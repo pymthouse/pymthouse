@@ -3,20 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
+import PipelineModelPicker from "@/components/PipelineModelPicker";
 
-interface PipelineCatalogEntry {
-  id: string;
-  name: string;
-  models: string[];
-}
-
-interface PricingRow {
-  orchAddress: string;
-  pipeline: string;
-  model: string;
-  priceWeiPerUnit: string;
-  pixelsPerUnit: string;
-}
+import type { PipelineCatalogEntry } from "@/components/PipelineModelPicker";
 
 interface PlanRow {
   id: string;
@@ -57,27 +46,37 @@ function displayToUsdMicros(display: string): string | null {
   return Math.round(n * USD_MICROS).toString();
 }
 
-function weiToEthDisplay(wei: string | undefined, ethUsdPrice: number | null): string {
-  if (!wei) return "";
-  try {
-    const weiN = BigInt(wei);
-    const whole = weiN / BigInt(1e18);
-    const frac = weiN % BigInt(1e18);
-    const fracStr = frac.toString().padStart(18, "0").replace(/0+$/, "").slice(0, 6);
-    const eth = fracStr ? `${whole}.${fracStr}` : whole.toString();
-    if (ethUsdPrice && ethUsdPrice > 0) {
-      const usd = (parseFloat(eth) * ethUsdPrice).toFixed(6);
-      return `${eth} ETH ≈ $${usd}`;
-    }
-    return `${eth} ETH`;
-  } catch {
-    return "";
-  }
-}
-
 function bpsToPercent(bps: number | null | undefined): string {
   if (bps == null) return "";
   return (bps / 100).toFixed(2);
+}
+
+const PLAN_TYPES = [
+  { value: "free", label: "Free" },
+  { value: "subscription", label: "Subscription" },
+  { value: "usage", label: "Pay-Per-Use" },
+] as const;
+
+/** Avoid `response.json()` on empty / HTML error bodies (throws SyntaxError). */
+async function readFetchJson(res: Response): Promise<{
+  ok: boolean;
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  const text = await res.text();
+  let body: Record<string, unknown> = {};
+  if (text.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      body =
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : {};
+    } catch {
+      body = {};
+    }
+  }
+  return { ok: res.ok, status: res.status, body };
 }
 
 export default function AppPlansPage() {
@@ -86,8 +85,6 @@ export default function AppPlansPage() {
   const [appName, setAppName] = useState("App");
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [catalog, setCatalog] = useState<PipelineCatalogEntry[]>([]);
-  const [pricing, setPricing] = useState<PricingRow[]>([]);
-  const [ethUsdPrice, setEthUsdPrice] = useState<number | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -103,45 +100,36 @@ export default function AppPlansPage() {
     includedUsdDisplay: "",
     generalUpchargePct: "",
     payPerUseUpchargePct: "",
-    pipeline: "",
-    modelId: "",
+    capabilityKeys: [] as string[], // "pipelineId" = all models wildcard, "pipelineId|modelId" = specific
     capabilityUpchargePct: "",
     slaTargetP95Ms: "",
   });
 
-  const selectedCatalogEntry = catalog.find((e) => e.id === form.pipeline);
-
-  const matchedPricingRow =
-    form.pipeline && form.modelId
-      ? pricing.find((r) => r.pipeline === form.pipeline && r.model === form.modelId)
-      : null;
-
-  const exampleRetailUsd: string | null = (() => {
-    if (!matchedPricingRow || !ethUsdPrice) return null;
-    try {
-      const priceWei = BigInt(matchedPricingRow.priceWeiPerUnit);
-      const pixels = BigInt(matchedPricingRow.pixelsPerUnit);
-      const feeWei = (priceWei * 1n) / pixels;
-      const eth = Number(feeWei) / 1e18;
-      const usd = eth * ethUsdPrice;
-      const upchargePct = parseFloat(form.capabilityUpchargePct || form.generalUpchargePct || "0");
-      const retail = usd * (1 + upchargePct / 100);
-      return `$${retail.toFixed(8)} /unit`;
-    } catch {
-      return null;
-    }
-  })();
-
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([
-      fetch(`/api/v1/apps/${id}`).then((r) => r.json()),
-      fetch(`/api/v1/apps/${id}/plans`).then((r) => r.json()),
+      fetch(`/api/v1/apps/${id}`).then(readFetchJson),
+      fetch(`/api/v1/apps/${id}/plans`).then(readFetchJson),
     ])
-      .then(([app, payload]) => {
-        setAppName(app.name || "App");
+      .then(([appWrap, plansWrap]) => {
+        const app = appWrap.body;
+        setAppName((typeof app.name === "string" ? app.name : "") || "App");
         setCanEdit(app.canEdit !== false);
-        setPlans(payload.plans || []);
+        if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
+          setPlans(plansWrap.body.plans as PlanRow[]);
+          setPlanError(null);
+        } else {
+          setPlans([]);
+          const msg =
+            typeof plansWrap.body.error === "string"
+              ? plansWrap.body.error
+              : `Could not load plans (HTTP ${plansWrap.status})`;
+          setPlanError(msg);
+        }
+      })
+      .catch((err) => {
+        setPlans([]);
+        setPlanError(err instanceof Error ? err.message : "Failed to load plans");
       })
       .finally(() => setLoading(false));
   }, [id]);
@@ -152,33 +140,24 @@ export default function AppPlansPage() {
 
   useEffect(() => {
     fetch("/api/v1/pipeline-catalog")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.catalog) setCatalog(d.catalog);
-        else if (d.error) setCatalogError(d.error);
+      .then(readFetchJson)
+      .then(({ ok, status, body }) => {
+        const cat = body.catalog;
+        if (Array.isArray(cat) && cat.length > 0) {
+          const entries = cat as PipelineCatalogEntry[];
+          setCatalog(entries);
+          setForm((prev) => ({
+            ...prev,
+            capabilityKeys: entries.map((e) => e.id),
+          }));
+        } else if (typeof body.error === "string") {
+          setCatalogError(body.error);
+        } else if (!ok) {
+          setCatalogError(`Pipeline catalog unavailable (HTTP ${status})`);
+        }
       })
       .catch(() => setCatalogError("NaaP catalog unavailable"));
-
-    fetch("/api/v1/prices/eth-usd")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.ethUsd?.priceUsd) setEthUsdPrice(d.ethUsd.priceUsd);
-      })
-      .catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (!form.pipeline) {
-      setPricing([]);
-      return;
-    }
-    fetch(`/api/v1/pipeline-pricing?pipeline=${encodeURIComponent(form.pipeline)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.pricing) setPricing(d.pricing);
-      })
-      .catch(() => {});
-  }, [form.pipeline]);
 
   const parseBps = (pct: string): number | null => {
     const n = parseFloat(pct);
@@ -198,6 +177,17 @@ export default function AppPlansPage() {
         ? displayToUsdMicros(form.includedUsdDisplay)
         : null;
 
+      const capabilities = form.capabilityKeys.map((key) => {
+        const sep = key.indexOf("|");
+        const isWildcard = sep === -1;
+        return {
+          pipeline: isWildcard ? key : key.slice(0, sep),
+          modelId: isWildcard ? "*" : key.slice(sep + 1),
+          slaTargetP95Ms: form.slaTargetP95Ms ? Number(form.slaTargetP95Ms) : null,
+          upchargePercentBps: capabilityBps,
+        };
+      });
+
       const res = await fetch(`/api/v1/apps/${id}/plans`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -212,14 +202,7 @@ export default function AppPlansPage() {
           includedUsdMicros,
           generalUpchargePercentBps: generalBps,
           payPerUseUpchargePercentBps: payPerUseBps,
-          capabilities: form.modelId
-            ? [{
-                modelId: form.modelId,
-                pipeline: form.pipeline,
-                slaTargetP95Ms: form.slaTargetP95Ms ? Number(form.slaTargetP95Ms) : null,
-                upchargePercentBps: capabilityBps,
-              }]
-            : [],
+          capabilities,
         }),
       });
       if (!res.ok) {
@@ -231,7 +214,8 @@ export default function AppPlansPage() {
         name: "", type: "free", priceAmount: "0", priceCurrency: "USD",
         includedUnits: "", overageRateWei: "", includedUsdDisplay: "",
         generalUpchargePct: "", payPerUseUpchargePct: "",
-        pipeline: "", modelId: "", capabilityUpchargePct: "", slaTargetP95Ms: "",
+        capabilityKeys: [],
+        capabilityUpchargePct: "", slaTargetP95Ms: "",
       });
       load();
     } catch (err) {
@@ -271,11 +255,6 @@ export default function AppPlansPage() {
         <h1 className="text-2xl font-bold text-zinc-100">Plans</h1>
         <p className="text-sm text-zinc-500 mt-1">
           Define subscription and pay-per-use plans with USD allowances and pipeline/model upcharges.
-          {ethUsdPrice && (
-            <span className="ml-2 text-zinc-400">
-              ETH ≈ <span className="text-emerald-400">${ethUsdPrice.toFixed(0)}</span>
-            </span>
-          )}
         </p>
         {!canEdit && (
           <p className="text-sm text-amber-400/90 mt-2">
@@ -301,30 +280,39 @@ export default function AppPlansPage() {
             disabled={!canEdit}
             className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
           />
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">Type</label>
-              <select
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
-                disabled={!canEdit}
-                className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-              >
-                <option value="free">Free</option>
-                <option value="subscription">Subscription</option>
-                <option value="usage">Pay-Per-Use</option>
-              </select>
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Type</label>
+            <div
+              className="flex w-full overflow-hidden rounded-lg border border-zinc-700"
+              role="group"
+              aria-label="Plan type"
+            >
+              {PLAN_TYPES.map((t, i) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() => setForm({ ...form, type: t.value })}
+                  className={`flex-1 min-w-0 px-2 py-2 text-xs sm:text-sm font-medium transition-colors disabled:opacity-50 ${
+                    form.type === t.value
+                      ? "bg-emerald-600 text-white"
+                      : "bg-zinc-800/50 text-zinc-400 hover:text-zinc-200"
+                  } ${i > 0 ? "border-l border-zinc-700" : ""}`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">Monthly price (USD)</label>
-              <input
-                value={form.priceAmount}
-                onChange={(e) => setForm({ ...form, priceAmount: e.target.value })}
-                placeholder="0"
-                disabled={!canEdit}
-                className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-              />
-            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Monthly price (USD)</label>
+            <input
+              value={form.priceAmount}
+              onChange={(e) => setForm({ ...form, priceAmount: e.target.value })}
+              placeholder="0"
+              disabled={!canEdit}
+              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+            />
           </div>
 
           {/* USD included allowance */}
@@ -374,82 +362,60 @@ export default function AppPlansPage() {
             </div>
           </div>
 
-          {/* Pipeline / model override */}
+          {/* Pipeline / model capabilities */}
           <div className="border-t border-zinc-800 pt-4 space-y-3">
-            <h3 className="text-sm font-medium text-zinc-300">Pipeline / model override</h3>
+            <h3 className="text-sm font-medium text-zinc-300">Pipeline / model capabilities</h3>
             {catalogError && (
               <p className="text-xs text-amber-400">{catalogError} — existing bundles still work.</p>
             )}
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">Pipeline</label>
-              {catalog.length > 0 ? (
-                <select
-                  value={form.pipeline}
-                  onChange={(e) => setForm({ ...form, pipeline: e.target.value, modelId: "" })}
+            {catalog.length > 0 ? (
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">
+                  Pipelines &amp; models
+                  <span className="ml-1 text-zinc-600 normal-case font-normal">— check a pipeline for all its models, or expand to pick individually</span>
+                </label>
+                <PipelineModelPicker
+                  catalog={catalog}
+                  values={form.capabilityKeys}
+                  onChange={(keys) => setForm({ ...form, capabilityKeys: keys })}
                   disabled={!canEdit}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-                >
-                  <option value="">— none —</option>
-                  {catalog.map((entry) => (
-                    <option key={entry.id} value={entry.id}>{entry.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={form.pipeline}
-                  onChange={(e) => setForm({ ...form, pipeline: e.target.value })}
-                  placeholder="pipeline id"
-                  disabled={!canEdit}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
                 />
-              )}
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">Model</label>
-              {selectedCatalogEntry && selectedCatalogEntry.models.length > 0 ? (
-                <select
-                  value={form.modelId}
-                  onChange={(e) => setForm({ ...form, modelId: e.target.value })}
-                  disabled={!canEdit}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-                >
-                  <option value="">— none —</option>
-                  {selectedCatalogEntry.models.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={form.modelId}
-                  onChange={(e) => setForm({ ...form, modelId: e.target.value })}
-                  placeholder="model id"
-                  disabled={!canEdit || !form.pipeline}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-                />
-              )}
-            </div>
-            {matchedPricingRow && (
-              <div className="text-xs text-zinc-400 bg-zinc-800/40 rounded-lg px-3 py-2 space-y-1">
-                <p>NaaP advertised price: <span className="text-zinc-200">{weiToEthDisplay(matchedPricingRow.priceWeiPerUnit, ethUsdPrice)}</span> / {matchedPricingRow.pixelsPerUnit} px</p>
-                {exampleRetailUsd && (
-                  <p>Example retail: <span className="text-emerald-400">{exampleRetailUsd}</span></p>
-                )}
-                <p className="text-zinc-500">Billing applies this override only after the signed ticket price validates against the advertised NaaP price.</p>
               </div>
+            ) : (
+              <p className="text-xs text-zinc-500 italic">No catalog available — pipeline capabilities cannot be configured.</p>
             )}
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">Override upcharge (%) for this pipeline/model</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.capabilityUpchargePct}
-                onChange={(e) => setForm({ ...form, capabilityUpchargePct: e.target.value })}
-                placeholder="optional — overrides general upcharge"
-                disabled={!canEdit || !form.pipeline}
-                className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">Capability upcharge (%)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.capabilityUpchargePct}
+                  onChange={(e) => setForm({ ...form, capabilityUpchargePct: e.target.value })}
+                  placeholder="optional"
+                  disabled={!canEdit || form.capabilityKeys.length === 0}
+                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">SLA p95 (ms)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.slaTargetP95Ms}
+                  onChange={(e) => setForm({ ...form, slaTargetP95Ms: e.target.value })}
+                  placeholder="optional"
+                  disabled={!canEdit || form.capabilityKeys.length === 0}
+                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+                />
+              </div>
             </div>
+            {form.capabilityKeys.length > 0 && (
+              <p className="text-xs text-zinc-500">
+                {form.capabilityKeys.length} {form.capabilityKeys.length !== 1 ? "capabilities" : "capability"} will be added to this plan.
+              </p>
+            )}
           </div>
 
           <button
@@ -494,7 +460,13 @@ export default function AppPlansPage() {
                         <div className="mt-3 space-y-1">
                           {plan.capabilities.map((cap) => (
                             <p key={cap.id} className="text-xs text-zinc-400">
-                              <span className="text-zinc-200">{cap.pipeline}</span> · {cap.modelId}
+                              <span className="text-zinc-200">{cap.pipeline}</span>
+                              {" · "}
+                              {cap.modelId === "*" ? (
+                                <span className="text-emerald-400/80">all models</span>
+                              ) : (
+                                cap.modelId
+                              )}
                               {cap.upchargePercentBps != null && ` · ${bpsToPercent(cap.upchargePercentBps)}% upcharge`}
                               {cap.slaTargetP95Ms ? ` · p95 ${cap.slaTargetP95Ms}ms` : ""}
                             </p>

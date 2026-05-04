@@ -225,10 +225,10 @@ export function resolveUpcharge(params: {
 }): { bps: number; source: BillingContext["pricingRuleSource"] } {
   const { plan, bundles, pipeline, modelId } = params;
 
-  // 1. Exact pipeline + modelId bundle override
-  const bundle = bundles.find(
-    (b) => b.pipeline === pipeline && b.modelId === modelId,
-  );
+  // 1. Exact pipeline + modelId bundle override, then pipeline wildcard ("*")
+  const bundle =
+    bundles.find((b) => b.pipeline === pipeline && b.modelId === modelId) ??
+    bundles.find((b) => b.pipeline === pipeline && b.modelId === "*");
   if (bundle?.upchargePercentBps != null && bundle.upchargePercentBps >= 0) {
     return { bps: bundle.upchargePercentBps, source: "pipeline_model" };
   }
