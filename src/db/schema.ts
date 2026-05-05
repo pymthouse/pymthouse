@@ -9,8 +9,10 @@ import {
   primaryKey,
   uniqueIndex,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { DiscoveryPolicy } from "@/lib/discovery-plans";
 
 // Admin/operator/developer accounts (OAuth or wallet login)
 export const users = pgTable("users", {
@@ -341,6 +343,8 @@ export const plans = pgTable(
     payPerUseUpchargePercentBps: integer("pay_per_use_upcharge_percent_bps"),
     /** Billing period length; currently only "monthly" is supported. */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
+    /** Optional NaaP discovery filter defaults (app-scoped; no pricing). */
+    discoveryPolicy: jsonb("discovery_policy").$type<DiscoveryPolicy | null>(),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -368,6 +372,8 @@ export const planCapabilityBundles = pgTable(
     maxPricePerUnit: text("max_price_per_unit"),
     /** Pipeline/model-specific positive upcharge override, in basis points. Overrides plan generalUpchargePercentBps. */
     upchargePercentBps: integer("upcharge_percent_bps"),
+    /** Optional discovery filter overrides for this pipeline/model bundle. */
+    discoveryPolicy: jsonb("discovery_policy").$type<DiscoveryPolicy | null>(),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

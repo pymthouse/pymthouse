@@ -6,6 +6,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import PipelineModelPicker from "@/components/PipelineModelPicker";
 
 import type { PipelineCatalogEntry } from "@/components/PipelineModelPicker";
+import type { DiscoveryPolicy } from "@/lib/discovery-plans";
 
 interface PlanRow {
   id: string;
@@ -20,6 +21,7 @@ interface PlanRow {
   generalUpchargePercentBps: number | null;
   payPerUseUpchargePercentBps: number | null;
   billingCycle: string;
+  discoveryPolicy?: DiscoveryPolicy | null;
   capabilities: {
     id: string;
     pipeline: string;
@@ -28,6 +30,7 @@ interface PlanRow {
     slaTargetP95Ms: number | null;
     maxPricePerUnit: string | null;
     upchargePercentBps: number | null;
+    discoveryPolicy?: DiscoveryPolicy | null;
   }[];
 }
 
@@ -49,6 +52,16 @@ function displayToUsdMicros(display: string): string | null {
 function bpsToPercent(bps: number | null | undefined): string {
   if (bps == null) return "";
   return (bps / 100).toFixed(2);
+}
+
+function formatDiscoveryPolicyShort(p: DiscoveryPolicy | null | undefined): string | null {
+  if (!p || typeof p !== "object") return null;
+  const parts: string[] = [];
+  if (p.topN != null) parts.push(`topN=${p.topN}`);
+  if (p.sortBy) parts.push(`sort=${p.sortBy}`);
+  if (p.slaMinScore != null) parts.push(`slaMin=${p.slaMinScore}`);
+  if (p.filters && Object.keys(p.filters).length > 0) parts.push("filters");
+  return parts.length ? parts.join(", ") : null;
 }
 
 const PLAN_TYPES = [
@@ -103,6 +116,14 @@ export default function AppPlansPage() {
     capabilityKeys: [] as string[], // "pipelineId" = all models wildcard, "pipelineId|modelId" = specific
     capabilityUpchargePct: "",
     slaTargetP95Ms: "",
+    discoveryTopN: "",
+    discoverySortBy: "",
+    discoverySlaMin: "",
+    discoveryGpuRamGbMin: "",
+    discoveryGpuRamGbMax: "",
+    discoveryPriceMax: "",
+    discoveryMaxAvgLatencyMs: "",
+    discoveryMaxSwapRatio: "",
   });
 
   const load = useCallback(() => {
@@ -188,6 +209,49 @@ export default function AppPlansPage() {
         };
       });
 
+      const filters: NonNullable<DiscoveryPolicy["filters"]> = {};
+      if (form.discoveryGpuRamGbMin.trim()) {
+        const n = Number(form.discoveryGpuRamGbMin);
+        if (Number.isFinite(n) && n >= 0) filters.gpuRamGbMin = n;
+      }
+      if (form.discoveryGpuRamGbMax.trim()) {
+        const n = Number(form.discoveryGpuRamGbMax);
+        if (Number.isFinite(n) && n >= 0) filters.gpuRamGbMax = n;
+      }
+      if (form.discoveryPriceMax.trim()) {
+        const n = Number(form.discoveryPriceMax);
+        if (Number.isFinite(n) && n >= 0) filters.priceMax = n;
+      }
+      if (form.discoveryMaxAvgLatencyMs.trim()) {
+        const n = Number(form.discoveryMaxAvgLatencyMs);
+        if (Number.isFinite(n) && n >= 0) filters.maxAvgLatencyMs = n;
+      }
+      if (form.discoveryMaxSwapRatio.trim()) {
+        const n = Number(form.discoveryMaxSwapRatio);
+        if (Number.isFinite(n) && n >= 0 && n <= 1) filters.maxSwapRatio = n;
+      }
+
+      const discoveryPolicy: DiscoveryPolicy = {};
+      if (form.discoveryTopN.trim()) {
+        const n = parseInt(form.discoveryTopN, 10);
+        if (Number.isInteger(n) && n >= 1 && n <= 1000) discoveryPolicy.topN = n;
+      }
+      if (form.discoverySortBy.trim()) {
+        discoveryPolicy.sortBy = form.discoverySortBy.trim() as DiscoveryPolicy["sortBy"];
+      }
+      if (form.discoverySlaMin.trim()) {
+        const n = Number(form.discoverySlaMin);
+        if (Number.isFinite(n) && n >= 0 && n <= 1) discoveryPolicy.slaMinScore = n;
+      }
+      if (Object.keys(filters).length > 0) {
+        discoveryPolicy.filters = filters;
+      }
+      const hasDiscovery =
+        discoveryPolicy.topN != null ||
+        discoveryPolicy.sortBy != null ||
+        discoveryPolicy.slaMinScore != null ||
+        (discoveryPolicy.filters && Object.keys(discoveryPolicy.filters).length > 0);
+
       const res = await fetch(`/api/v1/apps/${id}/plans`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -202,6 +266,7 @@ export default function AppPlansPage() {
           includedUsdMicros,
           generalUpchargePercentBps: generalBps,
           payPerUseUpchargePercentBps: payPerUseBps,
+          ...(hasDiscovery ? { discoveryPolicy } : {}),
           capabilities,
         }),
       });
@@ -216,6 +281,9 @@ export default function AppPlansPage() {
         generalUpchargePct: "", payPerUseUpchargePct: "",
         capabilityKeys: [],
         capabilityUpchargePct: "", slaTargetP95Ms: "",
+        discoveryTopN: "", discoverySortBy: "", discoverySlaMin: "",
+        discoveryGpuRamGbMin: "", discoveryGpuRamGbMax: "", discoveryPriceMax: "",
+        discoveryMaxAvgLatencyMs: "", discoveryMaxSwapRatio: "",
       });
       load();
     } catch (err) {
@@ -416,6 +484,117 @@ export default function AppPlansPage() {
                 {form.capabilityKeys.length} {form.capabilityKeys.length !== 1 ? "capabilities" : "capability"} will be added to this plan.
               </p>
             )}
+            <div className="border-t border-zinc-800 pt-3 space-y-2">
+              <h4 className="text-xs font-medium text-zinc-400">Discovery defaults (orchestrator ranking)</h4>
+              <p className="text-[11px] text-zinc-600">
+                Optional limits passed to NaaP-style discovery. Leave blank to omit.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">topN</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={form.discoveryTopN}
+                    onChange={(e) => setForm({ ...form, discoveryTopN: e.target.value })}
+                    placeholder="e.g. 10"
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">sortBy</label>
+                  <select
+                    value={form.discoverySortBy}
+                    onChange={(e) => setForm({ ...form, discoverySortBy: e.target.value })}
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  >
+                    <option value="">—</option>
+                    <option value="slaScore">slaScore</option>
+                    <option value="latency">latency</option>
+                    <option value="price">price</option>
+                    <option value="swapRate">swapRate</option>
+                    <option value="avail">avail</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">slaMinScore (0–1)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step="0.01"
+                    value={form.discoverySlaMin}
+                    onChange={(e) => setForm({ ...form, discoverySlaMin: e.target.value })}
+                    placeholder="optional"
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">GPU RAM min (GB)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.discoveryGpuRamGbMin}
+                    onChange={(e) => setForm({ ...form, discoveryGpuRamGbMin: e.target.value })}
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">GPU RAM max (GB)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.discoveryGpuRamGbMax}
+                    onChange={(e) => setForm({ ...form, discoveryGpuRamGbMax: e.target.value })}
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">price max</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={form.discoveryPriceMax}
+                    onChange={(e) => setForm({ ...form, discoveryPriceMax: e.target.value })}
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">max avg latency (ms)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.discoveryMaxAvgLatencyMs}
+                    onChange={(e) => setForm({ ...form, discoveryMaxAvgLatencyMs: e.target.value })}
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[11px] text-zinc-500 mb-0.5">max swap ratio (0–1)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step="0.01"
+                    value={form.discoveryMaxSwapRatio}
+                    onChange={(e) => setForm({ ...form, discoveryMaxSwapRatio: e.target.value })}
+                    disabled={!canEdit}
+                    className="w-full px-2 py-1.5 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-100 disabled:opacity-50"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <button
@@ -454,6 +633,11 @@ export default function AppPlansPage() {
                           {plan.generalUpchargePercentBps != null && `General upcharge: ${bpsToPercent(plan.generalUpchargePercentBps)}%`}
                           {plan.generalUpchargePercentBps != null && plan.payPerUseUpchargePercentBps != null && " · "}
                           {plan.payPerUseUpchargePercentBps != null && `PPU upcharge: ${bpsToPercent(plan.payPerUseUpchargePercentBps)}%`}
+                        </p>
+                      )}
+                      {formatDiscoveryPolicyShort(plan.discoveryPolicy ?? null) && (
+                        <p className="text-xs text-sky-400/90 mt-1">
+                          Discovery: {formatDiscoveryPolicyShort(plan.discoveryPolicy ?? null)}
                         </p>
                       )}
                       {plan.capabilities.length > 0 && (

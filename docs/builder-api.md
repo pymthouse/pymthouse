@@ -438,12 +438,14 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 | `generalUpchargePercentBps` | Default positive upcharge for all retail usage, basis points. |
 | `payPerUseUpchargePercentBps` | Fallback upcharge for free/no-credit users; inherits `generalUpchargePercentBps` if unset. |
 | `billingCycle` | `"monthly"` (default). |
+| `discoveryPolicy` | Optional JSON: orchestrator discovery defaults (see Plans section). No pricing fields. |
 
 #### Capability bundle fields (new)
 
 | Field | Description |
 | --- | --- |
 | `upchargePercentBps` | Pipeline/model-specific upcharge override, basis points. Takes precedence over `generalUpchargePercentBps` for matching usage. |
+| `discoveryPolicy` | Optional per-pipeline/model discovery overrides. `modelId` may be `"*"` for all models in that pipeline (billing upcharge uses the same wildcard semantics). |
 
 ### Authentication (billing summary)
 
@@ -468,20 +470,32 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
   "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?groupBy=pipeline_model"
 ```
 
-### Plans (provider session)
+### Plans (provider session + M2M read)
 
 **Base path:** `/api/v1/apps/{clientId}/plans`
 
-All plan routes use **`getAuthorizedProviderApp`** — a **logged-in provider dashboard** session for the app owner, platform admin, or `providerAdmins` team member. **M2M Basic auth is not supported** on these handlers (unlike the billing summary and Usage API). Mutations additionally require **`canEditProviderApp`**.
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans, capability bundles, and optional **`discoveryPolicy`** (JSON) on each plan and bundle |
+| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create plan (`name` required). Optional **`discoveryPolicy`** (plan defaults). Each **`capabilities[]`** entry may include **`discoveryPolicy`** and **`modelId: "*"`** for all models in that pipeline |
+| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). Optional **`discoveryPolicy`** (set to `null` to clear) |
+| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles |
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans` | List plans and capability bundles |
-| `POST` | `/api/v1/apps/{clientId}/plans` | Create plan (`name` required; `subscription` type supports `includedUsdMicros`; upcharge fields in basis points) |
-| `PUT` | `/api/v1/apps/{clientId}/plans` | Update plan (body must include `id`; optional `capabilities` replaces entire bundle set) |
-| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Delete plan and its bundles |
+**Discovery view (integrators, e.g. NaaP):**
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts).
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/apps/{clientId}/plans/discovery` | **M2M Basic** or provider session | **Active** plans only: `id`, `name`, `status`, `discoveryPolicy`, and `capabilities[]` with `pipeline`, `modelId`, `discoveryPolicy`. App-scoped — no per-user discovery rows |
+
+**`discoveryPolicy`** (optional JSON object, aligned with NaaP orchestrator leaderboard plan inputs):
+
+- `topN` — integer 1…1000  
+- `sortBy` — `"slaScore"` \| `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
+- `slaMinScore` — number 0…1  
+- `slaWeights` — `{ latency?, swapRate?, price? }` each 0…1  
+- `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
+
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts).
 
 ---
 

@@ -3,11 +3,15 @@ import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
+import { authenticateAppClient } from "@/lib/auth";
 import {
   canEditProviderApp,
   getAuthorizedProviderApp,
+  getProviderApp,
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
+import type { DiscoveryPolicy } from "@/lib/discovery-plans";
+import { discoveryPolicyFromDb, parseDiscoveryPolicyInput } from "@/lib/discovery-plans";
 
 function isNonNegativeIntegerString(s: string): boolean {
   return /^\d+$/.test(s);
@@ -143,6 +147,7 @@ function parseCapabilities(input: unknown): {
     slaTargetP95Ms: number | null;
     maxPricePerUnit: string | null;
     upchargePercentBps: number | null;
+    discoveryPolicy: DiscoveryPolicy | null;
   }>;
   error?: string;
 } {
@@ -195,6 +200,14 @@ function parseCapabilities(input: unknown): {
       throw new Error(`capabilities[${index}].upchargePercentBps must be a non-negative integer`);
     }
 
+    const dp = parseDiscoveryPolicyInput(
+      value.discoveryPolicy,
+      `capabilities[${index}].discoveryPolicy`,
+    );
+    if (!dp.ok) {
+      throw new Error(dp.error);
+    }
+
     return {
       pipeline,
       modelId,
@@ -205,22 +218,33 @@ function parseCapabilities(input: unknown): {
           ? null
           : String(value.maxPricePerUnit),
       upchargePercentBps: parsedUpchargeBps,
+      discoveryPolicy: dp.policy,
     };
   });
 
   return { capabilities };
 }
 
+async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
+  const clientAuth = await authenticateAppClient(request);
+  if (clientAuth?.appId === clientId) {
+    const app = await getProviderApp(clientId);
+    return app;
+  }
+  const auth = await getAuthorizedProviderApp(clientId);
+  return auth?.app ?? null;
+}
+
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
-  if (!auth) {
+  const app = await resolveAppForPlansRead(clientId, request);
+  if (!app) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const appId = auth.app.id;
+  const appId = app.id;
 
   const rows = await db.select().from(plans).where(eq(plans.clientId, appId));
   const bundles = await db
@@ -231,6 +255,7 @@ export async function GET(
   return NextResponse.json({
     plans: rows.map((plan) => ({
       ...plan,
+      discoveryPolicy: discoveryPolicyFromDb(plan.discoveryPolicy),
       includedUnits:
         plan.includedUnits !== null && plan.includedUnits !== undefined
           ? plan.includedUnits.toString()
@@ -244,6 +269,7 @@ export async function GET(
         .filter((bundle) => bundle.planId === plan.id)
         .map((bundle) => ({
           ...bundle,
+          discoveryPolicy: discoveryPolicyFromDb(bundle.discoveryPolicy),
           clientId,
         })),
     })),
@@ -290,6 +316,11 @@ export async function POST(
     return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
   }
 
+  const planDp = parseDiscoveryPolicyInput(body.discoveryPolicy, "discoveryPolicy");
+  if (!planDp.ok) {
+    return NextResponse.json({ error: planDp.error }, { status: 400 });
+  }
+
   const planType = String(body.type || "free");
   const billing = resolveBillingFieldsForPost(planType, body);
   if (!billing.ok) {
@@ -332,6 +363,7 @@ export async function POST(
       generalUpchargePercentBps: generalUpcharge.value,
       payPerUseUpchargePercentBps: payPerUseUpcharge.value,
       billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
+      discoveryPolicy: planDp.policy,
       createdAt: now,
       updatedAt: now,
     });
@@ -347,6 +379,7 @@ export async function POST(
         slaTargetP95Ms: capability.slaTargetP95Ms ?? null,
         maxPricePerUnit: capability.maxPricePerUnit,
         upchargePercentBps: capability.upchargePercentBps,
+        discoveryPolicy: capability.discoveryPolicy,
         createdAt: now,
       });
     }
@@ -398,6 +431,15 @@ export async function PUT(
     if (parsedCapabilities.error) {
       return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
     }
+  }
+
+  let planDiscoveryPut: DiscoveryPolicy | null | undefined = undefined;
+  if (body.discoveryPolicy !== undefined) {
+    const r = parseDiscoveryPolicyInput(body.discoveryPolicy, "discoveryPolicy");
+    if (!r.ok) {
+      return NextResponse.json({ error: r.error }, { status: 400 });
+    }
+    planDiscoveryPut = r.policy;
   }
 
   const now = new Date().toISOString();
@@ -459,6 +501,7 @@ export async function PUT(
         ...(payPerUseUpchargePut.value !== null ? { payPerUseUpchargePercentBps: payPerUseUpchargePut.value } : {}),
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
         ...(body.billingCycle !== undefined ? { billingCycle: String(body.billingCycle) } : {}),
+        ...(planDiscoveryPut !== undefined ? { discoveryPolicy: planDiscoveryPut } : {}),
         updatedAt: now,
       })
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
@@ -488,6 +531,7 @@ export async function PUT(
           slaTargetP95Ms: capability.slaTargetP95Ms ?? null,
           maxPricePerUnit: capability.maxPricePerUnit,
           upchargePercentBps: capability.upchargePercentBps,
+          discoveryPolicy: capability.discoveryPolicy,
           createdAt: now,
         });
       }
