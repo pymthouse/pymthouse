@@ -11,8 +11,13 @@ RUN apt-get update && \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+# CI build (0.8.10-0a1919e0); mirrored from the same upload pipeline as GitHub Actions artifacts.
+ARG LIVEPEER_COMMIT=0a1919e0c58986375df158433445563a45a04df8
+ARG LIVEPEER_SHA256=0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade
+
 # Download and extract livepeer binary
-RUN wget -q https://github.com/livepeer/go-livepeer/releases/download/v0.8.10/livepeer-linux-amd64.tar.gz && \
+RUN wget -q "https://build.livepeer.live/go-livepeer/${LIVEPEER_COMMIT}/livepeer-linux-amd64.tar.gz" -O livepeer-linux-amd64.tar.gz && \
+    echo "${LIVEPEER_SHA256}  livepeer-linux-amd64.tar.gz" | sha256sum -c - && \
     tar -xzf livepeer-linux-amd64.tar.gz && \
     mv livepeer-linux-amd64/livepeer /usr/local/bin/livepeer && \
     chmod +x /usr/local/bin/livepeer && \

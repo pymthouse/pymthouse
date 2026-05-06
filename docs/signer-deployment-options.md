@@ -121,7 +121,8 @@ app = "pymthouse-signer"
 
 [build]
   [build.args]
-    LIVEPEER_VERSION = "0.8.10"
+    LIVEPEER_COMMIT = "0a1919e0c58986375df158433445563a45a04df8"
+    LIVEPEER_SHA256 = "0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade"
 
 [env]
   SIGNER_NETWORK = "arbitrum-one-mainnet"
@@ -149,10 +150,14 @@ Create a `Dockerfile.fly`:
 ```dockerfile
 FROM debian:bookworm-slim
 
+ARG LIVEPEER_COMMIT
+ARG LIVEPEER_SHA256
+
 RUN apt-get update && \
     apt-get install -y wget ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
-    wget -q https://github.com/livepeer/go-livepeer/releases/download/v0.8.10/livepeer-linux-amd64.tar.gz && \
+    wget -q "https://build.livepeer.live/go-livepeer/${LIVEPEER_COMMIT}/livepeer-linux-amd64.tar.gz" -O livepeer-linux-amd64.tar.gz && \
+    echo "${LIVEPEER_SHA256}  livepeer-linux-amd64.tar.gz" | sha256sum -c - && \
     tar -xzf livepeer-linux-amd64.tar.gz && \
     mv livepeer-linux-amd64/livepeer /usr/local/bin/livepeer && \
     chmod +x /usr/local/bin/livepeer && \
@@ -349,15 +354,12 @@ Look for:
 
 To update to a new version:
 
-1. **Update the download URL** in:
-   - `docker/signer-dmz/Dockerfile.signer` (line with wget)
-   - `docker/signer-dmz/Dockerfile` (livepeer download in the `signer-dmz` image stage, if you use it)
+1. **Pick a build** from [go-livepeer Actions](https://github.com/livepeer/go-livepeer/actions) (or a tagged release). CI uploads linux-amd64 artifacts to **Google Cloud** at `https://build.livepeer.live/go-livepeer/<full-git-sha>/livepeer-linux-amd64.tar.gz` (same archive as the workflow artifact zip).
+
+2. **Update** `LIVEPEER_COMMIT`, `LIVEPEER_SHA256`, and the download URL in:
+   - `docker/signer-dmz/Dockerfile.signer`
+   - `docker/signer-dmz/Dockerfile` (livepeer download in the `signer-dmz` image stage)
    - `nixpacks.toml` (install phase)
-   
-2. **Change version number:**
-   ```
-   v0.8.10 → v0.8.11
-   ```
 
 3. **Redeploy** on your platform
 
