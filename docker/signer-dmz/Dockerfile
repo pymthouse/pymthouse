@@ -118,13 +118,14 @@ FROM gateway AS signer-dmz
 
 USER root
 
-# Verify the release asset against a known-good sha256 before extraction.
-# If upstream rotates/repacks the asset, the build fails closed rather than silently pulling new bytes.
-ARG LIVEPEER_VERSION=0.8.10
-ARG LIVEPEER_SHA256=febc11b0a8951b44539f978b24e2ea85adf650b1eafe7c213f3eac7cec1043d5
+# CI-built linux-amd64 tarball mirrored at build.livepeer.live (same bytes as GitHub Actions artifacts).
+# Source artifact: https://github.com/livepeer/go-livepeer/actions/runs/25226599716/artifacts/6796975695
+# Node reports: Livepeer Node Version 0.8.10-0a1919e0
+ARG LIVEPEER_COMMIT=0a1919e0c58986375df158433445563a45a04df8
+ARG LIVEPEER_SHA256=0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade
 
 RUN apt-get update && apt-get install -y --no-install-recommends wget && \
-    wget -q "https://github.com/livepeer/go-livepeer/releases/download/v${LIVEPEER_VERSION}/livepeer-linux-amd64.tar.gz" && \
+    wget -q "https://build.livepeer.live/go-livepeer/${LIVEPEER_COMMIT}/livepeer-linux-amd64.tar.gz" -O livepeer-linux-amd64.tar.gz && \
     echo "${LIVEPEER_SHA256}  livepeer-linux-amd64.tar.gz" | sha256sum -c - && \
     tar -xzf livepeer-linux-amd64.tar.gz && \
     mv livepeer-linux-amd64/livepeer /usr/local/bin/livepeer && \
