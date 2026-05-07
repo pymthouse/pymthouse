@@ -37,8 +37,14 @@ export default function PipelineModelPicker({
   }, []);
 
   useEffect(() => {
+    if (!disabled) return;
+    const timeoutId = window.setTimeout(close, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [disabled, close]);
+
+  useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e: PointerEvent) => {
       if (
         containerRef.current &&
         !containerRef.current.contains(e.target as Node)
@@ -46,8 +52,8 @@ export default function PipelineModelPicker({
         close();
       }
     };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("pointerdown", onDoc);
+    return () => document.removeEventListener("pointerdown", onDoc);
   }, [open, close]);
 
   // ── helpers ────────────────────────────────────────────────────────────────
@@ -189,6 +195,7 @@ export default function PipelineModelPicker({
                     type="button"
                     role="option"
                     aria-selected={isWildcard}
+                    disabled={disabled}
                     onClick={() => togglePipeline(entry)}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
                   >
@@ -211,7 +218,7 @@ export default function PipelineModelPicker({
                         role="option"
                         aria-selected={modelChecked || isWildcard}
                         onClick={() => toggleModel(entry, modelId)}
-                        disabled={isWildcard}
+                        disabled={disabled || isWildcard}
                         className={`w-full flex items-center gap-2 pl-7 pr-3 py-1.5 text-left text-xs ${
                           isWildcard
                             ? "text-zinc-600 cursor-default"

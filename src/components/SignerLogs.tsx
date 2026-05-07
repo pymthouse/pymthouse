@@ -2,16 +2,26 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const AUTO_REFRESH_INTERVAL_MS = 5000;
+const TAIL_OPTIONS = [25, 50, 100, 200] as const;
+type TailOption = (typeof TAIL_OPTIONS)[number];
+
+function parseTailOption(value: string): TailOption {
+  const parsed = Number(value);
+  return TAIL_OPTIONS.includes(parsed as TailOption) ? (parsed as TailOption) : 50;
+}
+
 export default function SignerLogs() {
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [tail, setTail] = useState(50);
+  const [tail, setTail] = useState<TailOption>(50);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await fetch(`/api/v1/signer/logs?tail=${tail}`);
+      const params = new URLSearchParams({ tail: String(tail) });
+      const res = await fetch(`/api/v1/signer/logs?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setLines(data.lines);
@@ -29,7 +39,9 @@ export default function SignerLogs() {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(fetchLogs, 5000);
+    const interval = setInterval(() => {
+      void fetchLogs();
+    }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLogs]);
 
@@ -56,13 +68,14 @@ export default function SignerLogs() {
         <div className="flex items-center gap-3">
           <select
             value={tail}
-            onChange={(e) => setTail(parseInt(e.target.value))}
+            onChange={(e) => setTail(parseTailOption(e.target.value))}
             className="px-2 py-1 bg-zinc-800/50 border border-zinc-700 rounded text-xs text-zinc-300 focus:outline-none"
           >
-            <option value={25}>25 lines</option>
-            <option value={50}>50 lines</option>
-            <option value={100}>100 lines</option>
-            <option value={200}>200 lines</option>
+            {TAIL_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option} lines
+              </option>
+            ))}
           </select>
 
           <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer">

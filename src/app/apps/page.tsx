@@ -147,6 +147,7 @@ function CopyPublicAppIdButton({
 
   const copy = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.clipboard) {
+      setCopied(false);
       setCopyFailed(true);
       if (timeoutRef.current !== null) {
         clearTimeout(timeoutRef.current);
@@ -171,6 +172,7 @@ function CopyPublicAppIdButton({
         }, 2000);
       },
       () => {
+        setCopied(false);
         setCopyFailed(true);
         if (timeoutRef.current !== null) {
           clearTimeout(timeoutRef.current);
