@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import Module from "node:module";
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
-import { plans } from "@/db/schema";
+import { discoveryProfiles, plans } from "@/db/schema";
 import { run } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -122,15 +123,39 @@ run("plans POST validates capabilities and discovery policy payloads", async (t)
   assert.equal(missingPipeline.status, 400);
   assert.equal(missingPipeline.body.error, "capabilities[0].pipeline is required");
 
-  const invalidDiscoveryPolicy = await postPlan(app.clientId, {
-    name: "Invalid discovery",
+  const invalidProfile = await postPlan(app.clientId, {
+    name: "Invalid profile ref",
     type: "free",
-    discoveryPolicy: { sortBy: "not-supported" },
+    discoveryProfileId: randomUUID(),
   });
-  assert.equal(invalidDiscoveryPolicy.status, 400);
+  assert.equal(invalidProfile.status, 400);
   assert.equal(
-    typeof invalidDiscoveryPolicy.body.error === "string" &&
-      invalidDiscoveryPolicy.body.error.includes("sortBy"),
+    typeof invalidProfile.body.error === "string" &&
+      invalidProfile.body.error.includes("discoveryProfileId"),
     true,
   );
+
+  const profileId = randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(discoveryProfiles).values({
+    id: profileId,
+    clientId: app.clientId,
+    name: "For plan test",
+    policy: { topN: 5 },
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const withProfile = await postPlan(app.clientId, {
+    name: "Plan with profile",
+    type: "free",
+    discoveryProfileId: profileId,
+  });
+  assert.equal(withProfile.status, 201);
+  const planRows = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.id, withProfile.body.id as string))
+    .limit(1);
+  assert.equal(planRows[0]?.discoveryProfileId, profileId);
 });

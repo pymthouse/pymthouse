@@ -319,6 +319,52 @@ export const providerAdmins = pgTable(
   (t) => [uniqueIndex("idx_provider_admins_user_client").on(t.userId, t.clientId)],
 );
 
+/** Reusable app-scoped discovery defaults for orchestrator leaderboard (no pricing). */
+export const discoveryProfiles = pgTable(
+  "discovery_profiles",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    name: text("name").notNull(),
+    policy: jsonb("policy").$type<DiscoveryPolicy | null>(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [uniqueIndex("idx_discovery_profiles_client_name").on(t.clientId, t.name)],
+);
+
+export const discoveryProfileBundles = pgTable(
+  "discovery_profile_bundles",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => discoveryProfiles.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    pipeline: text("pipeline").notNull(),
+    modelId: text("model_id").notNull(),
+    discoveryPolicy: jsonb("discovery_policy").$type<DiscoveryPolicy | null>(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_discovery_profile_bundles_unique").on(
+      t.profileId,
+      t.pipeline,
+      t.modelId,
+    ),
+  ],
+);
+
 export const plans = pgTable(
   "plans",
   {
@@ -343,8 +389,9 @@ export const plans = pgTable(
     payPerUseUpchargePercentBps: integer("pay_per_use_upcharge_percent_bps"),
     /** Billing period length; currently only "monthly" is supported. */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
-    /** Optional NaaP discovery filter defaults (app-scoped; no pricing). */
-    discoveryPolicy: jsonb("discovery_policy").$type<DiscoveryPolicy | null>(),
+    discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
+      onDelete: "set null",
+    }),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -372,8 +419,6 @@ export const planCapabilityBundles = pgTable(
     maxPricePerUnit: text("max_price_per_unit"),
     /** Pipeline/model-specific positive upcharge override, in basis points. Overrides plan generalUpchargePercentBps. */
     upchargePercentBps: integer("upcharge_percent_bps"),
-    /** Optional discovery filter overrides for this pipeline/model bundle. */
-    discoveryPolicy: jsonb("discovery_policy").$type<DiscoveryPolicy | null>(),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

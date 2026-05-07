@@ -439,14 +439,13 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 | `generalUpchargePercentBps` | Default positive upcharge for all retail usage, basis points. |
 | `payPerUseUpchargePercentBps` | Fallback upcharge for free/no-credit users; inherits `generalUpchargePercentBps` if unset. |
 | `billingCycle` | `"monthly"` (default). |
-| `discoveryPolicy` | Optional JSON: orchestrator discovery defaults (see Plans section). No pricing fields. |
+| `discoveryProfileId` | Optional FK to an app-scoped discovery profile (see **Discovery profiles** below). Omitted from billing summary payloads today; present on **`GET .../plans`**. |
 
 #### Capability bundle fields (new)
 
 | Field | Description |
 | --- | --- |
 | `upchargePercentBps` | Pipeline/model-specific upcharge override, basis points. Takes precedence over `generalUpchargePercentBps` for matching usage. |
-| `discoveryPolicy` | Optional per-pipeline/model discovery overrides. `modelId` may be `"*"` for all models in that pipeline (billing upcharge uses the same wildcard semantics). |
 
 ### Authentication (billing summary)
 
@@ -471,22 +470,38 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
   "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?groupBy=pipeline_model"
 ```
 
+### Discovery profiles (provider session + M2M read)
+
+Reusable **discovery** configuration (orchestrator ranking defaults) lives in **`discovery_profiles`** and **`discovery_profile_bundles`**. **Billing plans** reference an optional `discoveryProfileId`. Editing discovery no longer requires touching subscription pricing fields.
+
+**Base path:** `/api/v1/apps/{clientId}/discovery-profiles`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/discovery-profiles` | **M2M Basic** or provider session | List profiles with resolved `policy` and `capabilities[]` (`pipeline`, `modelId`, `discoveryPolicy`) |
+| `POST` | `/discovery-profiles` | Provider session only | Create profile: `name` (required), optional `policy`, optional `capabilities[]` with `{ pipeline, modelId, discoveryPolicy }` only |
+| `GET` | `/discovery-profiles/{profileId}` | **M2M Basic** or provider session | One profile |
+| `PUT` | `/discovery-profiles/{profileId}` | Provider session only | Update `name`, `policy`, and/or replace `capabilities[]` |
+| `DELETE` | `/discovery-profiles/{profileId}` | Provider session only | Delete profile; **`409`** if any plan still references it |
+
+**Implementation:** [`src/app/api/v1/apps/[id]/discovery-profiles/route.ts`](../src/app/api/v1/apps/[id]/discovery-profiles/route.ts), [`src/app/api/v1/apps/[id]/discovery-profiles/[profileId]/route.ts`](../src/app/api/v1/apps/[id]/discovery-profiles/[profileId]/route.ts).
+
 ### Plans (provider session + M2M read)
 
 **Base path:** `/api/v1/apps/{clientId}/plans`
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans, capability bundles, and optional **`discoveryPolicy`** (JSON) on each plan and bundle |
-| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create plan (`name` required). Optional **`discoveryPolicy`** (plan defaults). Each **`capabilities[]`** entry may include **`discoveryPolicy`** and **`modelId: "*"`** for all models in that pipeline |
-| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). Optional **`discoveryPolicy`** (set to `null` to clear) |
+| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each plan includes optional **`discoveryProfileId`** and **resolved** **`discoveryPolicy`** (from the linked profile) plus per-bundle **resolved** **`discoveryPolicy`** (from `discovery_profile_bundles` keys matching each billing bundle’s `pipeline` / `modelId`). |
+| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create plan (`name` required). Optional **`discoveryProfileId`** (must belong to the same app). Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), SLA/upcharge fields — **not** `discoveryPolicy`. |
+| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). Optional **`discoveryProfileId`** (`null` clears the link). |
 | `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles |
 
 **Discovery view (integrators, e.g. NaaP):**
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans/discovery` | **M2M Basic** or provider session | **Active** plans only: `id`, `name`, `status`, `discoveryPolicy`, and `capabilities[]` with `pipeline`, `modelId`, `discoveryPolicy`. App-scoped — no per-user discovery rows |
+| `GET` | `/api/v1/apps/{clientId}/plans/discovery` | **M2M Basic** or provider session | **Active** plans only: `id`, `name`, `status`, **resolved** `discoveryPolicy`, and `capabilities[]` with `pipeline`, `modelId`, **resolved** `discoveryPolicy`. Same JSON shape as before migration. |
 
 **`discoveryPolicy`** (optional JSON object, aligned with NaaP orchestrator leaderboard plan inputs):
 
@@ -496,7 +511,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 - `slaWeights` — `{ latency?, swapRate?, price? }` each 0…1  
 - `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts).
 
 ---
 

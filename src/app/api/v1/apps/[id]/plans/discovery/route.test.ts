@@ -14,16 +14,35 @@ run("plans discovery GET allows M2M for own app and returns active plans", async
   t.after(() => cleanupTestApp(app));
 
   const { db } = await import("@/db/index");
-  const { plans, planCapabilityBundles } = await import("@/db/schema");
+  const { plans, planCapabilityBundles, discoveryProfiles, discoveryProfileBundles } =
+    await import("@/db/schema");
+  const profileId = randomUUID();
   const planId = randomUUID();
   const now = new Date().toISOString();
+  await db.insert(discoveryProfiles).values({
+    id: profileId,
+    clientId: app.clientId,
+    name: "Discovery test profile",
+    policy: { topN: 7, sortBy: "latency" },
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(discoveryProfileBundles).values({
+    id: randomUUID(),
+    profileId,
+    clientId: app.clientId,
+    pipeline: "llm",
+    modelId: "*",
+    discoveryPolicy: { topN: 3 },
+    createdAt: now,
+  });
   await db.insert(plans).values({
     id: planId,
     clientId: app.clientId,
     name: "Discovery test plan",
     type: "free",
     status: "active",
-    discoveryPolicy: { topN: 7, sortBy: "latency" },
+    discoveryProfileId: profileId,
     createdAt: now,
     updatedAt: now,
   });
@@ -33,7 +52,6 @@ run("plans discovery GET allows M2M for own app and returns active plans", async
     clientId: app.clientId,
     pipeline: "llm",
     modelId: "*",
-    discoveryPolicy: { topN: 3 },
     createdAt: now,
   });
 

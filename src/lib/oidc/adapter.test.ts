@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
-const run = process.env.DATABASE_URL ? test : test.skip;
+const run =
+  process.env.DATABASE_URL && process.env.PYMTHOUSE_TEST_DATABASE_URL_UNSET !== "1"
+    ? test
+    : test.skip;
 
 run("upsert preserves consumed state for existing rows", async () => {
   const { PostgresOidcAdapter } = await import("./adapter");

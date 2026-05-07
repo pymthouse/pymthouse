@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
-import { planCapabilityBundles, plans } from "@/db/schema";
+import { discoveryProfiles, planCapabilityBundles, plans } from "@/db/schema";
 import { authenticateAppClient } from "@/lib/auth";
 import {
   canEditProviderApp,
@@ -10,8 +10,27 @@ import {
   getProviderApp,
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
-import type { DiscoveryPolicy } from "@/lib/discovery-plans";
-import { discoveryPolicyFromDb, parseDiscoveryPolicyInput } from "@/lib/discovery-plans";
+import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
+
+async function requireOwnedDiscoveryProfile(
+  appId: string,
+  discoveryProfileId: string | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (discoveryProfileId === null) {
+    return { ok: true };
+  }
+  const row = await db
+    .select({ id: discoveryProfiles.id })
+    .from(discoveryProfiles)
+    .where(
+      and(eq(discoveryProfiles.id, discoveryProfileId), eq(discoveryProfiles.clientId, appId)),
+    )
+    .limit(1);
+  if (!row[0]) {
+    return { ok: false, error: "discoveryProfileId not found for this app" };
+  }
+  return { ok: true };
+}
 
 function isNonNegativeIntegerString(s: string): boolean {
   return /^\d+$/.test(s);
@@ -147,7 +166,6 @@ function parseCapabilities(input: unknown): {
     slaTargetP95Ms: number | null;
     maxPricePerUnit: string | null;
     upchargePercentBps: number | null;
-    discoveryPolicy: DiscoveryPolicy | null;
   }>;
   error?: string;
 } {
@@ -200,14 +218,6 @@ function parseCapabilities(input: unknown): {
       throw new Error(`capabilities[${index}].upchargePercentBps must be a non-negative integer`);
     }
 
-    const dp = parseDiscoveryPolicyInput(
-      value.discoveryPolicy,
-      `capabilities[${index}].discoveryPolicy`,
-    );
-    if (!dp.ok) {
-      throw new Error(dp.error);
-    }
-
     return {
       pipeline,
       modelId,
@@ -218,7 +228,6 @@ function parseCapabilities(input: unknown): {
           ? null
           : String(value.maxPricePerUnit),
       upchargePercentBps: parsedUpchargeBps,
-      discoveryPolicy: dp.policy,
     };
   });
 
@@ -246,35 +255,31 @@ export async function GET(
   }
   const appId = app.id;
 
-  const rows = await db.select().from(plans).where(eq(plans.clientId, appId));
-  const bundles = await db
-    .select()
-    .from(planCapabilityBundles)
-    .where(eq(planCapabilityBundles.clientId, appId));
+  const resolved = await resolvePlansDiscoveryForApp(appId);
 
   return NextResponse.json({
-    plans: rows.map((plan) => ({
-      ...plan,
-      discoveryPolicy: discoveryPolicyFromDb(plan.discoveryPolicy),
-      includedUnits:
-        plan.includedUnits !== null && plan.includedUnits !== undefined
-          ? plan.includedUnits.toString()
-          : null,
-      overageRateWei:
-        plan.overageRateWei !== null && plan.overageRateWei !== undefined
-          ? plan.overageRateWei.toString()
-          : null,
-      clientId,
-      capabilities: bundles
-        .filter((bundle) => bundle.planId === plan.id)
-        .map((bundle) => ({
-          ...bundle,
-          discoveryPolicy: discoveryPolicyFromDb(bundle.discoveryPolicy),
+    plans: resolved.map((r) => {
+      const plan = r.plan;
+      return {
+        ...plan,
+        discoveryProfileId: plan.discoveryProfileId ?? null,
+        discoveryPolicy: r.discoveryPolicy,
+        includedUnits:
+          plan.includedUnits !== null && plan.includedUnits !== undefined
+            ? plan.includedUnits.toString()
+            : null,
+        overageRateWei:
+          plan.overageRateWei !== null && plan.overageRateWei !== undefined
+            ? plan.overageRateWei.toString()
+            : null,
+        clientId,
+        capabilities: r.capabilities.map((c) => ({
+          ...c,
           clientId,
         })),
-    })),
+      };
+    }),
   });
-
 }
 
 export async function POST(
@@ -316,9 +321,24 @@ export async function POST(
     return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
   }
 
-  const planDp = parseDiscoveryPolicyInput(body.discoveryPolicy, "discoveryPolicy");
-  if (!planDp.ok) {
-    return NextResponse.json({ error: planDp.error }, { status: 400 });
+  const appId = auth.app.id;
+
+  let discoveryProfileId: string | null = null;
+  if (body.discoveryProfileId !== undefined) {
+    if (body.discoveryProfileId === null || body.discoveryProfileId === "") {
+      discoveryProfileId = null;
+    } else if (typeof body.discoveryProfileId === "string" && body.discoveryProfileId.trim()) {
+      discoveryProfileId = body.discoveryProfileId.trim();
+    } else {
+      return NextResponse.json(
+        { error: "discoveryProfileId must be a non-empty string or null" },
+        { status: 400 },
+      );
+    }
+  }
+  const profCheck = await requireOwnedDiscoveryProfile(appId, discoveryProfileId);
+  if (!profCheck.ok) {
+    return NextResponse.json({ error: profCheck.error }, { status: 400 });
   }
 
   const planType = String(body.type || "free");
@@ -345,7 +365,6 @@ export async function POST(
 
   const planId = uuidv4();
   const now = new Date().toISOString();
-  const appId = auth.app.id;
   await db.transaction(async (tx) => {
     await tx.insert(plans).values({
       id: planId,
@@ -363,7 +382,7 @@ export async function POST(
       generalUpchargePercentBps: generalUpcharge.value,
       payPerUseUpchargePercentBps: payPerUseUpcharge.value,
       billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
-      discoveryPolicy: planDp.policy,
+      discoveryProfileId,
       createdAt: now,
       updatedAt: now,
     });
@@ -379,7 +398,6 @@ export async function POST(
         slaTargetP95Ms: capability.slaTargetP95Ms ?? null,
         maxPricePerUnit: capability.maxPricePerUnit,
         upchargePercentBps: capability.upchargePercentBps,
-        discoveryPolicy: capability.discoveryPolicy,
         createdAt: now,
       });
     }
@@ -417,6 +435,26 @@ export async function PUT(
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
+  let discoveryProfileIdPut: string | null | undefined = undefined;
+  if (body.discoveryProfileId !== undefined) {
+    if (body.discoveryProfileId === null || body.discoveryProfileId === "") {
+      discoveryProfileIdPut = null;
+    } else if (typeof body.discoveryProfileId === "string" && body.discoveryProfileId.trim()) {
+      discoveryProfileIdPut = body.discoveryProfileId.trim();
+    } else {
+      return NextResponse.json(
+        { error: "discoveryProfileId must be a non-empty string or null" },
+        { status: 400 },
+      );
+    }
+  }
+  if (discoveryProfileIdPut !== undefined && discoveryProfileIdPut !== null) {
+    const profCheck = await requireOwnedDiscoveryProfile(appId, discoveryProfileIdPut);
+    if (!profCheck.ok) {
+      return NextResponse.json({ error: profCheck.error }, { status: 400 });
+    }
+  }
+
   let parsedCapabilities: ReturnType<typeof parseCapabilities> | null = null;
   if (body.capabilities !== undefined) {
     try {
@@ -431,15 +469,6 @@ export async function PUT(
     if (parsedCapabilities.error) {
       return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
     }
-  }
-
-  let planDiscoveryPut: DiscoveryPolicy | null | undefined = undefined;
-  if (body.discoveryPolicy !== undefined) {
-    const r = parseDiscoveryPolicyInput(body.discoveryPolicy, "discoveryPolicy");
-    if (!r.ok) {
-      return NextResponse.json({ error: r.error }, { status: 400 });
-    }
-    planDiscoveryPut = r.policy;
   }
 
   const now = new Date().toISOString();
@@ -501,7 +530,9 @@ export async function PUT(
         ...(payPerUseUpchargePut.value !== null ? { payPerUseUpchargePercentBps: payPerUseUpchargePut.value } : {}),
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
         ...(body.billingCycle !== undefined ? { billingCycle: String(body.billingCycle) } : {}),
-        ...(planDiscoveryPut !== undefined ? { discoveryPolicy: planDiscoveryPut } : {}),
+        ...(discoveryProfileIdPut !== undefined
+          ? { discoveryProfileId: discoveryProfileIdPut }
+          : {}),
         updatedAt: now,
       })
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
@@ -531,7 +562,6 @@ export async function PUT(
           slaTargetP95Ms: capability.slaTargetP95Ms ?? null,
           maxPricePerUnit: capability.maxPricePerUnit,
           upchargePercentBps: capability.upchargePercentBps,
-          discoveryPolicy: capability.discoveryPolicy,
           createdAt: now,
         });
       }

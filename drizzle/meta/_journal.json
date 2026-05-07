@@ -120,6 +120,13 @@
       "when": 1777100000000,
       "tag": "0015_discovery_plan_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1777200000000,
+      "tag": "0016_discovery_profiles",
+      "breakpoints": true
     }
   ]
 }

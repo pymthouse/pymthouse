@@ -241,7 +241,7 @@ const basePlan = {
   generalUpchargePercentBps: 2000, // 20%
   payPerUseUpchargePercentBps: 1000, // 10%
   billingCycle: "monthly",
-  discoveryPolicy: null,
+  discoveryProfileId: null,
   createdAt: "",
   updatedAt: "",
 } as const;
@@ -256,7 +256,6 @@ const baseBundle = {
   slaTargetP95Ms: null,
   maxPricePerUnit: null,
   upchargePercentBps: 5000, // 50% override
-  discoveryPolicy: null,
   createdAt: "",
 } as const;
 

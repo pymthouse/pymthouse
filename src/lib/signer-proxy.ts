@@ -119,6 +119,14 @@ async function resolveUsageUserIdentifier(
  * a "Unexpected token 'M'" JSON parse error in the proxy layer.
  */
 export function getSignerUrl(signer?: typeof signerConfig.$inferSelect | null): string {
+  const testSignerUrl =
+    process.env.NODE_ENV === "test"
+      ? process.env.PYMTHOUSE_TEST_SIGNER_URL
+      : undefined;
+  if (testSignerUrl && testSignerUrl.trim() !== "") {
+    return testSignerUrl.replace(/\/+$/, "");
+  }
+
   // 127.0.0.1 (not "localhost"): the docker-compose publish is bound to 127.0.0.1
   // only, and some hosts resolve "localhost" to an IPv6 or LAN IPv4 address via
   // nsswitch/mDNS, producing ECONNREFUSED even when the container is healthy.
@@ -805,11 +813,12 @@ export async function proxyGenerateLivePayment(
           });
 
           if (providerAppId) {
+            const clientId = providerAppId;
             await tx.insert(usageRecords).values({
               id: usageRecordId,
               requestId,
               userId: usageUserId,
-              clientId: providerAppId,
+              clientId,
               modelId: constraint?.modelId ?? null,
               units: pixels.toString(),
               fee: feeWei.toString(),
@@ -817,20 +826,20 @@ export async function proxyGenerateLivePayment(
             });
 
             // Billable ledger row when pipeline/model constraint is present (negotiated ticket).
-            if (constraint) {
+            if (constraint && pipelineModelConstraintHash) {
               await tx.insert(usageBillingEvents).values({
                 id: uuidv4(),
                 usageRecordId,
                 transactionId,
                 streamSessionId,
-                clientId: providerAppId,
+                clientId,
                 userId: usageUserId,
                 pipeline: constraint.pipeline,
                 modelId: constraint.modelId,
                 attributionSource: attribution.attributionSource,
                 gatewayRequestId: attribution.gatewayRequestId,
                 paymentMetadataVersion: attribution.paymentMetadataVersion,
-                pipelineModelConstraintHash,
+                pipelineModelConstraintHash: pipelineModelConstraintHash,
                 orchAddress: orchestratorAddress ?? null,
                 advertisedPriceWeiPerUnit: signedPriceStr,
                 advertisedPixelsPerUnit: signedPixelsStr,
