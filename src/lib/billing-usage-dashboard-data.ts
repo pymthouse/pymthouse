@@ -29,8 +29,8 @@ export type BillingPipelineModelSummary = {
   pipeline: string;
   modelId: string;
   requestCount: number;
-  networkFeeUsdMicros: bigint;
-  endUserBillableUsdMicros: bigint;
+  networkFeeUsdMicros: string;
+  endUserBillableUsdMicros: string;
 };
 
 export type BillingAppUsageSummary = {
@@ -362,7 +362,13 @@ export async function getBillingUsageDashboardData(
         networkFeeUsdMicros: summary.networkFeeUsdMicros.toString(),
         endUserBillableUsdMicros: summary.endUserBillableUsdMicros.toString(),
         byUser,
-        byPipelineModel: [...summary.byPipelineModel.values()],
+        byPipelineModel: [...summary.byPipelineModel.values()].map((pm) => ({
+          pipeline: pm.pipeline,
+          modelId: pm.modelId,
+          requestCount: pm.requestCount,
+          networkFeeUsdMicros: pm.networkFeeUsdMicros.toString(),
+          endUserBillableUsdMicros: pm.endUserBillableUsdMicros.toString(),
+        })),
       };
     }),
   );
