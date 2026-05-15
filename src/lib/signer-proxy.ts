@@ -29,8 +29,15 @@ import {
   resolvePayerDaemonSocketPath,
 } from "@/lib/signer-lpnm/socket-resolver";
 import {
+  isRegistryPaymentMode,
+  parseRegistryFaceValueWei,
+  parseRegistryGenerateLivePaymentFields,
+  parseRegistryPricePerUnitWei,
+} from "@/lib/signer-lpnm/registry-payment";
+import {
   lpnmProxyDiscoverOrchestrators,
   lpnmProxyGenerateLivePayment,
+  lpnmProxyGenerateLivePaymentFromRegistry,
   lpnmProxySignByocJob,
   lpnmProxySignOrchestratorInfo,
 } from "@/lib/signer-lpnm/translator";
@@ -593,11 +600,31 @@ export async function proxyGenerateLivePayment(
   }
   const orchestratorData = orchPick.value;
 
+  const lpnmRegistry =
+    isLpnmSigningMode(signingMode) && isRegistryPaymentMode(requestBody);
+  const registryFieldsParsed = lpnmRegistry
+    ? parseRegistryGenerateLivePaymentFields(requestBody)
+    : null;
+  if (lpnmRegistry && registryFieldsParsed && !registryFieldsParsed.ok) {
+    return { status: 400, body: { error: registryFieldsParsed.message } };
+  }
+  const registryFields =
+    registryFieldsParsed && registryFieldsParsed.ok
+      ? registryFieldsParsed.fields
+      : undefined;
+
   let pricePerUnit = 0n;
   let pixelsPerUnit = 1n;
   let orchestratorAddress: string | undefined;
 
-  if (orchestratorData) {
+  if (registryFields) {
+    orchestratorAddress = registryFields.recipient;
+    const regPrice = parseRegistryPricePerUnitWei(requestBody);
+    if (regPrice !== undefined && regPrice > 0n) {
+      pricePerUnit = regPrice;
+      pixelsPerUnit = 1n;
+    }
+  } else if (orchestratorData) {
     try {
       const orchInfo = await decodeOrchestratorInfo(orchestratorData);
       if (orchInfo.priceInfo) {
@@ -624,7 +651,39 @@ export async function proxyGenerateLivePayment(
     pixels = 0n;
   }
 
-  const feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
+  let feeWei: bigint;
+  if (registryFields) {
+    const face = parseRegistryFaceValueWei(requestBody);
+    if (face !== undefined && face > 0n) {
+      feeWei = face;
+      if (pricePerUnit === 0n) {
+        pricePerUnit = face;
+        pixelsPerUnit = 1n;
+      }
+    } else {
+      const regPrice =
+        parseRegistryPricePerUnitWei(requestBody) ?? pricePerUnit;
+      if (regPrice > 0n && pixels > 0n) {
+        pricePerUnit = regPrice;
+        pixelsPerUnit = 1n;
+        feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
+      } else {
+        return {
+          status: 400,
+          body: {
+            error:
+              "registry LPNM payment requires faceValueWei > 0, or registryPricePerUnitWei with positive inPixels / work units",
+          },
+        };
+      }
+    }
+  } else {
+    feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
+  }
+
+  const usagePixels =
+    registryFields && feeWei > 0n && pixels === 0n ? 1n : pixels;
+
   const platformCutWei = calculatePlatformCut(
     feeWei,
     signer.defaultCutPercent
@@ -673,6 +732,23 @@ export async function proxyGenerateLivePayment(
 
   if (isLpnmSigningMode(signingMode)) {
     const sock = resolvePayerDaemonSocketPath(payerDaemonSocket);
+    if (registryFields) {
+      return lpnmProxyGenerateLivePaymentFromRegistry({
+        auth,
+        signer,
+        providerAppId,
+        usageUserId,
+        requestBody,
+        socketPath: sock,
+        feeWei,
+        platformCutWei,
+        pricePerUnit,
+        pixelsPerUnit,
+        pixels: usagePixels,
+        streamSessionId,
+        fields: registryFields,
+      });
+    }
     return lpnmProxyGenerateLivePayment({
       auth,
       signer,
@@ -684,7 +760,7 @@ export async function proxyGenerateLivePayment(
       platformCutWei,
       pricePerUnit,
       pixelsPerUnit,
-      pixels,
+      pixels: usagePixels,
       orchestratorData,
       streamSessionId,
     });
@@ -712,7 +788,7 @@ export async function proxyGenerateLivePayment(
         platformCutWei,
         pricePerUnit,
         pixelsPerUnit,
-        pixels,
+        pixels: usagePixels,
         streamSessionId,
         constraint,
         attribution,

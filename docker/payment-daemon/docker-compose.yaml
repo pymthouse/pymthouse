@@ -1,5 +1,6 @@
 # PymtHouse local stack: service-registry + payment-daemon sender.
-# Uses published images only (no `build:`). Configure via `.env` in this directory.
+# Builds payment-daemon locally from livepeer-network-modules; service-registry uses a published image.
+# Configure via `.env` in this directory.
 #
 #   cd docker/payment-daemon && docker compose up -d
 #
@@ -40,13 +41,19 @@ services:
     restart: unless-stopped
 
   payment-daemon-sender:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    image: ${PAYMENT_DAEMON_IMAGE:-livepeer-payment-daemon:local}
+    build:
+      context: ${PAYMENT_DAEMON_BUILD_CONTEXT:-../../../livepeer-network-modules}
+      dockerfile: payment-daemon/Dockerfile
+      args:
+        VERSION: ${PAYMENT_DAEMON_VERSION:-local}
     command:
       - --mode=sender
       - --socket=/var/run/livepeer/payer-daemon.sock
       - --chain-rpc=${CHAIN_RPC}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
+      - --orchestrator-insecure-skip-verify
     environment:
       LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
     volumes:

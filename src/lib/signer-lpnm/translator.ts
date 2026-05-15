@@ -16,6 +16,7 @@ import {
   payerIdentify,
   payerSignByocJob,
 } from "@/lib/signer-lpnm/payer-daemon-client";
+import type { RegistryGenerateLivePaymentFields } from "@/lib/signer-lpnm/registry-payment";
 export interface ProxyResult {
   status: number;
   body: unknown;
@@ -147,6 +148,80 @@ export async function lpnmProxyGenerateLivePayment(
     body: {
       payment: paymentB64,
       segCreds: segCreds ?? "",
+      state: { state: "", sig: "" },
+    },
+  };
+}
+
+export async function lpnmProxyGenerateLivePaymentFromRegistry(
+  args: {
+    auth: AuthResult;
+    signer: SignerConfig;
+    providerAppId: string | null;
+    usageUserId: string | null;
+    requestBody: Record<string, unknown>;
+    socketPath: string;
+    feeWei: bigint;
+    platformCutWei: bigint;
+    pricePerUnit: bigint;
+    pixelsPerUnit: bigint;
+    pixels: bigint;
+    streamSessionId: string | null;
+    fields: RegistryGenerateLivePaymentFields;
+  },
+): Promise<ProxyResult> {
+  if (args.feeWei <= 0n) {
+    return { status: 400, body: { error: "computed fee must be > 0" } };
+  }
+
+  const recipient20 = Buffer.from(args.fields.recipient.slice(2), "hex");
+  if (recipient20.length !== 20) {
+    return { status: 400, body: { error: "invalid registry recipient length" } };
+  }
+
+  const constraint = await resolvePaymentPipelineModelConstraint(args.requestBody);
+  const capability = args.fields.capability;
+  const offering = args.fields.offering;
+  const ticketParamsBaseUrl = args.fields.ticketParamsBaseUrl;
+
+  let paymentB64: string;
+  try {
+    const r = await payerCreatePayment(args.socketPath, {
+      faceValueWei: args.feeWei,
+      recipient20,
+      capability,
+      offering,
+      ticketParamsBaseUrl,
+    });
+    paymentB64 = r.paymentB64;
+  } catch (e) {
+    console.error("[lpnm] CreatePayment (registry):", e);
+    return { status: 502, body: { error: "PayerDaemon CreatePayment failed" } };
+  }
+
+  const attribution = resolveGatewayAttribution(args.requestBody);
+  await recordLivePaymentUsage({
+    auth: args.auth,
+    requestBody: args.requestBody,
+    signer: args.signer,
+    providerAppId: args.providerAppId,
+    usageUserId: args.usageUserId,
+    feeWei: args.feeWei,
+    platformCutWei: args.platformCutWei,
+    pricePerUnit: args.pricePerUnit,
+    pixelsPerUnit: args.pixelsPerUnit,
+    pixels: args.pixels,
+    streamSessionId: args.streamSessionId,
+    constraint,
+    attribution,
+    orchestratorAddress: args.fields.recipient,
+  });
+
+  return {
+    status: 200,
+    body: {
+      payment: paymentB64,
+      segCreds: "",
       state: { state: "", sig: "" },
     },
   };

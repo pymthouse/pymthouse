@@ -130,6 +130,7 @@ export async function payerCreatePayment(
 export async function payerIdentify(
   socketPath: string,
 ): Promise<{ address: Buffer; signature: Buffer }> {
+  console.warn("payerIdentify called with socketPath:", socketPath);
   const client = await getPayerDaemonGrpcClient(socketPath);
   return new Promise((resolve, reject) => {
     client.identify({}, (err, result) => (err ? reject(err) : resolve(result)));
