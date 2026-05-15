@@ -11,7 +11,6 @@ test("parseDiscoveryPolicyInput accepts valid policy", () => {
     {
       topN: 10,
       sortBy: "price",
-      slaMinScore: 0.5,
       filters: { gpuRamGbMin: 8, gpuRamGbMax: 48, priceMax: 1.5 },
     },
     "discoveryPolicy",

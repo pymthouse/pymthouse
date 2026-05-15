@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import Module from "node:module";
 import test from "node:test";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { discoveryProfiles, plans } from "@/db/schema";
 import { run } from "@/test-utils/db-guard";
@@ -56,6 +56,168 @@ async function postPlan(clientId: string, body: Record<string, unknown>) {
   );
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
+
+run("plans API: network default plan rules", async (t) => {
+  const prevLoad = moduleWithLoad._load;
+  const MOCK_CATALOG = [
+    { id: "pipe-a", name: "A", models: ["m1", "m2"] },
+    { id: "pipe-b", name: "B", models: ["only"] },
+  ];
+  moduleWithLoad._load = (request, parent, isMain) => {
+    if (typeof request === "string" && request.includes("naap-catalog")) {
+      return {
+        fetchPipelineCatalog: async () => MOCK_CATALOG,
+      };
+    }
+    return prevLoad(request, parent, isMain);
+  };
+  t.after(() => {
+    moduleWithLoad._load = prevLoad;
+  });
+
+  await t.test("GET lists exactly one network default plan", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const { GET } = await import("./route");
+    const res = await GET(
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      plans: Array<{ isNetworkDefault?: boolean; discoveryExcludedCapabilities?: unknown }>;
+    };
+    const defaults = body.plans.filter((p) => p.isNetworkDefault);
+    assert.equal(defaults.length, 1);
+    assert.ok("discoveryExcludedCapabilities" in defaults[0]!);
+  });
+
+  await t.test("POST rejects is_network_default", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const r = await postPlan(app.clientId, {
+      name: "Shadow default",
+      type: "free",
+      is_network_default: true,
+    });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, "is_network_default cannot be set on created plans");
+  });
+
+  await t.test("POST rejects reserved Network Price display name", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const r = await postPlan(app.clientId, {
+      name: "Network Price",
+      type: "free",
+    });
+    assert.equal(r.status, 400);
+    assert.ok(
+      typeof r.body.error === "string" && r.body.error.includes("reserved"),
+    );
+  });
+
+  await t.test("POST 400 when capability is excluded on Network Price plan", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const defRows = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(and(eq(plans.clientId, app.clientId), eq(plans.isNetworkDefault, true)))
+      .limit(1);
+    await db
+      .update(plans)
+      .set({
+        discoveryExcludedCapabilities: {
+          capabilities: [{ pipeline: "pipe-a", modelId: "m1" }],
+        },
+      })
+      .where(eq(plans.id, defRows[0]!.id));
+
+    const r = await postPlan(app.clientId, {
+      name: "Enterprise",
+      type: "free",
+      capabilities: [{ pipeline: "pipe-a", modelId: "m1" }],
+    });
+    assert.equal(r.status, 400);
+    assert.ok(Array.isArray((r.body as { conflicts?: unknown[] }).conflicts));
+  });
+
+  await t.test("PUT targeting network default plan returns 400", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const defRows = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(and(eq(plans.clientId, app.clientId), eq(plans.isNetworkDefault, true)))
+      .limit(1);
+
+    const { PUT } = await import("./route");
+    const res = await PUT(
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: defRows[0]!.id, name: "Renamed" }),
+      }) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(res.status, 400);
+    const putBody = (await res.json()) as { error?: string };
+    assert.ok(
+      typeof putBody.error === "string" &&
+        putBody.error.includes("Network Price default plan"),
+    );
+  });
+
+  await t.test("DELETE network default plan returns 409", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const defRows = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(and(eq(plans.clientId, app.clientId), eq(plans.isNetworkDefault, true)))
+      .limit(1);
+
+    const { DELETE } = await import("./route");
+    const res = await DELETE(
+      new Request(
+        `http://localhost/api/v1/apps/${app.clientId}/plans?planId=${defRows[0]!.id}`,
+      ) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(res.status, 409);
+  });
+});
 
 run("plans POST validates subscription billing fields before creating a plan", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });

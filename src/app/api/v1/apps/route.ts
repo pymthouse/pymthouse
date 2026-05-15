@@ -12,6 +12,7 @@ import {
 import { resetProvider } from "@/lib/oidc/provider";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { ensureProviderAdminMembership } from "@/lib/provider-apps";
+import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -166,6 +167,8 @@ export async function POST(request: NextRequest) {
     createdAt: now,
     updatedAt: now,
   });
+
+  await getOrCreateNetworkDefaultPlan(appId, db);
 
   if (body.backendDeviceHelper === true) {
     await ensureM2mBackendClient({

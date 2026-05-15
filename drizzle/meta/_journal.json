@@ -127,6 +127,34 @@
       "when": 1777200000000,
       "tag": "0016_discovery_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1777300000000,
+      "tag": "0017_discovery_allowed_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 4102444800000,
+      "tag": "0018_discovery_allowed_capabilities_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 4102444800001,
+      "tag": "0019_discovery_excluded_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 4102444800002,
+      "tag": "0020_network_default_plan",
+      "breakpoints": true
     }
   ]
 }

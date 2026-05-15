@@ -3,7 +3,7 @@
  * Field names align with NaaP Orchestrator Leaderboard CreatePlanInput (for-ai.md).
  */
 
-export type DiscoverySortBy = "slaScore" | "latency" | "price" | "swapRate" | "avail";
+export type DiscoverySortBy = "latency" | "price" | "swapRate" | "avail";
 
 export interface DiscoveryPolicyFilters {
   gpuRamGbMin?: number;
@@ -16,34 +16,13 @@ export interface DiscoveryPolicyFilters {
 export interface DiscoveryPolicy {
   topN?: number;
   sortBy?: DiscoverySortBy;
-  slaMinScore?: number;
-  slaWeights?: {
-    latency?: number;
-    swapRate?: number;
-    price?: number;
-  };
   filters?: DiscoveryPolicyFilters;
 }
 
-const SORT_BY_VALUES: DiscoverySortBy[] = [
-  "slaScore",
-  "latency",
-  "price",
-  "swapRate",
-  "avail",
-];
+const SORT_BY_VALUES: DiscoverySortBy[] = ["latency", "price", "swapRate", "avail"];
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function parseWeight(raw: unknown, path: string): { ok: true; value: number } | { ok: false; error: string } {
-  if (raw === undefined) return { ok: true, value: 0 };
-  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
-  if (!Number.isFinite(n) || n < 0 || n > 1) {
-    return { ok: false, error: `${path} must be a number between 0 and 1` };
-  }
-  return { ok: true, value: n };
 }
 
 function parseNonNegativeNumber(
@@ -105,27 +84,6 @@ export function parseDiscoveryPolicyInput(
       };
     }
     out.sortBy = s;
-  }
-
-  if (raw.slaMinScore !== undefined) {
-    const r = parseRatio(raw.slaMinScore, `${pathPrefix}.slaMinScore`);
-    if (!r.ok) return { ok: false, error: r.error };
-    out.slaMinScore = r.value;
-  }
-
-  if (raw.slaWeights !== undefined) {
-    if (!isPlainObject(raw.slaWeights)) {
-      return { ok: false, error: `${pathPrefix}.slaWeights must be an object` };
-    }
-    const sw: NonNullable<DiscoveryPolicy["slaWeights"]> = {};
-    for (const key of ["latency", "swapRate", "price"] as const) {
-      if (raw.slaWeights[key] !== undefined) {
-        const w = parseWeight(raw.slaWeights[key], `${pathPrefix}.slaWeights.${key}`);
-        if (!w.ok) return { ok: false, error: w.error };
-        if (w.value !== 0) sw[key] = w.value;
-      }
-    }
-    if (Object.keys(sw).length > 0) out.slaWeights = sw;
   }
 
   if (raw.filters !== undefined) {
@@ -207,17 +165,6 @@ export function mergeDiscoveryPolicies(
 
   if (user.sortBy !== undefined) {
     out.sortBy = user.sortBy;
-  }
-
-  if (user.slaMinScore !== undefined) {
-    out.slaMinScore = Math.max(app.slaMinScore ?? user.slaMinScore, user.slaMinScore);
-  }
-
-  const mergedWeights = { ...app.slaWeights, ...user.slaWeights };
-  if (Object.keys(mergedWeights).length > 0) {
-    out.slaWeights = mergedWeights;
-  } else {
-    delete out.slaWeights;
   }
 
   const af = app.filters;

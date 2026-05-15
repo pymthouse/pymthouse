@@ -1,14 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
+import NetworkPricePlanSection from "@/components/apps/NetworkPricePlanSection";
 import PipelineModelPicker from "@/components/PipelineModelPicker";
 
 import type { PipelineCatalogEntry } from "@/components/PipelineModelPicker";
-import type { DiscoveryPolicy } from "@/lib/discovery-plans";
+import {
+  expandDocumentToConcreteKeys,
+  normalizeDiscoveryAllowlistDoc,
+} from "@/lib/discovery-allowlist";
+import { planDisplayName } from "@/lib/network-default-plan-display";
+import { PLAN_TEMPLATES } from "@/lib/plan-templates";
 
 interface PlanRow {
   id: string;
@@ -24,16 +29,15 @@ interface PlanRow {
   payPerUseUpchargePercentBps: number | null;
   billingCycle: string;
   discoveryProfileId?: string | null;
-  discoveryPolicy?: DiscoveryPolicy | null;
+  isNetworkDefault?: boolean;
+  discoveryExcludedCapabilities?: { capabilities: unknown[] } | null;
   capabilities: {
     id: string;
     pipeline: string;
     modelId: string;
-    slaTargetScore: number | null;
     slaTargetP95Ms: number | null;
     maxPricePerUnit: string | null;
     upchargePercentBps: number | null;
-    discoveryPolicy?: DiscoveryPolicy | null;
   }[];
 }
 
@@ -55,16 +59,6 @@ function displayToUsdMicros(display: string): string | null {
 function bpsToPercent(bps: number | null | undefined): string {
   if (bps == null) return "";
   return (bps / 100).toFixed(2);
-}
-
-function formatDiscoveryPolicyShort(p: DiscoveryPolicy | null | undefined): string | null {
-  if (!p || typeof p !== "object") return null;
-  const parts: string[] = [];
-  if (p.topN != null) parts.push(`topN=${p.topN}`);
-  if (p.sortBy) parts.push(`sort=${p.sortBy}`);
-  if (p.slaMinScore != null) parts.push(`slaMin=${p.slaMinScore}`);
-  if (p.filters && Object.keys(p.filters).length > 0) parts.push("filters");
-  return parts.length ? parts.join(", ") : null;
 }
 
 const PLAN_TYPES = [
@@ -99,9 +93,6 @@ export default function AppPlansPage() {
   const { id } = useParams<{ id: string }>();
   const [appName, setAppName] = useState("App");
   const [plans, setPlans] = useState<PlanRow[]>([]);
-  const [discoveryProfilesList, setDiscoveryProfilesList] = useState<{ id: string; name: string }[]>(
-    [],
-  );
   const [catalog, setCatalog] = useState<PipelineCatalogEntry[]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,6 +100,7 @@ export default function AppPlansPage() {
   const [canEdit, setCanEdit] = useState(true);
   const [planError, setPlanError] = useState<string | null>(null);
   const [form, setForm] = useState({
+    templateId: "blank",
     name: "",
     type: "free",
     priceAmount: "0",
@@ -118,33 +110,41 @@ export default function AppPlansPage() {
     includedUsdDisplay: "",
     generalUpchargePct: "",
     payPerUseUpchargePct: "",
-    capabilityKeys: [] as string[], // "pipelineId" = all models wildcard, "pipelineId|modelId" = specific
+    capabilityKeys: [] as string[],
     capabilityUpchargePct: "",
-    slaTargetP95Ms: "",
-    discoveryProfileId: "",
   });
+
+  const catalogLite = useMemo(
+    () => catalog.map((e) => ({ id: e.id, models: e.models })),
+    [catalog],
+  );
+
+  const blockedConcreteKeys = useMemo(() => {
+    const net = plans.find((p) => p.isNetworkDefault);
+    const doc = normalizeDiscoveryAllowlistDoc(net?.discoveryExcludedCapabilities ?? null);
+    if (!doc || !catalogLite.length) return new Set<string>();
+    return expandDocumentToConcreteKeys(doc, catalogLite);
+  }, [plans, catalogLite]);
+
+  const sortedPlans = useMemo(
+    () =>
+      [...plans].sort(
+        (a, b) =>
+          (b.isNetworkDefault === true ? 1 : 0) - (a.isNetworkDefault === true ? 1 : 0),
+      ),
+    [plans],
+  );
 
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([
       fetch(`/api/v1/apps/${id}`).then(readFetchJson),
       fetch(`/api/v1/apps/${id}/plans`).then(readFetchJson),
-      fetch(`/api/v1/apps/${id}/discovery-profiles`).then(readFetchJson),
     ])
-      .then(([appWrap, plansWrap, profilesWrap]) => {
+      .then(([appWrap, plansWrap]) => {
         const app = appWrap.body;
         setAppName((typeof app.name === "string" ? app.name : "") || "App");
         setCanEdit(app.canEdit !== false);
-        if (profilesWrap.ok && Array.isArray(profilesWrap.body.profiles)) {
-          const raw = profilesWrap.body.profiles as { id?: string; name?: string }[];
-          setDiscoveryProfilesList(
-            raw
-              .filter((p) => typeof p.id === "string" && typeof p.name === "string")
-              .map((p) => ({ id: p.id as string, name: p.name as string })),
-          );
-        } else {
-          setDiscoveryProfilesList([]);
-        }
         if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
           setPlans(plansWrap.body.plans as PlanRow[]);
           setPlanError(null);
@@ -174,12 +174,8 @@ export default function AppPlansPage() {
       .then(({ ok, status, body }) => {
         const cat = body.catalog;
         if (Array.isArray(cat) && cat.length > 0) {
-          const entries = cat as PipelineCatalogEntry[];
-          setCatalog(entries);
-          setForm((prev) => ({
-            ...prev,
-            capabilityKeys: entries.map((e) => e.id),
-          }));
+          setCatalog(cat as PipelineCatalogEntry[]);
+          setCatalogError(null);
         } else if (typeof body.error === "string") {
           setCatalogError(body.error);
         } else if (!ok) {
@@ -188,6 +184,21 @@ export default function AppPlansPage() {
       })
       .catch(() => setCatalogError("NaaP catalog unavailable"));
   }, []);
+
+  const applyTemplate = (templateId: string) => {
+    const t = PLAN_TEMPLATES.find((x) => x.id === templateId);
+    if (!t) return;
+    setForm((prev) => ({
+      ...prev,
+      templateId,
+      type: t.type,
+      generalUpchargePct: t.generalUpchargePercentBps != null ? String(t.generalUpchargePercentBps / 100) : "",
+      payPerUseUpchargePct: t.payPerUseUpchargePercentBps != null ? String(t.payPerUseUpchargePercentBps / 100) : "",
+      capabilityKeys: [...t.capabilityKeys],
+      capabilityUpchargePct:
+        t.capabilityUpchargePercentBps != null ? String(t.capabilityUpchargePercentBps / 100) : "",
+    }));
+  };
 
   const parseBps = (pct: string): number | null => {
     const n = parseFloat(pct);
@@ -214,7 +225,6 @@ export default function AppPlansPage() {
         return {
           pipeline: isWildcard ? key : key.slice(0, sep),
           modelId: isWildcard ? "*" : key.slice(sep + 1),
-          slaTargetP95Ms: form.slaTargetP95Ms ? Number(form.slaTargetP95Ms) : null,
           upchargePercentBps: capabilityBps,
         };
       });
@@ -228,14 +238,17 @@ export default function AppPlansPage() {
           priceAmount: form.priceAmount,
           priceCurrency: form.priceCurrency,
           status: "active",
-          includedUnits: form.type === "subscription" && form.includedUnits.trim() ? form.includedUnits.trim() : null,
-          overageRateWei: (form.type === "subscription" || form.type === "usage") && form.overageRateWei.trim() ? form.overageRateWei.trim() : null,
+          includedUnits:
+            form.type === "subscription" && form.includedUnits.trim()
+              ? form.includedUnits.trim()
+              : null,
+          overageRateWei:
+            (form.type === "subscription" || form.type === "usage") && form.overageRateWei.trim()
+              ? form.overageRateWei.trim()
+              : null,
           includedUsdMicros,
           generalUpchargePercentBps: generalBps,
           payPerUseUpchargePercentBps: payPerUseBps,
-          ...(form.discoveryProfileId.trim()
-            ? { discoveryProfileId: form.discoveryProfileId.trim() }
-            : {}),
           capabilities,
         }),
       });
@@ -245,12 +258,18 @@ export default function AppPlansPage() {
         return;
       }
       setForm({
-        name: "", type: "free", priceAmount: "0", priceCurrency: "USD",
-        includedUnits: "", overageRateWei: "", includedUsdDisplay: "",
-        generalUpchargePct: "", payPerUseUpchargePct: "",
+        templateId: "blank",
+        name: "",
+        type: "free",
+        priceAmount: "0",
+        priceCurrency: "USD",
+        includedUnits: "",
+        overageRateWei: "",
+        includedUsdDisplay: "",
+        generalUpchargePct: "",
+        payPerUseUpchargePct: "",
         capabilityKeys: [],
-        capabilityUpchargePct: "", slaTargetP95Ms: "",
-        discoveryProfileId: "",
+        capabilityUpchargePct: "",
       });
       load();
     } catch (err) {
@@ -263,7 +282,9 @@ export default function AppPlansPage() {
   const deletePlan = async (planId: string) => {
     if (!canEdit) return;
     try {
-      const res = await fetch(`/api/v1/apps/${id}/plans?planId=${encodeURIComponent(planId)}`, { method: "DELETE" });
+      const res = await fetch(`/api/v1/apps/${id}/plans?planId=${encodeURIComponent(planId)}`, {
+        method: "DELETE",
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setPlanError(data?.error ?? `Failed to delete plan (${res.status})`);
@@ -278,15 +299,11 @@ export default function AppPlansPage() {
   return (
     <DashboardLayout>
       <div className="mb-8">
-        <AppSectionBreadcrumb appId={id} appName={appName} current="plans" />
-        <h1 className="text-2xl font-bold text-zinc-100">Plans</h1>
+        <AppSectionBreadcrumb appId={id} appName={appName} />
+        <h1 className="text-2xl font-bold text-zinc-100">Plans &amp; network discovery</h1>
         <p className="text-sm text-zinc-500 mt-1">
-          Define subscription and pay-per-use plans with USD allowances and pipeline/model upcharges.
-          {" "}
-          <Link href={`/apps/${id}/discovery-profiles`} className="text-emerald-500/90 hover:text-emerald-400 underline-offset-2 hover:underline">
-            Discovery profiles
-          </Link>
-          {" "}configure orchestrator ranking separately and can be reused across plans.
+          Network Price defines what integrators can discover. Custom plans add pricing overrides for
+          a subset of discoverable pipelines and models only.
         </p>
         {!canEdit && (
           <p className="text-sm text-amber-400/90 mt-2">
@@ -300,11 +317,35 @@ export default function AppPlansPage() {
         )}
       </div>
 
+      <NetworkPricePlanSection appId={id} canEdit={canEdit} />
+
       <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-zinc-100">New Plan</h2>
+          <h2 className="text-lg font-semibold text-zinc-100">New custom plan</h2>
 
-          {/* Basics */}
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Template</label>
+            <select
+              value={form.templateId}
+              disabled={!canEdit}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForm((prev) => ({ ...prev, templateId: v }));
+                applyTemplate(v);
+              }}
+              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+            >
+              {PLAN_TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-zinc-600 mt-1">
+              {PLAN_TEMPLATES.find((t) => t.id === form.templateId)?.description}
+            </p>
+          </div>
+
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -347,7 +388,6 @@ export default function AppPlansPage() {
             />
           </div>
 
-          {/* USD included allowance */}
           {form.type === "subscription" && (
             <div>
               <label className="block text-xs text-zinc-500 mb-1">Included usage allowance (USD)</label>
@@ -364,7 +404,6 @@ export default function AppPlansPage() {
             </div>
           )}
 
-          {/* Upcharges */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-zinc-500 mb-1">General upcharge (%)</label>
@@ -394,7 +433,6 @@ export default function AppPlansPage() {
             </div>
           </div>
 
-          {/* Pipeline / model capabilities */}
           <div className="border-t border-zinc-800 pt-4 space-y-3">
             <h3 className="text-sm font-medium text-zinc-300">Pipeline / model capabilities</h3>
             {catalogError && (
@@ -403,99 +441,77 @@ export default function AppPlansPage() {
             {catalog.length > 0 ? (
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
-                  Pipelines &amp; models
-                  <span className="ml-1 text-zinc-600 normal-case font-normal">— check a pipeline for all its models, or expand to pick individually</span>
+                  Pipelines &amp; models (must stay within Network Price discovery)
                 </label>
                 <PipelineModelPicker
                   catalog={catalog}
                   values={form.capabilityKeys}
                   onChange={(keys) => setForm({ ...form, capabilityKeys: keys })}
                   disabled={!canEdit}
+                  blockedConcreteKeys={blockedConcreteKeys}
+                  blockedSelectionTitle="Excluded in Network Price — un-exclude there first."
                 />
               </div>
             ) : (
-              <p className="text-xs text-zinc-500 italic">No catalog available — pipeline capabilities cannot be configured.</p>
+              <p className="text-xs text-zinc-500 italic">
+                No catalog available — pipeline capabilities cannot be configured.
+              </p>
             )}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">Capability upcharge (%)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.capabilityUpchargePct}
-                  onChange={(e) => setForm({ ...form, capabilityUpchargePct: e.target.value })}
-                  placeholder="optional"
-                  disabled={!canEdit || form.capabilityKeys.length === 0}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">SLA p95 (ms)</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.slaTargetP95Ms}
-                  onChange={(e) => setForm({ ...form, slaTargetP95Ms: e.target.value })}
-                  placeholder="optional"
-                  disabled={!canEdit || form.capabilityKeys.length === 0}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-                />
-              </div>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Capability upcharge (%)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.capabilityUpchargePct}
+                onChange={(e) => setForm({ ...form, capabilityUpchargePct: e.target.value })}
+                placeholder="optional"
+                disabled={!canEdit || form.capabilityKeys.length === 0}
+                className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+              />
             </div>
             {form.capabilityKeys.length > 0 && (
               <p className="text-xs text-zinc-500">
                 {form.capabilityKeys.length}{" "}
-                {form.capabilityKeys.length !== 1 ? "capabilities" : "capability"} will be added to this plan.
+                {form.capabilityKeys.length !== 1 ? "capabilities" : "capability"} will be added to
+                this plan.
               </p>
             )}
           </div>
 
-          <div className="border-t border-zinc-800 pt-4 space-y-2">
-            <label className="block text-xs text-zinc-500 mb-1">Discovery profile (optional)</label>
-            <select
-              value={form.discoveryProfileId}
-              onChange={(e) => setForm({ ...form, discoveryProfileId: e.target.value })}
-              disabled={!canEdit}
-              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-            >
-              <option value="">— None —</option>
-              {discoveryProfilesList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <p className="text-[11px] text-zinc-600">
-              <Link href={`/apps/${id}/discovery-profiles`} className="text-emerald-500/90 hover:underline">
-                Create or edit discovery profiles
-              </Link>
-              {" "}— resolved policy is shown on each plan below when linked.
-            </p>
-          </div>
-
           <button
-            onClick={createPlan}
+            type="button"
+            onClick={() => void createPlan()}
             disabled={!canEdit || saving}
             className="w-full px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-500 disabled:opacity-50"
           >
-            {saving ? "Saving..." : "Create Plan"}
+            {saving ? "Saving..." : "Create plan"}
           </button>
         </section>
 
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6">
-          <h2 className="text-lg font-semibold text-zinc-100 mb-4">Existing Plans</h2>
+          <h2 className="text-lg font-semibold text-zinc-100 mb-4">Existing plans</h2>
           {loading ? (
             <div className="text-zinc-500 animate-pulse">Loading plans...</div>
-          ) : plans.length === 0 ? (
+          ) : sortedPlans.length === 0 ? (
             <div className="text-zinc-500">No plans yet.</div>
           ) : (
             <div className="space-y-4">
-              {plans.map((plan) => (
+              {sortedPlans.map((plan) => (
                 <div key={plan.id} className="rounded-xl border border-zinc-800 bg-zinc-800/30 p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-zinc-100">{plan.name}</h3>
+                      <h3 className="text-sm font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
+                        {planDisplayName({
+                          name: plan.name,
+                          isNetworkDefault: plan.isNetworkDefault === true,
+                        })}
+                        {plan.isNetworkDefault && (
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-400/90 border border-emerald-500/30 rounded px-1.5 py-0.5">
+                            Default
+                          </span>
+                        )}
+                      </h3>
                       <p className="text-xs text-zinc-500 mt-1">
                         {plan.type} · {plan.priceAmount} {plan.priceCurrency}
                         {plan.billingCycle ? ` · ${plan.billingCycle}` : ""}
@@ -505,25 +521,16 @@ export default function AppPlansPage() {
                           Includes ${usdMicrosToDisplay(plan.includedUsdMicros)} USD usage
                         </p>
                       )}
-                      {(plan.generalUpchargePercentBps != null || plan.payPerUseUpchargePercentBps != null) && (
+                      {(plan.generalUpchargePercentBps != null ||
+                        plan.payPerUseUpchargePercentBps != null) && (
                         <p className="text-xs text-zinc-400 mt-1">
-                          {plan.generalUpchargePercentBps != null && `General upcharge: ${bpsToPercent(plan.generalUpchargePercentBps)}%`}
-                          {plan.generalUpchargePercentBps != null && plan.payPerUseUpchargePercentBps != null && " · "}
-                          {plan.payPerUseUpchargePercentBps != null && `PPU upcharge: ${bpsToPercent(plan.payPerUseUpchargePercentBps)}%`}
-                        </p>
-                      )}
-                      {plan.discoveryProfileId ? (
-                        <p className="text-xs text-zinc-500 mt-1">
-                          Discovery profile:{" "}
-                          <span className="text-zinc-300">
-                            {discoveryProfilesList.find((p) => p.id === plan.discoveryProfileId)?.name ??
-                              `${plan.discoveryProfileId.slice(0, 8)}…`}
-                          </span>
-                        </p>
-                      ) : null}
-                      {formatDiscoveryPolicyShort(plan.discoveryPolicy ?? null) && (
-                        <p className="text-xs text-sky-400/90 mt-1">
-                          Discovery: {formatDiscoveryPolicyShort(plan.discoveryPolicy ?? null)}
+                          {plan.generalUpchargePercentBps != null &&
+                            `General upcharge: ${bpsToPercent(plan.generalUpchargePercentBps)}%`}
+                          {plan.generalUpchargePercentBps != null &&
+                            plan.payPerUseUpchargePercentBps != null &&
+                            " · "}
+                          {plan.payPerUseUpchargePercentBps != null &&
+                            `PPU upcharge: ${bpsToPercent(plan.payPerUseUpchargePercentBps)}%`}
                         </p>
                       )}
                       {plan.capabilities.length > 0 && (
@@ -537,16 +544,17 @@ export default function AppPlansPage() {
                               ) : (
                                 cap.modelId
                               )}
-                              {cap.upchargePercentBps != null && ` · ${bpsToPercent(cap.upchargePercentBps)}% upcharge`}
-                              {cap.slaTargetP95Ms ? ` · p95 ${cap.slaTargetP95Ms}ms` : ""}
+                              {cap.upchargePercentBps != null &&
+                                ` · ${bpsToPercent(cap.upchargePercentBps)}% upcharge`}
                             </p>
                           ))}
                         </div>
                       )}
                     </div>
                     <button
-                      onClick={() => deletePlan(plan.id)}
-                      disabled={!canEdit}
+                      type="button"
+                      onClick={() => void deletePlan(plan.id)}
+                      disabled={!canEdit || plan.isNetworkDefault === true}
                       className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 shrink-0"
                     >
                       Delete

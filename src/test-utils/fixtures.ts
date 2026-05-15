@@ -6,6 +6,7 @@ import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients, signerConfig, users } from "@/db/schema";
 import { createAppClient, rotateClientSecret } from "@/lib/oidc/clients";
 import { createSession } from "@/lib/auth";
+import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 
 export interface SeededDeveloperApp {
   /**
@@ -81,6 +82,8 @@ export async function seedDeveloperAppWithClient(opts?: {
     createdAt: now,
     updatedAt: now,
   });
+
+  await getOrCreateNetworkDefaultPlan(clientId, db);
 
   return { clientId, oidcClientRowId, userId, clientSecret };
 }

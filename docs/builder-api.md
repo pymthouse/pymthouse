@@ -439,7 +439,7 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 | `generalUpchargePercentBps` | Default positive upcharge for all retail usage, basis points. |
 | `payPerUseUpchargePercentBps` | Fallback upcharge for free/no-credit users; inherits `generalUpchargePercentBps` if unset. |
 | `billingCycle` | `"monthly"` (default). |
-| `discoveryProfileId` | Optional FK to an app-scoped discovery profile (see **Discovery profiles** below). Omitted from billing summary payloads today; present on **`GET .../plans`**. |
+| `discoveryProfileId` | Optional FK to legacy **`discovery_profiles`** rows. Omitted from billing summary payloads today; may still appear on **`GET .../plans`**. New integrator discovery limits use **`GET .../discovery-allowlist`** (pipeline/model only). |
 
 #### Capability bundle fields (new)
 
@@ -470,9 +470,62 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
   "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?groupBy=pipeline_model"
 ```
 
-### Discovery profiles (provider session + M2M read)
+### Discovery allowlist (integrator pipeline / model caps)
 
-Reusable **discovery** configuration (orchestrator ranking defaults) lives in **`discovery_profiles`** and **`discovery_profile_bundles`**. **Billing plans** reference an optional `discoveryProfileId`. Editing discovery no longer requires touching subscription pricing fields.
+**Canonical** app-level discovery surface for integrators (e.g. NaaP). Each app has exactly one undeletable **Network Price** plan row (`plans.is_network_default = true`) whose **`discovery_excluded_capabilities`** JSON defines what is **not** discoverable. The live NaaP pipeline catalog minus those exclusions is the resolved allow list in **`capabilities`**. **Custom billing plans** only carry pricing overrides; they do **not** widen or narrow discovery.
+
+#### Storage (`plans`, network-default row only)
+
+| Field | Shape | Semantics |
+| --- | --- | --- |
+| **`discovery_excluded_capabilities`** | `{ "capabilities": [ { "pipeline", "modelId" } ] }` | **Subtractive** list against the full catalog. `modelId: "*"` removes every current model for that pipeline. **Null** or empty **`capabilities`** means “nothing excluded” (full catalog discoverable). |
+
+The provider dashboard **Plans** page edits these exclusions on the Network Price section. **`PUT /discovery-allowlist`** writes the same column. If new exclusions would hide pipeline/models that a **custom** plan still prices in **`plan_capability_bundles`**, **`PUT` returns `409`** until those bundles are removed or exclusions are relaxed.
+
+#### Fail-open and short-circuit
+
+- If exclusions are **null/empty** → **`GET` returns** `{ "capabilities": [], "excludedCapabilities": [] }` **without** calling the pipeline catalog. NaaP and other clients treat an empty **`capabilities`** array as **no restriction** (fail-open).
+- If exclusions are **non-empty**, the server loads the catalog (TTL-cached server-side), expands wildcards, subtracts exclusions, and drops unknown pipeline/model pairs. If the catalog cannot be loaded → **`503`** with `{ "error": "Pipeline catalog unavailable" }`.
+
+**Important:** Exclusions that cover the **entire** catalog still yield **`capabilities: []`**, which integrators interpret as **fail-open** — there is **no** stored “deny all” sentinel today.
+
+#### Resolution (server-side)
+
+1. **Start from full catalog** — Every `(pipeline, modelId)` currently in NaaP.
+2. **Subtract exclusions** — Remove any member matching an exclusion row `(P, M)` or pipeline wildcard `(P, "*")`.
+3. **Prune** — Drop anything not present in the current catalog.
+
+**`GET`** returns:
+
+```json
+{
+  "capabilities": [ { "pipeline": "…", "modelId": "…" } ],
+  "excludedCapabilities": [ { "pipeline": "…", "modelId": "…" } ]
+}
+```
+
+**`PUT`** (provider session with edit rights) accepts:
+
+```json
+{
+  "excludedCapabilities": [ { "pipeline": "…", "modelId": "…" } ]
+}
+```
+
+The response body matches **`GET`** (re-resolved after write).
+
+**Base path:** `/api/v1/apps/{clientId}/discovery-allowlist`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/discovery-allowlist` | **M2M Basic** or provider session | Resolved **`capabilities`** plus persisted **`excludedCapabilities`**. |
+| `PUT` | `/discovery-allowlist` | Provider session with edit rights | Replace exclusions on the Network Price plan; response same as `GET`. |
+
+**Implementation:** [`src/app/api/v1/apps/[id]/discovery-allowlist/route.ts`](../src/app/api/v1/apps/[id]/discovery-allowlist/route.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts).
+
+### Discovery profiles (legacy, provider session + M2M read)
+
+Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for backward compatibility. Prefer **`discovery-allowlist`** for new integrator work. **Billing plans** may still reference **`discoveryProfileId`** until fully migrated.
 
 **Base path:** `/api/v1/apps/{clientId}/discovery-profiles`
 
@@ -492,26 +545,24 @@ Reusable **discovery** configuration (orchestrator ranking defaults) lives in **
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each plan includes optional **`discoveryProfileId`** and **resolved** **`discoveryPolicy`** (from the linked profile) plus per-bundle **resolved** **`discoveryPolicy`** (from `discovery_profile_bundles` keys matching each billing bundle’s `pipeline` / `modelId`). |
-| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create plan (`name` required). Optional **`discoveryProfileId`** (must belong to the same app). Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), SLA/upcharge fields — **not** `discoveryPolicy`. |
-| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). Optional **`discoveryProfileId`** (`null` clears the link). |
-| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles |
+| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each row includes **`isNetworkDefault`** and, on the Network Price plan, **`discoveryExcludedCapabilities`**. Optional legacy **`discoveryProfileId`** and resolved **`discoveryPolicy`** when a profile is linked. |
+| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Price`** / internal default name rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. |
+| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /discovery-allowlist`** or the Plans UI. Optional **`discoveryProfileId`** (`null` clears the link). |
+| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles. Deleting the **Network Price** default plan returns **`409`**. |
 
 **Discovery view (integrators, e.g. NaaP):**
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans/discovery` | **M2M Basic** or provider session | **Active** plans only: `id`, `name`, `status`, **resolved** `discoveryPolicy`, and `capabilities[]` with `pipeline`, `modelId`, **resolved** `discoveryPolicy`. Same JSON shape as before migration. |
+| `GET` | `/api/v1/apps/{clientId}/plans/discovery` | **M2M Basic** or provider session | **Deprecated.** **Active** plans with legacy resolved **`discoveryPolicy`** per plan and capability. Prefer **`GET .../discovery-allowlist`** for pipeline/model caps; response includes a **`deprecation`** string and **`Deprecation`** / **`Link`** HTTP headers pointing at **`discovery-allowlist`**. |
 
 **`discoveryPolicy`** (optional JSON object, aligned with NaaP orchestrator leaderboard plan inputs):
 
 - `topN` — integer 1…1000  
-- `sortBy` — `"slaScore"` \| `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
-- `slaMinScore` — number 0…1  
-- `slaWeights` — `{ latency?, swapRate?, price? }` each 0…1  
+- `sortBy` — `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
 - `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/app/api/v1/apps/[id]/discovery-allowlist/route.ts`](../src/app/api/v1/apps/[id]/discovery-allowlist/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts).
 
 ---
 

@@ -242,6 +242,8 @@ const basePlan = {
   payPerUseUpchargePercentBps: 1000, // 10%
   billingCycle: "monthly",
   discoveryProfileId: null,
+  isNetworkDefault: false,
+  discoveryExcludedCapabilities: null,
   createdAt: "",
   updatedAt: "",
 } as const;
@@ -252,7 +254,6 @@ const baseBundle = {
   clientId: "app-1",
   pipeline: "text-to-image",
   modelId: "stabilityai/sdxl",
-  slaTargetScore: null,
   slaTargetP95Ms: null,
   maxPricePerUnit: null,
   upchargePercentBps: 5000, // 50% override

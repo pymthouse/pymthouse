@@ -32,17 +32,29 @@ export async function GET(
   const resolved = await resolvePlansDiscoveryForApp(app.id);
   const active = resolved.filter((r) => r.plan.status === "active");
 
-  return NextResponse.json({
-    plans: active.map((r) => ({
-      id: r.plan.id,
-      name: r.plan.name,
-      status: r.plan.status,
-      discoveryPolicy: r.discoveryPolicy,
-      capabilities: r.capabilities.map((c) => ({
-        pipeline: c.pipeline,
-        modelId: c.modelId,
-        discoveryPolicy: c.discoveryPolicy,
+  const successorPath = `/api/v1/apps/${encodeURIComponent(clientId)}/discovery-allowlist`;
+
+  return NextResponse.json(
+    {
+      plans: active.map((r) => ({
+        id: r.plan.id,
+        name: r.plan.name,
+        status: r.plan.status,
+        discoveryPolicy: r.discoveryPolicy,
+        capabilities: r.capabilities.map((c) => ({
+          pipeline: c.pipeline,
+          modelId: c.modelId,
+          discoveryPolicy: c.discoveryPolicy,
+        })),
       })),
-    })),
-  });
+      deprecation:
+        "Use GET /api/v1/apps/{clientId}/discovery-allowlist for pipeline/model allowlist; this endpoint remains for legacy discoveryPolicy resolution only.",
+    },
+    {
+      headers: {
+        Deprecation: "true",
+        Link: `<${successorPath}>; rel="alternate"`,
+      },
+    },
+  );
 }

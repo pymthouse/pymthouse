@@ -13,6 +13,8 @@ interface Props {
   hasSecret: boolean;
   /** Confidential M2M sibling (Builder + device approval token exchange); null until provisioned. */
   backendHelper: { clientId: string; hasSecret: boolean } | null;
+  /** Auth & Scopes → confidential backend helper (may be false while M2M still exists until save). */
+  backendDeviceHelper: boolean;
   onSecretGenerated: () => void;
   onBackendSecretGenerated?: () => void;
   readOnly?: boolean;
@@ -30,6 +32,7 @@ export default function TestingStep({
   allowedScopes,
   hasSecret,
   backendHelper,
+  backendDeviceHelper,
   onSecretGenerated,
   onBackendSecretGenerated,
   readOnly = false,
@@ -88,6 +91,13 @@ export default function TestingStep({
     });
   }, [redirectUris]);
 
+  useEffect(() => {
+    if (!backendDeviceHelper) {
+      setBackendSecret(null);
+      setBackendSecretFetchError(null);
+    }
+  }, [backendDeviceHelper]);
+
   const generateSecret = useCallback(async () => {
     if (readOnly || !appId) return;
     setGenerating(true);
@@ -113,7 +123,7 @@ export default function TestingStep({
   }, [appId, onSecretGenerated, readOnly]);
 
   const generateBackendSecret = useCallback(async () => {
-    if (readOnly || !appId) return;
+    if (readOnly || !appId || !backendDeviceHelper) return;
     setGeneratingBackend(true);
     setBackendSecretFetchError(null);
     try {
@@ -134,7 +144,7 @@ export default function TestingStep({
     } finally {
       setGeneratingBackend(false);
     }
-  }, [appId, onBackendSecretGenerated, readOnly]);
+  }, [appId, backendDeviceHelper, onBackendSecretGenerated, readOnly]);
 
   const copyToClipboard = useCallback(
     async (text: string, label: string) => {
@@ -212,14 +222,15 @@ export default function TestingStep({
   const backendHelperScopes = computeBackendM2mAllowedScopes(
     allowedScopes ?? DEFAULT_OIDC_SCOPES,
   );
-  const backendHelperCurlSnippet = backendHelper?.clientId
-    ? `curl -X POST ${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/oidc/token \\
+  const backendHelperCurlSnippet =
+    backendDeviceHelper && backendHelper?.clientId
+      ? `curl -X POST ${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/oidc/token \\
   -H "Content-Type: application/x-www-form-urlencoded" \\
   -d "grant_type=client_credentials" \\
   -d "client_id=${backendHelper.clientId}" \\
   -d "client_secret=YOUR_CLIENT_SECRET" \\
   -d "scope=${backendHelperScopes}"`
-    : "";
+      : "";
 
   return (
     <div className="space-y-8">
@@ -433,7 +444,7 @@ export default function TestingStep({
             </div>
           </div>
 
-          {backendHelper ? (
+          {backendDeviceHelper && backendHelper ? (
             <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
               <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
               <p className="text-xs text-zinc-500">
@@ -530,11 +541,18 @@ export default function TestingStep({
                 </div>
               ) : null}
             </div>
-          ) : (
+          ) : backendDeviceHelper && !backendHelper ? (
             <p className="text-sm text-zinc-500 mt-4">
               Enable <strong className="text-zinc-400">Backend device helper</strong> in Auth &amp; Scopes,
               save, then return here to create a confidential <code className="font-mono text-zinc-400">m2m_</code> client
               for Builder APIs and NaaP-side device approval.
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-500 mt-4">
+              Confidential backend helper is off in{" "}
+              <strong className="text-zinc-400">Auth &amp; Scopes</strong>. Turn on{" "}
+              <strong className="text-zinc-400">Confidential client (CLIENT CREDENTIALS)</strong>{" "}
+              there to manage M2M credentials on this tab.
             </p>
           )}
         </>

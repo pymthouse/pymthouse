@@ -5,6 +5,7 @@ import {
   integer,
   real,
   bigint,
+  boolean,
   timestamp,
   primaryKey,
   uniqueIndex,
@@ -392,6 +393,15 @@ export const plans = pgTable(
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
       onDelete: "set null",
     }),
+    /** Exactly one per client: catalog-wide network pricing + integrator discovery exclusions. */
+    isNetworkDefault: boolean("is_network_default").notNull().default(false),
+    /**
+     * Pipelines/models excluded from integrator discovery (NaaP). Only used when
+     * `is_network_default` is true. Same JSON shape as legacy app column.
+     */
+    discoveryExcludedCapabilities: jsonb("discovery_excluded_capabilities").$type<{
+      capabilities: Array<{ pipeline: string; modelId: string }>;
+    } | null>(),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -399,7 +409,12 @@ export const plans = pgTable(
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [uniqueIndex("idx_plans_client_name").on(t.clientId, t.name)],
+  (t) => [
+    uniqueIndex("idx_plans_client_name").on(t.clientId, t.name),
+    uniqueIndex("idx_plans_network_default_per_client")
+      .on(t.clientId)
+      .where(sql`${t.isNetworkDefault} = true`),
+  ],
 );
 
 export const planCapabilityBundles = pgTable(
@@ -414,7 +429,6 @@ export const planCapabilityBundles = pgTable(
       .references(() => developerApps.id),
     pipeline: text("pipeline").notNull(),
     modelId: text("model_id").notNull(),
-    slaTargetScore: real("sla_target_score"),
     slaTargetP95Ms: integer("sla_target_p95_ms"),
     maxPricePerUnit: text("max_price_per_unit"),
     /** Pipeline/model-specific positive upcharge override, in basis points. Overrides plan generalUpchargePercentBps. */
