@@ -18,6 +18,10 @@ import {
 } from "@/lib/provider-apps";
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
+import {
+  SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+  SIGNING_MODE_LPNM_PAYER_DAEMON,
+} from "@/lib/signing-modes";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -142,6 +146,39 @@ export async function PUT(
   for (const field of appFields) {
     if (body[field] !== undefined) {
       appUpdates[field] = body[field];
+    }
+  }
+
+  if (body.signingMode !== undefined) {
+    const m = String(body.signingMode);
+    if (m !== SIGNING_MODE_LEGACY_REMOTE_SIGNER && m !== SIGNING_MODE_LPNM_PAYER_DAEMON) {
+      return NextResponse.json(
+        {
+          error: `Invalid signingMode (expected ${SIGNING_MODE_LEGACY_REMOTE_SIGNER} or ${SIGNING_MODE_LPNM_PAYER_DAEMON})`,
+        },
+        { status: 400 },
+      );
+    }
+    appUpdates.signingMode = m;
+  }
+  if (body.payerDaemonSocket !== undefined) {
+    const raw = body.payerDaemonSocket;
+    if (raw === null || raw === "") {
+      appUpdates.payerDaemonSocket = null;
+    } else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (trimmed.length > 512) {
+        return NextResponse.json(
+          { error: "payerDaemonSocket must be at most 512 characters" },
+          { status: 400 },
+        );
+      }
+      appUpdates.payerDaemonSocket = trimmed || null;
+    } else {
+      return NextResponse.json(
+        { error: "payerDaemonSocket must be a string or null" },
+        { status: 400 },
+      );
     }
   }
 

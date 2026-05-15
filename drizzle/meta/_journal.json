@@ -94,38 +94,52 @@
       "breakpoints": true
     },
     {
-      "idx": 12,
+      "idx": 13,
       "version": "7",
       "when": 1776800000000,
       "tag": "0012_rename_privy_did_to_turnkey_user_id",
       "breakpoints": true
     },
     {
-      "idx": 13,
+      "idx": 14,
       "version": "7",
       "when": 1776900000000,
       "tag": "0013_developer_apps_jwks_uri_platform_public",
       "breakpoints": true
     },
     {
-      "idx": 14,
+      "idx": 15,
       "version": "7",
       "when": 1777000000000,
       "tag": "0014_billing_oracle",
       "breakpoints": true
     },
     {
-      "idx": 15,
+      "idx": 16,
       "version": "7",
       "when": 1777100000000,
       "tag": "0015_discovery_plan_policy",
       "breakpoints": true
     },
     {
-      "idx": 16,
+      "idx": 17,
       "version": "7",
       "when": 1777200000000,
       "tag": "0016_discovery_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1777300000000,
+      "tag": "0017_developer_apps_signing_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777600000000,
+      "tag": "0018_repair_developer_apps_signing_mode",
       "breakpoints": true
     }
   ]

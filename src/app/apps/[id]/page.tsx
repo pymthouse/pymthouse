@@ -6,6 +6,10 @@ import DashboardLayout from "@/components/DashboardLayout";
 import AppSettingsScreen from "@/components/apps/AppSettingsScreen";
 import type { AppFormData, AppState } from "@/components/apps/AppWizard";
 import { DEFAULT_OIDC_SCOPES } from "@/lib/oidc/scopes";
+import {
+  SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+  SIGNING_MODE_LPNM_PAYER_DAEMON,
+} from "@/lib/signing-modes";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: "Draft", color: "bg-zinc-700 text-zinc-300" },
@@ -55,6 +59,12 @@ export default function AppDetailPage() {
             tokenEndpointAuthMethod:
               data.oidcClient?.tokenEndpointAuthMethod || "none",
             backendDeviceHelper: Boolean(data.m2mOidcClient),
+            signingMode:
+              data.signingMode === SIGNING_MODE_LPNM_PAYER_DAEMON
+                ? SIGNING_MODE_LPNM_PAYER_DAEMON
+                : SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+            payerDaemonSocket:
+              typeof data.payerDaemonSocket === "string" ? data.payerDaemonSocket : "",
           },
           state: {
             id: data.id,

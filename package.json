@@ -24,6 +24,8 @@
   },
   "dependencies": {
     "@braintree/sanitize-url": "^7.1.2",
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@turnkey/crypto": "^2.8.14",
     "@turnkey/react-wallet-kit": "^1.11.1",

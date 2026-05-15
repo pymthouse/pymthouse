@@ -2,6 +2,9 @@
 # image), same as production (railway.json / render.yaml). Exposes the DMZ on
 # 127.0.0.1:8080 by default (see SIGNER_DMZ_HOST_PORT). The app should use
 # SIGNER_INTERNAL_URL=http://127.0.0.1:8080 and SIGNER_CLI_URL=http://127.0.0.1:8080/__signer_cli
+#
+# LPNM payer + service-registry run as **pulled images** from
+# `docker/payment-daemon/docker-compose.yaml` (not built here). See docs/LPNM_SIGNING.md.
 
 services:
   signer-dmz:

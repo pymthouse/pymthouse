@@ -1,0 +1,59 @@
+# PymtHouse local stack: service-registry + payment-daemon sender.
+# Uses published images only (no `build:`). Configure via `.env` in this directory.
+#
+#   cd docker/payment-daemon && docker compose up -d
+#
+# Set PAYMENT_DAEMON_SOCKET_DIR to a host path so PymtHouse on the host can set
+# LPNM_PAYER_DAEMON_SOCKET to <that-dir>/payer-daemon.sock (see docs/LPNM_SIGNING.md).
+
+services:
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    # image: tztcloud/livepeer-service-registry-daemon:744f48e
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-120s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${REGISTRY_LOG_LEVEL:-info}
+      - --log-format=${REGISTRY_LOG_FORMAT:-json}
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    # ports:
+    #   - "127.0.0.1:${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
+    volumes:
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/gateway-hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  registry-state: {}

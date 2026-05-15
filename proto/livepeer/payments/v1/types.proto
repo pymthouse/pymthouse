@@ -1,0 +1,198 @@
+// Livepeer Payments v1 — wire-format types.
+//
+// These messages are a wire-compatible re-declaration of the
+// payment-relevant portion of go-livepeer's `net/lp_rpc.proto`. Field
+// numbers and wire types are preserved byte-for-byte so that
+// `livepeer.payments.v1.Payment` encodes identically to `net.Payment`
+// from go-livepeer.
+//
+// See `../docs/wire-compat.md` for the byte-for-byte invariant and the
+// round-trip test that enforces it.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+
+// PriceInfo conveys pricing info for a unit of work.
+//
+// `pixelsPerUnit` is a historical name; the denominator is really just
+// "work units" — pixels, tokens, seconds, characters, anything the
+// consumer chooses. For wire compatibility the field name is preserved.
+message PriceInfo {
+  // Price in wei per `pixels_per_unit` units of work.
+  //
+  // WIRE COMPAT: the proto field NAME differs from go-livepeer's
+  // (`pricePerUnit` vs `price_per_unit`), but the field NUMBER is
+  // identical. Proto encoding keys on number, not name, so bytes on
+  // the wire are compatible. The Go-generated field name is
+  // `PricePerUnit` in both projects.
+  int64 price_per_unit = 1;
+
+  // Work units covered by `price_per_unit`. Setting `price_per_unit = 1`
+  // with a larger `pixels_per_unit` lets pricing go finer than 1 wei
+  // per unit.
+  int64 pixels_per_unit = 2;
+
+  // Capability this price applies to (uint32 capability ID, as in
+  // go-livepeer). The daemon's RPC surface accepts string capability
+  // names and maps them to this uint32 at the boundary.
+  uint32 capability = 3;
+
+  // Non-binary constraint this price applies to (e.g., a specific
+  // model id).
+  string constraint = 4;
+}
+
+// TicketParams is the recipient-controlled portion of a ticket. The
+// payee issues these to a payer during discovery (via `GetQuote` /
+// `GetTicketParams`); the payer uses them verbatim when constructing
+// tickets in a `TicketBatch`.
+message TicketParams {
+  // ETH address of the recipient.
+  bytes recipient = 1;
+
+  // Payout in wei if the ticket wins. Big-endian bytes.
+  bytes face_value = 2;
+
+  // Probability the ticket wins, scaled to the 256-bit win-probability
+  // field (maxWinProb = 2^256 - 1). Big-endian bytes.
+  bytes win_prob = 3;
+
+  // 32-byte keccak-256 hash commitment to a random number held by the
+  // recipient. Used as the session key.
+  bytes recipient_rand_hash = 4;
+
+  // Seed the recipient uses to derive the random number corresponding
+  // to `recipient_rand_hash`. HMAC-derived per (sender, capability,
+  // monotonic counter) so seeds cannot collide across senders.
+  bytes seed = 5;
+
+  // L1 block number after which this set of TicketParams is no longer
+  // valid. Big-endian bytes.
+  bytes expiration_block = 6;
+
+  // Expiration parameters used at ticket-validation time.
+  TicketExpirationParams expiration_params = 7;
+}
+
+// TicketSenderParams contains per-ticket nonce + signature values that
+// the sender produces while creating a ticket batch.
+message TicketSenderParams {
+  // Monotonically increasing counter that makes a ticket unique
+  // relative to a given `recipient_rand_hash` in `TicketParams`. The
+  // receiver tracks up to 600 nonces per recipient_rand_hash and
+  // rejects duplicates.
+  uint32 sender_nonce = 1;
+
+  // Sender's ECDSA signature over the ticket hash.
+  //
+  // Format: `[R || S || V]` (65 bytes). `V ∈ {27, 28}`. Signature is
+  // computed over `accounts.TextHash(ticket.Hash().Bytes())` — i.e.,
+  // the ticket hash wrapped in the Ethereum personal_sign EIP-191
+  // prefix `\x19Ethereum Signed Message:\n32`. See
+  // `../docs/wire-compat.md` §"Signature wire-compat".
+  bytes sig = 2;
+}
+
+// TicketExpirationParams carries the Livepeer "round" and associated
+// block hash used to validate ticket freshness against the protocol
+// round state.
+message TicketExpirationParams {
+  // Livepeer protocol round during which the tickets were created.
+  int64 creation_round = 1;
+
+  // Block hash associated with `creation_round`.
+  bytes creation_round_block_hash = 2;
+}
+
+// Payment is the on-the-wire payment message. One `Payment` can carry
+// many tickets (one per entry in `ticket_sender_params`) so a payer
+// can cover a whole segment / job / session in a single wire message.
+//
+// Encoding: deterministic protobuf-3 wire format, base64-encoded
+// (RFC 4648 §4 — standard, not URL-safe; padding REQUIRED) when
+// transported as the `Livepeer-Payment` HTTP header value.
+message Payment {
+  // Recipient-controlled ticket parameters. Stays the same across all
+  // tickets in this payment.
+  TicketParams ticket_params = 1;
+
+  // ETH address of the sender.
+  bytes sender = 2;
+
+  // Shared expiration params for all tickets in this payment.
+  TicketExpirationParams expiration_params = 3;
+
+  // Per-ticket sender parameters (nonce + signature). One entry per
+  // ticket.
+  repeated TicketSenderParams ticket_sender_params = 4;
+
+  // Payer's last-known price for this work. Used by the payee to
+  // detect stale clients and trigger a re-quote.
+  PriceInfo expected_price = 5;
+}
+
+// ─── Daemon-app envelopes (NOT wire-compat — free to evolve) ──────────
+//
+// The messages below appear in PayerDaemon / PayeeDaemon RPC envelopes
+// only; they never enter the gateway↔orchestrator wire path. Per
+// `wire-compat.md` they may evolve under v1.
+
+// OfferingPrice pairs an offering identifier with its wei-per-work-unit
+// price. Shared between GetQuoteResponse and ListCapabilitiesResponse so
+// the two surfaces cannot drift.
+message OfferingPrice {
+  // Offering identifier, e.g. "llama-3.3-70b". Must match the offering
+  // string the bridge uses when resolving a request to a node.
+  string id = 1;
+
+  // Price for one work unit (see `CapabilityEntry.work_unit` for the
+  // meaning of "unit" on this capability).
+  PriceInfo price_info = 2;
+}
+
+// CapabilityEntry is one row of the daemon's capability catalog.
+message CapabilityEntry {
+  // Capability string in the canonical form `openai:<uri-path>` for
+  // the OpenAI module family; other modules use their own domain
+  // prefix (e.g. `transcoding:...`). Opaque to the daemon.
+  string capability = 1;
+
+  // Work-unit identifier for observability ("token", "audio_second",
+  // "image_step_megapixel", "character", ...). The daemon treats work
+  // units as opaque int64 — this field is metadata for the worker /
+  // bridge.
+  string work_unit = 2;
+
+  // Offerings served on this capability, with their configured prices.
+  repeated OfferingPrice offerings = 3;
+}
+
+// HealthRequest / HealthResponse are shared by both PayerDaemon and
+// PayeeDaemon. Both services expose `Health` so callers can probe
+// readiness at startup before binding their own listeners.
+message HealthRequest {}
+
+message HealthResponse {
+  // Liveness signal. v0.2 returns the literal string "ok" when ready.
+  string status = 1;
+}
+
+// PendingRedemption describes one ticket queued for on-chain redemption.
+// Returned by ListPendingRedemptions for operator observability.
+message PendingRedemption {
+  // Deterministic ticket identifier (keccak256 of the ticket hash).
+  bytes ticket_hash = 1;
+  bytes sender = 2;
+
+  // Face value (wei, big-endian bytes).
+  bytes face_value = 3;
+
+  // Unix epoch seconds when the ticket was queued.
+  int64 queued_at = 4;
+
+  // Number of on-chain redemption attempts made so far.
+  int32 attempts = 5;
+}

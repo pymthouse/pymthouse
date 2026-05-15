@@ -4,6 +4,10 @@ import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { docsDeviceFlowUrl, docsInteractiveLoginUrl } from "@/lib/docs-base-url";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
+import {
+  SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+  SIGNING_MODE_LPNM_PAYER_DAEMON,
+} from "@/lib/signing-modes";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -24,6 +28,10 @@ export interface AppFormData {
   initiateLoginUri: string;
   /** Whether to redirect unauthenticated device verification to initiateLoginUri. */
   deviceThirdPartyInitiateLogin: boolean;
+  /** How `/api/v1/signer/*` is fulfilled for this app. */
+  signingMode: typeof SIGNING_MODE_LEGACY_REMOTE_SIGNER | typeof SIGNING_MODE_LPNM_PAYER_DAEMON;
+  /** Optional unix socket path for `PayerDaemon` when `signingMode` is LPNM. */
+  payerDaemonSocket: string;
 }
 
 export interface AppState {
@@ -54,6 +62,8 @@ export const defaultAppFormData: AppFormData = {
   backendDeviceHelper: true,
   initiateLoginUri: "",
   deviceThirdPartyInitiateLogin: false,
+  signingMode: SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+  payerDaemonSocket: "",
 };
 
 interface Props {

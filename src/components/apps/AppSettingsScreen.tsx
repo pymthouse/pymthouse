@@ -10,6 +10,10 @@ import {
   type AppFormData,
   type AppState,
 } from "./AppWizard";
+import {
+  SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+  SIGNING_MODE_LPNM_PAYER_DAEMON,
+} from "@/lib/signing-modes";
 
 interface Props {
   appId: string;
@@ -48,6 +52,11 @@ function mergeFormData(
     initiateLoginUri: initial.initiateLoginUri ?? initialInitiateLoginUri ?? "",
     deviceThirdPartyInitiateLogin:
       initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
+    signingMode:
+      initial.signingMode === SIGNING_MODE_LPNM_PAYER_DAEMON
+        ? SIGNING_MODE_LPNM_PAYER_DAEMON
+        : SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+    payerDaemonSocket: initial.payerDaemonSocket ?? "",
   };
 }
 
@@ -346,6 +355,65 @@ export default function AppSettingsScreen({
           domains={domains}
           onDomainsChange={setDomains}
         />
+      </section>
+
+      {/* Livepeer remote signing */}
+      <section className="py-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-100">Livepeer signing</h2>
+          <p className="text-sm text-zinc-500 mt-1">
+            Choose how PymtHouse fulfills <code className="text-zinc-400">/api/v1/signer/*</code> for
+            access tokens issued to this app. LPNM mode uses the payment-daemon{" "}
+            <code className="text-zinc-400">PayerDaemon</code> unix socket; ticket params come from{" "}
+            <code className="text-zinc-400">OrchestratorInfo.transcoder</code> (or{" "}
+            <code className="text-zinc-400">LPNM_TICKET_PARAMS_BASE_URL</code> if transcoder is empty).
+          </p>
+        </div>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input
+              type="radio"
+              name="signingMode"
+              checked={formData.signingMode === SIGNING_MODE_LEGACY_REMOTE_SIGNER}
+              onChange={() =>
+                updateFormData({ signingMode: SIGNING_MODE_LEGACY_REMOTE_SIGNER })
+              }
+              disabled={!canEdit}
+              className="accent-emerald-500"
+            />
+            Legacy — forward to go-livepeer remote signer (default)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input
+              type="radio"
+              name="signingMode"
+              checked={formData.signingMode === SIGNING_MODE_LPNM_PAYER_DAEMON}
+              onChange={() =>
+                updateFormData({ signingMode: SIGNING_MODE_LPNM_PAYER_DAEMON })
+              }
+              disabled={!canEdit}
+              className="accent-emerald-500"
+            />
+            LPNM — payment-daemon PayerDaemon (unix socket)
+          </label>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+            PayerDaemon socket path (optional)
+          </label>
+          <input
+            type="text"
+            value={formData.payerDaemonSocket}
+            onChange={(e) => updateFormData({ payerDaemonSocket: e.target.value })}
+            placeholder="/run/pymthouse/payer.sock"
+            disabled={!canEdit}
+            className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50"
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            Leave empty to use <code className="text-zinc-500">LPNM_PAYER_DAEMON_SOCKET</code> or the
+            default path.
+          </p>
+        </div>
       </section>
 
       {/* Post-logout Redirects */}
