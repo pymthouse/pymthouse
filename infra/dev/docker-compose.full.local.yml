@@ -44,8 +44,8 @@ services:
       DATABASE_URL: postgresql://pymthouse:pymthouse@db:5432/pymthouse?sslmode=disable
       NEXTAUTH_URL: http://localhost:3001
       OIDC_ISSUER: http://localhost:3001/api/v1/oidc
-      SIGNER_INTERNAL_URL: http://127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}
-      SIGNER_CLI_URL: http://127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}/__signer_cli
+      SIGNER_INTERNAL_URL: http://signer-dmz:8080
+      SIGNER_CLI_URL: http://signer-dmz:8080/__signer_cli
       CHOKIDAR_USEPOLLING: "1"
       WATCHPACK_POLLING: "true"
       HOST_DOCKER_INTERNAL_IP: ${HOST_DOCKER_INTERNAL_IP:-host-gateway}
