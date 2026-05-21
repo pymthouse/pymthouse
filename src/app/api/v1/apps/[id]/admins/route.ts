@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
-import { db } from "@/db/index";
-import { providerAdmins, users } from "@/db/schema";
 import {
   canEditProviderApp,
   getAuthorizedProviderApp,
   appEditForbiddenResponse,
-} from "@/lib/provider-apps";
+} from "@/domains/developer-apps/runtime/provider-access";
+import {
+  addAppAdmin,
+  readAppAdmins,
+  removeAppAdmin,
+} from "@/domains/developer-apps/runtime/app-admins";
 
 export async function GET(
   _request: NextRequest,
@@ -18,26 +19,7 @@ export async function GET(
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const appId = auth.app.id;
-
-  const memberships = await db
-    .select()
-    .from(providerAdmins)
-    .where(eq(providerAdmins.clientId, appId));
-
-  const userIds = memberships.map((m) => m.userId);
-  const adminUsers =
-    userIds.length > 0
-      ? await db.select().from(users).where(inArray(users.id, userIds))
-      : [];
-
-  return NextResponse.json({
-    admins: memberships.map((membership) => ({
-      ...membership,
-      clientId,
-      user: adminUsers.find((user) => user.id === membership.userId) || null,
-    })),
-  });
+  return NextResponse.json({ admins: await readAppAdmins(clientId, auth.app.id) });
 }
 
 export async function POST(
@@ -55,44 +37,11 @@ export async function POST(
     return appEditForbiddenResponse();
   }
 
-  const body = await request.json();
-  const userId = String(body.userId || "").trim();
-  if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
+  const result = await addAppAdmin(clientId, appId, await request.json());
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
-
-  const userRows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const user = userRows[0];
-  if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  const existingRows = await db
-    .select()
-    .from(providerAdmins)
-    .where(
-      and(
-        eq(providerAdmins.clientId, appId),
-        eq(providerAdmins.userId, userId),
-      ),
-    )
-    .limit(1);
-  const existing = existingRows[0];
-
-  if (existing) {
-    return NextResponse.json(existing);
-  }
-
-  const membership = {
-    id: uuidv4(),
-    userId,
-    clientId: appId,
-    role: body.role || "admin",
-    createdAt: new Date().toISOString(),
-  };
-
-  await db.insert(providerAdmins).values(membership);
-  return NextResponse.json({ ...membership, clientId }, { status: 201 });
+  return NextResponse.json(result.body, { status: result.status });
 }
 
 export async function DELETE(
@@ -111,17 +60,10 @@ export async function DELETE(
   }
 
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId");
-  if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
+  const result = await removeAppAdmin(appId, searchParams.get("userId"));
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
-
-  await db.delete(providerAdmins).where(
-    and(
-      eq(providerAdmins.clientId, appId),
-      eq(providerAdmins.userId, userId),
-    ),
-  );
 
   return NextResponse.json({ success: true });
 }

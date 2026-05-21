@@ -6,8 +6,8 @@ import {
   formatBillingPeriod,
   formatBillingWei,
   getBillingUsageDashboardData,
-} from "@/lib/billing-usage-dashboard-data";
-import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+} from "@/platform/ops/billing-usage-dashboard-data";
+import { formatUsdMicrosString } from "@/shared/utils/format-usd-micros";
 
 export default async function BillingUsageDashboard({
   filterAppId,

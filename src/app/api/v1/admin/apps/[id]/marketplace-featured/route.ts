@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { developerApps } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getProviderApp } from "@/lib/provider-apps";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { getProviderApp } from "@/domains/developer-apps/repo/provider-access";
+import { setMarketplaceFeatured } from "@/domains/developer-apps/repo/admin-apps";
 
 export async function PATCH(
   request: NextRequest,
@@ -49,15 +47,7 @@ export async function PATCH(
   }
 
   const now = new Date().toISOString();
-  const marketplaceFeatured = body.featured ? 1 : 0;
-
-  await db
-    .update(developerApps)
-    .set({
-      marketplaceFeatured,
-      updatedAt: now,
-    })
-    .where(eq(developerApps.id, app.id));
+  await setMarketplaceFeatured(app.id, body.featured, now);
 
   return NextResponse.json({
     success: true,

@@ -16,7 +16,7 @@ import { v4 as uuidv4 } from "uuid";
 import { eq } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import { users, sessions, signerConfig } from "../src/db/schema";
-import { hashToken } from "../src/lib/token-hash";
+import { hashToken } from "../src/shared/utils/token-hash";
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();

@@ -1,5 +1,5 @@
-import { PROVIDER_ENDPOINT_PATHS } from "@/lib/oidc/routes";
-import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { PROVIDER_ENDPOINT_PATHS } from "@/platform/oidc/routes";
+import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/platform/oidc/issuer-urls";
 
 export function deriveExternalOriginFromHeaders(headers: Headers): string {
   const publicFallback = getPublicOrigin();
@@ -26,7 +26,7 @@ export function deriveExternalOriginFromHeaders(headers: Headers): string {
  */
 export async function getTrustedOidcOrigins(): Promise<Set<string>> {
   const publicOrigin = getPublicOrigin();
-  const { getTrustedLoginHosts } = await import("@/lib/oidc/custom-domains");
+  const { getTrustedLoginHosts } = await import("@/domains/oidc-platform/runtime/custom-domains");
   const trustedHosts = await getTrustedLoginHosts();
 
   const origins = new Set<string>();

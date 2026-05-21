@@ -27,7 +27,7 @@ export interface OrchestratorInfoBuildOpts {
 /**
  * Build a base64-encoded OrchestratorInfo protobuf message suitable for use as
  * the `Orchestrator` field on a /generate-live-payment request body. The encoded
- * message is what `decodeOrchestratorInfo` in `src/lib/proto.ts` consumes.
+ * message is what `decodeOrchestratorInfo` in `src/platform/livepeer/proto.ts` consumes.
  */
 export async function buildOrchestratorInfoBase64(
   opts: OrchestratorInfoBuildOpts,

@@ -2,10 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { signerConfig, streamSessions, transactions } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { authOptions } from "@/platform/auth/next-auth-options";
 import DashboardLayout from "@/components/DashboardLayout";
 import SignerControlPanel from "@/components/SignerControlPanel";
 import SignerConfigForm from "@/components/SignerConfigForm";
@@ -13,22 +10,9 @@ import SignerLogs from "@/components/SignerLogs";
 import SignerLiveStats from "@/components/SignerLiveStats";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_MINUTES,
-  countActiveStreamsByRecentPayment,
-} from "@/lib/active-streams";
-import {
-  getIssuer,
-  getJwksUrlForLocalSignerDmzContainer,
-} from "@/lib/oidc/issuer-urls";
-import { resolveDmzHostPort } from "@/lib/signer-dmz-host-port";
-import { getSignerUrl } from "@/lib/signer-proxy";
-
-function formatWei(wei: string | null): string {
-  if (!wei || wei === "0") return "0 WEI";
-  const value = BigInt(wei);
-  const eth = Number(value) / 1e18;
-  if (eth < 0.001) return `${wei} WEI`;
-  return `${eth.toFixed(6)} ETH`;
-}
+  formatSignerWei,
+  getSignerAdminPageData,
+} from "@/domains/signer-runtime/runtime/signer-admin-page";
 
 export default async function SignerPage() {
   const session = await getServerSession(authOptions);
@@ -39,12 +23,8 @@ export default async function SignerPage() {
     redirect("/");
   }
 
-  const signerRows = await db
-    .select()
-    .from(signerConfig)
-    .where(eq(signerConfig.id, "default"))
-    .limit(1);
-  const signer = signerRows[0];
+  const data = await getSignerAdminPageData();
+  const signer = data?.signer;
 
   if (!signer) {
     return (
@@ -56,33 +36,24 @@ export default async function SignerPage() {
     );
   }
 
-  const [activeStreamCount, allSessions, allTxns] = await Promise.all([
-    countActiveStreamsByRecentPayment(),
-    db.select().from(streamSessions),
-    db.select({ id: transactions.id }).from(transactions),
-  ]);
-
-  let totalFeeWei = 0n;
-  for (const s of allSessions) {
-    totalFeeWei += BigInt(s.totalFeeWei);
-  }
+  const {
+    activeStreamCount,
+    allSessions,
+    allTxns,
+    totalFeeWei,
+    oidcIssuer,
+    oidcAudience,
+    oidcJwksUrl,
+    dmzHostPort,
+    effectiveSignerUrl,
+    signerUrlSource,
+  } = data;
 
   const statusColors: Record<string, string> = {
     running: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
     stopped: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30",
     error: "bg-red-500/20 text-red-400 border-red-500/30",
   };
-
-  const oidcIssuer = getIssuer();
-  const oidcAudience = oidcIssuer;
-  const oidcJwksUrl = getJwksUrlForLocalSignerDmzContainer();
-  const dmzHostPort = resolveDmzHostPort(signer.signerPort);
-  const effectiveSignerUrl = getSignerUrl(signer);
-  const signerUrlSource = signer.signerUrl
-    ? "saved"
-    : process.env.SIGNER_INTERNAL_URL
-      ? "env"
-      : "default";
 
   return (
     <DashboardLayout>
@@ -176,7 +147,10 @@ export default async function SignerPage() {
           color="text-emerald-400"
         />
         <StatCard label="Total Streams" value={allSessions.length.toString()} />
-        <StatCard label="Total Volume" value={formatWei(totalFeeWei.toString())} />
+        <StatCard
+          label="Total Volume"
+          value={formatSignerWei(totalFeeWei.toString())}
+        />
         <StatCard label="Transactions" value={allTxns.length.toString()} />
         <StatCard
           label="Platform Cut"

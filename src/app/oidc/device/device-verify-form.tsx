@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { normalizeUserCode } from "@/lib/oidc/device";
+import { normalizeUserCode } from "@/platform/oidc/device";
 
 interface DeviceInfo {
   clientName: string;

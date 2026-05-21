@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
-import { getNextAuthSecret } from "@/lib/next-auth-secret";
+import { getNextAuthSecret } from "@/platform/auth/next-auth-secret";
 
 const SESSION_COOKIE_NAMES = [
   "next-auth.session-token",

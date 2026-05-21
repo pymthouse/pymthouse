@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getInitiateLoginUriForDeviceFlow } from "@/lib/oidc/clients";
+import { getInitiateLoginUriForDeviceFlow } from "@/domains/oidc-platform/runtime/clients";
 import {
   buildInitiateLoginRedirectUrl,
   initiateSkipCookieOptions,
   thirdPartyInitiateSkipCookieName,
   userCodeFromDeviceTargetLinkUri,
-} from "@/lib/oidc/third-party-initiate-login";
-import { getIssuer } from "@/lib/oidc/issuer-urls";
+} from "@/platform/oidc/third-party-initiate-login";
+import { getIssuer } from "@/platform/oidc/issuer-urls";
 
 /**
  * Server redirect to the RP's registered `initiate_login_uri` with OIDC third-party login parameters.

@@ -2,7 +2,7 @@ import Link from "next/link";
 import {
   CATEGORY_COLORS,
   DEFAULT_CATEGORY_COLOR,
-} from "@/lib/marketplace-constants";
+} from "@/platform/marketplace/constants";
 
 export type HomeApp = {
   id: string;

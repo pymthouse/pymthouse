@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
-import type { AuthResult } from "@/lib/auth";
-import { validateBearerToken } from "@/lib/auth";
 import { db } from "@/db/index";
 import {
   endUsers,
@@ -13,8 +11,10 @@ import {
   usageBillingEvents,
   usageRecords,
 } from "@/db/schema";
-import { countActiveStreamsByRecentPayment } from "@/lib/active-streams";
-import { proxyGenerateLivePayment } from "@/lib/signer-proxy";
+import type { AuthResult } from "@/domains/identity-access/runtime/request-auth";
+import { validateBearerToken } from "@/domains/identity-access/runtime/request-auth";
+import { countActiveStreamsByRecentPayment } from "@/platform/ops/active-streams";
+import { proxyGenerateLivePayment } from "@/domains/signer-runtime/runtime/signer-payments";
 import { run } from "@/test-utils/db-guard";
 import {
   basicAuthHeader,

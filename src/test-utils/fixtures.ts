@@ -4,8 +4,8 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients, signerConfig, users } from "@/db/schema";
-import { createAppClient, rotateClientSecret } from "@/lib/oidc/clients";
-import { createSession } from "@/lib/auth";
+import { createSession } from "@/domains/identity-access/runtime/request-auth";
+import { createAppClient, rotateClientSecret } from "@/domains/oidc-platform/runtime/clients";
 
 export interface SeededDeveloperApp {
   /**

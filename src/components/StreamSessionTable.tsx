@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { formatIntegerString, weiHumanWithUnit } from "@/lib/format-wei";
-import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { formatIntegerString, weiHumanWithUnit } from "@/shared/utils/format-wei";
+import { formatUsdMicrosString } from "@/shared/utils/format-usd-micros";
 
 interface StreamSessionRow {
   id: string;

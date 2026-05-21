@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { sessions, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { createSession, revokeSession, authenticateRequest, hasScope } from "@/lib/auth";
+import { getAdminUser } from "@/domains/identity-access/runtime/admin-auth";
+import {
+  issueAdminToken,
+  listAdminTokens,
+  revokeAdminToken,
+} from "@/domains/identity-access/runtime/admin-tokens";
 
 /**
  * POST /api/v1/tokens -- Issue a new bearer token (scoped to an end user or admin)
@@ -39,8 +39,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { sessionId, token } = await createSession({
-    userId: admin.id,
+  const { sessionId, token } = await issueAdminToken({
+    adminUserId: admin.id,
     endUserId,
     label,
     scopes,
@@ -66,16 +66,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const allSessions = await db
-    .select({
-      id: sessions.id,
-      label: sessions.label,
-      endUserId: sessions.endUserId,
-      scopes: sessions.scopes,
-      expiresAt: sessions.expiresAt,
-      createdAt: sessions.createdAt,
-    })
-    .from(sessions);
+  const allSessions = await listAdminTokens();
 
   return NextResponse.json({ tokens: allSessions });
 }
@@ -97,33 +88,6 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  await revokeSession(body.sessionId);
+  await revokeAdminToken(body.sessionId);
   return NextResponse.json({ message: "Token revoked" });
-}
-
-async function getAdminUser(request: NextRequest) {
-  const oauthSession = await getServerSession(authOptions);
-  if (oauthSession?.user) {
-    const sessionUser = oauthSession.user as Record<string, unknown>;
-    if (sessionUser.id) {
-      const rows = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, sessionUser.id as string))
-        .limit(1);
-      return rows[0];
-    }
-  }
-
-  const auth = await authenticateRequest(request);
-  if (auth && hasScope(auth.scopes, "admin") && auth.userId) {
-    const rows = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, auth.userId))
-      .limit(1);
-    return rows[0];
-  }
-
-  return null;
 }
