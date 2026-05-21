@@ -1,0 +1,46 @@
+# Devcontainer compose: Postgres + Next.js dev server.
+# The signer-dmz runs on the host via docker/signer-dmz/docker-compose.yml.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - node_modules:/workspace/node_modules
+    command: sleep infinity
+    environment:
+      DATABASE_URL: postgresql://pymthouse:pymthouse@db:5432/pymthouse?sslmode=disable
+      NEXTAUTH_URL: http://localhost:3001
+      OIDC_ISSUER: http://localhost:3001/api/v1/oidc
+      # Signer runs on host; use host.docker.internal to reach it
+      SIGNER_INTERNAL_URL: http://host.docker.internal:8080
+      SIGNER_CLI_URL: http://host.docker.internal:8080/__signer_cli
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pymthouse
+      POSTGRES_USER: pymthouse
+      POSTGRES_PASSWORD: pymthouse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pymthouse -d pymthouse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+volumes:
+  node_modules:
+  postgres_data:

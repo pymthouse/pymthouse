@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.vscode
+.next
+node_modules
+data
+coverage
+test-results
+dist
+build
+.runlogs
+.livepeer
+.env
+.env.local
+.env.*.local
+*.log
