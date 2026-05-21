@@ -34,13 +34,20 @@
     "next-auth": "^4.24.0",
     "oidc-provider": "^9.7.0",
     "postgres": "^3.4.5",
-    "protobufjs": "^7.5.6",
+    "protobufjs": "^7.5.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "uuid": "^14.0.0"
   },
   "overrides": {
-    "esbuild": "^0.25.12"
+    "esbuild": "^0.25.12",
+    "ethers": {
+      "ws": "^8.20.1"
+    },
+    "postcss": "^8.5.10",
+    "viem": {
+      "ws": "^8.20.1"
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
