@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep from "./steps/TestingStep";
+import PlansTab from "./PlansTab";
 import {
   defaultAppFormData,
   type AppFormData,
@@ -28,6 +29,8 @@ interface Props {
   onReviewSubmitted?: () => void;
   /** Called after reverting from submitted to draft (header badge, etc.). */
   onRevertedToDraft?: () => void;
+  /** Initial tab to display (e.g. "plans" from URL query param). */
+  initialTab?: string;
 }
 
 function mergeFormData(
@@ -55,9 +58,18 @@ const INTEGRATION_TABS = [
   { id: "profile", label: "App profile" },
   { id: "auth", label: "Auth & scopes" },
   { id: "credentials", label: "Credentials & URLs" },
+  { id: "plans", label: "Billing Plans" },
 ] as const;
 
 type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
+
+function resolveInitialTab(tab: string | undefined): IntegrationSection {
+  const validTabs = INTEGRATION_TABS.map((t) => t.id);
+  if (tab && validTabs.includes(tab as IntegrationSection)) {
+    return tab as IntegrationSection;
+  }
+  return "profile";
+}
 
 export default function AppSettingsScreen({
   appId,
@@ -71,6 +83,7 @@ export default function AppSettingsScreen({
   canSubmitForReview = false,
   onReviewSubmitted,
   onRevertedToDraft,
+  initialTab,
 }: Props) {
   const router = useRouter();
   const [formData, setFormData] = useState<AppFormData>(() =>
@@ -91,7 +104,7 @@ export default function AppSettingsScreen({
   const [deleting, setDeleting] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [integrationSection, setIntegrationSection] =
-    useState<IntegrationSection>("profile");
+    useState<IntegrationSection>(() => resolveInitialTab(initialTab));
   const tabRefs = useRef<Partial<Record<IntegrationSection, HTMLButtonElement | null>>>({});
 
   const selectIntegrationSection = useCallback((section: IntegrationSection) => {
@@ -504,9 +517,6 @@ export default function AppSettingsScreen({
             data={formData}
             onChange={updateFormData}
             readOnly={!canEdit}
-            appId={appId}
-            domains={domains}
-            onDomainsChange={setDomains}
           />
         </section>
       )}
@@ -528,6 +538,11 @@ export default function AppSettingsScreen({
               hasSecret={appState.hasSecret}
               backendHelper={appState.backendHelper}
               backendDeviceHelper={formData.backendDeviceHelper}
+              initiateLoginUri={formData.initiateLoginUri}
+              deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
+              domains={domains}
+              onChange={updateFormData}
+              onDomainsChange={setDomains}
               onSecretGenerated={() => {
                 setAppState((s) => ({ ...s, hasSecret: true }));
                 updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
@@ -553,7 +568,18 @@ export default function AppSettingsScreen({
         </div>
       )}
 
-      {/* Save */}
+      {integrationSection === "plans" && (
+        <div
+          id="panel-plans"
+          role="tabpanel"
+          aria-labelledby="tab-plans"
+        >
+          <PlansTab appId={appId} canEdit={canEdit} />
+        </div>
+      )}
+
+      {/* Save - only shown for non-plans tabs */}
+      {integrationSection !== "plans" && (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 max-w-sm">
           Redirect URIs and domains update immediately. Use{" "}
@@ -569,6 +595,7 @@ export default function AppSettingsScreen({
           {saving ? "Saving…" : "Save changes"}
         </button>
       </div>
+      )}
     </div>
   );
 }

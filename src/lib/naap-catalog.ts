@@ -9,11 +9,28 @@
  * the negotiated ticket facts from the request body (python-gateway + signer).
  */
 
-const NAAP_API_BASE_URL =
-  process.env.NAAP_API_BASE_URL?.replace(/\/+$/, "") ??
-  "https://naap-api.cloudspe.com/v1";
+function resolveNaapApiBaseUrl(): string {
+  const explicit = process.env.NAAP_API_BASE_URL?.trim().replace(/\/+$/, "");
+  if (explicit) {
+    return explicit;
+  }
+  const nextAuth = process.env.NEXTAUTH_URL?.trim().replace(/\/+$/, "");
+  if (
+    process.env.NODE_ENV === "development" &&
+    nextAuth &&
+    /localhost|127\.0\.0\.1/i.test(nextAuth)
+  ) {
+    return "http://localhost:3000/api/v1";
+  }
+  return "https://naap-api.cloudspe.com/v1";
+}
 
-const REQUEST_TIMEOUT_MS = 3000;
+const NAAP_API_BASE_URL = resolveNaapApiBaseUrl();
+
+const REQUEST_TIMEOUT_MS = Math.max(
+  3000,
+  Number.parseInt(process.env.NAAP_CATALOG_REQUEST_TIMEOUT_MS ?? "15000", 10) || 15_000,
+);
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -112,16 +129,39 @@ function parsePricingRow(raw: unknown): PricingRow | null {
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
+function mapNaapFetchError(path: string, err: unknown): Error {
+  if (err instanceof Error) {
+    if (err.name === "TimeoutError" || err.message.includes("aborted due to timeout")) {
+      return new Error(
+        `NaaP API ${path} timed out after ${REQUEST_TIMEOUT_MS}ms (set NAAP_API_BASE_URL or NAAP_CATALOG_REQUEST_TIMEOUT_MS)`,
+      );
+    }
+    return new Error(`NaaP API ${path} failed: ${err.message}`);
+  }
+  return new Error(`NaaP API ${path} failed`);
+}
+
 async function naapGet(path: string): Promise<unknown> {
   const url = `${NAAP_API_BASE_URL}${path}`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw new Error(`NaaP API ${path} returned ${res.status}`);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        throw new Error(`NaaP API ${path} returned ${res.status}`);
+      }
+      return res.json();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
   }
-  return res.json();
+  throw mapNaapFetchError(path, lastErr);
 }
 
 async function fetchDashboardPricingFromNetwork(): Promise<PricingRow[]> {

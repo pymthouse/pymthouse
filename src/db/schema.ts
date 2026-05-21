@@ -384,10 +384,6 @@ export const plans = pgTable(
     overageRateWei: bigint("overage_rate_wei", { mode: "bigint" }),
     /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
     includedUsdMicros: text("included_usd_micros"),
-    /** Default positive upcharge for all retail usage, in basis points. */
-    generalUpchargePercentBps: integer("general_upcharge_percent_bps"),
-    /** Optional fallback upcharge for free/no-credit users; inherits generalUpchargePercentBps if unset. */
-    payPerUseUpchargePercentBps: integer("pay_per_use_upcharge_percent_bps"),
     /** Billing period length; currently only "monthly" is supported. */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
@@ -431,7 +427,7 @@ export const planCapabilityBundles = pgTable(
     modelId: text("model_id").notNull(),
     slaTargetP95Ms: integer("sla_target_p95_ms"),
     maxPricePerUnit: text("max_price_per_unit"),
-    /** Pipeline/model-specific positive upcharge override, in basis points. Overrides plan generalUpchargePercentBps. */
+    /** Pipeline/model-specific positive upcharge, in basis points. */
     upchargePercentBps: integer("upcharge_percent_bps"),
     createdAt: text("created_at")
       .notNull()
@@ -622,7 +618,7 @@ export const usageBillingEvents = pgTable(
     ownerChargeUsdMicros: text("owner_charge_usd_micros").notNull(),
     /** Upcharge applied, in basis points. */
     upchargePercentBps: integer("upcharge_percent_bps").notNull().default(0),
-    /** pipeline_model | general | pay_per_use | subscription_included | unpriced */
+    /** pipeline_model | subscription_included | unpriced */
     pricingRuleSource: text("pricing_rule_source").notNull().default("unpriced"),
     endUserBillableUsdMicros: text("end_user_billable_usd_micros").notNull().default("0"),
     // --- ETH/USD oracle snapshot used at signing time ---

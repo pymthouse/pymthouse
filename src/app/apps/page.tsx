@@ -372,7 +372,7 @@ export default function AppsPage() {
                       Usage
                     </Link>
                     <Link
-                      href={`/apps/${app.id}/plans`}
+                      href={`/apps/${app.id}?tab=plans`}
                       className="shrink-0 text-zinc-400 underline decoration-zinc-600/45 decoration-1 underline-offset-[3px] hover:text-emerald-400 hover:decoration-emerald-500/35"
                     >
                       Plans

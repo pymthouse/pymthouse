@@ -33,7 +33,7 @@ export interface BillingContext {
   planId: string | null;
   subscriptionId: string | null;
   upchargePercentBps: number;
-  pricingRuleSource: "pipeline_model" | "general" | "pay_per_use" | "subscription_included" | "unpriced";
+  pricingRuleSource: "pipeline_model" | "subscription_included" | "unpriced";
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -150,8 +150,7 @@ export function buildSignedTicketConstraintHash(params: {
 /**
  * Resolve the upcharge in basis points to apply to this usage event.
  *
- * Priority: pipeline/model bundle override → plan general upcharge →
- *           plan payPerUse fallback → 0.
+ * Uses pipeline/model bundle upchargePercentBps when present, otherwise 0.
  *
  * Negative values are rejected at write time and should never appear here.
  */
@@ -161,27 +160,14 @@ export function resolveUpcharge(params: {
   pipeline: string;
   modelId: string;
 }): { bps: number; source: BillingContext["pricingRuleSource"] } {
-  const { plan, bundles, pipeline, modelId } = params;
+  const { bundles, pipeline, modelId } = params;
 
-  // 1. Exact pipeline + modelId bundle override, then pipeline wildcard ("*")
+  // Exact pipeline + modelId bundle override, then pipeline wildcard ("*")
   const bundle =
     bundles.find((b) => b.pipeline === pipeline && b.modelId === modelId) ??
     bundles.find((b) => b.pipeline === pipeline && b.modelId === "*");
   if (bundle?.upchargePercentBps != null && bundle.upchargePercentBps >= 0) {
     return { bps: bundle.upchargePercentBps, source: "pipeline_model" };
-  }
-
-  // 2. Plan general upcharge
-  if (plan?.generalUpchargePercentBps != null && plan.generalUpchargePercentBps >= 0) {
-    return { bps: plan.generalUpchargePercentBps, source: "general" };
-  }
-
-  // 3. Pay-per-use fallback (for free / no-credit plans)
-  if (
-    plan?.payPerUseUpchargePercentBps != null &&
-    plan.payPerUseUpchargePercentBps >= 0
-  ) {
-    return { bps: plan.payPerUseUpchargePercentBps, source: "pay_per_use" };
   }
 
   return { bps: 0, source: "unpriced" };

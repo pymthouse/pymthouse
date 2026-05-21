@@ -371,12 +371,6 @@ export async function POST(
     return NextResponse.json({ error: billing.error }, { status: 400 });
   }
 
-  // Parse new USD/upcharge fields
-  const generalUpcharge = parseOptionalNonNegativeBps(body.generalUpchargePercentBps, "generalUpchargePercentBps");
-  if (!generalUpcharge.ok) return NextResponse.json({ error: generalUpcharge.error }, { status: 400 });
-  const payPerUseUpcharge = parseOptionalNonNegativeBps(body.payPerUseUpchargePercentBps, "payPerUseUpchargePercentBps");
-  if (!payPerUseUpcharge.ok) return NextResponse.json({ error: payPerUseUpcharge.error }, { status: 400 });
-
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
   if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
@@ -408,8 +402,6 @@ export async function POST(
         overageRateWei:
           billing.overageRateWei !== null ? BigInt(billing.overageRateWei) : null,
         includedUsdMicros,
-        generalUpchargePercentBps: generalUpcharge.value,
-        payPerUseUpchargePercentBps: payPerUseUpcharge.value,
         billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
         discoveryProfileId,
         isNetworkDefault: false,
@@ -586,12 +578,6 @@ export async function PUT(
       return { tag: "validation" as const, error: billing.error };
     }
 
-    // Parse new USD/upcharge fields for PUT
-    const generalUpchargePut = parseOptionalNonNegativeBps(body.generalUpchargePercentBps, "generalUpchargePercentBps");
-    if (!generalUpchargePut.ok) return { tag: "validation" as const, error: generalUpchargePut.error };
-    const payPerUseUpchargePut = parseOptionalNonNegativeBps(body.payPerUseUpchargePercentBps, "payPerUseUpchargePercentBps");
-    if (!payPerUseUpchargePut.ok) return { tag: "validation" as const, error: payPerUseUpchargePut.error };
-
     const rawIncludedUsdPut = body.includedUsdMicros;
     let includedUsdMicrosPut: string | null | undefined = undefined; // undefined = don't change
     if (rawIncludedUsdPut !== undefined) {
@@ -618,12 +604,6 @@ export async function PUT(
           billing.includedUnits !== null ? BigInt(billing.includedUnits) : null,
         overageRateWei:
           billing.overageRateWei !== null ? BigInt(billing.overageRateWei) : null,
-        ...(body.generalUpchargePercentBps !== undefined
-          ? { generalUpchargePercentBps: generalUpchargePut.value }
-          : {}),
-        ...(body.payPerUseUpchargePercentBps !== undefined
-          ? { payPerUseUpchargePercentBps: payPerUseUpchargePut.value }
-          : {}),
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
         ...(body.billingCycle !== undefined ? { billingCycle: String(body.billingCycle) } : {}),
         ...(discoveryProfileIdPut !== undefined

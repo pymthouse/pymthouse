@@ -137,6 +137,20 @@ export function toAppManifestResponse(resolved: AppManifestResolved): AppManifes
 }
 
 /**
+ * When the pipeline catalog cannot be loaded, return stored exclusions with empty
+ * `capabilities` (integrator fail-open). Dashboard UI uses `/pipeline-catalog` separately.
+ */
+export function buildManifestWhenCatalogUnavailable(
+  excluded: DiscoveryAllowlistDocument | null,
+): AppManifestResponse {
+  const excludedCapabilities = [...(excluded?.capabilities ?? [])].sort(sortCap);
+  return toAppManifestResponse({
+    capabilities: [],
+    excludedCapabilities,
+  });
+}
+
+/**
  * Resolve network-default exclusions against the live catalog into the explicit
  * capability list NaaP intersects on (full catalog minus exclusions).
  */

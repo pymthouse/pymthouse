@@ -247,7 +247,6 @@ run("plans POST validates subscription billing fields before creating a plan", a
     includedUnits: "1000000",
     overageRateWei: "25",
     includedUsdMicros: "20000000",
-    generalUpchargePercentBps: 2000,
   });
   assert.equal(valid.status, 201);
   assert.equal(typeof valid.body.id, "string");
@@ -263,7 +262,6 @@ run("plans POST validates subscription billing fields before creating a plan", a
   assert.equal(planRows[0].includedUnits?.toString(), "1000000");
   assert.equal(planRows[0].overageRateWei?.toString(), "25");
   assert.equal(planRows[0].includedUsdMicros, "20000000");
-  assert.equal(planRows[0].generalUpchargePercentBps, 2000);
 });
 
 run("plans POST validates capabilities and discovery policy payloads", async (t) => {

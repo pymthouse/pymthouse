@@ -231,8 +231,6 @@ export async function GET(
           includedUnits: planRow.includedUnits != null ? planRow.includedUnits.toString() : null,
           overageRateWei: planRow.overageRateWei != null ? planRow.overageRateWei.toString() : null,
           includedUsdMicros: planRow.includedUsdMicros ?? null,
-          generalUpchargePercentBps: planRow.generalUpchargePercentBps ?? null,
-          payPerUseUpchargePercentBps: planRow.payPerUseUpchargePercentBps ?? null,
           billingCycle: planRow.billingCycle,
           status: planRow.status,
         }

@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { authenticateAppClient } from "@/lib/auth";
+import { publishCachedManifestPolicy } from "@/lib/app-manifest-cache";
+import { buildAppManifestForApp } from "@/lib/app-manifest";
 import {
   canEditProviderApp,
   getAuthorizedProviderApp,
@@ -11,14 +13,11 @@ import {
 import {
   DiscoveryAllowlistUpdateBodySchema,
   normalizeDiscoveryAllowlistDoc,
-  resolveDiscoveryCapabilitiesForExclusions,
-  toAppManifestResponse,
 } from "@/lib/discovery-allowlist";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
   findCustomPlansBlockingNewExclusions,
   getOrCreateNetworkDefaultPlan,
-  selectNetworkDefaultPlan,
 } from "@/lib/network-default-plan";
 
 async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
@@ -29,25 +28,6 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
 
   const auth = await getAuthorizedProviderApp(clientId);
   return auth?.app ?? null;
-}
-
-async function buildAppManifestJson(appInternalId: string) {
-  const row =
-    (await selectNetworkDefaultPlan(appInternalId, db)) ??
-    (await getOrCreateNetworkDefaultPlan(appInternalId, db));
-  const rawExcluded = row.discoveryExcludedCapabilities ?? null;
-  const excludedDoc = normalizeDiscoveryAllowlistDoc(rawExcluded);
-
-  let catalog;
-  try {
-    catalog = await fetchPipelineCatalog();
-  } catch {
-    return null;
-  }
-
-  const lite = catalog.map((e) => ({ id: e.id, models: e.models }));
-  const resolved = resolveDiscoveryCapabilitiesForExclusions(lite, excludedDoc);
-  return toAppManifestResponse(resolved);
 }
 
 /**
@@ -65,14 +45,8 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await buildAppManifestJson(app.id);
-  if (body === null) {
-    return NextResponse.json(
-      { error: "Pipeline catalog unavailable" },
-      { status: 503 },
-    );
-  }
-
+  const body = await buildAppManifestForApp(app.id);
+  publishCachedManifestPolicy(clientId, body, "manifest_get");
   return NextResponse.json(body);
 }
 
@@ -105,8 +79,9 @@ export async function PUT(
   }
 
   const networkPlan = await getOrCreateNetworkDefaultPlan(auth.app.id, db);
+  const excludedCapabilities = parsed.data.excludedCapabilities;
   const newExcludedDoc = normalizeDiscoveryAllowlistDoc({
-    capabilities: parsed.data.excludedCapabilities,
+    capabilities: excludedCapabilities,
   });
 
   let catalogLite;
@@ -143,18 +118,12 @@ export async function PUT(
     .set({
       updatedAt: now,
       discoveryExcludedCapabilities: {
-        capabilities: parsed.data.excludedCapabilities,
+        capabilities: excludedCapabilities,
       },
     })
     .where(eq(plans.id, networkPlan.id));
 
-  const responseBody = await buildAppManifestJson(auth.app.id);
-  if (responseBody === null) {
-    return NextResponse.json(
-      { error: "Pipeline catalog unavailable" },
-      { status: 503 },
-    );
-  }
-
+  const responseBody = await buildAppManifestForApp(auth.app.id);
+  publishCachedManifestPolicy(clientId, responseBody, "manifest_put");
   return NextResponse.json(responseBody);
 }

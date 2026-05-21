@@ -272,6 +272,15 @@ export async function handleGatewayTokenExchange(
     expiresInDays: 90,
   });
 
+  try {
+    const { warmAppManifestCacheForPublicClient } = await import(
+      "@/lib/app-manifest-cache"
+    );
+    await warmAppManifestCacheForPublicClient(publicClientId, "token_mint");
+  } catch (err) {
+    console.warn("[oidc] manifest cache warm failed after gateway token exchange:", err);
+  }
+
   const correlationId = deps.createCorrelationId();
   await deps.writeAuditLog({
     clientId: developerAppId,

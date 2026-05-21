@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppSettingsScreen from "@/components/apps/AppSettingsScreen";
 import type { AppFormData, AppState } from "@/components/apps/AppWizard";
@@ -18,14 +18,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 export default function AppDetailPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-
-  useEffect(() => {
-    if (searchParams.get("tab") === "network-discovery") {
-      router.replace(`/apps/${id}/plans#network-price`);
-    }
-  }, [id, pathname, router, searchParams]);
+  const initialTab = searchParams.get("tab") ?? undefined;
 
   const [loading, setLoading] = useState(true);
   const [appData, setAppData] = useState<{
@@ -40,9 +33,6 @@ export default function AppDetailPage() {
   } | null>(null);
 
   useEffect(() => {
-    if (searchParams.get("tab") === "network-discovery") {
-      return;
-    }
     fetch(`/api/v1/apps/${id}`)
       .then((r) => {
         if (!r.ok) return null;
@@ -92,7 +82,7 @@ export default function AppDetailPage() {
       })
       .catch(() => setAppData(null))
       .finally(() => setLoading(false));
-  }, [id, searchParams]);
+  }, [id]);
 
   const handleReviewSubmitted = useCallback(() => {
     setAppData((prev) =>
@@ -153,8 +143,7 @@ export default function AppDetailPage() {
           </span>
         </div>
         <p className="text-sm text-zinc-500 mt-1">
-          Edit integration settings, credentials, and run OIDC tests. Network discovery and pricing
-          live on the Plans page.
+          Edit integration settings, credentials, network discovery, and pricing.
         </p>
       </div>
 
@@ -172,6 +161,7 @@ export default function AppDetailPage() {
         canSubmitForReview={appData.canSubmitForReview}
         onReviewSubmitted={handleReviewSubmitted}
         onRevertedToDraft={handleRevertedToDraft}
+        initialTab={initialTab}
       />
     </DashboardLayout>
   );

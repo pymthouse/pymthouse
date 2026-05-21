@@ -28,7 +28,7 @@ export default function AppSectionBreadcrumb({ appId, appName }: Props) {
         ·
       </span>
       <Link
-        href={`/apps/${appId}/plans#network-price`}
+        href={`/apps/${appId}?tab=plans`}
         className="hover:text-zinc-300 transition-colors"
       >
         Network discovery

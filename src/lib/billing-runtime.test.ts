@@ -238,8 +238,6 @@ const basePlan = {
   includedUnits: null,
   overageRateWei: null,
   includedUsdMicros: null,
-  generalUpchargePercentBps: 2000, // 20%
-  payPerUseUpchargePercentBps: 1000, // 10%
   billingCycle: "monthly",
   discoveryProfileId: null,
   isNetworkDefault: false,
@@ -260,7 +258,7 @@ const baseBundle = {
   createdAt: "",
 } as const;
 
-test("resolveUpcharge: pipeline/model bundle wins over general", () => {
+test("resolveUpcharge: pipeline/model bundle upcharge applies", () => {
   const result = resolveUpcharge({
     plan: basePlan,
     bundles: [baseBundle],
@@ -296,27 +294,15 @@ test("resolveUpcharge: exact bundle wins over pipeline wildcard", () => {
   assert.equal(result.source, "pipeline_model");
 });
 
-test("resolveUpcharge: general upcharge wins when no bundle matches", () => {
+test("resolveUpcharge: returns 0/unpriced when no bundle matches", () => {
   const result = resolveUpcharge({
     plan: basePlan,
     bundles: [],
     pipeline: "text-to-image",
     modelId: "stabilityai/sdxl",
   });
-  assert.equal(result.bps, 2000);
-  assert.equal(result.source, "general");
-});
-
-test("resolveUpcharge: pay-per-use fallback when no general is set", () => {
-  const planNoGeneral = { ...basePlan, generalUpchargePercentBps: null };
-  const result = resolveUpcharge({
-    plan: planNoGeneral,
-    bundles: [],
-    pipeline: "text-to-image",
-    modelId: "stabilityai/sdxl",
-  });
-  assert.equal(result.bps, 1000);
-  assert.equal(result.source, "pay_per_use");
+  assert.equal(result.bps, 0);
+  assert.equal(result.source, "unpriced");
 });
 
 test("resolveUpcharge: returns 0/unpriced when no plan", () => {
@@ -337,6 +323,6 @@ test("resolveUpcharge: non-matching bundle does not apply", () => {
     pipeline: "text-to-image",
     modelId: "stabilityai/sdxl",
   });
-  assert.equal(result.bps, 2000); // falls back to general
-  assert.equal(result.source, "general");
+  assert.equal(result.bps, 0);
+  assert.equal(result.source, "unpriced");
 });

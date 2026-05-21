@@ -18,6 +18,8 @@ interface PipelineModelPickerProps {
   blockedConcreteKeys?: ReadonlySet<string>;
   /** `title` on blocked rows */
   blockedSelectionTitle?: string;
+  /** When false, selected items are not shown as chips (e.g. shown in a separate rules list). */
+  showSelectedChips?: boolean;
 }
 
 type PipelineCheckState = "none" | "some" | "all-individual" | "wildcard";
@@ -29,6 +31,7 @@ export default function PipelineModelPicker({
   disabled = false,
   blockedConcreteKeys,
   blockedSelectionTitle = "Not available for custom plans under current Network Price exclusions.",
+  showSelectedChips = true,
 }: PipelineModelPickerProps) {
   const inputId = useId();
   const listboxId = `${inputId}-listbox`;
@@ -142,7 +145,7 @@ export default function PipelineModelPicker({
 
   return (
     <div ref={containerRef} className="relative w-full">
-      {values.length > 0 && (
+      {showSelectedChips && values.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {values.map((v) => (
             <span

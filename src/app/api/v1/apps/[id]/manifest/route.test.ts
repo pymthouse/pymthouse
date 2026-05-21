@@ -172,7 +172,7 @@ run("manifest GET and PUT", async (t) => {
     assert.deepEqual(body.capabilities, [{ pipeline: "pipe-b", modelId: "only" }]);
   });
 
-  await t.test("GET returns 503 when catalog fetch throws", async (t) => {
+  await t.test("GET returns degraded manifest when catalog fetch throws", async (t) => {
     catalogThrows = true;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
     authorizedApp = app;
@@ -197,9 +197,17 @@ run("manifest GET and PUT", async (t) => {
       new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
       { params: Promise.resolve({ id: app.clientId }) },
     );
-    assert.equal(res.status, 503);
-    const body = (await res.json()) as { error?: string };
-    assert.equal(body.error, "Pipeline catalog unavailable");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      capabilities: unknown[];
+      excludedCapabilities: Array<{ pipeline: string; modelId: string }>;
+      manifestVersion: string;
+    };
+    assert.deepEqual(body.capabilities, []);
+    assert.deepEqual(body.excludedCapabilities, [
+      { pipeline: "pipe-a", modelId: "m1" },
+    ]);
+    assert.ok(body.manifestVersion);
   });
 
   await t.test("PUT persists exclusions on network default plan row", async (t) => {

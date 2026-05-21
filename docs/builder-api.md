@@ -369,14 +369,23 @@ The oracle source and observation timestamp are stored with each transaction so 
 
 Returns `{ ethUsd: { priceUsd, source, observedAt, isFallback } }`.
 
+### Manifest enforcement on signing (hot path)
+
+`POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` enforce the app **network capability manifest** before forwarding to go-livepeer. Enforcement uses a **process-local in-memory cache** keyed by the token’s public `client_id` (`app_…`); the signing path does **not** query the database for manifest rows.
+
+1. **Pipeline required:** The request must include a resolvable `pipeline` (direct body fields, gateway metadata, or derivable `capabilities`). Requests without a pipeline are rejected with **`403`** and `error: "capability_not_allowed"`.
+2. **Model optional:** When `modelId` is present, the exact `(pipeline, modelId)` pair must appear in the cached manifest `capabilities`. When `modelId` is omitted, the pipeline must have at least one allowed model in the manifest.
+3. **Cache warm / miss:** The cache is populated off the hot path by `GET`/`PUT …/manifest`, programmatic user-token mint (`sign:job`), and gateway token exchange. If the cache has no entry for the app, signing returns **`403`** with `error: "manifest_cache_unavailable"` (fail-closed).
+4. **Not enforced on:** `POST /api/signer/sign-orchestrator-info` and `GET /api/signer/discover-orchestrators` (no pipeline/model contract on those routes today).
+
 ### Trusted pipeline/model attribution
 
-Billable **`usage_billing_events`** rows are created when the signing request resolves to a pipeline/model constraint. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
+Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
-1. **Constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses).
+1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Manifest enforcement may allow pipeline-only requests; billing still requires both fields for **`usage_billing_events`**.
 2. **No NaaP fetch on signing:** `POST /api/signer/generate-live-payment` does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** still proxies NaaP for UIs; it uses **`fetchDashboardPricing()`** without an in-process pricing cache.
-3. **Ledger insert:** When a constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
-4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If no pipeline/model can be resolved, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Older rows may still show legacy statuses such as **`pricing_unavailable`**. Signing is **not** blocked by attribution gaps — the gateway still receives the signer response.
+3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
+4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing may still succeed when the manifest allows the pipeline.
 
 **Usage API:** `groupBy=pipeline_model` aggregates from **`usage_billing_events`**, so breakdown rows appear for new traffic that includes `pipeline` + `modelId` (or derivable capabilities) on each payment.
 
@@ -436,8 +445,6 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 | Field | Description |
 | --- | --- |
 | `includedUsdMicros` | Subscription usage allowance in USD micros (e.g. `10000000` = $10.00). |
-| `generalUpchargePercentBps` | Default positive upcharge for all retail usage, basis points. |
-| `payPerUseUpchargePercentBps` | Fallback upcharge for free/no-credit users; inherits `generalUpchargePercentBps` if unset. |
 | `billingCycle` | `"monthly"` (default). |
 | `discoveryProfileId` | Optional FK to legacy **`discovery_profiles`** rows. Omitted from billing summary payloads today; may still appear on **`GET .../plans`**. Integrator network capability limits use **`GET .../manifest`**. |
 
@@ -445,7 +452,7 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 
 | Field | Description |
 | --- | --- |
-| `upchargePercentBps` | Pipeline/model-specific upcharge override, basis points. Takes precedence over `generalUpchargePercentBps` for matching usage. |
+| `upchargePercentBps` | Pipeline/model-specific upcharge, basis points. |
 
 ### Authentication (billing summary)
 

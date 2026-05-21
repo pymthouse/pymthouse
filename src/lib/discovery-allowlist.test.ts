@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildManifestWhenCatalogUnavailable,
   computeManifestRevision,
   excludedDocumentFromPickerValues,
   expandDocumentToConcreteKeys,
@@ -105,3 +106,12 @@ test("toAppManifestResponse adds manifestVersion", () => {
   const body = toAppManifestResponse(resolved);
   assert.equal(body.manifestVersion, computeManifestRevision(resolved));
 });
+
+test("buildManifestWhenCatalogUnavailable preserves exclusions", () => {
+  const body = buildManifestWhenCatalogUnavailable({
+    capabilities: [{ pipeline: "pipe-a", modelId: "m1" }],
+  });
+  assert.deepEqual(body.capabilities, []);
+  assert.deepEqual(body.excludedCapabilities, [{ pipeline: "pipe-a", modelId: "m1" }]);
+});
+

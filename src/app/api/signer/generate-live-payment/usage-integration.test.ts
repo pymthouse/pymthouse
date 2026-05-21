@@ -23,6 +23,7 @@ import {
   createJobTokenForApp,
   ensureRunningSigner,
   seedDeveloperAppWithClient,
+  seedManifestCacheForTestClient,
 } from "@/test-utils/fixtures";
 import { mockSignerFetch } from "@/test-utils/mock-signer";
 import { buildOrchestratorInfoBase64 } from "@/test-utils/orchestrator-info";
@@ -58,6 +59,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
+  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -286,6 +288,7 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
+  seedManifestCacheForTestClient(app.clientId);
 
   const endUserId = randomUUID();
   await db.insert(endUsers).values({
@@ -319,6 +322,7 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
       manifestID: manifestId,
       preloadSeconds: 3,
       Orchestrator: orch,
+      pipeline: "byoc",
     },
     auth!,
   );
@@ -351,6 +355,7 @@ run("successful zero-fee signer payment still increments usage count", async (t)
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
+  seedManifestCacheForTestClient(app.clientId);
 
   const token = await createJobTokenForApp({
     userId: app.userId,
@@ -370,6 +375,7 @@ run("successful zero-fee signer payment still increments usage count", async (t)
       RequestID: requestId,
       manifestID: `job-${randomUUID()}`,
       preloadSeconds: 3,
+      pipeline: "byoc",
     },
     auth!,
   );
@@ -396,6 +402,7 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
+  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -415,8 +422,6 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
     priceAmount: "0",
     priceCurrency: "USD",
     status: "active",
-    generalUpchargePercentBps: 2000,
-    payPerUseUpchargePercentBps: 1000,
     createdAt: now,
     updatedAt: now,
   });
@@ -507,6 +512,7 @@ run("generate-live-payment writes usage_billing_events from negotiated ticket wi
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
+  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -567,12 +573,13 @@ run("generate-live-payment writes usage_billing_events from negotiated ticket wi
   assert.equal(billingRows[0]!.signedPriceWeiPerUnit, PRICE_PER_UNIT.toString());
 });
 
-run("generate-live-payment records missing_constraint when pipeline/model absent", async (t) => {
+run("generate-live-payment records missing_constraint when modelId absent", async (t) => {
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
+  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -595,10 +602,11 @@ run("generate-live-payment records missing_constraint when pipeline/model absent
   const gatewayRequestId = `missing-constraint-${randomUUID()}`;
   const result = await proxyGenerateLivePayment(
     {
-      ManifestID: "no-pipeline-manifest",
+      ManifestID: "no-model-manifest",
       RequestID: gatewayRequestId,
       InPixels: PER_REQUEST_PIXELS,
       Orchestrator: orch,
+      pipeline: PIPELINE,
       attributionSource: "pymthouse_gateway",
       gatewayRequestId,
       paymentMetadataVersion: PAYMENT_METADATA_VERSION,
