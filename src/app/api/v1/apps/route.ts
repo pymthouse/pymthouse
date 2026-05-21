@@ -156,19 +156,28 @@ export async function POST(request: NextRequest) {
   const appId = clientId;
   const now = new Date().toISOString();
 
-  await db.insert(developerApps).values({
-    id: appId,
-    ownerId: userId,
-    oidcClientId: oidcRowId,
-    name: name.trim(),
-    developerName: body.developerName || null,
-    websiteUrl: body.websiteUrl || null,
-    status: "draft", // Apps start as draft and require admin approval
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  await getOrCreateNetworkDefaultPlan(appId, db);
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(developerApps).values({
+        id: appId,
+        ownerId: userId,
+        oidcClientId: oidcRowId,
+        name: name.trim(),
+        developerName: body.developerName || null,
+        websiteUrl: body.websiteUrl || null,
+        status: "draft", // Apps start as draft and require admin approval
+        createdAt: now,
+        updatedAt: now,
+      });
+      await getOrCreateNetworkDefaultPlan(appId, tx);
+    });
+  } catch (err) {
+    console.error("Failed to create app with network default plan:", err);
+    return NextResponse.json(
+      { error: "Failed to create app" },
+      { status: 500 },
+    );
+  }
 
   if (body.backendDeviceHelper === true) {
     await ensureM2mBackendClient({

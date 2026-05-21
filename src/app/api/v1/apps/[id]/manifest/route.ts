@@ -117,9 +117,7 @@ export async function PUT(
     .update(plans)
     .set({
       updatedAt: now,
-      discoveryExcludedCapabilities: {
-        capabilities: excludedCapabilities,
-      },
+      discoveryExcludedCapabilities: newExcludedDoc,
     })
     .where(eq(plans.id, networkPlan.id));
 

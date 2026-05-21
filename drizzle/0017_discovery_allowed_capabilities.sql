@@ -13,6 +13,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS "idx_plans_network_default_per_client"
 ALTER TABLE "plan_capability_bundles" DROP COLUMN IF EXISTS "sla_target_score";
 
 --> statement-breakpoint
+UPDATE "plans" p
+SET
+  "is_network_default" = true,
+  "updated_at" = to_char((now() AT TIME ZONE 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+WHERE p."name" = '__pymthouse_network_default__'
+  AND p."is_network_default" = false
+  AND NOT EXISTS (
+    SELECT 1 FROM "plans" p2
+    WHERE p2."client_id" = p."client_id" AND p2."is_network_default" = true
+  );
+
+--> statement-breakpoint
 INSERT INTO "plans" (
   "id",
   "client_id",
@@ -44,8 +56,4 @@ FROM "developer_apps" d
 WHERE NOT EXISTS (
   SELECT 1 FROM "plans" p
   WHERE p."client_id" = d."id" AND p."is_network_default" = true
-)
-AND NOT EXISTS (
-  SELECT 1 FROM "plans" p2
-  WHERE p2."client_id" = d."id" AND p2."name" = '__pymthouse_network_default__'
 );

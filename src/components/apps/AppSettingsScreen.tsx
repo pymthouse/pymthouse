@@ -1,7 +1,7 @@
 "use client";
 
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep from "./steps/TestingStep";
@@ -89,6 +89,8 @@ export default function AppSettingsScreen({
   initialTab,
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [formData, setFormData] = useState<AppFormData>(() =>
     mergeFormData(initialData, initialInitiateLoginUri ?? null, initialDeviceThirdPartyInitiateLogin),
   );
@@ -110,10 +112,33 @@ export default function AppSettingsScreen({
     useState<IntegrationSection>(() => resolveInitialTab(initialTab));
   const tabRefs = useRef<Partial<Record<IntegrationSection, HTMLButtonElement | null>>>({});
 
-  const selectIntegrationSection = useCallback((section: IntegrationSection) => {
-    setIntegrationSection(section);
-    requestAnimationFrame(() => tabRefs.current[section]?.focus());
-  }, []);
+  const selectIntegrationSection = useCallback(
+    (section: IntegrationSection, updateUrl = true) => {
+      setIntegrationSection(section);
+
+      if (updateUrl) {
+        const nextParams = new URLSearchParams(searchParams.toString());
+        if (section === "profile") {
+          nextParams.delete("tab");
+        } else {
+          nextParams.set("tab", section);
+        }
+        const query = nextParams.toString();
+        const nextUrl = query ? `${pathname}?${query}` : pathname;
+        router.replace(nextUrl, { scroll: false });
+      }
+
+      requestAnimationFrame(() => tabRefs.current[section]?.focus());
+    },
+    [pathname, router, searchParams],
+  );
+
+  useEffect(() => {
+    const resolvedTab = resolveInitialTab(initialTab);
+    setIntegrationSection((currentTab) =>
+      currentTab === resolvedTab ? currentTab : resolvedTab,
+    );
+  }, [initialTab]);
 
   const handleIntegrationTabKeyDown = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>, id: IntegrationSection) => {

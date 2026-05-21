@@ -24,15 +24,6 @@ export default function AppSectionBreadcrumb({ appId, appName }: Props) {
         /
       </span>
       <span className="text-zinc-200 font-medium">Plans</span>
-      <span className="text-zinc-600 mx-1.5" aria-hidden>
-        ·
-      </span>
-      <Link
-        href={`/apps/${appId}?tab=plans`}
-        className="hover:text-zinc-300 transition-colors"
-      >
-        Network discovery
-      </Link>
     </nav>
   );
 }

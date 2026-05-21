@@ -642,9 +642,10 @@ export default function TestingStep({
             </div>
           ) : backendDeviceHelper && !backendHelper ? (
             <p className="text-sm text-zinc-500 mt-4">
-              Enable <strong className="text-zinc-400">Backend device helper</strong> in Auth &amp; Scopes,
-              save, then return here to create a confidential <code className="font-mono text-zinc-400">m2m_</code> client
-              for Builder APIs and NaaP-side device approval.
+              <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
+              Save the app to provision the Backend device helper and create a confidential{" "}
+              <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
+              approval, then return here.
             </p>
           ) : (
             <p className="text-sm text-zinc-500 mt-4">

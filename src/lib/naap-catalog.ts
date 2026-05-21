@@ -20,7 +20,11 @@ function resolveNaapApiBaseUrl(): string {
     nextAuth &&
     /localhost|127\.0\.0\.1/i.test(nextAuth)
   ) {
-    return "http://localhost:3000/api/v1";
+    const u = new URL(nextAuth);
+    const port = u.port || (u.protocol === "https:" ? "443" : "3000");
+    const portSuffix =
+      port && port !== "443" && port !== "80" ? `:${port}` : "";
+    return `${u.protocol}//${u.hostname}${portSuffix}/api/v1`;
   }
   return "https://naap-api.cloudspe.com/v1";
 }

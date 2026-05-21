@@ -1325,6 +1325,9 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
         if (Array.isArray(cat) && cat.length > 0) {
           setCatalog(cat as PipelineCatalogEntry[]);
           setCatalogError(null);
+        } else if (Array.isArray(cat) && cat.length === 0) {
+          setCatalog([]);
+          setCatalogError("Pipeline catalog is empty");
         } else if (typeof body.error === "string") {
           setCatalogError(body.error);
         } else if (!ok) {
@@ -1336,6 +1339,14 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
 
   const deletePlan = async (planId: string) => {
     if (!canEdit) return;
+    const plan = plans.find((p) => p.id === planId);
+    if (
+      !confirm(
+        `Delete plan "${plan ? planDisplayName({ name: plan.name, isNetworkDefault: plan.isNetworkDefault === true }) : planId}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
     try {
       const res = await fetch(
         `/api/v1/apps/${appId}/plans?planId=${encodeURIComponent(planId)}`,
