@@ -1,29 +1,51 @@
 --> statement-breakpoint
-ALTER TABLE "developer_apps" ADD COLUMN IF NOT EXISTS "discovery_allowed_capabilities" jsonb;
+ALTER TABLE "plans" ADD COLUMN IF NOT EXISTS "is_network_default" boolean NOT NULL DEFAULT false;
 
 --> statement-breakpoint
-WITH caps AS (
-  SELECT DISTINCT pcb.client_id AS client_id, pcb.pipeline, pcb.model_id
-  FROM plan_capability_bundles pcb
-  INNER JOIN plans p ON p.id = pcb.plan_id AND p.client_id = pcb.client_id
-  WHERE p.status = 'active'
+ALTER TABLE "plans" ADD COLUMN IF NOT EXISTS "discovery_excluded_capabilities" jsonb;
+
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_plans_network_default_per_client"
+  ON "plans" ("client_id")
+  WHERE "is_network_default" = true;
+
+--> statement-breakpoint
+ALTER TABLE "plan_capability_bundles" DROP COLUMN IF EXISTS "sla_target_score";
+
+--> statement-breakpoint
+INSERT INTO "plans" (
+  "id",
+  "client_id",
+  "name",
+  "type",
+  "price_amount",
+  "price_currency",
+  "status",
+  "billing_cycle",
+  "is_network_default",
+  "discovery_excluded_capabilities",
+  "created_at",
+  "updated_at"
 )
-UPDATE developer_apps da
-SET discovery_allowed_capabilities = sub.doc
-FROM (
-  SELECT
-    caps.client_id,
-    jsonb_build_object(
-      'capabilities',
-      COALESCE(
-        jsonb_agg(
-          jsonb_build_object('pipeline', caps.pipeline, 'modelId', caps.model_id)
-          ORDER BY caps.pipeline, caps.model_id
-        ),
-        '[]'::jsonb
-      )
-    ) AS doc
-  FROM caps
-  GROUP BY caps.client_id
-) sub
-WHERE da.id = sub.client_id;
+SELECT
+  gen_random_uuid()::text,
+  d."id",
+  '__pymthouse_network_default__',
+  'free',
+  '0',
+  'USD',
+  'active',
+  'monthly',
+  true,
+  NULL,
+  to_char((now() AT TIME ZONE 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  to_char((now() AT TIME ZONE 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+FROM "developer_apps" d
+WHERE NOT EXISTS (
+  SELECT 1 FROM "plans" p
+  WHERE p."client_id" = d."id" AND p."is_network_default" = true
+)
+AND NOT EXISTS (
+  SELECT 1 FROM "plans" p2
+  WHERE p2."client_id" = d."id" AND p2."name" = '__pymthouse_network_default__'
+);
