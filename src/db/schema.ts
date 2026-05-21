@@ -546,6 +546,29 @@ export const appAllowedDomains = pgTable("app_allowed_domains", {
   uniqueIndex("app_allowed_domains_app_id_domain_unique").on(table.appId, table.domain),
 ]);
 
+/** Per-app billing display currency and fiat->ETH oracle provider selection. */
+export const appBillingOracleConfig = pgTable("app_billing_oracle_config", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => developerApps.id),
+  billingDisplayCurrency: text("billing_display_currency").notNull().default("USD"),
+  billingOracleProviderKey: text("billing_oracle_provider_key")
+    .notNull()
+    .default("global_eth_usd"),
+  billingOracleProviderConfig: jsonb("billing_oracle_provider_config").$type<
+    Record<string, unknown> | null
+  >(),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex("idx_app_billing_oracle_config_client_id").on(table.clientId),
+]);
+
 // ============================================
 // Billing Oracle Tables
 // ============================================
@@ -689,6 +712,7 @@ export type DeveloperApp = typeof developerApps.$inferSelect;
 export type NewDeveloperApp = typeof developerApps.$inferInsert;
 export type AdminInvite = typeof adminInvites.$inferSelect;
 export type AppAllowedDomain = typeof appAllowedDomains.$inferSelect;
+export type AppBillingOracleConfig = typeof appBillingOracleConfig.$inferSelect;
 export type ProviderAdmin = typeof providerAdmins.$inferSelect;
 export type Plan = typeof plans.$inferSelect;
 export type NewPlan = typeof plans.$inferInsert;

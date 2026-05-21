@@ -1,5 +1,6 @@
 import { db } from "@/db/index";
 import {
+  appBillingOracleConfig,
   appUsers,
   developerApps,
   endUsers,
@@ -76,6 +77,36 @@ export async function getSignerRoutingContext(authAppId?: string | null) {
   const signer = await getDefaultSigner();
   const providerAppId = await resolveDeveloperAppIdFromAuthAppId(authAppId);
   return { signer, providerAppId };
+}
+
+interface BillingOracleSelection {
+  billingDisplayCurrency: string;
+  billingOracleProviderKey: string;
+}
+
+async function resolveBillingOracleSelection(
+  providerAppId: string | null,
+): Promise<BillingOracleSelection> {
+  if (!providerAppId) {
+    return {
+      billingDisplayCurrency: "USD",
+      billingOracleProviderKey: "global_eth_usd",
+    };
+  }
+  const rows = await db
+    .select({
+      billingDisplayCurrency: appBillingOracleConfig.billingDisplayCurrency,
+      billingOracleProviderKey: appBillingOracleConfig.billingOracleProviderKey,
+    })
+    .from(appBillingOracleConfig)
+    .where(eq(appBillingOracleConfig.clientId, providerAppId))
+    .limit(1)
+    .catch(() => []);
+  const row = rows[0];
+  return {
+    billingDisplayCurrency: row?.billingDisplayCurrency ?? "USD",
+    billingOracleProviderKey: row?.billingOracleProviderKey ?? "global_eth_usd",
+  };
 }
 
 async function resolveUsageUserIdentifier(
@@ -642,6 +673,7 @@ export async function proxyGenerateLivePayment(
     signer.defaultCutPercent
   );
   const usageUserId = await resolveUsageUserIdentifier(auth, providerAppId);
+  const billingOracleSelection = await resolveBillingOracleSelection(providerAppId);
   const nowIso = new Date().toISOString();
   let streamSessionId: string | null = null;
 
@@ -750,7 +782,10 @@ export async function proxyGenerateLivePayment(
 
       if (!existingUsage) {
         // Fetch ETH/USD oracle at signing time
-        const ethUsd = await getEthUsdOracle();
+        const ethUsd = await getEthUsdOracle({
+          appId: providerAppId,
+          providerKey: billingOracleSelection.billingOracleProviderKey,
+        });
 
         // Compute USD values from wei
         const networkFeeUsdMicros = computeUsdMicrosFromWei(feeWei, ethUsd.priceUsd);

@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { developerApps, oidcClients, appAllowedDomains } from "@/db/schema";
+import {
+  appAllowedDomains,
+  appBillingOracleConfig,
+  developerApps,
+  oidcClients,
+} from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { v4 as uuidv4 } from "uuid";
 import {
   ensureM2mBackendClient,
   syncBackendM2mAllowedScopesFromPublicApp,
@@ -20,6 +26,10 @@ import {
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { authenticateAppClient } from "@/lib/auth";
+import {
+  listAvailableFiatOracleProviders,
+  resolveBillingOracleProviderKey,
+} from "@/lib/prices/fiat-oracle-registry";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -116,6 +126,13 @@ export async function GET(
     .select()
     .from(appAllowedDomains)
     .where(eq(appAllowedDomains.appId, app.id));
+  const pricingRows = await db
+    .select()
+    .from(appBillingOracleConfig)
+    .where(eq(appBillingOracleConfig.clientId, app.id))
+    .limit(1)
+    .catch(() => []);
+  const pricing = pricingRows[0] ?? null;
 
   const canonicalClientId = clientInfo?.clientId ?? clientId;
   const { oidcClientId: _oidcClientId, ...appWithoutOidcClientId } = app;
@@ -139,6 +156,12 @@ export async function GET(
       : null,
     m2mOidcClient,
     domains,
+    usagePricing: {
+      billingDisplayCurrency: pricing?.billingDisplayCurrency ?? "USD",
+      billingOracleProviderKey: pricing?.billingOracleProviderKey ?? "global_eth_usd",
+      billingOracleProviderConfig: pricing?.billingOracleProviderConfig ?? null,
+      availableOracleProviders: listAvailableFiatOracleProviders(),
+    },
   });
 }
 
@@ -176,6 +199,57 @@ export async function PUT(
   }
 
   await db.update(developerApps).set(appUpdates).where(eq(developerApps.id, app.id));
+
+  if (
+    body.billingDisplayCurrency !== undefined ||
+    body.billingOracleProviderKey !== undefined ||
+    body.billingOracleProviderConfig !== undefined
+  ) {
+    const existingPricingRows = await db
+      .select()
+      .from(appBillingOracleConfig)
+      .where(eq(appBillingOracleConfig.clientId, app.id))
+      .limit(1)
+      .catch(() => []);
+    const existingPricing = existingPricingRows[0] ?? null;
+    const nextCurrency =
+      body.billingDisplayCurrency !== undefined
+        ? String(body.billingDisplayCurrency || "USD").toUpperCase()
+        : (existingPricing?.billingDisplayCurrency ?? "USD");
+    const nextProvider = resolveBillingOracleProviderKey(
+      body.billingOracleProviderKey !== undefined
+        ? String(body.billingOracleProviderKey)
+        : (existingPricing?.billingOracleProviderKey ?? "global_eth_usd"),
+    ).key;
+    const nextConfig =
+      body.billingOracleProviderConfig !== undefined
+        ? (body.billingOracleProviderConfig &&
+          typeof body.billingOracleProviderConfig === "object"
+            ? body.billingOracleProviderConfig
+            : null)
+        : (existingPricing?.billingOracleProviderConfig ?? null);
+    if (existingPricing) {
+      await db
+        .update(appBillingOracleConfig)
+        .set({
+          billingDisplayCurrency: nextCurrency === "USD" ? "USD" : "USD",
+          billingOracleProviderKey: nextProvider,
+          billingOracleProviderConfig: nextConfig,
+          updatedAt: now,
+        })
+        .where(eq(appBillingOracleConfig.id, existingPricing.id));
+    } else {
+      await db.insert(appBillingOracleConfig).values({
+        id: uuidv4(),
+        clientId: app.id,
+        billingDisplayCurrency: nextCurrency === "USD" ? "USD" : "USD",
+        billingOracleProviderKey: nextProvider,
+        billingOracleProviderConfig: nextConfig,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
 
   // Provider apps are self-service in the MVP, so OIDC config updates apply immediately.
   if (app.oidcClientId) {

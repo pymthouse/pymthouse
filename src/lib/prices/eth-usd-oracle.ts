@@ -15,9 +15,10 @@
 
 import { db } from "@/db/index";
 import { priceOracleSnapshots } from "@/db/schema";
-import { desc, eq, gte } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { fetchEthUsdFromPublicExchanges } from "./public-exchange-spot";
+import { resolveBillingOracleProviderKey } from "./fiat-oracle-registry";
 
 export interface EthUsdOracleResult {
   priceUsd: number;
@@ -27,9 +28,31 @@ export interface EthUsdOracleResult {
   isFallback: boolean;
 }
 
+export interface EthUsdOracleOptions {
+  appId?: string | null;
+  providerKey?: string | null;
+}
+
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const ETH_SYMBOL = "ETH";
 const DEFAULT_PRICE = 3000;
+const MEMORY_TTL_MS = 45 * 1000;
+
+const memoryOracleCache = new Map<string, EthUsdOracleResult>();
+const refreshInFlight = new Set<string>();
+
+export function resetEthUsdOracleCacheForTests(): void {
+  memoryOracleCache.clear();
+  refreshInFlight.clear();
+}
+
+function cacheKeyForProvider(providerKey: string): string {
+  return `${providerKey}:${ETH_SYMBOL}`;
+}
+
+function isMemoryFresh(entry: EthUsdOracleResult): boolean {
+  return Date.now() - Date.parse(entry.observedAt) <= MEMORY_TTL_MS;
+}
 
 async function getFreshCacheRow(): Promise<EthUsdOracleResult | null> {
   const cutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
@@ -92,45 +115,29 @@ function persistPriceAsync(priceUsd: number, exchange: string, fetchedAt: string
     });
 }
 
-/**
- * Return the best available ETH/USD price with its provenance.
- * Always returns a result; uses DEFAULT_PRICE as the last-resort fallback.
- */
-export async function getEthUsdOracle(): Promise<EthUsdOracleResult> {
-  // 1. Fresh DB cache
-  try {
-    const fresh = await getFreshCacheRow();
-    if (fresh) return fresh;
-  } catch {
-    // DB unavailable — continue to live fetch
-  }
-
-  // 2. Live public exchange fetch
+async function refreshLiveSpotAsync(providerKey: string): Promise<void> {
+  const cacheKey = cacheKeyForProvider(providerKey);
+  if (refreshInFlight.has(cacheKey)) return;
+  refreshInFlight.add(cacheKey);
   try {
     const spot = await fetchEthUsdFromPublicExchanges();
-    if (spot !== null) {
-      const now = new Date().toISOString();
-      persistPriceAsync(spot.priceUsd, spot.exchange, now);
-      return {
-        priceUsd: spot.priceUsd,
-        source: spot.exchange,
-        observedAt: now,
-        isFallback: false,
-      };
-    }
+    if (spot === null) return;
+    const observedAt = new Date().toISOString();
+    persistPriceAsync(spot.priceUsd, spot.exchange, observedAt);
+    memoryOracleCache.set(cacheKey, {
+      priceUsd: spot.priceUsd,
+      source: spot.exchange,
+      observedAt,
+      isFallback: false,
+    });
   } catch {
-    // Live fetch failed — continue to stale cache
+    // Never bubble refresh failures into the signing path.
+  } finally {
+    refreshInFlight.delete(cacheKey);
   }
+}
 
-  // 3. Stale DB cache
-  try {
-    const stale = await getStaleCacheRow();
-    if (stale) return stale;
-  } catch {
-    // DB unavailable — continue to env/default
-  }
-
-  // 4. Environment variable
+function envOrDefaultResult(): EthUsdOracleResult {
   const envPrice = process.env.ETH_USD_PRICE
     ? parseFloat(process.env.ETH_USD_PRICE)
     : NaN;
@@ -143,11 +150,67 @@ export async function getEthUsdOracle(): Promise<EthUsdOracleResult> {
     };
   }
 
-  // 5. Hardcoded default
   return {
     priceUsd: DEFAULT_PRICE,
     source: "default",
     observedAt: new Date().toISOString(),
     isFallback: true,
   };
+}
+
+/**
+ * Return the best available ETH/USD price with its provenance.
+ * Always returns a result; uses DEFAULT_PRICE as the last-resort fallback.
+ */
+export async function getEthUsdOracle(
+  options: EthUsdOracleOptions = {},
+): Promise<EthUsdOracleResult> {
+  const provider = resolveBillingOracleProviderKey(options.providerKey);
+  const cacheKey = cacheKeyForProvider(provider.key);
+  const memoryEntry = memoryOracleCache.get(cacheKey);
+  if (memoryEntry && isMemoryFresh(memoryEntry)) {
+    return memoryEntry;
+  }
+
+  // 1. Fresh DB cache
+  try {
+    const fresh = await getFreshCacheRow();
+    if (fresh) {
+      memoryOracleCache.set(cacheKey, fresh);
+      return fresh;
+    }
+  } catch {
+    // DB unavailable — continue to fallback chain
+  }
+
+  // 2. Stale DB cache (serve immediately, then refresh in background)
+  try {
+    const stale = await getStaleCacheRow();
+    if (stale) {
+      memoryOracleCache.set(cacheKey, stale);
+      void refreshLiveSpotAsync(provider.key);
+      return stale;
+    }
+  } catch {
+    // DB unavailable — continue to env/default
+  }
+
+  // 3. Memory fallback (stale but better than env/default) and async refresh.
+  if (memoryEntry) {
+    void refreshLiveSpotAsync(provider.key);
+    return {
+      ...memoryEntry,
+      isFallback: true,
+      source:
+        memoryEntry.source === "cache" || memoryEntry.source === "stale_cache"
+          ? "stale_cache"
+          : memoryEntry.source,
+    };
+  }
+
+  // 4. Environment/default fallback (always return immediately), refresh in background.
+  const fallback = envOrDefaultResult();
+  memoryOracleCache.set(cacheKey, fallback);
+  void refreshLiveSpotAsync(provider.key);
+  return fallback;
 }
