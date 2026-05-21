@@ -1,0 +1,10 @@
+services:
+  - type: job
+    name: pymthouse-db-migrate
+    runtime: image
+    image:
+      url: ghcr.io/pymthouse/pymthouse-control-plane:replace-me
+    startCommand: node scripts/db-migrate.ts
+    envVars:
+      - key: DATABASE_URL
+        sync: false
