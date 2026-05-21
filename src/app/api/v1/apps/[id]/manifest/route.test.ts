@@ -5,6 +5,7 @@ import test from "node:test";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
+import { computeManifestRevision } from "@/lib/discovery-allowlist";
 import { run } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import { selectNetworkDefaultPlan } from "@/lib/network-default-plan";
@@ -59,8 +60,8 @@ test.after(() => {
   moduleWithLoad._load = originalLoad;
 });
 
-run("discovery-allowlist GET and PUT", async (t) => {
-  await t.test("GET returns full catalog when exclusions empty", async (t) => {
+run("manifest GET and PUT", async (t) => {
+  await t.test("GET returns full catalog and manifestVersion when exclusions empty", async (t) => {
     catalogFetchCount = 0;
     catalogThrows = false;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -72,7 +73,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
 
     const { GET } = await import("./route");
     const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/discovery-allowlist`) as never,
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
@@ -80,6 +81,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
     const body = (await res.json()) as {
       capabilities: unknown[];
       excludedCapabilities: unknown[];
+      manifestVersion: string;
     };
     assert.deepEqual(body.capabilities, [
       { pipeline: "pipe-a", modelId: "m1" },
@@ -87,6 +89,13 @@ run("discovery-allowlist GET and PUT", async (t) => {
       { pipeline: "pipe-b", modelId: "only" },
     ]);
     assert.deepEqual(body.excludedCapabilities, []);
+    assert.equal(
+      body.manifestVersion,
+      computeManifestRevision({
+        capabilities: body.capabilities as { pipeline: string; modelId: string }[],
+        excludedCapabilities: [],
+      }),
+    );
   });
 
   await t.test("GET resolves exclusions against catalog on Network Price plan", async (t) => {
@@ -112,7 +121,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
 
     const { GET } = await import("./route");
     const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/discovery-allowlist`) as never,
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
@@ -120,6 +129,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
     const body = (await res.json()) as {
       capabilities: Array<{ pipeline: string; modelId: string }>;
       excludedCapabilities: Array<{ pipeline: string; modelId: string }>;
+      manifestVersion: string;
     };
     assert.deepEqual(body.excludedCapabilities, [
       { pipeline: "pipe-a", modelId: "m1" },
@@ -128,6 +138,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
       { pipeline: "pipe-a", modelId: "m2" },
       { pipeline: "pipe-b", modelId: "only" },
     ]);
+    assert.ok(body.manifestVersion.length >= 5);
   });
 
   await t.test("GET applies pipeline wildcard exclusion", async (t) => {
@@ -151,7 +162,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
 
     const { GET } = await import("./route");
     const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/discovery-allowlist`) as never,
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
@@ -183,7 +194,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
 
     const { GET } = await import("./route");
     const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/discovery-allowlist`) as never,
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 503);
@@ -202,7 +213,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
 
     const { PUT } = await import("./route");
     const putRes = await PUT(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/discovery-allowlist`, {
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -215,6 +226,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
     const putBody = (await putRes.json()) as {
       capabilities: Array<{ pipeline: string; modelId: string }>;
       excludedCapabilities: Array<{ pipeline: string; modelId: string }>;
+      manifestVersion: string;
     };
     assert.deepEqual(putBody.excludedCapabilities, [
       { pipeline: "pipe-b", modelId: "only" },
@@ -223,6 +235,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
       { pipeline: "pipe-a", modelId: "m1" },
       { pipeline: "pipe-a", modelId: "m2" },
     ]);
+    assert.ok(putBody.manifestVersion);
 
     const def = await selectNetworkDefaultPlan(app.clientId, db);
     assert.deepEqual(def?.discoveryExcludedCapabilities, {
@@ -271,7 +284,7 @@ run("discovery-allowlist GET and PUT", async (t) => {
 
     const { PUT } = await import("./route");
     const putRes = await PUT(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/discovery-allowlist`, {
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -69,7 +69,7 @@ export default function NetworkPricePlanSection({ appId, canEdit }: Props) {
 
   const loadAllowlist = useCallback(() => {
     setLoading(true);
-    fetch(`/api/v1/apps/${appId}/discovery-allowlist`)
+    fetch(`/api/v1/apps/${appId}/manifest`)
       .then(readFetchJson)
       .then((allowWrap) => {
         if (!allowWrap.ok) {
@@ -129,7 +129,7 @@ export default function NetworkPricePlanSection({ appId, canEdit }: Props) {
         catalogLite,
         pickerValues,
       );
-      const res = await fetch(`/api/v1/apps/${appId}/discovery-allowlist`, {
+      const res = await fetch(`/api/v1/apps/${appId}/manifest`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ excludedCapabilities }),
@@ -156,7 +156,7 @@ export default function NetworkPricePlanSection({ appId, canEdit }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/discovery-allowlist`, {
+      const res = await fetch(`/api/v1/apps/${appId}/manifest`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ excludedCapabilities: [] }),
@@ -237,7 +237,7 @@ export default function NetworkPricePlanSection({ appId, canEdit }: Props) {
       ) : (
         <p className="text-sm text-zinc-500">
           Pipeline catalog unavailable. Reload when NaaP catalog is reachable, or use the Builder
-          API to PUT excludedCapabilities on the discovery-allowlist endpoint.
+          API to PUT excludedCapabilities on the manifest endpoint.
         </p>
       )}
       <p className="text-xs text-zinc-600">

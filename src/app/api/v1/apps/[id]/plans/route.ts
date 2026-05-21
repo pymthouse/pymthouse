@@ -673,7 +673,10 @@ export async function PUT(
   }
   if (txnResult.tag === "network_default") {
     return NextResponse.json(
-      { error: "The Network Price default plan cannot be edited via this endpoint" },
+      {
+        error:
+          "The Network Price default plan cannot be edited via this endpoint; update exclusions via PUT /manifest",
+      },
       { status: 400 },
     );
   }

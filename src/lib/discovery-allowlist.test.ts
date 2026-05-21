@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  computeManifestRevision,
   excludedDocumentFromPickerValues,
   expandDocumentToConcreteKeys,
   fullCatalogConcreteKeys,
@@ -9,6 +10,7 @@ import {
   normalizeDiscoveryAllowlistDoc,
   pickerValuesFromExcludedDocument,
   resolveDiscoveryCapabilitiesForExclusions,
+  toAppManifestResponse,
 } from "./discovery-allowlist";
 
 const CATALOG = [
@@ -96,4 +98,10 @@ test("isDiscoveryDocumentEmpty treats missing capabilities as empty", () => {
 
 test("fullCatalogConcreteKeys lists every pipeline|model", () => {
   assert.equal(fullCatalogConcreteKeys(CATALOG).size, 3);
+});
+
+test("toAppManifestResponse adds manifestVersion", () => {
+  const resolved = resolveDiscoveryCapabilitiesForExclusions(CATALOG, null);
+  const body = toAppManifestResponse(resolved);
+  assert.equal(body.manifestVersion, computeManifestRevision(resolved));
 });

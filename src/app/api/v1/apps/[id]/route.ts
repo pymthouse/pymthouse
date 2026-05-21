@@ -14,18 +14,48 @@ import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import {
   canEditProviderApp,
   getAuthorizedProviderApp,
+  getProviderApp,
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
+import { authenticateAppClient } from "@/lib/auth";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: clientId } = await params;
+  const clientAuth = await authenticateAppClient(request);
+  if (clientAuth?.appId === clientId) {
+    const app = await getProviderApp(clientId);
+    if (!app) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    let allowedScopes = DEFAULT_OIDC_SCOPES;
+    if (app.oidcClientId) {
+      const clientRows = await db
+        .select({ allowedScopes: oidcClients.allowedScopes })
+        .from(oidcClients)
+        .where(eq(oidcClients.id, app.oidcClientId))
+        .limit(1);
+      allowedScopes = clientRows[0]?.allowedScopes ?? DEFAULT_OIDC_SCOPES;
+    }
+    const publicClientId = clientAuth.appId;
+    return NextResponse.json({
+      clientId: publicClientId,
+      name: app.name,
+      status: app.status,
+      billingPattern: billingPatternFromAllowedScopesString(allowedScopes),
+      allowedScopes,
+      links: {
+        manifest: `/api/v1/apps/${encodeURIComponent(publicClientId)}/manifest`,
+      },
+    });
+  }
+
   const auth = await getAuthorizedProviderApp(clientId);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

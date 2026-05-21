@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export const DiscoveryAllowlistCapabilitySchema = z
@@ -15,6 +16,17 @@ export const DiscoveryAllowlistUpdateBodySchema = z
 
 export type DiscoveryAllowlistCapability = z.infer<typeof DiscoveryAllowlistCapabilitySchema>;
 export type DiscoveryAllowlistUpdatePayload = z.infer<typeof DiscoveryAllowlistUpdateBodySchema>;
+
+/** Resolved network capability manifest returned by `GET/PUT .../manifest`. */
+export type AppManifestResolved = {
+  capabilities: DiscoveryAllowlistCapability[];
+  excludedCapabilities: DiscoveryAllowlistCapability[];
+};
+
+export type AppManifestResponse = AppManifestResolved & {
+  /** Stable hash for cache busting (capabilities + exclusions). */
+  manifestVersion: string;
+};
 
 export type DiscoveryAllowlistDocument = {
   capabilities: DiscoveryAllowlistCapability[];
@@ -98,6 +110,30 @@ function sortCap(
 ): number {
   const p = a.pipeline.localeCompare(b.pipeline);
   return p !== 0 ? p : a.modelId.localeCompare(b.modelId);
+}
+
+export function computeManifestRevision(
+  data: AppManifestResolved | null,
+): string {
+  if (data == null) {
+    return "unavailable";
+  }
+  const caps = [...data.capabilities].sort(sortCap);
+  const excl = [...data.excludedCapabilities].sort(sortCap);
+  if (caps.length === 0 && excl.length === 0) {
+    return "empty";
+  }
+  return createHash("sha256")
+    .update(JSON.stringify({ capabilities: caps, excludedCapabilities: excl }))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+export function toAppManifestResponse(resolved: AppManifestResolved): AppManifestResponse {
+  return {
+    ...resolved,
+    manifestVersion: computeManifestRevision(resolved),
+  };
 }
 
 /**

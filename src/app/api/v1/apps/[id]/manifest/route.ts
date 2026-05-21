@@ -12,6 +12,7 @@ import {
   DiscoveryAllowlistUpdateBodySchema,
   normalizeDiscoveryAllowlistDoc,
   resolveDiscoveryCapabilitiesForExclusions,
+  toAppManifestResponse,
 } from "@/lib/discovery-allowlist";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
@@ -30,7 +31,7 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
   return auth?.app ?? null;
 }
 
-async function buildDiscoveryAllowlistJson(appInternalId: string) {
+async function buildAppManifestJson(appInternalId: string) {
   const row =
     (await selectNetworkDefaultPlan(appInternalId, db)) ??
     (await getOrCreateNetworkDefaultPlan(appInternalId, db));
@@ -45,13 +46,14 @@ async function buildDiscoveryAllowlistJson(appInternalId: string) {
   }
 
   const lite = catalog.map((e) => ({ id: e.id, models: e.models }));
-  return resolveDiscoveryCapabilitiesForExclusions(lite, excludedDoc);
+  const resolved = resolveDiscoveryCapabilitiesForExclusions(lite, excludedDoc);
+  return toAppManifestResponse(resolved);
 }
 
 /**
- * App-level pipeline/model allowlist for integrator discovery (e.g. NaaP).
- * Backed by the per-app Network Price plan exclusions. GET: M2M Basic or provider session.
- * PUT: provider session with edit rights.
+ * App network capability manifest for integrators (e.g. NaaP).
+ * GET: resolved discoverable set + exclusions + manifestVersion. M2M Basic or provider session.
+ * PUT: provider session — update Network Price exclusions only.
  */
 export async function GET(
   request: NextRequest,
@@ -63,7 +65,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await buildDiscoveryAllowlistJson(app.id);
+  const body = await buildAppManifestJson(app.id);
   if (body === null) {
     return NextResponse.json(
       { error: "Pipeline catalog unavailable" },
@@ -146,7 +148,7 @@ export async function PUT(
     })
     .where(eq(plans.id, networkPlan.id));
 
-  const responseBody = await buildDiscoveryAllowlistJson(auth.app.id);
+  const responseBody = await buildAppManifestJson(auth.app.id);
   if (responseBody === null) {
     return NextResponse.json(
       { error: "Pipeline catalog unavailable" },
