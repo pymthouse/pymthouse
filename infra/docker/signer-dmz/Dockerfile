@@ -1,6 +1,6 @@
 # Apache + mod_authnz_jwt in front of go-livepeer (DMZ). Targets:
 #   gateway   — Apache only; set SIGNER_UPSTREAM (e.g. http://signer:8081) for docker compose.
-#   signer-dmz — includes livepeer; Railway single service (Apache on $PORT, signer on loopback).
+#   signer-dmz — includes livepeer; image intended to be built once, pushed, and deployed by digest/tag.
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -75,10 +75,10 @@ RUN ldconfig && \
     a2enmod authnz_jwt && \
     a2enmod alias proxy proxy_http headers rewrite authn_core authz_core
 
-COPY docker/signer-dmz/scripts/jwks_to_pem.py /opt/pymthouse/scripts/jwks_to_pem.py
-COPY docker/signer-dmz/apache/ports.conf.in /etc/apache2/templates/ports.conf.in
-COPY docker/signer-dmz/apache/signer-dmz.conf.in /etc/apache2/templates/signer-dmz.conf.in
-COPY docker/signer-dmz/entrypoint.sh /entrypoint.sh
+COPY infra/docker/signer-dmz/scripts/jwks_to_pem.py /opt/pymthouse/scripts/jwks_to_pem.py
+COPY infra/docker/signer-dmz/apache/ports.conf.in /etc/apache2/templates/ports.conf.in
+COPY infra/docker/signer-dmz/apache/signer-dmz.conf.in /etc/apache2/templates/signer-dmz.conf.in
+COPY infra/docker/signer-dmz/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh /opt/pymthouse/scripts/jwks_to_pem.py
 

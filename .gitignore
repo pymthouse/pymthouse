@@ -9,10 +9,12 @@
 !.yarn/versions
 
 .vscode/settings.json
+.idea/
 
 # next.js
 /.next/
 /out/
+control-plane/.next/
 
 # production
 /build
@@ -30,6 +32,7 @@ yarn-error.log*
 # env files
 .env
 .env*.local
+control-plane/.env.local
 
 # vercel
 .vercel
@@ -40,6 +43,8 @@ next-env.d.ts
 
 # database
 /data/
+control-plane/data/
+infra/dev/data/
 *.db
 *.db-wal
 *.db-shm
@@ -48,3 +53,7 @@ next-env.d.ts
 src/lib/proto-generated.*
 
 certificates
+
+# local runtime / tooling state
+.livepeer/
+.runlogs/

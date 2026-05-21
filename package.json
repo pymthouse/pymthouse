@@ -8,7 +8,7 @@
   "scripts": {
     "predev": "npm run db:prepare",
     "dev": "next dev -p 3001",
-    "prebuild": "[ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare",
+    "prebuild": "[ \"$VERCEL\" = '1' ] || [ \"$SKIP_DB_PREPARE\" = '1' ] && echo 'Skipping db:prepare for this build' || npm run db:prepare",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -20,7 +20,8 @@
     "db:prepare": "npx tsx scripts/db-migrate.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "validate:env": "node scripts/validate-env.js",
-    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\""
+    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\"",
+    "test:local": "bash infra/scripts/test-local.sh"
   },
   "dependencies": {
     "@braintree/sanitize-url": "^7.1.2",
