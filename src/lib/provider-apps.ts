@@ -6,50 +6,21 @@ import { db } from "@/db/index";
 import { authOptions } from "@/lib/next-auth-options";
 import { developerApps, oidcClients, providerAdmins } from "@/db/schema";
 
-const noopAuthResponse = {
-  getHeader() {},
-  setCookie() {},
-  setHeader() {},
-};
-
-function parseCookieHeader(cookieHeader: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  if (!cookieHeader) return cookies;
-  for (const segment of cookieHeader.split(";")) {
-    const trimmed = segment.trim();
-    if (!trimmed) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) {
-      cookies[trimmed] = "";
-      continue;
-    }
-    const name = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1).trim();
-    if (name) cookies[name] = value;
-  }
-  return cookies;
-}
-
-function requestToAuthReq(request: Request): {
-  headers: Record<string, string>;
-  cookies: Record<string, string>;
-} {
-  const headers: Record<string, string> = {};
-  request.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-  return {
-    headers,
-    cookies: parseCookieHeader(request.headers.get("cookie") ?? ""),
-  };
-}
-
 /** Resolve NextAuth session from an explicit Request (route handlers / tests). */
 export async function getServerSessionFromRequest(
-  request: Request,
+  _request: Request,
 ): Promise<Session | null> {
-  const req = requestToAuthReq(request);
-  return getServerSession(req, noopAuthResponse, authOptions);
+  try {
+    return await getServerSession(authOptions);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("outside a request scope")
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 let sessionResolverForTests: ((request?: Request) => Promise<Session | null>) | null =

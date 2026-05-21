@@ -43,7 +43,7 @@ test("assertCapabilityRowsDiscoverable detects blocked models", () => {
 test("planDisplayName maps internal network default name", () => {
   assert.equal(
     planDisplayName({ name: "__pymthouse_network_default__", isNetworkDefault: true }),
-    "Network Price",
+    "Network Discovery",
   );
   assert.equal(planDisplayName({ name: "Foo", isNetworkDefault: false }), "Foo");
 });

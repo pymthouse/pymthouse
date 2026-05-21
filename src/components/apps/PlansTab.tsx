@@ -892,6 +892,7 @@ function NetworkPricePlanCard({
           </h3>
           <p className="text-xs text-zinc-500 mt-1">
             Select which pipelines and models your app can discover and use on the Livepeer network.
+            They will be available at the network market price. Price limits are coming soon.
           </p>
           {!expanded && (
             <p className="text-sm text-zinc-300 mt-2">{discoverySummary}</p>

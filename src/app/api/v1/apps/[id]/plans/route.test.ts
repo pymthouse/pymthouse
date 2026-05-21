@@ -90,7 +90,7 @@ run("plans API: network default plan rules", async (t) => {
     assert.equal(r.body.error, "is_network_default cannot be set on created plans");
   });
 
-  await t.test("POST rejects reserved Network Price display name", async (t) => {
+  await t.test("POST rejects reserved Network Discovery display name", async (t) => {
     const app = await seedDeveloperAppWithClient({ status: "approved" });
     authorizedApp = app;
     t.after(async () => {
@@ -99,7 +99,7 @@ run("plans API: network default plan rules", async (t) => {
     });
 
     const r = await postPlan(app.clientId, {
-      name: "Network Price",
+      name: "Network Discovery",
       type: "free",
     });
     assert.equal(r.status, 400);

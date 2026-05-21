@@ -15,6 +15,7 @@ import {
 } from "@/db/schema";
 import { countActiveStreamsByRecentPayment } from "@/lib/active-streams";
 import { proxyGenerateLivePayment } from "@/lib/signer-proxy";
+import { resetEthUsdOracleCacheForTests } from "@/lib/prices/eth-usd-oracle";
 import { run } from "@/test-utils/db-guard";
 import {
   basicAuthHeader,
@@ -51,6 +52,7 @@ const PAYMENT_METADATA_VERSION = "2026-04-usage-attribution-v1";
  *     **`proxy-routes.test.ts`**.
  */
 run("high-volume signer usage is persisted and summarised via Usage API", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const { GET: readUsage } = await import("@/app/api/v1/apps/[id]/usage/route");
   const runId = randomUUID();
 
@@ -282,6 +284,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
 });
 
 run("BYOC preload payment creates first usage row for signer sessions", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
@@ -349,6 +352,7 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
 });
 
 run("successful zero-fee signer payment still increments usage count", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
@@ -394,6 +398,7 @@ run("successful zero-fee signer payment still increments usage count", async (t)
 });
 
 run("plan capability upcharge is persisted and exposed through Usage API events", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const { GET: readUsage } = await import("@/app/api/v1/apps/[id]/usage/route");
 
   const restoreSigner = await ensureRunningSigner();
@@ -506,6 +511,7 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
 });
 
 run("generate-live-payment writes usage_billing_events from negotiated ticket without NaaP pricing", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
@@ -573,6 +579,7 @@ run("generate-live-payment writes usage_billing_events from negotiated ticket wi
 });
 
 run("generate-live-payment records missing_constraint when modelId absent", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
@@ -630,6 +637,7 @@ run("generate-live-payment records missing_constraint when modelId absent", asyn
 });
 
 run("generate-live-payment succeeds when live oracle fetch fails", async (t) => {
+  resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
