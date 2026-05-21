@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: pymthouse-control-plane
+    runtime: image
+    image:
+      url: ghcr.io/pymthouse/pymthouse-control-plane:replace-me
+    plan: starter
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: HOSTNAME
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: AUTH_TOKEN_PEPPER
+        sync: false
+      - key: SIGNER_INTERNAL_URL
+        sync: false
+      - key: SIGNER_CLI_URL
+        sync: false

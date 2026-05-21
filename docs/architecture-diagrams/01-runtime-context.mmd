@@ -1,0 +1,23 @@
+flowchart LR
+    ProviderAdmin[Provider Admin]
+    PlatformAdmin[Platform Admin]
+    EndUser[End User / Device]
+    App[Developer App]
+    CP[Next.js Control Plane]
+    OIDC[Hosted OIDC Provider]
+    PG[(PostgreSQL)]
+    Signer[Signer DMZ + go-livepeer]
+    External[OAuth / Turnkey / RPC / Pricing]
+
+    ProviderAdmin --> CP
+    PlatformAdmin --> CP
+    EndUser --> App
+    App --> CP
+    CP --> OIDC
+    CP --> PG
+    CP --> Signer
+    OIDC --> PG
+    Signer --> CP
+    CP --> External
+    OIDC --> External
+    Signer --> External

@@ -1,5 +1,5 @@
 import "./load-env-first";
-import { getAllClients } from "../src/lib/oidc/clients";
+import { getAllClients } from "../src/domains/oidc-platform/runtime/clients";
 
 async function main() {
   console.log("\n=== Testing getAllClients() ===\n");

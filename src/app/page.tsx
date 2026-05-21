@@ -1,28 +1,13 @@
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
+import { authOptions } from "@/platform/auth/next-auth-options";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AppCard, type HomeApp } from "@/components/AppCard";
 import { MarketingFooter } from "@/components/MarketingFooter";
-import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
-import { getDocsBaseUrl } from "@/lib/docs-base-url";
+import { getDocsBaseUrl } from "@/platform/docs/base-url";
+import { getHomeShowcaseData } from "@/platform/ops/runtime/home";
 
 // ─── App showcase helpers ────────────────────────────────────────────────────
-
-type PublishedAppRow = HomeApp & { featured: boolean };
-
-function toHomeApp(row: PublishedAppRow): HomeApp {
-  return {
-    id: row.id,
-    name: row.name,
-    subtitle: row.subtitle,
-    description: row.description,
-    category: row.category,
-    developerName: row.developerName,
-  };
-}
 
 // ─── Illustration components ─────────────────────────────────────────────────
 
@@ -210,67 +195,8 @@ export default async function HomePage() {
 
   const docsUrl = getDocsBaseUrl();
 
-  // Fetch published apps for the showcase
-  const rows = await db
-    .select({
-      id: developerApps.id,
-      name: developerApps.name,
-      subtitle: developerApps.subtitle,
-      description: developerApps.description,
-      category: developerApps.category,
-      developerName: developerApps.developerName,
-      marketplaceFeatured: developerApps.marketplaceFeatured,
-      publishedAt: developerApps.publishedAt,
-    })
-    .from(developerApps)
-    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(
-      and(
-        eq(developerApps.status, "approved"),
-        isNotNull(developerApps.publishedAt),
-      ),
-    )
-    .orderBy(desc(developerApps.publishedAt));
-
-  const mapped: PublishedAppRow[] = rows
-    .filter((r): r is typeof r & { id: string } => Boolean(r.id))
-    .map((r) => ({
-      id: r.id,
-      name: r.name,
-      subtitle: r.subtitle,
-      description: r.description,
-      category: r.category,
-      developerName: r.developerName,
-      featured: r.marketplaceFeatured === 1,
-    }));
-
-  const featuredApps = mapped.filter((a) => a.featured).slice(0, 4).map(toHomeApp);
-
-  let showcaseApps: HomeApp[] = featuredApps;
-  let showcaseTitle = "Featured apps";
-
-  if (featuredApps.length === 0 && mapped.length > 0) {
-    const rankRows = await db.execute<{ id: string }>(sql`
-      SELECT d.id
-      FROM developer_apps d
-      LEFT JOIN (
-        SELECT COALESCE(client_id, app_id) AS aid, COUNT(*)::bigint AS cnt
-        FROM transactions
-        WHERE type = 'usage'
-          AND status = 'confirmed'
-          AND COALESCE(client_id, app_id) IS NOT NULL
-        GROUP BY COALESCE(client_id, app_id)
-      ) u ON u.aid = d.id
-      WHERE d.status = 'approved'
-        AND d.published_at IS NOT NULL
-      ORDER BY COALESCE(u.cnt, 0) DESC, d.published_at::timestamptz DESC NULLS LAST
-      LIMIT 4
-    `);
-    const byId = new Map(mapped.map((m) => [m.id, toHomeApp(m)]));
-    showcaseApps = rankRows.map((r) => byId.get(r.id)).filter((a): a is HomeApp => a !== undefined);
-    if (showcaseApps.length === 0) showcaseApps = mapped.slice(0, 4).map(toHomeApp);
-    showcaseTitle = "Popular apps";
-  }
+  const { showcaseApps, showcaseTitle } = await getHomeShowcaseData();
+  const hasFeaturedShowcase = showcaseTitle === "Featured apps";
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
@@ -451,7 +377,7 @@ export default async function HomePage() {
             <div>
               <h2 className="text-2xl font-bold text-zinc-100">{showcaseTitle}</h2>
               <p className="text-sm text-zinc-500 mt-1">
-                {featuredApps.length > 0
+                {hasFeaturedShowcase
                   ? "Hand-picked apps built on pymthouse"
                   : "Top apps by usage on the network"}
               </p>

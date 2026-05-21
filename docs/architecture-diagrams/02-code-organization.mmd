@@ -1,0 +1,20 @@
+flowchart TD
+    AppLayer[src/app<br>pages + route adapters]
+    DomainRuntime[src/domains/*/runtime]
+    DomainService[src/domains/*/service]
+    DomainRepo[src/domains/*/repo]
+    Platform[src/platform/**]
+    Shared[src/shared/**]
+    DB[(PostgreSQL)]
+    External[External systems]
+
+    AppLayer --> DomainRuntime
+    AppLayer --> Platform
+    DomainRuntime --> DomainService
+    DomainRuntime --> DomainRepo
+    DomainRuntime --> Platform
+    DomainService --> Shared
+    DomainRepo --> DB
+    Platform --> DB
+    Platform --> External
+    DomainRuntime --> External

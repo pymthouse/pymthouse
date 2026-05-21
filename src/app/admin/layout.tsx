@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
+import { authOptions } from "@/platform/auth/next-auth-options";
 
 /**
  * Admin layout: protects all /admin/* routes.

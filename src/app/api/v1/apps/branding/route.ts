@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveAppBrandingByClientId, getDefaultBranding } from "@/lib/oidc/branding";
+import { resolveAppBrandingByClientId, getDefaultBranding } from "@/domains/oidc-platform/runtime/branding";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const clientId = request.nextUrl.searchParams.get("client_id");

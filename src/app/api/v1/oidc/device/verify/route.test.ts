@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeUserCode } from "@/lib/oidc/device";
+import { normalizeUserCode } from "@/platform/oidc/device";
 
 test("normalizeUserCode follows provider normalization rules", () => {
   assert.equal(normalizeUserCode("abcd-1234"), "ABCD1234");

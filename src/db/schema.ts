@@ -12,7 +12,7 @@ import {
   jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import type { DiscoveryPolicy } from "@/lib/discovery-plans";
+import type { DiscoveryPolicy } from "@/shared/discovery/discovery-plans";
 
 // Admin/operator/developer accounts (OAuth or wallet login)
 export const users = pgTable("users", {

@@ -4,7 +4,7 @@ import {
   type AppBranding,
   getBrandingCssVars,
   shouldUseWhiteLabelBranding,
-} from "@/lib/oidc/branding-shared";
+} from "@/platform/oidc/branding-shared";
 
 interface BrandedLayoutProps {
   branding: AppBranding;

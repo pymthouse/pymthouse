@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   serverExternalPackages: ["better-sqlite3", "oidc-provider"],
   /**
    * Remote signers (go-livepeer) and some gateways POST to `/sign-orchestrator-info`

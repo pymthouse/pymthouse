@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { developerApps } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import { getProviderApp } from "@/lib/provider-apps";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { revokeReviewedDeveloperApp } from "@/domains/developer-apps/runtime/admin-apps";
 
 /**
  * POST /api/v1/admin/apps/[id]/revoke
@@ -25,34 +22,10 @@ export async function POST(
   if (role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  const app = await getProviderApp(clientId);
-  if (!app) {
-    return NextResponse.json(
-      { error: "App not found or not in approved status" },
-      { status: 404 }
-    );
+  const result = await revokeReviewedDeveloperApp(clientId);
+  if (!result.ok) {
+    return NextResponse.json(result.body, { status: result.status });
   }
 
-  const now = new Date().toISOString();
-  const updated = await db.update(developerApps)
-    .set({
-      status: "submitted",
-      submittedAt: now,
-      updatedAt: now,
-      reviewerNotes: null,
-      reviewedBy: null,
-      reviewedAt: null,
-    })
-    .where(and(eq(developerApps.id, app.id), eq(developerApps.status, "approved")))
-    .returning({ id: developerApps.id });
-
-  if (updated.length === 0) {
-    return NextResponse.json(
-      { error: "App not found or not in approved status" },
-      { status: 404 }
-    );
-  }
-
-  return NextResponse.json({ success: true, status: "submitted" });
+  return NextResponse.json(result.body);
 }

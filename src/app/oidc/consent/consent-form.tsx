@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { type AppBranding, getDefaultBranding } from "@/lib/oidc/branding-shared";
+import { type AppBranding, getDefaultBranding } from "@/platform/oidc/branding-shared";
 
 interface ConsentFormProps {
   uid: string;

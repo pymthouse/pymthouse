@@ -60,7 +60,7 @@ Railway's Nixpacks automatically detects and uses `nixpacks.toml`:
 If you prefer Docker on Railway:
 
 1. **Create new project**
-2. **Settings → Deploy → Dockerfile Path:** `docker/signer-dmz/Dockerfile` (final stage = `signer-dmz`: Apache + livepeer). Use `docker/signer-dmz/Dockerfile.signer` only if you want go-livepeer **without** Apache.
+2. Build and push a prebuilt image from `infra/docker/signer-dmz/Dockerfile` (final stage = `signer-dmz`: Apache + livepeer). Use `infra/docker/signer-dmz/Dockerfile.signer` only if you want go-livepeer **without** Apache.
 3. **Add environment variables** (same as above)
 4. **Add volume** at `/data`
 5. **Deploy**
@@ -69,7 +69,7 @@ If you prefer Docker on Railway:
 
 Expose only Apache on the internet: **mod_authnz_jwt** validates PymtHouse OIDC access tokens (RS256) using a PEM derived from the public [JWKS](https://pymthouse.com/api/v1/oidc/jwks). **go-livepeer** listens on loopback inside the same container; only requests with a valid `Authorization: Bearer` header reach the signer. The Authorization header is stripped before proxying so the signer never sees bearer tokens.
 
-1. **Dockerfile path:** `docker/signer-dmz/Dockerfile`. Default build target is the combined image (`signer-dmz`).
+1. **Image source:** a prebuilt image produced from `infra/docker/signer-dmz/Dockerfile`. Default runtime image should be the combined `signer-dmz` image.
 2. **Environment variables** (in addition to signer settings such as `SIGNER_NETWORK`, `ETH_RPC_URL`, volume at `/data`):
 
    | Variable | Purpose |
@@ -93,17 +93,17 @@ Expose only Apache on the internet: **mod_authnz_jwt** validates PymtHouse OIDC 
 **Local compose (two containers — signer + Apache gateway):**
 
 ```bash
-docker compose -f docker/signer-dmz/docker-compose.yml up --build
+docker compose -f infra/dev/signer-dmz.compose.local.yml up --build
 ```
 
 Gateway is on [http://localhost:8080](http://localhost:8080); the signer is not published. Use `curl http://localhost:8080/healthz` and authenticated calls to proxied paths with a PymtHouse-issued bearer token.
 
 ### Option 3: Render (Docker)
 
-Render uses the `render.yaml` blueprint:
+Render can use the image-backed blueprint at `infra/deploy/render.image.yaml`:
 
 1. **Import repository** on Render
-2. **Render auto-detects `render.yaml`**
+2. Configure Render to deploy the prebuilt image or use `infra/deploy/render.image.yaml`
 3. **Adjust environment variables** in dashboard
 4. **Deploy**
 
@@ -201,7 +201,7 @@ gcloud run deploy pymthouse-signer \
 ### Option 6: DigitalOcean App Platform
 
 1. **Create new app** from GitHub
-2. **Detect Dockerfile:** Select `docker/signer-dmz/Dockerfile` (DMZ) or `docker/signer-dmz/Dockerfile.signer` (livepeer only)
+2. Build from `infra/docker/signer-dmz/Dockerfile` (DMZ) or `infra/docker/signer-dmz/Dockerfile.signer` (livepeer only), then push the resulting image
 3. **Add environment variables**
 4. **Attach a managed database** or volume for `/data`
 5. **Deploy**
@@ -214,7 +214,7 @@ For production-grade AWS deployment:
 
 1. **Push to ECR (Apache JWT DMZ + livepeer in one image):**
    ```bash
-   docker build -f docker/signer-dmz/Dockerfile -t pymthouse-signer-dmz .
+   ./infra/scripts/build-signer-dmz.sh
    docker tag pymthouse-signer-dmz:latest AWS_ACCOUNT.dkr.ecr.REGION.amazonaws.com/pymthouse-signer-dmz:latest
    docker push AWS_ACCOUNT.dkr.ecr.REGION.amazonaws.com/pymthouse-signer-dmz:latest
    ```
@@ -233,18 +233,18 @@ For production-grade AWS deployment:
 
 #### Alternative: Signer-only (non-DMZ) — use with caution
 
-> **Warning:** `docker/signer-dmz/Dockerfile.signer` is the **go-livepeer binary with no Apache JWT gate in front of it.** It has **none** of the DMZ protections (no RS256/JWKS verification, no `scope=admin` / `scope=sign:job` enforcement, no `Authorization` header stripping before upstream). Anything that can reach the container's listening port can call the signer's HTTP and CLI APIs directly.
+> **Warning:** `infra/docker/signer-dmz/Dockerfile.signer` is the **go-livepeer binary with no Apache JWT gate in front of it.** It has **none** of the DMZ protections (no RS256/JWKS verification, no `scope=admin` / `scope=sign:job` enforcement, no `Authorization` header stripping before upstream). Anything that can reach the container's listening port can call the signer's HTTP and CLI APIs directly.
 >
 > Only use this image when **all** of the following apply:
 > - It is deployed on a **private network** (VPC-internal ALB/NLB, security group locked down to the Next.js app's egress, no public ingress).
 > - **Another authenticated hop** (your Next.js server, a sidecar, or a separate Apache/ingress-level auth layer) sits between the public internet and the signer.
 > - You understand that the signer container **exposes admin-equivalent endpoints** on port `4935` (`-cliAddr`) — sender info, keystore interactions, etc.
 >
-> For any **public-facing** deployment, use the DMZ build above (`docker/signer-dmz/Dockerfile`) instead.
+> For any **public-facing** deployment, use the DMZ build above (`infra/docker/signer-dmz/Dockerfile`) instead.
 
 1. **Build, tag, and push the signer-only image:**
    ```bash
-   docker build -f docker/signer-dmz/Dockerfile.signer -t pymthouse-signer .
+   ./infra/scripts/build-signer.sh
    docker tag pymthouse-signer:latest AWS_ACCOUNT.dkr.ecr.REGION.amazonaws.com/pymthouse-signer:latest
    docker push AWS_ACCOUNT.dkr.ecr.REGION.amazonaws.com/pymthouse-signer:latest
    ```
@@ -358,8 +358,8 @@ To update to a new version:
 1. **Pick a build** from [go-livepeer Actions](https://github.com/livepeer/go-livepeer/actions) (or a tagged release). CI uploads linux-amd64 artifacts to **Google Cloud** at `https://build.livepeer.live/go-livepeer/<full-git-sha>/livepeer-linux-amd64.tar.gz` (same archive as the workflow artifact zip).
 
 2. **Update** `LIVEPEER_COMMIT`, `LIVEPEER_SHA256`, and the download URL in:
-   - `docker/signer-dmz/Dockerfile.signer`
-   - `docker/signer-dmz/Dockerfile` (livepeer download in the `signer-dmz` image stage)
+   - `infra/docker/signer-dmz/Dockerfile.signer`
+   - `infra/docker/signer-dmz/Dockerfile` (livepeer download in the `signer-dmz` image stage)
    - `nixpacks.toml` (install phase)
 
 3. **Redeploy** on your platform

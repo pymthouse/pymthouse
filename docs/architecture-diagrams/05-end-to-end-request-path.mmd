@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant Browser
+    participant Route as src/app route/page
+    participant Runtime as domain runtime
+    participant Service as domain service
+    participant Repo as domain repo / platform repo
+    participant DB as PostgreSQL
+    participant Ext as signer / oauth / rpc
+
+    Browser->>Route: HTTP request or page navigation
+    Route->>Runtime: parsed inputs + session context
+    Runtime->>Service: apply domain rules
+    Runtime->>Repo: load or persist state
+    Repo->>DB: SQL / Drizzle operations
+    Runtime->>Ext: optional external integration
+    Runtime-->>Route: domain result
+    Route-->>Browser: JSON / HTML / redirect

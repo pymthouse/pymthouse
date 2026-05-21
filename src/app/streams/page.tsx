@@ -1,35 +1,16 @@
 export const dynamic = "force-dynamic";
 
-import { db } from "@/db/index";
-import { streamSessions } from "@/db/schema";
 import DashboardLayout from "@/components/DashboardLayout";
 import StreamSessionTable from "@/components/StreamSessionTable";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
-  getActiveStreamSessionsByRecentPayment,
-} from "@/lib/active-streams";
-import { streamSessionToTableRow } from "@/lib/stream-session-ui";
-import { confirmedUsageCountByStreamSessionId } from "@/lib/stream-session-stats";
-
-function sessionRecencyMs(s: { lastPaymentAt: string | null; startedAt: string }) {
-  const t = s.lastPaymentAt ?? s.startedAt;
-  return new Date(t).getTime();
-}
+  getStreamsPageData,
+} from "@/platform/ops/runtime/streams";
+import { streamSessionToTableRow } from "@/platform/ops/stream-session-ui";
 
 export default async function StreamsPage() {
-  const activeSessions = await getActiveStreamSessionsByRecentPayment();
-  const activeSessionIds = new Set(activeSessions.map((session) => session.id));
-
-  const allSessions = await db.select().from(streamSessions);
-  const historicalSessions = allSessions
-    .filter((s) => !activeSessionIds.has(s.id))
-    .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
-    .slice(0, 100);
-
-  const usageCounts = await confirmedUsageCountByStreamSessionId([
-    ...activeSessions.map((s) => s.id),
-    ...historicalSessions.map((s) => s.id),
-  ]);
+  const { activeSessions, historicalSessions, usageCounts } =
+    await getStreamsPageData();
 
   return (
     <DashboardLayout>

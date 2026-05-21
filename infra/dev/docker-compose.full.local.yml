@@ -1,0 +1,112 @@
+# Full local development stack. This compose file is for clone-and-run
+# development only and is allowed to build images inline from the repo.
+# It brings up:
+# - PostgreSQL
+# - the Next.js control plane in dev mode
+# - signer-dmz
+#
+# Production deployments must not use this file.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pymthouse
+      POSTGRES_USER: pymthouse
+      POSTGRES_PASSWORD: pymthouse
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - pymthouse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pymthouse -d pymthouse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: infra/docker/control-plane/Dockerfile.dev
+    image: pymthouse/control-plane:dev-local
+    depends_on:
+      db:
+        condition: service_healthy
+    working_dir: /app
+    command:
+      - sh
+      - -lc
+      - npm install && npm run db:prepare && npm run oidc:seed && npx next dev -H 0.0.0.0 -p 3001
+    env_file:
+      - ../../.env.local
+    environment:
+      DATABASE_URL: postgresql://pymthouse:pymthouse@db:5432/pymthouse?sslmode=disable
+      NEXTAUTH_URL: http://localhost:3001
+      OIDC_ISSUER: http://localhost:3001/api/v1/oidc
+      SIGNER_INTERNAL_URL: http://127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}
+      SIGNER_CLI_URL: http://127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}/__signer_cli
+      CHOKIDAR_USEPOLLING: "1"
+      WATCHPACK_POLLING: "true"
+      HOST_DOCKER_INTERNAL_IP: ${HOST_DOCKER_INTERNAL_IP:-host-gateway}
+    ports:
+      - "${CONTROL_PLANE_HOST_PORT:-3001}:3001"
+    volumes:
+      - ../..:/app
+      - control-plane-node-modules:/app/node_modules
+      - control-plane-next-cache:/app/.next
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -sf
+        - http://127.0.0.1:3001/api/v1/health
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+    restart: unless-stopped
+
+  signer-dmz:
+    build:
+      context: ../..
+      dockerfile: infra/docker/signer-dmz/Dockerfile
+    image: pymthouse/signer-dmz:local
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}:8080"
+    volumes:
+      - signer-dmz-data:/data
+    environment:
+      PORT: "8080"
+      CLI_PORT: "8082"
+      SIGNER_PORT: "8081"
+      SIGNER_READY_TIMEOUT_SECONDS: "${SIGNER_READY_TIMEOUT_SECONDS:-300}"
+      SIGNER_NETWORK: "${SIGNER_NETWORK:-arbitrum-one-mainnet}"
+      ETH_RPC_URL: "${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}"
+      SIGNER_ETH_ADDR: "${SIGNER_ETH_ADDR:-}"
+      SIGNER_REMOTE_DISCOVERY: "${SIGNER_REMOTE_DISCOVERY:-0}"
+      ORCH_WEBHOOK_URL: "${ORCH_WEBHOOK_URL:-}"
+      LIVE_AI_CAP_REPORT_INTERVAL: "${LIVE_AI_CAP_REPORT_INTERVAL:-}"
+      NEXTAUTH_URL: http://localhost:3001
+      OIDC_ISSUER: http://localhost:3001/api/v1/oidc
+      OIDC_AUDIENCE: "${OIDC_AUDIENCE:-}"
+      JWKS_URI: http://host.docker.internal:3001/api/v1/oidc/jwks
+      JWKS_TLS_INSECURE: "${JWKS_TLS_INSECURE:-}"
+    extra_hosts:
+      - "host.docker.internal:${HOST_DOCKER_INTERNAL_IP:-host-gateway}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+    restart: unless-stopped
+
+volumes:
+  pymthouse-postgres-data:
+  control-plane-node-modules:
+  control-plane-next-cache:
+  signer-dmz-data:

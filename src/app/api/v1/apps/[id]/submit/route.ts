@@ -4,11 +4,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { developerApps } from "@/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
-import { getProviderApp } from "@/lib/provider-apps";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { getProviderApp } from "@/domains/developer-apps/repo/provider-access";
+import { submitOwnedAppForReview } from "@/domains/developer-apps/runtime/app-core";
 
 export async function POST(
   request: NextRequest,
@@ -26,44 +24,10 @@ export async function POST(
     return NextResponse.json({ error: "App not found" }, { status: 404 });
   }
 
-  // Only the owner can submit the app
-  if (app.ownerId !== userId) {
-    return NextResponse.json(
-      { error: "Only the app owner can submit for review" },
-      { status: 403 }
-    );
+  const result = await submitOwnedAppForReview({ app, userId });
+  if (!result.ok) {
+    return NextResponse.json(result.body, { status: result.status });
   }
 
-  // Guarded update: atomically transition only from draft or rejected
-  const now = new Date().toISOString();
-  const updated = await db
-    .update(developerApps)
-    .set({
-      status: "submitted",
-      submittedAt: now,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(developerApps.id, app.id),
-        inArray(developerApps.status, ["draft", "rejected"]),
-      ),
-    )
-    .returning({ id: developerApps.id });
-
-  if (updated.length === 0) {
-    return NextResponse.json(
-      {
-        error: "Invalid status",
-        message: `App is currently ${app.status}. Only draft or rejected apps can be submitted for review.`,
-      },
-      { status: 409 }
-    );
-  }
-
-  return NextResponse.json({
-    success: true,
-    status: "submitted",
-    message: "App submitted for review",
-  });
+  return NextResponse.json(result.body);
 }

@@ -1,16 +1,14 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
-import { getClient } from "@/lib/oidc/clients";
-import { getScopeDefinition } from "@/lib/oidc/scopes";
-import { getProvider } from "@/lib/oidc/provider";
-import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { resolveAppBrandingByClientId, getDefaultBranding, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
-import { resolveHostContext } from "@/lib/oidc/host-resolution";
-import { eq } from "drizzle-orm";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { getClient } from "@/domains/oidc-platform/runtime/clients";
+import { getScopeDefinition } from "@/platform/oidc/scopes";
+import { getProvider } from "@/domains/oidc-platform/runtime/provider-instance";
+import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/platform/oidc/issuer-urls";
+import { resolveAppBrandingByClientId, getDefaultBranding, shouldUseWhiteLabelBranding } from "@/domains/oidc-platform/runtime/branding";
+import { resolveHostContext } from "@/domains/oidc-platform/runtime/host-context";
+import { getConsentDisplayData } from "@/domains/oidc-platform/runtime/consent-page";
 import { IncomingMessage, ServerResponse } from "http";
 import { Socket } from "net";
 import ConsentForm from "./consent-form";
@@ -133,31 +131,11 @@ export default async function ConsentPage({
 
   const branding = await resolveAppBrandingByClientId(clientId);
   const isWhiteLabel = shouldUseWhiteLabelBranding(branding);
-
-  const developerAppRows = await db
-    .select({
-      name: developerApps.name,
-      developerName: developerApps.developerName,
-      websiteUrl: developerApps.websiteUrl,
-      privacyPolicyUrl: developerApps.privacyPolicyUrl,
-      supportUrl: developerApps.supportUrl,
-      logoLightUrl: developerApps.logoLightUrl,
-    })
-    .from(developerApps)
-    .where(eq(developerApps.oidcClientId, client.id))
-    .limit(1);
-  const developerApp = developerAppRows[0];
-
-  // Fetch logo_uri from OIDC client metadata (synced from app settings)
-  const oidcClientRows = await db
-    .select({ logoUri: oidcClients.logoUri })
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
-  const oidcClientRow = oidcClientRows[0];
-  const logoUrl = isWhiteLabel 
-    ? (branding.logoUrl || oidcClientRow?.logoUri || developerApp?.logoLightUrl || null)
-    : (oidcClientRow?.logoUri || developerApp?.logoLightUrl || null);
+  const { developerApp, logoUrl } = await getConsentDisplayData({
+    clientId,
+    oidcClientRowId: client.id,
+    branding,
+  });
 
   const scopes = scope
     ? scope.split(/\s+/).filter((s) => client.allowedScopes.includes(s))

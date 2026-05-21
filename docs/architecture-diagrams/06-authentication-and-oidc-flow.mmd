@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant User
+    participant Client as Developer App Client
+    participant CP as Control Plane
+    participant OIDC as oidc-platform
+    participant ID as identity-access
+    participant DB as PostgreSQL
+
+    User->>Client: starts login or device flow
+    Client->>CP: /api/v1/oidc/*
+    CP->>OIDC: route adapter delegates
+    OIDC->>ID: resolve session / admin / app access as needed
+    OIDC->>DB: load clients, payloads, keys, custom domain data
+    OIDC-->>Client: auth page, device verification, token, or redirect
+    Client-->>User: signed-in experience

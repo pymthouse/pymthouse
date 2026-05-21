@@ -2,14 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  deleteDeveloperApp,
+  revertDeveloperAppToDraft,
+  saveDeveloperApp,
+  saveDeveloperAppSettings,
+  submitDeveloperAppForReview,
+} from "@/domains/developer-apps/ui/app-editor-api";
+import {
+  createSettingsFormData,
+  type AppFormData,
+  type AppState,
+} from "@/domains/developer-apps/ui/app-editor";
+import AppDangerZoneSection from "./settings/AppDangerZoneSection";
+import AppSettingsSaveBar from "./settings/AppSettingsSaveBar";
+import AppSettingsStatusSection from "./settings/AppSettingsStatusSection";
+import PostLogoutRedirectsSection from "./settings/PostLogoutRedirectsSection";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep from "./steps/TestingStep";
-import {
-  defaultAppFormData,
-  type AppFormData,
-  type AppState,
-} from "./AppWizard";
 
 interface Props {
   appId: string;
@@ -30,27 +41,6 @@ interface Props {
   onRevertedToDraft?: () => void;
 }
 
-function mergeFormData(
-  initial: Partial<AppFormData>,
-  initialInitiateLoginUri: string | null,
-  initialDeviceThirdPartyInitiateLogin: boolean,
-): AppFormData {
-  return {
-    ...defaultAppFormData,
-    ...initial,
-    redirectUris: initial.redirectUris ?? [...defaultAppFormData.redirectUris],
-    grantTypes:
-      initial.grantTypes !== undefined
-        ? [...initial.grantTypes]
-        : [...defaultAppFormData.grantTypes],
-    allowedScopes: initial.allowedScopes ?? defaultAppFormData.allowedScopes,
-    backendDeviceHelper: initial.backendDeviceHelper ?? false,
-    initiateLoginUri: initial.initiateLoginUri ?? initialInitiateLoginUri ?? "",
-    deviceThirdPartyInitiateLogin:
-      initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
-  };
-}
-
 export default function AppSettingsScreen({
   appId,
   initialData,
@@ -66,7 +56,11 @@ export default function AppSettingsScreen({
 }: Props) {
   const router = useRouter();
   const [formData, setFormData] = useState<AppFormData>(() =>
-    mergeFormData(initialData, initialInitiateLoginUri ?? null, initialDeviceThirdPartyInitiateLogin),
+    createSettingsFormData(
+      initialData,
+      initialInitiateLoginUri ?? null,
+      initialDeviceThirdPartyInitiateLogin,
+    ),
   );
   const [appState, setAppState] = useState<AppState>(initialState);
   const [domains, setDomains] = useState<{ id: string; domain: string }[]>(
@@ -96,19 +90,7 @@ export default function AppSettingsScreen({
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData }),
-      });
-      const putJson = (await res.json()) as {
-        success?: boolean;
-        m2mOidcClient?: { clientId: string; hasSecret: boolean } | null;
-        error?: string;
-      };
-      if (!res.ok) {
-        throw new Error(putJson.error || `Failed to save (${res.status})`);
-      }
+      const putJson = await saveDeveloperApp(appId, formData);
 
       if (putJson.m2mOidcClient) {
         setAppState((s) => ({
@@ -117,22 +99,12 @@ export default function AppSettingsScreen({
         }));
       }
 
-      const settingsRes = await fetch(`/api/v1/apps/${appId}/settings`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          postLogoutRedirectUris,
-          initiateLoginUri: formData.initiateLoginUri.trim() || null,
-          deviceThirdPartyInitiateLogin: formData.deviceThirdPartyInitiateLogin,
-          tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
-        }),
+      await saveDeveloperAppSettings(appId, {
+        postLogoutRedirectUris,
+        initiateLoginUri: formData.initiateLoginUri.trim() || null,
+        deviceThirdPartyInitiateLogin: formData.deviceThirdPartyInitiateLogin,
+        tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
       });
-      if (!settingsRes.ok) {
-        const body = await settingsRes.json().catch(() => ({}));
-        throw new Error(
-          body.error || "App metadata saved, but failed to save OIDC settings"
-        );
-      }
 
       setMessage("All settings saved.");
     } catch (err) {
@@ -153,21 +125,7 @@ export default function AppSettingsScreen({
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/submit`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let msg = `Submit failed (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data.message) msg = data.message;
-          else if (data.error) msg = data.error;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
+      await submitDeveloperAppForReview(appId);
       setAppState((s) => ({ ...s, status: "submitted" }));
       onReviewSubmitted?.();
       setMessage("App submitted for review. An administrator will approve it.");
@@ -191,15 +149,7 @@ export default function AppSettingsScreen({
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(
-          typeof body.error === "string"
-            ? body.error
-            : `Delete failed (${res.status})`,
-        );
-      }
+      await deleteDeveloperApp(appId);
       router.push("/apps");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
@@ -221,21 +171,7 @@ export default function AppSettingsScreen({
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/revert-draft`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let msg = `Revert failed (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data.message) msg = data.message;
-          else if (data.error) msg = data.error;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
+      await revertDeveloperAppToDraft(appId);
       setAppState((s) => ({ ...s, status: "draft" }));
       onRevertedToDraft?.();
       setMessage("App is back in draft. You can edit and submit again when ready.");
@@ -265,71 +201,21 @@ export default function AppSettingsScreen({
     typeof window !== "undefined"
       ? `${window.location.origin}/api/v1/oidc/token`
       : "";
+  const canSave = formData.name.trim().length > 0;
 
   return (
     <div className="max-w-[600px] divide-y divide-zinc-800">
-      {/* Status banners */}
-      <div className="space-y-3 pb-6">
-        {!canEdit && (
-          <div className="p-3 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-200 text-sm">
-            You can view this app&apos;s configuration. Only platform or app
-            administrators can change settings.
-          </div>
-        )}
-        {canEdit &&
-          canSubmitForReview &&
-          (appState.status === "draft" || appState.status === "rejected") && (
-            <div className="p-4 rounded-md border border-blue-500/25 bg-blue-500/5 space-y-3">
-              <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Submit for review</h2>
-                <p className="text-sm text-zinc-400 mt-1">
-                  While this app is in draft, only you and platform staff can use
-                  it. Submit it when you are ready so an administrator can approve
-                  it for production.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void submitForReview()}
-                disabled={submittingForReview}
-                className="px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {submittingForReview ? "Submitting…" : "Submit for review"}
-              </button>
-            </div>
-          )}
-        {canEdit &&
-          canSubmitForReview &&
-          appState.status === "submitted" && (
-            <div className="p-4 rounded-md border border-amber-500/25 bg-amber-500/5 space-y-3">
-              <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Revert to draft</h2>
-                <p className="text-sm text-zinc-400 mt-1">
-                  This app is waiting for administrator review. You can withdraw it
-                  from the queue to make changes, then submit again.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void revertToDraft()}
-                disabled={reverting}
-                className="px-4 py-2 text-sm font-medium rounded-md border border-amber-500/40 text-amber-200 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {reverting ? "Reverting…" : "Revert to draft"}
-              </button>
-            </div>
-          )}
-        {error && (
-          <div className="p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-300 text-sm">
-            {error}
-          </div>
-        )}
-        {message && (
-          <div className="p-3 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-sm">
-            {message}
-          </div>
-        )}
-      </div>
+      <AppSettingsStatusSection
+        canEdit={canEdit}
+        canSubmitForReview={canSubmitForReview}
+        appStatus={appState.status}
+        submittingForReview={submittingForReview}
+        reverting={reverting}
+        error={error}
+        message={message}
+        onSubmitForReview={() => void submitForReview()}
+        onRevertToDraft={() => void revertToDraft()}
+      />
 
       {/* App Info */}
       <section className="py-6">
@@ -348,64 +234,16 @@ export default function AppSettingsScreen({
         />
       </section>
 
-      {/* Post-logout Redirects */}
-      <section className="py-6 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-zinc-100">Post-logout Redirects</h2>
-          <p className="text-sm text-zinc-500 mt-1">
-            URIs to redirect users to after sign-out. Saved with{" "}
-            <strong className="text-zinc-400">Save changes</strong> below.
-          </p>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-zinc-300 mb-1.5">
-            Post-logout redirect URIs
-          </label>
-          <div className="flex gap-2 mb-2">
-            <input
-              type="text"
-              value={newPostLogoutUri}
-              onChange={(e) => setNewPostLogoutUri(e.target.value)}
-              onKeyDown={(e) =>
-                e.key === "Enter" && (e.preventDefault(), addPostLogoutUri())
-              }
-              placeholder="https://example.com/logout-complete"
-              disabled={!canEdit}
-              className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
-            />
-            <button
-              type="button"
-              onClick={addPostLogoutUri}
-              disabled={!canEdit}
-              className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Add
-            </button>
-          </div>
-          <div className="space-y-1.5">
-            {postLogoutRedirectUris.map((uri) => (
-              <div
-                key={uri}
-                className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
-              >
-                <code className="text-xs text-zinc-300">{uri}</code>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setPostLogoutRedirectUris((items) =>
-                      items.filter((item) => item !== uri),
-                    )
-                  }
-                  disabled={!canEdit}
-                  className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <PostLogoutRedirectsSection
+        canEdit={canEdit}
+        newPostLogoutUri={newPostLogoutUri}
+        postLogoutRedirectUris={postLogoutRedirectUris}
+        onNewUriChange={setNewPostLogoutUri}
+        onAddUri={addPostLogoutUri}
+        onRemoveUri={(uri) =>
+          setPostLogoutRedirectUris((items) => items.filter((item) => item !== uri))
+        }
+      />
 
       {/* Credentials & URIs */}
       <section className="py-6">
@@ -441,41 +279,18 @@ export default function AppSettingsScreen({
         tokenUrl={tokenUrl}
       />
 
-      {/* Danger zone */}
-      {canSubmitForReview && appState.status === "draft" && (
-        <section className="py-6 space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-100">Delete draft app</h2>
-          <p className="text-sm text-zinc-400">
-            Permanently remove this app, its OIDC client, and related data. This
-            cannot be undone.
-          </p>
-          <button
-            type="button"
-            onClick={() => void deleteDraftApp()}
-            disabled={deleting}
-            className="px-4 py-2 text-sm font-medium rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {deleting ? "Deleting…" : "Delete app"}
-          </button>
-        </section>
-      )}
+      <AppDangerZoneSection
+        visible={canSubmitForReview && appState.status === "draft"}
+        deleting={deleting}
+        onDelete={() => void deleteDraftApp()}
+      />
 
-      {/* Save */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6">
-        <p className="text-xs text-zinc-500 max-w-sm">
-          Redirect URIs and domains update immediately. Use{" "}
-          <strong className="text-zinc-400">Save changes</strong> for metadata,
-          auth mode, scopes, and OIDC fields.
-        </p>
-        <button
-          type="button"
-          onClick={() => void saveChanges()}
-          disabled={!canEdit || saving || !formData.name.trim()}
-          className="px-5 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-        >
-          {saving ? "Saving…" : "Save changes"}
-        </button>
-      </div>
+      <AppSettingsSaveBar
+        canEdit={canEdit}
+        saving={saving}
+        canSave={canSave}
+        onSave={() => void saveChanges()}
+      />
     </div>
   );
 }

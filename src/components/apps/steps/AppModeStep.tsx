@@ -1,24 +1,20 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
-import type { AppFormData } from "../AppWizard";
-import { OIDC_SCOPES } from "@/lib/oidc/scopes";
-import { validateInitiateLoginUri } from "@/lib/oidc/third-party-initiate-login";
+import type { AppFormData } from "@/domains/developer-apps/ui/app-editor";
+import {
+  buildAppAuthModeModel,
+  ensureRequiredUserTokenScope,
+  getInitiateLoginUpdates,
+  getToggledScopeUpdates,
+  getToggleDeviceCodeUpdates,
+  getToggleHelperUpdates,
+  getToggleRefreshTokenUpdates,
+} from "@/domains/developer-apps/ui/app-auth-mode";
+import { OIDC_SCOPES } from "@/platform/oidc/scopes";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 
-const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const noopDomainsChange = (_domains: { id: string; domain: string }[]) => {};
-
-function isValidInitiateLoginUri(uri: string): boolean {
-  const t = uri.trim();
-  if (!t.length) return false;
-  try {
-    validateInitiateLoginUri(t);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 interface Props {
   data: AppFormData;
@@ -44,68 +40,44 @@ export default function AppModeStep({
     },
     [onDomainsChange],
   );
-  const scopes = data.allowedScopes.split(/\s+/).filter(Boolean);
-  const hasDeviceCode = data.grantTypes.includes(DEVICE_CODE_GRANT);
-  const hasAuthCodeFlow = data.grantTypes.includes("authorization_code");
-  const requiresIssueUserTokens =
-    hasDeviceCode && data.deviceThirdPartyInitiateLogin && isValidInitiateLoginUri(data.initiateLoginUri);
-  const hasIssueUserTokens = scopes.includes("users:token");
-
-  // openid (required) + sign:job always visible; users:token only when helper is on
-  const baseScopes = OIDC_SCOPES.filter((s) => ["openid", "sign:job"].includes(s.value));
-  const helperScopes = OIDC_SCOPES.filter((s) => s.value === "users:token");
+  const {
+    scopes,
+    hasDeviceCode,
+    hasAuthCodeFlow,
+    requiresIssueUserTokens,
+    hasIssueUserTokens,
+    baseScopes,
+    helperScopes,
+  } = buildAppAuthModeModel(data);
 
   const toggleScope = (scope: string) => {
-    if (readOnly || scope === "openid") return;
-    if (scope === "users:token" && requiresIssueUserTokens) return;
-    const next = scopes.includes(scope)
-      ? scopes.filter((v) => v !== scope)
-      : [...scopes, scope];
-    onChange({ allowedScopes: next.join(" ") });
+    const updates = getToggledScopeUpdates(data, scope, readOnly);
+    if (!updates) return;
+    onChange(updates);
   };
 
   useEffect(() => {
-    if (!requiresIssueUserTokens || hasIssueUserTokens) return;
-    onChange({ allowedScopes: [...scopes, "users:token"].join(" ") });
-  }, [hasIssueUserTokens, onChange, requiresIssueUserTokens, scopes]);
+    const updates = ensureRequiredUserTokenScope(data);
+    if (!updates) return;
+    onChange(updates);
+  }, [data, onChange]);
 
   const toggleRefreshToken = () => {
-    if (readOnly) return;
-    const has = data.grantTypes.includes("refresh_token");
-    onChange({
-      grantTypes: has
-        ? data.grantTypes.filter((v) => v !== "refresh_token")
-        : [...data.grantTypes, "refresh_token"],
-    });
+    const updates = getToggleRefreshTokenUpdates(data, readOnly);
+    if (!updates) return;
+    onChange(updates);
   };
 
   const toggleDeviceCode = () => {
-    if (readOnly || !data.backendDeviceHelper) return;
-    if (hasDeviceCode) {
-      onChange({
-        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
-        initiateLoginUri: "",
-        deviceThirdPartyInitiateLogin: false,
-      });
-    } else {
-      onChange({ grantTypes: [...data.grantTypes, DEVICE_CODE_GRANT] });
-    }
+    const updates = getToggleDeviceCodeUpdates(data, readOnly);
+    if (!updates) return;
+    onChange(updates);
   };
 
   const toggleHelper = (checked: boolean) => {
-    if (readOnly) return;
-    if (checked) {
-      const nextScopes = scopes.includes("users:token") ? scopes : [...scopes, "users:token"];
-      onChange({ backendDeviceHelper: true, allowedScopes: nextScopes.join(" ") });
-    } else {
-      onChange({
-        backendDeviceHelper: false,
-        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
-        initiateLoginUri: "",
-        deviceThirdPartyInitiateLogin: false,
-        allowedScopes: scopes.filter((s) => s !== "users:token").join(" "),
-      });
-    }
+    const updates = getToggleHelperUpdates(data, checked, readOnly);
+    if (!updates) return;
+    onChange(updates);
   };
 
   const scopeRow = (
@@ -243,13 +215,7 @@ export default function AppModeStep({
                           <input
                             type="url"
                             value={data.initiateLoginUri}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              onChange({
-                                initiateLoginUri: v,
-                                deviceThirdPartyInitiateLogin: isValidInitiateLoginUri(v),
-                              });
-                            }}
+                            onChange={(e) => onChange(getInitiateLoginUpdates(e.target.value))}
                             placeholder="https://example.com/api/auth/initiate-login"
                             disabled={readOnly}
                             className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"

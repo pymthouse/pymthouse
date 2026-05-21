@@ -1,0 +1,46 @@
+# Local-only signer DMZ stack. This compose file is for clone-and-run development
+# and is allowed to build images inline from the repo. It must not be used as a
+# production deployment input. Exposes the DMZ on 127.0.0.1:8080 by default.
+# The app should use
+# SIGNER_INTERNAL_URL=http://127.0.0.1:8080 and SIGNER_CLI_URL=http://127.0.0.1:8080/__signer_cli
+
+services:
+  signer-dmz:
+    build:
+      context: ../..
+      dockerfile: infra/docker/signer-dmz/Dockerfile
+    image: pymthouse/signer-dmz:local
+    ports:
+      - "127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - PORT=8080
+      - CLI_PORT=8082
+      - SIGNER_PORT=8081
+      - SIGNER_READY_TIMEOUT_SECONDS=${SIGNER_READY_TIMEOUT_SECONDS:-300}
+      - SIGNER_NETWORK=${SIGNER_NETWORK:-arbitrum-one-mainnet}
+      - ETH_RPC_URL=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}
+      - SIGNER_ETH_ADDR=${SIGNER_ETH_ADDR:-}
+      - SIGNER_REMOTE_DISCOVERY=${SIGNER_REMOTE_DISCOVERY:-0}
+      - ORCH_WEBHOOK_URL=${ORCH_WEBHOOK_URL:-}
+      - LIVE_AI_CAP_REPORT_INTERVAL=${LIVE_AI_CAP_REPORT_INTERVAL:-}
+      # Same NEXTAUTH_URL as the Next app so signer-dmz entrypoint sets AuthJWTIss
+      # to match getIssuer(). Leave OIDC_* / JWKS_URI unset to derive in entrypoint.
+      # If the Next app sets OIDC_ISSUER (e.g. http://127.0.0.1:3001/api/v1/oidc), set
+      # the same values here; localhost vs 127.0.0.1 mismatch → Apache 401 HTML on /sign-*.
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3001}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_AUDIENCE=${OIDC_AUDIENCE:-}
+      - JWKS_URI=${JWKS_URI:-}
+      # Set to 1 when JWKS is HTTPS with a self-signed / corporate CA (local dev).
+      - JWKS_TLS_INSECURE=${JWKS_TLS_INSECURE:-}
+    extra_hosts:
+      - "host.docker.internal:${HOST_DOCKER_INTERNAL_IP:-host-gateway}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped

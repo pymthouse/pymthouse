@@ -1,26 +1,15 @@
 export const dynamic = "force-dynamic";
 
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
+import { authOptions } from "@/platform/auth/next-auth-options";
 import { redirect } from "next/navigation";
-import { db } from "@/db/index";
-import { signerConfig, transactions, endUsers } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import DashboardLayout from "@/components/DashboardLayout";
 import Link from "next/link";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
-  countActiveStreamsByRecentPayment,
-  getActiveStreamSessionsByRecentPayment,
-} from "@/lib/active-streams";
-
-function formatWei(wei: string): string {
-  if (wei === "0") return "0 ETH";
-  const value = BigInt(wei);
-  const eth = Number(value) / 1e18;
-  if (eth < 0.001) return `${wei} wei`;
-  return `${eth.toFixed(6)} ETH`;
-}
+  formatDashboardWei,
+  getAdminDashboardData,
+} from "@/platform/ops/runtime/dashboard";
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
@@ -36,32 +25,15 @@ export default async function DashboardPage() {
 }
 
 async function AdminDashboard() {
-  const signerRows = await db
-    .select()
-    .from(signerConfig)
-    .where(eq(signerConfig.id, "default"))
-    .limit(1);
-  const signer = signerRows[0];
-
-  const [activeStreamCount, recentActiveSessions, allTransactions, allEndUsers] =
-    await Promise.all([
-      countActiveStreamsByRecentPayment(),
-      getActiveStreamSessionsByRecentPayment(5),
-      db
-        .select({
-          amountWei: transactions.amountWei,
-          platformCutWei: transactions.platformCutWei,
-        })
-        .from(transactions),
-      db.select().from(endUsers),
-    ]);
-
-  let totalFeeWei = 0n;
-  let totalPlatformCutWei = 0n;
-  for (const txn of allTransactions) {
-    totalFeeWei += BigInt(txn.amountWei);
-    totalPlatformCutWei += BigInt(txn.platformCutWei || "0");
-  }
+  const {
+    signer,
+    activeStreamCount,
+    recentActiveSessions,
+    allTransactions,
+    allEndUsers,
+    totalFeeWei,
+    totalPlatformCutWei,
+  } = await getAdminDashboardData();
 
   const stats = [
     {
@@ -86,13 +58,13 @@ async function AdminDashboard() {
     },
     {
       label: "Total Volume",
-      value: formatWei(totalFeeWei.toString()),
+      value: formatDashboardWei(totalFeeWei.toString()),
       sub: `${allTransactions.length} transactions`,
       color: "text-amber-400",
     },
     {
       label: "Platform Revenue",
-      value: formatWei(totalPlatformCutWei.toString()),
+      value: formatDashboardWei(totalPlatformCutWei.toString()),
       sub: "total cut earned",
       color: "text-purple-400",
     },
@@ -147,7 +119,7 @@ async function AdminDashboard() {
                     </span>
                   </div>
                   <span className="text-zinc-500 text-xs">
-                    {formatWei(user.creditBalanceWei)}
+                    {formatDashboardWei(user.creditBalanceWei)}
                   </span>
                 </div>
               ))}
@@ -172,7 +144,7 @@ async function AdminDashboard() {
                       : session.manifestId}
                   </span>
                   <span className="text-zinc-500 text-xs">
-                    {formatWei(session.totalFeeWei)}
+                    {formatDashboardWei(session.totalFeeWei)}
                   </span>
                 </div>
               ))}

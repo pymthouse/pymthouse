@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: pymthouse-signer
+    runtime: image
+    image:
+      url: ghcr.io/pymthouse/pymthouse-signer-dmz:replace-me
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: SIGNER_NETWORK
+        value: arbitrum-one-mainnet
+      - key: SIGNER_PORT
+        value: 8081
+      - key: ETH_RPC_URL
+        value: https://arb1.arbitrum.io/rpc
+      - key: SIGNER_ETH_ADDR
+        sync: false
+      - key: SIGNER_REMOTE_DISCOVERY
+        value: 0

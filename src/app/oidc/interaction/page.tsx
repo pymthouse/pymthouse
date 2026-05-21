@@ -3,12 +3,12 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { IncomingMessage, ServerResponse } from "http";
 import { Socket } from "net";
-import { authOptions } from "@/lib/next-auth-options";
-import { getProvider } from "@/lib/oidc/provider";
-import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
-import { resolveHostContext } from "@/lib/oidc/host-resolution";
-import { checkAppAccess } from "@/lib/oidc/app-access";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { getProvider } from "@/domains/oidc-platform/runtime/provider-instance";
+import { getPublicOrigin } from "@/platform/oidc/issuer-urls";
+import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/domains/oidc-platform/runtime/branding";
+import { resolveHostContext } from "@/domains/oidc-platform/runtime/host-context";
+import { checkAppAccess } from "@/domains/oidc-platform/runtime/app-access";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 

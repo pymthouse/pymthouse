@@ -1,12 +1,10 @@
 export const dynamic = "force-dynamic";
 
-import { db } from "@/db/index";
-import { users, endUsers, sessions, streamSessions, transactions } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
 import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
 import UserTable from "@/components/UserTable";
 import CreateEndUserForm from "@/components/CreateEndUserForm";
+import { getUsersPageData } from "@/platform/ops/runtime/end-users";
 
 function formatWei(wei: string): string {
   if (wei === "0") return "0 ETH";
@@ -17,37 +15,7 @@ function formatWei(wei: string): string {
 }
 
 export default async function UsersPage() {
-  const adminUsers = await db.select().from(users);
-  const allEndUsers = await db.select().from(endUsers);
-
-  // Enrich end users with token count and usage
-  const enriched = await Promise.all(
-    allEndUsers.map(async (user) => {
-      const userSessionRows = await db
-        .select()
-        .from(sessions)
-        .where(eq(sessions.endUserId, user.id));
-
-      const userStreams = await db
-        .select()
-        .from(streamSessions)
-        .where(eq(streamSessions.endUserId, user.id));
-
-      const [txnCountRow] = await db
-        .select({
-          transactionCount: sql<number>`cast(count(${transactions.id}) as integer)`.mapWith(Number),
-        })
-        .from(transactions)
-        .where(eq(transactions.endUserId, user.id));
-
-      return {
-        ...user,
-        tokenCount: userSessionRows.length,
-        streamCount: userStreams.length,
-        transactionCount: txnCountRow.transactionCount,
-      };
-    }),
-  );
+  const { adminUsers, enrichedEndUsers } = await getUsersPageData();
 
   return (
     <DashboardLayout>
@@ -70,7 +38,7 @@ export default async function UsersPage() {
           <CreateEndUserForm />
         </div>
 
-        {enriched.length === 0 ? (
+        {enrichedEndUsers.length === 0 ? (
           <div className="text-center py-12 text-zinc-500">
             <p>No app users yet</p>
             <p className="text-xs mt-1">
@@ -91,7 +59,7 @@ export default async function UsersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50">
-                {enriched.map((user) => (
+                {enrichedEndUsers.map((user) => (
                   <tr
                     key={user.id}
                     className="hover:bg-zinc-900/50 transition-colors"

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchDashboardPricing } from "@/lib/naap-catalog";
+import { fetchDashboardPricing } from "@/platform/catalog/naap-catalog";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);

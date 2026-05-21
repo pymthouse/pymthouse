@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant App as Developer App / Gateway
+    participant CP as Control Plane
+    participant Signer as Signer DMZ
+    participant SRuntime as signer-runtime
+    participant Billing as usage-billing
+    participant EndUsers as end-user-accounts
+    participant DB as PostgreSQL
+
+    App->>CP: /api/signer/* request
+    CP->>SRuntime: authorize + route request
+    SRuntime->>Signer: forward signed / gated request
+    Signer-->>SRuntime: payment or signing response
+    SRuntime->>Billing: compute usage/billing facts
+    Billing->>EndUsers: attribute cost / balances
+    EndUsers->>DB: persist transactions, sessions, usage
+    SRuntime-->>App: signer response

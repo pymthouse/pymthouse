@@ -8,7 +8,7 @@ import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
 import PipelineModelPicker from "@/components/PipelineModelPicker";
 
 import type { PipelineCatalogEntry } from "@/components/PipelineModelPicker";
-import type { DiscoveryPolicy } from "@/lib/discovery-plans";
+import type { DiscoveryPolicy } from "@/shared/discovery/discovery-plans";
 
 interface ProfileRow {
   id: string;

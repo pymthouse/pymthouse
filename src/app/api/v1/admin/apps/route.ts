@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { developerApps, users, oidcClients } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { readAdminApps } from "@/domains/developer-apps/runtime/admin-apps";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -15,37 +13,5 @@ export async function GET() {
   if (role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  try {
-    const apps = await db
-      .select({
-        id: oidcClients.clientId,
-        name: developerApps.name,
-        subtitle: developerApps.subtitle,
-        category: developerApps.category,
-        status: developerApps.status,
-        developerName: developerApps.developerName,
-        submittedAt: developerApps.submittedAt,
-        pendingRevisionSubmittedAt: developerApps.pendingRevisionSubmittedAt,
-        createdAt: developerApps.createdAt,
-        ownerEmail: users.email,
-        ownerName: users.name,
-        clientId: oidcClients.clientId,
-        marketplaceFeatured: developerApps.marketplaceFeatured,
-      })
-      .from(developerApps)
-      .leftJoin(users, eq(developerApps.ownerId, users.id))
-      .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-      .where(
-        inArray(developerApps.status, ["submitted", "in_review", "approved", "rejected"])
-      );
-
-    return NextResponse.json({ apps: apps || [] });
-  } catch (error) {
-    console.error("Admin apps API error:", error);
-    return NextResponse.json(
-      { error: "Failed to load apps", apps: [] },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json(await readAdminApps());
 }

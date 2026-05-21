@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateRequestAsync, hasScope, AuthError } from "@/lib/auth";
-import { proxyDiscoverOrchestrators } from "@/lib/signer-proxy";
+import { authenticateRequestAsync, hasScope, AuthError } from "@/domains/identity-access/runtime/request-auth";
+import { proxyDiscoverOrchestrators } from "@/domains/signer-runtime/runtime/signer-proxy";
 
 export async function GET(request: NextRequest) {
   try {
