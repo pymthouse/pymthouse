@@ -228,9 +228,11 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   assert.ok(Array.isArray(buckets), "byUser array present when groupBy=user");
   assert.equal(buckets!.length, 3, "three buckets: owner(user), alpha, beta");
 
-  const alphaBucket = buckets!.find((b) => b.endUserId === appUserAlpha.externalUserId);
-  const betaBucket = buckets!.find((b) => b.endUserId === appUserBeta.externalUserId);
-  const ownerBucket = buckets!.find((b) => b.endUserId === app.userId);
+  const alphaBucket = buckets!.find((b) => b.externalUserId === "ext-alpha");
+  const betaBucket = buckets!.find((b) => b.externalUserId === "ext-beta");
+  const ownerBucket = buckets!.find(
+    (b) => b.endUserId === app.userId && b.externalUserId === null,
+  );
 
   assert.ok(alphaBucket, "alpha end user present in byUser");
   assert.equal(alphaBucket!.externalUserId, "ext-alpha");

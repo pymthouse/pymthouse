@@ -226,7 +226,7 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
     const app = await getProviderApp(clientId);
     return app;
   }
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   return auth?.app ?? null;
 }
 
@@ -275,7 +275,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -302,7 +302,7 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (body.is_network_default === true) {
+  if ("is_network_default" in body) {
     return NextResponse.json(
       { error: "is_network_default cannot be set on created plans" },
       { status: 400 },
@@ -445,7 +445,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -469,7 +469,7 @@ export async function PUT(
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
-  if (body.is_network_default === true) {
+  if ("is_network_default" in body) {
     return NextResponse.json(
       { error: "is_network_default cannot be changed via this API" },
       { status: 400 },
@@ -669,7 +669,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

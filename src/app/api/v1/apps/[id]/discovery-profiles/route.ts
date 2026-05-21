@@ -65,7 +65,7 @@ async function resolveAppForDiscoveryProfilesRead(clientId: string, request: Nex
   if (clientAuth?.appId === clientId) {
     return getProviderApp(clientId);
   }
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   return auth?.app ?? null;
 }
 
@@ -113,7 +113,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

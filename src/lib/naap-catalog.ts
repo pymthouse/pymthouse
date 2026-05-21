@@ -184,7 +184,19 @@ async function fetchDashboardPricingFromNetwork(): Promise<PricingRow[]> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /** Fetch (and cache) the NaaP pipeline catalog. */
+let fetchPipelineCatalogForTests: (() => Promise<PipelineCatalogEntry[]>) | null = null;
+
+/** Route tests stub the catalog without Module loader hooks. */
+export function setFetchPipelineCatalogForTests(
+  fetcher: (() => Promise<PipelineCatalogEntry[]>) | null,
+): void {
+  fetchPipelineCatalogForTests = fetcher;
+}
+
 export async function fetchPipelineCatalog(): Promise<PipelineCatalogEntry[]> {
+  if (fetchPipelineCatalogForTests) {
+    return fetchPipelineCatalogForTests();
+  }
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.data;
   }

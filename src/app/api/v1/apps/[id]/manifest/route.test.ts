@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import Module from "node:module";
 import test from "node:test";
 
 import { eq } from "drizzle-orm";
@@ -8,9 +7,19 @@ import { planCapabilityBundles, plans } from "@/db/schema";
 import { computeManifestRevision } from "@/lib/discovery-allowlist";
 import { run } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
+import {
+  installNaapCatalogMock,
+  uninstallNaapCatalogMock,
+} from "@/test-utils/naap-catalog-mock";
+import {
+  installProviderAppSessionAuth,
+  uninstallProviderAppSessionAuth,
+} from "@/test-utils/provider-app-session-auth";
 import { selectNetworkDefaultPlan } from "@/lib/network-default-plan";
 
 let authorizedApp: { clientId: string; userId: string } | null = null;
+
+installProviderAppSessionAuth(() => authorizedApp);
 
 let catalogThrows = false;
 let catalogFetchCount = 0;
@@ -20,44 +29,17 @@ const MOCK_CATALOG = [
   { id: "pipe-b", name: "Pipe B", models: ["only"] },
 ];
 
-type ModuleLoad = (
-  request: string,
-  parent: NodeJS.Module | null | undefined,
-  isMain: boolean,
-) => unknown;
-
-const moduleWithLoad = Module as unknown as { _load: ModuleLoad };
-const originalLoad = moduleWithLoad._load;
-moduleWithLoad._load = (request, parent, isMain) => {
-  if (request === "next-auth") {
-    return {
-      getServerSession: async () =>
-        authorizedApp
-          ? {
-              user: {
-                id: authorizedApp.userId,
-                role: "developer",
-              },
-            }
-          : null,
-    };
-  }
-  if (typeof request === "string" && request.includes("naap-catalog")) {
-    return {
-      fetchPipelineCatalog: async () => {
-        catalogFetchCount += 1;
-        if (catalogThrows) {
-          throw new Error("catalog unavailable");
-        }
-        return MOCK_CATALOG;
-      },
-    };
-  }
-  return originalLoad(request, parent, isMain);
-};
+installNaapCatalogMock({
+  catalog: MOCK_CATALOG,
+  onFetch: () => {
+    catalogFetchCount += 1;
+  },
+  shouldThrow: () => catalogThrows,
+});
 
 test.after(() => {
-  moduleWithLoad._load = originalLoad;
+  uninstallNaapCatalogMock();
+  uninstallProviderAppSessionAuth();
 });
 
 run("manifest GET and PUT", async (t) => {

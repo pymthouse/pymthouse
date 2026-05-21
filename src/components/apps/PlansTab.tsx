@@ -715,7 +715,7 @@ function buildPlanPayload(
     type: draft.type,
     priceAmount: draft.priceAmount,
     priceCurrency: draft.priceCurrency,
-    status: "active",
+    ...(planId ? {} : { status: "active" }),
     capabilities,
     includedUsdMicros,
   };

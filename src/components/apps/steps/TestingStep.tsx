@@ -383,13 +383,15 @@ export default function TestingStep({
                     const value = e.target.value;
                     const isValid = isValidInitiateLoginUri(value);
                     const scopes = allowedScopes.split(/\s+/).filter(Boolean);
+                    const nextScopes = isValid
+                      ? scopes.includes("users:token")
+                        ? scopes
+                        : [...scopes, "users:token"]
+                      : scopes.filter((s) => s !== "users:token");
                     onChange({
                       initiateLoginUri: value,
                       deviceThirdPartyInitiateLogin: isValid,
-                      allowedScopes:
-                        isValid && !scopes.includes("users:token")
-                          ? [...scopes, "users:token"].join(" ")
-                          : allowedScopes,
+                      allowedScopes: nextScopes.join(" "),
                     });
                   }}
                   placeholder="https://example.com/api/auth/initiate-login"

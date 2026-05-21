@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
 import { db } from "@/db/index";
 import {
-  appBillingOracleConfig,
   appUsers,
   endUsers,
   usageBillingEvents,
@@ -102,13 +101,7 @@ export async function GET(
   let totalOwnerChargeUsdMicros = 0n;
   let totalPlatformFeeUsdMicros = 0n;
   let totalEndUserBillableUsdMicros = 0n;
-  const pricingRows = await db
-    .select({ billingDisplayCurrency: appBillingOracleConfig.billingDisplayCurrency })
-    .from(appBillingOracleConfig)
-    .where(eq(appBillingOracleConfig.clientId, app.id))
-    .limit(1)
-    .catch(() => []);
-  const displayCurrency = pricingRows[0]?.billingDisplayCurrency ?? "USD";
+  const usageCurrency = "USD";
 
   for (const row of rows) {
     const event = eventByUsageRecord.get(row.id);
@@ -122,7 +115,7 @@ export async function GET(
 
   const totals = {
     requestCount: rows.length,
-    currency: displayCurrency,
+    currency: usageCurrency,
     networkFeeUsdMicros: totalNetworkFeeUsdMicros.toString(),
     ownerChargeUsdMicros: totalOwnerChargeUsdMicros.toString(),
     platformFeeUsdMicros: totalPlatformFeeUsdMicros.toString(),
@@ -205,7 +198,7 @@ export async function GET(
         externalUserId,
         userType,
         identifier: endUserId,
-        currency: displayCurrency,
+        currency: usageCurrency,
         networkFeeUsdMicros: data.networkFeeUsdMicros.toString(),
         ownerChargeUsdMicros: data.ownerChargeUsdMicros.toString(),
         endUserBillableUsdMicros: data.endUserBillableUsdMicros.toString(),
@@ -244,7 +237,7 @@ export async function GET(
     response.byPipelineModel = [...byKeyMap.values()].map((data) => ({
       pipeline: data.pipeline,
       modelId: data.modelId,
-      currency: displayCurrency,
+      currency: usageCurrency,
       requestCount: data.count,
       networkFeeUsdMicros: data.networkFeeUsdMicros.toString(),
       ownerChargeUsdMicros: data.ownerChargeUsdMicros.toString(),
@@ -264,7 +257,7 @@ export async function GET(
       paymentMetadataVersion: e.paymentMetadataVersion,
       pipelineModelConstraintHash: e.pipelineModelConstraintHash,
       orchAddress: e.orchAddress,
-      currency: displayCurrency,
+      currency: usageCurrency,
       networkFeeUsdMicros: e.networkFeeUsdMicros,
       platformFeeUsdMicros: e.platformFeeUsdMicros,
       ownerChargeUsdMicros: e.ownerChargeUsdMicros,

@@ -1,9 +1,86 @@
 import { getServerSession } from "next-auth";
+import type { Session } from "next-auth";
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { authOptions } from "@/lib/next-auth-options";
 import { developerApps, oidcClients, providerAdmins } from "@/db/schema";
+
+const noopAuthResponse = {
+  getHeader() {},
+  setCookie() {},
+  setHeader() {},
+};
+
+function parseCookieHeader(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  for (const segment of cookieHeader.split(";")) {
+    const trimmed = segment.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) {
+      cookies[trimmed] = "";
+      continue;
+    }
+    const name = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim();
+    if (name) cookies[name] = value;
+  }
+  return cookies;
+}
+
+function requestToAuthReq(request: Request): {
+  headers: Record<string, string>;
+  cookies: Record<string, string>;
+} {
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  return {
+    headers,
+    cookies: parseCookieHeader(request.headers.get("cookie") ?? ""),
+  };
+}
+
+/** Resolve NextAuth session from an explicit Request (route handlers / tests). */
+export async function getServerSessionFromRequest(
+  request: Request,
+): Promise<Session | null> {
+  const req = requestToAuthReq(request);
+  return getServerSession(req, noopAuthResponse, authOptions);
+}
+
+let sessionResolverForTests: ((request?: Request) => Promise<Session | null>) | null =
+  null;
+
+/** Route tests inject session auth without Next request scope or next-auth mocks. */
+export function setProviderAppSessionResolverForTests(
+  resolver: ((request?: Request) => Promise<Session | null>) | null,
+): void {
+  sessionResolverForTests = resolver;
+}
+
+async function resolveServerSession(request?: Request): Promise<Session | null> {
+  if (sessionResolverForTests) {
+    return sessionResolverForTests(request);
+  }
+  if (request) {
+    return getServerSessionFromRequest(request);
+  }
+  try {
+    return await getServerSession(authOptions);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("outside a request scope")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 export async function getProviderAppByClientId(clientId: string) {
   const byPublic = await db
@@ -82,8 +159,8 @@ export async function ensureProviderAdminMembership(userId: string, appId: strin
   return rows[0] ?? membership;
 }
 
-export async function getAuthorizedProviderApp(appId: string) {
-  const session = await getServerSession(authOptions);
+export async function getAuthorizedProviderApp(appId: string, request?: Request) {
+  const session = await resolveServerSession(request);
   if (!session?.user) return null;
 
   const userId = (session.user as Record<string, unknown>).id as string | undefined;

@@ -26,7 +26,7 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
     return getProviderApp(clientId);
   }
 
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   return auth?.app ?? null;
 }
 
@@ -55,7 +55,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth?.app) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -95,12 +95,26 @@ export async function PUT(
     );
   }
 
-  const blocked = await findCustomPlansBlockingNewExclusions(
-    auth.app.id,
-    catalogLite,
-    newExcludedDoc,
-    db,
-  );
+  const now = new Date().toISOString();
+  let blocked: Awaited<ReturnType<typeof findCustomPlansBlockingNewExclusions>> = [];
+  await db.transaction(async (tx) => {
+    blocked = await findCustomPlansBlockingNewExclusions(
+      auth.app.id,
+      catalogLite,
+      newExcludedDoc,
+      tx,
+    );
+    if (blocked.length > 0) {
+      return;
+    }
+    await tx
+      .update(plans)
+      .set({
+        updatedAt: now,
+        discoveryExcludedCapabilities: newExcludedDoc,
+      })
+      .where(eq(plans.id, networkPlan.id));
+  });
   if (blocked.length > 0) {
     return NextResponse.json(
       {
@@ -111,15 +125,6 @@ export async function PUT(
       { status: 409 },
     );
   }
-
-  const now = new Date().toISOString();
-  await db
-    .update(plans)
-    .set({
-      updatedAt: now,
-      discoveryExcludedCapabilities: newExcludedDoc,
-    })
-    .where(eq(plans.id, networkPlan.id));
 
   const responseBody = await buildAppManifestForApp(auth.app.id);
   publishCachedManifestPolicy(clientId, responseBody, "manifest_put");

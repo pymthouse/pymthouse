@@ -23,7 +23,9 @@ export default function AppSectionBreadcrumb({ appId, appName }: Props) {
       <span className="mx-1.5 text-zinc-600" aria-hidden>
         /
       </span>
-      <span className="text-zinc-200 font-medium">Plans</span>
+      <span className="text-zinc-200 font-medium" aria-current="page">
+        Plans
+      </span>
     </nav>
   );
 }

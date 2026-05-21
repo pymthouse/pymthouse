@@ -216,6 +216,12 @@ export async function PUT(
       body.billingDisplayCurrency !== undefined
         ? String(body.billingDisplayCurrency || "USD").toUpperCase()
         : (existingPricing?.billingDisplayCurrency ?? "USD");
+    if (nextCurrency !== "USD") {
+      return NextResponse.json(
+        { error: "billingDisplayCurrency must be USD" },
+        { status: 400 },
+      );
+    }
     const nextProvider = resolveBillingOracleProviderKey(
       body.billingOracleProviderKey !== undefined
         ? String(body.billingOracleProviderKey)

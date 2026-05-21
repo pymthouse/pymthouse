@@ -27,11 +27,11 @@ export type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "delet
 
 function isUniqueConstraintError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return (
-    msg.includes("unique") ||
-    msg.includes("duplicate") ||
-    (err as Record<string, unknown>).code === "23505"
-  );
+  const code =
+    typeof err === "object" && err !== null && "code" in err
+      ? (err as { code: unknown }).code
+      : undefined;
+  return msg.includes("unique") || msg.includes("duplicate") || code === "23505";
 }
 
 function excludedDocFromPlanRow(

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import Module from "node:module";
 import test from "node:test";
 
 import { and, eq } from "drizzle-orm";
@@ -12,36 +11,21 @@ import {
   seedDeveloperAppWithClient,
   type SeededDeveloperApp,
 } from "@/test-utils/fixtures";
+import {
+  installNaapCatalogMock,
+  uninstallNaapCatalogMock,
+} from "@/test-utils/naap-catalog-mock";
+import {
+  installProviderAppSessionAuth,
+  uninstallProviderAppSessionAuth,
+} from "@/test-utils/provider-app-session-auth";
 
 let authorizedApp: SeededDeveloperApp | null = null;
 
-type ModuleLoad = (
-  request: string,
-  parent: NodeJS.Module | null | undefined,
-  isMain: boolean,
-) => unknown;
-
-const moduleWithLoad = Module as unknown as { _load: ModuleLoad };
-const originalLoad = moduleWithLoad._load;
-moduleWithLoad._load = (request, parent, isMain) => {
-  if (request === "next-auth") {
-    return {
-      getServerSession: async () =>
-        authorizedApp
-          ? {
-              user: {
-                id: authorizedApp.userId,
-                role: "developer",
-              },
-            }
-          : null,
-    };
-  }
-  return originalLoad(request, parent, isMain);
-};
+installProviderAppSessionAuth(() => authorizedApp);
 
 test.after(() => {
-  moduleWithLoad._load = originalLoad;
+  uninstallProviderAppSessionAuth();
 });
 
 async function postPlan(clientId: string, body: Record<string, unknown>) {
@@ -58,21 +42,13 @@ async function postPlan(clientId: string, body: Record<string, unknown>) {
 }
 
 run("plans API: network default plan rules", async (t) => {
-  const prevLoad = moduleWithLoad._load;
   const MOCK_CATALOG = [
     { id: "pipe-a", name: "A", models: ["m1", "m2"] },
     { id: "pipe-b", name: "B", models: ["only"] },
   ];
-  moduleWithLoad._load = (request, parent, isMain) => {
-    if (typeof request === "string" && request.includes("naap-catalog")) {
-      return {
-        fetchPipelineCatalog: async () => MOCK_CATALOG,
-      };
-    }
-    return prevLoad(request, parent, isMain);
-  };
+  installNaapCatalogMock({ catalog: MOCK_CATALOG });
   t.after(() => {
-    moduleWithLoad._load = prevLoad;
+    uninstallNaapCatalogMock();
   });
 
   await t.test("GET lists exactly one network default plan", async (t) => {

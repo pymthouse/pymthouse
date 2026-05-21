@@ -12,36 +12,17 @@ import {
   seedDeveloperAppWithClient,
   type SeededDeveloperApp,
 } from "@/test-utils/fixtures";
+import {
+  installProviderAppSessionAuth,
+  uninstallProviderAppSessionAuth,
+} from "@/test-utils/provider-app-session-auth";
 
 let authorizedApp: SeededDeveloperApp | null = null;
 
-type ModuleLoad = (
-  request: string,
-  parent: NodeJS.Module | null | undefined,
-  isMain: boolean,
-) => unknown;
-
-const moduleWithLoad = Module as unknown as { _load: ModuleLoad };
-const originalLoad = moduleWithLoad._load;
-moduleWithLoad._load = (request, parent, isMain) => {
-  if (request === "next-auth") {
-    return {
-      getServerSession: async () =>
-        authorizedApp
-          ? {
-              user: {
-                id: authorizedApp.userId,
-                role: "developer",
-              },
-            }
-          : null,
-    };
-  }
-  return originalLoad(request, parent, isMain);
-};
+installProviderAppSessionAuth(() => authorizedApp);
 
 test.after(() => {
-  moduleWithLoad._load = originalLoad;
+  uninstallProviderAppSessionAuth();
 });
 
 run("discovery-profiles POST GET and DELETE", async (t) => {
