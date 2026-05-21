@@ -27,9 +27,13 @@ test("normalizeDiscoveryAllowlistDoc trims and skips invalid rows", () => {
   assert.deepEqual(doc, { capabilities: [{ pipeline: "p", modelId: "x" }] });
 });
 
-test("resolveDiscoveryCapabilitiesForExclusions: empty exclusions short-circuits", () => {
+test("resolveDiscoveryCapabilitiesForExclusions: empty exclusions return full catalog", () => {
   const r = resolveDiscoveryCapabilitiesForExclusions(CATALOG, null);
-  assert.deepEqual(r.capabilities, []);
+  assert.deepEqual(r.capabilities, [
+    { pipeline: "pipe-a", modelId: "m1" },
+    { pipeline: "pipe-a", modelId: "m2" },
+    { pipeline: "pipe-b", modelId: "only" },
+  ]);
   assert.deepEqual(r.excludedCapabilities, []);
 });
 

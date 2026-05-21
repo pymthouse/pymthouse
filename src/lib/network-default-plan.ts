@@ -25,6 +25,15 @@ export {
 
 export type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete" | "transaction">;
 
+function isUniqueConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("unique") ||
+    msg.includes("duplicate") ||
+    (err as Record<string, unknown>).code === "23505"
+  );
+}
+
 function excludedDocFromPlanRow(
   raw: typeof plans.$inferSelect["discoveryExcludedCapabilities"],
 ): DiscoveryAllowlistDocument | null {
@@ -73,23 +82,29 @@ export async function getOrCreateNetworkDefaultPlan(
   }
   const now = new Date().toISOString();
   const id = randomUUID();
-  await executor.insert(plans).values({
-    id,
-    clientId,
-    name: NETWORK_DEFAULT_PLAN_INTERNAL_NAME,
-    type: "free",
-    priceAmount: "0",
-    priceCurrency: "USD",
-    status: "active",
-    billingCycle: "monthly",
-    isNetworkDefault: true,
-    discoveryExcludedCapabilities: null,
-    createdAt: now,
-    updatedAt: now,
-  });
+  try {
+    await executor.insert(plans).values({
+      id,
+      clientId,
+      name: NETWORK_DEFAULT_PLAN_INTERNAL_NAME,
+      type: "free",
+      priceAmount: "0",
+      priceCurrency: "USD",
+      status: "active",
+      billingCycle: "monthly",
+      isNetworkDefault: true,
+      discoveryExcludedCapabilities: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (err) {
+    if (!isUniqueConstraintError(err)) {
+      throw err;
+    }
+  }
   const created = await selectNetworkDefaultPlan(clientId, executor);
   if (!created) {
-    throw new Error("getOrCreateNetworkDefaultPlan: insert did not persist");
+    throw new Error("getOrCreateNetworkDefaultPlan: insert/re-read did not find network default");
   }
   return created;
 }
@@ -172,6 +187,7 @@ export async function findCustomPlansBlockingNewExclusions(
           pipeline: b.pipeline,
           modelId: b.modelId,
         });
+        break;
       }
     }
   }

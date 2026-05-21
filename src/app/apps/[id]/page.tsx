@@ -40,6 +40,9 @@ export default function AppDetailPage() {
   } | null>(null);
 
   useEffect(() => {
+    if (searchParams.get("tab") === "network-discovery") {
+      return;
+    }
     fetch(`/api/v1/apps/${id}`)
       .then((r) => {
         if (!r.ok) return null;
@@ -89,7 +92,7 @@ export default function AppDetailPage() {
       })
       .catch(() => setAppData(null))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, searchParams]);
 
   const handleReviewSubmitted = useCallback(() => {
     setAppData((prev) =>

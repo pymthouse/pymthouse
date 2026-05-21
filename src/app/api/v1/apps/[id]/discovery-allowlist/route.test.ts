@@ -60,7 +60,7 @@ test.after(() => {
 });
 
 run("discovery-allowlist GET and PUT", async (t) => {
-  await t.test("GET short-circuits when exclusions empty", async (t) => {
+  await t.test("GET returns full catalog when exclusions empty", async (t) => {
     catalogFetchCount = 0;
     catalogThrows = false;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -76,12 +76,16 @@ run("discovery-allowlist GET and PUT", async (t) => {
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
-    assert.equal(catalogFetchCount, 0);
+    assert.equal(catalogFetchCount, 1);
     const body = (await res.json()) as {
       capabilities: unknown[];
       excludedCapabilities: unknown[];
     };
-    assert.deepEqual(body.capabilities, []);
+    assert.deepEqual(body.capabilities, [
+      { pipeline: "pipe-a", modelId: "m1" },
+      { pipeline: "pipe-a", modelId: "m2" },
+      { pipeline: "pipe-b", modelId: "only" },
+    ]);
     assert.deepEqual(body.excludedCapabilities, []);
   });
 

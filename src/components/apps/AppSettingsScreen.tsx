@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
@@ -51,6 +51,14 @@ function mergeFormData(
   };
 }
 
+const INTEGRATION_TABS = [
+  { id: "profile", label: "App profile" },
+  { id: "auth", label: "Auth & scopes" },
+  { id: "credentials", label: "Credentials & URLs" },
+] as const;
+
+type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
+
 export default function AppSettingsScreen({
   appId,
   initialData,
@@ -82,9 +90,38 @@ export default function AppSettingsScreen({
   const [submittingForReview, setSubmittingForReview] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reverting, setReverting] = useState(false);
-  const [integrationSection, setIntegrationSection] = useState<
-    "profile" | "auth" | "credentials"
-  >("profile");
+  const [integrationSection, setIntegrationSection] =
+    useState<IntegrationSection>("profile");
+  const tabRefs = useRef<Partial<Record<IntegrationSection, HTMLButtonElement | null>>>({});
+
+  const selectIntegrationSection = useCallback((section: IntegrationSection) => {
+    setIntegrationSection(section);
+    requestAnimationFrame(() => tabRefs.current[section]?.focus());
+  }, []);
+
+  const handleIntegrationTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, id: IntegrationSection) => {
+      const currentIndex = INTEGRATION_TABS.findIndex((tab) => tab.id === id);
+      if (currentIndex === -1) return;
+
+      let nextIndex: number | null = null;
+      if (event.key === "ArrowLeft") {
+        nextIndex =
+          (currentIndex - 1 + INTEGRATION_TABS.length) % INTEGRATION_TABS.length;
+      } else if (event.key === "ArrowRight") {
+        nextIndex = (currentIndex + 1) % INTEGRATION_TABS.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = INTEGRATION_TABS.length - 1;
+      }
+
+      if (nextIndex === null) return;
+      event.preventDefault();
+      selectIntegrationSection(INTEGRATION_TABS[nextIndex].id);
+    },
+    [selectIntegrationSection],
+  );
 
   const updateFormData = useCallback(
     (updates: Partial<AppFormData>) => {
@@ -339,21 +376,22 @@ export default function AppSettingsScreen({
         role="tablist"
         aria-label="Integration settings sections"
       >
-        {(
-          [
-            { id: "profile" as const, label: "App profile" },
-            { id: "auth" as const, label: "Auth & scopes" },
-            { id: "credentials" as const, label: "Credentials & URLs" },
-          ] as const
-        ).map(({ id, label }) => {
+        {INTEGRATION_TABS.map(({ id, label }) => {
           const selected = integrationSection === id;
           return (
             <button
               key={id}
+              id={`tab-${id}`}
+              ref={(node) => {
+                tabRefs.current[id] = node;
+              }}
               type="button"
               role="tab"
               aria-selected={selected}
-              onClick={() => setIntegrationSection(id)}
+              aria-controls={`panel-${id}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => selectIntegrationSection(id)}
+              onKeyDown={(event) => handleIntegrationTabKeyDown(event, id)}
               className={`px-3 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors ${
                 selected
                   ? "border-emerald-500 text-emerald-400 bg-zinc-900/50"
@@ -367,7 +405,12 @@ export default function AppSettingsScreen({
       </nav>
 
       {integrationSection === "profile" && (
-        <div className="space-y-10 pb-6">
+        <div
+          id="panel-profile"
+          role="tabpanel"
+          aria-labelledby="tab-profile"
+          className="space-y-10 pb-6"
+        >
           <section className="space-y-4">
             <AppInfoStep data={formData} onChange={updateFormData} readOnly={!canEdit} />
           </section>
@@ -451,7 +494,12 @@ export default function AppSettingsScreen({
       )}
 
       {integrationSection === "auth" && (
-        <section className="pb-6">
+        <section
+          id="panel-auth"
+          role="tabpanel"
+          aria-labelledby="tab-auth"
+          className="pb-6"
+        >
           <AppModeStep
             data={formData}
             onChange={updateFormData}
@@ -464,7 +512,12 @@ export default function AppSettingsScreen({
       )}
 
       {integrationSection === "credentials" && (
-        <div className="space-y-10 pb-6">
+        <div
+          id="panel-credentials"
+          role="tabpanel"
+          aria-labelledby="tab-credentials"
+          className="space-y-10 pb-6"
+        >
           <section>
             <TestingStep
               appId={appId}

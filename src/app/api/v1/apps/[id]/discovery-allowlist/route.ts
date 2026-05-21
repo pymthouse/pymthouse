@@ -10,7 +10,6 @@ import {
 } from "@/lib/provider-apps";
 import {
   DiscoveryAllowlistUpdateBodySchema,
-  isDiscoveryDocumentEmpty,
   normalizeDiscoveryAllowlistDoc,
   resolveDiscoveryCapabilitiesForExclusions,
 } from "@/lib/discovery-allowlist";
@@ -26,7 +25,6 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
   if (clientAuth?.appId === clientId) {
     return getProviderApp(clientId);
   }
-  if (clientAuth) return null;
 
   const auth = await getAuthorizedProviderApp(clientId);
   return auth?.app ?? null;
@@ -38,13 +36,6 @@ async function buildDiscoveryAllowlistJson(appInternalId: string) {
     (await getOrCreateNetworkDefaultPlan(appInternalId, db));
   const rawExcluded = row.discoveryExcludedCapabilities ?? null;
   const excludedDoc = normalizeDiscoveryAllowlistDoc(rawExcluded);
-
-  if (isDiscoveryDocumentEmpty(excludedDoc)) {
-    return {
-      capabilities: [] as { pipeline: string; modelId: string }[],
-      excludedCapabilities: [] as { pipeline: string; modelId: string }[],
-    };
-  }
 
   let catalog;
   try {

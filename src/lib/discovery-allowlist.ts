@@ -112,14 +112,20 @@ export function resolveDiscoveryCapabilitiesForExclusions(
   excludedCapabilities: DiscoveryAllowlistCapability[];
 } {
   const excludedArr = excluded?.capabilities ?? [];
+  const all = fullCatalogConcreteKeys(catalog);
   if (isDiscoveryDocumentEmpty(excluded)) {
+    const capabilities = [...all]
+      .map((k) => {
+        const sep = k.indexOf("|");
+        return { pipeline: k.slice(0, sep), modelId: k.slice(sep + 1) };
+      })
+      .sort(sortCap);
     return {
-      capabilities: [],
+      capabilities,
       excludedCapabilities: [],
     };
   }
   const excl = expandDocumentToConcreteKeys(excluded!, catalog);
-  const all = fullCatalogConcreteKeys(catalog);
   const resolvedKeys = [...all].filter((k) => !excl.has(k));
   const capabilities = resolvedKeys
     .map((k) => {
