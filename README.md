@@ -3,7 +3,67 @@
 This guide starts the full local stack:
 - Next.js app (UI + API) on `http://localhost:3001`
 - PostgreSQL database (set `DATABASE_URL`; Neon or local Postgres)
-- Full **signer-dmz** (Apache + JWT + go-livepeer) via the repo root `docker-compose.yml` (same image path as production)
+- Full **signer-dmz** (Apache + JWT + go-livepeer) via `infra/dev/docker-compose.local.yml` for local clone-and-run development
+
+## Fresh Clone: Copy-Paste Setup
+
+For a fresh local setup from a new clone, use this exact sequence:
+
+```bash
+fnm use
+npm install
+cp .env.example .env.local
+```
+
+Set at least these values in `.env.local`:
+
+```env
+NEXTAUTH_URL=http://localhost:3001
+NEXTAUTH_SECRET=change-me
+AUTH_TOKEN_PEPPER=change-me
+
+DATABASE_URL=postgresql://pymthouse:pymthouse@127.0.0.1:5432/pymthouse?sslmode=disable
+
+SIGNER_INTERNAL_URL=http://127.0.0.1:8080
+SIGNER_CLI_URL=http://127.0.0.1:8080/__signer_cli
+OIDC_ISSUER=http://localhost:3001/api/v1/oidc
+SIGNER_DMZ_JWKS_URL=http://host.docker.internal:3001/api/v1/oidc/jwks
+JWKS_URI=http://host.docker.internal:3001/api/v1/oidc/jwks
+
+SIGNER_NETWORK=arbitrum-one-mainnet
+ETH_RPC_URL=http://nyc-router.eliteencoder.net:3517
+HOST_DOCKER_INTERNAL_IP=<your host LAN IP if needed>
+```
+
+Then bring up the full stack:
+
+```bash
+bash ./infra/scripts/run-full-local-dev.sh
+```
+
+Verify it is up:
+
+```bash
+docker compose --env-file .env.local -f infra/dev/docker-compose.full.local.yml ps
+curl http://localhost:3001/api/v1/health
+curl http://127.0.0.1:8080/healthz
+```
+
+Open:
+- App: `http://localhost:3001`
+- Health: `http://localhost:3001/api/v1/health`
+
+If you need an admin login token:
+
+```bash
+npm run bootstrap
+```
+
+To stop the full stack:
+
+```bash
+docker compose --env-file .env.local -f infra/dev/docker-compose.full.local.yml down
+```
 
 ## Prerequisites
 
@@ -70,8 +130,8 @@ Open:
 
 ## 4) Start the signer (signer-dmz)
 
-The local stack uses the full **signer-dmz** image from `docker/signer-dmz/Dockerfile` (same as
-production: Apache, JWT verification, and go-livepeer in one process). The container
+The local stack uses the full **signer-dmz** image from `infra/docker/signer-dmz/Dockerfile`
+(same runtime image shape as production: Apache, JWT verification, and go-livepeer in one process). The container
 must be able to download the OIDC public key at start time, so the app in step 3
 must be running *before* the first `docker compose up`. Default DMZ URL:
 `http://127.0.0.1:8080` — match `SIGNER_INTERNAL_URL` and `SIGNER_CLI_URL` in `.env`.
@@ -81,13 +141,13 @@ If you do not use port `3001` for the app, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, a
 container (for example `http://host.docker.internal:<port>/api/v1/oidc/jwks`).
 
 ```bash
-docker compose up -d --build
+docker compose -f infra/dev/docker-compose.local.yml up -d --build
 ```
 
 Check signer logs (optional):
 
 ```bash
-docker compose logs -f signer-dmz
+docker compose -f infra/dev/docker-compose.local.yml logs -f signer-dmz
 ```
 
 ## 5) Create an admin token (first login)
@@ -133,45 +193,85 @@ Then register application clients through the dashboard/API and rotate secrets p
 
 ```bash
 # Start signer
-docker compose up -d --build
+docker compose -f infra/dev/docker-compose.local.yml up -d --build
+
+# Start the full local stack (db + control plane + signer)
+./infra/scripts/run-full-local-dev.sh
 
 # Stop signer
-docker compose stop signer-dmz
+docker compose -f infra/dev/docker-compose.local.yml stop signer-dmz
 
 # Stop and remove signer container
-docker compose down
+docker compose -f infra/dev/docker-compose.local.yml down
 
 # Run linter
 npm run lint
+
+# Run tests against a disposable local PostgreSQL container
+npm run test:local
+```
+
+## Full Local Docker Dev
+
+If you want the entire development stack under one compose file instead of running
+`next dev` on the host, use:
+
+```bash
+./infra/scripts/run-full-local-dev.sh
+```
+
+This starts:
+
+- PostgreSQL on `127.0.0.1:5432`
+- the control plane on `http://localhost:3001`
+- signer-dmz on `http://127.0.0.1:8080`
+
+To inspect or stop it:
+
+```bash
+docker compose --env-file .env.local -f infra/dev/docker-compose.full.local.yml ps
+docker compose --env-file .env.local -f infra/dev/docker-compose.full.local.yml logs -f
+docker compose --env-file .env.local -f infra/dev/docker-compose.full.local.yml down
 ```
 
 ## Deployment to Production
 
-### Vercel + Railway/Render
+### Vercel or Containerized App + Signer
 
-Pymthouse can be deployed to Vercel (for the Next.js app) with the Docker signer running on Railway, Render, or Fly.io.
+Pymthouse can be deployed either:
+- with the Next.js app on Vercel and the signer on Railway/Render/Fly.io, or
+- with both the control plane and signer as prebuilt container images.
 
 **Quick Deploy (15 minutes):**
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a quick checklist.
 
-**Detailed Guide:**
-See [docs/vercel-deployment.md](docs/vercel-deployment.md) for full step-by-step instructions including:
-- Deploying the go-livepeer signer to Railway/Render/Fly.io
-- Deploying the Next.js app to Vercel
-- Configuring environment variables
-- Setting up PostgreSQL (Neon/Vercel Postgres)
-- OAuth callback URLs
-- Custom domains
+**Architecture Overview:**
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full repository architecture map, runtime flows, and deployment topology diagrams.
+
+**Refactor Completion Status:**
+See [docs/COMPLETION_STATUS.md](docs/COMPLETION_STATUS.md) for what is structurally complete and what remains operational follow-up.
+
+**Topology Guides:**
+- [docs/vercel-deployment.md](docs/vercel-deployment.md) for the Vercel control-plane topology
+- [docs/container-deployment.md](docs/container-deployment.md) for the fully containerized topology
 
 **Files included:**
 - `vercel.json` - Vercel configuration
-- `docker/signer-dmz/` — go-livepeer signer Dockerfiles, Apache JWT DMZ, `docker-compose.yml`, and `scripts/jwks_to_pem.py` (see [docker/signer-dmz/README.md](docker/signer-dmz/README.md))
-- `railway.json` - Railway configuration
-- `render.yaml` - Render Blueprint
+- `infra/docker/control-plane/` - Next.js control-plane Dockerfile
+- `infra/docker/signer-dmz/` — go-livepeer signer Dockerfiles, Apache JWT DMZ assets, and JWKS helper
+- `infra/dev/` - local-only compose files that may build inline from the repo
+- `infra/scripts/` - image build scripts
+- `infra/deploy/` - production deploy inputs and prebuilt-image guidance
+
+For containerized production:
+- build the control-plane image with `./infra/scripts/build-control-plane.sh`
+- run DB migrations with `./infra/scripts/run-db-migrations.sh`
+- run the container locally with `./infra/scripts/run-control-plane.sh`
+- use `/api/v1/health` for control-plane readiness/liveness checks
 
 ## Troubleshooting
 
-- `Signer is not running` / DMZ **401** on `/api/signer/*`: Apache `iss` must match `getIssuer()` (your **`NEXTAUTH_URL`** + `/api/v1/oidc`). The compose stack passes **`NEXTAUTH_URL`** into the container so the entrypoint can set `OIDC_ISSUER` / `JWKS_URI`; keep it identical to the URL you use for the Next app (`localhost` vs `127.0.0.1` vs a LAN hostname must match). After changing `docker-compose.yml` or `entrypoint.sh`, rebuild: `docker compose up -d --build`.
+- `Signer is not running` / DMZ **401** on `/api/signer/*`: Apache `iss` must match `getIssuer()` (your **`NEXTAUTH_URL`** + `/api/v1/oidc`). The local compose stack passes **`NEXTAUTH_URL`** into the container so the entrypoint can set `OIDC_ISSUER` / `JWKS_URI`; keep it identical to the URL you use for the Next app (`localhost` vs `127.0.0.1` vs a LAN hostname must match). After changing `infra/dev/docker-compose.local.yml` or `infra/docker/signer-dmz/entrypoint.sh`, rebuild: `docker compose -f infra/dev/docker-compose.local.yml up -d --build`.
 - App can’t open DB: verify `DATABASE_URL` and that `npm run db:prepare` succeeds.
 - OAuth buttons fail: set provider credentials in `.env` or use token login from `npm run bootstrap`.
 - Repeating `JWT_SESSION_ERROR` / `JWEDecryptionFailed`:

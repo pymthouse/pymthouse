@@ -1,0 +1,28 @@
+flowchart LR
+    Identity[identity-access]
+    OIDC[oidc-platform]
+    Apps[developer-apps]
+    Plans[plans-discovery]
+    Signer[signer-runtime]
+    Billing[usage-billing]
+    EndUsers[end-user-accounts]
+    Ops[platform/ops]
+
+    Identity --> Apps
+    Identity --> OIDC
+    Apps --> OIDC
+    Apps --> Plans
+    Apps --> EndUsers
+    Apps --> Billing
+    OIDC --> Apps
+    OIDC --> Identity
+    OIDC --> EndUsers
+    Signer --> Billing
+    Signer --> EndUsers
+    Signer --> Apps
+    Plans --> Apps
+    Billing --> EndUsers
+    Ops --> Apps
+    Ops --> EndUsers
+    Ops --> Signer
+    Ops --> Billing

@@ -511,7 +511,7 @@ Reusable **discovery** configuration (orchestrator ranking defaults) lives in **
 - `slaWeights` — `{ latency?, swapRate?, price? }` each 0…1  
 - `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/shared/discovery/discovery-plans.ts`](../src/shared/discovery/discovery-plans.ts), [`src/domains/plans-discovery/runtime/discovery-resolution.ts`](../src/domains/plans-discovery/runtime/discovery-resolution.ts).
 
 ---
 
@@ -582,24 +582,24 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 **OIDC and token exchange**
 
 - [`src/app/api/v1/oidc/[...oidc]/route.ts`](../src/app/api/v1/oidc/[...oidc]/route.ts)
-- [`src/lib/oidc/device-token-exchange.ts`](../src/lib/oidc/device-token-exchange.ts)
-- [`src/lib/oidc/gateway-token-exchange.ts`](../src/lib/oidc/gateway-token-exchange.ts)
+- [`src/domains/oidc-platform/runtime/device-token-exchange.ts`](../src/domains/oidc-platform/runtime/device-token-exchange.ts)
+- [`src/domains/oidc-platform/runtime/gateway-token-exchange.ts`](../src/domains/oidc-platform/runtime/gateway-token-exchange.ts)
 
 **Auth and usage**
 
-- [`src/lib/auth.ts`](../src/lib/auth.ts) (`authenticateAppClient`, JWT parsing)
+- [`src/domains/identity-access/runtime/request-auth.ts`](../src/domains/identity-access/runtime/request-auth.ts) (`authenticateAppClient`, JWT parsing)
 - [`src/app/api/v1/apps/[id]/usage/route.ts`](../src/app/api/v1/apps/[id]/usage/route.ts)
 - [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts)
 - [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts)
-- [`src/lib/provider-apps.ts`](../src/lib/provider-apps.ts) (`getAuthorizedProviderApp`, `getProviderApp`)
+- [`src/domains/developer-apps/runtime/provider-access.ts`](../src/domains/developer-apps/runtime/provider-access.ts) and [`src/domains/developer-apps/repo/provider-access.ts`](../src/domains/developer-apps/repo/provider-access.ts) (`getAuthorizedProviderApp`, `getProviderApp`)
 - [`src/db/schema.ts`](../src/db/schema.ts) (`usageRecords`, `usageBillingEvents`, `priceOracleSnapshots`, `appUsers`)
 
 **Billing oracle and catalog**
 
-- [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, upcharge resolution, USD micros)
-- [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
-- [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
-- [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts) (NaaP catalog with TTL cache; pricing fetch is uncached)
+- [`src/domains/usage-billing/service/billing-runtime.ts`](../src/domains/usage-billing/service/billing-runtime.ts) (pipeline/model validation, upcharge resolution, USD micros)
+- [`src/platform/ops/prices/public-exchange-spot.ts`](../src/platform/ops/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
+- [`src/platform/ops/prices/eth-usd-oracle.ts`](../src/platform/ops/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
+- [`src/platform/catalog/naap-catalog.ts`](../src/platform/catalog/naap-catalog.ts) (NaaP catalog with TTL cache; pricing fetch is uncached)
 - [`src/app/api/v1/prices/eth-usd/route.ts`](../src/app/api/v1/prices/eth-usd/route.ts)
 - [`src/app/api/v1/pipeline-catalog/route.ts`](../src/app/api/v1/pipeline-catalog/route.ts)
 - [`src/app/api/v1/pipeline-pricing/route.ts`](../src/app/api/v1/pipeline-pricing/route.ts)

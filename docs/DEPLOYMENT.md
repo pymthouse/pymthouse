@@ -1,126 +1,53 @@
-# Quick Deployment Checklist for Vercel
+# Deployment Topologies
 
-Use this checklist to deploy Pymthouse to Vercel in ~15 minutes.
+Pymthouse supports two production deployment topologies.
 
-## 🚀 Quick Steps
+## 1. Vercel Control Plane + Separate Signer
 
-### 1. Deploy Docker Signer (5 min)
+Use this when you want the Next.js app on Vercel and the signer deployed separately.
 
-**Railway with Nixpacks (Easiest - Recommended)**
-1. Go to [railway.app](https://railway.app) → New Project
-2. Select "Deploy from GitHub repo" → Choose your repo
-3. Railway auto-detects `nixpacks.toml` (downloads binary automatically)
-4. Add environment variables:
-   - `SIGNER_NETWORK`: `arbitrum-one-mainnet`
-   - `PORT`: `8081`
-   - `ETH_RPC_URL`: `https://arb1.arbitrum.io/rpc`
-5. Add volume: `/app/data` (1GB)
-6. Railway auto-enables public networking
-7. Copy the public URL (e.g., `https://app-name.up.railway.app`)
+- control plane: Vercel
+- signer: Railway, Render, Fly.io, or another container host
+- database: Neon, Supabase, RDS, or Vercel Postgres
 
-**Alternative: Railway with Docker**
-- Same as above, but Railway uses `docker/signer-dmz/Dockerfile` (Apache JWT DMZ + livepeer in one image; see `railway.json`)
+Primary guide:
 
-**OR Render (Blueprint)**
-- Push code → Render detects `render.yaml` → Deploy
+- [vercel-deployment.md](./vercel-deployment.md)
 
-### 2. Setup Database (3 min)
+## 2. Fully Containerized Deployment
 
-**Neon (Free)**
-1. Go to [neon.tech](https://neon.tech) → New Project
-2. Copy connection string
-3. Save for Vercel
+Use this when both the control plane and signer should run as prebuilt images.
 
-**OR Vercel Postgres**
-- Will set up in Vercel dashboard (Step 3)
+- control plane image: `infra/docker/control-plane/Dockerfile`
+- signer image: `infra/docker/signer-dmz/Dockerfile`
+- production deploy inputs: `infra/deploy/`
 
-### 3. Deploy to Vercel (5 min)
+Primary guide:
 
-```bash
-# Install Vercel CLI
-npm install -g vercel
+- [container-deployment.md](./container-deployment.md)
 
-# Login
-vercel login
+## Production Rules
 
-# Deploy
-vercel
-```
+- Production deploys must use prebuilt images only.
+- Local compose files under `infra/dev/` are for clone-and-run development only.
+- Production deploy descriptors must not build from repository source.
+- Database migrations should run as a separate release step from the exact image being deployed.
 
-OR use Vercel dashboard: [vercel.com/new](https://vercel.com/new)
+## Signer Deployment References
 
-### 4. Set Environment Variables (2 min)
+- [signer-deployment-options.md](./signer-deployment-options.md)
+- [../infra/deploy/render.image.yaml](../infra/deploy/render.image.yaml)
+- [../infra/deploy/railway.prebuilt-image.md](../infra/deploy/railway.prebuilt-image.md)
 
-In Vercel dashboard → Settings → Environment Variables:
+## Control Plane Deployment References
 
-**Required:**
-```
-DATABASE_URL=postgresql://...  (from Step 2)
-NEXTAUTH_URL=https://your-app.vercel.app
-NEXTAUTH_SECRET=<run: openssl rand -base64 32>
-SIGNER_INTERNAL_URL=https://your-railway-app.up.railway.app  (from Step 1)
-SIGNER_CLI_URL=https://your-railway-app.up.railway.app  (same as above)
-ETH_RPC_URL=https://arb1.arbitrum.io/rpc
-SIGNER_NETWORK=arbitrum-one-mainnet
-```
+- [container-deployment.md](./container-deployment.md)
+- [../infra/deploy/control-plane.prebuilt-image.md](../infra/deploy/control-plane.prebuilt-image.md)
+- [../infra/deploy/render.control-plane.image.yaml](../infra/deploy/render.control-plane.image.yaml)
+- [../infra/deploy/railway.control-plane.prebuilt-image.md](../infra/deploy/railway.control-plane.prebuilt-image.md)
 
-**For OAuth (optional but recommended):**
-```
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-```
+## Operations References
 
-### 5. Redeploy (1 min)
-
-After adding env vars:
-```bash
-vercel --prod
-```
-
-OR trigger redeploy in Vercel dashboard
-
-### 6. Test
-
-1. Visit your app: `https://your-app.vercel.app`
-2. Try logging in
-3. Check signer status in dashboard
-
-## 🔧 Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| "DATABASE_URL required" error | Add DATABASE_URL in Vercel env vars, redeploy |
-| Can't connect to signer | Verify SIGNER_INTERNAL_URL is public and signer is running |
-| OAuth fails | Update callback URLs in Google/GitHub to match NEXTAUTH_URL |
-| Build fails | Check Vercel function logs, ensure all env vars set |
-
-## 📚 Full Documentation
-
-See [vercel-deployment.md](./vercel-deployment.md) for detailed instructions.
-
-## ⚡ One-Command Deploy (Advanced)
-
-If you have Railway + Vercel CLI configured:
-
-```bash
-# Deploy signer to Railway
-railway up --dockerfile docker/signer-dmz/Dockerfile
-
-# Get Railway URL
-railway status --json
-
-# Deploy to Vercel
-vercel --prod
-
-# Set env vars in Vercel dashboard, then redeploy
-```
-
-## 💰 Cost
-
-- **Vercel**: Free tier (100GB bandwidth)
-- **Railway**: ~$5-10/month (500MB RAM, always on)
-- **Neon**: Free tier (3GB storage)
-
-**Total**: ~$5-10/month
+- [COMPLETION_STATUS.md](./COMPLETION_STATUS.md)
+- [operations/README.md](./operations/README.md)
+- [operations/observability-and-slos.md](./operations/observability-and-slos.md)

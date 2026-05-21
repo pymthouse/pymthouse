@@ -1,0 +1,11 @@
+flowchart LR
+    Types[types]
+    Repo[repo]
+    Service[service]
+    Runtime[runtime]
+    UI[ui]
+
+    Types --> Repo
+    Repo --> Service
+    Service --> Runtime
+    Runtime --> UI

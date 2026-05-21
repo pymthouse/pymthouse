@@ -1,0 +1,8 @@
+flowchart LR
+    Build[Build image]
+    Push[Push immutable tag or digest]
+    Migrate[Run DB migrations from same image]
+    Deploy[Deploy long-running service]
+    Health[Wait for health checks]
+
+    Build --> Push --> Migrate --> Deploy --> Health

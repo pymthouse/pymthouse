@@ -1,0 +1,16 @@
+flowchart TD
+    Draft[Draft app]
+    Submit[Submitted]
+    Review[In review]
+    Approved[Approved]
+    Rejected[Rejected]
+    Publish[Published marketplace state]
+    Revise[Revert to draft / revise]
+
+    Draft --> Submit
+    Submit --> Review
+    Review --> Approved
+    Review --> Rejected
+    Approved --> Publish
+    Rejected --> Revise
+    Revise --> Draft

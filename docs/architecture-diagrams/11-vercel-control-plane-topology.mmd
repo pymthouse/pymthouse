@@ -1,0 +1,9 @@
+flowchart LR
+    User[Browser / App]
+    Vercel[Vercel-hosted control plane]
+    Signer[Signer DMZ on Railway / Render / Fly]
+    DB[(Managed PostgreSQL)]
+
+    User --> Vercel
+    Vercel --> DB
+    Vercel --> Signer

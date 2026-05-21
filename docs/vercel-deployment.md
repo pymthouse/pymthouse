@@ -1,12 +1,19 @@
 # Vercel Deployment Guide for Pymthouse
 
-This guide walks you through deploying Pymthouse to Vercel. Since Vercel doesn't support Docker containers, the `go-livepeer` signer service must be deployed separately.
+This guide covers the Vercel-based production topology. If you want the control plane to run as a container image instead, use [container-deployment.md](./container-deployment.md).
 
 ## Architecture Overview
 
-- **Next.js App** → Deployed to Vercel (serverless)
-- **go-livepeer Signer** → Deployed to Railway/Render/Fly.io (Docker container)
+- **Next.js App** → Deployed to Vercel
+- **go-livepeer Signer** → Deployed separately to Railway/Render/Fly.io or another container host
 - **PostgreSQL Database** → Neon, Supabase, or Vercel Postgres
+
+This is one of two supported production topologies:
+
+1. Vercel control plane + separate signer
+2. Fully containerized control plane + signer
+
+For the second topology, see [container-deployment.md](./container-deployment.md).
 
 ## Prerequisites
 
@@ -65,18 +72,18 @@ If you prefer using Docker:
 
 1. Follow steps 1-3 above
 2. In "Settings" → "Deploy":
-   - Dockerfile Path: `docker/signer-dmz/Dockerfile` (Apache + livepeer; same as `railway.json`)
+   - Use a prebuilt image produced from `infra/docker/signer-dmz/Dockerfile`
 3. Add environment variables and volume (same as Option A)
 4. Deploy
 
 ### Option C: Render
 
-Render uses the included `render.yaml` blueprint:
+Render can use the image-backed blueprint at `infra/deploy/render.image.yaml`:
 
 1. Go to [render.com](https://render.com)
 2. Click "New" → "Blueprint"
 3. Connect your GitHub repository
-4. Render auto-detects `render.yaml`
+4. Point Render at the prebuilt image URL referenced by your image-backed service or blueprint
 5. Review the configuration (environment variables, disk)
 6. Click "Apply" to create the service
 
