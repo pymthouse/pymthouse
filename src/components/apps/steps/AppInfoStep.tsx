@@ -1,6 +1,6 @@
 "use client";
 
-import type { AppFormData } from "../AppWizard";
+import type { AppFormData } from "@/domains/developer-apps/ui/app-editor";
 
 interface Props {
   data: AppFormData;

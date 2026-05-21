@@ -1,27 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import type { AppDomain } from "@/domains/developer-apps/ui/app-editor";
+import {
+  addDeveloperAppDomain,
+  getAutoWhitelistedDomain,
+  removeDeveloperAppDomain,
+  saveDeveloperAppRedirectUris,
+} from "@/domains/developer-apps/ui/app-redirects";
 
 interface Props {
   appId: string | null;
   redirectUris: string[];
   onRedirectUrisChange: (uris: string[]) => void;
-  domains: { id: string; domain: string }[];
-  onDomainsChange: (domains: { id: string; domain: string }[]) => void;
+  domains: AppDomain[];
+  onDomainsChange: (domains: AppDomain[]) => void;
   readOnly?: boolean;
-}
-
-async function parseDomainError(res: Response): Promise<string> {
-  const text = await res.text();
-  try {
-    const data = text ? JSON.parse(text) : {};
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error.trim();
-    }
-  } catch {
-    /* keep fallback */
-  }
-  return text.trim() || res.statusText || `Domain request failed (${res.status})`;
 }
 
 export default function AuthorizationCodeRedirectBlock({
@@ -45,27 +39,11 @@ export default function AuthorizationCodeRedirectBlock({
     setRedirectSaving(true);
     setRedirectPersistError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ redirectUris: nextUris }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let message = `Failed to save redirect URIs (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data.error) message = data.error;
-        } catch {
-          /* keep generic */
-        }
-        setRedirectPersistError(message);
-        return false;
-      }
+      await saveDeveloperAppRedirectUris(appId, nextUris);
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      setRedirectPersistError(`Failed to save redirect URIs: ${message}`);
+      setRedirectPersistError(message);
       return false;
     } finally {
       setRedirectSaving(false);
@@ -90,31 +68,13 @@ export default function AuthorizationCodeRedirectBlock({
     }
 
     if (appId) {
-      let normalizedOrigin: string;
-      try {
-        const origin = new URL(uri).origin;
-        if (origin === "null") return;
-        normalizedOrigin = origin.toLowerCase();
-      } catch {
-        /* invalid URL or wildcard — skip auto-whitelist */
-        return;
-      }
-
-      if (domains.some((d) => d.domain.toLowerCase() === normalizedOrigin)) return;
+      const domainToWhitelist = getAutoWhitelistedDomain(uri, domains);
+      if (!domainToWhitelist) return;
 
       setDomainError(null);
       try {
-        const res = await fetch(`/api/v1/apps/${appId}/domains`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain: normalizedOrigin }),
-        });
-        if (!res.ok) {
-          setDomainError(await parseDomainError(res));
-          return;
-        }
-        const resData = await res.json();
-        onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
+        const domain = await addDeveloperAppDomain(appId, domainToWhitelist);
+        onDomainsChange([...domains, domain]);
       } catch (err) {
         console.error("Failed to auto-whitelist redirect URI domain.", err);
         setDomainError(
@@ -140,17 +100,8 @@ export default function AuthorizationCodeRedirectBlock({
     setAdding(true);
     setDomainError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/domains`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: newDomain.trim() }),
-      });
-      if (!res.ok) {
-        setDomainError(await parseDomainError(res));
-        return;
-      }
-      const resData = await res.json();
-      onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
+      const domain = await addDeveloperAppDomain(appId, newDomain.trim());
+      onDomainsChange([...domains, domain]);
       setNewDomain("");
     } catch (err) {
       setDomainError(err instanceof Error ? err.message : "Could not add domain.");
@@ -163,16 +114,7 @@ export default function AuthorizationCodeRedirectBlock({
     if (readOnly || !appId) return;
     setDomainError(null);
     try {
-      const res = await fetch(
-        `/api/v1/apps/${appId}/domains?domainId=${encodeURIComponent(domainId)}`,
-        {
-          method: "DELETE",
-        },
-      );
-      if (!res.ok) {
-        setDomainError(await parseDomainError(res));
-        return;
-      }
+      await removeDeveloperAppDomain(appId, domainId);
       onDomainsChange(domains.filter((d) => d.id !== domainId));
     } catch (err) {
       setDomainError(err instanceof Error ? err.message : "Could not remove domain.");
