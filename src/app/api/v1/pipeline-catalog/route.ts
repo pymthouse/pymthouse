@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalog } from "@/platform/catalog/naap-catalog";
 
 export async function GET() {
   try {

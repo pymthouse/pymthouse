@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateRequestAsync, hasScope, AuthError } from "@/lib/auth";
-import { proxySignOrchestratorInfo } from "@/lib/signer-proxy";
+import {
+  authenticateRequestAsync,
+  hasScope,
+  AuthError,
+} from "@/domains/identity-access/runtime/request-auth";
+import { proxySignOrchestratorInfo } from "@/domains/signer-runtime/runtime/signer-proxy";
 
 export async function POST(request: NextRequest) {
   try {

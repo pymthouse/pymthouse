@@ -3,7 +3,8 @@ import {
   canEditProviderApp,
   getAuthorizedProviderApp,
   appEditForbiddenResponse,
-} from "@/lib/provider-apps";
+} from "@/domains/developer-apps/runtime/provider-access";
+import { publishAppMarketplaceDisabled } from "@/domains/developer-apps/runtime/app-core";
 
 export async function POST(
   _request: NextRequest,
@@ -20,7 +21,7 @@ export async function POST(
   }
 
   return NextResponse.json(
-    { published: false, reason: "marketplace_publish_disabled" },
+    publishAppMarketplaceDisabled(),
     { status: 200 },
   );
 }

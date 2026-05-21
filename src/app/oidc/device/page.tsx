@@ -1,18 +1,18 @@
 import { getServerSession } from "next-auth";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/next-auth-options";
+import { authOptions } from "@/platform/auth/next-auth-options";
 import DeviceVerifyForm from "./device-verify-form";
-import { resolveHostContext } from "@/lib/oidc/host-resolution";
-import { getInitiateLoginUriForDeviceFlow } from "@/lib/oidc/clients";
-import { SqliteAdapter } from "@/lib/oidc/adapter";
-import { normalizeUserCode } from "@/lib/oidc/device";
+import { resolveHostContext } from "@/domains/oidc-platform/runtime/host-context";
+import { getInitiateLoginUriForDeviceFlow } from "@/domains/oidc-platform/runtime/clients";
+import { SqliteAdapter } from "@/domains/oidc-platform/runtime/adapter";
+import { normalizeUserCode } from "@/platform/oidc/device";
 import {
   buildDeviceFlowTargetLinkUri,
   issuerMatchesExpected,
   thirdPartyInitiateSkipCookieName,
-} from "@/lib/oidc/third-party-initiate-login";
-import { getIssuer } from "@/lib/oidc/issuer-urls";
+} from "@/platform/oidc/third-party-initiate-login";
+import { getIssuer } from "@/platform/oidc/issuer-urls";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 

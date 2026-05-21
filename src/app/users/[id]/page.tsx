@@ -1,16 +1,13 @@
 export const dynamic = "force-dynamic";
 
-import { db } from "@/db/index";
-import { endUsers, streamSessions, transactions } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import StreamSessionTable from "@/components/StreamSessionTable";
 import TransactionLog from "@/components/TransactionLog";
 import UserActions from "@/components/UserActions";
-import { streamSessionToTableRow } from "@/lib/stream-session-ui";
-import { weiHumanWithUnit } from "@/lib/format-wei";
-import { confirmedUsageCountByStreamSessionId } from "@/lib/stream-session-stats";
+import { streamSessionToTableRow } from "@/platform/ops/stream-session-ui";
+import { weiHumanWithUnit } from "@/shared/utils/format-wei";
+import { getUserDetailPageData } from "@/platform/ops/runtime/end-users";
 
 export default async function UserDetailPage({
   params,
@@ -18,43 +15,9 @@ export default async function UserDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-
-  const userRows = await db
-    .select()
-    .from(endUsers)
-    .where(eq(endUsers.id, id))
-    .limit(1);
-  const user = userRows[0];
-
-  if (!user) notFound();
-
-  const userStreams = await db
-    .select()
-    .from(streamSessions)
-    .where(eq(streamSessions.endUserId, id));
-
-  const streamUsageCounts = await confirmedUsageCountByStreamSessionId(
-    userStreams.map((s) => s.id),
-  );
-
-  const userTxns = await db
-    .select({
-      id: transactions.id,
-      type: transactions.type,
-      amountWei: transactions.amountWei,
-      platformCutPercent: transactions.platformCutPercent,
-      platformCutWei: transactions.platformCutWei,
-      txHash: transactions.txHash,
-      status: transactions.status,
-      createdAt: transactions.createdAt,
-    })
-    .from(transactions)
-    .where(eq(transactions.endUserId, id));
-
-  let totalUsage = 0n;
-  for (const txn of userTxns) {
-    if (txn.type === "usage") totalUsage += BigInt(txn.amountWei);
-  }
+  const data = await getUserDetailPageData(id);
+  if (!data) notFound();
+  const { user, userStreams, userTxns, streamUsageCounts, totalUsage } = data;
 
   return (
     <DashboardLayout>

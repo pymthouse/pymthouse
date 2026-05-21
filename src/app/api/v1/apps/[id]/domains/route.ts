@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/index";
-import { appAllowedDomains } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
-import { normalizeDomainWhitelist } from "@/lib/domain-whitelist";
 import {
   canEditProviderApp,
   getAuthorizedProviderApp,
   appEditForbiddenResponse,
-} from "@/lib/provider-apps";
+} from "@/domains/developer-apps/runtime/provider-access";
+import {
+  createAppDomain,
+  readAppDomains,
+  removeAppDomain,
+} from "@/domains/developer-apps/runtime/app-domains";
 
 export async function GET(
   _request: NextRequest,
@@ -21,12 +21,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const domains = await db
-    .select()
-    .from(appAllowedDomains)
-    .where(eq(appAllowedDomains.appId, app.id));
-
-  return NextResponse.json({ domains });
+  return NextResponse.json({ domains: await readAppDomains(app.id) });
 }
 
 export async function POST(
@@ -45,62 +40,12 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { domain } = body;
-
-  if (!domain || typeof domain !== "string") {
-    return NextResponse.json(
-      { error: "domain is required" },
-      { status: 400 }
-    );
+  const result = await createAppDomain(app.id, body);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  // Normalize and validate the domain
-  const result = normalizeDomainWhitelist(domain);
-  if (!result.success) {
-    return NextResponse.json(
-      { error: result.error },
-      { status: 400 }
-    );
-  }
-
-  const normalizedDomain = result.normalized;
-
-  // Check for duplicates
-  const existingDomains = await db
-    .select()
-    .from(appAllowedDomains)
-    .where(eq(appAllowedDomains.appId, app.id));
-
-  const isDuplicate = existingDomains.some(
-    (d) => d.domain.toLowerCase() === normalizedDomain.toLowerCase()
-  );
-
-  if (isDuplicate) {
-    return NextResponse.json(
-      { error: `Domain "${normalizedDomain}" is already in the whitelist` },
-      { status: 409 }
-    );
-  }
-
-  const domainId = uuidv4();
-  try {
-    await db.insert(appAllowedDomains).values({
-      id: domainId,
-      appId: app.id,
-      domain: normalizedDomain,
-    });
-  } catch (err: unknown) {
-    // Handle unique constraint violation (Postgres error code 23505)
-    if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "23505") {
-      return NextResponse.json(
-        { error: `Domain "${normalizedDomain}" is already in the whitelist` },
-        { status: 409 }
-      );
-    }
-    throw err;
-  }
-
-  return NextResponse.json({ id: domainId, domain: normalizedDomain }, { status: 201 });
+  return NextResponse.json(result.value, { status: 201 });
 }
 
 export async function DELETE(
@@ -119,21 +64,10 @@ export async function DELETE(
   }
 
   const { searchParams } = new URL(request.url);
-  const domainId = searchParams.get("domainId");
-
-  if (!domainId) {
-    return NextResponse.json(
-      { error: "domainId query parameter is required" },
-      { status: 400 }
-    );
+  const result = await removeAppDomain(app.id, searchParams.get("domainId"));
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
-
-  await db.delete(appAllowedDomains).where(
-    and(
-      eq(appAllowedDomains.id, domainId),
-      eq(appAllowedDomains.appId, app.id),
-    ),
-  );
 
   return NextResponse.json({ success: true });
 }

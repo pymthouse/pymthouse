@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { getAllClients, getClient, updateClientConfig } from "@/lib/oidc/clients";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { getAllClients, getClient, updateClientConfig } from "@/domains/oidc-platform/runtime/clients";
 
 /**
  * GET /api/v1/admin/oidc-clients

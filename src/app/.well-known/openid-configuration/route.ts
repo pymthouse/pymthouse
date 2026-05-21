@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { docsOidcUrl } from "@/lib/docs-base-url";
-import { getIssuer } from "@/lib/oidc/issuer-urls";
-import { PROVIDER_ENDPOINT_PATHS } from "@/lib/oidc/routes";
+import { docsOidcUrl } from "@/platform/docs/base-url";
+import { getIssuer } from "@/platform/oidc/issuer-urls";
+import { PROVIDER_ENDPOINT_PATHS } from "@/platform/oidc/routes";
 
 export async function GET(): Promise<NextResponse> {
   const issuer = getIssuer();

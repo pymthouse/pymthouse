@@ -4,11 +4,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
-import { db } from "@/db/index";
-import { developerApps } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
-import { getProviderApp } from "@/lib/provider-apps";
+import { authOptions } from "@/platform/auth/next-auth-options";
+import { getProviderApp } from "@/domains/developer-apps/repo/provider-access";
+import { revertOwnedAppToDraft } from "@/domains/developer-apps/runtime/app-core";
 
 export async function POST(
   _request: NextRequest,
@@ -26,37 +24,10 @@ export async function POST(
     return NextResponse.json({ error: "App not found" }, { status: 404 });
   }
 
-  if (app.ownerId !== userId) {
-    return NextResponse.json(
-      { error: "Only the app owner can revert a submitted app to draft" },
-      { status: 403 },
-    );
+  const result = await revertOwnedAppToDraft({ app, userId });
+  if (!result.ok) {
+    return NextResponse.json(result.body, { status: result.status });
   }
 
-  const now = new Date().toISOString();
-  const updated = await db
-    .update(developerApps)
-    .set({
-      status: "draft",
-      submittedAt: null,
-      updatedAt: now,
-    })
-    .where(and(eq(developerApps.id, app.id), eq(developerApps.status, "submitted")))
-    .returning({ id: developerApps.id });
-
-  if (updated.length === 0) {
-    return NextResponse.json(
-      {
-        error: "Invalid status",
-        message: `App is currently ${app.status}. Only submitted apps can be reverted to draft.`,
-      },
-      { status: 409 },
-    );
-  }
-
-  return NextResponse.json({
-    success: true,
-    status: "draft",
-    message: "App reverted to draft",
-  });
+  return NextResponse.json(result.body);
 }
