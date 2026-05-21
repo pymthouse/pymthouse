@@ -15,7 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "proto:compile": "pbjs -t static-module -w es6 -o src/lib/proto-generated.js proto/lp_rpc.proto && pbts -o src/lib/proto-generated.d.ts src/lib/proto-generated.js",
+    "proto:compile": "pbjs -t static-module -w es6 -o src/platform/livepeer/proto-generated.js proto/lp_rpc.proto && pbts -o src/platform/livepeer/proto-generated.d.ts src/platform/livepeer/proto-generated.js",
     "bootstrap": "npx tsx scripts/bootstrap-admin.ts",
     "db:prepare": "npx tsx scripts/db-migrate.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
