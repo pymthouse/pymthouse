@@ -1289,33 +1289,36 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
     return expandDocumentToConcreteKeys(doc, catalogLite);
   }, [networkPlan, catalogLite]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    fetch(`/api/v1/apps/${appId}/plans`)
-      .then(readFetchJson)
-      .then((plansWrap) => {
-        if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
-          setPlans(plansWrap.body.plans as PlanRow[]);
-          setPlanError(null);
-        } else {
-          setPlans([]);
-          const msg =
-            typeof plansWrap.body.error === "string"
-              ? plansWrap.body.error
-              : `Could not load plans (HTTP ${plansWrap.status})`;
-          setPlanError(msg);
-        }
-      })
-      .catch((err) => {
+  const fetchPlans = useCallback(async () => {
+    try {
+      const plansWrap = await fetch(`/api/v1/apps/${appId}/plans`).then(readFetchJson);
+      if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
+        setPlans(plansWrap.body.plans as PlanRow[]);
+        setPlanError(null);
+      } else {
         setPlans([]);
-        setPlanError(err instanceof Error ? err.message : "Failed to load plans");
-      })
-      .finally(() => setLoading(false));
+        const msg =
+          typeof plansWrap.body.error === "string"
+            ? plansWrap.body.error
+            : `Could not load plans (HTTP ${plansWrap.status})`;
+        setPlanError(msg);
+      }
+    } catch (err) {
+      setPlans([]);
+      setPlanError(err instanceof Error ? err.message : "Failed to load plans");
+    } finally {
+      setLoading(false);
+    }
   }, [appId]);
 
+  const reloadPlans = useCallback(() => {
+    setLoading(true);
+    void fetchPlans();
+  }, [fetchPlans]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    void fetchPlans();
+  }, [fetchPlans]);
 
   useEffect(() => {
     fetch("/api/v1/pipeline-catalog")
@@ -1362,7 +1365,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
         return;
       }
       if (editingPlanId === planId) setEditingPlanId(null);
-      load();
+      reloadPlans();
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Failed to delete plan");
     }
@@ -1370,7 +1373,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
 
   const handleSaved = () => {
     setEditingPlanId(null);
-    load();
+    reloadPlans();
   };
 
   return (
