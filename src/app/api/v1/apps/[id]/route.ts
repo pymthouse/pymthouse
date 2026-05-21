@@ -232,7 +232,7 @@ export async function PUT(
       await db
         .update(appBillingOracleConfig)
         .set({
-          billingDisplayCurrency: nextCurrency === "USD" ? "USD" : "USD",
+          billingDisplayCurrency: nextCurrency,
           billingOracleProviderKey: nextProvider,
           billingOracleProviderConfig: nextConfig,
           updatedAt: now,
@@ -242,7 +242,7 @@ export async function PUT(
       await db.insert(appBillingOracleConfig).values({
         id: uuidv4(),
         clientId: app.id,
-        billingDisplayCurrency: nextCurrency === "USD" ? "USD" : "USD",
+        billingDisplayCurrency: nextCurrency,
         billingOracleProviderKey: nextProvider,
         billingOracleProviderConfig: nextConfig,
         createdAt: now,

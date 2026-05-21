@@ -64,6 +64,9 @@ const INTEGRATION_TABS = [
 type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
 
 function resolveInitialTab(tab: string | undefined): IntegrationSection {
+  if (tab === "network-discovery") {
+    return "plans";
+  }
   const validTabs = INTEGRATION_TABS.map((t) => t.id);
   if (tab && validTabs.includes(tab as IntegrationSection)) {
     return tab as IntegrationSection;
