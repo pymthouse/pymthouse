@@ -1,0 +1,49 @@
+flowchart TB
+    subgraph Identity
+        Users[users]
+        Sessions[sessions]
+        Invites[admin_invites]
+        Audit[auth_audit_log]
+    end
+
+    subgraph OIDC
+        Clients[oidc_clients]
+        Payloads[oidc_payloads]
+        Keys[oidc_signing_keys]
+    end
+
+    subgraph Apps
+        DevApps[developer_apps]
+        AppUsers[app_users]
+        Domains[app_allowed_domains]
+    end
+
+    subgraph Plans
+        Profiles[discovery_profiles]
+        PlansTbl[plans]
+        Subs[subscriptions]
+    end
+
+    subgraph SignerAndLedger
+        SignerCfg[signer_config]
+        EndUsersTbl[end_users]
+        Streams[stream_sessions]
+        Tx[transactions]
+        Usage[usage_records]
+        BillingEvents[usage_billing_events]
+        Prices[price_oracle_snapshots]
+    end
+
+    Users --> DevApps
+    DevApps --> Clients
+    DevApps --> AppUsers
+    DevApps --> Profiles
+    DevApps --> PlansTbl
+    DevApps --> EndUsersTbl
+    Sessions --> EndUsersTbl
+    EndUsersTbl --> Streams
+    Streams --> Tx
+    Tx --> Usage
+    Usage --> BillingEvents
+    Prices --> BillingEvents
+    SignerCfg --> Streams

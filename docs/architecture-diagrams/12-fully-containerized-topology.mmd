@@ -1,0 +1,13 @@
+flowchart LR
+    User[Browser / App]
+    CP[Control-plane image]
+    Signer[Signer DMZ image]
+    DB[(Managed PostgreSQL)]
+    Registry[Container Registry]
+
+    Registry --> CP
+    Registry --> Signer
+    User --> CP
+    CP --> DB
+    CP --> Signer
+    Signer --> DB

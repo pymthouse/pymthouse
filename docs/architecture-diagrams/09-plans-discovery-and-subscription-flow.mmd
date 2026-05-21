@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant Admin as Provider Admin
+    participant CP as Control Plane
+    participant Plans as plans-discovery
+    participant Apps as developer-apps
+    participant DB as PostgreSQL
+
+    Admin->>CP: manage plans / profiles / subscriptions
+    CP->>Plans: validate and resolve policy changes
+    Plans->>Apps: load app ownership / access context
+    Plans->>DB: persist plans, profiles, subscriptions
+    Plans-->>CP: resolved discovery or billing-facing state
