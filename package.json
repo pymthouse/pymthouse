@@ -11,7 +11,7 @@
     "prebuild": "[ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
+    "lint": "npm run validate:compat-imports && npm run validate:db-imports && eslint .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -20,6 +20,8 @@
     "db:prepare": "npx tsx scripts/db-migrate.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "validate:env": "node scripts/validate-env.js",
+    "validate:compat-imports": "node scripts/check-compat-imports.js",
+    "validate:db-imports": "node scripts/check-direct-db-imports.js",
     "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\""
   },
   "dependencies": {
