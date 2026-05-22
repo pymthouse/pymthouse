@@ -6,6 +6,7 @@ import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const AUTHORIZATION_CODE_GRANT = "authorization_code";
 
 const USERS_TOKEN_SCOPE = OIDC_SCOPES.find((s) => s.value === "users:token")!;
 
@@ -37,7 +38,7 @@ export interface AppState {
 }
 
 const DEFAULT_GRANT_TYPES_WITH_DEVICE = [
-  "authorization_code",
+  AUTHORIZATION_CODE_GRANT,
   "refresh_token",
   DEVICE_CODE_GRANT,
 ] as const;
@@ -154,6 +155,10 @@ export default function AppWizard({ initialData }: Props) {
     try {
       const payload: AppFormData = {
         ...formData,
+        grantTypes:
+          formData.redirectUris.length === 0
+            ? formData.grantTypes.filter((grantType) => grantType !== AUTHORIZATION_CODE_GRANT)
+            : formData.grantTypes,
       };
       const res = await fetch("/api/v1/apps", {
         method: "POST",

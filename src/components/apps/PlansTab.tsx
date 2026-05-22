@@ -767,7 +767,7 @@ function NetworkPricePlanCard({
   catalog: PipelineCatalogEntry[];
   catalogError: string | null;
   canEdit: boolean;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
 }) {
   const catalogLite = useMemo(() => catalogLiteFrom(catalog), [catalog]);
   const [expanded, setExpanded] = useState(false);
@@ -1057,7 +1057,7 @@ function CustomPlanCard({
   isEditing: boolean;
   onEdit: () => void;
   onCancelEdit: () => void;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
   onDelete: () => void;
 }) {
   const [draft, setDraft] = useState<PlanDraft>(() => planToDraft(plan));
@@ -1090,7 +1090,7 @@ function CustomPlanCard({
         );
         return;
       }
-      onSaved();
+      await onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -1209,7 +1209,7 @@ function AddPlanPanel({
   catalogError: string | null;
   blockedConcreteKeys: Set<string>;
   canEdit: boolean;
-  onCreated: () => void;
+  onCreated: () => void | Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState<PlanDraft>(emptyDraft);
@@ -1237,7 +1237,7 @@ function AddPlanPanel({
       }
       setDraft(emptyDraft());
       setExpanded(false);
-      onCreated();
+      await onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create plan");
     } finally {
@@ -1451,7 +1451,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
         return;
       }
       if (editingPlanId === planId) setEditingPlanId(null);
-      void refreshCustomPlans();
+      await refreshCustomPlans();
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Failed to delete plan");
     }
@@ -1462,9 +1462,9 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
     reloadPlans();
   };
 
-  const handleCustomPlanSaved = () => {
+  const handleCustomPlanSaved = async () => {
     setEditingPlanId(null);
-    void refreshCustomPlans();
+    await refreshCustomPlans();
   };
 
   return (

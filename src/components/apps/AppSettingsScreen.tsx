@@ -200,6 +200,7 @@ export default function AppSettingsScreen({
           backendHelper: putJson.m2mOidcClient ?? null,
         }));
       }
+      setSavedGrantTypes([...formData.grantTypes]);
 
       const settingsRes = await fetch(`/api/v1/apps/${appId}/settings`, {
         method: "PUT",
@@ -218,7 +219,6 @@ export default function AppSettingsScreen({
         );
       }
 
-      setSavedGrantTypes([...formData.grantTypes]);
       setMessage("All settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -544,11 +544,15 @@ export default function AppSettingsScreen({
                 </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+                <label
+                  htmlFor="postLogoutUriInput"
+                  className="block text-sm font-medium text-zinc-300 mb-1.5"
+                >
                   Post-logout redirect URIs
                 </label>
                 <div className="flex gap-2 mb-2">
                   <input
+                    id="postLogoutUriInput"
                     type="text"
                     value={newPostLogoutUri}
                     onChange={(e) => setNewPostLogoutUri(e.target.value)}
