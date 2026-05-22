@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 
-const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const AUTHORIZATION_CODE_GRANT = "authorization_code";
+const REFRESH_TOKEN_GRANT = "refresh_token";
+const DEVICE_FLOW_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 const USERS_TOKEN_SCOPE = OIDC_SCOPES.find((s) => s.value === "users:token")!;
 
@@ -39,8 +40,8 @@ export interface AppState {
 
 const DEFAULT_GRANT_TYPES_WITH_DEVICE = [
   AUTHORIZATION_CODE_GRANT,
-  "refresh_token",
-  DEVICE_CODE_GRANT,
+  REFRESH_TOKEN_GRANT,
+  DEVICE_FLOW_GRANT,
 ] as const;
 
 export const defaultAppFormData: AppFormData = {
@@ -91,7 +92,7 @@ export default function AppWizard({ initialData }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const hasDeviceCode = formData.grantTypes.includes(DEVICE_CODE_GRANT);
+  const hasDeviceCode = formData.grantTypes.includes(DEVICE_FLOW_GRANT);
   const scopesList = useMemo(() => parseScopes(formData.allowedScopes), [formData.allowedScopes]);
   const hasIssueUserTokens = scopesList.includes("users:token");
 
@@ -106,7 +107,7 @@ export default function AppWizard({ initialData }: Props) {
         return {
           ...prev,
           backendDeviceHelper: false,
-          grantTypes: prev.grantTypes.filter((g) => g !== DEVICE_CODE_GRANT),
+          grantTypes: prev.grantTypes.filter((g) => g !== DEVICE_FLOW_GRANT),
           allowedScopes: joinScopes(scopes),
           initiateLoginUri: "",
           deviceThirdPartyInitiateLogin: false,
@@ -128,14 +129,14 @@ export default function AppWizard({ initialData }: Props) {
   const toggleDeviceCode = () => {
     if (!formData.backendDeviceHelper) return;
     if (hasDeviceCode) {
-      set("grantTypes", formData.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT));
+      set("grantTypes", formData.grantTypes.filter((v) => v !== DEVICE_FLOW_GRANT));
       return;
     }
     setFormData((prev) => ({
       ...prev,
-      grantTypes: prev.grantTypes.includes(DEVICE_CODE_GRANT)
+      grantTypes: prev.grantTypes.includes(DEVICE_FLOW_GRANT)
         ? prev.grantTypes
-        : [...prev.grantTypes, DEVICE_CODE_GRANT],
+        : [...prev.grantTypes, DEVICE_FLOW_GRANT],
     }));
   };
 
@@ -153,12 +154,22 @@ export default function AppWizard({ initialData }: Props) {
     setSaving(true);
     setError(null);
     try {
+      const grantTypesWithoutRedirectlessAuthCode = formData.grantTypes.filter(
+        (grantType) =>
+          formData.redirectUris.length > 0 || grantType !== AUTHORIZATION_CODE_GRANT,
+      );
+      const hasRefreshTokenIssuingGrant = grantTypesWithoutRedirectlessAuthCode.some(
+        (grantType) =>
+          grantType === AUTHORIZATION_CODE_GRANT || grantType === DEVICE_FLOW_GRANT,
+      );
+      const grantTypes = hasRefreshTokenIssuingGrant
+        ? grantTypesWithoutRedirectlessAuthCode
+        : grantTypesWithoutRedirectlessAuthCode.filter(
+            (grantType) => grantType !== REFRESH_TOKEN_GRANT,
+          );
       const payload: AppFormData = {
         ...formData,
-        grantTypes:
-          formData.redirectUris.length === 0
-            ? formData.grantTypes.filter((grantType) => grantType !== AUTHORIZATION_CODE_GRANT)
-            : formData.grantTypes,
+        grantTypes,
       };
       const res = await fetch("/api/v1/apps", {
         method: "POST",

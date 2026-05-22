@@ -859,9 +859,9 @@ function NetworkPricePlanCard({
         );
         return;
       }
+      await onSaved();
       setExpanded(false);
       setSynced(false);
-      onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -888,9 +888,9 @@ function NetworkPricePlanCard({
         );
         return;
       }
+      await onSaved();
       setExpanded(false);
       setSynced(false);
-      onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset");
     } finally {
