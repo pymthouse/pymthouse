@@ -891,8 +891,7 @@ function NetworkPricePlanCard({
             </span>
           </h3>
           <p className="text-xs text-zinc-500 mt-1">
-            Select which pipelines and models your app can discover and use on the Livepeer network.
-            They will be available at the network market price. Price limits are coming soon.
+            Choose which pipelines and models are discoverable for users of this app
           </p>
           {!expanded && (
             <p className="text-sm text-zinc-300 mt-2">{discoverySummary}</p>
@@ -950,6 +949,9 @@ function NetworkPricePlanCard({
               </div>
               <label className="block text-xs text-zinc-500">
                 Pipelines &amp; models discoverable to integrators
+                <span className="block text-zinc-600 mt-0.5">
+                  Per-capability price limits coming soon.
+                </span>
               </label>
               <PipelineModelPicker
                 catalog={catalog}
@@ -1382,8 +1384,9 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
       <div className="mb-6">
         <h2 className="text-lg font-semibold text-zinc-100">Plans &amp; network discovery</h2>
         <p className="text-sm text-zinc-500 mt-1">
-          Network Price defines what gateway clients can discover. Custom plans add pricing for a subset
-          of discoverable pipelines and models.
+          Control which pipelines and models are discoverable for your app&apos;s gateway clients.
+          Enabled capabilities are priced at the live network market rate. Use custom plans to apply
+          reseller markup pricing to specific network capabilities.
         </p>
         {!canEdit && (
           <p className="text-sm text-amber-400/90 mt-2">
