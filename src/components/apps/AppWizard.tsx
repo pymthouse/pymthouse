@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { docsDeviceFlowUrl, docsInteractiveLoginUrl } from "@/lib/docs-base-url";
+import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -87,10 +87,8 @@ export default function AppWizard({ initialData }: Props) {
         ? [...initialData.redirectUris]
         : [...defaultAppFormData.redirectUris],
   });
-  const [callbackUrl, setCallbackUrl] = useState(initialData?.redirectUris?.[0] ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const hasDeviceCode = formData.grantTypes.includes(DEVICE_CODE_GRANT);
   const scopesList = useMemo(() => parseScopes(formData.allowedScopes), [formData.allowedScopes]);
@@ -156,7 +154,6 @@ export default function AppWizard({ initialData }: Props) {
     try {
       const payload: AppFormData = {
         ...formData,
-        redirectUris: callbackUrl.trim() ? [callbackUrl.trim()] : [],
       };
       const res = await fetch("/api/v1/apps", {
         method: "POST",
@@ -213,10 +210,25 @@ export default function AppWizard({ initialData }: Props) {
             type="text"
             value={formData.name}
             onChange={(e) => set("name", e.target.value)}
+            autoFocus
             required
             className={fieldClass}
           />
           <p className="text-xs text-zinc-500 mt-1.5">Something users will recognize and trust.</p>
+        </div>
+
+        {/* Developer / organization name */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+            Developer / organization name
+          </label>
+          <input
+            type="text"
+            value={formData.developerName}
+            onChange={(e) => set("developerName", e.target.value)}
+            placeholder="Acme Inc."
+            className={fieldClass}
+          />
         </div>
 
         {/* Homepage URL (optional) */}
@@ -233,6 +245,23 @@ export default function AppWizard({ initialData }: Props) {
           />
           <p className="text-xs text-zinc-500 mt-1.5">
             Shown on consent and in marketplace listings when set.
+          </p>
+        </div>
+
+        {/* Description */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+            Application description
+          </label>
+          <textarea
+            value={formData.description}
+            onChange={(e) => set("description", e.target.value)}
+            rows={3}
+            placeholder="Application description is optional"
+            className={`${fieldClass} resize-none`}
+          />
+          <p className="text-xs text-zinc-500 mt-1.5">
+            This is displayed to all users of your application.
           </p>
         </div>
 
@@ -325,86 +354,6 @@ export default function AppWizard({ initialData }: Props) {
             and set <strong className="text-zinc-400">Initiate login URI</strong> so users complete
             sign-in on your site instead of the default PymtHouse device page.
           </div>
-        </div>
-
-        {/* Authorization callback URL */}
-        <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
-            Authorization callback URL
-          </label>
-          <input
-            type="url"
-            value={callbackUrl}
-            onChange={(e) => setCallbackUrl(e.target.value)}
-            placeholder="https://"
-            className={fieldClass}
-          />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            Required for the browser authorization code flow. Optional if you only use device or
-            server flows for now; you can add this later in app settings. Read our{" "}
-            <a
-              href={docsInteractiveLoginUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-emerald-500 hover:underline"
-            >
-              OAuth documentation
-            </a>{" "}
-            for more information.
-          </p>
-        </div>
-
-        {/* Description */}
-        <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
-            Application description
-          </label>
-          <textarea
-            value={formData.description}
-            onChange={(e) => set("description", e.target.value)}
-            rows={3}
-            placeholder="Application description is optional"
-            className={`${fieldClass} resize-none`}
-          />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            This is displayed to all users of your application.
-          </p>
-        </div>
-
-        {/* Advanced: developer name only */}
-        <div className="border-t border-zinc-800 pt-4">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            <svg
-              className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            Advanced settings
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-4 space-y-5 pl-[22px]">
-              <div>
-                <label className="block text-sm font-medium text-zinc-200 mb-1.5">
-                  Developer / organization name
-                </label>
-                <input
-                  type="text"
-                  value={formData.developerName}
-                  onChange={(e) => set("developerName", e.target.value)}
-                  placeholder="Acme Inc."
-                  className={fieldClass}
-                />
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Actions */}

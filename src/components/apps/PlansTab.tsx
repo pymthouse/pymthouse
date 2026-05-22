@@ -730,6 +730,28 @@ function buildPlanPayload(
   return payload;
 }
 
+// ── Collapsed card hit area ───────────────────────────────────────────────────
+
+function CollapsedPlanCardHitArea({
+  enabled,
+  ariaLabel,
+  onActivate,
+}: {
+  enabled: boolean;
+  ariaLabel: string;
+  onActivate: () => void;
+}) {
+  if (!enabled) return null;
+  return (
+    <button
+      type="button"
+      onClick={onActivate}
+      className="absolute inset-0 z-0 cursor-pointer rounded-xl outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500/60"
+      aria-label={ariaLabel}
+    />
+  );
+}
+
 // ── Network Price card ────────────────────────────────────────────────────────
 
 function NetworkPricePlanCard({
@@ -880,9 +902,24 @@ function NetworkPricePlanCard({
     ? excludedDocumentFromPickerValues(catalogLite, pickerValues).length
     : null;
 
+  const collapsedEditable = canEdit && !expanded;
+
   return (
-    <article className="rounded-xl border border-emerald-500/25 bg-zinc-900/40 p-5 space-y-3">
-      <div className="flex items-start justify-between gap-4">
+    <article
+      className={`group relative rounded-xl border border-emerald-500/25 bg-zinc-900/40 p-5 space-y-3 transition-colors ${
+        collapsedEditable ? "hover:border-emerald-500/40 hover:bg-zinc-900/50" : ""
+      }`}
+    >
+      <CollapsedPlanCardHitArea
+        enabled={collapsedEditable}
+        ariaLabel="Edit network discovery"
+        onActivate={openEdit}
+      />
+      <div
+        className={`relative z-10 flex items-start justify-between gap-4 ${
+          collapsedEditable ? "pointer-events-none" : ""
+        }`}
+      >
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
             {planDisplayName({ name: plan.name, isNetworkDefault: true })}
@@ -897,14 +934,10 @@ function NetworkPricePlanCard({
             <p className="text-sm text-zinc-300 mt-2">{discoverySummary}</p>
           )}
         </div>
-        {canEdit && !expanded && (
-          <button
-            type="button"
-            onClick={openEdit}
-            className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300"
-          >
+        {collapsedEditable && (
+          <span className="shrink-0 text-sm font-medium text-emerald-400 group-hover:text-emerald-300">
             Edit discovery
-          </button>
+          </span>
         )}
       </div>
 
@@ -1065,9 +1098,24 @@ function CustomPlanCard({
     }
   };
 
+  const collapsedEditable = canEdit && !isEditing;
+
   return (
-    <article className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5 space-y-3">
-      <div className="flex items-start justify-between gap-4">
+    <article
+      className={`relative rounded-xl border border-zinc-800 bg-zinc-900/30 p-5 space-y-3 transition-colors ${
+        collapsedEditable ? "hover:border-zinc-700 hover:bg-zinc-900/50" : ""
+      }`}
+    >
+      <CollapsedPlanCardHitArea
+        enabled={collapsedEditable}
+        ariaLabel={`Edit plan ${plan.name}`}
+        onActivate={onEdit}
+      />
+      <div
+        className={`relative z-10 flex items-start justify-between gap-4 ${
+          collapsedEditable ? "pointer-events-none" : ""
+        }`}
+      >
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
             {plan.name}
@@ -1088,18 +1136,15 @@ function CustomPlanCard({
             <CapabilityChips capabilities={plan.capabilities} catalog={catalog} />
           )}
         </div>
-        {canEdit && !isEditing && (
-          <div className="flex shrink-0 gap-3">
+        {collapsedEditable && (
+          <div className="flex shrink-0 gap-3 pointer-events-auto">
+            <span className="text-sm font-medium text-emerald-400">Edit</span>
             <button
               type="button"
-              onClick={onEdit}
-              className="text-sm text-emerald-400 hover:text-emerald-300"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
               className="text-sm text-zinc-500 hover:text-red-400"
             >
               Delete
@@ -1202,16 +1247,28 @@ function AddPlanPanel({
 
   if (!canEdit) return null;
 
+  const openCreate = () => {
+    setError(null);
+    setExpanded(true);
+  };
+
   return (
-    <article className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/20 p-5">
+    <article
+      className={`relative rounded-xl border border-dashed border-zinc-700 bg-zinc-900/20 p-5 transition-colors ${
+        !expanded ? "hover:border-zinc-600 hover:bg-zinc-900/30" : ""
+      }`}
+    >
       {!expanded ? (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="w-full text-left text-sm font-medium text-emerald-400 hover:text-emerald-300"
-        >
-          + Add custom plan
-        </button>
+        <>
+          <CollapsedPlanCardHitArea
+            enabled
+            ariaLabel="Add custom plan"
+            onActivate={openCreate}
+          />
+          <div className="relative z-10 flex items-center justify-end pointer-events-none">
+            <span className="text-sm font-medium text-emerald-400">+ Add custom plan</span>
+          </div>
+        </>
       ) : (
         <div className="space-y-4">
           <h3 className="text-base font-semibold text-zinc-100">New custom plan</h3>
@@ -1319,6 +1376,32 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
     void fetchPlans();
   }, [fetchPlans]);
 
+  const refreshCustomPlans = useCallback(async () => {
+    try {
+      const plansWrap = await fetch(`/api/v1/apps/${appId}/plans`).then(readFetchJson);
+      if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
+        const nextPlans = plansWrap.body.plans as PlanRow[];
+        const nextCustomPlans = nextPlans.filter((p) => p.isNetworkDefault !== true);
+        setPlans((prevPlans) => {
+          const previousNetworkPlan = prevPlans.find((p) => p.isNetworkDefault === true);
+          if (!previousNetworkPlan) {
+            return nextPlans;
+          }
+          return [previousNetworkPlan, ...nextCustomPlans];
+        });
+        setPlanError(null);
+      } else {
+        const msg =
+          typeof plansWrap.body.error === "string"
+            ? plansWrap.body.error
+            : `Could not refresh plans (HTTP ${plansWrap.status})`;
+        setPlanError(msg);
+      }
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : "Failed to refresh plans");
+    }
+  }, [appId]);
+
   useEffect(() => {
     void fetchPlans();
   }, [fetchPlans]);
@@ -1368,15 +1451,20 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
         return;
       }
       if (editingPlanId === planId) setEditingPlanId(null);
-      reloadPlans();
+      void refreshCustomPlans();
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Failed to delete plan");
     }
   };
 
-  const handleSaved = () => {
+  const handleNetworkSaved = () => {
     setEditingPlanId(null);
     reloadPlans();
+  };
+
+  const handleCustomPlanSaved = () => {
+    setEditingPlanId(null);
+    void refreshCustomPlans();
   };
 
   return (
@@ -1411,7 +1499,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
               catalog={catalog}
               catalogError={catalogError}
               canEdit={canEdit}
-              onSaved={handleSaved}
+              onSaved={handleNetworkSaved}
             />
           ) : (
             <p className="text-sm text-amber-400">Network Price plan not found for this app.</p>
@@ -1429,7 +1517,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
               isEditing={editingPlanId === plan.id}
               onEdit={() => setEditingPlanId(plan.id)}
               onCancelEdit={() => setEditingPlanId(null)}
-              onSaved={handleSaved}
+              onSaved={handleCustomPlanSaved}
               onDelete={() => void deletePlan(plan.id)}
             />
           ))}
@@ -1440,7 +1528,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
             catalogError={catalogError}
             blockedConcreteKeys={blockedConcreteKeys}
             canEdit={canEdit}
-            onCreated={handleSaved}
+            onCreated={handleCustomPlanSaved}
           />
         </div>
       )}
