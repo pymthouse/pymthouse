@@ -249,15 +249,14 @@ export default function TestingStep({
   const backendHelperScopes = computeBackendM2mAllowedScopes(
     allowedScopes ?? DEFAULT_OIDC_SCOPES,
   );
-  const backendHelperCurlSnippet =
-    backendDeviceHelper && backendHelper?.clientId
-      ? `curl -X POST ${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/oidc/token \\
+  const backendHelperCurlSnippet = backendHelper?.clientId
+    ? `curl -X POST ${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/oidc/token \\
   -H "Content-Type: application/x-www-form-urlencoded" \\
   -d "grant_type=client_credentials" \\
   -d "client_id=${backendHelper.clientId}" \\
   -d "client_secret=YOUR_CLIENT_SECRET" \\
   -d "scope=${backendHelperScopes}"`
-      : "";
+    : "";
 
   return (
     <div className="space-y-8">
@@ -545,120 +544,130 @@ export default function TestingStep({
             </div>
           </div>
 
-          {backendDeviceHelper && backendHelper ? (
-            <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
-              <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
-              <p className="text-xs text-zinc-500">
-                Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
-              </p>
+        </>
+      )}
+
+      {/*
+        Backend helper (confidential m2m_) section.
+        Shown whenever a backend helper exists in the DB, independent of the
+        `backendDeviceHelper` form toggle (which lives on the Auth & Scopes
+        tab). Hints below cover the not-yet-provisioned and off states for
+        interactive apps; M2M-only apps treat the m2m_ as optional, so we
+        skip the hints there to avoid confusion (their primary app_* client
+        is already confidential).
+      */}
+      {backendHelper ? (
+        <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
+          <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
+          <p className="text-xs text-zinc-500">
+            Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1">Client ID</label>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
+                {backendHelper.clientId}
+              </code>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
+                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+              >
+                {copied === "m2mClientId" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</label>
+            {backendSecret ? (
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Client ID</label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
-                    {backendHelper.clientId}
+                <div className="flex items-center gap-2 mb-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
+                    {backendSecret}
                   </code>
                   <button
                     type="button"
-                    onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+                    onClick={() => copyToClipboard(backendSecret, "backendSecret")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
                   >
-                    {copied === "m2mClientId" ? "Copied!" : "Copy"}
+                    {copied === "backendSecret" ? "Copied!" : "Copy"}
                   </button>
                 </div>
+                <p className="text-xs text-amber-400/80">
+                  Store this secret securely. It will not be shown again.
+                </p>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</label>
-                {backendSecret ? (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
-                        {backendSecret}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(backendSecret, "backendSecret")}
-                        className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
-                      >
-                        {copied === "backendSecret" ? "Copied!" : "Copy"}
-                      </button>
-                    </div>
-                    <p className="text-xs text-amber-400/80">
-                      Store this secret securely. It will not be shown again.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {backendHelper.hasSecret && (
-                      <p className="text-sm text-zinc-500">
-                        A secret exists. Generate a new one to rotate.
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void generateBackendSecret()}
-                      disabled={readOnly || generatingBackend || !appId}
-                      className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
-                    >
-                      {generatingBackend
-                        ? "Generating..."
-                        : backendHelper.hasSecret
-                          ? "Rotate Secret"
-                          : "Generate Secret"}
-                    </button>
-                  </div>
-                )}
-                {backendSecretFetchError && (
-                  <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
-                )}
-              </div>
-              {backendHelperCurlSnippet ? (
-                <div className="pt-3 border-t border-cyan-500/15 space-y-2">
-                  <h4 className="text-xs font-semibold text-cyan-200/80">
-                    Test client credentials (bearer token)
-                  </h4>
-                  <p className="text-xs text-zinc-500">
-                    Run this where your server runs. Replace{" "}
-                    <code className="text-zinc-400">YOUR_CLIENT_SECRET</code> with the secret above (or
-                    one you have stored). The JSON response includes{" "}
-                    <code className="text-zinc-400">access_token</code> — use{" "}
-                    <code className="text-zinc-400">Authorization: Bearer …</code> on Builder routes.
-                    Scopes match the backend helper client (Builder / device approval), not the public
-                    app list.
+            ) : (
+              <div className="flex items-center gap-3 flex-wrap">
+                {backendHelper.hasSecret && (
+                  <p className="text-sm text-zinc-500">
+                    A secret exists. Generate a new one to rotate.
                   </p>
-                  <div className="relative">
-                    <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
-                      {backendHelperCurlSnippet}
-                    </pre>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyToClipboard(backendHelperCurlSnippet, "curlBackend")
-                      }
-                      className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
-                    >
-                      {copied === "curlBackend" ? "Copied!" : "Copy"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+                )}
+                <button
+                  type="button"
+                  onClick={() => void generateBackendSecret()}
+                  disabled={readOnly || generatingBackend || !appId}
+                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                >
+                  {generatingBackend
+                    ? "Generating..."
+                    : backendHelper.hasSecret
+                      ? "Rotate Secret"
+                      : "Generate Secret"}
+                </button>
+              </div>
+            )}
+            {backendSecretFetchError && (
+              <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
+            )}
+          </div>
+          {backendHelperCurlSnippet ? (
+            <div className="pt-3 border-t border-cyan-500/15 space-y-2">
+              <h4 className="text-xs font-semibold text-cyan-200/80">
+                Test client credentials (bearer token)
+              </h4>
+              <p className="text-xs text-zinc-500">
+                Run this where your server runs. Replace{" "}
+                <code className="text-zinc-400">YOUR_CLIENT_SECRET</code> with the secret above (or
+                one you have stored). The JSON response includes{" "}
+                <code className="text-zinc-400">access_token</code> — use{" "}
+                <code className="text-zinc-400">Authorization: Bearer …</code> on Builder routes.
+                Scopes match the backend helper client (Builder / device approval), not the public
+                app list.
+              </p>
+              <div className="relative">
+                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
+                  {backendHelperCurlSnippet}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyToClipboard(backendHelperCurlSnippet, "curlBackend")
+                  }
+                  className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+                >
+                  {copied === "curlBackend" ? "Copied!" : "Copy"}
+                </button>
+              </div>
             </div>
-          ) : backendDeviceHelper && !backendHelper ? (
-            <p className="text-sm text-zinc-500 mt-4">
-              <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
-              Save the app to provision the Backend device helper and create a confidential{" "}
-              <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
-              approval, then return here.
-            </p>
-          ) : (
-            <p className="text-sm text-zinc-500 mt-4">
-              Confidential backend helper is off in{" "}
-              <strong className="text-zinc-400">Auth &amp; Scopes</strong>. Turn on{" "}
-              <strong className="text-zinc-400">Confidential client (CLIENT CREDENTIALS)</strong>{" "}
-              there to manage M2M credentials on this tab.
-            </p>
-          )}
-        </>
-      )}
+          ) : null}
+        </div>
+      ) : !isM2MOnly && backendDeviceHelper ? (
+        <p className="text-sm text-zinc-500 mt-4">
+          <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
+          Save the app to provision the Backend device helper and create a confidential{" "}
+          <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
+          approval, then return here.
+        </p>
+      ) : !isM2MOnly ? (
+        <p className="text-sm text-zinc-500 mt-4">
+          Confidential backend helper is off in{" "}
+          <strong className="text-zinc-400">Auth &amp; Scopes</strong>. Turn on{" "}
+          <strong className="text-zinc-400">Confidential client (CLIENT CREDENTIALS)</strong>{" "}
+          there to manage M2M credentials on this tab.
+        </p>
+      ) : null}
 
       {/* Discovery URL */}
       <div>
