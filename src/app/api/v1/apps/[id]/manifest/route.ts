@@ -18,6 +18,7 @@ import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
   findCustomPlansBlockingNewExclusions,
   getOrCreateNetworkDefaultPlan,
+  selectNetworkDefaultPlan,
 } from "@/lib/network-default-plan";
 
 async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
@@ -30,8 +31,9 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
   return auth?.app ?? null;
 }
 
-function buildManifestEtag(manifestVersion: string): string {
-  return `"${manifestVersion}"`;
+function buildManifestEtagFromPlanUpdatedAt(updatedAt: string | undefined): string {
+  const stamp = updatedAt?.trim() || "missing";
+  return `"manifest-plan-${stamp}"`;
 }
 
 function requestMatchesIfNoneMatch(request: NextRequest, etag: string): boolean {
@@ -66,7 +68,8 @@ export async function GET(
 
   const body = await buildAppManifestForApp(app.id);
   publishCachedManifestPolicy(clientId, body, "manifest_get");
-  const etag = buildManifestEtag(body.manifestVersion);
+  const networkPlan = await selectNetworkDefaultPlan(clientId, db);
+  const etag = buildManifestEtagFromPlanUpdatedAt(networkPlan?.updatedAt);
   if (requestMatchesIfNoneMatch(request, etag)) {
     return new NextResponse(null, {
       status: 304,
@@ -86,9 +89,8 @@ export async function HEAD(
     return new NextResponse(null, { status: 404 });
   }
 
-  const body = await buildAppManifestForApp(app.id);
-  publishCachedManifestPolicy(clientId, body, "manifest_get");
-  const etag = buildManifestEtag(body.manifestVersion);
+  const networkPlan = await selectNetworkDefaultPlan(clientId, db);
+  const etag = buildManifestEtagFromPlanUpdatedAt(networkPlan?.updatedAt);
   if (requestMatchesIfNoneMatch(request, etag)) {
     return new NextResponse(null, {
       status: 304,
