@@ -68,7 +68,7 @@ export async function GET(
 
   const body = await buildAppManifestForApp(app.id);
   publishCachedManifestPolicy(clientId, body, "manifest_get");
-  const networkPlan = await selectNetworkDefaultPlan(clientId, db);
+  const networkPlan = await selectNetworkDefaultPlan(app.id, db);
   const etag = buildManifestEtagFromPlanUpdatedAt(networkPlan?.updatedAt);
   if (requestMatchesIfNoneMatch(request, etag)) {
     return new NextResponse(null, {
@@ -89,7 +89,7 @@ export async function HEAD(
     return new NextResponse(null, { status: 404 });
   }
 
-  const networkPlan = await selectNetworkDefaultPlan(clientId, db);
+  const networkPlan = await selectNetworkDefaultPlan(app.id, db);
   const etag = buildManifestEtagFromPlanUpdatedAt(networkPlan?.updatedAt);
   if (requestMatchesIfNoneMatch(request, etag)) {
     return new NextResponse(null, {
