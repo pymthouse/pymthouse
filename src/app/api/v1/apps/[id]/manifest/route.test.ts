@@ -78,6 +78,46 @@ run("manifest GET and PUT", async (t) => {
         excludedCapabilities: [],
       }),
     );
+    const etag = res.headers.get("etag");
+    assert.ok(etag, "GET should return ETag header");
+  });
+
+  await t.test("HEAD returns ETag and honors If-None-Match", async (t) => {
+    catalogFetchCount = 0;
+    catalogThrows = false;
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const { GET, HEAD } = await import("./route");
+    const getRes = await GET(
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(getRes.status, 200);
+    const etag = getRes.headers.get("etag");
+    assert.ok(etag, "GET should include ETag");
+
+    const headRes = await HEAD(
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(headRes.status, 200);
+    assert.equal(headRes.headers.get("etag"), etag);
+    assert.equal(await headRes.text(), "");
+
+    const notModifiedHeadRes = await HEAD(
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`, {
+        headers: { "If-None-Match": etag! },
+      }) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(notModifiedHeadRes.status, 304);
+    assert.equal(notModifiedHeadRes.headers.get("etag"), etag);
+    assert.equal(await notModifiedHeadRes.text(), "");
   });
 
   await t.test("GET resolves exclusions against catalog on Network Price plan", async (t) => {

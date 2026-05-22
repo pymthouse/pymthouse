@@ -30,6 +30,25 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
   return auth?.app ?? null;
 }
 
+function buildManifestEtag(manifestVersion: string): string {
+  return `"${manifestVersion}"`;
+}
+
+function requestMatchesIfNoneMatch(request: NextRequest, etag: string): boolean {
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (!ifNoneMatch) return false;
+  return ifNoneMatch
+    .split(",")
+    .map((value) => value.trim())
+    .some(
+      (value) =>
+        value === "*" ||
+        value === etag ||
+        value === `W/${etag}` ||
+        (value.startsWith("W/") && value.slice(2) === etag),
+    );
+}
+
 /**
  * App network capability manifest for integrators (e.g. NaaP).
  * GET: resolved discoverable set + exclusions + manifestVersion. M2M Basic or provider session.
@@ -47,7 +66,40 @@ export async function GET(
 
   const body = await buildAppManifestForApp(app.id);
   publishCachedManifestPolicy(clientId, body, "manifest_get");
-  return NextResponse.json(body);
+  const etag = buildManifestEtag(body.manifestVersion);
+  if (requestMatchesIfNoneMatch(request, etag)) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: { ETag: etag },
+    });
+  }
+  return NextResponse.json(body, { headers: { ETag: etag } });
+}
+
+export async function HEAD(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id: clientId } = await params;
+  const app = await resolveAppForPlansRead(clientId, request);
+  if (!app) {
+    return new NextResponse(null, { status: 404 });
+  }
+
+  const body = await buildAppManifestForApp(app.id);
+  publishCachedManifestPolicy(clientId, body, "manifest_get");
+  const etag = buildManifestEtag(body.manifestVersion);
+  if (requestMatchesIfNoneMatch(request, etag)) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: { ETag: etag },
+    });
+  }
+
+  return new NextResponse(null, {
+    status: 200,
+    headers: { ETag: etag },
+  });
 }
 
 export async function PUT(

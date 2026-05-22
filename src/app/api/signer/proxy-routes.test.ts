@@ -249,7 +249,7 @@ run("sign-byoc-job rejects when manifest cache is cold", async (t) => {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ pipeline: "byoc" }),
+      body: JSON.stringify({ pipeline: "pipeline-not-in-manifest" }),
     }) as never,
   );
   assert.equal(res.status, 403);

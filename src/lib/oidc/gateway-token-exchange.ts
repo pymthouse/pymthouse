@@ -273,8 +273,8 @@ export async function handleGatewayTokenExchange(
   });
 
   void import("@/lib/app-manifest-cache")
-    .then(({ warmAppManifestCacheForPublicClient }) =>
-      warmAppManifestCacheForPublicClient(publicClientId, "token_mint"),
+    .then(({ warmAppManifestCacheForPublicClientWithRetry }) =>
+      warmAppManifestCacheForPublicClientWithRetry(publicClientId, "token_mint"),
     )
     .catch((err) => {
       console.warn("[oidc] manifest cache warm failed after gateway token exchange:", err);

@@ -108,6 +108,37 @@ export async function warmAppManifestCacheForPublicClient(
   return publishCachedManifestPolicy(publicClientId, manifest, source);
 }
 
+const MANIFEST_WARM_RETRY_DELAYS_MS = [0, 50, 150] as const;
+
+/**
+ * Warm manifest cache with short backoff retries (token mint / enforcement paths).
+ */
+export async function warmAppManifestCacheForPublicClientWithRetry(
+  publicClientId: string,
+  source?: ManifestPolicySource,
+): Promise<CachedManifestPolicy | null> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MANIFEST_WARM_RETRY_DELAYS_MS.length; attempt++) {
+    const delayMs = MANIFEST_WARM_RETRY_DELAYS_MS[attempt];
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const policy = await warmAppManifestCacheForPublicClient(publicClientId, source);
+      if (policy) return policy;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (lastError) {
+    console.warn(
+      `[manifest-cache] warmAppManifestCacheForPublicClient failed after ${MANIFEST_WARM_RETRY_DELAYS_MS.length} attempts`,
+      { publicClientId, source, err: lastError },
+    );
+  }
+  return null;
+}
+
 /**
  * Resolve pipeline (required) and optional modelId for manifest enforcement.
  * Does not require modelId when only pipeline fields are present on the body.
