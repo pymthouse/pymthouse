@@ -297,11 +297,11 @@ export default function AppsPage() {
           {apps.map((app) => (
             <div
               key={app.id}
-              className="relative flex h-full min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900/30 transition-colors group hover:border-zinc-700"
+              className="relative flex h-full min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900/30 transition-colors group hover:border-zinc-700 hover:bg-zinc-900/60"
             >
               <Link
                 href={`/apps/${app.id}`}
-                className="absolute inset-0 z-0 rounded-xl outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500/60"
+                className="absolute inset-0 z-0 cursor-pointer rounded-xl outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500/60"
                 aria-label={`${app.name} — open app settings`}
               />
               <div className="relative z-10 flex h-full min-h-0 flex-col gap-3 p-5 pointer-events-none">
@@ -320,7 +320,7 @@ export default function AppsPage() {
                         </h3>
                       </div>
                       {app.clientId ? (
-                        <div className="mt-2 space-y-1 pointer-events-auto">
+                        <div className="mt-2 space-y-1">
                           <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
                             Public app id
                           </div>
