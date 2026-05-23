@@ -9,6 +9,7 @@
 !.yarn/versions
 
 .vscode/settings.json
+.idea/
 
 # next.js
 /.next/
@@ -48,3 +49,7 @@ next-env.d.ts
 src/lib/proto-generated.*
 
 certificates
+
+# local runtime / tooling state
+.livepeer/
+.runlogs/

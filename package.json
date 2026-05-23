@@ -8,7 +8,7 @@
   "scripts": {
     "predev": "npm run db:prepare",
     "dev": "next dev -p 3001",
-    "prebuild": "[ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare",
+    "prebuild": "[ \"$VERCEL\" = '1' ] || [ \"$SKIP_DB_PREPARE\" = '1' ] && echo 'Skipping db:prepare' || npm run db:prepare",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

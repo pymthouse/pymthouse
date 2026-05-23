@@ -1,0 +1,30 @@
+{
+  "name": "PymtHouse Control Plane",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "forwardPorts": [3001, 5432],
+  "postCreateCommand": "npm install && npm run db:prepare && npm run oidc:seed",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+      }
+    }
+  },
+  "remoteEnv": {
+    "DATABASE_URL": "postgresql://pymthouse:pymthouse@db:5432/pymthouse?sslmode=disable",
+    "NEXTAUTH_URL": "http://localhost:3001",
+    "OIDC_ISSUER": "http://localhost:3001/api/v1/oidc"
+  }
+}

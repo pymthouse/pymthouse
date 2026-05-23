@@ -7,6 +7,9 @@
 #
 # Gateway listens on localhost:8080 → Apache on port 80 inside the gateway container.
 # Signer is not published; only the gateway can reach it on the internal network.
+#
+# For local dev with the devcontainer, set JWKS_URI to point to the control plane:
+#   JWKS_URI=http://host.docker.internal:3001/api/v1/oidc/jwks docker compose up --build
 
 services:
   signer:
@@ -33,13 +36,15 @@ services:
       target: gateway
     ports:
       - "127.0.0.1:8080:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       PORT: "80"
       SIGNER_UPSTREAM: http://signer:8081
       SIGNER_CLI_HTTP_ADDR: http://signer:4935
-      OIDC_ISSUER: ${OIDC_ISSUER:-https://pymthouse.com/api/v1/oidc}
-      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-https://pymthouse.com/api/v1/oidc}
-      JWKS_URI: ${JWKS_URI:-https://pymthouse.com/api/v1/oidc/jwks}
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:3001/api/v1/oidc}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-http://localhost:3001/api/v1/oidc}
+      JWKS_URI: ${JWKS_URI:-http://host.docker.internal:3001/api/v1/oidc/jwks}
       JWKS_REFRESH_SECONDS: ${JWKS_REFRESH_SECONDS:-900}
       JWKS_TLS_INSECURE: ${JWKS_TLS_INSECURE:-}
     depends_on:
