@@ -1053,6 +1053,28 @@ function DeviceInitiateLoginUriField({
             development.
           </p>
         ) : null}
+        {deviceThirdPartyInitiateLogin && isValidInitiateLoginUri(initiateLoginUri) ? (
+          <div className="mt-3 space-y-2">
+            <p className="text-xs text-zinc-500">
+              Test third-party initiated login by simulating the redirect that PymtHouse sends to your app:
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const params = new URLSearchParams({
+                  iss: getBrowserOrigin(),
+                  target_link_uri: `${getBrowserOrigin()}/api/v1/oidc/device/verify?user_code=TEST_CODE`,
+                });
+                const url = `${initiateLoginUri.trim()}?${params.toString()}`;
+                const newWin = globalThis.window?.open(url, "_blank", "noopener,noreferrer");
+                if (newWin) newWin.opener = null;
+              }}
+              className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+            >
+              Test Third-Party Initiated Login
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1212,14 +1234,55 @@ export function AuthCodeFlowTestSection({
         </div>
       ) : null}
 
-      {backendDeviceHelper && hasDeviceCode ? (
-        <DeviceInitiateLoginUriField
-          initiateLoginUri={initiateLoginUri}
-          deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
-          allowedScopes={allowedScopes}
-          readOnly={readOnly}
-          onChange={onChange}
-        />
+      {hasDeviceCode ? (
+        <div className="border-t border-zinc-800 pt-5 space-y-5">
+          <div className="space-y-3">
+            <div>
+              <h4 className="text-sm font-semibold text-zinc-200">Test Device Authorization Flow</h4>
+              <p className="text-xs text-zinc-500 mt-1">
+                Use{" "}
+                <a
+                  href="https://oidcdebugger.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-400 hover:text-emerald-300 underline"
+                >
+                  oidcdebugger.com
+                </a>{" "}
+                or start a device code request directly to verify your device login flow end to end.
+              </p>
+            </div>
+            {clientId ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const params = new URLSearchParams({
+                    authorize_uri: `${browserOrigin}/api/v1/oidc/device/authorize`,
+                    client_id: clientId,
+                    scope: effectiveScopes,
+                    response_type: "device_code",
+                  });
+                  const url = `https://oidcdebugger.com/debug?${params.toString()}`;
+                  const newWin = globalThis.window?.open(url, "_blank", "noopener,noreferrer");
+                  if (newWin) newWin.opener = null;
+                }}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
+              >
+                Test Device Flow on oidcdebugger.com
+              </button>
+            ) : null}
+          </div>
+
+          {backendDeviceHelper ? (
+            <DeviceInitiateLoginUriField
+              initiateLoginUri={initiateLoginUri}
+              deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
+              allowedScopes={allowedScopes}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

@@ -86,7 +86,7 @@ export default function AppModeStep({
   };
 
   const toggleDeviceCode = () => {
-    if (readOnly || !data.backendDeviceHelper) return;
+    if (readOnly) return;
     if (hasDeviceCode) {
       onChange({
         grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
@@ -111,9 +111,6 @@ export default function AppModeStep({
     } else {
       onChange({
         backendDeviceHelper: false,
-        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
-        initiateLoginUri: "",
-        deviceThirdPartyInitiateLogin: false,
         allowedScopes: ensureOpenIdScope(
           scopes.filter((s) => s !== "users:token").join(" "),
         ),
@@ -149,30 +146,33 @@ export default function AppModeStep({
           </div>
         </label>
 
-        {data.backendDeviceHelper ? (
-          <label aria-label="Device / CLI login" className={capabilityRowClass(hasDeviceCode, readOnly)}>
-            <input
-              type="checkbox"
-              checked={hasDeviceCode}
-              onChange={toggleDeviceCode}
-              disabled={readOnly}
-              className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
-            />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-zinc-200">Device / CLI login</p>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Allow CLI tools, SDKs, and headless clients to authenticate via a
-                user code on a secondary device.
+        <label aria-label="Device / CLI login" className={capabilityRowClass(hasDeviceCode, readOnly)}>
+          <input
+            type="checkbox"
+            checked={hasDeviceCode}
+            onChange={toggleDeviceCode}
+            disabled={readOnly}
+            className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
+          />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-zinc-200">Device / CLI login</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Allow CLI tools, SDKs, and headless clients to authenticate via a
+              user code on a secondary device.
+            </p>
+            {hasDeviceCode ? (
+              <p className="mt-2 text-xs text-zinc-500">
+                Configure the third-party initiate login URL on{" "}
+                <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
+                {!data.backendDeviceHelper ? (
+                  <span className="block mt-1 text-amber-400/80">
+                    Enable <strong>Confidential M2M backend</strong> above for custom login flows via device code authorization (RFC 8693 token exchange).
+                  </span>
+                ) : null}
               </p>
-              {hasDeviceCode ? (
-                <p className="mt-2 text-xs text-zinc-500">
-                  Configure the third-party initiate login URL on{" "}
-                  <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
-                </p>
-              ) : null}
-            </div>
-          </label>
-        ) : null}
+            ) : null}
+          </div>
+        </label>
 
         <label aria-label="Payment signing" className={capabilityRowClass(hasSignJob, readOnly)}>
           <input
