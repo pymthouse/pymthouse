@@ -144,59 +144,38 @@ export default function PipelineModelPicker({
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div ref={containerRef} className="relative w-full">
-      {showSelectedChips && values.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {values.map((v) => (
-            <span
-              key={v}
-              className="inline-flex items-center gap-1 max-w-full rounded-full bg-zinc-700 px-2 py-0.5 text-xs text-zinc-100"
-            >
-              <span className="truncate">{chipLabel(v)}</span>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => removeValue(v)}
-                className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-100 disabled:opacity-40"
-                aria-label={`Remove ${chipLabel(v)}`}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
+    <div ref={containerRef} className="w-full">
+      <div className="relative">
+        <input
+          ref={inputRef}
+          id={inputId}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={open ? listboxId : undefined}
+          aria-autocomplete="list"
+          value={open ? filter : ""}
+          placeholder={disabled ? "" : "Search pipelines and models…"}
+          disabled={disabled}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onFocus={() => {
+            if (!disabled) setOpen(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") close();
+          }}
+          className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-500 disabled:opacity-50"
+        />
 
-      <input
-        ref={inputRef}
-        id={inputId}
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={open ? listboxId : undefined}
-        aria-autocomplete="list"
-        value={open ? filter : ""}
-        placeholder={disabled ? "" : "Search pipelines and models…"}
-        disabled={disabled}
-        onChange={(e) => {
-          setFilter(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        onFocus={() => {
-          if (!disabled) setOpen(true);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") close();
-        }}
-        className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-500 disabled:opacity-50"
-      />
-
-      {open && (
-        <div
-          id={listboxId}
-          role="listbox"
-          aria-multiselectable="true"
-          className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-lg"
-        >
+        {open && (
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-multiselectable="true"
+            className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-lg"
+          >
           {filteredCatalog.length === 0 ? (
             <div className="px-3 py-2 text-sm text-zinc-500">No matches</div>
           ) : (
@@ -258,6 +237,29 @@ export default function PipelineModelPicker({
               );
             })
           )}
+          </div>
+        )}
+      </div>
+
+      {showSelectedChips && values.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {values.map((v) => (
+            <span
+              key={v}
+              className="inline-flex items-center gap-1 max-w-full rounded-full bg-zinc-700 px-2 py-0.5 text-xs text-zinc-100"
+            >
+              <span className="truncate">{chipLabel(v)}</span>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => removeValue(v)}
+                className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-100 disabled:opacity-40"
+                aria-label={`Remove ${chipLabel(v)}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
         </div>
       )}
     </div>

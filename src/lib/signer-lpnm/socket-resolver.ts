@@ -1,4 +1,6 @@
-import { SIGNING_MODE_LPNM_PAYER_DAEMON } from "@/lib/signing-modes";
+import { isLpnmSigningMode } from "@/lib/signing-modes";
+
+export { isLpnmSigningMode };
 
 const DEFAULT_PAYER_SOCKET = "/run/pymthouse/payer.sock";
 
@@ -33,8 +35,4 @@ export function defaultPaymentCapabilityOffering(): {
       process.env.LPNM_PAYMENT_CAPABILITY?.trim() || "live-video-to-video",
     offering: process.env.LPNM_PAYMENT_OFFERING?.trim() || "default",
   };
-}
-
-export function isLpnmSigningMode(mode: string | null | undefined): boolean {
-  return mode === SIGNING_MODE_LPNM_PAYER_DAEMON;
 }

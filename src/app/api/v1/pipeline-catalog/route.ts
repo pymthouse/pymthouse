@@ -1,11 +1,25 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import type { CatalogServiceType } from "@/lib/signing-modes";
 
-export async function GET() {
+function parseServiceType(value: string | null): CatalogServiceType | undefined {
+  if (value === "legacy" || value === "registry") {
+    return value;
+  }
+  return undefined;
+}
+
+export async function GET(request: NextRequest) {
+  const serviceType = parseServiceType(
+    request.nextUrl.searchParams.get("serviceType"),
+  );
+
   try {
-    const catalog = await fetchPipelineCatalog();
+    const catalog = await fetchPipelineCatalog(
+      serviceType ? { serviceType } : undefined,
+    );
     return NextResponse.json(
-      { catalog },
+      { catalog, serviceType: serviceType ?? null },
       {
         headers: {
           "Cache-Control": "public, max-age=300, stale-while-revalidate=60",

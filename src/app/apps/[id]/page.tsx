@@ -8,7 +8,7 @@ import type { AppFormData, AppState } from "@/components/apps/AppWizard";
 import { DEFAULT_OIDC_SCOPES } from "@/lib/oidc/scopes";
 import {
   SIGNING_MODE_LEGACY_REMOTE_SIGNER,
-  SIGNING_MODE_LPNM_PAYER_DAEMON,
+  isValidSigningMode,
 } from "@/lib/signing-modes";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -63,8 +63,8 @@ export default function AppDetailPage() {
               data.oidcClient?.tokenEndpointAuthMethod || "none",
             backendDeviceHelper: Boolean(data.m2mOidcClient),
             signingMode:
-              data.signingMode === SIGNING_MODE_LPNM_PAYER_DAEMON
-                ? SIGNING_MODE_LPNM_PAYER_DAEMON
+              data.signingMode && isValidSigningMode(data.signingMode)
+                ? data.signingMode
                 : SIGNING_MODE_LEGACY_REMOTE_SIGNER,
             payerDaemonSocket:
               typeof data.payerDaemonSocket === "string" ? data.payerDaemonSocket : "",

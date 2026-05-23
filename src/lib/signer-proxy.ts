@@ -27,15 +27,24 @@ import {
   resolveGatewayAttribution,
 } from "./billing-runtime";
 import {
-  isLpnmSigningMode,
   resolvePayerDaemonSocketPath,
 } from "@/lib/signer-lpnm/socket-resolver";
 import {
-  isRegistryPaymentMode,
   parseRegistryFaceValueWei,
   parseRegistryGenerateLivePaymentFields,
   parseRegistryPricePerUnitWei,
 } from "@/lib/signer-lpnm/registry-payment";
+import {
+  resolveAuxSignerRoute,
+  resolveSignerRoute,
+  SIGNER_ROUTE_LPNM_REGISTRY,
+  signerRouteUsesLpnm,
+} from "@/lib/signing-route";
+import {
+  getCachedAppSigningRouting,
+  warmAppSigningRoutingCache,
+  type CachedAppSigningRouting,
+} from "@/lib/signing-routing-cache";
 import {
   lpnmProxyDiscoverOrchestrators,
   lpnmProxyGenerateLivePayment,
@@ -82,27 +91,58 @@ export async function resolveDeveloperAppIdFromAuthAppId(
 }
 
 export async function getSignerRoutingContext(authAppId?: string | null) {
-  const signer = await getDefaultSigner();
-  const providerAppId = await resolveDeveloperAppIdFromAuthAppId(authAppId);
+  const ctx = await resolveSigningRequestContext(authAppId);
+  return {
+    signer: ctx.signer,
+    providerAppId: ctx.providerAppId,
+    signingMode: ctx.routing?.signingMode ?? "legacy_remote_signer",
+    payerDaemonSocket: ctx.payerDaemonSocket,
+    routing: ctx.routing,
+  };
+}
 
-  let signingMode = "legacy_remote_signer";
-  let payerDaemonSocket: string | null = null;
-  if (providerAppId) {
-    const rows = await db
-      .select({
-        signingMode: developerApps.signingMode,
-        payerDaemonSocket: developerApps.payerDaemonSocket,
-      })
-      .from(developerApps)
-      .where(eq(developerApps.id, providerAppId))
-      .limit(1);
-    if (rows[0]?.signingMode) {
-      signingMode = rows[0].signingMode;
-    }
-    payerDaemonSocket = rows[0]?.payerDaemonSocket ?? null;
+export interface SigningRequestContext {
+  signer: Awaited<ReturnType<typeof getDefaultSigner>>;
+  providerAppId: string | null;
+  routing: CachedAppSigningRouting | null;
+  payerDaemonSocket: string | null;
+}
+
+export async function resolveSigningRequestContext(
+  authAppId?: string | null,
+): Promise<SigningRequestContext> {
+  const signer = await getDefaultSigner();
+  const publicClientId = authAppId?.trim() ?? "";
+  let routing = publicClientId
+    ? getCachedAppSigningRouting(publicClientId)
+    : undefined;
+  if (!routing && publicClientId) {
+    routing = (await warmAppSigningRoutingCache(publicClientId)) ?? undefined;
   }
 
-  return { signer, providerAppId, signingMode, payerDaemonSocket };
+  const providerAppId =
+    routing?.providerAppId ??
+    (await resolveDeveloperAppIdFromAuthAppId(authAppId));
+
+  return {
+    signer,
+    providerAppId,
+    routing: routing ?? null,
+    payerDaemonSocket: routing?.payerDaemonSocket ?? null,
+  };
+}
+
+function routeResolutionError(
+  message: string,
+): ProxyResult {
+  return { status: 403, body: { error: message } };
+}
+
+function legacySignerUnavailable(): ProxyResult {
+  return {
+    status: 503,
+    body: { error: "Legacy remote signer is not running" },
+  };
 }
 
 interface BillingOracleSelection {
@@ -553,15 +593,19 @@ export async function proxySignOrchestratorInfo(
   requestBody: unknown,
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer, signingMode, payerDaemonSocket } =
-    await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
+  const { signer, routing } = await resolveSigningRequestContext(auth.appId);
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
   }
 
-  if (isLpnmSigningMode(signingMode)) {
-    const sock = resolvePayerDaemonSocketPath(payerDaemonSocket);
+  const auxRoute = resolveAuxSignerRoute(routing);
+  if (signerRouteUsesLpnm(auxRoute)) {
+    const sock = resolvePayerDaemonSocketPath(routing.payerDaemonSocket);
     return lpnmProxySignOrchestratorInfo(requestBody, sock);
+  }
+
+  if (!signer || signer.status !== "running") {
+    return legacySignerUnavailable();
   }
 
   try {
@@ -610,11 +654,18 @@ export async function proxyGenerateLivePayment(
   requestBody: Record<string, unknown>,
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer, providerAppId, signingMode, payerDaemonSocket } =
-    await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
+  const { signer, providerAppId, routing, payerDaemonSocket } =
+    await resolveSigningRequestContext(auth.appId);
+
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
   }
+
+  const routeResolved = resolveSignerRoute(routing, requestBody);
+  if (!routeResolved.ok) {
+    return routeResolutionError(routeResolved.message);
+  }
+  const route = routeResolved.route;
 
   const manifestCheck = await enforceCachedManifestPolicy(requestBody, auth);
   if (!manifestCheck.ok) {
@@ -669,12 +720,11 @@ export async function proxyGenerateLivePayment(
   }
   const orchestratorData = orchPick.value;
 
-  const lpnmRegistry =
-    isLpnmSigningMode(signingMode) && isRegistryPaymentMode(requestBody);
-  const registryFieldsParsed = lpnmRegistry
-    ? parseRegistryGenerateLivePaymentFields(requestBody)
-    : null;
-  if (lpnmRegistry && registryFieldsParsed && !registryFieldsParsed.ok) {
+  const registryFieldsParsed =
+    route === SIGNER_ROUTE_LPNM_REGISTRY
+      ? parseRegistryGenerateLivePaymentFields(requestBody)
+      : null;
+  if (registryFieldsParsed && !registryFieldsParsed.ok) {
     return { status: 400, body: { error: registryFieldsParsed.message } };
   }
   const registryFields =
@@ -800,9 +850,9 @@ export async function proxyGenerateLivePayment(
   const constraint = await resolvePaymentPipelineModelConstraint(requestBody);
   const attribution = resolveGatewayAttribution(requestBody);
 
-  if (isLpnmSigningMode(signingMode)) {
+  if (signerRouteUsesLpnm(route)) {
     const sock = resolvePayerDaemonSocketPath(payerDaemonSocket);
-    if (registryFields) {
+    if (route === SIGNER_ROUTE_LPNM_REGISTRY && registryFields) {
       return lpnmProxyGenerateLivePaymentFromRegistry({
         auth,
         signer,
@@ -838,7 +888,11 @@ export async function proxyGenerateLivePayment(
     });
   }
 
-  // Forward first — signing must not depend on NaaP pricing availability.
+  if (!signer || signer.status !== "running") {
+    return legacySignerUnavailable();
+  }
+
+  // Forward to go-livepeer DMZ (legacy remote signer).
   try {
     const { response } = await forwardToSigner(
       signer,
@@ -883,24 +937,31 @@ export async function proxySignByocJob(
   requestBody: unknown,
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer, signingMode, payerDaemonSocket } =
-    await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
-  }
+  const { signer, routing, payerDaemonSocket } =
+    await resolveSigningRequestContext(auth.appId);
 
   const bodyRecord =
     requestBody !== null && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
       : {};
+
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
+  }
+
   const manifestCheck = await enforceCachedManifestPolicy(bodyRecord, auth);
   if (!manifestCheck.ok) {
     return { status: manifestCheck.status, body: manifestCheck.body };
   }
 
-  if (isLpnmSigningMode(signingMode)) {
+  const auxRoute = resolveAuxSignerRoute(routing);
+  if (signerRouteUsesLpnm(auxRoute)) {
     const sock = resolvePayerDaemonSocketPath(payerDaemonSocket);
     return lpnmProxySignByocJob(requestBody, sock);
+  }
+
+  if (!signer || signer.status !== "running") {
+    return legacySignerUnavailable();
   }
 
   try {
@@ -931,13 +992,19 @@ export async function proxySignByocJob(
 export async function proxyDiscoverOrchestrators(
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer, signingMode } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
+  const { signer, routing } = await resolveSigningRequestContext(auth.appId);
+
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
   }
 
-  if (isLpnmSigningMode(signingMode)) {
+  const auxRoute = resolveAuxSignerRoute(routing);
+  if (signerRouteUsesLpnm(auxRoute)) {
     return lpnmProxyDiscoverOrchestrators();
+  }
+
+  if (!signer || signer.status !== "running") {
+    return legacySignerUnavailable();
   }
 
   try {

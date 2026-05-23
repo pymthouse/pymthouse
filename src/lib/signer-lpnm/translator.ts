@@ -22,6 +22,44 @@ export interface ProxyResult {
   body: unknown;
 }
 
+function pickTrimmedString(
+  body: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = body[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function defaultWorkUnitNameForCapability(capability: string): string {
+  const c = capability.trim().toLowerCase();
+  if (c === "openai:audio-speech") return "characters";
+  if (c === "openai:audio-transcriptions") return "audio_seconds";
+  if (c === "openai:chat-completions") return "tokens";
+  if (c === "openai:embeddings") return "tokens";
+  if (c === "openai:images-generations") return "images";
+  return "work-units";
+}
+
+function resolveWorkUnitName(
+  requestBody: Record<string, unknown>,
+  capability: string,
+): string {
+  return (
+    pickTrimmedString(
+      requestBody,
+      "workUnitName",
+      "work_unit_name",
+      "workUnit",
+      "work_unit",
+    ) ?? defaultWorkUnitNameForCapability(capability)
+  );
+}
+
 function hex0x(buf: Buffer): string {
   return `0x${buf.toString("hex")}`;
 }
@@ -79,7 +117,7 @@ export async function lpnmProxyGenerateLivePayment(
     return { status: 400, body: { error: "invalid orchestrator" } };
   }
 
-  if (!orch.address || orch.address.length !== 20) {
+  if (orch.address?.length !== 20) {
     return { status: 400, body: { error: "orchestrator address missing" } };
   }
 
@@ -87,6 +125,7 @@ export async function lpnmProxyGenerateLivePayment(
   const defaults = defaultPaymentCapabilityOffering();
   const capability = constraint?.pipeline ?? defaults.capability;
   const offering = constraint ? constraint.modelId : defaults.offering;
+  const workUnitName = resolveWorkUnitName(args.requestBody, capability);
 
   const ticketParamsBaseUrl =
     orch.transcoder?.trim().replace(/\/+$/, "") ||
@@ -104,11 +143,15 @@ export async function lpnmProxyGenerateLivePayment(
   let paymentB64: string;
   try {
     const r = await payerCreatePayment(args.socketPath, {
-      faceValueWei: args.feeWei,
+      fundedValueWei: args.feeWei,
       recipient20: Buffer.from(orch.address),
       capability,
       offering,
       ticketParamsBaseUrl,
+      pricePerUnitWei: args.pricePerUnit,
+      unitsPerPrice: args.pixelsPerUnit,
+      estimatedUnits: args.pixels,
+      workUnitName,
     });
     paymentB64 = r.paymentB64;
   } catch (e) {
@@ -139,7 +182,7 @@ export async function lpnmProxyGenerateLivePayment(
     constraint,
     attribution,
     orchestratorAddress:
-      orch.address && orch.address.length === 20
+      orch.address?.length === 20
         ? `0x${Buffer.from(orch.address).toString("hex")}`
         : undefined,
     billingOracleProviderKey: args.billingOracleProviderKey,
@@ -186,15 +229,20 @@ export async function lpnmProxyGenerateLivePaymentFromRegistry(
   const capability = args.fields.capability;
   const offering = args.fields.offering;
   const ticketParamsBaseUrl = args.fields.ticketParamsBaseUrl;
+  const workUnitName = resolveWorkUnitName(args.requestBody, capability);
 
   let paymentB64: string;
   try {
     const r = await payerCreatePayment(args.socketPath, {
-      faceValueWei: args.feeWei,
+      fundedValueWei: args.feeWei,
       recipient20,
       capability,
       offering,
       ticketParamsBaseUrl,
+      pricePerUnitWei: args.pricePerUnit,
+      unitsPerPrice: args.pixelsPerUnit,
+      estimatedUnits: args.pixels,
+      workUnitName,
     });
     paymentB64 = r.paymentB64;
   } catch (e) {
@@ -243,12 +291,12 @@ export async function lpnmProxySignByocJob(
   const capability = typeof b.capability === "string" ? b.capability : "";
   const request = typeof b.request === "string" ? b.request : "";
   const parameters = typeof b.parameters === "string" ? b.parameters : "";
-  const timeoutSeconds =
-    typeof b.timeout_seconds === "number"
-      ? b.timeout_seconds
-      : typeof b.timeoutSeconds === "number"
-        ? b.timeoutSeconds
-        : 0;
+  let timeoutSeconds = 0;
+  if (typeof b.timeout_seconds === "number") {
+    timeoutSeconds = b.timeout_seconds;
+  } else if (typeof b.timeoutSeconds === "number") {
+    timeoutSeconds = b.timeoutSeconds;
+  }
   if (!id.trim() || !capability.trim()) {
     return { status: 400, body: { error: "id and capability required" } };
   }

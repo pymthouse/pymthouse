@@ -72,29 +72,22 @@ service PayerDaemon {
 }
 
 message CreatePaymentRequest {
-  // Target spend (expected value) for the request, in wei, big-endian
-  // bytes. Quote-free path; see RPC doc for semantics.
-  bytes face_value = 1;
-
   // Recipient orchestrator identity (the on-chain payee address), 20
-  // raw bytes. The daemon resolves a worker URL for this address.
-  bytes recipient = 2;
-
-  // Capability being purchased, e.g. "openai:/v1/chat/completions".
-  // Forwarded to the payee-side ticket-params endpoint so the worker
-  // can validate the request against its offered routes.
-  string capability = 3;
-
-  // Offering within the capability being purchased, e.g. a model
-  // identifier. Forwarded to the payee-side ticket-params endpoint.
-  string offering = 4;
+  // raw bytes.
+  bytes recipient = 1;
 
   // Optional per-request broker origin the sender should query for
   // `POST /v1/payment/ticket-params`. Gateway-backed resolver flows set
   // this to the selected broker URL so the ticket-params source matches
   // the payee that will validate the payment. When empty, sender mode
   // may fall back to a configured default for single-broker/dev setups.
-  string ticket_params_base_url = 5;
+  string ticket_params_base_url = 2;
+
+  // Accepted route/quote basis chosen by the gateway.
+  AcceptedPrice accepted_price = 3;
+
+  // Funding scope the gateway is authorizing for this minted payment batch.
+  FundingIntent funding = 4;
 }
 
 message CreatePaymentResponse {
@@ -104,11 +97,20 @@ message CreatePaymentResponse {
   bytes payment_bytes = 1;
 
   // Number of tickets this payment carries (for metrics / audit).
-  int32 tickets_created = 2;
+  uint32 tickets_created = 2;
 
   // Aggregate expected value (EV = face_value × win_prob) committed by
-  // this payment, in wei, big-endian bytes.
-  bytes expected_value = 3;
+  // this payment.
+  BigUInt expected_value = 3;
+
+  // Effective funded value used for the minted payment batch.
+  BigUInt funded_value_wei = 4;
+
+  // Quote identity serialized into the payment context.
+  QuoteRef accepted_quote_ref = 5;
+
+  // Work-id bound to this minted payment (hex recipient_rand_hash).
+  string work_id = 6;
 }
 
 message GetSessionDebitsRequest {

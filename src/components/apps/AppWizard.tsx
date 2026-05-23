@@ -6,7 +6,7 @@ import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import {
   SIGNING_MODE_LEGACY_REMOTE_SIGNER,
-  SIGNING_MODE_LPNM_PAYER_DAEMON,
+  type SigningMode,
 } from "@/lib/signing-modes";
 
 const AUTHORIZATION_CODE_GRANT = "authorization_code";
@@ -31,8 +31,8 @@ export interface AppFormData {
   /** Whether to redirect unauthenticated device verification to initiateLoginUri. */
   deviceThirdPartyInitiateLogin: boolean;
   /** How `/api/v1/signer/*` is fulfilled for this app. */
-  signingMode: typeof SIGNING_MODE_LEGACY_REMOTE_SIGNER | typeof SIGNING_MODE_LPNM_PAYER_DAEMON;
-  /** Optional unix socket path for `PayerDaemon` when `signingMode` is LPNM. */
+  signingMode: SigningMode;
+  /** Optional unix socket path for `PayerDaemon` when LPNM is enabled. */
   payerDaemonSocket: string;
 }
 

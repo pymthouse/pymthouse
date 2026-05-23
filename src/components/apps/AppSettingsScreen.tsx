@@ -14,6 +14,8 @@ import {
 import {
   SIGNING_MODE_LEGACY_REMOTE_SIGNER,
   SIGNING_MODE_LPNM_PAYER_DAEMON,
+  SIGNING_MODE_DUAL,
+  isValidSigningMode,
 } from "@/lib/signing-modes";
 
 interface Props {
@@ -56,8 +58,8 @@ function mergeFormData(
     deviceThirdPartyInitiateLogin:
       initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
     signingMode:
-      initial.signingMode === SIGNING_MODE_LPNM_PAYER_DAEMON
-        ? SIGNING_MODE_LPNM_PAYER_DAEMON
+      initial.signingMode && isValidSigningMode(initial.signingMode)
+        ? initial.signingMode
         : SIGNING_MODE_LEGACY_REMOTE_SIGNER,
     payerDaemonSocket: initial.payerDaemonSocket ?? "",
   };
@@ -509,11 +511,10 @@ export default function AppSettingsScreen({
               <p className="text-sm text-zinc-500 mt-1">
                 Choose how PymtHouse fulfills{" "}
                 <code className="text-zinc-400">/api/v1/signer/*</code> for access
-                tokens issued to this app. LPNM mode uses the payment-daemon{" "}
-                <code className="text-zinc-400">PayerDaemon</code> unix socket; ticket
-                params come from{" "}
-                <code className="text-zinc-400">OrchestratorInfo.transcoder</code> or{" "}
-                <code className="text-zinc-400">LPNM_TICKET_PARAMS_BASE_URL</code>.
+                tokens issued to this app. Dual mode routes per request:
+                registry payments use LPNM; orchestrator blobs use the legacy remote
+                signer. LPNM mode uses the payment-daemon{" "}
+                <code className="text-zinc-400">PayerDaemon</code> unix socket.
               </p>
             </div>
             <div className="space-y-2">
@@ -542,6 +543,21 @@ export default function AppSettingsScreen({
                   className="accent-emerald-500"
                 />
                 <span>LPNM: payment-daemon PayerDaemon unix socket</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="radio"
+                  name="signingMode"
+                  checked={formData.signingMode === SIGNING_MODE_DUAL}
+                  onChange={() =>
+                    updateFormData({ signingMode: SIGNING_MODE_DUAL })
+                  }
+                  disabled={!canEdit}
+                  className="accent-emerald-500"
+                />
+                <span>
+                  Dual: registry → LPNM; orchestrator blob → legacy remote signer
+                </span>
               </label>
             </div>
             <div>
@@ -687,7 +703,11 @@ export default function AppSettingsScreen({
           role="tabpanel"
           aria-labelledby="tab-plans"
         >
-          <PlansTab appId={appId} canEdit={canEdit} />
+          <PlansTab
+            appId={appId}
+            canEdit={canEdit}
+            isActive={integrationSection === "plans"}
+          />
         </div>
       )}
 

@@ -180,6 +180,40 @@ message HealthResponse {
   string status = 1;
 }
 
+// BigUInt is the canonical daemon-app representation for non-negative integers
+// that may exceed 64 bits. Bytes are unsigned big-endian with no sign byte.
+// Zero is encoded as the empty byte string or a single 0x00 byte; producers
+// SHOULD prefer the empty byte string for canonical form.
+message BigUInt {
+  bytes value = 1;
+}
+
+// QuoteRef anchors gateway-selected pricing to a stable route/quote identity.
+message QuoteRef {
+  string quote_id = 1;
+  uint64 quote_version = 2;
+  bytes constraint_fingerprint = 3;
+  bytes route_fingerprint = 4;
+}
+
+// AcceptedPrice is the quote basis the gateway accepted before payment minting.
+message AcceptedPrice {
+  BigUInt price_per_unit_wei = 1;
+  uint64 units_per_price = 2;
+  string work_unit_name = 3;
+  string capability = 4;
+  string offering = 5;
+  QuoteRef quote_ref = 6;
+}
+
+// FundingIntent describes the budget the gateway is authorizing for a request/session.
+message FundingIntent {
+  uint64 estimated_units = 1;
+  BigUInt funded_value_wei = 2;
+  uint64 max_total_units = 3;
+  bool top_up_allowed = 4;
+}
+
 // PendingRedemption describes one ticket queued for on-chain redemption.
 // Returned by ListPendingRedemptions for operator observability.
 message PendingRedemption {

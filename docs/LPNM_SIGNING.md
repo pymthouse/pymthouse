@@ -1,8 +1,16 @@
 # Livepeer Network Modules (LPNM) remote signing
 
-Per-developer-app `signing_mode` can be set to `lpnm_payer_daemon` so PymtHouse serves the existing `/api/v1/signer/*` HTTP contract by talking to **livepeer-network-modules** `livepeer-payment-daemon` in **sender** mode over a **unix socket**. **No capability-broker** is required: ticket-params HTTP resolution uses **`OrchestratorInfo.transcoder`** from the request (with an optional env fallback).
+Per-developer-app `signing_mode` controls how PymtHouse fulfills `/api/v1/signer/*`:
 
-Legacy apps keep `legacy_remote_signer` (default): requests still forward through the signer DMZ to **go-livepeer** `remote_signer.go`.
+| Mode | Behavior |
+|------|----------|
+| `legacy_remote_signer` (default) | Forward to go-livepeer remote signer (DMZ). |
+| `lpnm_payer_daemon` | **livepeer-network-modules** `livepeer-payment-daemon` over a unix socket. |
+| `dual` | **Per request:** `paymentMode: registry` → LPNM; orchestrator blob → legacy DMZ. |
+
+LPNM mode does **not** require a capability-broker: ticket-params HTTP resolution uses **`OrchestratorInfo.transcoder`** from the request (with an optional env fallback), or registry fields on `paymentMode: registry` bodies.
+
+**python-gateway** chooses the envelope: `PaymentSession` (orchestrator b64) vs `RegistryPaymentSession` (`paymentMode: "registry"`). See `docs/signing-envelopes.md` in the python-gateway repo.
 
 ## Environment variables (PymtHouse process)
 
@@ -52,7 +60,7 @@ The repo **root** `docker-compose.yml` only runs **signer-dmz**; it does **not**
 
 `PUT /api/v1/apps/:id` accepts:
 
-- `signingMode`: `legacy_remote_signer` | `lpnm_payer_daemon`
+- `signingMode`: `legacy_remote_signer` | `lpnm_payer_daemon` | `dual`
 - `payerDaemonSocket`: optional string (max 512 chars) or empty / null to clear and fall back to `LPNM_PAYER_DAEMON_SOCKET` / default.
 
 `GET /api/v1/apps/:id` includes the stored `signingMode` and `payerDaemonSocket` on the app object.
