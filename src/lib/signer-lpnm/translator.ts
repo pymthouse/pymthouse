@@ -60,6 +60,7 @@ export async function lpnmProxyGenerateLivePayment(
     pixels: bigint;
     orchestratorData: string | undefined;
     streamSessionId: string | null;
+    billingOracleProviderKey: string;
   },
 ): Promise<ProxyResult> {
   if (!args.orchestratorData) {
@@ -141,6 +142,7 @@ export async function lpnmProxyGenerateLivePayment(
       orch.address && orch.address.length === 20
         ? `0x${Buffer.from(orch.address).toString("hex")}`
         : undefined,
+    billingOracleProviderKey: args.billingOracleProviderKey,
   });
 
   return {
@@ -168,6 +170,7 @@ export async function lpnmProxyGenerateLivePaymentFromRegistry(
     pixels: bigint;
     streamSessionId: string | null;
     fields: RegistryGenerateLivePaymentFields;
+    billingOracleProviderKey: string;
   },
 ): Promise<ProxyResult> {
   if (args.feeWei <= 0n) {
@@ -215,6 +218,7 @@ export async function lpnmProxyGenerateLivePaymentFromRegistry(
     constraint,
     attribution,
     orchestratorAddress: args.fields.recipient,
+    billingOracleProviderKey: args.billingOracleProviderKey,
   });
 
   return {

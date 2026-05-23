@@ -6,6 +6,8 @@ import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients, signerConfig, users } from "@/db/schema";
 import { createAppClient, rotateClientSecret } from "@/lib/oidc/clients";
 import { createSession } from "@/lib/auth";
+import { seedCachedManifestPolicyForTests } from "@/lib/app-manifest-cache";
+import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 
 export interface SeededDeveloperApp {
   /**
@@ -82,7 +84,29 @@ export async function seedDeveloperAppWithClient(opts?: {
     updatedAt: now,
   });
 
+  await getOrCreateNetworkDefaultPlan(clientId, db);
+
   return { clientId, oidcClientRowId, userId, clientSecret };
+}
+
+/** Capabilities allowed for signer proxy tests (manifest enforcement). */
+export const DEFAULT_TEST_MANIFEST_CAPABILITIES = [
+  { pipeline: "text-to-image", modelId: "stabilityai/sdxl" },
+  { pipeline: "byoc", modelId: "default" },
+] as const;
+
+/**
+ * Seed in-memory manifest policy for signer tests (no DB on signing hot path).
+ */
+export function seedManifestCacheForTestClient(
+  clientId: string,
+  capabilities: ReadonlyArray<{ pipeline: string; modelId: string }> = DEFAULT_TEST_MANIFEST_CAPABILITIES,
+): void {
+  seedCachedManifestPolicyForTests(clientId, {
+    capabilities: [...capabilities],
+    excludedCapabilities: [],
+    manifestVersion: "test-fixture",
+  });
 }
 
 export async function createJobTokenForApp(opts: {

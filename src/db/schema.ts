@@ -5,6 +5,7 @@ import {
   integer,
   real,
   bigint,
+  boolean,
   timestamp,
   primaryKey,
   uniqueIndex,
@@ -392,15 +393,20 @@ export const plans = pgTable(
     overageRateWei: bigint("overage_rate_wei", { mode: "bigint" }),
     /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
     includedUsdMicros: text("included_usd_micros"),
-    /** Default positive upcharge for all retail usage, in basis points. */
-    generalUpchargePercentBps: integer("general_upcharge_percent_bps"),
-    /** Optional fallback upcharge for free/no-credit users; inherits generalUpchargePercentBps if unset. */
-    payPerUseUpchargePercentBps: integer("pay_per_use_upcharge_percent_bps"),
     /** Billing period length; currently only "monthly" is supported. */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
       onDelete: "set null",
     }),
+    /** Exactly one per client: catalog-wide network pricing + integrator discovery exclusions. */
+    isNetworkDefault: boolean("is_network_default").notNull().default(false),
+    /**
+     * Pipelines/models excluded from integrator discovery (NaaP). Only used when
+     * `is_network_default` is true. Same JSON shape as legacy app column.
+     */
+    discoveryExcludedCapabilities: jsonb("discovery_excluded_capabilities").$type<{
+      capabilities: Array<{ pipeline: string; modelId: string }>;
+    } | null>(),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -408,7 +414,12 @@ export const plans = pgTable(
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [uniqueIndex("idx_plans_client_name").on(t.clientId, t.name)],
+  (t) => [
+    uniqueIndex("idx_plans_client_name").on(t.clientId, t.name),
+    uniqueIndex("idx_plans_network_default_per_client")
+      .on(t.clientId)
+      .where(sql`${t.isNetworkDefault} = true`),
+  ],
 );
 
 export const planCapabilityBundles = pgTable(
@@ -423,10 +434,9 @@ export const planCapabilityBundles = pgTable(
       .references(() => developerApps.id),
     pipeline: text("pipeline").notNull(),
     modelId: text("model_id").notNull(),
-    slaTargetScore: real("sla_target_score"),
     slaTargetP95Ms: integer("sla_target_p95_ms"),
     maxPricePerUnit: text("max_price_per_unit"),
-    /** Pipeline/model-specific positive upcharge override, in basis points. Overrides plan generalUpchargePercentBps. */
+    /** Pipeline/model-specific positive upcharge, in basis points. */
     upchargePercentBps: integer("upcharge_percent_bps"),
     createdAt: text("created_at")
       .notNull()
@@ -545,6 +555,29 @@ export const appAllowedDomains = pgTable("app_allowed_domains", {
   uniqueIndex("app_allowed_domains_app_id_domain_unique").on(table.appId, table.domain),
 ]);
 
+/** Per-app billing display currency and fiat->ETH oracle provider selection. */
+export const appBillingOracleConfig = pgTable("app_billing_oracle_config", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => developerApps.id),
+  billingDisplayCurrency: text("billing_display_currency").notNull().default("USD"),
+  billingOracleProviderKey: text("billing_oracle_provider_key")
+    .notNull()
+    .default("global_eth_usd"),
+  billingOracleProviderConfig: jsonb("billing_oracle_provider_config").$type<
+    Record<string, unknown> | null
+  >(),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex("idx_app_billing_oracle_config_client_id").on(table.clientId),
+]);
+
 // ============================================
 // Billing Oracle Tables
 // ============================================
@@ -617,7 +650,7 @@ export const usageBillingEvents = pgTable(
     ownerChargeUsdMicros: text("owner_charge_usd_micros").notNull(),
     /** Upcharge applied, in basis points. */
     upchargePercentBps: integer("upcharge_percent_bps").notNull().default(0),
-    /** pipeline_model | general | pay_per_use | subscription_included | unpriced */
+    /** pipeline_model | subscription_included | unpriced */
     pricingRuleSource: text("pricing_rule_source").notNull().default("unpriced"),
     endUserBillableUsdMicros: text("end_user_billable_usd_micros").notNull().default("0"),
     // --- ETH/USD oracle snapshot used at signing time ---
@@ -688,6 +721,7 @@ export type DeveloperApp = typeof developerApps.$inferSelect;
 export type NewDeveloperApp = typeof developerApps.$inferInsert;
 export type AdminInvite = typeof adminInvites.$inferSelect;
 export type AppAllowedDomain = typeof appAllowedDomains.$inferSelect;
+export type AppBillingOracleConfig = typeof appBillingOracleConfig.$inferSelect;
 export type ProviderAdmin = typeof providerAdmins.$inferSelect;
 export type Plan = typeof plans.$inferSelect;
 export type NewPlan = typeof plans.$inferInsert;

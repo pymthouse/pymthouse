@@ -1,17 +1,14 @@
 import Link from "next/link";
 
-type CrumbKey = "plans" | "discovery-profiles";
-
 interface Props {
   appId: string;
   appName: string;
-  current: CrumbKey;
 }
 
 /**
- * In-app navigation: My Apps → … → Plans and Discovery profiles (sibling sections).
+ * In-app navigation: My Apps → app → Plans (current).
  */
-export default function AppSectionBreadcrumb({ appId, appName, current }: Props) {
+export default function AppSectionBreadcrumb({ appId, appName }: Props) {
   return (
     <nav className="text-sm text-zinc-500 mb-3" aria-label="Breadcrumb">
       <Link href="/apps" className="hover:text-zinc-300 transition-colors">
@@ -20,31 +17,14 @@ export default function AppSectionBreadcrumb({ appId, appName, current }: Props)
       <span className="mx-1.5 text-zinc-600" aria-hidden>
         /
       </span>
-      <span className="text-zinc-400">{appName}</span>
+      <Link href={`/apps/${appId}`} className="hover:text-zinc-300 transition-colors">
+        {appName}
+      </Link>
       <span className="mx-1.5 text-zinc-600" aria-hidden>
         /
       </span>
-      <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        {current === "plans" ? (
-          <span className="text-zinc-200 font-medium">Plans</span>
-        ) : (
-          <Link href={`/apps/${appId}/plans`} className="hover:text-zinc-300 transition-colors">
-            Plans
-          </Link>
-        )}
-        <span className="text-zinc-600" aria-hidden>
-          ·
-        </span>
-        {current === "discovery-profiles" ? (
-          <span className="text-zinc-200 font-medium">Discovery profiles</span>
-        ) : (
-          <Link
-            href={`/apps/${appId}/discovery-profiles`}
-            className="hover:text-zinc-300 transition-colors"
-          >
-            Discovery profiles
-          </Link>
-        )}
+      <span className="text-zinc-200 font-medium" aria-current="page">
+        Plans
       </span>
     </nav>
   );

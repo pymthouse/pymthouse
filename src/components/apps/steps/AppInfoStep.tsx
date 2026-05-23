@@ -33,7 +33,7 @@ export default function AppInfoStep({ data, onChange, readOnly = false }: Props)
 
       <div>
         <label className="block text-sm font-medium text-zinc-300 mb-1.5">
-          Description <span className="text-red-400">*</span>
+          Description
         </label>
         <p className="text-xs text-zinc-500 mb-1.5">
           Short internal description of the provider app and what it exposes.

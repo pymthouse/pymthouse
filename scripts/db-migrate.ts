@@ -1,10 +1,12 @@
 /**
  * Apply Drizzle SQL migrations to PostgreSQL (DATABASE_URL).
  *
- * Drizzle applies a migration only when its journal `when` value is greater than the
- * latest row in `drizzle.__drizzle_migrations` (by `created_at`). After editing the
- * journal or restoring a DB from backup, new entries must use a `when` timestamp above
- * that maximum or they will be skipped silently.
+ * Drizzle applies only migrations whose journal `when` (folderMillis) is **strictly
+ * greater** than `drizzle.__drizzle_migrations.created_at` on the latest row (ORDER BY
+ * created_at DESC LIMIT 1). Older journal entries are skipped. If that latest
+ * `created_at` is already above a migration's `when` (restored DB, branch mismatch,
+ * manual edits), that migration never runs—add a new SQL migration with a higher
+ * `when` (e.g. 0018_discovery_allowed_capabilities_repair) or repair the table.
  */
 import "./load-env-first";
 import path from "path";

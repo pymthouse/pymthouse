@@ -14,6 +14,12 @@ interface PipelineModelPickerProps {
   values: string[];
   onChange: (values: string[]) => void;
   disabled?: boolean;
+  /** Concrete keys `pipelineId|modelId` that cannot be toggled on (e.g. not discoverable). */
+  blockedConcreteKeys?: ReadonlySet<string>;
+  /** `title` on blocked rows */
+  blockedSelectionTitle?: string;
+  /** When false, selected items are not shown as chips (e.g. shown in a separate rules list). */
+  showSelectedChips?: boolean;
 }
 
 type PipelineCheckState = "none" | "some" | "all-individual" | "wildcard";
@@ -23,6 +29,9 @@ export default function PipelineModelPicker({
   values,
   onChange,
   disabled = false,
+  blockedConcreteKeys,
+  blockedSelectionTitle = "Not available for custom plans under current Network Price exclusions.",
+  showSelectedChips = true,
 }: PipelineModelPickerProps) {
   const inputId = useId();
   const listboxId = `${inputId}-listbox`;
@@ -58,6 +67,12 @@ export default function PipelineModelPicker({
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
+  const isModelBlocked = (pipelineId: string, modelId: string) =>
+    Boolean(blockedConcreteKeys?.has(`${pipelineId}|${modelId}`));
+
+  const isPipelineWildcardBlocked = (entry: PipelineCatalogEntry) =>
+    entry.models.some((m) => isModelBlocked(entry.id, m));
+
   const isPipelineWildcard = (pipelineId: string) => values.includes(pipelineId);
 
   const isModelSelected = (pipelineId: string, modelId: string) =>
@@ -75,6 +90,7 @@ export default function PipelineModelPicker({
 
   const togglePipeline = (entry: PipelineCatalogEntry) => {
     if (disabled) return;
+    if (isPipelineWildcardBlocked(entry)) return;
     if (isPipelineWildcard(entry.id)) {
       onChange(values.filter((v) => v !== entry.id));
     } else {
@@ -87,7 +103,7 @@ export default function PipelineModelPicker({
   };
 
   const toggleModel = (entry: PipelineCatalogEntry, modelId: string) => {
-    if (disabled || isPipelineWildcard(entry.id)) return;
+    if (disabled || isPipelineWildcard(entry.id) || isModelBlocked(entry.id, modelId)) return;
     const key = `${entry.id}|${modelId}`;
     if (values.includes(key)) {
       onChange(values.filter((v) => v !== key));
@@ -129,7 +145,7 @@ export default function PipelineModelPicker({
 
   return (
     <div ref={containerRef} className="relative w-full">
-      {values.length > 0 && (
+      {showSelectedChips && values.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {values.map((v) => (
             <span
@@ -187,6 +203,7 @@ export default function PipelineModelPicker({
             filteredCatalog.map((entry) => {
               const state = pipelineCheckState(entry);
               const isWildcard = state === "wildcard";
+              const pipelineBlocked = isPipelineWildcardBlocked(entry);
 
               return (
                 <div key={entry.id}>
@@ -195,9 +212,14 @@ export default function PipelineModelPicker({
                     type="button"
                     role="option"
                     aria-selected={isWildcard}
-                    disabled={disabled}
+                    disabled={disabled || pipelineBlocked}
+                    title={pipelineBlocked ? blockedSelectionTitle : undefined}
                     onClick={() => togglePipeline(entry)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
+                      pipelineBlocked
+                        ? "text-zinc-600 cursor-not-allowed"
+                        : "text-zinc-200 hover:bg-zinc-800"
+                    }`}
                   >
                     <PipelineCheckMark state={state} />
                     <span className="font-medium flex-1">{entry.name}</span>
@@ -211,6 +233,7 @@ export default function PipelineModelPicker({
                   {/* Model rows */}
                   {entry.filteredModels.map((modelId) => {
                     const modelChecked = isModelSelected(entry.id, modelId);
+                    const modelBlocked = isModelBlocked(entry.id, modelId);
                     return (
                       <button
                         key={modelId}
@@ -218,10 +241,11 @@ export default function PipelineModelPicker({
                         role="option"
                         aria-selected={modelChecked || isWildcard}
                         onClick={() => toggleModel(entry, modelId)}
-                        disabled={disabled || isWildcard}
+                        disabled={disabled || isWildcard || modelBlocked}
+                        title={modelBlocked ? blockedSelectionTitle : undefined}
                         className={`w-full flex items-center gap-2 pl-7 pr-3 py-1.5 text-left text-xs ${
-                          isWildcard
-                            ? "text-zinc-600 cursor-default"
+                          isWildcard || modelBlocked
+                            ? "text-zinc-600 cursor-not-allowed"
                             : "text-zinc-300 hover:bg-zinc-800"
                         }`}
                       >

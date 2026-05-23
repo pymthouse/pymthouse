@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
 import { db } from "@/db/index";
-import { appUsers, endUsers, usageBillingEvents, usageRecords } from "@/db/schema";
+import {
+  appUsers,
+  endUsers,
+  usageBillingEvents,
+  usageRecords,
+} from "@/db/schema";
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
-import { weiToEthString } from "@/lib/billing-runtime";
 
 type UsageUserType = "system_managed" | "oidc_authorized" | "unknown";
 
@@ -93,35 +97,28 @@ export async function GET(
     billingEvents.map((e) => [e.usageRecordId, e]),
   );
 
-  let totalFeeWei = 0n;
   let totalNetworkFeeUsdMicros = 0n;
-  let totalOwnerChargeWei = 0n;
   let totalOwnerChargeUsdMicros = 0n;
-  let totalPlatformFeeWei = 0n;
+  let totalPlatformFeeUsdMicros = 0n;
   let totalEndUserBillableUsdMicros = 0n;
+  const usageCurrency = "USD";
 
   for (const row of rows) {
-    totalFeeWei += BigInt(row.fee);
     const event = eventByUsageRecord.get(row.id);
     if (event) {
       totalNetworkFeeUsdMicros += BigInt(event.networkFeeUsdMicros);
-      totalOwnerChargeWei += BigInt(event.ownerChargeWei);
       totalOwnerChargeUsdMicros += BigInt(event.ownerChargeUsdMicros);
-      totalPlatformFeeWei += BigInt(event.platformFeeWei);
+      totalPlatformFeeUsdMicros += BigInt(event.platformFeeUsdMicros);
       totalEndUserBillableUsdMicros += BigInt(event.endUserBillableUsdMicros);
     }
   }
 
   const totals = {
     requestCount: rows.length,
-    totalFeeWei: totalFeeWei.toString(),
-    totalFeeEth: weiToEthString(totalFeeWei),
+    currency: usageCurrency,
     networkFeeUsdMicros: totalNetworkFeeUsdMicros.toString(),
-    ownerChargeWei: totalOwnerChargeWei.toString(),
-    ownerChargeEth: weiToEthString(totalOwnerChargeWei),
     ownerChargeUsdMicros: totalOwnerChargeUsdMicros.toString(),
-    platformFeeWei: totalPlatformFeeWei.toString(),
-    platformFeeEth: weiToEthString(totalPlatformFeeWei),
+    platformFeeUsdMicros: totalPlatformFeeUsdMicros.toString(),
     endUserBillableUsdMicros: totalEndUserBillableUsdMicros.toString(),
   };
 
@@ -132,15 +129,28 @@ export async function GET(
   };
 
   if (groupBy === "user") {
-    const byUserMap = new Map<string, { feeWei: bigint; networkFeeUsdMicros: bigint; endUserBillableUsdMicros: bigint; count: number }>();
+    const byUserMap = new Map<
+      string,
+      {
+        networkFeeUsdMicros: bigint;
+        ownerChargeUsdMicros: bigint;
+        endUserBillableUsdMicros: bigint;
+        count: number;
+      }
+    >();
     for (const row of rows) {
       const uid = row.userId || "unknown";
-      const existing = byUserMap.get(uid) || { feeWei: 0n, networkFeeUsdMicros: 0n, endUserBillableUsdMicros: 0n, count: 0 };
-      existing.feeWei += BigInt(row.fee);
+      const existing = byUserMap.get(uid) || {
+        networkFeeUsdMicros: 0n,
+        ownerChargeUsdMicros: 0n,
+        endUserBillableUsdMicros: 0n,
+        count: 0,
+      };
       existing.count += 1;
       const event = eventByUsageRecord.get(row.id);
       if (event) {
         existing.networkFeeUsdMicros += BigInt(event.networkFeeUsdMicros);
+        existing.ownerChargeUsdMicros += BigInt(event.ownerChargeUsdMicros);
         existing.endUserBillableUsdMicros += BigInt(event.endUserBillableUsdMicros);
       }
       byUserMap.set(uid, existing);
@@ -188,9 +198,9 @@ export async function GET(
         externalUserId,
         userType,
         identifier: endUserId,
-        feeWei: data.feeWei.toString(),
-        feeEth: weiToEthString(data.feeWei),
+        currency: usageCurrency,
         networkFeeUsdMicros: data.networkFeeUsdMicros.toString(),
+        ownerChargeUsdMicros: data.ownerChargeUsdMicros.toString(),
         endUserBillableUsdMicros: data.endUserBillableUsdMicros.toString(),
         requestCount: data.count,
       };
@@ -201,7 +211,6 @@ export async function GET(
     const byKeyMap = new Map<string, {
       pipeline: string;
       modelId: string;
-      feeWei: bigint;
       networkFeeUsdMicros: bigint;
       ownerChargeUsdMicros: bigint;
       endUserBillableUsdMicros: bigint;
@@ -213,13 +222,11 @@ export async function GET(
       const existing = byKeyMap.get(key) || {
         pipeline: event.pipeline,
         modelId: event.modelId,
-        feeWei: 0n,
         networkFeeUsdMicros: 0n,
         ownerChargeUsdMicros: 0n,
         endUserBillableUsdMicros: 0n,
         count: 0,
       };
-      existing.feeWei += BigInt(event.networkFeeWei);
       existing.networkFeeUsdMicros += BigInt(event.networkFeeUsdMicros);
       existing.ownerChargeUsdMicros += BigInt(event.ownerChargeUsdMicros);
       existing.endUserBillableUsdMicros += BigInt(event.endUserBillableUsdMicros);
@@ -230,9 +237,8 @@ export async function GET(
     response.byPipelineModel = [...byKeyMap.values()].map((data) => ({
       pipeline: data.pipeline,
       modelId: data.modelId,
+      currency: usageCurrency,
       requestCount: data.count,
-      networkFeeWei: data.feeWei.toString(),
-      networkFeeEth: weiToEthString(data.feeWei),
       networkFeeUsdMicros: data.networkFeeUsdMicros.toString(),
       ownerChargeUsdMicros: data.ownerChargeUsdMicros.toString(),
       endUserBillableUsdMicros: data.endUserBillableUsdMicros.toString(),
@@ -251,25 +257,13 @@ export async function GET(
       paymentMetadataVersion: e.paymentMetadataVersion,
       pipelineModelConstraintHash: e.pipelineModelConstraintHash,
       orchAddress: e.orchAddress,
-      advertisedPriceWeiPerUnit: e.advertisedPriceWeiPerUnit,
-      advertisedPixelsPerUnit: e.advertisedPixelsPerUnit,
-      signedPriceWeiPerUnit: e.signedPriceWeiPerUnit,
-      signedPixelsPerUnit: e.signedPixelsPerUnit,
-      networkFeeWei: e.networkFeeWei,
-      networkFeeEth: weiToEthString(BigInt(e.networkFeeWei)),
+      currency: usageCurrency,
       networkFeeUsdMicros: e.networkFeeUsdMicros,
-      platformFeeWei: e.platformFeeWei,
-      platformFeeEth: weiToEthString(BigInt(e.platformFeeWei)),
       platformFeeUsdMicros: e.platformFeeUsdMicros,
-      ownerChargeWei: e.ownerChargeWei,
-      ownerChargeEth: weiToEthString(BigInt(e.ownerChargeWei)),
       ownerChargeUsdMicros: e.ownerChargeUsdMicros,
       upchargePercentBps: e.upchargePercentBps,
       pricingRuleSource: e.pricingRuleSource,
       endUserBillableUsdMicros: e.endUserBillableUsdMicros,
-      ethUsdPrice: e.ethUsdPrice,
-      ethUsdSource: e.ethUsdSource,
-      ethUsdObservedAt: e.ethUsdObservedAt,
       createdAt: e.createdAt,
     }));
   }

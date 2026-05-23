@@ -1,13 +1,11 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 import type { AppFormData } from "../AppWizard";
 import { OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { validateInitiateLoginUri } from "@/lib/oidc/third-party-initiate-login";
-import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
-const noopDomainsChange = (_domains: { id: string; domain: string }[]) => {};
 
 function isValidInitiateLoginUri(uri: string): boolean {
   const t = uri.trim();
@@ -24,29 +22,15 @@ interface Props {
   data: AppFormData;
   onChange: (updates: Partial<AppFormData>) => void;
   readOnly?: boolean;
-  /** Present on the app settings page so redirect URIs persist immediately. */
-  appId?: string | null;
-  domains?: { id: string; domain: string }[];
-  onDomainsChange?: (domains: { id: string; domain: string }[]) => void;
 }
 
 export default function AppModeStep({
   data,
   onChange,
   readOnly = false,
-  appId = null,
-  domains = [],
-  onDomainsChange,
 }: Props) {
-  const stableOnDomainsChange = useCallback(
-    (nextDomains: { id: string; domain: string }[]) => {
-      (onDomainsChange ?? noopDomainsChange)(nextDomains);
-    },
-    [onDomainsChange],
-  );
   const scopes = data.allowedScopes.split(/\s+/).filter(Boolean);
   const hasDeviceCode = data.grantTypes.includes(DEVICE_CODE_GRANT);
-  const hasAuthCodeFlow = data.grantTypes.includes("authorization_code");
   const requiresIssueUserTokens =
     hasDeviceCode && data.deviceThirdPartyInitiateLogin && isValidInitiateLoginUri(data.initiateLoginUri);
   const hasIssueUserTokens = scopes.includes("users:token");
@@ -230,50 +214,11 @@ export default function AppModeStep({
                       via a user code on a secondary device.
                     </p>
 
-                    {/* ── Third-party initiate login (grandchild — only when device_code is on) ── */}
                     {hasDeviceCode && (
-                      <div className="mt-3 border-t border-zinc-700/50 pt-3 space-y-3">
-                        <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                          Third-party initiate login
-                        </p>
-                        <div>
-                          <label className="block text-xs font-medium text-zinc-400 mb-1">
-                            Initiate login URI
-                          </label>
-                          <input
-                            type="url"
-                            value={data.initiateLoginUri}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              onChange({
-                                initiateLoginUri: v,
-                                deviceThirdPartyInitiateLogin: isValidInitiateLoginUri(v),
-                              });
-                            }}
-                            placeholder="https://example.com/api/auth/initiate-login"
-                            disabled={readOnly}
-                            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                          />
-                          <p className="text-xs text-zinc-500 mt-1">
-                            OIDC{" "}
-                            <code className="font-mono text-zinc-400">
-                              initiate_login_uri
-                            </code>{" "}
-                            — when set, unauthenticated device verification
-                            redirects here with{" "}
-                            <code className="font-mono text-zinc-400">iss</code>{" "}
-                            and{" "}
-                            <code className="font-mono text-zinc-400">
-                              target_link_uri
-                            </code>
-                            . Your app must return users to{" "}
-                            <code className="font-mono text-zinc-400">
-                              target_link_uri
-                            </code>{" "}
-                            after login.
-                          </p>
-                        </div>
-                      </div>
+                      <p className="mt-3 border-t border-zinc-700/50 pt-3 text-xs text-zinc-500">
+                        Configure the third-party initiate login URL from{" "}
+                        <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
+                      </p>
                     )}
                   </div>
                 </label>
@@ -313,21 +258,6 @@ export default function AppModeStep({
                   </p>
                 </div>
               </label>
-              {hasAuthCodeFlow && (
-                <div className="border-t border-zinc-700/60 bg-zinc-900/25 px-3 py-4 space-y-1">
-                  <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider mb-3">
-                    Redirect &amp; browser security
-                  </p>
-                  <AuthorizationCodeRedirectBlock
-                    appId={appId}
-                    redirectUris={data.redirectUris}
-                    onRedirectUrisChange={(uris) => onChange({ redirectUris: uris })}
-                    domains={domains}
-                    onDomainsChange={stableOnDomainsChange}
-                    readOnly={readOnly}
-                  />
-                </div>
-              )}
             </div>
             <label
               className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${

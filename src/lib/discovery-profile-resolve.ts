@@ -15,7 +15,6 @@ export type ResolvedPlanCapability = {
   clientId: string;
   pipeline: string;
   modelId: string;
-  slaTargetScore: number | null;
   slaTargetP95Ms: number | null;
   maxPricePerUnit: string | null;
   upchargePercentBps: number | null;
@@ -105,7 +104,6 @@ export async function resolvePlansDiscoveryForApp(
           clientId: bundle.clientId,
           pipeline: bundle.pipeline,
           modelId: bundle.modelId,
-          slaTargetScore: bundle.slaTargetScore,
           slaTargetP95Ms: bundle.slaTargetP95Ms,
           maxPricePerUnit: bundle.maxPricePerUnit,
           upchargePercentBps: bundle.upchargePercentBps,

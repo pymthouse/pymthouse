@@ -1,9 +1,57 @@
 import { getServerSession } from "next-auth";
+import type { Session } from "next-auth";
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { authOptions } from "@/lib/next-auth-options";
 import { developerApps, oidcClients, providerAdmins } from "@/db/schema";
+
+/** Resolve NextAuth session from an explicit Request (route handlers / tests). */
+export async function getServerSessionFromRequest(
+  _request: Request,
+): Promise<Session | null> {
+  try {
+    return await getServerSession(authOptions);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("outside a request scope")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+let sessionResolverForTests: ((request?: Request) => Promise<Session | null>) | null =
+  null;
+
+/** Route tests inject session auth without Next request scope or next-auth mocks. */
+export function setProviderAppSessionResolverForTests(
+  resolver: ((request?: Request) => Promise<Session | null>) | null,
+): void {
+  sessionResolverForTests = resolver;
+}
+
+async function resolveServerSession(request?: Request): Promise<Session | null> {
+  if (sessionResolverForTests) {
+    return sessionResolverForTests(request);
+  }
+  if (request) {
+    return getServerSessionFromRequest(request);
+  }
+  try {
+    return await getServerSession(authOptions);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("outside a request scope")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 export async function getProviderAppByClientId(clientId: string) {
   const byPublic = await db
@@ -82,8 +130,8 @@ export async function ensureProviderAdminMembership(userId: string, appId: strin
   return rows[0] ?? membership;
 }
 
-export async function getAuthorizedProviderApp(appId: string) {
-  const session = await getServerSession(authOptions);
+export async function getAuthorizedProviderApp(appId: string, request?: Request) {
+  const session = await resolveServerSession(request);
   if (!session?.user) return null;
 
   const userId = (session.user as Record<string, unknown>).id as string | undefined;

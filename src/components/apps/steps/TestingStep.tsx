@@ -1,8 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AppFormData } from "../AppWizard";
 import { computeBackendM2mAllowedScopes } from "@/lib/oidc/backend-m2m-scopes";
 import { DEFAULT_OIDC_SCOPES, getScopeDefinition, OIDC_SCOPES } from "@/lib/oidc/scopes";
+import { validateInitiateLoginUri } from "@/lib/oidc/third-party-initiate-login";
+import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
+
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 interface Props {
   appId: string | null;
@@ -13,6 +18,13 @@ interface Props {
   hasSecret: boolean;
   /** Confidential M2M sibling (Builder + device approval token exchange); null until provisioned. */
   backendHelper: { clientId: string; hasSecret: boolean } | null;
+  /** Auth & Scopes → confidential backend helper (may be false while M2M still exists until save). */
+  backendDeviceHelper: boolean;
+  initiateLoginUri: string;
+  deviceThirdPartyInitiateLogin: boolean;
+  domains: { id: string; domain: string }[];
+  onChange: (updates: Partial<AppFormData>) => void;
+  onDomainsChange: (domains: { id: string; domain: string }[]) => void;
   onSecretGenerated: () => void;
   onBackendSecretGenerated?: () => void;
   readOnly?: boolean;
@@ -20,6 +32,17 @@ interface Props {
 
 function getDefaultRedirectUri(redirectUris: string[]) {
   return redirectUris.find((uri) => /^https?:\/\//i.test(uri)) ?? redirectUris[0] ?? "";
+}
+
+function isValidInitiateLoginUri(uri: string): boolean {
+  const trimmed = uri.trim();
+  if (!trimmed.length) return false;
+  try {
+    validateInitiateLoginUri(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export default function TestingStep({
@@ -30,6 +53,12 @@ export default function TestingStep({
   allowedScopes,
   hasSecret,
   backendHelper,
+  backendDeviceHelper,
+  initiateLoginUri,
+  deviceThirdPartyInitiateLogin,
+  domains,
+  onChange,
+  onDomainsChange,
   onSecretGenerated,
   onBackendSecretGenerated,
   readOnly = false,
@@ -48,6 +77,7 @@ export default function TestingStep({
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasAuthCodeFlow = grantTypes.includes("authorization_code");
+  const hasDeviceCode = grantTypes.includes(DEVICE_CODE_GRANT);
   const isM2MOnly = grantTypes.includes("client_credentials") && !hasAuthCodeFlow;
 
   const discoveryUrl =
@@ -88,6 +118,13 @@ export default function TestingStep({
     });
   }, [redirectUris]);
 
+  useEffect(() => {
+    if (!backendDeviceHelper) {
+      setBackendSecret(null);
+      setBackendSecretFetchError(null);
+    }
+  }, [backendDeviceHelper]);
+
   const generateSecret = useCallback(async () => {
     if (readOnly || !appId) return;
     setGenerating(true);
@@ -113,7 +150,7 @@ export default function TestingStep({
   }, [appId, onSecretGenerated, readOnly]);
 
   const generateBackendSecret = useCallback(async () => {
-    if (readOnly || !appId) return;
+    if (readOnly || !appId || !backendDeviceHelper) return;
     setGeneratingBackend(true);
     setBackendSecretFetchError(null);
     try {
@@ -134,7 +171,7 @@ export default function TestingStep({
     } finally {
       setGeneratingBackend(false);
     }
-  }, [appId, onBackendSecretGenerated, readOnly]);
+  }, [appId, backendDeviceHelper, onBackendSecretGenerated, readOnly]);
 
   const copyToClipboard = useCallback(
     async (text: string, label: string) => {
@@ -224,14 +261,161 @@ export default function TestingStep({
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials & Testing</h2>
+        <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
         <p className="text-sm text-zinc-500">
           {isM2MOnly
             ? "Generate your client secret, then test your M2M token request."
-            : "Generate and rotate secrets, try a live authorization request, and copy reference endpoints. Configure redirect URIs and allowed domains under Auth & Scopes → Authorization Code + PKCE."}
+            : "Configure redirect URLs, generate and rotate credentials, try a live authorization request, and copy reference endpoints."}
         </p>
         {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
       </div>
+
+      {hasAuthCodeFlow && (
+        <div className="space-y-5 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
+          {redirectUris.length === 0 && (
+            <div
+              className="flex gap-3 rounded-lg border border-blue-500/25 bg-blue-500/5 px-3 py-3"
+              role="status"
+            >
+              <svg
+                className="w-4 h-4 mt-0.5 shrink-0 text-blue-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <div className="min-w-0 space-y-1">
+                <p className="text-sm font-medium text-zinc-200">Try the authorization code flow</p>
+                <p className="text-xs text-zinc-400">
+                  Add at least one redirect URI below. Once saved, you can open a live authorization
+                  request in a new tab to verify sign-in end to end.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-200">Redirect &amp; login URLs</h3>
+            <p className="text-xs text-zinc-500 mt-1">
+              Callback URLs for authorization and sign-out. Domains are auto-suggested from redirect
+              origins.
+            </p>
+          </div>
+          <AuthorizationCodeRedirectBlock
+            appId={appId}
+            redirectUris={redirectUris}
+            onRedirectUrisChange={(uris) => onChange({ redirectUris: uris })}
+            domains={domains}
+            onDomainsChange={onDomainsChange}
+            readOnly={readOnly}
+          />
+
+          {testUrl && (
+            <div className="space-y-3 border-t border-zinc-800 pt-5">
+              <div>
+                <h4 className="text-sm font-semibold text-zinc-200">Try the authorization code flow</h4>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Opens a new tab with a test authorization request using your configured redirect
+                  URI.
+                </p>
+              </div>
+              {redirectUriOptions.length > 1 && (
+                <div>
+                  <label
+                    htmlFor="testing-redirect-uri"
+                    className="block text-xs font-medium text-zinc-400 mb-1"
+                  >
+                    Redirect URI
+                  </label>
+                  <select
+                    id="testing-redirect-uri"
+                    value={selectedRedirectUri}
+                    onChange={(e) => setSelectedRedirectUri(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                  >
+                    {redirectUriOptions.map((uri) => (
+                      <option key={uri} value={uri}>
+                        {uri}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  const newWin = window.open(testUrl, "_blank", "noopener,noreferrer");
+                  if (newWin) newWin.opener = null;
+                }}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
+              >
+                Open Test Flow
+              </button>
+              <p className="text-xs text-zinc-500">
+                Requested scopes:{" "}
+                <span className="text-zinc-400">{selectedScopes.join(", ")}</span>
+              </p>
+              <p className="text-xs text-zinc-500">
+                Using redirect URI:{" "}
+                <code className="text-zinc-400">{selectedRedirectUri}</code>
+              </p>
+            </div>
+          )}
+
+          {backendDeviceHelper && hasDeviceCode && (
+            <div className="border-t border-zinc-800 pt-5">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-zinc-300">
+                  Third-party initiate login URI
+                </label>
+                <input
+                  type="url"
+                  value={initiateLoginUri}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const isValid = isValidInitiateLoginUri(value);
+                    const scopes = allowedScopes.split(/\s+/).filter(Boolean);
+                    const nextScopes = isValid
+                      ? scopes.includes("users:token")
+                        ? scopes
+                        : [...scopes, "users:token"]
+                      : scopes.filter((s) => s !== "users:token");
+                    onChange({
+                      initiateLoginUri: value,
+                      deviceThirdPartyInitiateLogin: isValid,
+                      allowedScopes: nextScopes.join(" "),
+                    });
+                  }}
+                  placeholder="https://example.com/api/auth/initiate-login"
+                  disabled={readOnly}
+                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <p className="text-xs text-zinc-500">
+                  OIDC <code className="font-mono text-zinc-400">initiate_login_uri</code>.
+                  When set, unauthenticated device verification redirects here with{" "}
+                  <code className="font-mono text-zinc-400">iss</code> and{" "}
+                  <code className="font-mono text-zinc-400">target_link_uri</code>. Your app must
+                  return users to <code className="font-mono text-zinc-400">target_link_uri</code>{" "}
+                  after login.
+                </p>
+                {initiateLoginUri.trim() && !deviceThirdPartyInitiateLogin && (
+                  <p className="text-xs text-amber-300">
+                    Enter a valid HTTPS initiate login URI. HTTP is only accepted for loopback hosts
+                    in development.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* M2M Quick-start */}
       {isM2MOnly && clientId && (
@@ -263,79 +447,6 @@ export default function TestingStep({
           <p className="text-xs text-zinc-500">
             The <code className="text-zinc-400">scope</code> value is derived from your app&apos;s allowed scopes (Auth &amp; Scopes). Replace it in the command if your configured scopes differ.
           </p>
-        </div>
-      )}
-
-      {/* Interactive flow: quick test */}
-      {hasAuthCodeFlow && (
-        <div className="space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500" />
-            <h3 className="text-sm font-semibold text-zinc-200">Try the authorization code flow</h3>
-          </div>
-          <p className="text-xs text-zinc-500">
-            Uses the redirect URIs from{" "}
-            <strong className="text-zinc-400">Auth &amp; Scopes</strong>. Add at least one redirect
-            URI there before opening the test.
-          </p>
-          <div className="border-t border-zinc-800 pt-4">
-            {testUrl ? (
-              <>
-                <label className="block text-sm font-medium text-zinc-300 mb-1.5">
-                  Test Authorization Code Flow
-                </label>
-                {redirectUriOptions.length > 1 && (
-                  <div className="mb-3">
-                    <label
-                      htmlFor="testing-redirect-uri"
-                      className="block text-xs font-medium text-zinc-400 mb-1"
-                    >
-                      Redirect URI
-                    </label>
-                    <select
-                      id="testing-redirect-uri"
-                      value={selectedRedirectUri}
-                      onChange={(e) => setSelectedRedirectUri(e.target.value)}
-                      className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    >
-                      {redirectUriOptions.map((uri) => (
-                        <option key={uri} value={uri}>
-                          {uri}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const newWin = window.open(testUrl, "_blank", "noopener,noreferrer");
-                    if (newWin) newWin.opener = null;
-                  }}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
-                >
-                  Open Test Flow
-                </button>
-                <p className="text-xs text-zinc-500 mt-1.5">
-                  Opens a new tab with a test authorization request. Make sure you have a redirect URI
-                  configured that can receive the callback.
-                </p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Requested scopes:{" "}
-                  <span className="text-zinc-400">{selectedScopes.join(", ")}</span>
-                </p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Using redirect URI:{" "}
-                  <code className="text-zinc-400">{selectedRedirectUri}</code>
-                </p>
-              </>
-            ) : (
-              <p className="text-sm text-zinc-500">
-                Add a redirect URI in <strong className="text-zinc-400">Auth &amp; Scopes</strong> to
-                enable the test button.
-              </p>
-            )}
-          </div>
         </div>
       )}
 
@@ -433,112 +544,130 @@ export default function TestingStep({
             </div>
           </div>
 
-          {backendHelper ? (
-            <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
-              <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
-              <p className="text-xs text-zinc-500">
-                Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
-              </p>
+        </>
+      )}
+
+      {/*
+        Backend helper (confidential m2m_) section.
+        Shown whenever a backend helper exists in the DB, independent of the
+        `backendDeviceHelper` form toggle (which lives on the Auth & Scopes
+        tab). Hints below cover the not-yet-provisioned and off states for
+        interactive apps; M2M-only apps treat the m2m_ as optional, so we
+        skip the hints there to avoid confusion (their primary app_* client
+        is already confidential).
+      */}
+      {backendHelper ? (
+        <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
+          <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
+          <p className="text-xs text-zinc-500">
+            Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1">Client ID</label>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
+                {backendHelper.clientId}
+              </code>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
+                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+              >
+                {copied === "m2mClientId" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</label>
+            {backendSecret ? (
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Client ID</label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
-                    {backendHelper.clientId}
+                <div className="flex items-center gap-2 mb-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
+                    {backendSecret}
                   </code>
                   <button
                     type="button"
-                    onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+                    onClick={() => copyToClipboard(backendSecret, "backendSecret")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
                   >
-                    {copied === "m2mClientId" ? "Copied!" : "Copy"}
+                    {copied === "backendSecret" ? "Copied!" : "Copy"}
                   </button>
                 </div>
+                <p className="text-xs text-amber-400/80">
+                  Store this secret securely. It will not be shown again.
+                </p>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</label>
-                {backendSecret ? (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
-                        {backendSecret}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(backendSecret, "backendSecret")}
-                        className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
-                      >
-                        {copied === "backendSecret" ? "Copied!" : "Copy"}
-                      </button>
-                    </div>
-                    <p className="text-xs text-amber-400/80">
-                      Store this secret securely. It will not be shown again.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {backendHelper.hasSecret && (
-                      <p className="text-sm text-zinc-500">
-                        A secret exists. Generate a new one to rotate.
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void generateBackendSecret()}
-                      disabled={readOnly || generatingBackend || !appId}
-                      className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
-                    >
-                      {generatingBackend
-                        ? "Generating..."
-                        : backendHelper.hasSecret
-                          ? "Rotate Secret"
-                          : "Generate Secret"}
-                    </button>
-                  </div>
-                )}
-                {backendSecretFetchError && (
-                  <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
-                )}
-              </div>
-              {backendHelperCurlSnippet ? (
-                <div className="pt-3 border-t border-cyan-500/15 space-y-2">
-                  <h4 className="text-xs font-semibold text-cyan-200/80">
-                    Test client credentials (bearer token)
-                  </h4>
-                  <p className="text-xs text-zinc-500">
-                    Run this where your server runs. Replace{" "}
-                    <code className="text-zinc-400">YOUR_CLIENT_SECRET</code> with the secret above (or
-                    one you have stored). The JSON response includes{" "}
-                    <code className="text-zinc-400">access_token</code> — use{" "}
-                    <code className="text-zinc-400">Authorization: Bearer …</code> on Builder routes.
-                    Scopes match the backend helper client (Builder / device approval), not the public
-                    app list.
+            ) : (
+              <div className="flex items-center gap-3 flex-wrap">
+                {backendHelper.hasSecret && (
+                  <p className="text-sm text-zinc-500">
+                    A secret exists. Generate a new one to rotate.
                   </p>
-                  <div className="relative">
-                    <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
-                      {backendHelperCurlSnippet}
-                    </pre>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyToClipboard(backendHelperCurlSnippet, "curlBackend")
-                      }
-                      className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
-                    >
-                      {copied === "curlBackend" ? "Copied!" : "Copy"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+                )}
+                <button
+                  type="button"
+                  onClick={() => void generateBackendSecret()}
+                  disabled={readOnly || generatingBackend || !appId}
+                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                >
+                  {generatingBackend
+                    ? "Generating..."
+                    : backendHelper.hasSecret
+                      ? "Rotate Secret"
+                      : "Generate Secret"}
+                </button>
+              </div>
+            )}
+            {backendSecretFetchError && (
+              <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
+            )}
+          </div>
+          {backendHelperCurlSnippet ? (
+            <div className="pt-3 border-t border-cyan-500/15 space-y-2">
+              <h4 className="text-xs font-semibold text-cyan-200/80">
+                Test client credentials (bearer token)
+              </h4>
+              <p className="text-xs text-zinc-500">
+                Run this where your server runs. Replace{" "}
+                <code className="text-zinc-400">YOUR_CLIENT_SECRET</code> with the secret above (or
+                one you have stored). The JSON response includes{" "}
+                <code className="text-zinc-400">access_token</code> — use{" "}
+                <code className="text-zinc-400">Authorization: Bearer …</code> on Builder routes.
+                Scopes match the backend helper client (Builder / device approval), not the public
+                app list.
+              </p>
+              <div className="relative">
+                <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
+                  {backendHelperCurlSnippet}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyToClipboard(backendHelperCurlSnippet, "curlBackend")
+                  }
+                  className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+                >
+                  {copied === "curlBackend" ? "Copied!" : "Copy"}
+                </button>
+              </div>
             </div>
-          ) : (
-            <p className="text-sm text-zinc-500 mt-4">
-              Enable <strong className="text-zinc-400">Backend device helper</strong> in Auth &amp; Scopes,
-              save, then return here to create a confidential <code className="font-mono text-zinc-400">m2m_</code> client
-              for Builder APIs and NaaP-side device approval.
-            </p>
-          )}
-        </>
-      )}
+          ) : null}
+        </div>
+      ) : !isM2MOnly && backendDeviceHelper ? (
+        <p className="text-sm text-zinc-500 mt-4">
+          <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
+          Save the app to provision the Backend device helper and create a confidential{" "}
+          <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
+          approval, then return here.
+        </p>
+      ) : !isM2MOnly ? (
+        <p className="text-sm text-zinc-500 mt-4">
+          Confidential backend helper is off in{" "}
+          <strong className="text-zinc-400">Auth &amp; Scopes</strong>. Turn on{" "}
+          <strong className="text-zinc-400">Confidential client (CLIENT CREDENTIALS)</strong>{" "}
+          there to manage M2M credentials on this tab.
+        </p>
+      ) : null}
 
       {/* Discovery URL */}
       <div>

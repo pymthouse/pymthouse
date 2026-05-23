@@ -13,7 +13,7 @@
     "start": "next start",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "npx tsx scripts/db-migrate.ts",
     "db:studio": "drizzle-kit studio",
     "proto:compile": "pbjs -t static-module -w es6 -o src/lib/proto-generated.js proto/lp_rpc.proto && pbts -o src/lib/proto-generated.d.ts src/lib/proto-generated.js",
     "bootstrap": "npx tsx scripts/bootstrap-admin.ts",
@@ -32,17 +32,27 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.1",
-    "next": "16.2.3",
+    "next": "16.2.6",
     "next-auth": "^4.24.0",
     "oidc-provider": "^9.7.0",
     "postgres": "^3.4.5",
-    "protobufjs": "^7.5.5",
+    "protobufjs": "^7.5.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "uuid": "^14.0.0"
   },
   "overrides": {
-    "esbuild": "^0.25.12"
+    "esbuild": "^0.25.12",
+    "ethers": {
+      "ws": "^8.20.1"
+    },
+    "next-auth": {
+      "uuid": "^11.1.1"
+    },
+    "postcss": "^8.5.10",
+    "viem": {
+      "ws": "^8.20.1"
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

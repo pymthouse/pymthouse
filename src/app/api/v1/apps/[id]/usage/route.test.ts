@@ -160,34 +160,41 @@ run("usage API aggregates seeded rows, filters by date and user, and validates i
   // Totals across all rows.
   const all = await call();
   assert.equal(all.status, 200);
-  const allTotals = (all.body as { totals: { requestCount: number; totalFeeWei: string } }).totals;
+  const allTotals = (all.body as {
+    totals: { requestCount: number; currency: string; networkFeeUsdMicros: string };
+  }).totals;
   assert.equal(allTotals.requestCount, 5);
-  assert.equal(
-    allTotals.totalFeeWei,
-    (1_000_000_000_000_000n + 2_000_000_000_000_000n + 500_000_000_000_000n + 10n + 7n).toString(),
-  );
+  assert.equal(allTotals.currency, "USD");
+  assert.equal(allTotals.networkFeeUsdMicros, "0");
 
   // Date-windowed totals exclude the "outside" row.
   const windowed = await call(`?startDate=2026-05-01T00:00:00.000Z&endDate=2026-07-01T00:00:00.000Z`);
   assert.equal(windowed.status, 200);
-  const windowedTotals = (windowed.body as { totals: { requestCount: number; totalFeeWei: string } }).totals;
+  const windowedTotals = (windowed.body as {
+    totals: { requestCount: number; networkFeeUsdMicros: string };
+  }).totals;
   assert.equal(windowedTotals.requestCount, 4);
-  assert.equal(
-    windowedTotals.totalFeeWei,
-    (1_000_000_000_000_000n + 2_000_000_000_000_000n + 500_000_000_000_000n + 10n).toString(),
-  );
+  assert.equal(windowedTotals.networkFeeUsdMicros, "0");
 
   // userId filter narrows to one app_user.
   const betaOnly = await call(`?userId=${encodeURIComponent(beta.id)}`);
   assert.equal(betaOnly.status, 200);
-  const betaTotals = (betaOnly.body as { totals: { requestCount: number; totalFeeWei: string } }).totals;
+  const betaTotals = (betaOnly.body as {
+    totals: { requestCount: number; networkFeeUsdMicros: string };
+  }).totals;
   assert.equal(betaTotals.requestCount, 1);
-  assert.equal(betaTotals.totalFeeWei, "500000000000000");
+  assert.equal(betaTotals.networkFeeUsdMicros, "0");
 
   // groupBy=user exposes external ids and an "unknown" bucket for null user_id rows.
   const grouped = await call("?groupBy=user");
   const buckets = (grouped.body as {
-    byUser: { endUserId: string; externalUserId: string | null; requestCount: number; feeWei: string }[];
+    byUser: {
+      endUserId: string;
+      externalUserId: string | null;
+      requestCount: number;
+      currency: string;
+      networkFeeUsdMicros: string;
+    }[];
   }).byUser;
   assert.equal(buckets.length, 3);
   const byId = new Map(buckets.map((b) => [b.endUserId, b]));
@@ -387,9 +394,8 @@ run("usage API aggregates billing events by pipeline/model and exposes gateway r
     byPipelineModel: Array<{
       pipeline: string;
       modelId: string;
+      currency: string;
       requestCount: number;
-      networkFeeWei: string;
-      networkFeeEth: string;
       networkFeeUsdMicros: string;
       ownerChargeUsdMicros: string;
       endUserBillableUsdMicros: string;
@@ -402,9 +408,8 @@ run("usage API aggregates billing events by pipeline/model and exposes gateway r
   assert.deepEqual(groupedByKey.get("text-to-image|stabilityai/sdxl"), {
     pipeline: "text-to-image",
     modelId: "stabilityai/sdxl",
+    currency: "USD",
     requestCount: 2,
-    networkFeeWei: "3000",
-    networkFeeEth: "0.000000000000003",
     networkFeeUsdMicros: "3000000",
     ownerChargeUsdMicros: "3450000",
     endUserBillableUsdMicros: "4200000",
@@ -412,9 +417,8 @@ run("usage API aggregates billing events by pipeline/model and exposes gateway r
   assert.deepEqual(groupedByKey.get("llm|openai-chat-completions"), {
     pipeline: "llm",
     modelId: "openai-chat-completions",
+    currency: "USD",
     requestCount: 1,
-    networkFeeWei: "3000",
-    networkFeeEth: "0.000000000000003",
     networkFeeUsdMicros: "3000000",
     ownerChargeUsdMicros: "3000000",
     endUserBillableUsdMicros: "3000000",

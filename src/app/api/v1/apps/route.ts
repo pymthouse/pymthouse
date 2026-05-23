@@ -12,6 +12,7 @@ import {
 import { resetProvider } from "@/lib/oidc/provider";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { ensureProviderAdminMembership } from "@/lib/provider-apps";
+import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -155,17 +156,28 @@ export async function POST(request: NextRequest) {
   const appId = clientId;
   const now = new Date().toISOString();
 
-  await db.insert(developerApps).values({
-    id: appId,
-    ownerId: userId,
-    oidcClientId: oidcRowId,
-    name: name.trim(),
-    developerName: body.developerName || null,
-    websiteUrl: body.websiteUrl || null,
-    status: "draft", // Apps start as draft and require admin approval
-    createdAt: now,
-    updatedAt: now,
-  });
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(developerApps).values({
+        id: appId,
+        ownerId: userId,
+        oidcClientId: oidcRowId,
+        name: name.trim(),
+        developerName: body.developerName || null,
+        websiteUrl: body.websiteUrl || null,
+        status: "draft", // Apps start as draft and require admin approval
+        createdAt: now,
+        updatedAt: now,
+      });
+      await getOrCreateNetworkDefaultPlan(appId, tx);
+    });
+  } catch (err) {
+    console.error("Failed to create app with network default plan:", err);
+    return NextResponse.json(
+      { error: "Failed to create app" },
+      { status: 500 },
+    );
+  }
 
   if (body.backendDeviceHelper === true) {
     await ensureM2mBackendClient({

@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { developerApps, oidcClients, appAllowedDomains } from "@/db/schema";
+import {
+  appAllowedDomains,
+  appBillingOracleConfig,
+  developerApps,
+  oidcClients,
+} from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { v4 as uuidv4 } from "uuid";
 import {
   ensureM2mBackendClient,
   syncBackendM2mAllowedScopesFromPublicApp,
@@ -14,6 +18,7 @@ import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import {
   canEditProviderApp,
   getAuthorizedProviderApp,
+  getProviderApp,
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
@@ -22,14 +27,47 @@ import {
   SIGNING_MODE_LEGACY_REMOTE_SIGNER,
   SIGNING_MODE_LPNM_PAYER_DAEMON,
 } from "@/lib/signing-modes";
+import { authenticateAppClient } from "@/lib/auth";
+import {
+  listAvailableFiatOracleProviders,
+  resolveBillingOracleProviderKey,
+} from "@/lib/prices/fiat-oracle-registry";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: clientId } = await params;
+  const clientAuth = await authenticateAppClient(request);
+  if (clientAuth?.appId === clientId) {
+    const app = await getProviderApp(clientId);
+    if (!app) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    let allowedScopes = DEFAULT_OIDC_SCOPES;
+    if (app.oidcClientId) {
+      const clientRows = await db
+        .select({ allowedScopes: oidcClients.allowedScopes })
+        .from(oidcClients)
+        .where(eq(oidcClients.id, app.oidcClientId))
+        .limit(1);
+      allowedScopes = clientRows[0]?.allowedScopes ?? DEFAULT_OIDC_SCOPES;
+    }
+    const publicClientId = clientAuth.appId;
+    return NextResponse.json({
+      clientId: publicClientId,
+      name: app.name,
+      status: app.status,
+      billingPattern: billingPatternFromAllowedScopesString(allowedScopes),
+      allowedScopes,
+      links: {
+        manifest: `/api/v1/apps/${encodeURIComponent(publicClientId)}/manifest`,
+      },
+    });
+  }
+
   const auth = await getAuthorizedProviderApp(clientId);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -90,6 +128,13 @@ export async function GET(
     .select()
     .from(appAllowedDomains)
     .where(eq(appAllowedDomains.appId, app.id));
+  const pricingRows = await db
+    .select()
+    .from(appBillingOracleConfig)
+    .where(eq(appBillingOracleConfig.clientId, app.id))
+    .limit(1)
+    .catch(() => []);
+  const pricing = pricingRows[0] ?? null;
 
   const canonicalClientId = clientInfo?.clientId ?? clientId;
   const { oidcClientId: _oidcClientId, ...appWithoutOidcClientId } = app;
@@ -113,6 +158,12 @@ export async function GET(
       : null,
     m2mOidcClient,
     domains,
+    usagePricing: {
+      billingDisplayCurrency: pricing?.billingDisplayCurrency ?? "USD",
+      billingOracleProviderKey: pricing?.billingOracleProviderKey ?? "global_eth_usd",
+      billingOracleProviderConfig: pricing?.billingOracleProviderConfig ?? null,
+      availableOracleProviders: listAvailableFiatOracleProviders(),
+    },
   });
 }
 
@@ -183,6 +234,63 @@ export async function PUT(
   }
 
   await db.update(developerApps).set(appUpdates).where(eq(developerApps.id, app.id));
+
+  if (
+    body.billingDisplayCurrency !== undefined ||
+    body.billingOracleProviderKey !== undefined ||
+    body.billingOracleProviderConfig !== undefined
+  ) {
+    const existingPricingRows = await db
+      .select()
+      .from(appBillingOracleConfig)
+      .where(eq(appBillingOracleConfig.clientId, app.id))
+      .limit(1)
+      .catch(() => []);
+    const existingPricing = existingPricingRows[0] ?? null;
+    const nextCurrency =
+      body.billingDisplayCurrency !== undefined
+        ? String(body.billingDisplayCurrency || "USD").toUpperCase()
+        : (existingPricing?.billingDisplayCurrency ?? "USD");
+    if (nextCurrency !== "USD") {
+      return NextResponse.json(
+        { error: "billingDisplayCurrency must be USD" },
+        { status: 400 },
+      );
+    }
+    const nextProvider = resolveBillingOracleProviderKey(
+      body.billingOracleProviderKey !== undefined
+        ? String(body.billingOracleProviderKey)
+        : (existingPricing?.billingOracleProviderKey ?? "global_eth_usd"),
+    ).key;
+    const nextConfig =
+      body.billingOracleProviderConfig !== undefined
+        ? (body.billingOracleProviderConfig &&
+          typeof body.billingOracleProviderConfig === "object"
+            ? body.billingOracleProviderConfig
+            : null)
+        : (existingPricing?.billingOracleProviderConfig ?? null);
+    if (existingPricing) {
+      await db
+        .update(appBillingOracleConfig)
+        .set({
+          billingDisplayCurrency: nextCurrency,
+          billingOracleProviderKey: nextProvider,
+          billingOracleProviderConfig: nextConfig,
+          updatedAt: now,
+        })
+        .where(eq(appBillingOracleConfig.id, existingPricing.id));
+    } else {
+      await db.insert(appBillingOracleConfig).values({
+        id: uuidv4(),
+        clientId: app.id,
+        billingDisplayCurrency: nextCurrency,
+        billingOracleProviderKey: nextProvider,
+        billingOracleProviderConfig: nextConfig,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
 
   // Provider apps are self-service in the MVP, so OIDC config updates apply immediately.
   if (app.oidcClientId) {

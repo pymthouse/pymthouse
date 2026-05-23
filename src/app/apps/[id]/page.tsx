@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppSettingsScreen from "@/components/apps/AppSettingsScreen";
 import type { AppFormData, AppState } from "@/components/apps/AppWizard";
@@ -21,6 +21,9 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 
 export default function AppDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get("tab") ?? undefined;
+
   const [loading, setLoading] = useState(true);
   const [appData, setAppData] = useState<{
     formData: Partial<AppFormData>;
@@ -150,8 +153,7 @@ export default function AppDetailPage() {
           </span>
         </div>
         <p className="text-sm text-zinc-500 mt-1">
-          Edit integration settings, credentials, and run OIDC tests. The create
-          wizard is only used when you add a new app.
+          Edit integration settings, credentials, network discovery, and pricing.
         </p>
       </div>
 
@@ -169,6 +171,7 @@ export default function AppDetailPage() {
         canSubmitForReview={appData.canSubmitForReview}
         onReviewSubmitted={handleReviewSubmitted}
         onRevertedToDraft={handleRevertedToDraft}
+        initialTab={initialTab}
       />
     </DashboardLayout>
   );

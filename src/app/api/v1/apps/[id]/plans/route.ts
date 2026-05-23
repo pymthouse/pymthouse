@@ -11,6 +11,13 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
+import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import {
+  assertCapabilityRowsDiscoverable,
+  loadDiscoverableSetForApp,
+  NETWORK_DEFAULT_PLAN_DISPLAY_NAME,
+  NETWORK_DEFAULT_PLAN_INTERNAL_NAME,
+} from "@/lib/network-default-plan";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -163,8 +170,6 @@ function parseCapabilities(input: unknown): {
   capabilities: Array<{
     pipeline: string;
     modelId: string;
-    slaTargetScore: number | null;
-    slaTargetP95Ms: number | null;
     maxPricePerUnit: string | null;
     upchargePercentBps: number | null;
   }>;
@@ -191,25 +196,6 @@ function parseCapabilities(input: unknown): {
       throw new Error(`capabilities[${index}].modelId is required`);
     }
 
-    const rawSlaTargetScore = value.slaTargetScore;
-    const rawSlaTargetP95Ms = value.slaTargetP95Ms;
-    const parsedSlaTargetScore =
-      rawSlaTargetScore === null || rawSlaTargetScore === undefined
-        ? null
-        : Number(rawSlaTargetScore);
-    const parsedSlaTargetP95Ms =
-      rawSlaTargetP95Ms === null || rawSlaTargetP95Ms === undefined
-        ? null
-        : Number(rawSlaTargetP95Ms);
-
-    if (parsedSlaTargetScore !== null && !Number.isFinite(parsedSlaTargetScore)) {
-      throw new Error(`capabilities[${index}].slaTargetScore must be numeric`);
-    }
-
-    if (parsedSlaTargetP95Ms !== null && !Number.isFinite(parsedSlaTargetP95Ms)) {
-      throw new Error(`capabilities[${index}].slaTargetP95Ms must be numeric`);
-    }
-
     const rawUpcharge = value.upchargePercentBps;
     let parsedUpchargeBps: number | null = null;
     if (rawUpcharge !== null && rawUpcharge !== undefined) {
@@ -223,8 +209,6 @@ function parseCapabilities(input: unknown): {
     return {
       pipeline,
       modelId,
-      slaTargetScore: parsedSlaTargetScore,
-      slaTargetP95Ms: parsedSlaTargetP95Ms,
       maxPricePerUnit:
         value.maxPricePerUnit === null || value.maxPricePerUnit === undefined
           ? null
@@ -242,7 +226,7 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
     const app = await getProviderApp(clientId);
     return app;
   }
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   return auth?.app ?? null;
 }
 
@@ -264,6 +248,8 @@ export async function GET(
       const plan = r.plan;
       return {
         ...plan,
+        isNetworkDefault: plan.isNetworkDefault,
+        discoveryExcludedCapabilities: plan.discoveryExcludedCapabilities ?? null,
         discoveryProfileId: plan.discoveryProfileId ?? null,
         discoveryPolicy: r.discoveryPolicy,
         includedUnits:
@@ -289,7 +275,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -297,6 +283,8 @@ export async function POST(
   if (!(await canEditProviderApp(auth))) {
     return appEditForbiddenResponse();
   }
+
+  const appId = auth.app.id;
 
   let body: Record<string, unknown>;
   try {
@@ -307,6 +295,18 @@ export async function POST(
   const name = String(body.name || "").trim();
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
+  }
+  if (name === NETWORK_DEFAULT_PLAN_INTERNAL_NAME || name === NETWORK_DEFAULT_PLAN_DISPLAY_NAME) {
+    return NextResponse.json(
+      { error: "This plan name is reserved for the Network Price default plan" },
+      { status: 400 },
+    );
+  }
+  if ("is_network_default" in body) {
+    return NextResponse.json(
+      { error: "is_network_default cannot be set on created plans" },
+      { status: 400 },
+    );
   }
 
   let parsedCapabilities: ReturnType<typeof parseCapabilities>;
@@ -323,7 +323,34 @@ export async function POST(
     return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
   }
 
-  const appId = auth.app.id;
+  if (parsedCapabilities.capabilities.length > 0) {
+    let catalogLite;
+    try {
+      const cat = await fetchPipelineCatalog();
+      catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
+    } catch {
+      return NextResponse.json(
+        { error: "Pipeline catalog unavailable; cannot validate capabilities" },
+        { status: 503 },
+      );
+    }
+    const discoverable = await loadDiscoverableSetForApp(appId, catalogLite, db);
+    const discCheck = assertCapabilityRowsDiscoverable(
+      catalogLite,
+      discoverable,
+      parsedCapabilities.capabilities,
+    );
+    if (!discCheck.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more capabilities are not discoverable under Network Price exclusions. Un-exclude them there first.",
+          conflicts: discCheck.conflicts,
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   let discoveryProfileId: string | null = null;
   if (body.discoveryProfileId !== undefined) {
@@ -343,12 +370,6 @@ export async function POST(
   if (!billing.ok) {
     return NextResponse.json({ error: billing.error }, { status: 400 });
   }
-
-  // Parse new USD/upcharge fields
-  const generalUpcharge = parseOptionalNonNegativeBps(body.generalUpchargePercentBps, "generalUpchargePercentBps");
-  if (!generalUpcharge.ok) return NextResponse.json({ error: generalUpcharge.error }, { status: 400 });
-  const payPerUseUpcharge = parseOptionalNonNegativeBps(body.payPerUseUpchargePercentBps, "payPerUseUpchargePercentBps");
-  if (!payPerUseUpcharge.ok) return NextResponse.json({ error: payPerUseUpcharge.error }, { status: 400 });
 
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
@@ -381,10 +402,10 @@ export async function POST(
         overageRateWei:
           billing.overageRateWei !== null ? BigInt(billing.overageRateWei) : null,
         includedUsdMicros,
-        generalUpchargePercentBps: generalUpcharge.value,
-        payPerUseUpchargePercentBps: payPerUseUpcharge.value,
         billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
         discoveryProfileId,
+        isNetworkDefault: false,
+        discoveryExcludedCapabilities: null,
         createdAt: now,
         updatedAt: now,
       });
@@ -396,8 +417,7 @@ export async function POST(
           clientId: appId,
           pipeline: capability.pipeline,
           modelId: capability.modelId,
-          slaTargetScore: capability.slaTargetScore ?? null,
-          slaTargetP95Ms: capability.slaTargetP95Ms ?? null,
+          slaTargetP95Ms: null,
           maxPricePerUnit: capability.maxPricePerUnit,
           upchargePercentBps: capability.upchargePercentBps,
           createdAt: now,
@@ -425,7 +445,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -447,6 +467,23 @@ export async function PUT(
   const appId = auth.app.id;
   if (!planId) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  if ("is_network_default" in body) {
+    return NextResponse.json(
+      { error: "is_network_default cannot be changed via this API" },
+      { status: 400 },
+    );
+  }
+
+  if (typeof body.name === "string" && body.name.trim()) {
+    const nm = body.name.trim();
+    if (nm === NETWORK_DEFAULT_PLAN_INTERNAL_NAME || nm === NETWORK_DEFAULT_PLAN_DISPLAY_NAME) {
+      return NextResponse.json(
+        { error: "This plan name is reserved for the Network Price default plan" },
+        { status: 400 },
+      );
+    }
   }
 
   let discoveryProfileIdPut: string | null | undefined = undefined;
@@ -478,6 +515,35 @@ export async function PUT(
     }
   }
 
+  if (parsedCapabilities && parsedCapabilities.capabilities.length > 0) {
+    let catalogLite;
+    try {
+      const cat = await fetchPipelineCatalog();
+      catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
+    } catch {
+      return NextResponse.json(
+        { error: "Pipeline catalog unavailable; cannot validate capabilities" },
+        { status: 503 },
+      );
+    }
+    const discoverable = await loadDiscoverableSetForApp(appId, catalogLite, db);
+    const discCheck = assertCapabilityRowsDiscoverable(
+      catalogLite,
+      discoverable,
+      parsedCapabilities.capabilities,
+    );
+    if (!discCheck.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "One or more capabilities are not discoverable under Network Price exclusions. Un-exclude them there first.",
+          conflicts: discCheck.conflicts,
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const now = new Date().toISOString();
   const txnResult = await db.transaction(async (tx) => {
     const existingRows = await tx
@@ -488,6 +554,10 @@ export async function PUT(
     const existing = existingRows[0];
     if (!existing) {
       return { tag: "notfound" as const };
+    }
+
+    if (existing.isNetworkDefault) {
+      return { tag: "network_default" as const };
     }
 
     if (discoveryProfileIdPut !== undefined && discoveryProfileIdPut !== null) {
@@ -507,12 +577,6 @@ export async function PUT(
     if (!billing.ok) {
       return { tag: "validation" as const, error: billing.error };
     }
-
-    // Parse new USD/upcharge fields for PUT
-    const generalUpchargePut = parseOptionalNonNegativeBps(body.generalUpchargePercentBps, "generalUpchargePercentBps");
-    if (!generalUpchargePut.ok) return { tag: "validation" as const, error: generalUpchargePut.error };
-    const payPerUseUpchargePut = parseOptionalNonNegativeBps(body.payPerUseUpchargePercentBps, "payPerUseUpchargePercentBps");
-    if (!payPerUseUpchargePut.ok) return { tag: "validation" as const, error: payPerUseUpchargePut.error };
 
     const rawIncludedUsdPut = body.includedUsdMicros;
     let includedUsdMicrosPut: string | null | undefined = undefined; // undefined = don't change
@@ -540,12 +604,6 @@ export async function PUT(
           billing.includedUnits !== null ? BigInt(billing.includedUnits) : null,
         overageRateWei:
           billing.overageRateWei !== null ? BigInt(billing.overageRateWei) : null,
-        ...(body.generalUpchargePercentBps !== undefined
-          ? { generalUpchargePercentBps: generalUpchargePut.value }
-          : {}),
-        ...(body.payPerUseUpchargePercentBps !== undefined
-          ? { payPerUseUpchargePercentBps: payPerUseUpchargePut.value }
-          : {}),
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
         ...(body.billingCycle !== undefined ? { billingCycle: String(body.billingCycle) } : {}),
         ...(discoveryProfileIdPut !== undefined
@@ -576,8 +634,7 @@ export async function PUT(
           clientId: appId,
           pipeline: capability.pipeline,
           modelId: capability.modelId,
-          slaTargetScore: capability.slaTargetScore ?? null,
-          slaTargetP95Ms: capability.slaTargetP95Ms ?? null,
+          slaTargetP95Ms: null,
           maxPricePerUnit: capability.maxPricePerUnit,
           upchargePercentBps: capability.upchargePercentBps,
           createdAt: now,
@@ -594,6 +651,15 @@ export async function PUT(
   if (txnResult.tag === "validation") {
     return NextResponse.json({ error: txnResult.error }, { status: 400 });
   }
+  if (txnResult.tag === "network_default") {
+    return NextResponse.json(
+      {
+        error:
+          "The Network Price default plan cannot be edited via this endpoint; update exclusions via PUT /manifest",
+      },
+      { status: 400 },
+    );
+  }
 
   return NextResponse.json({ success: true });
 }
@@ -603,7 +669,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await getAuthorizedProviderApp(clientId);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -621,13 +687,16 @@ export async function DELETE(
 
   const deleted = await db.transaction(async (tx) => {
     const planRows = await tx
-      .select({ id: plans.id })
+      .select({ id: plans.id, isNetworkDefault: plans.isNetworkDefault })
       .from(plans)
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
       .limit(1);
 
     if (!planRows[0]) {
       return false;
+    }
+    if (planRows[0].isNetworkDefault) {
+      return "network_default" as const;
     }
 
     await tx
@@ -647,6 +716,12 @@ export async function DELETE(
 
   if (!deleted) {
     return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+  }
+  if (deleted === "network_default") {
+    return NextResponse.json(
+      { error: "The Network Price default plan cannot be deleted" },
+      { status: 409 },
+    );
   }
 
   return NextResponse.json({ success: true });

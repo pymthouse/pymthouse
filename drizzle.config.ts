@@ -1,3 +1,4 @@
+import "./scripts/load-env-first";
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({

@@ -35,6 +35,7 @@ export interface RecordLivePaymentUsageArgs {
   constraint: PipelineModelConstraint | null;
   attribution: GatewayAttribution;
   orchestratorAddress: string | undefined;
+  billingOracleProviderKey?: string;
 }
 
 /**
@@ -59,6 +60,7 @@ export async function recordLivePaymentUsage(
     constraint,
     attribution,
     orchestratorAddress,
+    billingOracleProviderKey,
   } = args;
 
   const orchAddrForConstraint =
@@ -111,7 +113,10 @@ export async function recordLivePaymentUsage(
 
   if (existingUsage) return;
 
-  const ethUsd = await getEthUsdOracle();
+  const ethUsd = await getEthUsdOracle({
+    appId: providerAppId,
+    providerKey: billingOracleProviderKey,
+  });
 
   const networkFeeUsdMicros = computeUsdMicrosFromWei(feeWei, ethUsd.priceUsd);
   const ownerChargeWei = feeWei + platformCutWei;

@@ -138,6 +138,27 @@
     {
       "idx": 19,
       "version": "7",
+      "when": 1777300000000,
+      "tag": "0017_discovery_allowed_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1777400000000,
+      "tag": "0018_drop_plan_upcharge_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1777500000000,
+      "tag": "0019_app_billing_oracle_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
       "when": 1777600000000,
       "tag": "0018_repair_developer_apps_signing_mode",
       "breakpoints": true

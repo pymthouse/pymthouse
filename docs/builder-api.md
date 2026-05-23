@@ -369,14 +369,23 @@ The oracle source and observation timestamp are stored with each transaction so 
 
 Returns `{ ethUsd: { priceUsd, source, observedAt, isFallback } }`.
 
+### Manifest enforcement on signing (hot path)
+
+`POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` enforce the app **network capability manifest** before forwarding to go-livepeer. Enforcement uses a **process-local in-memory cache** keyed by the token’s public `client_id` (`app_…`); the signing path does **not** query the database for manifest rows.
+
+1. **Pipeline required:** The request must include a resolvable `pipeline` (direct body fields, gateway metadata, or derivable `capabilities`). Requests without a pipeline are rejected with **`403`** and `error: "capability_not_allowed"`.
+2. **Model optional:** When `modelId` is present, the exact `(pipeline, modelId)` pair must appear in the cached manifest `capabilities`. When `modelId` is omitted, the pipeline must have at least one allowed model in the manifest.
+3. **Cache warm / miss:** The cache is populated off the hot path by `GET`/`PUT …/manifest`, programmatic user-token mint (`sign:job`), and gateway token exchange. If the cache has no entry for the app, signing returns **`403`** with `error: "manifest_cache_unavailable"` (fail-closed).
+4. **Not enforced on:** `POST /api/signer/sign-orchestrator-info` and `GET /api/signer/discover-orchestrators` (no pipeline/model contract on those routes today).
+
 ### Trusted pipeline/model attribution
 
-Billable **`usage_billing_events`** rows are created when the signing request resolves to a pipeline/model constraint. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
+Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
-1. **Constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses).
+1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Manifest enforcement may allow pipeline-only requests; billing still requires both fields for **`usage_billing_events`**.
 2. **No NaaP fetch on signing:** `POST /api/signer/generate-live-payment` does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** still proxies NaaP for UIs; it uses **`fetchDashboardPricing()`** without an in-process pricing cache.
-3. **Ledger insert:** When a constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
-4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If no pipeline/model can be resolved, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Older rows may still show legacy statuses such as **`pricing_unavailable`**. Signing is **not** blocked by attribution gaps — the gateway still receives the signer response.
+3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
+4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing may still succeed when the manifest allows the pipeline.
 
 **Usage API:** `groupBy=pipeline_model` aggregates from **`usage_billing_events`**, so breakdown rows appear for new traffic that includes `pipeline` + `modelId` (or derivable capabilities) on each payment.
 
@@ -436,16 +445,14 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 | Field | Description |
 | --- | --- |
 | `includedUsdMicros` | Subscription usage allowance in USD micros (e.g. `10000000` = $10.00). |
-| `generalUpchargePercentBps` | Default positive upcharge for all retail usage, basis points. |
-| `payPerUseUpchargePercentBps` | Fallback upcharge for free/no-credit users; inherits `generalUpchargePercentBps` if unset. |
 | `billingCycle` | `"monthly"` (default). |
-| `discoveryProfileId` | Optional FK to an app-scoped discovery profile (see **Discovery profiles** below). Omitted from billing summary payloads today; present on **`GET .../plans`**. |
+| `discoveryProfileId` | Optional FK to legacy **`discovery_profiles`** rows. Omitted from billing summary payloads today; may still appear on **`GET .../plans`**. Integrator network capability limits use **`GET .../manifest`**. |
 
 #### Capability bundle fields (new)
 
 | Field | Description |
 | --- | --- |
-| `upchargePercentBps` | Pipeline/model-specific upcharge override, basis points. Takes precedence over `generalUpchargePercentBps` for matching usage. |
+| `upchargePercentBps` | Pipeline/model-specific upcharge, basis points. |
 
 ### Authentication (billing summary)
 
@@ -470,9 +477,92 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
   "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?groupBy=pipeline_model"
 ```
 
-### Discovery profiles (provider session + M2M read)
+### App metadata (integrator read)
 
-Reusable **discovery** configuration (orchestrator ranking defaults) lives in **`discovery_profiles`** and **`discovery_profile_bundles`**. **Billing plans** reference an optional `discoveryProfileId`. Editing discovery no longer requires touching subscription pricing fields.
+**Endpoint:** `GET /api/v1/apps/{clientId}`
+
+| Auth | Description |
+| --- | --- |
+| **M2M Basic** (path `{clientId}` must match the authenticated public `app_…` id) | Minimal app descriptor for integrators. |
+| **Provider session** | Full app record (OIDC client config, domains, edit flags) — unchanged dashboard behavior. |
+
+**M2M response** (subset):
+
+```json
+{
+  "clientId": "app_…",
+  "name": "My App",
+  "status": "approved",
+  "billingPattern": "app_level",
+  "allowedScopes": "sign:job users:read …",
+  "links": {
+    "manifest": "/api/v1/apps/app_…/manifest"
+  }
+}
+```
+
+Network capability availability is **`GET …/manifest`**, not this route.
+
+**Implementation:** [`src/app/api/v1/apps/[id]/route.ts`](../src/app/api/v1/apps/[id]/route.ts).
+
+### Network capability manifest (integrator pipeline / model caps)
+
+**Canonical** app-level network surface for integrators (e.g. NaaP). Each app has exactly one undeletable **Network Price** plan row (`plans.is_network_default = true`) whose **`discovery_excluded_capabilities`** JSON defines what is **not** discoverable. The live NaaP pipeline catalog minus those exclusions is the resolved list in **`capabilities`**. **Custom billing plans** only carry pricing overrides; they do **not** widen or narrow discovery.
+
+#### Storage (`plans`, network-default row only)
+
+| Field | Shape | Semantics |
+| --- | --- | --- |
+| **`discovery_excluded_capabilities`** | `{ "capabilities": [ { "pipeline", "modelId" } ] }` | **Subtractive** list against the full catalog. `modelId: "*"` removes every current model for that pipeline. **Null** or empty **`capabilities`** means “nothing excluded” (full catalog discoverable). |
+
+The provider dashboard **Plans** page edits these exclusions on the Network Price section. **`PUT /manifest`** writes the same column (body: **`excludedCapabilities` only**). If new exclusions would hide pipeline/models that a **custom** plan still prices in **`plan_capability_bundles`**, **`PUT` returns `409`** until those bundles are removed or exclusions are relaxed.
+
+#### Fail-open (integrators)
+
+- **`capabilities` empty** → no restriction (fail-open). This includes total exclusion edge cases and failed catalog loads on the integrator side.
+- When exclusions are **null/empty**, **`GET`** still loads the catalog and returns the **full** explicit list in **`capabilities`** (not an empty array).
+- If the catalog cannot be loaded → **`503`** with `{ "error": "Pipeline catalog unavailable" }`.
+
+#### Resolution (server-side)
+
+1. **Start from full catalog** — Every `(pipeline, modelId)` currently in NaaP.
+2. **Subtract exclusions** — Remove any member matching an exclusion row `(P, M)` or pipeline wildcard `(P, "*")`.
+3. **Prune** — Drop anything not present in the current catalog.
+
+**`GET`** returns:
+
+```json
+{
+  "capabilities": [ { "pipeline": "…", "modelId": "…" } ],
+  "excludedCapabilities": [ { "pipeline": "…", "modelId": "…" } ],
+  "manifestVersion": "a1b2c3…"
+}
+```
+
+**`manifestVersion`** — SHA-256 prefix (24 hex chars) over sorted `capabilities` + `excludedCapabilities`; use for cache busting.
+
+**`PUT`** (provider session with edit rights) accepts:
+
+```json
+{
+  "excludedCapabilities": [ { "pipeline": "…", "modelId": "…" } ]
+}
+```
+
+The response body matches **`GET`** (re-resolved after write).
+
+**Base path:** `/api/v1/apps/{clientId}/manifest`
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/manifest` | **M2M Basic** or provider session | Resolved **`capabilities`**, **`excludedCapabilities`**, **`manifestVersion`**. |
+| `PUT` | `/manifest` | Provider session with edit rights | Replace exclusions on the Network Price plan; response same as `GET`. |
+
+**Implementation:** [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts).
+
+### Discovery profiles (legacy, provider session + M2M read)
+
+Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for backward compatibility. Prefer **`GET …/manifest`** for new integrator pipeline/model caps. **Billing plans** may still reference **`discoveryProfileId`** until fully migrated.
 
 **Base path:** `/api/v1/apps/{clientId}/discovery-profiles`
 
@@ -492,26 +582,18 @@ Reusable **discovery** configuration (orchestrator ranking defaults) lives in **
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each plan includes optional **`discoveryProfileId`** and **resolved** **`discoveryPolicy`** (from the linked profile) plus per-bundle **resolved** **`discoveryPolicy`** (from `discovery_profile_bundles` keys matching each billing bundle’s `pipeline` / `modelId`). |
-| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create plan (`name` required). Optional **`discoveryProfileId`** (must belong to the same app). Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), SLA/upcharge fields — **not** `discoveryPolicy`. |
-| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). Optional **`discoveryProfileId`** (`null` clears the link). |
-| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles |
+| `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each row includes **`isNetworkDefault`** and, on the Network Price plan, **`discoveryExcludedCapabilities`**. Optional legacy **`discoveryProfileId`** and resolved **`discoveryPolicy`** when a profile is linked. |
+| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Price`** / internal default name rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. |
+| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /manifest`** or the Plans UI. Optional **`discoveryProfileId`** (`null` clears the link). |
+| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles. Deleting the **Network Price** default plan returns **`409`**. |
 
-**Discovery view (integrators, e.g. NaaP):**
-
-| Method | Path | Auth | Description |
-| --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/plans/discovery` | **M2M Basic** or provider session | **Active** plans only: `id`, `name`, `status`, **resolved** `discoveryPolicy`, and `capabilities[]` with `pipeline`, `modelId`, **resolved** `discoveryPolicy`. Same JSON shape as before migration. |
-
-**`discoveryPolicy`** (optional JSON object, aligned with NaaP orchestrator leaderboard plan inputs):
+**`discoveryPolicy`** (optional JSON object on legacy profile-linked plans, aligned with NaaP orchestrator leaderboard plan inputs):
 
 - `topN` — integer 1…1000  
-- `sortBy` — `"slaScore"` \| `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
-- `slaMinScore` — number 0…1  
-- `slaWeights` — `{ latency?, swapRate?, price? }` each 0…1  
+- `sortBy` — `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
 - `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/plans/discovery/route.ts`](../src/app/api/v1/apps/[id]/plans/discovery/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts).
 
 ---
 

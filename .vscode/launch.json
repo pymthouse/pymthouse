@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "pymthouse: Next dev (HTTPS)",
+      "name": "pymthouse: Next dev",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev -- --experimental-https --inspect",
+      "command": "npm run dev -- --inspect",
       "cwd": "${workspaceFolder}"
     }
   ]

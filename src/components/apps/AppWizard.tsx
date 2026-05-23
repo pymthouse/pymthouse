@@ -2,14 +2,16 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { docsDeviceFlowUrl, docsInteractiveLoginUrl } from "@/lib/docs-base-url";
+import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import {
   SIGNING_MODE_LEGACY_REMOTE_SIGNER,
   SIGNING_MODE_LPNM_PAYER_DAEMON,
 } from "@/lib/signing-modes";
 
-const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const AUTHORIZATION_CODE_GRANT = "authorization_code";
+const REFRESH_TOKEN_GRANT = "refresh_token";
+const DEVICE_FLOW_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 const USERS_TOKEN_SCOPE = OIDC_SCOPES.find((s) => s.value === "users:token")!;
 
@@ -45,9 +47,9 @@ export interface AppState {
 }
 
 const DEFAULT_GRANT_TYPES_WITH_DEVICE = [
-  "authorization_code",
-  "refresh_token",
-  DEVICE_CODE_GRANT,
+  AUTHORIZATION_CODE_GRANT,
+  REFRESH_TOKEN_GRANT,
+  DEVICE_FLOW_GRANT,
 ] as const;
 
 export const defaultAppFormData: AppFormData = {
@@ -97,12 +99,10 @@ export default function AppWizard({ initialData }: Props) {
         ? [...initialData.redirectUris]
         : [...defaultAppFormData.redirectUris],
   });
-  const [callbackUrl, setCallbackUrl] = useState(initialData?.redirectUris?.[0] ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const hasDeviceCode = formData.grantTypes.includes(DEVICE_CODE_GRANT);
+  const hasDeviceCode = formData.grantTypes.includes(DEVICE_FLOW_GRANT);
   const scopesList = useMemo(() => parseScopes(formData.allowedScopes), [formData.allowedScopes]);
   const hasIssueUserTokens = scopesList.includes("users:token");
 
@@ -117,7 +117,7 @@ export default function AppWizard({ initialData }: Props) {
         return {
           ...prev,
           backendDeviceHelper: false,
-          grantTypes: prev.grantTypes.filter((g) => g !== DEVICE_CODE_GRANT),
+          grantTypes: prev.grantTypes.filter((g) => g !== DEVICE_FLOW_GRANT),
           allowedScopes: joinScopes(scopes),
           initiateLoginUri: "",
           deviceThirdPartyInitiateLogin: false,
@@ -139,14 +139,14 @@ export default function AppWizard({ initialData }: Props) {
   const toggleDeviceCode = () => {
     if (!formData.backendDeviceHelper) return;
     if (hasDeviceCode) {
-      set("grantTypes", formData.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT));
+      set("grantTypes", formData.grantTypes.filter((v) => v !== DEVICE_FLOW_GRANT));
       return;
     }
     setFormData((prev) => ({
       ...prev,
-      grantTypes: prev.grantTypes.includes(DEVICE_CODE_GRANT)
+      grantTypes: prev.grantTypes.includes(DEVICE_FLOW_GRANT)
         ? prev.grantTypes
-        : [...prev.grantTypes, DEVICE_CODE_GRANT],
+        : [...prev.grantTypes, DEVICE_FLOW_GRANT],
     }));
   };
 
@@ -164,9 +164,22 @@ export default function AppWizard({ initialData }: Props) {
     setSaving(true);
     setError(null);
     try {
+      const grantTypesWithoutRedirectlessAuthCode = formData.grantTypes.filter(
+        (grantType) =>
+          formData.redirectUris.length > 0 || grantType !== AUTHORIZATION_CODE_GRANT,
+      );
+      const hasRefreshTokenIssuingGrant = grantTypesWithoutRedirectlessAuthCode.some(
+        (grantType) =>
+          grantType === AUTHORIZATION_CODE_GRANT || grantType === DEVICE_FLOW_GRANT,
+      );
+      const grantTypes = hasRefreshTokenIssuingGrant
+        ? grantTypesWithoutRedirectlessAuthCode
+        : grantTypesWithoutRedirectlessAuthCode.filter(
+            (grantType) => grantType !== REFRESH_TOKEN_GRANT,
+          );
       const payload: AppFormData = {
         ...formData,
-        redirectUris: callbackUrl.trim() ? [callbackUrl.trim()] : [],
+        grantTypes,
       };
       const res = await fetch("/api/v1/apps", {
         method: "POST",
@@ -223,10 +236,25 @@ export default function AppWizard({ initialData }: Props) {
             type="text"
             value={formData.name}
             onChange={(e) => set("name", e.target.value)}
+            autoFocus
             required
             className={fieldClass}
           />
           <p className="text-xs text-zinc-500 mt-1.5">Something users will recognize and trust.</p>
+        </div>
+
+        {/* Developer / organization name */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+            Developer / organization name
+          </label>
+          <input
+            type="text"
+            value={formData.developerName}
+            onChange={(e) => set("developerName", e.target.value)}
+            placeholder="Acme Inc."
+            className={fieldClass}
+          />
         </div>
 
         {/* Homepage URL (optional) */}
@@ -243,6 +271,23 @@ export default function AppWizard({ initialData }: Props) {
           />
           <p className="text-xs text-zinc-500 mt-1.5">
             Shown on consent and in marketplace listings when set.
+          </p>
+        </div>
+
+        {/* Description */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+            Application description
+          </label>
+          <textarea
+            value={formData.description}
+            onChange={(e) => set("description", e.target.value)}
+            rows={3}
+            placeholder="Application description is optional"
+            className={`${fieldClass} resize-none`}
+          />
+          <p className="text-xs text-zinc-500 mt-1.5">
+            This is displayed to all users of your application.
           </p>
         </div>
 
@@ -335,86 +380,6 @@ export default function AppWizard({ initialData }: Props) {
             and set <strong className="text-zinc-400">Initiate login URI</strong> so users complete
             sign-in on your site instead of the default PymtHouse device page.
           </div>
-        </div>
-
-        {/* Authorization callback URL */}
-        <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
-            Authorization callback URL
-          </label>
-          <input
-            type="url"
-            value={callbackUrl}
-            onChange={(e) => setCallbackUrl(e.target.value)}
-            placeholder="https://"
-            className={fieldClass}
-          />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            Required for the browser authorization code flow. Optional if you only use device or
-            server flows for now; you can add this later in app settings. Read our{" "}
-            <a
-              href={docsInteractiveLoginUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-emerald-500 hover:underline"
-            >
-              OAuth documentation
-            </a>{" "}
-            for more information.
-          </p>
-        </div>
-
-        {/* Description */}
-        <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
-            Application description
-          </label>
-          <textarea
-            value={formData.description}
-            onChange={(e) => set("description", e.target.value)}
-            rows={3}
-            placeholder="Application description is optional"
-            className={`${fieldClass} resize-none`}
-          />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            This is displayed to all users of your application.
-          </p>
-        </div>
-
-        {/* Advanced: developer name only */}
-        <div className="border-t border-zinc-800 pt-4">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            <svg
-              className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            Advanced settings
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-4 space-y-5 pl-[22px]">
-              <div>
-                <label className="block text-sm font-medium text-zinc-200 mb-1.5">
-                  Developer / organization name
-                </label>
-                <input
-                  type="text"
-                  value={formData.developerName}
-                  onChange={(e) => set("developerName", e.target.value)}
-                  placeholder="Acme Inc."
-                  className={fieldClass}
-                />
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Actions */}
