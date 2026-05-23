@@ -104,6 +104,10 @@ export async function warmAppManifestCacheForPublicClient(
 ): Promise<CachedManifestPolicy | null> {
   const app = await getProviderApp(publicClientId);
   if (!app) return null;
+  const { warmAppSigningRoutingCache } = await import(
+    "@/lib/signing-routing-cache"
+  );
+  await warmAppSigningRoutingCache(publicClientId);
   const manifest = await buildAppManifestForApp(app.id);
   return publishCachedManifestPolicy(publicClientId, manifest, source);
 }
@@ -148,13 +152,17 @@ export async function resolveSigningPipelineConstraint(
 ): Promise<{ pipeline: string; modelId?: string } | null> {
   const pipeline =
     pickTrimmedString(requestBody, "pipeline") ??
-    pickTrimmedString(requestBody, "Pipeline");
+    pickTrimmedString(requestBody, "Pipeline") ??
+    pickTrimmedString(requestBody, "capability") ??
+    pickTrimmedString(requestBody, "Capability");
   const modelId =
     pickTrimmedString(requestBody, "modelId") ??
     pickTrimmedString(requestBody, "ModelID") ??
     pickTrimmedString(requestBody, "modelID") ??
     pickTrimmedString(requestBody, "model") ??
-    pickTrimmedString(requestBody, "Model");
+    pickTrimmedString(requestBody, "Model") ??
+    pickTrimmedString(requestBody, "offering") ??
+    pickTrimmedString(requestBody, "Offering");
 
   if (pipeline) {
     return modelId ? { pipeline, modelId } : { pipeline };
@@ -239,7 +247,14 @@ export async function enforceCachedManifestPolicy(
     };
   }
 
-  const policy = getCachedManifestPolicy(publicClientId);
+  let policy = getCachedManifestPolicy(publicClientId);
+  policy ??=
+    // Dev servers restart frequently and clear process-local caches. Try an
+    // on-demand warm once before failing the request.
+    await warmAppManifestCacheForPublicClientWithRetry(
+      publicClientId,
+      "token_mint",
+    );
   if (!policy) {
     return {
       ok: false,

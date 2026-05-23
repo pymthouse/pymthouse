@@ -369,9 +369,21 @@ The oracle source and observation timestamp are stored with each transaction so 
 
 Returns `{ ethUsd: { priceUsd, source, observedAt, isFallback } }`.
 
+### Per-app signing mode (`signingMode`)
+
+`PUT /api/v1/apps/:id` accepts `signingMode`:
+
+| Value | `generate-live-payment` routing |
+| --- | --- |
+| `legacy_remote_signer` (default) | Orchestrator blob → go-livepeer DMZ; registry body → **403** |
+| `lpnm_payer_daemon` | Registry → LPNM payer-daemon; orchestrator blob → LPNM |
+| `dual` | Registry → LPNM; orchestrator blob → legacy DMZ |
+
+`GET /api/v1/apps/:id/pipeline-catalog` scopes the Plans catalog: legacy capabilities, registry capabilities, or **both** (dual). **`python-gateway`** should use `PaymentSession` for orchestrator-based tickets and `RegistryPaymentSession` for `paymentMode: "registry"` (see python-gateway `docs/signing-envelopes.md`).
+
 ### Manifest enforcement on signing (hot path)
 
-`POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` enforce the app **network capability manifest** before forwarding to go-livepeer. Enforcement uses a **process-local in-memory cache** keyed by the token’s public `client_id` (`app_…`); the signing path does **not** query the database for manifest rows.
+`POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` enforce the app **network capability manifest** before forwarding to the resolved signer backend. Enforcement uses a **process-local in-memory cache** keyed by the token’s public `client_id` (`app_…`); the signing path does **not** query the database for manifest rows.
 
 1. **Pipeline required:** The request must include a resolvable `pipeline` (direct body fields, gateway metadata, or derivable `capabilities`). Requests without a pipeline are rejected with **`403`** and `error: "capability_not_allowed"`.
 2. **Model optional:** When `modelId` is present, the exact `(pipeline, modelId)` pair must appear in the cached manifest `capabilities`. When `modelId` is omitted, the pipeline must have at least one allowed model in the manifest.

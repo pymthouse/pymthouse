@@ -11,6 +11,12 @@ import {
   type AppFormData,
   type AppState,
 } from "./AppWizard";
+import {
+  SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+  SIGNING_MODE_LPNM_PAYER_DAEMON,
+  SIGNING_MODE_DUAL,
+  isValidSigningMode,
+} from "@/lib/signing-modes";
 
 interface Props {
   appId: string;
@@ -51,6 +57,11 @@ function mergeFormData(
     initiateLoginUri: initial.initiateLoginUri ?? initialInitiateLoginUri ?? "",
     deviceThirdPartyInitiateLogin:
       initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
+    signingMode:
+      initial.signingMode && isValidSigningMode(initial.signingMode)
+        ? initial.signingMode
+        : SIGNING_MODE_LEGACY_REMOTE_SIGNER,
+    payerDaemonSocket: initial.payerDaemonSocket ?? "",
   };
 }
 
@@ -486,13 +497,92 @@ export default function AppSettingsScreen({
           id="panel-auth"
           role="tabpanel"
           aria-labelledby="tab-auth"
-          className="pb-6"
+          className="space-y-10 pb-6"
         >
           <AppModeStep
             data={formData}
             onChange={updateFormData}
             readOnly={!canEdit}
           />
+
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-100">Livepeer signing</h2>
+              <p className="text-sm text-zinc-500 mt-1">
+                Choose how PymtHouse fulfills{" "}
+                <code className="text-zinc-400">/api/v1/signer/*</code> for access
+                tokens issued to this app. Dual mode routes per request:
+                registry payments use LPNM; orchestrator blobs use the legacy remote
+                signer. LPNM mode uses the payment-daemon{" "}
+                <code className="text-zinc-400">PayerDaemon</code> unix socket.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="radio"
+                  name="signingMode"
+                  checked={formData.signingMode === SIGNING_MODE_LEGACY_REMOTE_SIGNER}
+                  onChange={() =>
+                    updateFormData({ signingMode: SIGNING_MODE_LEGACY_REMOTE_SIGNER })
+                  }
+                  disabled={!canEdit}
+                  className="accent-emerald-500"
+                />
+                <span>Legacy: forward to go-livepeer remote signer</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="radio"
+                  name="signingMode"
+                  checked={formData.signingMode === SIGNING_MODE_LPNM_PAYER_DAEMON}
+                  onChange={() =>
+                    updateFormData({ signingMode: SIGNING_MODE_LPNM_PAYER_DAEMON })
+                  }
+                  disabled={!canEdit}
+                  className="accent-emerald-500"
+                />
+                <span>LPNM: payment-daemon PayerDaemon unix socket</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="radio"
+                  name="signingMode"
+                  checked={formData.signingMode === SIGNING_MODE_DUAL}
+                  onChange={() =>
+                    updateFormData({ signingMode: SIGNING_MODE_DUAL })
+                  }
+                  disabled={!canEdit}
+                  className="accent-emerald-500"
+                />
+                <span>
+                  Dual: registry → LPNM; orchestrator blob → legacy remote signer
+                </span>
+              </label>
+            </div>
+            <div>
+              <label
+                htmlFor="payerDaemonSocket"
+                className="block text-sm font-medium text-zinc-300 mb-1.5"
+              >
+                PayerDaemon socket path (optional)
+              </label>
+              <input
+                id="payerDaemonSocket"
+                type="text"
+                value={formData.payerDaemonSocket}
+                onChange={(e) => updateFormData({ payerDaemonSocket: e.target.value })}
+                placeholder="/run/pymthouse/payer.sock"
+                disabled={!canEdit}
+                className="w-full px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50"
+              />
+              <p className="text-xs text-zinc-500 mt-1">
+                Leave empty to use{" "}
+                <code className="text-zinc-500">LPNM_PAYER_DAEMON_SOCKET</code> or the
+                default path.
+              </p>
+            </div>
+          </section>
         </section>
       )}
 
@@ -613,27 +703,31 @@ export default function AppSettingsScreen({
           role="tabpanel"
           aria-labelledby="tab-plans"
         >
-          <PlansTab appId={appId} canEdit={canEdit} />
+          <PlansTab
+            appId={appId}
+            canEdit={canEdit}
+            isActive={integrationSection === "plans"}
+          />
         </div>
       )}
 
       {/* Save - only shown for non-plans tabs */}
       {integrationSection !== "plans" && (
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
-        <p className="text-xs text-zinc-500 max-w-sm">
-          Redirect URIs and domains update immediately. Use{" "}
-          <strong className="text-zinc-400">Save changes</strong> for metadata,
-          auth mode, scopes, and OIDC fields.
-        </p>
-        <button
-          type="button"
-          onClick={() => void saveChanges()}
-          disabled={!canEdit || saving || !formData.name.trim()}
-          className="px-5 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-        >
-          {saving ? "Saving…" : "Save changes"}
-        </button>
-      </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
+          <p className="text-xs text-zinc-500 max-w-sm">
+            Redirect URIs and domains update immediately. Use{" "}
+            <strong className="text-zinc-400">Save changes</strong> for metadata,
+            auth mode, scopes, and OIDC fields.
+          </p>
+          <button
+            type="button"
+            onClick={() => void saveChanges()}
+            disabled={!canEdit || saving || !formData.name.trim()}
+            className="px-5 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
       )}
     </div>
   );

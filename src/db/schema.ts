@@ -270,6 +270,15 @@ export const developerApps = pgTable("developer_apps", {
   brandingSupportEmail: text("branding_support_email"), // custom support email for branded login
   /** Public JWKS URL for RFC 8693 (Pattern B); use production host, not loopback. */
   jwksUri: text("jwks_uri"),
+  /**
+   * Remote signing backend for `/api/v1/signer/*` when the access token resolves to this app.
+   * `legacy_remote_signer` — forward to go-livepeer (DMZ). `lpnm_payer_daemon` — payment-daemon PayerDaemon over unix socket.
+   */
+  signingMode: text("signing_mode")
+    .notNull()
+    .default("legacy_remote_signer"),
+  /** Optional unix socket path for PayerDaemon when `signing_mode` is `lpnm_payer_daemon`. Falls back to `LPNM_PAYER_DAEMON_SOCKET` env. */
+  payerDaemonSocket: text("payer_daemon_socket"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

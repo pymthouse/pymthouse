@@ -85,6 +85,8 @@ export interface DecodedOrchestratorInfo {
   address?: Uint8Array;
   priceInfo?: PriceInfo;
   capabilitiesPrices?: PriceInfo[];
+  /** Present when the orchestrator returned an auth token for segment creds. */
+  authToken?: Record<string, unknown>;
 }
 
 /**
@@ -129,6 +131,10 @@ export async function decodeOrchestratorInfo(
         constraint: p.constraint as string | undefined,
       })
     ),
+    authToken:
+      obj.authToken && typeof obj.authToken === "object"
+        ? (obj.authToken as Record<string, unknown>)
+        : undefined,
   };
 }
 
@@ -250,4 +256,32 @@ export function calculatePlatformCut(
 export function calculateLv2vPixels(secondsElapsed: number): bigint {
   const PIXELS_PER_SEC = 1280 * 720 * 30; // 27,648,000
   return BigInt(Math.floor(PIXELS_PER_SEC * secondsElapsed));
+}
+
+/**
+ * Build base64 `Livepeer-Segment` / `segCreds` from decoded orchestrator auth token
+ * (matches python-gateway offchain `SegData` encoding).
+ */
+export async function encodeSegCredsBase64FromDecodedOrchestrator(
+  orch: DecodedOrchestratorInfo,
+): Promise<string | null> {
+  if (!orch.authToken || Object.keys(orch.authToken).length === 0) {
+    return null;
+  }
+  const root = (await loadOrchestratorInfoType()).parent;
+  if (!root) return null;
+  const AuthToken = root.lookupType("net.AuthToken");
+  const SegData = root.lookupType("net.SegData");
+  const errA = AuthToken.verify(orch.authToken);
+  if (errA) {
+    throw new Error(`AuthToken verify: ${errA}`);
+  }
+  const authMsg = AuthToken.create(orch.authToken);
+  const segPayload = { authToken: authMsg };
+  const errS = SegData.verify(segPayload);
+  if (errS) {
+    throw new Error(`SegData verify: ${errS}`);
+  }
+  const seg = SegData.create(segPayload);
+  return Buffer.from(SegData.encode(seg).finish()).toString("base64");
 }

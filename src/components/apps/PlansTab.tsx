@@ -961,31 +961,33 @@ function NetworkPricePlanCard({
       {expanded && (
         <div className="space-y-3">
           {catalog.length > 0 ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={!canEdit || saving}
-                  onClick={() => setPickerValues(allCatalogPickerValues(catalog))}
-                  className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  disabled={!canEdit || saving}
-                  onClick={() => setPickerValues([])}
-                  className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  Unselect all
-                </button>
-              </div>
-              <label className="block text-xs text-zinc-500">
-                Pipelines &amp; models discoverable to integrators
-                <span className="block text-zinc-600 mt-0.5">
-                  Per-capability price limits coming soon.
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-zinc-500">
+                  Pipelines &amp; models discoverable to integrators
+                  <span className="block text-zinc-600 mt-0.5">
+                    Per-capability price limits coming soon.
+                  </span>
                 </span>
-              </label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!canEdit || saving}
+                    onClick={() => setPickerValues(allCatalogPickerValues(catalog))}
+                    className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canEdit || saving}
+                    onClick={() => setPickerValues([])}
+                    className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </div>
               <PipelineModelPicker
                 catalog={catalog}
                 values={pickerValues}
@@ -997,7 +999,7 @@ function NetworkPricePlanCard({
                   {exclusionCount} exclusion{exclusionCount === 1 ? "" : "s"} from full catalog.
                 </p>
               )}
-            </>
+            </div>
           ) : (
             <p className="text-sm text-zinc-500">Catalog unavailable — cannot edit picker.</p>
           )}
@@ -1319,11 +1321,14 @@ function AddPlanPanel({
 interface PlansTabProps {
   appId: string;
   canEdit: boolean;
+  /** Refetch catalog when the Plans tab becomes visible (e.g. after saving signing mode). */
+  isActive?: boolean;
 }
 
-export default function PlansTab({ appId, canEdit }: PlansTabProps) {
+export default function PlansTab({ appId, canEdit, isActive = true }: PlansTabProps) {
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [catalog, setCatalog] = useState<PipelineCatalogEntry[]>([]);
+  const [catalogServiceType, setCatalogServiceType] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -1407,15 +1412,22 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
   }, [fetchPlans]);
 
   useEffect(() => {
-    fetch("/api/v1/pipeline-catalog")
+    if (!isActive) return;
+    fetch(`/api/v1/apps/${appId}/pipeline-catalog`)
       .then(readFetchJson)
       .then(({ ok, status, body }) => {
         const cat = body.catalog;
         if (Array.isArray(cat) && cat.length > 0) {
           setCatalog(cat as PipelineCatalogEntry[]);
+          setCatalogServiceType(
+            typeof body.serviceType === "string" ? body.serviceType : null,
+          );
           setCatalogError(null);
         } else if (Array.isArray(cat) && cat.length === 0) {
           setCatalog([]);
+          setCatalogServiceType(
+            typeof body.serviceType === "string" ? body.serviceType : null,
+          );
           setCatalogError("Pipeline catalog is empty");
         } else if (typeof body.error === "string") {
           setCatalogError(body.error);
@@ -1423,8 +1435,8 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
           setCatalogError(`Pipeline catalog unavailable (HTTP ${status})`);
         }
       })
-      .catch(() => setCatalogError("NaaP catalog unavailable"));
-  }, []);
+      .catch(() => setCatalogError("Pipeline catalog unavailable"));
+  }, [appId, isActive]);
 
   const deletePlan = async (planId: string) => {
     if (!canEdit) return;
@@ -1476,6 +1488,19 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
           Enabled capabilities are priced at the live network market rate. Use custom plans to apply
           reseller markup pricing to specific network capabilities.
         </p>
+        {catalogServiceType && (
+          <p className="text-xs text-zinc-600 mt-2">
+            Catalog scope:{" "}
+            <span className="text-zinc-400">
+              {catalogServiceType === "dual"
+                ? "legacy + registry (dual signing — union catalog)"
+                : catalogServiceType === "registry"
+                  ? "registry (LPNM payer-daemon signing)"
+                  : "legacy (go-livepeer remote signer)"}
+            </span>
+            . Change under App profile → Livepeer signing.
+          </p>
+        )}
         {!canEdit && (
           <p className="text-sm text-amber-400/90 mt-2">
             View only — only platform or app administrators can edit plans.

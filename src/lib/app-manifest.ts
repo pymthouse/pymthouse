@@ -6,7 +6,9 @@ import {
   toAppManifestResponse,
   type AppManifestResponse,
 } from "@/lib/discovery-allowlist";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import {
+  fetchPipelineCatalogForApp,
+} from "@/lib/catalog-for-app";
 import {
   getOrCreateNetworkDefaultPlan,
   selectNetworkDefaultPlan,
@@ -30,7 +32,7 @@ export async function buildAppManifestForApp(
 
   let catalog;
   try {
-    catalog = await fetchPipelineCatalog();
+    catalog = await fetchPipelineCatalogForApp(appInternalId, executor);
   } catch {
     return buildManifestWhenCatalogUnavailable(excludedDoc);
   }

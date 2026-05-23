@@ -14,7 +14,7 @@ import {
   DiscoveryAllowlistUpdateBodySchema,
   normalizeDiscoveryAllowlistDoc,
 } from "@/lib/discovery-allowlist";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalogForApp } from "@/lib/catalog-for-app";
 import {
   findCustomPlansBlockingNewExclusions,
   getOrCreateNetworkDefaultPlan,
@@ -140,7 +140,7 @@ export async function PUT(
 
   let catalogLite;
   try {
-    const catalog = await fetchPipelineCatalog();
+    const catalog = await fetchPipelineCatalogForApp(auth.app.id);
     catalogLite = catalog.map((e) => ({ id: e.id, models: e.models }));
   } catch {
     return NextResponse.json(

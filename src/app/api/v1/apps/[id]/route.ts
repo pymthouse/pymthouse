@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import {
   appAllowedDomains,
@@ -25,6 +23,9 @@ import {
 } from "@/lib/provider-apps";
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
+import { isValidSigningMode } from "@/lib/signing-modes";
+import { warmAppManifestCacheForPublicClient } from "@/lib/app-manifest-cache";
+import { warmAppSigningRoutingCache } from "@/lib/signing-routing-cache";
 import { authenticateAppClient } from "@/lib/auth";
 import {
   listAvailableFiatOracleProviders,
@@ -198,7 +199,50 @@ export async function PUT(
     }
   }
 
+  if (body.signingMode !== undefined) {
+    const m = String(body.signingMode).trim();
+    if (!isValidSigningMode(m)) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid signingMode (expected legacy_remote_signer, lpnm_payer_daemon, or dual)",
+        },
+        { status: 400 },
+      );
+    }
+    appUpdates.signingMode = m;
+  }
+  if (body.payerDaemonSocket !== undefined) {
+    const raw = body.payerDaemonSocket;
+    if (raw === null || raw === "") {
+      appUpdates.payerDaemonSocket = null;
+    } else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (trimmed.length > 512) {
+        return NextResponse.json(
+          { error: "payerDaemonSocket must be at most 512 characters" },
+          { status: 400 },
+        );
+      }
+      appUpdates.payerDaemonSocket = trimmed || null;
+    } else {
+      return NextResponse.json(
+        { error: "payerDaemonSocket must be a string or null" },
+        { status: 400 },
+      );
+    }
+  }
+
   await db.update(developerApps).set(appUpdates).where(eq(developerApps.id, app.id));
+
+  if (body.signingMode !== undefined) {
+    try {
+      await warmAppSigningRoutingCache(clientId);
+      await warmAppManifestCacheForPublicClient(clientId, "manifest_put");
+    } catch (err) {
+      console.warn("[api] cache warm failed after signingMode update:", err);
+    }
+  }
 
   if (
     body.billingDisplayCurrency !== undefined ||

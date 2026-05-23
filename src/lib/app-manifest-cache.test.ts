@@ -47,6 +47,18 @@ test("resolveSigningPipelineConstraint accepts pipeline without modelId", async 
   assert.deepEqual(c, { pipeline: "text-to-image" });
 });
 
+test("resolveSigningPipelineConstraint maps registry capability and offering", async () => {
+  const c = await resolveSigningPipelineConstraint({
+    paymentMode: "registry",
+    capability: "openai:audio-speech",
+    offering: "kokoro",
+  });
+  assert.deepEqual(c, {
+    pipeline: "openai:audio-speech",
+    modelId: "kokoro",
+  });
+});
+
 test("enforceCachedManifestPolicy rejects cache miss", async () => {
   resetManifestPolicyCacheForTests();
   const result = await enforceCachedManifestPolicy(
@@ -103,6 +115,24 @@ test("enforceCachedManifestPolicy allows pipeline-only when model omitted", asyn
   });
   const result = await enforceCachedManifestPolicy(
     { pipeline: "text-to-image" },
+    AUTH,
+  );
+  assert.equal(result.ok, true);
+});
+
+test("enforceCachedManifestPolicy allows registry capability from discovery catalog", async () => {
+  publishCachedManifestPolicy("app_test123", {
+    capabilities: [{ pipeline: "openai:audio-speech", modelId: "kokoro" }],
+    excludedCapabilities: [],
+    manifestVersion: "v4",
+  });
+  const result = await enforceCachedManifestPolicy(
+    {
+      paymentMode: "registry",
+      pipeline: "openai:audio-speech",
+      capability: "openai:audio-speech",
+      offering: "kokoro",
+    },
     AUTH,
   );
   assert.equal(result.ok, true);

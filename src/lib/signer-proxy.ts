@@ -5,15 +5,10 @@ import {
   developerApps,
   endUsers,
   oidcClients,
-  planCapabilityBundles,
-  plans,
   signerConfig,
   streamSessions,
-  transactions,
-  usageBillingEvents,
-  usageRecords,
 } from "@/db/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import {
   decodeOrchestratorInfo,
@@ -26,16 +21,38 @@ import { issueSignerDmzToken } from "./signer-dmz-token";
 import { getSenderInfo } from "./signer-cli";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "./signer-local-compose";
 import { getIssuer } from "./oidc/issuer-urls";
-import { getEthUsdOracle } from "./prices/eth-usd-oracle";
 import { enforceCachedManifestPolicy } from "./app-manifest-cache";
 import {
   resolvePaymentPipelineModelConstraint,
   resolveGatewayAttribution,
-  buildSignedTicketConstraintHash,
-  resolveUpcharge,
-  computeUsdMicrosFromWei,
-  weiToEthString,
 } from "./billing-runtime";
+import {
+  resolvePayerDaemonSocketPath,
+} from "@/lib/signer-lpnm/socket-resolver";
+import {
+  parseRegistryFaceValueWei,
+  parseRegistryGenerateLivePaymentFields,
+  parseRegistryPricePerUnitWei,
+} from "@/lib/signer-lpnm/registry-payment";
+import {
+  resolveAuxSignerRoute,
+  resolveSignerRoute,
+  SIGNER_ROUTE_LPNM_REGISTRY,
+  signerRouteUsesLpnm,
+} from "@/lib/signing-route";
+import {
+  getCachedAppSigningRouting,
+  warmAppSigningRoutingCache,
+  type CachedAppSigningRouting,
+} from "@/lib/signing-routing-cache";
+import {
+  lpnmProxyDiscoverOrchestrators,
+  lpnmProxyGenerateLivePayment,
+  lpnmProxyGenerateLivePaymentFromRegistry,
+  lpnmProxySignByocJob,
+  lpnmProxySignOrchestratorInfo,
+} from "@/lib/signer-lpnm/translator";
+import { recordLivePaymentUsage } from "@/lib/signer-usage";
 
 export interface ProxyResult {
   status: number;
@@ -74,9 +91,58 @@ export async function resolveDeveloperAppIdFromAuthAppId(
 }
 
 export async function getSignerRoutingContext(authAppId?: string | null) {
+  const ctx = await resolveSigningRequestContext(authAppId);
+  return {
+    signer: ctx.signer,
+    providerAppId: ctx.providerAppId,
+    signingMode: ctx.routing?.signingMode ?? "legacy_remote_signer",
+    payerDaemonSocket: ctx.payerDaemonSocket,
+    routing: ctx.routing,
+  };
+}
+
+export interface SigningRequestContext {
+  signer: Awaited<ReturnType<typeof getDefaultSigner>>;
+  providerAppId: string | null;
+  routing: CachedAppSigningRouting | null;
+  payerDaemonSocket: string | null;
+}
+
+export async function resolveSigningRequestContext(
+  authAppId?: string | null,
+): Promise<SigningRequestContext> {
   const signer = await getDefaultSigner();
-  const providerAppId = await resolveDeveloperAppIdFromAuthAppId(authAppId);
-  return { signer, providerAppId };
+  const publicClientId = authAppId?.trim() ?? "";
+  let routing = publicClientId
+    ? getCachedAppSigningRouting(publicClientId)
+    : undefined;
+  if (!routing && publicClientId) {
+    routing = (await warmAppSigningRoutingCache(publicClientId)) ?? undefined;
+  }
+
+  const providerAppId =
+    routing?.providerAppId ??
+    (await resolveDeveloperAppIdFromAuthAppId(authAppId));
+
+  return {
+    signer,
+    providerAppId,
+    routing: routing ?? null,
+    payerDaemonSocket: routing?.payerDaemonSocket ?? null,
+  };
+}
+
+function routeResolutionError(
+  message: string,
+): ProxyResult {
+  return { status: 403, body: { error: message } };
+}
+
+function legacySignerUnavailable(): ProxyResult {
+  return {
+    status: 503,
+    body: { error: "Legacy remote signer is not running" },
+  };
 }
 
 interface BillingOracleSelection {
@@ -527,9 +593,19 @@ export async function proxySignOrchestratorInfo(
   requestBody: unknown,
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer } = await getSignerRoutingContext(auth.appId);
+  const { signer, routing } = await resolveSigningRequestContext(auth.appId);
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
+  }
+
+  const auxRoute = resolveAuxSignerRoute(routing);
+  if (signerRouteUsesLpnm(auxRoute)) {
+    const sock = resolvePayerDaemonSocketPath(routing.payerDaemonSocket);
+    return lpnmProxySignOrchestratorInfo(requestBody, sock);
+  }
+
   if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
+    return legacySignerUnavailable();
   }
 
   try {
@@ -578,10 +654,18 @@ export async function proxyGenerateLivePayment(
   requestBody: Record<string, unknown>,
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer, providerAppId } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
+  const { signer, providerAppId, routing, payerDaemonSocket } =
+    await resolveSigningRequestContext(auth.appId);
+
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
   }
+
+  const routeResolved = resolveSignerRoute(routing, requestBody);
+  if (!routeResolved.ok) {
+    return routeResolutionError(routeResolved.message);
+  }
+  const route = routeResolved.route;
 
   const manifestCheck = await enforceCachedManifestPolicy(requestBody, auth);
   if (!manifestCheck.ok) {
@@ -636,11 +720,30 @@ export async function proxyGenerateLivePayment(
   }
   const orchestratorData = orchPick.value;
 
+  const registryFieldsParsed =
+    route === SIGNER_ROUTE_LPNM_REGISTRY
+      ? parseRegistryGenerateLivePaymentFields(requestBody)
+      : null;
+  if (registryFieldsParsed && !registryFieldsParsed.ok) {
+    return { status: 400, body: { error: registryFieldsParsed.message } };
+  }
+  const registryFields =
+    registryFieldsParsed && registryFieldsParsed.ok
+      ? registryFieldsParsed.fields
+      : undefined;
+
   let pricePerUnit = 0n;
   let pixelsPerUnit = 1n;
   let orchestratorAddress: string | undefined;
 
-  if (orchestratorData) {
+  if (registryFields) {
+    orchestratorAddress = registryFields.recipient;
+    const regPrice = parseRegistryPricePerUnitWei(requestBody);
+    if (regPrice !== undefined && regPrice > 0n) {
+      pricePerUnit = regPrice;
+      pixelsPerUnit = 1n;
+    }
+  } else if (orchestratorData) {
     try {
       const orchInfo = await decodeOrchestratorInfo(orchestratorData);
       if (orchInfo.priceInfo) {
@@ -667,14 +770,45 @@ export async function proxyGenerateLivePayment(
     pixels = 0n;
   }
 
-  const feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
+  let feeWei: bigint;
+  if (registryFields) {
+    const face = parseRegistryFaceValueWei(requestBody);
+    if (face !== undefined && face > 0n) {
+      feeWei = face;
+      if (pricePerUnit === 0n) {
+        pricePerUnit = face;
+        pixelsPerUnit = 1n;
+      }
+    } else {
+      const regPrice =
+        parseRegistryPricePerUnitWei(requestBody) ?? pricePerUnit;
+      if (regPrice > 0n && pixels > 0n) {
+        pricePerUnit = regPrice;
+        pixelsPerUnit = 1n;
+        feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
+      } else {
+        return {
+          status: 400,
+          body: {
+            error:
+              "registry LPNM payment requires faceValueWei > 0, or registryPricePerUnitWei with positive inPixels / work units",
+          },
+        };
+      }
+    }
+  } else {
+    feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
+  }
+
+  const usagePixels =
+    registryFields && feeWei > 0n && pixels === 0n ? 1n : pixels;
+
   const platformCutWei = calculatePlatformCut(
     feeWei,
     signer.defaultCutPercent
   );
   const usageUserId = await resolveUsageUserIdentifier(auth, providerAppId);
   const billingOracleSelection = await resolveBillingOracleSelection(providerAppId);
-  const nowIso = new Date().toISOString();
   let streamSessionId: string | null = null;
 
   // Upsert StreamSession, linked to end user if token is scoped
@@ -716,7 +850,49 @@ export async function proxyGenerateLivePayment(
   const constraint = await resolvePaymentPipelineModelConstraint(requestBody);
   const attribution = resolveGatewayAttribution(requestBody);
 
-  // Forward first — signing must not depend on NaaP pricing availability.
+  if (signerRouteUsesLpnm(route)) {
+    const sock = resolvePayerDaemonSocketPath(payerDaemonSocket);
+    if (route === SIGNER_ROUTE_LPNM_REGISTRY && registryFields) {
+      return lpnmProxyGenerateLivePaymentFromRegistry({
+        auth,
+        signer,
+        providerAppId,
+        usageUserId,
+        requestBody,
+        socketPath: sock,
+        feeWei,
+        platformCutWei,
+        pricePerUnit,
+        pixelsPerUnit,
+        pixels: usagePixels,
+        streamSessionId,
+        fields: registryFields,
+        billingOracleProviderKey: billingOracleSelection.billingOracleProviderKey,
+      });
+    }
+    return lpnmProxyGenerateLivePayment({
+      auth,
+      signer,
+      providerAppId,
+      usageUserId,
+      requestBody,
+      socketPath: sock,
+      feeWei,
+      platformCutWei,
+      pricePerUnit,
+      pixelsPerUnit,
+      pixels: usagePixels,
+      orchestratorData,
+      streamSessionId,
+      billingOracleProviderKey: billingOracleSelection.billingOracleProviderKey,
+    });
+  }
+
+  if (!signer || signer.status !== "running") {
+    return legacySignerUnavailable();
+  }
+
+  // Forward to go-livepeer DMZ (legacy remote signer).
   try {
     const { response } = await forwardToSigner(
       signer,
@@ -728,214 +904,23 @@ export async function proxyGenerateLivePayment(
     const responseBody = await readSignerUpstreamBody(response);
 
     if (response.ok) {
-      const orchAddrForConstraint =
-        orchestratorAddress && orchestratorAddress.length > 0
-          ? orchestratorAddress
-          : "0x";
-
-      const signedPriceStr = pricePerUnit.toString();
-      const signedPixelsStr = pixelsPerUnit.toString();
-      const pipelineModelConstraintHash =
-        constraint !== null
-          ? buildSignedTicketConstraintHash({
-              pipeline: constraint.pipeline,
-              modelId: constraint.modelId,
-              orchAddress: orchAddrForConstraint,
-              signedPriceWeiPerUnit: signedPriceStr,
-              signedPixelsPerUnit: signedPixelsStr,
-            })
-          : null;
-
-      let priceValidationStatus: string;
-      let priceValidationReason: string | undefined;
-      if (!constraint) {
-        priceValidationStatus = "missing_constraint";
-        priceValidationReason =
-          "No pipeline/model in request (add pipeline and modelId or capabilities with PerCapability models) for full attribution.";
-      } else {
-        priceValidationStatus = "matched";
-      }
-
-      // Dedupe is per explicit RequestID only. Do NOT fall back to manifestId — the gateway
-      // keeps one manifest for the whole LV2V session, so that would collapse every payment
-      // into a single usage row and freeze signerPaymentCount at 1.
-      const rawReq =
-        (typeof requestBody.requestId === "string" && requestBody.requestId.trim()) ||
-        (typeof requestBody.RequestID === "string" && requestBody.RequestID.trim());
-      const requestId = rawReq || uuidv4();
-
-      // Check for an existing usage record first to prevent duplicate inserts on retries
-      let existingUsage = null;
-      if (providerAppId) {
-        const usageRows = await db
-          .select()
-          .from(usageRecords)
-          .where(
-            and(
-              eq(usageRecords.clientId, providerAppId),
-              eq(usageRecords.requestId, requestId),
-            ),
-          )
-          .limit(1);
-        existingUsage = usageRows[0] ?? null;
-      }
-
-      if (!existingUsage) {
-        // Fetch ETH/USD oracle at signing time
-        const ethUsd = await getEthUsdOracle({
-          appId: providerAppId,
-          providerKey: billingOracleSelection.billingOracleProviderKey,
-        });
-
-        // Compute USD values from wei
-        const networkFeeUsdMicros = computeUsdMicrosFromWei(feeWei, ethUsd.priceUsd);
-        const ownerChargeWei = feeWei + platformCutWei;
-        const ownerPlatformFeeUsdMicros = computeUsdMicrosFromWei(platformCutWei, ethUsd.priceUsd);
-        const ownerChargeUsdMicros = computeUsdMicrosFromWei(ownerChargeWei, ethUsd.priceUsd);
-
-        // Resolve plan upcharge when we have a pipeline/model constraint.
-        let upchargeResult: {
-          bps: number;
-          source: "pipeline_model" | "subscription_included" | "unpriced";
-        } = { bps: 0, source: "unpriced" as const };
-        if (providerAppId && constraint) {
-          try {
-            const planRows = await db
-              .select()
-              .from(plans)
-              .where(and(eq(plans.clientId, providerAppId), eq(plans.status, "active")))
-              .orderBy(desc(plans.updatedAt))
-              .limit(1);
-            const bundleRows = planRows[0]
-              ? await db
-                  .select()
-                  .from(planCapabilityBundles)
-                  .where(
-                    and(
-                      eq(planCapabilityBundles.planId, planRows[0].id),
-                      eq(planCapabilityBundles.clientId, providerAppId),
-                    ),
-                  )
-              : [];
-            upchargeResult = resolveUpcharge({
-              plan: planRows[0] ?? null,
-              bundles: bundleRows,
-              pipeline: constraint.pipeline,
-              modelId: constraint.modelId,
-            });
-          } catch (err) {
-            console.warn("[proxy] Plan upcharge lookup failed:", err);
-          }
-        }
-
-        // Compute end-user billable: networkFee * (1 + upchargeBps/10000) in micros
-        const endUserBillableUsdMicros =
-          upchargeResult.bps > 0
-            ? networkFeeUsdMicros + (networkFeeUsdMicros * BigInt(upchargeResult.bps)) / 10000n
-            : networkFeeUsdMicros;
-
-        const transactionId = uuidv4();
-        const usageRecordId = uuidv4();
-
-        await db.transaction(async (tx) => {
-          if (streamSessionId) {
-            await tx
-              .update(streamSessions)
-              .set({
-                signerPaymentCount: sql`${streamSessions.signerPaymentCount} + 1`,
-                totalFeeWei: sql`(${streamSessions.totalFeeWei}::numeric + ${feeWei.toString()}::numeric)::bigint::text`,
-                lastPaymentAt: nowIso,
-                pricePerUnit: pricePerUnit.toString(),
-                pixelsPerUnit: pixelsPerUnit.toString(),
-              })
-              .where(eq(streamSessions.id, streamSessionId));
-          }
-
-          await tx.insert(transactions).values({
-            id: transactionId,
-            endUserId: auth.endUserId || null,
-            appId: providerAppId ?? auth.appId ?? null,
-            clientId: providerAppId,
-            streamSessionId,
-            type: "usage",
-            amountWei: feeWei.toString(),
-            platformCutPercent: signer.defaultCutPercent,
-            platformCutWei: platformCutWei.toString(),
-            status: "confirmed",
-            pipeline: constraint?.pipeline ?? null,
-            modelId: constraint?.modelId ?? null,
-            attributionSource: attribution.attributionSource,
-            gatewayRequestId: attribution.gatewayRequestId,
-            paymentMetadataVersion: attribution.paymentMetadataVersion,
-            pipelineModelConstraintHash,
-            advertisedPriceWeiPerUnit: constraint ? signedPriceStr : null,
-            advertisedPixelsPerUnit: constraint ? signedPixelsStr : null,
-            signedPriceWeiPerUnit: pricePerUnit.toString(),
-            signedPixelsPerUnit: pixelsPerUnit.toString(),
-            priceValidationStatus,
-            priceValidationReason: priceValidationReason ?? null,
-            // ETH/USD oracle snapshot
-            ethUsdPrice: ethUsd.priceUsd.toString(),
-            ethUsdSource: ethUsd.source,
-            ethUsdObservedAt: ethUsd.observedAt,
-            networkFeeUsdMicros: networkFeeUsdMicros.toString(),
-            ownerPlatformFeeWei: platformCutWei.toString(),
-            ownerPlatformFeeUsdMicros: ownerPlatformFeeUsdMicros.toString(),
-            ownerChargeWei: ownerChargeWei.toString(),
-            ownerChargeUsdMicros: ownerChargeUsdMicros.toString(),
-          });
-
-          if (providerAppId) {
-            const clientId = providerAppId;
-            await tx.insert(usageRecords).values({
-              id: usageRecordId,
-              requestId,
-              userId: usageUserId,
-              clientId,
-              modelId: constraint?.modelId ?? null,
-              units: pixels.toString(),
-              fee: feeWei.toString(),
-              createdAt: new Date().toISOString(),
-            });
-
-            // Billable ledger row when pipeline/model constraint is present (negotiated ticket).
-            if (constraint && pipelineModelConstraintHash) {
-              await tx.insert(usageBillingEvents).values({
-                id: uuidv4(),
-                usageRecordId,
-                transactionId,
-                streamSessionId,
-                clientId,
-                userId: usageUserId,
-                pipeline: constraint.pipeline,
-                modelId: constraint.modelId,
-                attributionSource: attribution.attributionSource,
-                gatewayRequestId: attribution.gatewayRequestId,
-                paymentMetadataVersion: attribution.paymentMetadataVersion,
-                pipelineModelConstraintHash: pipelineModelConstraintHash,
-                orchAddress: orchestratorAddress ?? null,
-                advertisedPriceWeiPerUnit: signedPriceStr,
-                advertisedPixelsPerUnit: signedPixelsStr,
-                signedPriceWeiPerUnit: pricePerUnit.toString(),
-                signedPixelsPerUnit: pixelsPerUnit.toString(),
-                networkFeeWei: feeWei.toString(),
-                networkFeeUsdMicros: networkFeeUsdMicros.toString(),
-                platformFeeWei: platformCutWei.toString(),
-                platformFeeUsdMicros: ownerPlatformFeeUsdMicros.toString(),
-                ownerChargeWei: ownerChargeWei.toString(),
-                ownerChargeUsdMicros: ownerChargeUsdMicros.toString(),
-                upchargePercentBps: upchargeResult.bps,
-                pricingRuleSource: upchargeResult.source,
-                endUserBillableUsdMicros: endUserBillableUsdMicros.toString(),
-                ethUsdPrice: ethUsd.priceUsd.toString(),
-                ethUsdSource: ethUsd.source,
-                ethUsdObservedAt: ethUsd.observedAt,
-                createdAt: new Date().toISOString(),
-              });
-            }
-          }
-        });
-      }
+      await recordLivePaymentUsage({
+        auth,
+        requestBody,
+        signer,
+        providerAppId,
+        usageUserId,
+        feeWei,
+        platformCutWei,
+        pricePerUnit,
+        pixelsPerUnit,
+        pixels: usagePixels,
+        streamSessionId,
+        constraint,
+        attribution,
+        orchestratorAddress,
+        billingOracleProviderKey: billingOracleSelection.billingOracleProviderKey,
+      });
     }
 
     return { status: response.status, body: responseBody };
@@ -952,18 +937,31 @@ export async function proxySignByocJob(
   requestBody: unknown,
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
-  }
+  const { signer, routing, payerDaemonSocket } =
+    await resolveSigningRequestContext(auth.appId);
 
   const bodyRecord =
     requestBody !== null && typeof requestBody === "object" && !Array.isArray(requestBody)
       ? (requestBody as Record<string, unknown>)
       : {};
+
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
+  }
+
   const manifestCheck = await enforceCachedManifestPolicy(bodyRecord, auth);
   if (!manifestCheck.ok) {
     return { status: manifestCheck.status, body: manifestCheck.body };
+  }
+
+  const auxRoute = resolveAuxSignerRoute(routing);
+  if (signerRouteUsesLpnm(auxRoute)) {
+    const sock = resolvePayerDaemonSocketPath(payerDaemonSocket);
+    return lpnmProxySignByocJob(requestBody, sock);
+  }
+
+  if (!signer || signer.status !== "running") {
+    return legacySignerUnavailable();
   }
 
   try {
@@ -994,9 +992,19 @@ export async function proxySignByocJob(
 export async function proxyDiscoverOrchestrators(
   auth: AuthResult
 ): Promise<ProxyResult> {
-  const { signer } = await getSignerRoutingContext(auth.appId);
+  const { signer, routing } = await resolveSigningRequestContext(auth.appId);
+
+  if (!routing) {
+    return routeResolutionError("App signing configuration is not loaded");
+  }
+
+  const auxRoute = resolveAuxSignerRoute(routing);
+  if (signerRouteUsesLpnm(auxRoute)) {
+    return lpnmProxyDiscoverOrchestrators();
+  }
+
   if (!signer || signer.status !== "running") {
-    return { status: 503, body: { error: "Signer is not running" } };
+    return legacySignerUnavailable();
   }
 
   try {

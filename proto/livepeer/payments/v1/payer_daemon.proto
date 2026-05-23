@@ -1,0 +1,177 @@
+// Livepeer Payments v1 — PayerDaemon service.
+//
+// The PayerDaemon runs next to a payer application — a Livepeer gateway
+// or any consumer app paying an orchestrator. It creates and signs
+// tickets, manages per-session sender nonces, and watches the payer's
+// on-chain escrow.
+//
+// Mounted only when the daemon is started with `--mode=sender`. Calls
+// to it in receiver mode return UNIMPLEMENTED.
+//
+// This service is NOT part of the wire-compat contract; it is a
+// daemon↔consumer-app contract that may evolve under v1. See
+// `../docs/wire-compat.md`.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+import "livepeer/payments/v1/types.proto";
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+
+service PayerDaemon {
+  // Create a payment blob (a `Payment` carrying one or more tickets)
+  // for a selected payee identity at a target spend.
+  //
+  // On the quote-free sender path, the daemon:
+  //   1. Resolves a worker URL for `recipient` (via the local resolver
+  //      or a configured override).
+  //   2. POSTs `(sender, recipient, face_value, capability, offering)`
+  //      to the worker's `/v1/payment/ticket-params` endpoint.
+  //   3. Receives canonical `TicketParams` back.
+  //   4. Validates against sender escrow / EV caps.
+  //   5. Signs a one-ticket `Payment`.
+  //
+  // The `face_value` argument is interpreted as the caller's TARGET
+  // SPEND (expected value), not a mandatory winning-ticket size. The
+  // receiver may answer with a larger `TicketParams.face_value` plus a
+  // lower `TicketParams.win_prob` when redemption economics require a
+  // redeemable ticket. Senders MUST treat the response `TicketParams`
+  // as the source of truth and not assume the returned `face_value`
+  // equals the requested face_value.
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+
+  // Inspect the payer's current TicketBroker deposit / reserve state.
+  // Read-only; the daemon does not fund escrow.
+  rpc GetDepositInfo(GetDepositInfoRequest) returns (GetDepositInfoResponse);
+
+  // Read the per-session debit ledger for a long-lived session
+  // (`ws-realtime@v0`, `session-control-plus-media@v0`, etc.). Used by
+  // gateway adapters at session-close time to surface a final
+  // `Livepeer-Work-Units` count to the gateway caller without adding a
+  // close-frame extension or a control-plane event. The daemon may
+  // return UNIMPLEMENTED when long-lived debit tracking is not wired
+  // (the gateway-side adapter treats UNIMPLEMENTED as "0 work units,
+  // best effort"). The actual debit-pushdown from the broker-side
+  // ticker lands with plan 0015.
+  rpc GetSessionDebits(GetSessionDebitsRequest) returns (GetSessionDebitsResponse);
+
+  // Health returns "ok" if the daemon is ready to mint payments. The
+  // gateway calls this once at startup.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Identify returns the payer ETH address and a signature over its hex
+  // form, matching go-livepeer remote signer `POST /sign-orchestrator-info`
+  // (keccak256(addressHex) then EIP-191 personal_sign).
+  rpc Identify(IdentifyRequest) returns (IdentifyResponse);
+
+  // SignBYOCJob signs the V1 BYOC job flattening (same bytes as
+  // go-livepeer `byoc.FlattenBYOCJob`).
+  rpc SignBYOCJob(SignBYOCJobRequest) returns (SignBYOCJobResponse);
+}
+
+message CreatePaymentRequest {
+  // Recipient orchestrator identity (the on-chain payee address), 20
+  // raw bytes.
+  bytes recipient = 1;
+
+  // Optional per-request broker origin the sender should query for
+  // `POST /v1/payment/ticket-params`. Gateway-backed resolver flows set
+  // this to the selected broker URL so the ticket-params source matches
+  // the payee that will validate the payment. When empty, sender mode
+  // may fall back to a configured default for single-broker/dev setups.
+  string ticket_params_base_url = 2;
+
+  // Accepted route/quote basis chosen by the gateway.
+  AcceptedPrice accepted_price = 3;
+
+  // Funding scope the gateway is authorizing for this minted payment batch.
+  FundingIntent funding = 4;
+}
+
+message CreatePaymentResponse {
+  // Wire-format `livepeer.payments.v1.Payment` bytes. The caller
+  // attaches these to its app-level request to the payee (typically as
+  // the `Livepeer-Payment` HTTP header value, base64-encoded).
+  bytes payment_bytes = 1;
+
+  // Number of tickets this payment carries (for metrics / audit).
+  uint32 tickets_created = 2;
+
+  // Aggregate expected value (EV = face_value × win_prob) committed by
+  // this payment.
+  BigUInt expected_value = 3;
+
+  // Effective funded value used for the minted payment batch.
+  BigUInt funded_value_wei = 4;
+
+  // Quote identity serialized into the payment context.
+  QuoteRef accepted_quote_ref = 5;
+
+  // Work-id bound to this minted payment (hex recipient_rand_hash).
+  string work_id = 6;
+}
+
+message GetSessionDebitsRequest {
+  // Sender ETH address (20 raw bytes), echoed from the payment envelope.
+  bytes sender = 1;
+
+  // Work-id of the long-lived session. Hex-encoded
+  // recipient_rand_hash, identical to the value the broker echoes in
+  // `Livepeer-Request-Id` when the session opens.
+  string work_id = 2;
+}
+
+message GetSessionDebitsResponse {
+  // Total work units accrued across all interim debits for this
+  // session. Zero when the daemon has no record of the session (or
+  // when long-lived debit tracking is not wired and the daemon
+  // returns the empty default).
+  uint64 total_work_units = 1;
+
+  // Number of interim debits the daemon recorded for this session.
+  // Useful for diagnostics; the gateway-adapter does not act on it.
+  uint64 debit_count = 2;
+
+  // True when the session is closed (CloseSession was issued).
+  bool closed = 3;
+}
+
+message GetDepositInfoRequest {}
+
+message IdentifyRequest {}
+
+message IdentifyResponse {
+  // 20-byte ETH address (raw).
+  bytes address = 1;
+  // 65-byte ECDSA signature [R||S||V], V in {27,28}.
+  bytes signature = 2;
+}
+
+message SignBYOCJobRequest {
+  string id = 1;
+  string capability = 2;
+  string request = 3;
+  string parameters = 4;
+  int32 timeout_seconds = 5;
+}
+
+message SignBYOCJobResponse {
+  bytes sender = 1;
+  bytes signature = 2;
+}
+
+message GetDepositInfoResponse {
+  // Current on-chain deposit (wei, big-endian bytes).
+  bytes deposit = 1;
+
+  // Current on-chain reserve (wei, big-endian bytes).
+  bytes reserve = 2;
+
+  // If the payer has initiated an unlock, the round at which
+  // withdrawal becomes possible. Zero when no unlock is pending.
+  int64 withdraw_round = 3;
+}
+
+// HealthRequest / HealthResponse live in types.proto (shared with PayeeDaemon).

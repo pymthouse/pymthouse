@@ -11,7 +11,7 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalogForApp } from "@/lib/catalog-for-app";
 import {
   assertCapabilityRowsDiscoverable,
   loadDiscoverableSetForApp,
@@ -326,7 +326,7 @@ export async function POST(
   if (parsedCapabilities.capabilities.length > 0) {
     let catalogLite;
     try {
-      const cat = await fetchPipelineCatalog();
+      const cat = await fetchPipelineCatalogForApp(appId);
       catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
     } catch {
       return NextResponse.json(
@@ -518,7 +518,7 @@ export async function PUT(
   if (parsedCapabilities && parsedCapabilities.capabilities.length > 0) {
     let catalogLite;
     try {
-      const cat = await fetchPipelineCatalog();
+      const cat = await fetchPipelineCatalogForApp(appId);
       catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
     } catch {
       return NextResponse.json(

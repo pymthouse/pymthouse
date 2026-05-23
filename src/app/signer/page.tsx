@@ -11,6 +11,9 @@ import SignerControlPanel from "@/components/SignerControlPanel";
 import SignerConfigForm from "@/components/SignerConfigForm";
 import SignerLogs from "@/components/SignerLogs";
 import SignerLiveStats from "@/components/SignerLiveStats";
+import PaymentControlPanel from "@/components/PaymentControlPanel";
+import PaymentLiveStats from "@/components/PaymentLiveStats";
+import PaymentLogs from "@/components/PaymentLogs";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_MINUTES,
   countActiveStreamsByRecentPayment,
@@ -21,6 +24,10 @@ import {
 } from "@/lib/oidc/issuer-urls";
 import { resolveDmzHostPort } from "@/lib/signer-dmz-host-port";
 import { getSignerUrl } from "@/lib/signer-proxy";
+import {
+  fetchPaymentDaemonStatus,
+  getPaymentDaemonAdminConfig,
+} from "@/lib/payment-daemon-status";
 
 function formatWei(wei: string | null): string {
   if (!wei || wei === "0") return "0 WEI";
@@ -56,10 +63,12 @@ export default async function SignerPage() {
     );
   }
 
-  const [activeStreamCount, allSessions, allTxns] = await Promise.all([
+  const [activeStreamCount, allSessions, allTxns, paymentStatus] =
+    await Promise.all([
     countActiveStreamsByRecentPayment(),
     db.select().from(streamSessions),
     db.select({ id: transactions.id }).from(transactions),
+    fetchPaymentDaemonStatus(),
   ]);
 
   let totalFeeWei = 0n;
@@ -84,6 +93,18 @@ export default async function SignerPage() {
       ? "env"
       : "default";
 
+  const paymentConfig = getPaymentDaemonAdminConfig();
+  const paymentStatusColors: Record<string, string> = {
+    running: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    stopped: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30",
+    error: "bg-red-500/20 text-red-400 border-red-500/30",
+  };
+  const paymentModuleStatus = paymentStatus.reachable
+    ? "running"
+    : paymentStatus.containerRunning
+      ? "running"
+      : "stopped";
+
   return (
     <DashboardLayout>
       <div className="mb-8">
@@ -99,6 +120,10 @@ export default async function SignerPage() {
         </div>
         <p className="text-zinc-500 font-mono text-sm">
           {signer.ethAddress || "No address -- signer not connected"}
+        </p>
+        <p className="text-zinc-600 text-xs mt-2">
+          Admin for go-livepeer remote signer and LPNM payment-daemon (unix
+          socket).
         </p>
       </div>
 
@@ -196,7 +221,7 @@ export default async function SignerPage() {
       </div>
 
       {/* pymthouse configuration */}
-      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30">
+      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-12">
         <SignerConfigForm
           config={{
             name: signer.name,
@@ -218,6 +243,103 @@ export default async function SignerPage() {
             signerUrlSource,
           }}
         />
+      </div>
+
+      {/* LPNM payment-daemon (unix socket) */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-4">
+          <h3 className="text-xl font-bold tracking-tight text-zinc-100">
+            LPNM Payment Daemon
+          </h3>
+          <span
+            className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${
+              paymentStatusColors[paymentModuleStatus] ||
+              paymentStatusColors.stopped
+            }`}
+          >
+            {paymentModuleStatus}
+          </span>
+        </div>
+        <p className="text-zinc-500 font-mono text-sm mb-6">
+          {paymentStatus.ethAddress ||
+            "No address -- payment daemon not connected"}
+        </p>
+      </div>
+
+      <div className="border border-zinc-800 rounded-xl bg-zinc-900/30 mb-8 overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-800">
+          <h3 className="font-semibold text-zinc-200">
+            payment-daemon (sender mode)
+          </h3>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Apps with{" "}
+            <code className="text-zinc-400">signing_mode = lpnm_payer_daemon</code>{" "}
+            reach the PayerDaemon gRPC service over a unix socket. Configure
+            containers via{" "}
+            <code className="text-zinc-400">docker/payment-daemon/.env</code>.
+          </p>
+        </div>
+        <div className="font-mono text-sm">
+          <ConfigRow label="Mode" value="sender" />
+          <ConfigRow
+            label="Socket path"
+            value={paymentConfig.socketPath}
+            mono
+          />
+          <ConfigRow
+            label="Socket source"
+            value={
+              paymentConfig.socketSource === "env"
+                ? "LPNM_PAYER_DAEMON_SOCKET"
+                : "default (/run/pymthouse/payer.sock)"
+            }
+          />
+          <ConfigRow
+            label="Compose dir"
+            value={paymentConfig.composeDir}
+            mono
+          />
+          <ConfigRow
+            label="LPNM_TICKET_PARAMS_BASE_URL"
+            value={paymentConfig.ticketParamsBaseUrl || "(empty)"}
+            mono
+          />
+          <ConfigRow
+            label="LPNM_DISCOVERY_ORCH_URL"
+            value={paymentConfig.discoveryOrchUrl || "(empty)"}
+            mono
+          />
+          <ConfigRow
+            label="LPNM_PAYMENT_CAPABILITY"
+            value={paymentConfig.capability}
+            mono
+          />
+          <ConfigRow
+            label="LPNM_PAYMENT_OFFERING"
+            value={paymentConfig.offering}
+            mono
+          />
+          <ConfigRow label="Keystore" value="(see docker/payment-daemon/.env)" />
+          <ConfigRow
+            label="OrchestratorInsecureSkipVerify"
+            value="true"
+          />
+        </div>
+      </div>
+
+      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
+        <PaymentLiveStats />
+      </div>
+
+      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
+        <PaymentControlPanel
+          senderRunning={paymentStatus.senderContainerRunning}
+          registryRunning={paymentStatus.registryContainerRunning}
+        />
+      </div>
+
+      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30">
+        <PaymentLogs />
       </div>
     </DashboardLayout>
   );
