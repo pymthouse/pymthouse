@@ -65,6 +65,15 @@ async function mintFromDeviceToken(
         code: error.code,
       });
     }
+    if (
+      error instanceof Error &&
+      error.message.includes("subject_token sub does not map")
+    ) {
+      throw new PmtHouseError(error.message, {
+        status: 400,
+        code: "invalid_grant",
+      });
+    }
     throw error;
   }
 }

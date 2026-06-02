@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appUsers, developerApps, endUsers, oidcClients, users } from "@/db/schema";
+import { findOrCreateAppEndUser } from "@/lib/billing";
 import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
 import { TokenExchangeError } from "@/lib/oidc/token-exchange";
 
@@ -146,18 +147,23 @@ export async function resolveSubjectAccessToken(
     };
   }
 
+  // Device verification binds accountId to platform users.id (see device/verify approve).
+  // Any such user who received an access token may exchange for a signer JWT; provision
+  // a per-app end_user keyed by user:{sub} (same convention as app owner below).
   const platformUserRows = await dbConn
     .select({ id: users.id })
     .from(users)
     .where(eq(users.id, sub))
     .limit(1);
-  if (platformUserRows[0]?.id === developerApp.ownerId) {
+  if (platformUserRows[0]) {
+    const externalUserId = `user:${sub}`;
+    await findOrCreateAppEndUser(developerApp.appId, externalUserId);
     return {
       payload: rec,
       sub,
       publicClientId,
       developerAppId: developerApp.appId,
-      externalUserId: `user:${sub}`,
+      externalUserId,
     };
   }
 
