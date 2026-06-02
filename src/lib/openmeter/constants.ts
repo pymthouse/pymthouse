@@ -31,3 +31,8 @@ export function getHostedOpenMeterUrl(): string {
 export function requireOpenMeterForUsageReads(): boolean {
   return isOpenMeterEnabled();
 }
+
+/** When false in NODE_ENV=test, OpenMeter reads/writes use in-memory stubs only. */
+export function openMeterUsesLiveNetworkInTests(): boolean {
+  return process.env.OPENMETER_TEST_LIVE === "1";
+}

@@ -5,10 +5,15 @@ import {
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import {
   isOpenMeterEnabled,
+  openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
 import type { MeterQueryRow } from "@openmeter/sdk";
+
+function avoidOpenMeterNetworkInTests(): boolean {
+  return process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests();
+}
 
 export type OpenMeterUsageRow = {
   externalUserId: string;
@@ -500,6 +505,10 @@ export async function queryOpenMeterUserPipelineByModel(input: {
     }
   }
 
+  if (avoidOpenMeterNetworkInTests()) {
+    return [];
+  }
+
   const client = await getOpenMeterClientForApp(input.clientId);
   if (!client) {
     return [];
@@ -543,6 +552,10 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
     if (stub) {
       return stub;
     }
+  }
+
+  if (avoidOpenMeterNetworkInTests()) {
+    return [];
   }
 
   const client = await getOpenMeterClientForApp(input.clientId);
@@ -604,6 +617,10 @@ export async function queryOpenMeterUsage(input: {
     }
   }
 
+  if (avoidOpenMeterNetworkInTests()) {
+    return [];
+  }
+
   const client = await getOpenMeterClientForApp(input.clientId);
   if (!client) {
     return [];
@@ -647,6 +664,10 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     if (stub) {
       return stub;
     }
+  }
+
+  if (avoidOpenMeterNetworkInTests()) {
+    return null;
   }
 
   const client = await getOpenMeterClientForApp(input.clientId);
