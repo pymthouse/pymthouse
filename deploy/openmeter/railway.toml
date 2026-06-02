@@ -1,0 +1,16 @@
+# Deploy only the OpenMeter API from GitHub (workers are separate services).
+# Railway dashboard: service root directory = deploy/openmeter, or use monorepo root
+# with dockerfilePath = deploy/openmeter/Dockerfile and start command via entrypoint.
+#
+# Prefer docker-compose.openmeter.railway.yml for the full 6-service stack.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "deploy/openmeter/Dockerfile"
+watchPatterns = ["deploy/openmeter/**", "docker/openmeter/**"]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/api/v1/debug/metrics"
+healthcheckTimeout = 300

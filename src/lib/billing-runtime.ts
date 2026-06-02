@@ -148,28 +148,14 @@ export function buildSignedTicketConstraintHash(params: {
 }
 
 /**
- * Resolve the upcharge in basis points to apply to this usage event.
- *
- * Uses pipeline/model bundle upchargePercentBps when present, otherwise 0.
- *
- * Negative values are rejected at write time and should never appear here.
+ * @deprecated Retail pricing is defined by OpenMeter plan rate cards synced from Plans tab.
  */
-export function resolveUpcharge(params: {
+export function resolveUpcharge(_params: {
   plan: typeof plans.$inferSelect | null;
   bundles: Array<typeof planCapabilityBundles.$inferSelect>;
   pipeline: string;
   modelId: string;
 }): { bps: number; source: BillingContext["pricingRuleSource"] } {
-  const { bundles, pipeline, modelId } = params;
-
-  // Exact pipeline + modelId bundle override, then pipeline wildcard ("*")
-  const bundle =
-    bundles.find((b) => b.pipeline === pipeline && b.modelId === modelId) ??
-    bundles.find((b) => b.pipeline === pipeline && b.modelId === "*");
-  if (bundle?.upchargePercentBps != null && bundle.upchargePercentBps >= 0) {
-    return { bps: bundle.upchargePercentBps, source: "pipeline_model" };
-  }
-
   return { bps: 0, source: "unpriced" };
 }
 

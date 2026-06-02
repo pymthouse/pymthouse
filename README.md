@@ -81,8 +81,13 @@ If you do not use port `3001` for the app, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, a
 container (for example `http://host.docker.internal:<port>/api/v1/oidc/jwks`).
 
 ```bash
-docker compose up -d --build
+./scripts/build-local-signer.sh
+docker compose up -d signer-dmz
 ```
+
+The build script compiles go-livepeer from `../go-livepeer` via
+`lpclearinghouse/scripts/build-remote-signer.sh`, then layers it into the DMZ image.
+Re-run it after go-livepeer changes.
 
 Check signer logs (optional):
 
@@ -132,8 +137,8 @@ Then register application clients through the dashboard/API and rotate secrets p
 ## Common commands
 
 ```bash
-# Start signer
-docker compose up -d --build
+# Build / start signer (after go-livepeer changes: ./scripts/build-local-signer.sh)
+docker compose up -d signer-dmz
 
 # Stop signer
 docker compose stop signer-dmz
@@ -149,7 +154,7 @@ npm run lint
 
 ### Vercel + Railway/Render
 
-Pymthouse can be deployed to Vercel (for the Next.js app) with the Docker signer running on Railway, Render, or Fly.io.
+Pymthouse can be deployed to Vercel (for the Next.js app) with the Docker signer on Railway and **OpenMeter on a separate Railway project** (usage / trial credits). See [docs/openmeter-railway.md](docs/openmeter-railway.md).
 
 **Quick Deploy (15 minutes):**
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a quick checklist.
@@ -157,6 +162,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a quick checklist.
 **Detailed Guide:**
 See [docs/vercel-deployment.md](docs/vercel-deployment.md) for full step-by-step instructions including:
 - Deploying the go-livepeer signer to Railway/Render/Fly.io
+- Deploying OpenMeter to Railway ([openmeter-railway.md](docs/openmeter-railway.md))
 - Deploying the Next.js app to Vercel
 - Configuring environment variables
 - Setting up PostgreSQL (Neon/Vercel Postgres)

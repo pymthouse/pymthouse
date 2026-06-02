@@ -83,7 +83,6 @@ export default async function UsersPage() {
               <thead>
                 <tr className="border-b border-zinc-800 text-zinc-500 text-xs uppercase tracking-wider">
                   <th className="text-left py-3 px-4 font-medium">User</th>
-                  <th className="text-right py-3 px-4 font-medium">Credits</th>
                   <th className="text-right py-3 px-4 font-medium">Streams</th>
                   <th className="text-right py-3 px-4 font-medium">Txns</th>
                   <th className="text-center py-3 px-4 font-medium">Status</th>
@@ -110,9 +109,6 @@ export default async function UsersPage() {
                             : user.id.slice(0, 12)}
                         </p>
                       </Link>
-                    </td>
-                    <td className="py-3 px-4 text-right text-zinc-300 font-mono text-xs">
-                      {formatWei(user.creditBalanceWei)}
                     </td>
                     <td className="py-3 px-4 text-right text-zinc-300">
                       {user.streamCount}

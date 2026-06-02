@@ -1,10 +1,12 @@
 import { getServerSession } from "next-auth";
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { appUsers, developerApps, usageBillingEvents, usageRecords, users } from "@/db/schema";
+import { developerApps, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
+import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
+import { queryOpenMeterAppDashboardUsage } from "@/lib/usage/query-openmeter";
 
 export type BillingAppRow = {
   id: string;
@@ -23,6 +25,7 @@ export type BillingUserUsageRow = {
   requestCount: number;
   totalFeeWei: string;
   totalUnits: string;
+  networkFeeUsdMicros?: string;
 };
 
 export type BillingPipelineModelSummary = {
@@ -65,36 +68,6 @@ export function formatBillingPeriod(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-function dateKeyFromIso(iso: string): string {
-  return iso.slice(0, 10);
-}
-
-function classifyUsageUser(endUserId: string, externalUserId: string | null): {
-  userType: "system_managed" | "oidc_authorized" | "unknown";
-  userLabel: string;
-  identifier: string;
-} {
-  if (externalUserId) {
-    return {
-      userType: "system_managed",
-      userLabel: externalUserId,
-      identifier: endUserId,
-    };
-  }
-  if (endUserId !== "unknown") {
-    return {
-      userType: "oidc_authorized",
-      userLabel: "OIDC user (not provisioned)",
-      identifier: endUserId,
-    };
-  }
-  return {
-    userType: "unknown",
-    userLabel: "Unknown / unscoped",
-    identifier: "unknown",
-  };
 }
 
 function sortAppsForViewer(apps: BillingAppRow[], userId: string, isAdmin: boolean): BillingAppRow[] {
@@ -144,18 +117,21 @@ export type BillingUsageDashboardPayload = {
   userId: string;
   role: string | undefined;
   isAdmin: boolean;
+  usageSource: "openmeter";
   cycle: { start: string; end: string };
   orderedApps: BillingAppRow[];
   appUsage: BillingAppUsageSummary[];
   chartData: { date: string; value: number }[];
   totalRequests: number;
   totalFeeWei: bigint;
+  totalNetworkFeeUsdMicros: bigint;
   appsWithUsage: number;
 };
 
 export type BillingUsageDashboardResult =
   | { ok: false; reason: "no_session" }
   | { ok: false; reason: "forbidden" }
+  | { ok: false; reason: "openmeter_unconfigured" }
   | { ok: true; data: BillingUsageDashboardPayload };
 
 export async function getBillingUsageDashboardData(
@@ -205,188 +181,122 @@ export async function getBillingUsageDashboardData(
     scope = "all";
   }
 
-  const appIds = orderedApps.map((app) => app.id);
   const cycleBounds = calendarMonthBoundsUtc(new Date());
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
 
-  const usageRows =
-    appIds.length > 0
-      ? await db
-          .select()
-          .from(usageRecords)
-          .where(
-            and(
-              inArray(usageRecords.clientId, appIds),
-              gte(usageRecords.createdAt, cycleBounds.start),
-              lte(usageRecords.createdAt, cycleBounds.end),
-            ),
-          )
-      : [];
+  if (!requireOpenMeterForUsageReads()) {
+    return { ok: false, reason: "openmeter_unconfigured" };
+  }
 
-  const appUserRows =
-    appIds.length > 0
-      ? await db
-          .select({
-            id: appUsers.id,
-            clientId: appUsers.clientId,
-            externalUserId: appUsers.externalUserId,
-          })
-          .from(appUsers)
-          .where(inArray(appUsers.clientId, appIds))
-      : [];
+  return buildOpenMeterBillingDashboard({
+    scope,
+    userId,
+    role,
+    isAdmin,
+    cycle,
+    cycleBounds,
+    orderedApps,
+  });
+}
 
-  const usageRecordIds = usageRows.map((r) => r.id).filter(Boolean);
-  const billingEventRows =
-    usageRecordIds.length > 0
-      ? await db
-          .select()
-          .from(usageBillingEvents)
-          .where(inArray(usageBillingEvents.usageRecordId, usageRecordIds))
-      : [];
-
-  const eventByUsageRecord = new Map(billingEventRows.map((e) => [e.usageRecordId, e]));
-
-  const externalUserIdByAppUser = new Map(
-    appUserRows.map((row) => [`${row.clientId}:${row.id}`, row.externalUserId]),
+async function buildOpenMeterBillingDashboard(input: {
+  scope: "all" | "single";
+  userId: string;
+  role: string | undefined;
+  isAdmin: boolean;
+  cycle: { start: string; end: string };
+  cycleBounds: { start: string; end: string };
+  orderedApps: BillingAppRow[];
+}): Promise<BillingUsageDashboardResult> {
+  const omResults = await Promise.all(
+    input.orderedApps.map((app) =>
+      queryOpenMeterAppDashboardUsage({
+        clientId: app.id,
+        startDate: input.cycle.start,
+        endDate: input.cycle.end,
+      }),
+    ),
   );
 
-  const summaryByApp = new Map<
-    string,
-    {
-      requestCount: number;
-      totalFeeWei: bigint;
-      totalUnits: bigint;
-      networkFeeUsdMicros: bigint;
-      endUserBillableUsdMicros: bigint;
-      byUser: Map<string, { requestCount: number; totalFeeWei: bigint; totalUnits: bigint }>;
-      byPipelineModel: Map<
-        string,
-        {
-          pipeline: string;
-          modelId: string;
-          requestCount: number;
-          networkFeeUsdMicros: bigint;
-          endUserBillableUsdMicros: bigint;
-        }
-      >;
-    }
-  >();
-
-  for (const app of orderedApps) {
-    summaryByApp.set(app.id, {
-      requestCount: 0,
-      totalFeeWei: 0n,
-      totalUnits: 0n,
-      networkFeeUsdMicros: 0n,
-      endUserBillableUsdMicros: 0n,
-      byUser: new Map(),
-      byPipelineModel: new Map(),
-    });
-  }
-
-  for (const row of usageRows) {
-    const appSummary = summaryByApp.get(row.clientId);
-    if (!appSummary) continue;
-
-    appSummary.requestCount += 1;
-    appSummary.totalFeeWei += BigInt(row.fee || "0");
-    appSummary.totalUnits += BigInt(row.units || "0");
-
-    const billingEvent = eventByUsageRecord.get(row.id);
-    if (billingEvent) {
-      appSummary.networkFeeUsdMicros += BigInt(billingEvent.networkFeeUsdMicros);
-      appSummary.endUserBillableUsdMicros += BigInt(billingEvent.endUserBillableUsdMicros);
-
-      const pmKey = `${billingEvent.pipeline}|${billingEvent.modelId}`;
-      const existing = appSummary.byPipelineModel.get(pmKey) || {
-        pipeline: billingEvent.pipeline,
-        modelId: billingEvent.modelId,
-        requestCount: 0,
-        networkFeeUsdMicros: 0n,
-        endUserBillableUsdMicros: 0n,
-      };
-      existing.requestCount += 1;
-      existing.networkFeeUsdMicros += BigInt(billingEvent.networkFeeUsdMicros);
-      existing.endUserBillableUsdMicros += BigInt(billingEvent.endUserBillableUsdMicros);
-      appSummary.byPipelineModel.set(pmKey, existing);
-    }
-
-    const endUserId = row.userId || "unknown";
-    const userSummary = appSummary.byUser.get(endUserId) || {
-      requestCount: 0,
-      totalFeeWei: 0n,
-      totalUnits: 0n,
-    };
-    userSummary.requestCount += 1;
-    userSummary.totalFeeWei += BigInt(row.fee || "0");
-    userSummary.totalUnits += BigInt(row.units || "0");
-    appSummary.byUser.set(endUserId, userSummary);
-  }
+  const requestsByDay = new Map<string, number>();
 
   const appUsage: BillingAppUsageSummary[] = sortAppUsageByMostUsed(
-    orderedApps.map((app) => {
-      const summary = summaryByApp.get(app.id)!;
-      const byUser: BillingUserUsageRow[] = [...summary.byUser.entries()]
-        .map(([endUserId, userSummary]) => {
-          const externalUserId =
-            endUserId === "unknown"
-              ? null
-              : externalUserIdByAppUser.get(`${app.id}:${endUserId}`) || null;
-          const identity = classifyUsageUser(endUserId, externalUserId);
-          return {
-            endUserId,
-            externalUserId,
-            userType: identity.userType,
-            userLabel: identity.userLabel,
-            identifier: identity.identifier,
-            requestCount: userSummary.requestCount,
-            totalFeeWei: userSummary.totalFeeWei.toString(),
-            totalUnits: userSummary.totalUnits.toString(),
-          };
-        })
+    input.orderedApps.map((app, index) => {
+      const om = omResults[index];
+      if (!om) {
+        return {
+          app,
+          requestCount: 0,
+          totalFeeWei: "0",
+          totalUnits: "0",
+          networkFeeUsdMicros: "0",
+          endUserBillableUsdMicros: "0",
+          byUser: [],
+          byPipelineModel: [],
+        };
+      }
+
+      for (const [day, count] of om.requestsByDay) {
+        requestsByDay.set(day, (requestsByDay.get(day) ?? 0) + count);
+      }
+
+      let networkFeeUsdMicros = 0n;
+      let requestCount = 0;
+      for (const row of om.byUser) {
+        networkFeeUsdMicros += BigInt(row.networkFeeUsdMicros);
+        requestCount += row.requestCount;
+      }
+
+      const byUser: BillingUserUsageRow[] = [...om.byUser]
         .sort((a, b) => {
           if (b.requestCount !== a.requestCount) {
             return b.requestCount - a.requestCount;
           }
-          const feeA = BigInt(a.totalFeeWei);
-          const feeB = BigInt(b.totalFeeWei);
+          const feeA = BigInt(a.networkFeeUsdMicros);
+          const feeB = BigInt(b.networkFeeUsdMicros);
           if (feeA === feeB) return 0;
           return feeB > feeA ? 1 : -1;
-        });
+        })
+        .map((row) => ({
+          endUserId: row.externalUserId,
+          externalUserId: row.externalUserId,
+          userType: "system_managed" as const,
+          userLabel: row.externalUserId,
+          identifier: row.externalUserId,
+          requestCount: row.requestCount,
+          totalFeeWei: "0",
+          totalUnits: "0",
+          networkFeeUsdMicros: row.networkFeeUsdMicros,
+        }));
 
       return {
         app,
-        requestCount: summary.requestCount,
-        totalFeeWei: summary.totalFeeWei.toString(),
-        totalUnits: summary.totalUnits.toString(),
-        networkFeeUsdMicros: summary.networkFeeUsdMicros.toString(),
-        endUserBillableUsdMicros: summary.endUserBillableUsdMicros.toString(),
+        requestCount,
+        totalFeeWei: "0",
+        totalUnits: "0",
+        networkFeeUsdMicros: networkFeeUsdMicros.toString(),
+        endUserBillableUsdMicros: networkFeeUsdMicros.toString(),
         byUser,
-        byPipelineModel: [...summary.byPipelineModel.values()].map((pm) => ({
+        byPipelineModel: om.byPipelineModel.map((pm) => ({
           pipeline: pm.pipeline,
           modelId: pm.modelId,
           requestCount: pm.requestCount,
-          networkFeeUsdMicros: pm.networkFeeUsdMicros.toString(),
-          endUserBillableUsdMicros: pm.endUserBillableUsdMicros.toString(),
+          networkFeeUsdMicros: pm.networkFeeUsdMicros,
+          endUserBillableUsdMicros: pm.networkFeeUsdMicros,
         })),
       };
     }),
   );
 
   const totalRequests = appUsage.reduce((sum, row) => sum + row.requestCount, 0);
-  const totalFeeWei = appUsage.reduce(
-    (sum, row) => sum + BigInt(row.totalFeeWei || "0"),
+  const totalNetworkFeeUsdMicros = appUsage.reduce(
+    (sum, row) => sum + BigInt(row.networkFeeUsdMicros || "0"),
     0n,
   );
   const appsWithUsage = appUsage.filter((app) => app.requestCount > 0).length;
-  const requestsByDay = new Map<string, number>();
-  for (const row of usageRows) {
-    const day = dateKeyFromIso(row.createdAt);
-    requestsByDay.set(day, (requestsByDay.get(day) ?? 0) + 1);
-  }
   const chartData: { date: string; value: number }[] = dateKeysInclusiveUtc(
-    cycleBounds.start,
-    cycleBounds.end,
+    input.cycleBounds.start,
+    input.cycleBounds.end,
   ).map((date) => ({
     date,
     value: requestsByDay.get(date) ?? 0,
@@ -395,16 +305,18 @@ export async function getBillingUsageDashboardData(
   return {
     ok: true,
     data: {
-      scope,
-      userId,
-      role,
-      isAdmin,
-      cycle: { start: cycle.start, end: cycle.end },
-      orderedApps,
+      scope: input.scope,
+      userId: input.userId,
+      role: input.role,
+      isAdmin: input.isAdmin,
+      usageSource: "openmeter",
+      cycle: { start: input.cycle.start, end: input.cycle.end },
+      orderedApps: input.orderedApps,
       appUsage,
       chartData,
       totalRequests,
-      totalFeeWei,
+      totalFeeWei: 0n,
+      totalNetworkFeeUsdMicros,
       appsWithUsage,
     },
   };

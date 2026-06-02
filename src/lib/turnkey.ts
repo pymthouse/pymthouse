@@ -130,7 +130,6 @@ export async function findOrCreateEndUser(
     id,
     turnkeyUserId,
     walletAddress: walletAddress || null,
-    creditBalanceWei: "0",
   });
 
   return { id, isNew: true };

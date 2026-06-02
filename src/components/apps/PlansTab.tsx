@@ -13,6 +13,18 @@ import {
   pickerValuesFromExcludedDocument,
 } from "@/lib/discovery-allowlist";
 import { planDisplayName } from "@/lib/network-default-plan-display";
+import { planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
+import {
+  markupPercentToRetailRateUsd,
+  retailRateUsdPerMillion,
+  retailRateUsdToMarkupPercent,
+  parseMarkupPercentInput,
+} from "@/lib/plan-pricing";
+import { validateCapabilityFeatureKeys } from "@/lib/openmeter/capability-features";
+import {
+  CUSTOM_PLAN_NAME_MAX_LENGTH,
+  validateCustomPlanName,
+} from "@/lib/openmeter/plan-naming";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -23,21 +35,47 @@ interface PlanRow {
   priceAmount: string;
   priceCurrency: string;
   status: string;
-  includedUnits: string | null;
-  overageRateWei: string | null;
+  overageRateUsd: string | null;
   includedUsdMicros: string | null;
   billingCycle: string;
   discoveryProfileId?: string | null;
   isNetworkDefault?: boolean;
+  isStarterDefault?: boolean;
   discoveryExcludedCapabilities?: { capabilities: unknown[] } | null;
+  openmeterPlanId?: string | null;
+  openmeterPlanVersion?: number | null;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
+  sync?: {
+    status: "not_applicable" | "pending" | "synced" | "error";
+    syncedAt: string | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+    openmeterPlanId?: string | null;
+  };
   capabilities: {
     id: string;
     pipeline: string;
     modelId: string;
     slaTargetP95Ms: number | null;
     maxPricePerUnit: string | null;
-    upchargePercentBps: number | null;
+    retailRateUsd: string | null;
+    markupPercent?: string | null;
+    effectiveRetailRateUsd?: string;
+    featureKey?: string;
   }[];
+}
+
+/** Shown only when OpenMeter sync failed (e.g. after save); omit success timestamps. */
+function planSyncFailureMessage(plan: PlanRow): string | null {
+  if (plan.isNetworkDefault || plan.type === "free") {
+    return null;
+  }
+  const detail = (plan.sync?.errorMessage || plan.syncError)?.trim();
+  if (plan.sync?.status === "error" || detail) {
+    return detail ? `OpenMeter sync failed: ${detail}` : "OpenMeter sync failed";
+  }
+  return null;
 }
 
 type CatalogLite = { id: string; models: string[] };
@@ -48,8 +86,9 @@ interface PlanDraft {
   priceAmount: string;
   priceCurrency: string;
   includedUsdDisplay: string;
+  defaultMarkupPct: string;
   capabilityKeys: string[];
-  capabilityUpchargeByKey: Record<string, string>;
+  capabilityMarkupByKey: Record<string, string>;
 }
 
 const USD_MICROS = 1_000_000;
@@ -92,17 +131,6 @@ function displayToUsdMicros(display: string): string | null {
   const n = parseFloat(display);
   if (!isFinite(n) || n < 0) return null;
   return Math.round(n * USD_MICROS).toString();
-}
-
-function bpsToPercent(bps: number | null | undefined): string {
-  if (bps == null) return "";
-  return (bps / 100).toFixed(2);
-}
-
-function parseBps(pct: string): number | null {
-  const n = parseFloat(pct);
-  if (!isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
 }
 
 function catalogLiteFrom(catalog: PipelineCatalogEntry[]): CatalogLite[] {
@@ -170,7 +198,7 @@ function capabilityKeyLabel(key: string, catalog: PipelineCatalogEntry[]): strin
   return capabilityChipLabel(key.slice(0, sep), key.slice(sep + 1), catalog);
 }
 
-function syncCapabilityUpcharges(
+function syncCapabilityMarkups(
   prev: Record<string, string>,
   keys: string[],
 ): Record<string, string> {
@@ -181,30 +209,31 @@ function syncCapabilityUpcharges(
   return out;
 }
 
-function capabilitiesToUpchargeByKey(
+function capabilitiesToMarkupByKey(
   capabilities: PlanRow["capabilities"],
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const cap of capabilities) {
     const key = cap.modelId === "*" ? cap.pipeline : `${cap.pipeline}|${cap.modelId}`;
-    out[key] =
-      cap.upchargePercentBps != null ? bpsToPercent(cap.upchargePercentBps) : "";
+    out[key] = retailRateUsdToMarkupPercent(cap.retailRateUsd);
   }
   return out;
 }
 
 function pickerKeysToCapabilities(
   keys: string[],
-  upchargeByKey: Record<string, string>,
-): Array<{ pipeline: string; modelId: string; upchargePercentBps: number | null }> {
+  markupByKey: Record<string, string>,
+): Array<{ pipeline: string; modelId: string; retailRateUsd: string | null }> {
   return keys.map((key) => {
     const sep = key.indexOf("|");
     const isWildcard = sep === -1;
-    const pct = upchargeByKey[key]?.trim() ?? "";
+    const markupRaw = markupByKey[key]?.trim() ?? "";
+    const markup = parseMarkupPercentInput(markupRaw);
     return {
       pipeline: isWildcard ? key : key.slice(0, sep),
       modelId: isWildcard ? "*" : key.slice(sep + 1),
-      upchargePercentBps: pct ? parseBps(pct) : null,
+      retailRateUsd:
+        markup != null && markup > 0 ? markupPercentToRetailRateUsd(markup) : null,
     };
   });
 }
@@ -218,8 +247,9 @@ function planToDraft(plan: PlanRow): PlanDraft {
     priceAmount: plan.priceAmount,
     priceCurrency: plan.priceCurrency,
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
+    defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
     capabilityKeys,
-    capabilityUpchargeByKey: capabilitiesToUpchargeByKey(caps),
+    capabilityMarkupByKey: capabilitiesToMarkupByKey(caps),
   };
 }
 
@@ -230,8 +260,9 @@ function emptyDraft(): PlanDraft {
     priceAmount: "0",
     priceCurrency: "USD",
     includedUsdDisplay: "",
+    defaultMarkupPct: "",
     capabilityKeys: [],
-    capabilityUpchargeByKey: {},
+    capabilityMarkupByKey: {},
   };
 }
 
@@ -308,8 +339,10 @@ function CapabilityChips({
           className="inline-flex max-w-full rounded-full bg-zinc-700/80 px-2 py-0.5 text-xs text-zinc-200 truncate"
         >
           {capabilityChipLabel(cap.pipeline, cap.modelId, catalog)}
-          {cap.upchargePercentBps != null && (
-            <span className="text-zinc-400 ml-1">+{bpsToPercent(cap.upchargePercentBps)}%</span>
+          {cap.retailRateUsd != null && (
+            <span className="text-zinc-400 ml-1">
+              ${retailRateUsdPerMillion(cap.retailRateUsd)}/M
+            </span>
           )}
         </span>
       ))}
@@ -318,6 +351,10 @@ function CapabilityChips({
 }
 
 const SUGGESTED_MARKUP_RATES = [0, 5, 10, 15, 20, 25, 30, 50] as const;
+
+function sanitizePlanNameInput(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9 _.\-]/g, "");
+}
 
 function sanitizePercentInput(raw: string): string {
   let s = raw.replace(/[^\d.]/g, "");
@@ -334,7 +371,7 @@ function CapabilityPricingRow({
   markupPct,
   canEdit,
   idPrefix,
-  onUpchargeChange,
+  onMarkupChange,
   onRemove,
 }: {
   capKey: string;
@@ -342,7 +379,7 @@ function CapabilityPricingRow({
   markupPct: string;
   canEdit: boolean;
   idPrefix: string;
-  onUpchargeChange: (pct: string) => void;
+  onMarkupChange: (pct: string) => void;
   onRemove: () => void;
 }) {
   const [markupFocused, setMarkupFocused] = useState(false);
@@ -398,7 +435,7 @@ function CapabilityPricingRow({
               inputMode="decimal"
               autoComplete="off"
               value={markupPct}
-              onChange={(e) => onUpchargeChange(sanitizePercentInput(e.target.value))}
+              onChange={(e) => onMarkupChange(sanitizePercentInput(e.target.value))}
               onFocus={() => {
                 clearBlurTimeout();
                 setMarkupFocused(true);
@@ -428,7 +465,7 @@ function CapabilityPricingRow({
                     key={rate}
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => onUpchargeChange(String(rate))}
+                    onClick={() => onMarkupChange(String(rate))}
                     className={`min-w-[2.25rem] rounded-md px-2 py-0.5 text-[11px] font-medium tabular-nums transition-colors ${
                       active
                         ? "bg-emerald-600 text-white"
@@ -449,19 +486,19 @@ function CapabilityPricingRow({
 
 function CapabilityPricingRules({
   keys,
-  upchargeByKey,
+  markupByKey,
   catalog,
   canEdit,
   idPrefix,
-  onUpchargeChange,
+  onMarkupChange,
   onRemove,
 }: {
   keys: string[];
-  upchargeByKey: Record<string, string>;
+  markupByKey: Record<string, string>;
   catalog: PipelineCatalogEntry[];
   canEdit: boolean;
   idPrefix: string;
-  onUpchargeChange: (key: string, pct: string) => void;
+  onMarkupChange: (key: string, pct: string) => void;
   onRemove: (key: string) => void;
 }) {
   const sorted = sortedCapabilityKeys(keys, catalog);
@@ -478,10 +515,10 @@ function CapabilityPricingRules({
             key={key}
             capKey={key}
             label={capabilityKeyLabel(key, catalog)}
-            markupPct={upchargeByKey[key] ?? ""}
+            markupPct={markupByKey[key] ?? ""}
             canEdit={canEdit}
             idPrefix={idPrefix}
-            onUpchargeChange={(pct) => onUpchargeChange(key, pct)}
+            onMarkupChange={(pct) => onMarkupChange(key, pct)}
             onRemove={() => onRemove(key)}
           />
         ))
@@ -536,11 +573,21 @@ function PlanDraftForm({
         <input
           id={`${idPrefix}-name`}
           value={draft.name}
-          onChange={(e) => onChange({ ...draft, name: e.target.value })}
-          placeholder="Plan name"
+          onChange={(e) =>
+            onChange({
+              ...draft,
+              name: sanitizePlanNameInput(e.target.value).slice(0, CUSTOM_PLAN_NAME_MAX_LENGTH),
+            })
+          }
+          placeholder="e.g. PPU lv2v"
+          maxLength={CUSTOM_PLAN_NAME_MAX_LENGTH}
           disabled={!canEdit}
           className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
         />
+        <p className="text-xs text-zinc-500 mt-1">
+          Letters, numbers, spaces, hyphens, underscores, and periods only (max{" "}
+          {CUSTOM_PLAN_NAME_MAX_LENGTH} chars). Required for OpenMeter sync.
+        </p>
       </div>
 
       <div>
@@ -557,6 +604,26 @@ function PlanDraftForm({
           disabled={!canEdit}
         />
       </div>
+
+      {(draft.type === "subscription" || draft.type === "usage") && (
+        <div>
+          <label htmlFor={`${idPrefix}-default-markup`} className="block text-xs text-zinc-500 mb-1">
+            Default usage markup (% over network cost)
+          </label>
+          <input
+            id={`${idPrefix}-default-markup`}
+            type="text"
+            inputMode="decimal"
+            value={draft.defaultMarkupPct}
+            onChange={(e) =>
+              onChange({ ...draft, defaultMarkupPct: sanitizePercentInput(e.target.value) })
+            }
+            placeholder="0 = pass-through network pricing"
+            disabled={!canEdit}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+          />
+        </div>
+      )}
 
       {draft.type === "subscription" && (
         <>
@@ -612,8 +679,8 @@ function PlanDraftForm({
                     onChange({
                       ...draft,
                       capabilityKeys: keys,
-                      capabilityUpchargeByKey: syncCapabilityUpcharges(
-                        draft.capabilityUpchargeByKey,
+                      capabilityMarkupByKey: syncCapabilityMarkups(
+                        draft.capabilityMarkupByKey,
                         keys,
                       ),
                     });
@@ -629,7 +696,7 @@ function PlanDraftForm({
                     onChange({
                       ...draft,
                       capabilityKeys: [],
-                      capabilityUpchargeByKey: {},
+                      capabilityMarkupByKey: {},
                     })
                   }
                   className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
@@ -645,8 +712,8 @@ function PlanDraftForm({
                 onChange({
                   ...draft,
                   capabilityKeys: keys,
-                  capabilityUpchargeByKey: syncCapabilityUpcharges(
-                    draft.capabilityUpchargeByKey,
+                  capabilityMarkupByKey: syncCapabilityMarkups(
+                    draft.capabilityMarkupByKey,
                     keys,
                   ),
                 })
@@ -658,15 +725,15 @@ function PlanDraftForm({
             />
             <CapabilityPricingRules
               keys={draft.capabilityKeys}
-              upchargeByKey={draft.capabilityUpchargeByKey}
+              markupByKey={draft.capabilityMarkupByKey}
               catalog={catalog}
               canEdit={canEdit}
               idPrefix={idPrefix}
-              onUpchargeChange={(key, pct) =>
+              onMarkupChange={(key, pct) =>
                 onChange({
                   ...draft,
-                  capabilityUpchargeByKey: {
-                    ...draft.capabilityUpchargeByKey,
+                  capabilityMarkupByKey: {
+                    ...draft.capabilityMarkupByKey,
                     [key]: pct,
                   },
                 })
@@ -676,15 +743,15 @@ function PlanDraftForm({
                 onChange({
                   ...draft,
                   capabilityKeys: keys,
-                  capabilityUpchargeByKey: syncCapabilityUpcharges(
-                    draft.capabilityUpchargeByKey,
+                  capabilityMarkupByKey: syncCapabilityMarkups(
+                    draft.capabilityMarkupByKey,
                     keys,
                   ),
                 });
               }}
             />
             <p className="text-xs text-zinc-600">
-              Leave markup blank to use network pricing only.
+              Leave markup blank to bill at network cost. Markup applies as retail $/micro on OpenMeter rate cards.
             </p>
           </>
         ) : (
@@ -698,7 +765,7 @@ function PlanDraftForm({
 function buildPlanPayload(
   draft: PlanDraft,
   planId: string | undefined,
-  existing: PlanRow | null,
+  _existing: PlanRow | null,
 ): Record<string, unknown> {
   const includedUsdMicros =
     draft.type === "subscription" && draft.includedUsdDisplay
@@ -707,8 +774,16 @@ function buildPlanPayload(
 
   const capabilities = pickerKeysToCapabilities(
     draft.capabilityKeys,
-    draft.capabilityUpchargeByKey,
+    draft.capabilityMarkupByKey,
   );
+
+  const defaultMarkup = parseMarkupPercentInput(draft.defaultMarkupPct.trim());
+  const overageRateUsd =
+    draft.type === "free"
+      ? null
+      : defaultMarkup != null && defaultMarkup > 0
+        ? markupPercentToRetailRateUsd(defaultMarkup)
+        : null;
 
   const payload: Record<string, unknown> = {
     name: draft.name.trim(),
@@ -718,16 +793,35 @@ function buildPlanPayload(
     ...(planId ? {} : { status: "active" }),
     capabilities,
     includedUsdMicros,
+    overageRateUsd,
   };
 
   if (planId) payload.id = planId;
 
-  if (draft.type === "subscription") {
-    payload.includedUnits = existing?.includedUnits ?? "0";
-    payload.overageRateWei = existing?.overageRateWei ?? "0";
-  }
-
   return payload;
+}
+
+function openMeterCapabilityValidationError(
+  appId: string,
+  planId: string,
+  draft: PlanDraft,
+): string | null {
+  if (draft.type === "free") {
+    return null;
+  }
+  const capabilities = pickerKeysToCapabilities(
+    draft.capabilityKeys,
+    draft.capabilityMarkupByKey,
+  );
+  if (capabilities.length === 0) {
+    return null;
+  }
+  const result = validateCapabilityFeatureKeys({
+    clientId: appId,
+    planId,
+    capabilities,
+  });
+  return result.ok ? null : result.error;
 }
 
 // ── Collapsed card hit area ───────────────────────────────────────────────────
@@ -1033,6 +1127,168 @@ function NetworkPricePlanCard({
   );
 }
 
+// ── Starter plan card ─────────────────────────────────────────────────────────
+
+function StarterPlanCard({
+  appId,
+  plan,
+  canEdit,
+  onSaved,
+}: {
+  appId: string;
+  plan: PlanRow;
+  canEdit: boolean;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [includedUsdMicros, setIncludedUsdMicros] = useState(plan.includedUsdMicros ?? "5000000");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const syncFailure = planSyncFailureMessage(plan);
+
+  useEffect(() => {
+    if (expanded) {
+      setIncludedUsdMicros(plan.includedUsdMicros ?? "5000000");
+      setError(null);
+    }
+  }, [expanded, plan.includedUsdMicros]);
+
+  const save = async () => {
+    if (!canEdit) return;
+    const trimmed = includedUsdMicros.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      setError("Allowance must be a non-negative whole number (USD micros)");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/starter-plan`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ includedUsdMicros: trimmed }),
+      });
+      const data = await readFetchJson(res);
+      if (!data.ok) {
+        setError(
+          typeof data.body.error === "string"
+            ? data.body.error
+            : `Failed to save (${res.status})`,
+        );
+        return;
+      }
+      if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
+        setError(`Saved, but OpenMeter sync failed: ${data.body.syncError}`);
+        await onSaved();
+        return;
+      }
+      await onSaved();
+      setExpanded(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const collapsedEditable = canEdit && !expanded;
+
+  return (
+    <article
+      className={`group relative rounded-xl border border-sky-500/25 bg-zinc-900/40 p-5 space-y-3 transition-colors ${
+        collapsedEditable ? "hover:border-sky-500/40 hover:bg-zinc-900/50" : ""
+      }`}
+    >
+      <CollapsedPlanCardHitArea
+        enabled={collapsedEditable}
+        ariaLabel="Edit Starter allowance"
+        onActivate={() => setExpanded(true)}
+      />
+      <div
+        className={`relative z-10 flex items-start justify-between gap-4 ${
+          collapsedEditable ? "pointer-events-none" : ""
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
+            {planDisplayNameWithStarter({
+              name: plan.name,
+              isNetworkDefault: false,
+              isStarterDefault: true,
+            })}
+            <span className="text-[10px] font-medium uppercase tracking-wide text-sky-400/90 border border-sky-500/30 rounded px-1.5 py-0.5">
+              Free tier
+            </span>
+          </h3>
+          <p className="text-xs text-zinc-500 mt-1">
+            Included usage for new end users via OpenMeter subscription entitlements (network
+            pass-through pricing)
+          </p>
+          {!expanded && plan.includedUsdMicros && (
+            <p className="text-sm text-sky-300/90 mt-2">
+              ${usdMicrosToDisplay(plan.includedUsdMicros)} USD included per billing period
+            </p>
+          )}
+          {syncFailure && (
+            <p className="text-xs mt-1 text-red-400">{syncFailure}</p>
+          )}
+        </div>
+        {collapsedEditable && (
+          <span className="shrink-0 text-sm font-medium text-sky-400 group-hover:text-sky-300">
+            Edit allowance
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      {expanded && (
+        <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
+          <label className="block text-sm text-zinc-300">
+            Included usage allowance (USD micros)
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={includedUsdMicros}
+              onChange={(e) => setIncludedUsdMicros(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+            />
+          </label>
+          <p className="text-xs text-zinc-500">
+            Display: ${usdMicrosToDisplay(includedUsdMicros || "0")} USD · 1,000,000 micros = $1
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={!canEdit || saving}
+              className="px-4 py-2 rounded-lg bg-sky-600 text-white text-sm hover:bg-sky-500 disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setExpanded(false);
+                setError(null);
+              }}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg border border-zinc-600 text-zinc-200 text-sm hover:bg-zinc-800 disabled:opacity-50"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 // ── Custom plan card ──────────────────────────────────────────────────────────
 
 function CustomPlanCard({
@@ -1063,6 +1319,7 @@ function CustomPlanCard({
   const [draft, setDraft] = useState<PlanDraft>(() => planToDraft(plan));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const syncFailure = planSyncFailureMessage(plan);
 
   useEffect(() => {
     if (isEditing) {
@@ -1073,6 +1330,16 @@ function CustomPlanCard({
 
   const save = async () => {
     if (!canEdit || !draft.name.trim()) return;
+    const nameCheck = validateCustomPlanName(draft.name);
+    if (!nameCheck.ok) {
+      setError(nameCheck.error);
+      return;
+    }
+    const capabilityError = openMeterCapabilityValidationError(appId, plan.id, draft);
+    if (capabilityError) {
+      setError(capabilityError);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -1090,6 +1357,11 @@ function CustomPlanCard({
         );
         return;
       }
+      if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
+        setError(`Saved, but OpenMeter sync failed: ${data.body.syncError}`);
+        await onSaved();
+        return;
+      }
       await onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
@@ -1099,6 +1371,7 @@ function CustomPlanCard({
   };
 
   const collapsedEditable = canEdit && !isEditing;
+  const saveButtonLabel = saving ? "Saving…" : "Save plan";
 
   return (
     <article
@@ -1131,6 +1404,9 @@ function CustomPlanCard({
             <p className="text-xs text-emerald-400/80 mt-1">
               Includes ${usdMicrosToDisplay(plan.includedUsdMicros)} USD usage
             </p>
+          )}
+          {plan.type !== "free" && !plan.isNetworkDefault && syncFailure && (
+            <p className="text-xs mt-1 text-red-400">{syncFailure}</p>
           )}
           {!isEditing && (
             <CapabilityChips capabilities={plan.capabilities} catalog={catalog} />
@@ -1177,7 +1453,7 @@ function CustomPlanCard({
               disabled={saving || !draft.name.trim()}
               className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-500 disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save plan"}
+              {saveButtonLabel}
             </button>
             <button
               type="button"
@@ -1188,6 +1464,11 @@ function CustomPlanCard({
               Discard
             </button>
           </div>
+          <p className="text-xs text-zinc-500">
+            Saving paid plans publishes retail $/micro rate cards to OpenMeter. Use Usage API
+            with <code className="text-zinc-400">?include=retail&amp;groupBy=pipeline_model</code>{" "}
+            to validate effective rates.
+          </p>
         </>
       )}
     </article>
@@ -1218,6 +1499,11 @@ function AddPlanPanel({
 
   const create = async () => {
     if (!canEdit || !draft.name.trim()) return;
+    const nameCheck = validateCustomPlanName(draft.name);
+    if (!nameCheck.ok) {
+      setError(nameCheck.error);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -1235,6 +1521,11 @@ function AddPlanPanel({
         );
         return;
       }
+      if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
+        setError(`Created, but OpenMeter sync failed: ${data.body.syncError}`);
+        await onCreated();
+        return;
+      }
       setDraft(emptyDraft());
       setExpanded(false);
       await onCreated();
@@ -1246,6 +1537,8 @@ function AddPlanPanel({
   };
 
   if (!canEdit) return null;
+
+  const createButtonLabel = saving ? "Creating…" : "Create plan";
 
   const openCreate = () => {
     setError(null);
@@ -1293,7 +1586,7 @@ function AddPlanPanel({
               disabled={saving || !draft.name.trim()}
               className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-500 disabled:opacity-50"
             >
-              {saving ? "Creating…" : "Create plan"}
+              {createButtonLabel}
             </button>
             <button
               type="button"
@@ -1336,8 +1629,13 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
     [plans],
   );
 
+  const starterPlan = useMemo(
+    () => plans.find((p) => p.isStarterDefault === true),
+    [plans],
+  );
+
   const customPlans = useMemo(
-    () => plans.filter((p) => p.isNetworkDefault !== true),
+    () => plans.filter((p) => p.isNetworkDefault !== true && p.isStarterDefault !== true),
     [plans],
   );
 
@@ -1351,7 +1649,9 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
 
   const fetchPlans = useCallback(async () => {
     try {
-      const plansWrap = await fetch(`/api/v1/apps/${appId}/plans`).then(readFetchJson);
+      const plansWrap = await fetch(
+        `/api/v1/apps/${appId}/plans?includeInternals=true`,
+      ).then(readFetchJson);
       if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
         setPlans(plansWrap.body.plans as PlanRow[]);
         setPlanError(null);
@@ -1378,16 +1678,24 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
 
   const refreshCustomPlans = useCallback(async () => {
     try {
-      const plansWrap = await fetch(`/api/v1/apps/${appId}/plans`).then(readFetchJson);
+      const plansWrap = await fetch(
+        `/api/v1/apps/${appId}/plans?includeInternals=true`,
+      ).then(readFetchJson);
       if (plansWrap.ok && Array.isArray(plansWrap.body.plans)) {
         const nextPlans = plansWrap.body.plans as PlanRow[];
-        const nextCustomPlans = nextPlans.filter((p) => p.isNetworkDefault !== true);
+        const nextCustomPlans = nextPlans.filter(
+          (p) => p.isNetworkDefault !== true && p.isStarterDefault !== true,
+        );
         setPlans((prevPlans) => {
           const previousNetworkPlan = prevPlans.find((p) => p.isNetworkDefault === true);
-          if (!previousNetworkPlan) {
+          const previousStarterPlan = prevPlans.find((p) => p.isStarterDefault === true);
+          const reserved = [previousNetworkPlan, previousStarterPlan].filter(
+            (p): p is PlanRow => Boolean(p),
+          );
+          if (reserved.length === 0) {
             return nextPlans;
           }
-          return [previousNetworkPlan, ...nextCustomPlans];
+          return [...reserved, ...nextCustomPlans];
         });
         setPlanError(null);
       } else {
@@ -1431,7 +1739,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
     const plan = plans.find((p) => p.id === planId);
     if (
       !confirm(
-        `Delete plan "${plan ? planDisplayName({ name: plan.name, isNetworkDefault: plan.isNetworkDefault === true }) : planId}"? This cannot be undone.`,
+        `Delete plan "${plan ? planDisplayNameWithStarter({ name: plan.name, isNetworkDefault: plan.isNetworkDefault === true, isStarterDefault: plan.isStarterDefault === true }) : planId}"? This cannot be undone.`,
       )
     ) {
       return;
@@ -1474,7 +1782,7 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
         <p className="text-sm text-zinc-500 mt-1">
           Control which pipelines and models are discoverable for your app&apos;s gateway clients.
           Enabled capabilities are priced at the live network market rate. Use custom plans to apply
-          reseller markup pricing to specific network capabilities.
+          reseller markup on specific pipeline/model capabilities.
         </p>
         {!canEdit && (
           <p className="text-sm text-amber-400/90 mt-2">
@@ -1503,6 +1811,17 @@ export default function PlansTab({ appId, canEdit }: PlansTabProps) {
             />
           ) : (
             <p className="text-sm text-amber-400">Network Price plan not found for this app.</p>
+          )}
+
+          {starterPlan ? (
+            <StarterPlanCard
+              appId={appId}
+              plan={starterPlan}
+              canEdit={canEdit}
+              onSaved={reloadPlans}
+            />
+          ) : (
+            <p className="text-sm text-amber-400">Starter plan not found for this app.</p>
           )}
 
           {customPlans.map((plan) => (

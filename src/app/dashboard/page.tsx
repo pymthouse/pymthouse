@@ -146,8 +146,8 @@ async function AdminDashboard() {
                       {user.name || user.email || user.id.slice(0, 8)}
                     </span>
                   </div>
-                  <span className="text-zinc-500 text-xs">
-                    {formatWei(user.creditBalanceWei)}
+                  <span className="text-zinc-500 text-xs font-mono">
+                    {user.externalUserId || user.id.slice(0, 8)}
                   </span>
                 </div>
               ))}

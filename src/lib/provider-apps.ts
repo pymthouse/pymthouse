@@ -191,3 +191,23 @@ export function appEditForbiddenResponse() {
     { status: 403 },
   );
 }
+
+/**
+ * Merchant-of-record actions (Stripe connect/disconnect). Stricter than canEditProviderApp:
+ * app owner or platform admin only.
+ */
+export async function canManageMerchantBilling(
+  auth: AuthorizedProviderApp,
+): Promise<boolean> {
+  if (auth.role === "admin") return true;
+  return auth.app.ownerId === auth.userId;
+}
+
+export function merchantBillingForbiddenResponse() {
+  return NextResponse.json(
+    {
+      error: "Only the app owner or platform admin can manage Stripe billing.",
+    },
+    { status: 403 },
+  );
+}

@@ -6,6 +6,7 @@ import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep from "./steps/TestingStep";
 import PlansTab from "./PlansTab";
+import PaymentsTab from "./PaymentsTab";
 import {
   defaultAppFormData,
   type AppFormData,
@@ -25,6 +26,8 @@ interface Props {
   canEdit?: boolean;
   /** Only the app owner may submit for review (matches submit API). */
   canSubmitForReview?: boolean;
+  /** Only app owner may connect/disconnect Stripe (matches billing API). */
+  canManageBilling?: boolean;
   /** Called after a successful submit so the parent can refresh status UI. */
   onReviewSubmitted?: () => void;
   /** Called after reverting from submitted to draft (header badge, etc.). */
@@ -59,6 +62,7 @@ const INTEGRATION_TABS = [
   { id: "auth", label: "Auth & scopes" },
   { id: "credentials", label: "Credentials & URLs" },
   { id: "plans", label: "Billing Plans" },
+  { id: "payments", label: "Payments" },
 ] as const;
 
 type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
@@ -84,6 +88,7 @@ export default function AppSettingsScreen({
   initialDeviceThirdPartyInitiateLogin = false,
   canEdit = true,
   canSubmitForReview = false,
+  canManageBilling = false,
   onReviewSubmitted,
   onRevertedToDraft,
   initialTab,
@@ -617,8 +622,18 @@ export default function AppSettingsScreen({
         </div>
       )}
 
-      {/* Save - only shown for non-plans tabs */}
-      {integrationSection !== "plans" && (
+      {integrationSection === "payments" && (
+        <div
+          id="panel-payments"
+          role="tabpanel"
+          aria-labelledby="tab-payments"
+        >
+          <PaymentsTab appId={appId} canManageBilling={canManageBilling} />
+        </div>
+      )}
+
+      {/* Save - only shown for non-plans/payments tabs */}
+      {integrationSection !== "plans" && integrationSection !== "payments" && (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 max-w-sm">
           Redirect URIs and domains update immediately. Use{" "}

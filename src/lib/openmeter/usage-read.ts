@@ -1,0 +1,672 @@
+import {
+  getOpenMeterClientForApp,
+  getMeterSlugForApp,
+} from "@/lib/openmeter/client-factory";
+import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
+import {
+  isOpenMeterEnabled,
+  requireOpenMeterForUsageReads,
+  SIGNED_TICKET_COUNT_METER,
+} from "@/lib/openmeter/constants";
+import type { MeterQueryRow } from "@openmeter/sdk";
+
+export type OpenMeterUsageRow = {
+  externalUserId: string;
+  requestCount: number;
+  networkFeeUsdMicros: string;
+};
+
+export type OpenMeterPipelineModelRow = {
+  pipeline: string;
+  modelId: string;
+  requestCount: number;
+  networkFeeUsdMicros: string;
+};
+
+export type OpenMeterDailyPipelineRow = {
+  pipeline: string;
+  modelId: string;
+  date: string;
+  requestCount: number;
+  networkFeeUsdMicros: string;
+};
+
+export type OpenMeterAppDashboardUsage = {
+  byUser: OpenMeterUsageRow[];
+  byPipelineModel: OpenMeterPipelineModelRow[];
+  requestsByDay: Map<string, number>;
+};
+
+type MeterWindowSize = "DAY" | "MONTH";
+
+/** OpenMeter meter query dimensions (must match ingest event + meter groupBy). */
+const METER_GROUP_BY_USER = ["client_id", "external_user_id"] as const;
+const METER_GROUP_BY_DETAIL = [
+  "client_id",
+  "external_user_id",
+  "pipeline",
+  "model_id",
+] as const;
+
+function buildMeterQuery(input: {
+  startDate?: string | null;
+  endDate?: string | null;
+  windowSize: MeterWindowSize;
+  clientId: string;
+  externalUserId?: string | null;
+  groupBy: readonly string[];
+}): Record<string, unknown> {
+  const query: Record<string, unknown> = {
+    windowSize: input.windowSize,
+    groupBy: [...input.groupBy],
+  };
+  if (input.startDate) {
+    query.from = new Date(input.startDate);
+  }
+  if (input.endDate) {
+    query.to = new Date(input.endDate);
+  }
+  if (input.externalUserId) {
+    query.subject = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
+  }
+  return query;
+}
+
+function clientIdFromGroup(
+  group: Record<string, unknown>,
+  fallbackClientId: string,
+): string {
+  return String(group.client_id || fallbackClientId);
+}
+
+/** UTC date key (YYYY-MM-DD) from an OpenMeter meter query row window. */
+export function dateKeyFromMeterWindow(row: Pick<MeterQueryRow, "windowStart">): string | null {
+  const windowStart = row.windowStart;
+  if (!windowStart) {
+    return null;
+  }
+  const date = windowStart instanceof Date ? windowStart : new Date(windowStart);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function aggregateUserRows(input: {
+  clientId: string;
+  feeRows: MeterQueryRow[];
+  countRows: MeterQueryRow[];
+  filterExternalUserId?: string | null;
+}): OpenMeterUsageRow[] {
+  const countByUser = new Map<string, number>();
+  for (const row of input.countRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    const externalUserId = String(group.external_user_id || "");
+    if (!externalUserId) continue;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    countByUser.set(
+      externalUserId,
+      (countByUser.get(externalUserId) ?? 0) + Math.floor(Number(row.value ?? 0)),
+    );
+  }
+
+  const feeByUser = new Map<string, bigint>();
+  for (const row of input.feeRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    const externalUserId = String(group.external_user_id || "");
+    if (!externalUserId) continue;
+    if (input.filterExternalUserId && externalUserId !== input.filterExternalUserId) continue;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    feeByUser.set(
+      externalUserId,
+      (feeByUser.get(externalUserId) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+    );
+  }
+
+  const externalUserIds = new Set([...countByUser.keys(), ...feeByUser.keys()]);
+  const rows: OpenMeterUsageRow[] = [...externalUserIds].map((externalUserId) => ({
+    externalUserId,
+    requestCount: countByUser.get(externalUserId) ?? 0,
+    networkFeeUsdMicros: (feeByUser.get(externalUserId) ?? 0n).toString(),
+  }));
+
+  if (rows.length === 0 && input.filterExternalUserId) {
+    rows.push({
+      externalUserId: input.filterExternalUserId,
+      requestCount: countByUser.get(input.filterExternalUserId) ?? 0,
+      networkFeeUsdMicros: "0",
+    });
+  }
+
+  return rows;
+}
+
+export function aggregatePipelineModelRows(input: {
+  clientId: string;
+  feeRows: MeterQueryRow[];
+  countRows: MeterQueryRow[];
+}): OpenMeterPipelineModelRow[] {
+  const countByKey = new Map<string, number>();
+  const metaByKey = new Map<string, { pipeline: string; modelId: string }>();
+
+  for (const row of input.countRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    const pipeline = String(group.pipeline || "unknown");
+    const modelId = String(group.model_id || "unknown");
+    const key = `${pipeline}|${modelId}`;
+    metaByKey.set(key, { pipeline, modelId });
+    countByKey.set(
+      key,
+      (countByKey.get(key) ?? 0) + Math.floor(Number(row.value ?? 0)),
+    );
+  }
+
+  const feeByKey = new Map<string, bigint>();
+  for (const row of input.feeRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    const pipeline = String(group.pipeline || "unknown");
+    const modelId = String(group.model_id || "unknown");
+    const key = `${pipeline}|${modelId}`;
+    metaByKey.set(key, { pipeline, modelId });
+    feeByKey.set(
+      key,
+      (feeByKey.get(key) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+    );
+  }
+
+  const keys = new Set([...countByKey.keys(), ...feeByKey.keys()]);
+  return [...keys].flatMap((key) => {
+    const meta = metaByKey.get(key);
+    if (!meta) {
+      return [];
+    }
+    return [
+      {
+        pipeline: meta.pipeline,
+        modelId: meta.modelId,
+        requestCount: countByKey.get(key) ?? 0,
+        networkFeeUsdMicros: (feeByKey.get(key) ?? 0n).toString(),
+      },
+    ];
+  });
+}
+
+export function aggregateDailyPipelineModelRows(input: {
+  clientId: string;
+  feeRows: MeterQueryRow[];
+  countRows: MeterQueryRow[];
+}): OpenMeterDailyPipelineRow[] {
+  const byKey = new Map<
+    string,
+    {
+      pipeline: string;
+      modelId: string;
+      date: string;
+      requestCount: number;
+      networkFeeUsdMicros: bigint;
+    }
+  >();
+
+  for (const row of input.countRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    const pipeline = String(group.pipeline || "unknown");
+    const modelId = String(group.model_id || "unknown");
+    const day = dateKeyFromMeterWindow(row);
+    if (!day) continue;
+    const key = `${pipeline}|${modelId}|${day}`;
+    const existing = byKey.get(key) ?? {
+      pipeline,
+      modelId,
+      date: day,
+      requestCount: 0,
+      networkFeeUsdMicros: 0n,
+    };
+    existing.requestCount += Math.floor(Number(row.value ?? 0));
+    byKey.set(key, existing);
+  }
+
+  for (const row of input.feeRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    const pipeline = String(group.pipeline || "unknown");
+    const modelId = String(group.model_id || "unknown");
+    const day = dateKeyFromMeterWindow(row);
+    if (!day) continue;
+    const key = `${pipeline}|${modelId}|${day}`;
+    const existing = byKey.get(key) ?? {
+      pipeline,
+      modelId,
+      date: day,
+      requestCount: 0,
+      networkFeeUsdMicros: 0n,
+    };
+    existing.networkFeeUsdMicros += BigInt(Math.floor(Number(row.value ?? 0)));
+    byKey.set(key, existing);
+  }
+
+  return [...byKey.values()]
+    .map((row) => ({
+      pipeline: row.pipeline,
+      modelId: row.modelId,
+      date: row.date,
+      requestCount: row.requestCount,
+      networkFeeUsdMicros: row.networkFeeUsdMicros.toString(),
+    }))
+    .sort((a, b) => {
+      const dateCmp = a.date.localeCompare(b.date);
+      if (dateCmp !== 0) return dateCmp;
+      const pipelineCmp = a.pipeline.localeCompare(b.pipeline);
+      if (pipelineCmp !== 0) return pipelineCmp;
+      return a.modelId.localeCompare(b.modelId);
+    });
+}
+
+export function aggregateDailyRequestCounts(input: {
+  clientId: string;
+  countRows: MeterQueryRow[];
+}): Map<string, number> {
+  const requestsByDay = new Map<string, number>();
+  for (const row of input.countRows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+    const day = dateKeyFromMeterWindow(row);
+    if (!day) continue;
+    requestsByDay.set(
+      day,
+      (requestsByDay.get(day) ?? 0) + Math.floor(Number(row.value ?? 0)),
+    );
+  }
+  return requestsByDay;
+}
+
+const testUsageRowsByClient = new Map<string, OpenMeterUsageRow[]>();
+const testDashboardByClient = new Map<string, OpenMeterAppDashboardUsage>();
+
+/** Register OpenMeter meter rows for integration tests (NODE_ENV=test only). */
+export function __testSetOpenMeterUsageRows(
+  clientId: string,
+  rows: OpenMeterUsageRow[],
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testSetOpenMeterUsageRows is only available in test");
+  }
+  testUsageRowsByClient.set(clientId, rows);
+}
+
+export function __testSetOpenMeterDashboardUsage(
+  clientId: string,
+  dashboard: OpenMeterAppDashboardUsage,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testSetOpenMeterDashboardUsage is only available in test");
+  }
+  testDashboardByClient.set(clientId, dashboard);
+}
+
+export function __testClearOpenMeterUsageStubs(): void {
+  testUsageRowsByClient.clear();
+  testDashboardByClient.clear();
+  testDailyByClient.clear();
+}
+
+function filterTestUsageRows(
+  rows: OpenMeterUsageRow[],
+  input: { externalUserId?: string | null },
+): OpenMeterUsageRow[] {
+  if (!input.externalUserId) {
+    return rows;
+  }
+  return rows.filter((row) => row.externalUserId === input.externalUserId);
+}
+
+/** Per-user period totals by pipeline/model (OpenMeter MONTH windows, subject-scoped). */
+export async function queryOpenMeterUserPipelineByModel(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  externalUserId: string;
+}): Promise<OpenMeterPipelineModelRow[]> {
+  if (!requireOpenMeterForUsageReads()) {
+    return [];
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    const daily = testDailyByClient.get(input.clientId);
+    if (daily) {
+      const byKey = new Map<string, OpenMeterPipelineModelRow>();
+      for (const row of daily) {
+        const key = `${row.pipeline}|${row.modelId}`;
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.requestCount += row.requestCount;
+          existing.networkFeeUsdMicros = (
+            BigInt(existing.networkFeeUsdMicros) + BigInt(row.networkFeeUsdMicros)
+          ).toString();
+        } else {
+          byKey.set(key, {
+            pipeline: row.pipeline,
+            modelId: row.modelId,
+            requestCount: row.requestCount,
+            networkFeeUsdMicros: row.networkFeeUsdMicros,
+          });
+        }
+      }
+      return [...byKey.values()];
+    }
+  }
+
+  const client = await getOpenMeterClientForApp(input.clientId);
+  if (!client) {
+    return [];
+  }
+
+  const meterSlug = await getMeterSlugForApp(input.clientId);
+  const periodQuery = buildMeterQuery({
+    clientId: input.clientId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "MONTH",
+    externalUserId: input.externalUserId,
+    groupBy: METER_GROUP_BY_DETAIL,
+  });
+
+  const [feeResult, countResult] = await Promise.all([
+    client.meters.query(meterSlug, periodQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
+  ]);
+
+  return aggregatePipelineModelRows({
+    clientId: input.clientId,
+    feeRows: feeResult.data || [],
+    countRows: countResult.data || [],
+  });
+}
+
+/** Per-user daily signed-ticket counts and network fees by pipeline/model (OpenMeter DAY windows). */
+export async function queryOpenMeterUserDailyByPipeline(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  externalUserId: string;
+}): Promise<OpenMeterDailyPipelineRow[]> {
+  if (!requireOpenMeterForUsageReads()) {
+    return [];
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    const stub = testDailyByClient.get(input.clientId);
+    if (stub) {
+      return stub;
+    }
+  }
+
+  const client = await getOpenMeterClientForApp(input.clientId);
+  if (!client) {
+    return [];
+  }
+
+  const meterSlug = await getMeterSlugForApp(input.clientId);
+  const dayQuery = buildMeterQuery({
+    clientId: input.clientId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "DAY",
+    externalUserId: input.externalUserId,
+    groupBy: METER_GROUP_BY_DETAIL,
+  });
+
+  const [feeResult, countResult] = await Promise.all([
+    client.meters.query(meterSlug, dayQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
+  ]);
+
+  return aggregateDailyPipelineModelRows({
+    clientId: input.clientId,
+    feeRows: feeResult.data || [],
+    countRows: countResult.data || [],
+  });
+}
+
+const testDailyByClient = new Map<string, OpenMeterDailyPipelineRow[]>();
+
+export function __testSetOpenMeterDailyPipelineRows(
+  clientId: string,
+  rows: OpenMeterDailyPipelineRow[],
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testSetOpenMeterDailyPipelineRows is only available in test");
+  }
+  testDailyByClient.set(clientId, rows);
+}
+
+export async function queryOpenMeterUsage(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  externalUserId?: string | null;
+}): Promise<OpenMeterUsageRow[]> {
+  if (!requireOpenMeterForUsageReads()) {
+    return [];
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    const stub = testUsageRowsByClient.get(input.clientId);
+    if (stub) {
+      return filterTestUsageRows(stub, input);
+    }
+  }
+
+  const client = await getOpenMeterClientForApp(input.clientId);
+  if (!client) {
+    return [];
+  }
+
+  const meterSlug = await getMeterSlugForApp(input.clientId);
+  const periodQuery = buildMeterQuery({
+    clientId: input.clientId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "MONTH",
+    externalUserId: input.externalUserId,
+    groupBy: METER_GROUP_BY_USER,
+  });
+
+  const [feeResult, countResult] = await Promise.all([
+    client.meters.query(meterSlug, periodQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
+  ]);
+
+  return aggregateUserRows({
+    clientId: input.clientId,
+    feeRows: feeResult.data || [],
+    countRows: countResult.data || [],
+    filterExternalUserId: input.externalUserId,
+  });
+}
+
+/** Per-app usage for the platform billing dashboard (users, pipeline/model, daily chart). */
+export async function queryOpenMeterAppDashboardUsage(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+}): Promise<OpenMeterAppDashboardUsage | null> {
+  if (!requireOpenMeterForUsageReads()) {
+    return null;
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    const stub = testDashboardByClient.get(input.clientId);
+    if (stub) {
+      return stub;
+    }
+  }
+
+  const client = await getOpenMeterClientForApp(input.clientId);
+  if (!client) {
+    return null;
+  }
+
+  const meterSlug = await getMeterSlugForApp(input.clientId);
+  const periodQuery = buildMeterQuery({
+    clientId: input.clientId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "MONTH",
+    groupBy: METER_GROUP_BY_DETAIL,
+  });
+  const dayQuery = buildMeterQuery({
+    clientId: input.clientId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "DAY",
+    groupBy: METER_GROUP_BY_DETAIL,
+  });
+
+  const [feeResult, countResult, dayCountResult] = await Promise.all([
+    client.meters.query(meterSlug, periodQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
+  ]);
+
+  const feeRows = feeResult.data || [];
+  const countRows = countResult.data || [];
+
+  return {
+    byUser: aggregateUserRows({
+      clientId: input.clientId,
+      feeRows,
+      countRows,
+    }),
+    byPipelineModel: aggregatePipelineModelRows({
+      clientId: input.clientId,
+      feeRows,
+      countRows,
+    }),
+    requestsByDay: aggregateDailyRequestCounts({
+      clientId: input.clientId,
+      countRows: dayCountResult.data || [],
+    }),
+  };
+}
+
+export function shouldReadUsageFromOpenMeter(): boolean {
+  return requireOpenMeterForUsageReads();
+}
+
+/**
+ * Build Builder API usage response from OpenMeter meter rows.
+ * Retail (`endUserBillableUsdMicros`) is omitted until OM plan invoicing is queried;
+ * network cost is authoritative from the signer-backed meter.
+ */
+export function buildOpenMeterUsageResponse(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  groupBy: string;
+  filterUserId?: string | null;
+  rows: OpenMeterUsageRow[];
+  pipelineRows?: OpenMeterPipelineModelRow[];
+  dailyPipelineRows?: OpenMeterDailyPipelineRow[];
+  includeRetail?: boolean;
+  retailByPipelineModel?: Map<
+    string,
+    { endUserBillableUsdMicros: string; retailRateUsd: string }
+  >;
+}): Record<string, unknown> {
+  const usageCurrency = "USD";
+  let totalNetworkFeeUsdMicros = 0n;
+  let totalRequestCount = 0;
+
+  for (const row of input.rows) {
+    totalNetworkFeeUsdMicros += BigInt(row.networkFeeUsdMicros);
+    totalRequestCount += row.requestCount;
+  }
+
+  const response: Record<string, unknown> = {
+    clientId: input.clientId,
+    source: "openmeter",
+    period: { start: input.startDate || null, end: input.endDate || null },
+    totals: {
+      requestCount: totalRequestCount,
+      currency: usageCurrency,
+      networkFeeUsdMicros: totalNetworkFeeUsdMicros.toString(),
+      ownerChargeUsdMicros: totalNetworkFeeUsdMicros.toString(),
+      platformFeeUsdMicros: "0",
+    },
+  };
+
+  if (input.groupBy === "user") {
+    response.byUser = input.rows.map((row) => {
+      const base = {
+        endUserId: row.externalUserId,
+        externalUserId: row.externalUserId,
+        userType: "system_managed" as const,
+        identifier: row.externalUserId,
+        currency: usageCurrency,
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+        ownerChargeUsdMicros: row.networkFeeUsdMicros,
+        requestCount: row.requestCount,
+      };
+      if (input.includeRetail && input.retailByPipelineModel) {
+        const retail = input.retailByPipelineModel.get("*|*");
+        if (retail) {
+          return { ...base, endUserBillableUsdMicros: retail.endUserBillableUsdMicros };
+        }
+      }
+      return base;
+    });
+  }
+
+  if (input.groupBy === "daily_pipeline" && input.dailyPipelineRows) {
+    response.byDailyPipeline = input.dailyPipelineRows.map((row) => ({
+      pipeline: row.pipeline,
+      modelId: row.modelId,
+      date: row.date,
+      requestCount: row.requestCount,
+      currency: usageCurrency,
+      networkFeeUsdMicros: row.networkFeeUsdMicros,
+      ownerChargeUsdMicros: row.networkFeeUsdMicros,
+    }));
+  }
+
+  if (input.groupBy === "pipeline_model" && input.pipelineRows) {
+    response.byPipelineModel = input.pipelineRows.map((row) => {
+      const key = `${row.pipeline}|${row.modelId}`;
+      const retail = input.retailByPipelineModel?.get(key);
+      const network = BigInt(row.networkFeeUsdMicros);
+      const base = {
+        pipeline: row.pipeline,
+        modelId: row.modelId,
+        currency: usageCurrency,
+        requestCount: row.requestCount,
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+        ownerChargeUsdMicros: row.networkFeeUsdMicros,
+      };
+      if (input.includeRetail && retail) {
+        return {
+          ...base,
+          retailRateUsd: retail.retailRateUsd,
+          endUserBillableUsdMicros: retail.endUserBillableUsdMicros,
+        };
+      }
+      return base;
+    });
+    if (input.includeRetail && input.retailByPipelineModel) {
+      let totalRetail = 0n;
+      for (const row of input.pipelineRows) {
+        const key = `${row.pipeline}|${row.modelId}`;
+        const retail = input.retailByPipelineModel.get(key);
+        if (retail) {
+          totalRetail += BigInt(retail.endUserBillableUsdMicros);
+        }
+      }
+      (response.totals as Record<string, unknown>).endUserBillableUsdMicros =
+        totalRetail.toString();
+    }
+  }
+
+  return response;
+}

@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
 import { db } from "@/db/index";
-import { plans, signerConfig, subscriptions, usageBillingEvents, usageRecords } from "@/db/schema";
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { plans, signerConfig, subscriptions } from "@/db/schema";
+import { and, desc, eq } from "drizzle-orm";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
 import { weiToEthString } from "@/lib/billing-runtime";
-
-function dateKeyFromIso(iso: string): string {
-  return iso.slice(0, 10);
-}
+import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import {
+  queryOpenMeterAppDashboardUsage,
+  queryOpenMeterUsage,
+} from "@/lib/usage/query-openmeter";
 
 export async function GET(
   request: NextRequest,
@@ -26,7 +27,6 @@ export async function GET(
     try {
       providerAuth = await getAuthorizedProviderApp(clientId);
     } catch (err) {
-      // Log error for debugging
       console.error("getAuthorizedProviderApp failed", err);
       providerAuth = null;
     }
@@ -38,6 +38,13 @@ export async function GET(
 
   if (!app) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (!requireOpenMeterForUsageReads()) {
+    return NextResponse.json(
+      { error: "OpenMeter not configured (OPENMETER_URL required)" },
+      { status: 503 },
+    );
   }
 
   const signerRows = await db
@@ -75,9 +82,7 @@ export async function GET(
     const fallbackPlans = await db
       .select()
       .from(plans)
-      .where(
-        and(eq(plans.clientId, app.id), eq(plans.status, "active")),
-      )
+      .where(and(eq(plans.clientId, app.id), eq(plans.status, "active")))
       .orderBy(desc(plans.updatedAt))
       .limit(1);
     planRow = fallbackPlans[0] ?? null;
@@ -97,89 +102,32 @@ export async function GET(
     periodEnd = cal.end;
   }
 
-  const rows = await db
-    .select()
-    .from(usageRecords)
-    .where(
-      and(
-        eq(usageRecords.clientId, app.id),
-        gte(usageRecords.createdAt, periodStart),
-        lte(usageRecords.createdAt, periodEnd),
-      ),
-    );
+  const [omRows, omDashboard] = await Promise.all([
+    queryOpenMeterUsage({
+      clientId: app.id,
+      startDate: periodStart,
+      endDate: periodEnd,
+    }),
+    queryOpenMeterAppDashboardUsage({
+      clientId: app.id,
+      startDate: periodStart,
+      endDate: periodEnd,
+    }),
+  ]);
 
-  let totalFeeWei = 0n;
-  let totalUnits = 0n;
-  const byDay = new Map<string, { requestCount: number; feeWei: bigint }>();
+  const omRequestCount = omRows.reduce((sum, row) => sum + row.requestCount, 0);
+  const omNetworkFeeUsdMicros = omRows.reduce(
+    (sum, row) => sum + BigInt(row.networkFeeUsdMicros),
+    0n,
+  );
+  const omEndUserBillableUsdMicros = omNetworkFeeUsdMicros;
+  const omOwnerChargeUsdMicros = omNetworkFeeUsdMicros;
 
-  for (const row of rows) {
-    const feeStr = row.fee || "0";
-    totalFeeWei += BigInt(feeStr);
-    totalUnits += BigInt(row.units || "0");
-    const day = dateKeyFromIso(row.createdAt);
-    const cur = byDay.get(day) || { requestCount: 0, feeWei: 0n };
-    cur.requestCount += 1;
-    cur.feeWei += BigInt(feeStr);
-    byDay.set(day, cur);
-  }
-
-  // Fetch billing events for the period to get USD-denominated breakdown
-  const usageRecordIds = rows.map((r) => r.id).filter(Boolean);
-  const billingEvents =
-    usageRecordIds.length > 0
-      ? await db
-          .select()
-          .from(usageBillingEvents)
-          .where(
-            and(
-              eq(usageBillingEvents.clientId, app.id),
-              inArray(usageBillingEvents.usageRecordId, usageRecordIds),
-            ),
-          )
-      : [];
-
-  let totalNetworkFeeWei = 0n;
-  let totalNetworkFeeUsdMicros = 0n;
-  let totalPlatformFeeUsdMicros = 0n;
-  let totalOwnerChargeWei = 0n;
-  let totalOwnerChargeUsdMicros = 0n;
-  let totalEndUserBillableUsdMicros = 0n;
-
-  // Pipeline/model breakdown
-  const byPipelineModel = new Map<string, {
-    pipeline: string;
-    modelId: string;
-    networkFeeWei: bigint;
-    networkFeeUsdMicros: bigint;
-    ownerChargeUsdMicros: bigint;
-    endUserBillableUsdMicros: bigint;
-    count: number;
-  }>();
-
-  for (const e of billingEvents) {
-    totalNetworkFeeWei += BigInt(e.networkFeeWei);
-    totalNetworkFeeUsdMicros += BigInt(e.networkFeeUsdMicros);
-    totalPlatformFeeUsdMicros += BigInt(e.platformFeeUsdMicros);
-    totalOwnerChargeWei += BigInt(e.ownerChargeWei);
-    totalOwnerChargeUsdMicros += BigInt(e.ownerChargeUsdMicros);
-    totalEndUserBillableUsdMicros += BigInt(e.endUserBillableUsdMicros);
-
-    const key = `${e.pipeline}|${e.modelId}`;
-    const existing = byPipelineModel.get(key) || {
-      pipeline: e.pipeline,
-      modelId: e.modelId,
-      networkFeeWei: 0n,
-      networkFeeUsdMicros: 0n,
-      ownerChargeUsdMicros: 0n,
-      endUserBillableUsdMicros: 0n,
-      count: 0,
-    };
-    existing.networkFeeWei += BigInt(e.networkFeeWei);
-    existing.networkFeeUsdMicros += BigInt(e.networkFeeUsdMicros);
-    existing.ownerChargeUsdMicros += BigInt(e.ownerChargeUsdMicros);
-    existing.endUserBillableUsdMicros += BigInt(e.endUserBillableUsdMicros);
-    existing.count += 1;
-    byPipelineModel.set(key, existing);
+  const byDay = new Map<string, { requestCount: number }>();
+  if (omDashboard?.requestsByDay) {
+    for (const [date, count] of omDashboard.requestsByDay) {
+      byDay.set(date, { requestCount: count });
+    }
   }
 
   const timelineDates = dateKeysInclusiveUtc(periodStart, periodEnd);
@@ -188,39 +136,51 @@ export async function GET(
     return {
       date,
       requestCount: bucket?.requestCount ?? 0,
-      feeWei: (bucket?.feeWei ?? 0n).toString(),
+      feeWei: "0",
     };
   });
 
   const planType = planRow?.type ?? "free";
+  const totalUnits = 0n;
   let overageUnits = "0";
   let overageWei = "0";
   if (
     (planType === "subscription" || planType === "usage") &&
-    planRow?.includedUnits != null &&
-    planRow?.overageRateWei != null
+    planRow?.includedUnits != null
   ) {
     const included = BigInt(planRow.includedUnits);
-    const rate = BigInt(planRow.overageRateWei);
     if (totalUnits > included) {
-      const over = totalUnits - included;
-      overageUnits = over.toString();
-      overageWei = (over * rate).toString();
+      overageUnits = (totalUnits - included).toString();
     }
   }
 
-  // Subscription USD allowance consumption
-  const includedUsdMicros = planRow?.includedUsdMicros ? BigInt(planRow.includedUsdMicros) : 0n;
-  const consumedUsdMicros =
-    totalEndUserBillableUsdMicros < includedUsdMicros
-      ? totalEndUserBillableUsdMicros
-      : includedUsdMicros;
-  const remainingUsdMicros = includedUsdMicros > consumedUsdMicros
-    ? includedUsdMicros - consumedUsdMicros
+  const includedUsdMicros = planRow?.includedUsdMicros
+    ? BigInt(planRow.includedUsdMicros)
     : 0n;
+
+  const consumedUsdMicrosFinal =
+    omEndUserBillableUsdMicros < includedUsdMicros
+      ? omEndUserBillableUsdMicros
+      : includedUsdMicros;
+  const remainingUsdMicrosFinal =
+    includedUsdMicros > consumedUsdMicrosFinal
+      ? includedUsdMicros - consumedUsdMicrosFinal
+      : 0n;
+
+  const byPipelineModel = (omDashboard?.byPipelineModel ?? []).map((d) => ({
+    pipeline: d.pipeline,
+    modelId: d.modelId,
+    requestCount: d.requestCount,
+    networkFeeWei: "0",
+    networkFeeEth: "0",
+    networkFeeUsdMicros: d.networkFeeUsdMicros,
+    ownerChargeUsdMicros: d.networkFeeUsdMicros,
+    endUserBillableUsdMicros: d.networkFeeUsdMicros,
+  }));
 
   return NextResponse.json({
     clientId,
+    usageSource: "openmeter",
     plan: planRow
       ? {
           id: planRow.id,
@@ -228,8 +188,7 @@ export async function GET(
           name: planRow.name,
           priceAmount: planRow.priceAmount,
           priceCurrency: planRow.priceCurrency,
-          includedUnits: planRow.includedUnits != null ? planRow.includedUnits.toString() : null,
-          overageRateWei: planRow.overageRateWei != null ? planRow.overageRateWei.toString() : null,
+          overageRateUsd: planRow.overageRateUsd ?? null,
           includedUsdMicros: planRow.includedUsdMicros ?? null,
           billingCycle: planRow.billingCycle,
           status: planRow.status,
@@ -247,38 +206,29 @@ export async function GET(
       periodStart,
       periodEnd,
       usage: {
-        requestCount: rows.length,
-        totalFeeWei: totalFeeWei.toString(),
-        totalFeeEth: weiToEthString(totalFeeWei),
+        requestCount: omRequestCount,
+        totalFeeWei: "0",
+        totalFeeEth: "0",
         totalUnits: totalUnits.toString(),
       },
       timeline,
       overage: { overageUnits, overageWei },
       ownerCost: {
-        networkFeeWei: totalNetworkFeeWei.toString(),
-        networkFeeEth: weiToEthString(totalNetworkFeeWei),
-        networkFeeUsdMicros: totalNetworkFeeUsdMicros.toString(),
-        platformFeeUsdMicros: totalPlatformFeeUsdMicros.toString(),
-        ownerChargeWei: totalOwnerChargeWei.toString(),
-        ownerChargeEth: weiToEthString(totalOwnerChargeWei),
-        ownerChargeUsdMicros: totalOwnerChargeUsdMicros.toString(),
+        networkFeeWei: "0",
+        networkFeeEth: "0",
+        networkFeeUsdMicros: omNetworkFeeUsdMicros.toString(),
+        platformFeeUsdMicros: "0",
+        ownerChargeWei: "0",
+        ownerChargeEth: "0",
+        ownerChargeUsdMicros: omOwnerChargeUsdMicros.toString(),
       },
       retail: {
-        endUserBillableUsdMicros: totalEndUserBillableUsdMicros.toString(),
+        endUserBillableUsdMicros: omEndUserBillableUsdMicros.toString(),
         includedUsdMicros: includedUsdMicros.toString(),
-        consumedIncludedUsdMicros: consumedUsdMicros.toString(),
-        remainingIncludedUsdMicros: remainingUsdMicros.toString(),
+        consumedIncludedUsdMicros: consumedUsdMicrosFinal.toString(),
+        remainingIncludedUsdMicros: remainingUsdMicrosFinal.toString(),
       },
-      byPipelineModel: [...byPipelineModel.values()].map((d) => ({
-        pipeline: d.pipeline,
-        modelId: d.modelId,
-        requestCount: d.count,
-        networkFeeWei: d.networkFeeWei.toString(),
-        networkFeeEth: weiToEthString(d.networkFeeWei),
-        networkFeeUsdMicros: d.networkFeeUsdMicros.toString(),
-        ownerChargeUsdMicros: d.ownerChargeUsdMicros.toString(),
-        endUserBillableUsdMicros: d.endUserBillableUsdMicros.toString(),
-      })),
+      byPipelineModel,
     },
     platformCutPercent,
   });

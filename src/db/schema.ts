@@ -84,7 +84,6 @@ export const endUsers = pgTable(
     email: text("email"),
     turnkeyUserId: text("turnkey_user_id").unique(),
     walletAddress: text("wallet_address"),
-    creditBalanceWei: text("credit_balance_wei").notNull().default("0"),
     isActive: integer("is_active").notNull().default(1),
     createdAt: text("created_at")
       .notNull()
@@ -378,10 +377,10 @@ export const plans = pgTable(
     priceAmount: text("price_amount").notNull().default("0"),
     priceCurrency: text("price_currency").notNull().default("USD"),
     status: text("status").notNull().default("draft"),
-    /** Pixel-unit quota included per billing cycle (subscription plans). */
+    /** Pixel-unit quota included per billing cycle (legacy; optional). */
     includedUnits: bigint("included_units", { mode: "bigint" }),
-    /** Per-pixel wei for overage (subscription) or base rate (usage plans). */
-    overageRateWei: bigint("overage_rate_wei", { mode: "bigint" }),
+    /** Retail USD per network USD-micro for plan-level usage (decimal string). */
+    overageRateUsd: text("overage_rate_usd"),
     /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
     includedUsdMicros: text("included_usd_micros"),
     /** Billing period length; currently only "monthly" is supported. */
@@ -391,6 +390,8 @@ export const plans = pgTable(
     }),
     /** Exactly one per client: catalog-wide network pricing + integrator discovery exclusions. */
     isNetworkDefault: boolean("is_network_default").notNull().default(false),
+    /** Exactly one per client: free-tier OpenMeter subscription with included usage allowance. */
+    isStarterDefault: boolean("is_starter_default").notNull().default(false),
     /**
      * Pipelines/models excluded from integrator discovery (NaaP). Only used when
      * `is_network_default` is true. Same JSON shape as legacy app column.
@@ -398,6 +399,10 @@ export const plans = pgTable(
     discoveryExcludedCapabilities: jsonb("discovery_excluded_capabilities").$type<{
       capabilities: Array<{ pipeline: string; modelId: string }>;
     } | null>(),
+    openmeterPlanId: text("openmeter_plan_id"),
+    openmeterPlanVersion: integer("openmeter_plan_version"),
+    lastSyncedAt: text("last_synced_at"),
+    syncError: text("sync_error"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -410,6 +415,9 @@ export const plans = pgTable(
     uniqueIndex("idx_plans_network_default_per_client")
       .on(t.clientId)
       .where(sql`${t.isNetworkDefault} = true`),
+    uniqueIndex("idx_plans_starter_default_per_client")
+      .on(t.clientId)
+      .where(sql`${t.isStarterDefault} = true`),
   ],
 );
 
@@ -427,8 +435,10 @@ export const planCapabilityBundles = pgTable(
     modelId: text("model_id").notNull(),
     slaTargetP95Ms: integer("sla_target_p95_ms"),
     maxPricePerUnit: text("max_price_per_unit"),
-    /** Pipeline/model-specific positive upcharge, in basis points. */
-    upchargePercentBps: integer("upcharge_percent_bps"),
+    /** Retail USD per network USD-micro for this pipeline/model (decimal string). */
+    retailRateUsd: text("retail_rate_usd"),
+    /** Compact OpenMeter feature key (<= 64 chars) for rate cards. */
+    openmeterFeatureKey: text("openmeter_feature_key"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -460,6 +470,10 @@ export const subscriptions = pgTable("subscriptions", {
     withTimezone: true,
     mode: "string",
   }),
+  openmeterSubscriptionId: text("openmeter_subscription_id"),
+  openmeterCustomerKey: text("openmeter_customer_key"),
+  externalUserId: text("external_user_id"),
+  stripeCheckoutSessionId: text("stripe_checkout_session_id"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -469,7 +483,9 @@ export const subscriptions = pgTable("subscriptions", {
 export const apiKeys = pgTable("api_keys", {
   id: text("id").primaryKey(),
   keyHash: text("key_hash").notNull().unique(),
+  keyPrefix: text("key_prefix"),
   userId: text("user_id").references(() => users.id),
+  appUserId: text("app_user_id").references(() => appUsers.id),
   clientId: text("client_id")
     .notNull()
     .references(() => developerApps.id),
@@ -481,6 +497,95 @@ export const apiKeys = pgTable("api_keys", {
     .$defaultFn(() => new Date().toISOString()),
   revokedAt: text("revoked_at"),
 });
+
+/** Per-app OpenMeter backend (hosted default or BYO cloud/self-hosted). */
+export const appOpenMeterConfig = pgTable(
+  "app_openmeter_config",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    mode: text("mode").notNull().default("pymthouse_hosted"),
+    baseUrl: text("base_url"),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    meterSlug: text("meter_slug").notNull().default("network_fee_usd_micros"),
+    trialFeatureKey: text("trial_feature_key").notNull().default("network_spend"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [uniqueIndex("idx_app_openmeter_config_client_id").on(t.clientId)],
+);
+
+export const appBillingConfig = pgTable(
+  "app_billing_config",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    stripeConnectStatus: text("stripe_connect_status").notNull().default("disconnected"),
+    openmeterStripeAppId: text("openmeter_stripe_app_id"),
+    openmeterBillingProfileId: text("openmeter_billing_profile_id"),
+    defaultCurrency: text("default_currency").notNull().default("USD"),
+    checkoutSuccessUrl: text("checkout_success_url"),
+    checkoutCancelUrl: text("checkout_cancel_url"),
+    connectedAt: text("connected_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [uniqueIndex("idx_app_billing_config_client_id").on(t.clientId)],
+);
+
+export const appBillingOauthStates = pgTable(
+  "app_billing_oauth_states",
+  {
+    id: text("id").primaryKey(),
+    state: text("state").notNull().unique(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [index("idx_app_billing_oauth_states_expires").on(t.expiresAt)],
+);
+
+/** Idempotency audit for OpenMeter signed-ticket ingest (not balance source). */
+export const usageIngestReceipts = pgTable(
+  "usage_ingest_receipts",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    requestId: text("request_id").notNull(),
+    openmeterEventId: text("openmeter_event_id").notNull(),
+    externalUserId: text("external_user_id"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_usage_ingest_receipts_client_request").on(
+      t.clientId,
+      t.requestId,
+    ),
+  ],
+);
 
 export const usageRecords = pgTable(
   "usage_records",
@@ -725,3 +830,5 @@ export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
 export type UsageBillingEvent = typeof usageBillingEvents.$inferSelect;
 export type NewUsageBillingEvent = typeof usageBillingEvents.$inferInsert;
+export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;
+export type UsageIngestReceipt = typeof usageIngestReceipts.$inferSelect;

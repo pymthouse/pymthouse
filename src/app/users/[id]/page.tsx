@@ -7,7 +7,6 @@ import { notFound } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import StreamSessionTable from "@/components/StreamSessionTable";
 import TransactionLog from "@/components/TransactionLog";
-import UserActions from "@/components/UserActions";
 import { streamSessionToTableRow } from "@/lib/stream-session-ui";
 import { weiHumanWithUnit } from "@/lib/format-wei";
 import { confirmedUsageCountByStreamSessionId } from "@/lib/stream-session-stats";
@@ -84,15 +83,17 @@ export default async function UserDetailPage({
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/30">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">
-            Credit Balance
-          </p>
-          <p className="text-lg font-bold text-emerald-400">
-            {weiHumanWithUnit(user.creditBalanceWei)}
-          </p>
-        </div>
+      {user.appId && user.externalUserId ? (
+        <p className="text-sm text-zinc-500 mb-6">
+          Allowance balance is managed in OpenMeter via Builder API (
+          <code className="text-zinc-400">GET .../usage/balance</code>
+          ) for app{" "}
+          <span className="font-mono text-zinc-400">{user.appId}</span> / user{" "}
+          <span className="font-mono text-zinc-400">{user.externalUserId}</span>.
+        </p>
+      ) : null}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
         <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/30">
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">
             Total Usage
@@ -109,11 +110,6 @@ export default async function UserDetailPage({
             {userStreams.length}
           </p>
         </div>
-      </div>
-
-      {/* Actions: issue token, add credits */}
-      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
-        <UserActions userId={id} />
       </div>
 
       {/* Stream sessions */}

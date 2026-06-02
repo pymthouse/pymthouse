@@ -1,6 +1,7 @@
 # Apache + mod_authnz_jwt in front of go-livepeer (DMZ). Targets:
-#   gateway   — Apache only; set SIGNER_UPSTREAM (e.g. http://signer:8081) for docker compose.
-#   signer-dmz — includes livepeer; Railway single service (Apache on $PORT, signer on loopback).
+#   gateway         — Apache only; set SIGNER_UPSTREAM (e.g. http://signer:8081) for docker compose.
+#   signer-dmz-local — local dev; livepeer copied from go-livepeer-remote-signer:local (see scripts/build-local-signer.sh).
+#   signer-dmz      — production; pinned CI binary from build.livepeer.live (Railway single service).
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -114,11 +115,41 @@ USER ${APP_USER}
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-FROM gateway AS signer-dmz
+# Local dev: livepeer from go-livepeer/docker/Dockerfile (scripts/build-local-signer.sh).
+FROM go-livepeer-remote-signer:local AS livepeer-src
+
+FROM gateway AS signer-dmz-local
 
 USER root
 
-# CI-built linux-amd64 tarball mirrored at build.livepeer.live (same bytes as GitHub Actions artifacts).
+# go-livepeer/docker/Dockerfile links against CUDA NPP (libnppig, libnppicc, libnppc).
+# Copy only those libs (~46MB), not the full 1.8GB cuda tree.
+RUN mkdir -p /usr/local/cuda/targets/x86_64-linux/lib
+
+COPY --from=livepeer-src /usr/local/bin/livepeer /usr/local/bin/livepeer
+COPY --from=livepeer-src /usr/local/lib/ /usr/local/lib/
+COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppc.so* /usr/local/cuda/targets/x86_64-linux/lib/
+COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppig.so* /usr/local/cuda/targets/x86_64-linux/lib/
+COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppicc.so* /usr/local/cuda/targets/x86_64-linux/lib/
+
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib:/usr/local/lib
+
+RUN chmod +x /usr/local/bin/livepeer && ldconfig
+
+USER pymthouse
+
+ENV SIGNER_NETWORK=arbitrum-one-mainnet
+ENV SIGNER_PORT=8081
+ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
+ENV SIGNER_ETH_ADDR=""
+ENV SIGNER_REMOTE_DISCOVERY=0
+
+EXPOSE 8080 8082
+
+# Production / Railway: pinned CI binary from build.livepeer.live (default final stage).
+FROM gateway AS signer-dmz
+
+USER root
 # Source artifact: https://github.com/livepeer/go-livepeer/actions/runs/25226599716/artifacts/6796975695
 # Node reports: Livepeer Node Version 0.8.10-0a1919e0
 ARG LIVEPEER_COMMIT=0a1919e0c58986375df158433445563a45a04df8

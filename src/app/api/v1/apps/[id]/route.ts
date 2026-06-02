@@ -148,6 +148,7 @@ export async function GET(
     clientId: canonicalClientId,
     canEdit: await canEditProviderApp(auth),
     canSubmitForReview: auth.app.ownerId === auth.userId,
+    canManageBilling: auth.app.ownerId === auth.userId || auth.role === "admin",
     oidcClient: clientInfo
       ? {
           ...clientInfo,

@@ -1,0 +1,123 @@
+# Self-hosted OpenMeter stack for local dev and staging.
+# Usage: docker compose -f docker-compose.openmeter.yml up -d
+# API: http://127.0.0.1:48888
+
+services:
+  openmeter-postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  openmeter-kafka:
+    image: confluentinc/cp-kafka:8.0.3
+    environment:
+      CLUSTER_ID: ca497efe-9f82-4b84-890b-d9969a9a2e1c
+      KAFKA_BROKER_ID: 0
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@openmeter-kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://openmeter-kafka:9092
+      KAFKA_LISTENERS: INTERNAL://openmeter-kafka:9092,CONTROLLER://openmeter-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-topics --bootstrap-server openmeter-kafka:9092 --list",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  openmeter-clickhouse:
+    image: clickhouse/clickhouse-server:25.12.3-alpine
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: default
+      CLICKHOUSE_DB: openmeter
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://openmeter-clickhouse:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  openmeter-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "50mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  openmeter:
+    image: ghcr.io/openmeterio/openmeter:latest
+    command: openmeter --address 0.0.0.0:8888 --config /etc/openmeter/config.yaml
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:48888:8888"
+    volumes:
+      - ./docker/openmeter/config.yaml:/etc/openmeter/config.yaml:ro
+    depends_on:
+      openmeter-kafka:
+        condition: service_healthy
+      openmeter-clickhouse:
+        condition: service_healthy
+      openmeter-postgres:
+        condition: service_healthy
+      openmeter-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://127.0.0.1:8888/api/v1/debug/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  openmeter-sink-worker:
+    image: ghcr.io/openmeterio/openmeter:latest
+    command: openmeter-sink-worker --config /etc/openmeter/config.yaml
+    restart: unless-stopped
+    volumes:
+      - ./docker/openmeter/config.yaml:/etc/openmeter/config.yaml:ro
+    depends_on:
+      openmeter:
+        condition: service_healthy
+      openmeter-kafka:
+        condition: service_healthy
+      openmeter-clickhouse:
+        condition: service_healthy
+      openmeter-redis:
+        condition: service_healthy
+
+  openmeter-balance-worker:
+    image: ghcr.io/openmeterio/openmeter:latest
+    command: openmeter-balance-worker --config /etc/openmeter/config.yaml
+    restart: unless-stopped
+    volumes:
+      - ./docker/openmeter/config.yaml:/etc/openmeter/config.yaml:ro
+    depends_on:
+      openmeter:
+        condition: service_healthy
+      openmeter-kafka:
+        condition: service_healthy
+      openmeter-clickhouse:
+        condition: service_healthy
+      openmeter-redis:
+        condition: service_healthy

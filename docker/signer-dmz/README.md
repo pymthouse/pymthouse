@@ -14,8 +14,14 @@ Everything needed to run the go-livepeer signer with an optional **Apache + mod_
 **Compose (from repo root):**
 
 ```bash
-docker compose -f docker/signer-dmz/docker-compose.yml up --build
+# Builds go-livepeer from ../go-livepeer (lpclearinghouse build-remote-signer.sh), then signer-dmz.
+./scripts/build-local-signer.sh
+docker compose up -d signer-dmz
 ```
+
+**Production / Railway** uses the default `signer-dmz` target (pinned CI binary from build.livepeer.live).
+
+**Compose (legacy two-container stack):**
 
 **Build the standalone signer image (from repo root):**
 

@@ -87,7 +87,58 @@ run("plans API: network default plan rules", async (t) => {
       is_network_default: true,
     });
     assert.equal(r.status, 400);
-    assert.equal(r.body.error, "is_network_default cannot be set on created plans");
+    assert.ok(
+      typeof r.body.error === "string" &&
+        r.body.error.includes("is_network_default"),
+    );
+  });
+
+  await t.test("GET lists exactly one starter default plan", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const { GET } = await import("./route");
+    const res = await GET(
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      plans: Array<{ isStarterDefault?: boolean; includedUsdMicros?: string | null }>;
+    };
+    const starters = body.plans.filter((p) => p.isStarterDefault);
+    assert.equal(starters.length, 1);
+    assert.ok(starters[0]!.includedUsdMicros);
+  });
+
+  await t.test("DELETE starter default plan returns 409", async (t) => {
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    authorizedApp = app;
+    t.after(async () => {
+      authorizedApp = null;
+      await cleanupTestApp(app);
+    });
+
+    const starterRows = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(and(eq(plans.clientId, app.clientId), eq(plans.isStarterDefault, true)))
+      .limit(1);
+
+    const { DELETE } = await import("./route");
+    const res = await DELETE(
+      new Request(
+        `http://localhost/api/v1/apps/${app.clientId}/plans?planId=${starterRows[0]!.id}`,
+      ) as never,
+      { params: Promise.resolve({ id: app.clientId }) },
+    );
+    assert.equal(res.status, 409);
+    const delBody = (await res.json()) as { error?: string };
+    assert.ok(typeof delBody.error === "string" && delBody.error.includes("Starter"));
   });
 
   await t.test("POST rejects reserved Network Discovery display name", async (t) => {
@@ -195,7 +246,7 @@ run("plans API: network default plan rules", async (t) => {
   });
 });
 
-run("plans POST validates subscription billing fields before creating a plan", async (t) => {
+run("plans POST accepts subscription with retail overageRateUsd", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   authorizedApp = app;
   t.after(async () => {
@@ -203,26 +254,20 @@ run("plans POST validates subscription billing fields before creating a plan", a
     await cleanupTestApp(app);
   });
 
-  const missingBilling = await postPlan(app.clientId, {
-    name: "Subscription without quota",
-    type: "subscription",
-    priceAmount: "20",
-    priceCurrency: "USD",
-  });
-  assert.equal(missingBilling.status, 400);
-  assert.equal(
-    missingBilling.body.error,
-    "includedUnits and overageRateWei are required for subscription plans",
-  );
-
   const valid = await postPlan(app.clientId, {
-    name: "Subscription with quota",
+    name: "Subscription with retail",
     type: "subscription",
     priceAmount: "20",
     priceCurrency: "USD",
-    includedUnits: "1000000",
-    overageRateWei: "25",
+    overageRateUsd: "0.0000015",
     includedUsdMicros: "20000000",
+    capabilities: [
+      {
+        pipeline: "text-to-image",
+        modelId: "stabilityai/sdxl",
+        retailRateUsd: "0.000002",
+      },
+    ],
   });
   assert.equal(valid.status, 201);
   assert.equal(typeof valid.body.id, "string");
@@ -233,10 +278,8 @@ run("plans POST validates subscription billing fields before creating a plan", a
     .where(eq(plans.id, valid.body.id as string))
     .limit(1);
   assert.equal(planRows.length, 1);
-  assert.equal(planRows[0].clientId, app.clientId);
   assert.equal(planRows[0].type, "subscription");
-  assert.equal(planRows[0].includedUnits?.toString(), "1000000");
-  assert.equal(planRows[0].overageRateWei?.toString(), "25");
+  assert.equal(planRows[0].overageRateUsd, "0.0000015");
   assert.equal(planRows[0].includedUsdMicros, "20000000");
 });
 

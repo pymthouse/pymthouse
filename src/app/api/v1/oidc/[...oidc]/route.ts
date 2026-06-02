@@ -28,6 +28,15 @@ import {
   handleDeviceApprovalTokenExchange,
   isDeviceApprovalTokenExchangeRequest,
 } from "@/lib/oidc/device-token-exchange";
+import {
+  handleMintUserSignerToken,
+  isMintUserSignerTokenRequest,
+  MintUserSignerTokenError,
+} from "@/lib/oidc/mint-user-signer-token";
+import {
+  handleSignerJwtTokenExchange,
+  isSignerJwtTokenExchangeRequest,
+} from "@/lib/oidc/signer-jwt-token-exchange";
 import { rotateProgrammaticRefreshToken } from "@/lib/oidc/programmatic-tokens";
 import { decodeBasicAuthComponent } from "@/lib/auth";
 
@@ -123,6 +132,37 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    if (isMintUserSignerTokenRequest(exchangeParams)) {
+      const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
+        request,
+        exchangeParams,
+      );
+      try {
+        const result = await handleMintUserSignerToken({
+          clientId,
+          clientSecret,
+          externalUserId: exchangeParams.get("external_user_id") || "",
+          audience: exchangeParams.get("audience"),
+          scope: exchangeParams.get("scope"),
+        });
+        return NextResponse.json(result, {
+          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+        });
+      } catch (err) {
+        if (err instanceof MintUserSignerTokenError) {
+          return NextResponse.json(
+            { error: err.code, error_description: err.message },
+            { status: err.status },
+          );
+        }
+        console.error("[OIDC] mint user signer token error:", err);
+        return NextResponse.json(
+          { error: "server_error", error_description: "Internal error during token mint" },
+          { status: 500 },
+        );
+      }
+    }
+
     if (isTokenExchangeGrant(grantType)) {
       const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
         request,
@@ -153,11 +193,33 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         }
 
         if (
+          isSignerJwtTokenExchangeRequest({
+            grantType,
+            subjectTokenType,
+            resource: resourceParam,
+            audience: exchangeParams.getAll("audience"),
+          })
+        ) {
+          const result = await handleSignerJwtTokenExchange({
+            clientId,
+            clientSecret,
+            subjectToken: exchangeParams.get("subject_token") || "",
+            subjectTokenType,
+            resource: resourceParam,
+            audience: exchangeParams.getAll("audience"),
+          });
+          return NextResponse.json(result, {
+            headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+          });
+        }
+
+        if (
           isGatewayTokenExchangeRequest({
             grantType,
             clientId,
             subjectTokenType,
             resource: resourceParam,
+            audience: exchangeParams.getAll("audience"),
           })
         ) {
           const result = await handleGatewayTokenExchange({

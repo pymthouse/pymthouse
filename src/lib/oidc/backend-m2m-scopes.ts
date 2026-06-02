@@ -27,6 +27,9 @@ export function computeBackendM2mAllowedScopes(publicAllowedScopes: string): str
       selected.add(scope);
     }
   }
+  if (publicSet.has("sign:job")) {
+    selected.add("sign:mint_user_token");
+  }
   const ordered = OIDC_SCOPES.map((d) => d.value).filter((v) => selected.has(v));
   return ordered.join(" ");
 }

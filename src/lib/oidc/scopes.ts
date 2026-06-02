@@ -21,6 +21,12 @@ export const OIDC_SCOPES: ScopeDefinition[] = [
     required: true,
   },
   {
+    value: "sign:mint_user_token",
+    label: "Mint Signer Tokens",
+    description:
+      "Mint short-lived user signer JWTs for direct go-livepeer signing (M2M only)",
+  },
+  {
     value: "sign:job",
     label: "Sign Jobs",
     description: "Access all remote signer endpoints, including discovery and payment signing",

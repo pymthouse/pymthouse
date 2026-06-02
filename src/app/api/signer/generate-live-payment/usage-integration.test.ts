@@ -11,7 +11,6 @@ import {
   streamSessions,
   transactions,
   usageBillingEvents,
-  usageRecords,
 } from "@/db/schema";
 import { countActiveStreamsByRecentPayment } from "@/lib/active-streams";
 import { proxyGenerateLivePayment } from "@/lib/signer-proxy";
@@ -24,7 +23,6 @@ import {
   createJobTokenForApp,
   ensureRunningSigner,
   seedDeveloperAppWithClient,
-  seedManifestCacheForTestClient,
 } from "@/test-utils/fixtures";
 import { mockSignerFetch } from "@/test-utils/mock-signer";
 import { buildOrchestratorInfoBase64 } from "@/test-utils/orchestrator-info";
@@ -61,7 +59,6 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -290,14 +287,12 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const endUserId = randomUUID();
   await db.insert(endUsers).values({
     id: endUserId,
     appId: app.clientId,
     externalUserId: "byoc-preload-user",
-    creditBalanceWei: "0",
   });
 
   const token = await createJobTokenForApp({
@@ -334,15 +329,6 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
     `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
-  const usageRows = await db
-    .select()
-    .from(usageRecords)
-    .where(and(eq(usageRecords.clientId, app.clientId), eq(usageRecords.requestId, requestId)));
-  assert.equal(usageRows.length, 1);
-  assert.equal(usageRows[0]!.userId, "byoc-preload-user");
-  assert.equal(usageRows[0]!.units, "3");
-  assert.equal(usageRows[0]!.fee, (3n * BigInt(PRICE_PER_UNIT)).toString());
-
   const sessionRows = await db
     .select()
     .from(streamSessions)
@@ -358,7 +344,6 @@ run("successful zero-fee signer payment still increments usage count", async (t)
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const token = await createJobTokenForApp({
     userId: app.userId,
@@ -388,16 +373,9 @@ run("successful zero-fee signer payment still increments usage count", async (t)
     `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
-  const usageRows = await db
-    .select()
-    .from(usageRecords)
-    .where(and(eq(usageRecords.clientId, app.clientId), eq(usageRecords.requestId, requestId)));
-  assert.equal(usageRows.length, 1);
-  assert.equal(usageRows[0]!.units, "3");
-  assert.equal(usageRows[0]!.fee, "0");
 });
 
-run("plan capability upcharge is persisted and exposed through Usage API events", async (t) => {
+run("network cost billing events omit legacy bps upcharge (retail via OpenMeter plans)", async (t) => {
   resetEthUsdOracleCacheForTests();
   const { GET: readUsage } = await import("@/app/api/v1/apps/[id]/usage/route");
 
@@ -406,7 +384,6 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -435,7 +412,7 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
     clientId: app.clientId,
     pipeline: PIPELINE,
     modelId: MODEL_ID,
-    upchargePercentBps: 5000,
+    retailRateUsd: "0.0000015",
     createdAt: now,
   });
 
@@ -500,14 +477,63 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
   assert.equal(event.gatewayRequestId, gatewayRequestId);
   assert.equal(event.pipeline, PIPELINE);
   assert.equal(event.modelId, MODEL_ID);
-  assert.equal(event.upchargePercentBps, 5000);
-  assert.equal(event.pricingRuleSource, "pipeline_model");
+  assert.equal(event.upchargePercentBps, 0);
+  assert.equal(event.pricingRuleSource, "unpriced");
+  assert.equal(event.endUserBillableUsdMicros, event.networkFeeUsdMicros);
+  assert.equal(body.totals.endUserBillableUsdMicros, event.networkFeeUsdMicros);
+});
 
-  const networkFeeUsdMicros = BigInt(event.networkFeeUsdMicros);
-  const expectedBillableUsdMicros =
-    networkFeeUsdMicros + (networkFeeUsdMicros * 5000n) / 10000n;
-  assert.equal(event.endUserBillableUsdMicros, expectedBillableUsdMicros.toString());
-  assert.equal(body.totals.endUserBillableUsdMicros, expectedBillableUsdMicros.toString());
+run("proxy strips signer usage block and records signer_chainlink eth source", async (t) => {
+  resetEthUsdOracleCacheForTests();
+  const restoreSigner = await ensureRunningSigner();
+  t.after(restoreSigner);
+
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const ownerToken = await createJobTokenForApp({
+    userId: app.userId,
+    clientId: app.clientId,
+    scopes: "sign:job",
+  });
+  const ownerAuth = await validateBearerToken(ownerToken);
+  assert.ok(ownerAuth);
+
+  const orch = await buildOrchestratorInfoBase64({
+    pricePerUnit: PRICE_PER_UNIT,
+    pixelsPerUnit: PIXELS_PER_UNIT,
+  });
+
+  const mock = mockSignerFetch({
+    signerHost: "http://test-signer.invalid",
+  });
+  t.after(mock.restore);
+
+  const gatewayRequestId = `signer-usage-${randomUUID()}`;
+  const result = await proxyGenerateLivePayment(
+    {
+      ManifestID: "signer-usage-manifest",
+      RequestID: gatewayRequestId,
+      InPixels: PER_REQUEST_PIXELS,
+      Orchestrator: orch,
+      pipeline: PIPELINE,
+      modelId: MODEL_ID,
+      attributionSource: "pymthouse_gateway",
+      gatewayRequestId,
+      paymentMetadataVersion: PAYMENT_METADATA_VERSION,
+    },
+    ownerAuth!,
+  );
+  assert.equal(result.status, 200);
+  assert.equal("usage" in (result.body as Record<string, unknown>), false);
+
+  const txnRows = await db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.gatewayRequestId, gatewayRequestId))
+    .limit(1);
+  assert.ok(txnRows[0]);
+  assert.equal(txnRows[0]!.ethUsdSource, "signer_chainlink");
 });
 
 run("generate-live-payment writes usage_billing_events from negotiated ticket without NaaP pricing", async (t) => {
@@ -517,7 +543,6 @@ run("generate-live-payment writes usage_billing_events from negotiated ticket wi
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -585,7 +610,6 @@ run("generate-live-payment records missing_constraint when modelId absent", asyn
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -643,7 +667,6 @@ run("generate-live-payment succeeds when live oracle fetch fails", async (t) => 
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const token = await createJobTokenForApp({
     userId: app.userId,

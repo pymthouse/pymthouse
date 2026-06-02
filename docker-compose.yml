@@ -2,13 +2,26 @@
 # image), same as production (railway.json / render.yaml). Exposes the DMZ on
 # 127.0.0.1:8080 by default (see SIGNER_DMZ_HOST_PORT). The app should use
 # SIGNER_INTERNAL_URL=http://127.0.0.1:8080 and SIGNER_CLI_URL=http://127.0.0.1:8080/__signer_cli
+#
+# Build the image first (go-livepeer from ../go-livepeer via lpclearinghouse):
+#   ./scripts/build-local-signer.sh
+# Then start:
+#   docker compose up -d signer-dmz
+#
+# Optional OpenMeter stack (usage metering + trial credits):
+#   docker compose -f docker-compose.openmeter.yml up -d
+#   npm run openmeter:bootstrap
+#
+# Production (Railway, separate project from signer):
+#   See docs/openmeter-railway.md and docker-compose.openmeter.railway.yml
 
 services:
   signer-dmz:
+    image: pymthouse/signer-dmz:local
     build:
       context: .
       dockerfile: docker/signer-dmz/Dockerfile
-    image: pymthouse/signer-dmz:local
+      target: signer-dmz-local
     ports:
       - "127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}:8080"
     volumes:
@@ -34,6 +47,7 @@ services:
       - JWKS_URI=${JWKS_URI:-}
       # Set to 1 when JWKS is HTTPS with a self-signed / corporate CA (local dev).
       - JWKS_TLS_INSECURE=${JWKS_TLS_INSECURE:-}
+      - REMOTE_SIGNER_USAGE_IDENTITY_MODE=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

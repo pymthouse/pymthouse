@@ -1,0 +1,25 @@
+name: OpenMeter Railway bootstrap
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bootstrap meters and features
+        env:
+          OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
+          OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
+          OPENMETER_TRIAL_FEATURE_KEY: ${{ vars.OPENMETER_TRIAL_FEATURE_KEY || 'network_spend' }}
+        run: npm run openmeter:railway:bootstrap

@@ -5,20 +5,14 @@ import {
   developerApps,
   endUsers,
   oidcClients,
-  planCapabilityBundles,
-  plans,
   signerConfig,
   streamSessions,
-  transactions,
-  usageBillingEvents,
-  usageRecords,
 } from "@/db/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import {
   decodeOrchestratorInfo,
   calculateFeeWei,
-  calculatePlatformCut,
   calculateLv2vPixels,
 } from "./proto";
 import type { AuthResult } from "./auth";
@@ -27,15 +21,26 @@ import { getSenderInfo } from "./signer-cli";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "./signer-local-compose";
 import { getIssuer } from "./oidc/issuer-urls";
 import { getEthUsdOracle } from "./prices/eth-usd-oracle";
-import { enforceCachedManifestPolicy } from "./app-manifest-cache";
 import {
   resolvePaymentPipelineModelConstraint,
   resolveGatewayAttribution,
-  buildSignedTicketConstraintHash,
-  resolveUpcharge,
   computeUsdMicrosFromWei,
-  weiToEthString,
 } from "./billing-runtime";
+import { signerSnapshotToIngestPayload } from "@pymthouse/builder-sdk";
+import { ingestSignedTicketUsage } from "./billing/signed-ticket-ingest";
+import {
+  forwardToSigner as sdkForwardToSigner,
+  normalizeSignerBaseUrl,
+  pickConflictingNumberAliases,
+  pickConflictingStringAliases,
+  probeSignerHttpReachability as sdkProbeSignerHttpReachability,
+  readSignerUpstreamBody,
+  resolveSignerBaseUrl,
+} from "@pymthouse/builder-sdk/signer/server";
+import {
+  parseSignerUsageSnapshot,
+  stripSignerUsageFromResponse,
+} from "./signer-usage-response";
 
 export interface ProxyResult {
   status: number;
@@ -150,30 +155,38 @@ async function resolveUsageUserIdentifier(
  * signer replies with `Method Not Allowed` on GET, surfacing as a 502 with
  * a "Unexpected token 'M'" JSON parse error in the proxy layer.
  */
+/**
+ * Public signer API base for external clients (gateway, SDK).
+ * Routes through pymthouse `/api/signer/*` so usage is recorded in proxyGenerateLivePayment.
+ */
+export function getClientSignerApiUrl(): string {
+  const explicit = process.env.PYMTHOUSE_CLIENT_SIGNER_API_URL?.trim();
+  if (explicit) {
+    return normalizeSignerBaseUrl(explicit);
+  }
+  const base =
+    process.env.PYMTHOUSE_PUBLIC_URL?.trim() ||
+    process.env.NEXTAUTH_URL?.trim() ||
+    "http://localhost:3001";
+  return `${normalizeSignerBaseUrl(base)}/api/signer`;
+}
+
 export function getSignerUrl(signer?: typeof signerConfig.$inferSelect | null): string {
   const testSignerUrl =
     process.env.NODE_ENV === "test"
       ? process.env.PYMTHOUSE_TEST_SIGNER_URL
       : undefined;
-  if (testSignerUrl && testSignerUrl.trim() !== "") {
-    return testSignerUrl.replace(/\/+$/, "");
-  }
+  return resolveSignerBaseUrl({
+    testSignerUrl,
+    envUrl: process.env.SIGNER_INTERNAL_URL,
+    storedUrl: signer?.signerUrl,
+    storedPort: signer?.signerPort ?? undefined,
+    defaultPort: 8080,
+  });
+}
 
-  // 127.0.0.1 (not "localhost"): the docker-compose publish is bound to 127.0.0.1
-  // only, and some hosts resolve "localhost" to an IPv6 or LAN IPv4 address via
-  // nsswitch/mDNS, producing ECONNREFUSED even when the container is healthy.
-  //
-  // Legacy rows had signer_port=8081 (bare go-livepeer HTTP). That's now the
-  // in-container port; publicly we hit Apache on 8080. Coerce so an un-upgraded
-  // row still lands on the DMZ listener.
-  const LEGACY_BARE_SIGNER_PORT = 8081;
-  const rawPort = signer?.signerPort ?? 8080;
-  const port = rawPort === LEGACY_BARE_SIGNER_PORT ? 8080 : rawPort;
-  const base =
-    process.env.SIGNER_INTERNAL_URL
-    || signer?.signerUrl
-    || `http://127.0.0.1:${port}`;
-  return base.replace(/\/+$/, "");
+function getDmzTokenForSubject(subject: string) {
+  return issueSignerDmzToken({ gate: "http", subject });
 }
 
 /** Stable `sub` for DMZ tokens used only by server-side signer health / sync probes. */
@@ -188,167 +201,29 @@ const SIGNER_SYNC_DMZ_SUBJECT = "pymthouse-signer-sync";
 export async function probeSignerHttpReachability(
   signerUrl: string,
 ): Promise<{ reachable: boolean; ethAddress?: string }> {
-  const timeoutMs = 5000;
-  let ethAddress: string | undefined;
-
-  const parseEthFromStatus = async (
-    response: Response,
-  ): Promise<string | undefined> => {
-    if (!response.ok) return undefined;
-    const data = (await readSignerUpstreamBody(response)) as Record<
-      string,
-      unknown
-    >;
-    return (
-      (typeof data.Address === "string" && data.Address) ||
-      (typeof data.address === "string" && data.address) ||
-      undefined
-    );
-  };
-
-  const fetchStatus = async (headers: Record<string, string>) => {
-    const response = await fetch(`${signerUrl}/status`, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const addr = await parseEthFromStatus(response);
-    return { ok: response.ok, addr };
-  };
-
-  const fetchSigningProbe = async (): Promise<boolean> => {
-    const token = await issueSignerDmzToken({
-      gate: "http",
-      subject: SIGNER_SYNC_DMZ_SUBJECT,
-    });
-    const response = await fetch(`${signerUrl}/sign-orchestrator-info`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: "{}",
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    return response.ok;
-  };
-
-  try {
-    const health = await fetch(`${signerUrl}/healthz`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (health.ok) {
-      if (process.env.SIGNER_DMZ_FORWARD_JWT !== "false") {
-        try {
-          const token = await issueSignerDmzToken({
-            gate: "http",
-            subject: SIGNER_SYNC_DMZ_SUBJECT,
-          });
-          const { ok, addr } = await fetchStatus({
-            Authorization: `Bearer ${token}`,
-          });
-          if (ok) {
-            return { reachable: true, ethAddress: addr };
-          }
-        } catch {
-          /* continue */
-        }
-      }
-      try {
-        const { ok, addr } = await fetchStatus({});
-        if (ok) {
-          return { reachable: true, ethAddress: addr };
-        }
-      } catch {
-        /* continue */
-      }
-      try {
-        if (await fetchSigningProbe()) {
-          return { reachable: true, ethAddress: undefined };
-        }
-      } catch {
-        /* continue */
-      }
-      return { reachable: false, ethAddress: undefined };
-    }
-  } catch {
-    /* try /status without healthz */
-  }
-
-  if (process.env.SIGNER_DMZ_FORWARD_JWT !== "false") {
-    try {
-      const token = await issueSignerDmzToken({
-        gate: "http",
-        subject: SIGNER_SYNC_DMZ_SUBJECT,
-      });
-      const { ok, addr } = await fetchStatus({
-        Authorization: `Bearer ${token}`,
-      });
-      if (ok) {
-        return { reachable: true, ethAddress: addr };
-      }
-    } catch {
-      /* continue */
-    }
-  }
-
-  try {
-    const { ok, addr } = await fetchStatus({});
-    if (ok) {
-      return { reachable: true, ethAddress: addr };
-    }
-  } catch {
-    /* unreachable */
-  }
-
-  try {
-    if (await fetchSigningProbe()) {
-      return { reachable: true, ethAddress: undefined };
-    }
-  } catch {
-    /* unreachable */
-  }
-
-  return { reachable: false, ethAddress: undefined };
+  return sdkProbeSignerHttpReachability({
+    signerUrl,
+    getDmzToken: getDmzTokenForSubject,
+    probeSubject: SIGNER_SYNC_DMZ_SUBJECT,
+    forwardJwt: process.env.SIGNER_DMZ_FORWARD_JWT !== "false",
+  });
 }
 
-/**
- * Per-subject LRU cache for DMZ bearer tokens. Mirrors the scheme in `signer-cli.ts`:
- * DMZ tokens are minted for ~4 minutes; we serve cached copies for ~3.5 minutes and
- * mint a fresh one slightly before expiry so in-flight Apache verification never
- * trips the clock skew / leeway window.
- *
- * Keyed by the subject we put in the JWT (`sub` claim), so two callers acting on
- * behalf of the same principal reuse the same token instead of minting one per request.
- */
-const HTTP_DMZ_TOKEN_MAX_ENTRIES = 100;
-const HTTP_DMZ_TOKEN_TTL_MS = 3.5 * 60 * 1000;
-const httpDmzTokenCache = new Map<string, { token: string; expMs: number }>();
-
-async function getHttpDmzBearerForSubject(subject: string): Promise<string> {
-  const now = Date.now();
-  const cached = httpDmzTokenCache.get(subject);
-  if (cached && cached.expMs > now + 15_000) {
-    // Bump recency: re-insertion moves the entry to the end of the Map iteration order.
-    httpDmzTokenCache.delete(subject);
-    httpDmzTokenCache.set(subject, cached);
-    return cached.token;
+async function buildLivepeerIdentityHeaders(
+  auth: AuthResult,
+  providerAppId: string | null,
+): Promise<Record<string, string> | null> {
+  const clientId = auth.appId?.trim();
+  const usageSubject = await resolveUsageUserIdentifier(auth, providerAppId);
+  if (!clientId || !usageSubject) {
+    return null;
   }
-
-  const token = await issueSignerDmzToken({ gate: "http", subject });
-  httpDmzTokenCache.set(subject, { token, expMs: now + HTTP_DMZ_TOKEN_TTL_MS });
-
-  if (httpDmzTokenCache.size > HTTP_DMZ_TOKEN_MAX_ENTRIES) {
-    const oldest = httpDmzTokenCache.keys().next().value;
-    if (oldest !== undefined) httpDmzTokenCache.delete(oldest);
-  }
-
-  return token;
-}
-
-interface ForwardToSignerResult {
-  response: Response;
-  requestUrl: string;
-  authorizationHeader?: string;
+  return {
+    "X-Livepeer-Usage-Issuer": getIssuer(),
+    "X-Livepeer-Client-ID": clientId,
+    "X-Livepeer-Usage-Subject": usageSubject,
+    "X-Livepeer-Usage-Subject-Type": "external_user_id",
+  };
 }
 
 async function forwardToSigner(
@@ -357,50 +232,38 @@ async function forwardToSigner(
   method: string,
   body: unknown | undefined,
   auth: AuthResult,
-): Promise<ForwardToSignerResult> {
-  const url = `${getSignerUrl(signer)}${path}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (process.env.SIGNER_DMZ_FORWARD_JWT !== "false") {
-    // Fall back to sessionId (always populated on AuthResult) so unauthenticated-but-
-    // session-scoped callers don't collapse onto a single shared "signer-proxy" token —
-    // each session keeps its own cache entry and stays traceable in upstream logs.
-    const sub =
-      auth.endUserId || auth.userId || auth.appId || auth.sessionId;
-    const token = await getHttpDmzBearerForSubject(sub);
-    headers.Authorization = `Bearer ${token}`;
-  }
-  try {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-    return {
-      response,
-      requestUrl: url,
-      authorizationHeader: headers.Authorization,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/** Apache may return HTML on 401; avoid throwing so callers surface real status. */
-async function readSignerUpstreamBody(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text.trim()) return {};
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return {
-      error: "Signer DMZ returned a non-JSON body (often Apache auth failure)",
-      upstreamStatus: response.status,
-      detail: text.slice(0, 800),
+  providerAppId: string | null = auth.appId,
+) {
+  const sub = auth.endUserId || auth.userId || auth.appId || auth.sessionId;
+  const identityHeaders = await buildLivepeerIdentityHeaders(auth, providerAppId);
+  let outboundBody = body;
+  if (
+    identityHeaders &&
+    body !== null &&
+    typeof body === "object" &&
+    !Array.isArray(body)
+  ) {
+    const record = body as Record<string, unknown>;
+    outboundBody = {
+      ...record,
+      identity: {
+        issuer: identityHeaders["X-Livepeer-Usage-Issuer"],
+        client_id: identityHeaders["X-Livepeer-Client-ID"],
+        usage_subject: identityHeaders["X-Livepeer-Usage-Subject"],
+        usage_subject_type: identityHeaders["X-Livepeer-Usage-Subject-Type"],
+      },
     };
   }
+  return sdkForwardToSigner({
+    baseUrl: getSignerUrl(signer),
+    path,
+    method,
+    body: outboundBody,
+    subject: sub,
+    getDmzToken: getDmzTokenForSubject,
+    forwardJwt: process.env.SIGNER_DMZ_FORWARD_JWT !== "false",
+    extraHeaders: identityHeaders ?? undefined,
+  });
 }
 
 /**
@@ -465,61 +328,6 @@ function formatDmzTokenForLog(authz: string | undefined) {
   };
 }
 
-function pickConflictingStringAliases(
-  body: Record<string, unknown>,
-  ...keys: string[]
-):
-  | { ok: true; value: string | undefined }
-  | { ok: false; message: string } {
-  const values = keys
-    .map((key) => {
-      const raw = body[key];
-      const defined = raw !== undefined && raw !== null && `${raw}`.length > 0;
-      return defined ? { key, value: String(raw) } : null;
-    })
-    .filter((entry): entry is { key: string; value: string } => entry !== null);
-  const first = values[0];
-  const conflict = values.find((entry) => entry.value !== first?.value);
-  if (first && conflict) {
-    return {
-      ok: false,
-      message: `Conflicting ${keys.join("/")} in request body`,
-    };
-  }
-  return { ok: true, value: first?.value };
-}
-
-function pickConflictingNumberAliases(
-  body: Record<string, unknown>,
-  ...keys: string[]
-):
-  | { ok: true; value: number | undefined }
-  | { ok: false; message: string } {
-  const parseNum = (v: unknown): number | undefined => {
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string" && v.trim() !== "") {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : undefined;
-    }
-    return undefined;
-  };
-  const values = keys
-    .map((key) => {
-      const value = parseNum(body[key]);
-      return value !== undefined ? { key, value } : null;
-    })
-    .filter((entry): entry is { key: string; value: number } => entry !== null);
-  const first = values[0];
-  const conflict = values.find((entry) => entry.value !== first?.value);
-  if (first && conflict) {
-    return {
-      ok: false,
-      message: `Conflicting ${keys.join("/")} in request body`,
-    };
-  }
-  return { ok: true, value: first?.value };
-}
-
 /**
  * Proxy: POST /sign-orchestrator-info
  */
@@ -581,11 +389,6 @@ export async function proxyGenerateLivePayment(
   const { signer, providerAppId } = await getSignerRoutingContext(auth.appId);
   if (!signer || signer.status !== "running") {
     return { status: 503, body: { error: "Signer is not running" } };
-  }
-
-  const manifestCheck = await enforceCachedManifestPolicy(requestBody, auth);
-  if (!manifestCheck.ok) {
-    return { status: manifestCheck.status, body: manifestCheck.body };
   }
 
   const manifestPick = pickConflictingStringAliases(
@@ -668,10 +471,6 @@ export async function proxyGenerateLivePayment(
   }
 
   const feeWei = calculateFeeWei(pixels, pricePerUnit, pixelsPerUnit);
-  const platformCutWei = calculatePlatformCut(
-    feeWei,
-    signer.defaultCutPercent
-  );
   const usageUserId = await resolveUsageUserIdentifier(auth, providerAppId);
   const billingOracleSelection = await resolveBillingOracleSelection(providerAppId);
   const nowIso = new Date().toISOString();
@@ -724,217 +523,98 @@ export async function proxyGenerateLivePayment(
       "POST",
       requestBody,
       auth,
+      providerAppId,
     );
     const responseBody = await readSignerUpstreamBody(response);
+    const usageSnapshot = parseSignerUsageSnapshot(responseBody);
+    stripSignerUsageFromResponse(responseBody);
 
     if (response.ok) {
-      const orchAddrForConstraint =
-        orchestratorAddress && orchestratorAddress.length > 0
-          ? orchestratorAddress
-          : "0x";
-
-      const signedPriceStr = pricePerUnit.toString();
-      const signedPixelsStr = pixelsPerUnit.toString();
-      const pipelineModelConstraintHash =
-        constraint !== null
-          ? buildSignedTicketConstraintHash({
-              pipeline: constraint.pipeline,
-              modelId: constraint.modelId,
-              orchAddress: orchAddrForConstraint,
-              signedPriceWeiPerUnit: signedPriceStr,
-              signedPixelsPerUnit: signedPixelsStr,
-            })
-          : null;
-
-      let priceValidationStatus: string;
-      let priceValidationReason: string | undefined;
-      if (!constraint) {
-        priceValidationStatus = "missing_constraint";
-        priceValidationReason =
-          "No pipeline/model in request (add pipeline and modelId or capabilities with PerCapability models) for full attribution.";
-      } else {
-        priceValidationStatus = "matched";
-      }
-
-      // Dedupe is per explicit RequestID only. Do NOT fall back to manifestId — the gateway
-      // keeps one manifest for the whole LV2V session, so that would collapse every payment
-      // into a single usage row and freeze signerPaymentCount at 1.
       const rawReq =
         (typeof requestBody.requestId === "string" && requestBody.requestId.trim()) ||
         (typeof requestBody.RequestID === "string" && requestBody.RequestID.trim());
-      const requestId = rawReq || uuidv4();
+      const requestId = usageSnapshot?.requestId || rawReq || uuidv4();
 
-      // Check for an existing usage record first to prevent duplicate inserts on retries
-      let existingUsage = null;
-      if (providerAppId) {
-        const usageRows = await db
-          .select()
-          .from(usageRecords)
-          .where(
-            and(
-              eq(usageRecords.clientId, providerAppId),
-              eq(usageRecords.requestId, requestId),
-            ),
-          )
-          .limit(1);
-        existingUsage = usageRows[0] ?? null;
-      }
+      const authoritativeFeeWei = usageSnapshot?.computedFeeWei
+        ? BigInt(usageSnapshot.computedFeeWei)
+        : feeWei;
 
-      if (!existingUsage) {
-        // Fetch ETH/USD oracle at signing time
+      let networkFeeUsdMicros: bigint;
+      let ethUsdPrice: string;
+      let ethUsdObservedAt: string;
+
+      if (usageSnapshot) {
+        networkFeeUsdMicros = usageSnapshot.computedFeeUsdMicros;
+        ethUsdPrice = usageSnapshot.ethUsdPrice ?? "0";
+        ethUsdObservedAt =
+          usageSnapshot.ethUsdObservedAt ?? new Date().toISOString();
+      } else {
         const ethUsd = await getEthUsdOracle({
           appId: providerAppId,
           providerKey: billingOracleSelection.billingOracleProviderKey,
         });
+        networkFeeUsdMicros = computeUsdMicrosFromWei(
+          authoritativeFeeWei,
+          ethUsd.priceUsd,
+        );
+        ethUsdPrice = ethUsd.priceUsd.toString();
+        ethUsdObservedAt = ethUsd.observedAt;
+      }
 
-        // Compute USD values from wei
-        const networkFeeUsdMicros = computeUsdMicrosFromWei(feeWei, ethUsd.priceUsd);
-        const ownerChargeWei = feeWei + platformCutWei;
-        const ownerPlatformFeeUsdMicros = computeUsdMicrosFromWei(platformCutWei, ethUsd.priceUsd);
-        const ownerChargeUsdMicros = computeUsdMicrosFromWei(ownerChargeWei, ethUsd.priceUsd);
+      const pipeline =
+        usageSnapshot?.pipeline || constraint?.pipeline || undefined;
+      const modelId =
+        usageSnapshot?.modelId || constraint?.modelId || undefined;
 
-        // Resolve plan upcharge when we have a pipeline/model constraint.
-        let upchargeResult: {
-          bps: number;
-          source: "pipeline_model" | "subscription_included" | "unpriced";
-        } = { bps: 0, source: "unpriced" as const };
-        if (providerAppId && constraint) {
-          try {
-            const planRows = await db
-              .select()
-              .from(plans)
-              .where(and(eq(plans.clientId, providerAppId), eq(plans.status, "active")))
-              .orderBy(desc(plans.updatedAt))
-              .limit(1);
-            const bundleRows = planRows[0]
-              ? await db
-                  .select()
-                  .from(planCapabilityBundles)
-                  .where(
-                    and(
-                      eq(planCapabilityBundles.planId, planRows[0].id),
-                      eq(planCapabilityBundles.clientId, providerAppId),
-                    ),
-                  )
-              : [];
-            upchargeResult = resolveUpcharge({
-              plan: planRows[0] ?? null,
-              bundles: bundleRows,
-              pipeline: constraint.pipeline,
-              modelId: constraint.modelId,
-            });
-          } catch (err) {
-            console.warn("[proxy] Plan upcharge lookup failed:", err);
-          }
-        }
+      if (streamSessionId) {
+        await db
+          .update(streamSessions)
+          .set({
+            signerPaymentCount: sql`${streamSessions.signerPaymentCount} + 1`,
+            totalFeeWei: sql`(${streamSessions.totalFeeWei}::numeric + ${authoritativeFeeWei.toString()}::numeric)::bigint::text`,
+            lastPaymentAt: nowIso,
+            pricePerUnit: pricePerUnit.toString(),
+            pixelsPerUnit: pixelsPerUnit.toString(),
+          })
+          .where(eq(streamSessions.id, streamSessionId));
+      }
 
-        // Compute end-user billable: networkFee * (1 + upchargeBps/10000) in micros
-        const endUserBillableUsdMicros =
-          upchargeResult.bps > 0
-            ? networkFeeUsdMicros + (networkFeeUsdMicros * BigInt(upchargeResult.bps)) / 10000n
-            : networkFeeUsdMicros;
-
-        const transactionId = uuidv4();
-        const usageRecordId = uuidv4();
-
-        await db.transaction(async (tx) => {
-          if (streamSessionId) {
-            await tx
-              .update(streamSessions)
-              .set({
-                signerPaymentCount: sql`${streamSessions.signerPaymentCount} + 1`,
-                totalFeeWei: sql`(${streamSessions.totalFeeWei}::numeric + ${feeWei.toString()}::numeric)::bigint::text`,
-                lastPaymentAt: nowIso,
-                pricePerUnit: pricePerUnit.toString(),
-                pixelsPerUnit: pixelsPerUnit.toString(),
-              })
-              .where(eq(streamSessions.id, streamSessionId));
-          }
-
-          await tx.insert(transactions).values({
-            id: transactionId,
-            endUserId: auth.endUserId || null,
-            appId: providerAppId ?? auth.appId ?? null,
-            clientId: providerAppId,
-            streamSessionId,
-            type: "usage",
-            amountWei: feeWei.toString(),
-            platformCutPercent: signer.defaultCutPercent,
-            platformCutWei: platformCutWei.toString(),
-            status: "confirmed",
-            pipeline: constraint?.pipeline ?? null,
-            modelId: constraint?.modelId ?? null,
-            attributionSource: attribution.attributionSource,
-            gatewayRequestId: attribution.gatewayRequestId,
-            paymentMetadataVersion: attribution.paymentMetadataVersion,
-            pipelineModelConstraintHash,
-            advertisedPriceWeiPerUnit: constraint ? signedPriceStr : null,
-            advertisedPixelsPerUnit: constraint ? signedPixelsStr : null,
-            signedPriceWeiPerUnit: pricePerUnit.toString(),
-            signedPixelsPerUnit: pixelsPerUnit.toString(),
-            priceValidationStatus,
-            priceValidationReason: priceValidationReason ?? null,
-            // ETH/USD oracle snapshot
-            ethUsdPrice: ethUsd.priceUsd.toString(),
-            ethUsdSource: ethUsd.source,
-            ethUsdObservedAt: ethUsd.observedAt,
-            networkFeeUsdMicros: networkFeeUsdMicros.toString(),
-            ownerPlatformFeeWei: platformCutWei.toString(),
-            ownerPlatformFeeUsdMicros: ownerPlatformFeeUsdMicros.toString(),
-            ownerChargeWei: ownerChargeWei.toString(),
-            ownerChargeUsdMicros: ownerChargeUsdMicros.toString(),
-          });
-
-          if (providerAppId) {
-            const clientId = providerAppId;
-            await tx.insert(usageRecords).values({
-              id: usageRecordId,
-              requestId,
-              userId: usageUserId,
-              clientId,
-              modelId: constraint?.modelId ?? null,
-              units: pixels.toString(),
-              fee: feeWei.toString(),
-              createdAt: new Date().toISOString(),
-            });
-
-            // Billable ledger row when pipeline/model constraint is present (negotiated ticket).
-            if (constraint && pipelineModelConstraintHash) {
-              await tx.insert(usageBillingEvents).values({
-                id: uuidv4(),
-                usageRecordId,
-                transactionId,
-                streamSessionId,
-                clientId,
-                userId: usageUserId,
-                pipeline: constraint.pipeline,
-                modelId: constraint.modelId,
-                attributionSource: attribution.attributionSource,
-                gatewayRequestId: attribution.gatewayRequestId,
-                paymentMetadataVersion: attribution.paymentMetadataVersion,
-                pipelineModelConstraintHash: pipelineModelConstraintHash,
-                orchAddress: orchestratorAddress ?? null,
-                advertisedPriceWeiPerUnit: signedPriceStr,
-                advertisedPixelsPerUnit: signedPixelsStr,
-                signedPriceWeiPerUnit: pricePerUnit.toString(),
-                signedPixelsPerUnit: pixelsPerUnit.toString(),
-                networkFeeWei: feeWei.toString(),
+      if (providerAppId && usageUserId && networkFeeUsdMicros > 0n) {
+        try {
+          const ticket = usageSnapshot
+            ? {
+                ...signerSnapshotToIngestPayload({
+                  snapshot: usageSnapshot,
+                  externalUserId: usageUserId,
+                  gatewayRequestId: attribution.gatewayRequestId ?? undefined,
+                }),
+                requestId,
+                feeWei: authoritativeFeeWei.toString(),
+                pipeline,
+                modelId,
+                pixels: usageSnapshot.pixels ?? pixels.toString(),
+                ethUsdPrice,
+                ethUsdObservedAt,
+              }
+            : {
+                requestId,
+                externalUserId: usageUserId,
                 networkFeeUsdMicros: networkFeeUsdMicros.toString(),
-                platformFeeWei: platformCutWei.toString(),
-                platformFeeUsdMicros: ownerPlatformFeeUsdMicros.toString(),
-                ownerChargeWei: ownerChargeWei.toString(),
-                ownerChargeUsdMicros: ownerChargeUsdMicros.toString(),
-                upchargePercentBps: upchargeResult.bps,
-                pricingRuleSource: upchargeResult.source,
-                endUserBillableUsdMicros: endUserBillableUsdMicros.toString(),
-                ethUsdPrice: ethUsd.priceUsd.toString(),
-                ethUsdSource: ethUsd.source,
-                ethUsdObservedAt: ethUsd.observedAt,
-                createdAt: new Date().toISOString(),
-              });
-            }
-          }
-        });
+                feeWei: authoritativeFeeWei.toString(),
+                pixels: pixels.toString(),
+                pipeline,
+                modelId,
+                gatewayRequestId: attribution.gatewayRequestId ?? undefined,
+                ethUsdPrice,
+                ethUsdObservedAt,
+              };
+          await ingestSignedTicketUsage({
+            clientId: providerAppId,
+            ticket,
+          });
+        } catch (err) {
+          console.warn("[proxy] usage ingest failed:", err);
+        }
       }
     }
 
@@ -955,15 +635,6 @@ export async function proxySignByocJob(
   const { signer } = await getSignerRoutingContext(auth.appId);
   if (!signer || signer.status !== "running") {
     return { status: 503, body: { error: "Signer is not running" } };
-  }
-
-  const bodyRecord =
-    requestBody !== null && typeof requestBody === "object" && !Array.isArray(requestBody)
-      ? (requestBody as Record<string, unknown>)
-      : {};
-  const manifestCheck = await enforceCachedManifestPolicy(bodyRecord, auth);
-  if (!manifestCheck.ok) {
-    return { status: manifestCheck.status, body: manifestCheck.body };
   }
 
   try {

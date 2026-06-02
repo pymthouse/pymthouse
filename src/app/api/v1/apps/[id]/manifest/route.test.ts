@@ -311,7 +311,7 @@ run("manifest GET and PUT", async (t) => {
       modelId: "only",
       slaTargetP95Ms: null,
       maxPricePerUnit: null,
-      upchargePercentBps: 100,
+      retailRateUsd: "0.0000011",
       createdAt: now,
     });
 

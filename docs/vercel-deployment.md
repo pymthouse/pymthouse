@@ -165,6 +165,16 @@ Deploy with: `fly deploy`
    - **Build Command**: `npm run build` (auto-detected)
    - **Output Directory**: `.next` (auto-detected)
 
+## Step 3b: Deploy OpenMeter on Railway (separate project)
+
+Usage, allowances, and trial balances require OpenMeter. Deploy it in a **second** Railway project (not on the signer service).
+
+1. Follow **[openmeter-railway.md](./openmeter-railway.md)** — upload `docker-compose.openmeter.railway.yml`, attach volumes, generate a public domain on the `openmeter` service.
+2. Run `OPENMETER_URL=https://… npm run openmeter:railway:bootstrap` once the API is healthy.
+3. Set `OPENMETER_URL` on Vercel (Step 4 below).
+
+The remote signer does **not** need OpenMeter env vars; metering goes PymtHouse → OpenMeter over HTTPS.
+
 ## Step 4: Configure Vercel Environment Variables
 
 In your Vercel project dashboard, go to "Settings" → "Environment Variables" and add:
@@ -178,6 +188,9 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 | `NEXTAUTH_SECRET` | Random secret (generate with `openssl rand -base64 32`) | `your-secret-here` |
 | `SIGNER_INTERNAL_URL` | Your deployed signer URL from Step 1 | `https://your-signer.up.railway.app` |
 | `SIGNER_CLI_URL` | Same as SIGNER_INTERNAL_URL (or separate if exposed) | `https://your-signer.up.railway.app` |
+| `OPENMETER_URL` | Self-hosted OpenMeter on Railway (**separate project**) | `https://openmeter-xxxx.up.railway.app` |
+| `OPENMETER_API_KEY` | Optional; set if OpenMeter auth is enabled | (secret) |
+| `OPENMETER_TRIAL_FEATURE_KEY` | Trial entitlement feature | `network_spend` |
 | `SIGNER_NETWORK` | Ethereum network | `arbitrum-one-mainnet` |
 | `ETH_RPC_URL` | Ethereum RPC endpoint | `https://arb1.arbitrum.io/rpc` |
 

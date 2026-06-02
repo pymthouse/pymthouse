@@ -35,14 +35,21 @@ export default async function BillingUsageDashboard({
     userId,
     role,
     isAdmin,
+    usageSource,
     cycle,
     orderedApps,
     appUsage,
     chartData,
     totalRequests,
     totalFeeWei,
+    totalNetworkFeeUsdMicros,
     appsWithUsage,
   } = result.data;
+
+  const isOpenMeter = usageSource === "openmeter";
+  const totalFeesLabel = isOpenMeter
+    ? formatUsdMicrosString(totalNetworkFeeUsdMicros.toString(), 4) ?? "$0"
+    : formatBillingWei(totalFeeWei.toString());
 
   const singleAppName = scope === "single" ? orderedApps[0]?.name : null;
 
@@ -63,6 +70,16 @@ export default async function BillingUsageDashboard({
               </p>
               <p className="text-xs text-zinc-600 mt-2 break-words">
                 Cycle: {formatBillingPeriod(cycle.start)} — {formatBillingPeriod(cycle.end)}
+                <span className="mx-2 text-zinc-700">·</span>
+                <span
+                  className={
+                    isOpenMeter
+                      ? "text-emerald-500/90"
+                      : "text-zinc-500"
+                  }
+                >
+                  Source: {isOpenMeter ? "OpenMeter" : "Postgres"}
+                </span>
               </p>
             </div>
             <Link
@@ -81,6 +98,16 @@ export default async function BillingUsageDashboard({
             </p>
             <p className="text-xs text-zinc-600 mt-2 break-words">
               Cycle: {formatBillingPeriod(cycle.start)} — {formatBillingPeriod(cycle.end)}
+              <span className="mx-2 text-zinc-700">·</span>
+              <span
+                className={
+                  isOpenMeter
+                    ? "text-emerald-500/90"
+                    : "text-zinc-500"
+                }
+              >
+                Source: {isOpenMeter ? "OpenMeter" : "Postgres"}
+              </span>
             </p>
           </>
         )}
@@ -102,12 +129,16 @@ export default async function BillingUsageDashboard({
         <div className="border border-zinc-800 rounded-xl p-4 sm:p-5 bg-zinc-900/30 min-w-0">
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Total Fees</p>
           <p
-            className="font-mono text-lg sm:text-xl font-bold text-zinc-100 break-all leading-snug"
-            title={formatBillingWei(totalFeeWei.toString())}
+            className={`font-mono text-lg sm:text-xl font-bold break-all leading-snug ${
+              isOpenMeter ? "text-emerald-400" : "text-zinc-100"
+            }`}
+            title={totalFeesLabel}
           >
-            {formatBillingWei(totalFeeWei.toString())}
+            {totalFeesLabel}
           </p>
-          <p className="text-xs text-zinc-600 mt-2">estimated usage fees</p>
+          <p className="text-xs text-zinc-600 mt-2">
+            {isOpenMeter ? "network fees (USD micros meter)" : "estimated usage fees"}
+          </p>
         </div>
         <div className="border border-zinc-800 rounded-xl p-4 sm:p-5 bg-zinc-900/30 min-w-0">
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Viewer Role</p>
@@ -179,21 +210,28 @@ export default async function BillingUsageDashboard({
                       </p>
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[11px] uppercase tracking-wider text-zinc-500">Network fee (ETH)</p>
-                      <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
-                        {formatBillingWei(entry.totalFeeWei)}
+                      <p className="text-[11px] uppercase tracking-wider text-zinc-500">
+                        {isOpenMeter ? "Network fee (USD)" : "Network fee (ETH)"}
+                      </p>
+                      <p
+                        className={`text-sm font-semibold font-mono break-all ${
+                          isOpenMeter ? "text-emerald-400" : "text-zinc-200"
+                        }`}
+                      >
+                        {isOpenMeter
+                          ? formatUsdMicrosString(entry.networkFeeUsdMicros, 4) ?? "—"
+                          : formatBillingWei(entry.totalFeeWei)}
                       </p>
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[11px] uppercase tracking-wider text-zinc-500">Network fee (USD)</p>
-                      <p className="text-sm font-semibold text-emerald-400 font-mono break-all">
-                        {formatUsdMicrosString(entry.networkFeeUsdMicros, 4) ?? "—"}
+                      <p className="text-[11px] uppercase tracking-wider text-zinc-500">
+                        {isOpenMeter ? "Billable (USD est.)" : "Network fee (USD)"}
                       </p>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[11px] uppercase tracking-wider text-zinc-500">Billable (USD)</p>
                       <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
-                        {formatUsdMicrosString(entry.endUserBillableUsdMicros, 4) ?? "—"}
+                        {formatUsdMicrosString(
+                          isOpenMeter ? entry.endUserBillableUsdMicros : entry.networkFeeUsdMicros,
+                          4,
+                        ) ?? "—"}
                       </p>
                     </div>
                   </div>
@@ -221,8 +259,15 @@ export default async function BillingUsageDashboard({
                         <th className="text-left px-4 sm:px-5 py-3 font-medium">Identity</th>
                         <th className="text-left px-4 sm:px-5 py-3 font-medium">Identifier</th>
                         <th className="text-right px-4 sm:px-5 py-3 font-medium">Requests</th>
-                        <th className="text-right px-4 sm:px-5 py-3 font-medium">Units</th>
-                        <th className="text-right px-4 sm:px-5 py-3 font-medium">Total Fees</th>
+                        {!isOpenMeter && (
+                          <>
+                            <th className="text-right px-4 sm:px-5 py-3 font-medium">Units</th>
+                            <th className="text-right px-4 sm:px-5 py-3 font-medium">Total Fees</th>
+                          </>
+                        )}
+                        {isOpenMeter && (
+                          <th className="text-right px-4 sm:px-5 py-3 font-medium">Network fee (USD)</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -265,12 +310,21 @@ export default async function BillingUsageDashboard({
                           <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 tabular-nums">
                             {userUsage.requestCount}
                           </td>
-                          <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
-                            {userUsage.totalUnits}
-                          </td>
-                          <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
-                            {formatBillingWei(userUsage.totalFeeWei)}
-                          </td>
+                          {!isOpenMeter && (
+                            <>
+                              <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
+                                {userUsage.totalUnits}
+                              </td>
+                              <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
+                                {formatBillingWei(userUsage.totalFeeWei)}
+                              </td>
+                            </>
+                          )}
+                          {isOpenMeter && (
+                            <td className="px-4 sm:px-5 py-3 text-right text-emerald-400 font-mono text-xs break-all">
+                              {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 4) ?? "—"}
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>

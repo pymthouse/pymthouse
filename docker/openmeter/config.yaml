@@ -1,0 +1,60 @@
+# PymtHouse OpenMeter config — mounted into the openmeter container.
+# Service hostnames match docker-compose.openmeter.yml.
+
+ingest:
+  kafka:
+    broker: openmeter-kafka:9092
+    brokerAddressFamily: v4
+    socketKeepAliveEnable: true
+    topicMetadataRefreshInterval: 10s
+
+aggregation:
+  clickhouse:
+    address: openmeter-clickhouse:9000
+
+sink:
+  minCommitCount: 1
+  namespaceRefetch: 1s
+  namespaceRefetchTimeout: 1s
+  kafka:
+    brokers: openmeter-kafka:9092
+    brokerAddressFamily: v4
+    socketKeepAliveEnable: true
+    topicMetadataRefreshInterval: 10s
+  dedupe:
+    enabled: true
+    driver: redis
+    config:
+      address: openmeter-redis:6379
+      database: 0
+      expiration: 768h # 32d
+
+postgres:
+  url: postgres://postgres:postgres@openmeter-postgres:5432/postgres?sslmode=disable
+  autoMigrate: migration
+
+telemetry:
+  log:
+    level: info
+
+meters:
+  - slug: network_fee_usd_micros
+    description: Livepeer signed-ticket network fee (USD micros)
+    eventType: create_signed_ticket
+    aggregation: SUM
+    valueProperty: $.network_fee_usd_micros
+    groupBy:
+      client_id: $.client_id
+      external_user_id: $.external_user_id
+      pipeline: $.pipeline
+      model_id: $.model_id
+
+  - slug: signed_ticket_count
+    description: Signed ticket count per user
+    eventType: create_signed_ticket
+    aggregation: COUNT
+    groupBy:
+      client_id: $.client_id
+      external_user_id: $.external_user_id
+      pipeline: $.pipeline
+      model_id: $.model_id

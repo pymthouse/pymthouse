@@ -82,6 +82,12 @@ CustomLog /dev/stdout signer_combined
 		# Strip the bearer before proxying upstream, but not before mod_authnz_jwt verifies it.
 		RequestHeader unset Authorization
 
+		# Map verified JWT claims to go-livepeer trusted_headers identity (remoteSignerUsageIdentityMode=trusted_headers).
+		RequestHeader set X-Livepeer-Usage-Issuer "${OIDC_ISSUER}" env=AUTHJWT_AUTHENTICATED
+		RequestHeader set X-Livepeer-Usage-Subject-Type "external_user_id" env=AUTHJWT_AUTHENTICATED
+		RequestHeader set X-Livepeer-Client-ID "expr=%{reqenv:AUTHJWT_CLAIM_client_id}" env=AUTHJWT_CLAIM_client_id
+		RequestHeader set X-Livepeer-Usage-Subject "expr=%{reqenv:AUTHJWT_CLAIM_external_user_id}" env=AUTHJWT_CLAIM_external_user_id
+
 		Require jwt-claim scope=sign:job
 	</LocationMatch>
 </VirtualHost>

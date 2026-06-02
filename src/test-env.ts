@@ -14,6 +14,11 @@ const mutableEnv = process.env as Record<string, string | undefined>;
 mutableEnv.NODE_ENV ??= "test";
 loadDotenvFiles();
 
+/** Usage API reads OpenMeter; tests stub meter rows via __testSetOpenMeterUsageRows. */
+if (mutableEnv.NODE_ENV === "test" && !process.env.OPENMETER_URL?.trim()) {
+  process.env.OPENMETER_URL = "http://127.0.0.1:48888";
+}
+
 process.env.AUTH_TOKEN_PEPPER ??=
   "test-auth-token-pepper-00000000000000000000000000000000";
 process.env.NEXTAUTH_SECRET ??=
