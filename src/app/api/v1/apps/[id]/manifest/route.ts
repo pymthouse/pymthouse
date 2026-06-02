@@ -9,12 +9,11 @@ import {
   getAuthorizedProviderApp,
   getProviderApp,
 } from "@/lib/provider-apps";
+import { DiscoveryAllowlistUpdateBodySchema, normalizeDiscoveryAllowlistDoc } from "@/lib/discovery-allowlist";
 import {
   ALLOW_ALL_MANIFEST_ETAG,
   ALLOW_ALL_MANIFEST_RESPONSE,
-  DiscoveryAllowlistUpdateBodySchema,
-  normalizeDiscoveryAllowlistDoc,
-} from "@/lib/discovery-allowlist";
+} from "@/lib/discovery-allowlist-manifest";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
   findCustomPlansBlockingNewExclusions,

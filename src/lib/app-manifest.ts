@@ -1,11 +1,13 @@
 import { db } from "@/db/index";
 import {
-  buildManifestWhenCatalogUnavailable,
   normalizeDiscoveryAllowlistDoc,
   resolveDiscoveryCapabilitiesForExclusions,
-  toAppManifestResponse,
   type AppManifestResponse,
 } from "@/lib/discovery-allowlist";
+import {
+  buildManifestWhenCatalogUnavailable,
+  toAppManifestResponse,
+} from "@/lib/discovery-allowlist-manifest";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
   getOrCreateNetworkDefaultPlan,
