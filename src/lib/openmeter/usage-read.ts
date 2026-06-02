@@ -4,7 +4,6 @@ import {
 } from "@/lib/openmeter/client-factory";
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import {
-  isOpenMeterEnabled,
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
@@ -423,6 +422,46 @@ function aggregateTestPipelineRowsForUser(input: {
   return [...byKey.values()];
 }
 
+function aggregateDailyRowsToPipelineModel(
+  daily: OpenMeterDailyPipelineRow[],
+): OpenMeterPipelineModelRow[] {
+  const byKey = new Map<string, OpenMeterPipelineModelRow>();
+  for (const row of daily) {
+    const key = `${row.pipeline}|${row.modelId}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.requestCount += row.requestCount;
+      existing.networkFeeUsdMicros = (
+        BigInt(existing.networkFeeUsdMicros) + BigInt(row.networkFeeUsdMicros)
+      ).toString();
+    } else {
+      byKey.set(key, {
+        pipeline: row.pipeline,
+        modelId: row.modelId,
+        requestCount: row.requestCount,
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
+
+/** Test stubs for per-user pipeline/model rows; undefined means use live OpenMeter. */
+function getTestPipelineModelRows(input: {
+  clientId: string;
+  externalUserId: string;
+}): OpenMeterPipelineModelRow[] | undefined {
+  const fromIngest = aggregateTestPipelineRowsForUser(input);
+  if (fromIngest.length > 0) {
+    return fromIngest;
+  }
+  const daily = testDailyByClient.get(input.clientId);
+  if (!daily) {
+    return undefined;
+  }
+  return aggregateDailyRowsToPipelineModel(daily);
+}
+
 /** Register OpenMeter meter rows for integration tests (NODE_ENV=test only). */
 export function __testSetOpenMeterUsageRows(
   clientId: string,
@@ -474,34 +513,12 @@ export async function queryOpenMeterUserPipelineByModel(input: {
   }
 
   if (process.env.NODE_ENV === "test") {
-    const fromIngest = aggregateTestPipelineRowsForUser({
+    const stub = getTestPipelineModelRows({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
     });
-    if (fromIngest.length > 0) {
-      return fromIngest;
-    }
-    const daily = testDailyByClient.get(input.clientId);
-    if (daily) {
-      const byKey = new Map<string, OpenMeterPipelineModelRow>();
-      for (const row of daily) {
-        const key = `${row.pipeline}|${row.modelId}`;
-        const existing = byKey.get(key);
-        if (existing) {
-          existing.requestCount += row.requestCount;
-          existing.networkFeeUsdMicros = (
-            BigInt(existing.networkFeeUsdMicros) + BigInt(row.networkFeeUsdMicros)
-          ).toString();
-        } else {
-          byKey.set(key, {
-            pipeline: row.pipeline,
-            modelId: row.modelId,
-            requestCount: row.requestCount,
-            networkFeeUsdMicros: row.networkFeeUsdMicros,
-          });
-        }
-      }
-      return [...byKey.values()];
+    if (stub !== undefined) {
+      return stub;
     }
   }
 

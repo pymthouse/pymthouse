@@ -129,7 +129,7 @@ WHERE NOT COALESCE("is_network_default", false)
 UPDATE "plans"
 SET "name" = 'Plan'
 WHERE NOT COALESCE("is_network_default", false)
-  AND (trim("name") IS NULL OR trim("name") = '');
+  AND NULLIF(trim("name"), '') IS NULL;
 --> statement-breakpoint
 UPDATE "plans"
 SET
