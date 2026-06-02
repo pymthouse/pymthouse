@@ -5,8 +5,6 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
 import {
-} from "@/lib/discovery-allowlist";
-import {
   ALLOW_ALL_MANIFEST_ETAG,
   ALLOW_ALL_MANIFEST_RESPONSE,
 } from "@/lib/discovery-allowlist-manifest";
