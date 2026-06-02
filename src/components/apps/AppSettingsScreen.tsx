@@ -508,6 +508,7 @@ export default function AppSettingsScreen({
               appId={appId}
               clientId={appState.clientId}
               grantTypes={formData.grantTypes}
+              tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
               redirectUris={formData.redirectUris}
               allowedScopes={formData.allowedScopes}
               hasSecret={appState.hasSecret}

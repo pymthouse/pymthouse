@@ -37,28 +37,6 @@ SIGNER_DMZ_BIND_HOST=0.0.0.0
 
 PymtHouse on the same machine can keep **`SIGNER_INTERNAL_URL=http://127.0.0.1:8080`**. Open the port in the host firewall and terminate TLS at the edge; signing still requires valid DMZ JWTs (`scope=sign:job` / `admin`).
 
-## Second stack (staging issuer, port 8090)
-
-Run a **second** DMZ on another host port with a **different OIDC issuer** (e.g. staging Vercel). Each stack needs its own datadir and compose project; point **that** PymtHouse deployment’s `SIGNER_INTERNAL_URL` at the matching port.
-
-```bash
-# From repo root — copy keystore from ./data into ./data-staging
-./docker/signer-dmz/scripts/init-staging-data.sh
-
-docker compose -f docker-compose.yml -f docker/signer-dmz/docker-compose.staging.yml \
-  --env-file docker/signer-dmz/config/staging.env.example \
-  -p pymthouse-signer-staging up -d --build
-```
-
-| Stack | Project | Port | Env file | Data dir |
-|-------|---------|------|----------|----------|
-| Default | (default) | 8080 | root `.env` | `./data` |
-| Staging | `pymthouse-signer-staging` | 8090 | `config/staging.env.example` | `./data-staging` |
-
-Staging Vercel must use `NEXTAUTH_URL=https://pymthouse-staging.vercel.app` so discovery and DMZ JWT `iss` match. Set `SIGNER_INTERNAL_URL=http://<host>:8090` and `SIGNER_CLI_URL=http://<host>:8090/__signer_cli` on staging only.
-
-Copy `config/staging.env.example` → `config/staging.env` to override `ETH_RPC_URL` / `SIGNER_ETH_ADDR` locally.
-
 ## Railway networking (Docker DMZ)
 
 The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, proxied signer API) and **`$CLI_PORT`** (default **8082**, dedicated CLI-only vhost). **go-livepeer** binds **127.0.0.1:8081** (HTTP) and **127.0.0.1:4935** (CLI) inside the container — they are **not** the ports Railway’s public hostname should target.

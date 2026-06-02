@@ -13,6 +13,8 @@ interface Props {
   appId: string | null;
   clientId: string | null;
   grantTypes: string[];
+  /** Primary (app_) client auth method. "none" => public, no secret may exist. */
+  tokenEndpointAuthMethod: string;
   redirectUris: string[];
   allowedScopes: string;
   hasSecret: boolean;
@@ -49,6 +51,7 @@ export default function TestingStep({
   appId,
   clientId,
   grantTypes,
+  tokenEndpointAuthMethod,
   redirectUris,
   allowedScopes,
   hasSecret,
@@ -78,7 +81,18 @@ export default function TestingStep({
 
   const hasAuthCodeFlow = grantTypes.includes("authorization_code");
   const hasDeviceCode = grantTypes.includes(DEVICE_CODE_GRANT);
-  const isM2MOnly = grantTypes.includes("client_credentials") && !hasAuthCodeFlow;
+  // The primary client may only hold a secret when it is confidential. A public
+  // client (token_endpoint_auth_method === "none") never surfaces a secret or
+  // rotate control, regardless of its grant types — confidential credentials live
+  // exclusively on the m2m_ backend helper.
+  // When an m2m_ backend helper exists, app_ is always public regardless of stale DB auth.
+  const primaryIsConfidential =
+    backendHelper == null && tokenEndpointAuthMethod !== "none";
+  const isM2MOnly =
+    backendHelper == null &&
+    primaryIsConfidential &&
+    grantTypes.includes("client_credentials") &&
+    !hasAuthCodeFlow;
 
   const discoveryUrl =
     typeof window !== "undefined"
@@ -453,7 +467,7 @@ export default function TestingStep({
       {/* Divider */}
       <div className="border-t border-zinc-800" />
 
-      {isM2MOnly ? (
+      {primaryIsConfidential ? (
         <>
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">
