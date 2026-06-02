@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  buildManifestWhenCatalogUnavailable,
-  computeManifestRevision,
   excludedDocumentFromPickerValues,
   expandDocumentToConcreteKeys,
   fullCatalogConcreteKeys,
@@ -11,8 +9,12 @@ import {
   normalizeDiscoveryAllowlistDoc,
   pickerValuesFromExcludedDocument,
   resolveDiscoveryCapabilitiesForExclusions,
-  toAppManifestResponse,
 } from "./discovery-allowlist";
+import {
+  buildManifestWhenCatalogUnavailable,
+  computeManifestRevision,
+  toAppManifestResponse,
+} from "./discovery-allowlist-manifest";
 
 const CATALOG = [
   { id: "pipe-a", models: ["m1", "m2"] },

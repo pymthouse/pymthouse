@@ -157,7 +157,10 @@ export async function GET(
     ? BigInt(planRow.includedUsdMicros)
     : 0n;
 
-  const consumedUsdMicrosFinal = Math.min(omEndUserBillableUsdMicros, includedUsdMicros);
+  const consumedUsdMicrosFinal =
+    omEndUserBillableUsdMicros < includedUsdMicros
+      ? omEndUserBillableUsdMicros
+      : includedUsdMicros;
   const remainingUsdMicrosFinal =
     includedUsdMicros > consumedUsdMicrosFinal
       ? includedUsdMicros - consumedUsdMicrosFinal

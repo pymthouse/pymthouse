@@ -7,7 +7,7 @@ import { planCapabilityBundles, plans } from "@/db/schema";
 import {
   ALLOW_ALL_MANIFEST_ETAG,
   ALLOW_ALL_MANIFEST_RESPONSE,
-} from "@/lib/discovery-allowlist";
+} from "@/lib/discovery-allowlist-manifest";
 import { run } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import {
