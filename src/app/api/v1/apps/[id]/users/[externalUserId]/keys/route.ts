@@ -70,7 +70,7 @@ export async function GET(
   }
 
   const appUser = await resolveAppUser(access.app.id, externalUserId);
-  if (!appUser || appUser.status !== "active") {
+  if (appUser?.status !== "active") {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
@@ -101,7 +101,7 @@ export async function POST(
   }
 
   const appUser = await resolveAppUser(access.app.id, externalUserId);
-  if (!appUser || appUser.status !== "active") {
+  if (appUser?.status !== "active") {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 

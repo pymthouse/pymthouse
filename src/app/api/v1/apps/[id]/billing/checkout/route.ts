@@ -29,8 +29,9 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const planId = String(body.planId || "").trim();
-  const externalUserId = String(body.externalUserId || "").trim();
+  const planId = typeof body.planId === "string" ? body.planId.trim() : "";
+  const externalUserId =
+    typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
   if (!planId || !externalUserId) {
     return NextResponse.json(
       { error: "planId and externalUserId are required" },

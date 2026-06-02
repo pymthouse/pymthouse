@@ -85,9 +85,9 @@ export default async function UserDetailPage({
       {/* Stats */}
       {user.appId && user.externalUserId ? (
         <p className="text-sm text-zinc-500 mb-6">
-          Allowance balance is managed in OpenMeter via Builder API (
+          Allowance balance is managed in OpenMeter via Builder API ({" "}
           <code className="text-zinc-400">GET .../usage/balance</code>
-          ) for app{" "}
+          {" "}) for app{" "}
           <span className="font-mono text-zinc-400">{user.appId}</span> / user{" "}
           <span className="font-mono text-zinc-400">{user.externalUserId}</span>.
         </p>

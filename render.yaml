@@ -11,10 +11,12 @@ services:
     # Apache serves /healthz; /status is also proxied without JWT for livepeer compatibility
     healthCheckPath: /healthz
     envVars:
+      # Render injects PORT for the web service; Apache (signer-dmz) must listen on PORT.
+      # SIGNER_PORT is go-livepeer loopback only — do not point the public URL at 8081.
       - key: SIGNER_NETWORK
         value: arbitrum-one-mainnet
       - key: SIGNER_PORT
-        value: 8081
+        value: "8081"
       - key: ETH_RPC_URL
         value: https://arb1.arbitrum.io/rpc
       - key: SIGNER_ETH_ADDR

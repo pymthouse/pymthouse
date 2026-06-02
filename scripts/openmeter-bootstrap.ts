@@ -52,15 +52,15 @@ async function main() {
   try {
     const features = await client.features.list();
     const hasFeature = (features || []).some((f) => f.key === featureKey);
-    if (!hasFeature) {
+    if (hasFeature) {
+      console.log(`[openmeter-bootstrap] feature exists: ${featureKey}`);
+    } else {
       await client.features.create({
         key: featureKey,
         name: "Network spend",
         meterSlug: "network_fee_usd_micros",
       });
       console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
-    } else {
-      console.log(`[openmeter-bootstrap] feature exists: ${featureKey}`);
     }
   } catch (err) {
     console.warn("[openmeter-bootstrap] feature bootstrap skipped:", err);

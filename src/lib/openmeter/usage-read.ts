@@ -701,6 +701,76 @@ export function shouldReadUsageFromOpenMeter(): boolean {
   return requireOpenMeterForUsageReads();
 }
 
+function mapOpenMeterUserRows(input: {
+  rows: OpenMeterUsageRow[];
+  usageCurrency: string;
+  includeRetail?: boolean;
+  retailByPipelineModel?: Map<string, { endUserBillableUsdMicros: string; retailRateUsd: string }>;
+}) {
+  return input.rows.map((row) => {
+    const base = {
+      endUserId: row.externalUserId,
+      externalUserId: row.externalUserId,
+      userType: "system_managed" as const,
+      identifier: row.externalUserId,
+      currency: input.usageCurrency,
+      networkFeeUsdMicros: row.networkFeeUsdMicros,
+      ownerChargeUsdMicros: row.networkFeeUsdMicros,
+      requestCount: row.requestCount,
+    };
+    if (input.includeRetail && input.retailByPipelineModel) {
+      const retail = input.retailByPipelineModel.get("*|*");
+      if (retail) {
+        return { ...base, endUserBillableUsdMicros: retail.endUserBillableUsdMicros };
+      }
+    }
+    return base;
+  });
+}
+
+function mapOpenMeterPipelineModelRows(input: {
+  pipelineRows: OpenMeterPipelineModelRow[];
+  usageCurrency: string;
+  includeRetail?: boolean;
+  retailByPipelineModel?: Map<string, { endUserBillableUsdMicros: string; retailRateUsd: string }>;
+}) {
+  return input.pipelineRows.map((row) => {
+    const key = `${row.pipeline}|${row.modelId}`;
+    const retail = input.retailByPipelineModel?.get(key);
+    const base = {
+      pipeline: row.pipeline,
+      modelId: row.modelId,
+      currency: input.usageCurrency,
+      requestCount: row.requestCount,
+      networkFeeUsdMicros: row.networkFeeUsdMicros,
+      ownerChargeUsdMicros: row.networkFeeUsdMicros,
+    };
+    if (input.includeRetail && retail) {
+      return {
+        ...base,
+        retailRateUsd: retail.retailRateUsd,
+        endUserBillableUsdMicros: retail.endUserBillableUsdMicros,
+      };
+    }
+    return base;
+  });
+}
+
+function sumRetailBillableUsdMicros(
+  pipelineRows: OpenMeterPipelineModelRow[],
+  retailByPipelineModel: Map<string, { endUserBillableUsdMicros: string; retailRateUsd: string }>,
+): bigint {
+  let totalRetail = 0n;
+  for (const row of pipelineRows) {
+    const key = `${row.pipeline}|${row.modelId}`;
+    const retail = retailByPipelineModel.get(key);
+    if (retail) {
+      totalRetail += BigInt(retail.endUserBillableUsdMicros);
+    }
+  }
+  return totalRetail;
+}
+
 /**
  * Build Builder API usage response from OpenMeter meter rows.
  * Retail (`endUserBillableUsdMicros`) is omitted until OM plan invoicing is queried;
@@ -744,24 +814,11 @@ export function buildOpenMeterUsageResponse(input: {
   };
 
   if (input.groupBy === "user") {
-    response.byUser = input.rows.map((row) => {
-      const base = {
-        endUserId: row.externalUserId,
-        externalUserId: row.externalUserId,
-        userType: "system_managed" as const,
-        identifier: row.externalUserId,
-        currency: usageCurrency,
-        networkFeeUsdMicros: row.networkFeeUsdMicros,
-        ownerChargeUsdMicros: row.networkFeeUsdMicros,
-        requestCount: row.requestCount,
-      };
-      if (input.includeRetail && input.retailByPipelineModel) {
-        const retail = input.retailByPipelineModel.get("*|*");
-        if (retail) {
-          return { ...base, endUserBillableUsdMicros: retail.endUserBillableUsdMicros };
-        }
-      }
-      return base;
+    response.byUser = mapOpenMeterUserRows({
+      rows: input.rows,
+      usageCurrency,
+      includeRetail: input.includeRetail,
+      retailByPipelineModel: input.retailByPipelineModel,
     });
   }
 
@@ -778,36 +835,17 @@ export function buildOpenMeterUsageResponse(input: {
   }
 
   if (input.groupBy === "pipeline_model" && input.pipelineRows) {
-    response.byPipelineModel = input.pipelineRows.map((row) => {
-      const key = `${row.pipeline}|${row.modelId}`;
-      const retail = input.retailByPipelineModel?.get(key);
-      const network = BigInt(row.networkFeeUsdMicros);
-      const base = {
-        pipeline: row.pipeline,
-        modelId: row.modelId,
-        currency: usageCurrency,
-        requestCount: row.requestCount,
-        networkFeeUsdMicros: row.networkFeeUsdMicros,
-        ownerChargeUsdMicros: row.networkFeeUsdMicros,
-      };
-      if (input.includeRetail && retail) {
-        return {
-          ...base,
-          retailRateUsd: retail.retailRateUsd,
-          endUserBillableUsdMicros: retail.endUserBillableUsdMicros,
-        };
-      }
-      return base;
+    response.byPipelineModel = mapOpenMeterPipelineModelRows({
+      pipelineRows: input.pipelineRows,
+      usageCurrency,
+      includeRetail: input.includeRetail,
+      retailByPipelineModel: input.retailByPipelineModel,
     });
     if (input.includeRetail && input.retailByPipelineModel) {
-      let totalRetail = 0n;
-      for (const row of input.pipelineRows) {
-        const key = `${row.pipeline}|${row.modelId}`;
-        const retail = input.retailByPipelineModel.get(key);
-        if (retail) {
-          totalRetail += BigInt(retail.endUserBillableUsdMicros);
-        }
-      }
+      const totalRetail = sumRetailBillableUsdMicros(
+        input.pipelineRows,
+        input.retailByPipelineModel,
+      );
       (response.totals as Record<string, unknown>).endUserBillableUsdMicros =
         totalRetail.toString();
     }

@@ -22,7 +22,7 @@ export async function createEndUserCheckout(input: {
     .where(eq(plans.id, input.planId))
     .limit(1);
   const plan = planRows[0];
-  if (!plan || plan.clientId !== input.clientId) {
+  if (plan?.clientId !== input.clientId) {
     throw new Error("Plan not found");
   }
   if (!plan.openmeterPlanId) {

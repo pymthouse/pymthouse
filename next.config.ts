@@ -10,8 +10,14 @@ const nextConfig: NextConfig = {
   webpack: (config, { isServer }) => {
     if (isServer) {
       const prev = config.externals;
+      let externalsList: unknown[] = [];
+      if (Array.isArray(prev)) {
+        externalsList = prev;
+      } else if (prev) {
+        externalsList = [prev];
+      }
       config.externals = [
-        ...(Array.isArray(prev) ? prev : prev ? [prev] : []),
+        ...externalsList,
         (
           data: { request?: string },
           callback: (err?: Error | null, result?: string) => void,

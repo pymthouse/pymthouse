@@ -24,7 +24,9 @@ Self-hosted OpenMeter runs in a **dedicated Railway project**, separate from the
 2. **Add services** → **Docker Compose** → upload or paste from repo root:
    - [`docker-compose.openmeter.railway.yml`](../docker-compose.openmeter.railway.yml)
 
-Railway creates six services. Service names must stay as in the compose file (they are DNS names on the private network).
+Railway creates six services. Service names must stay as in the compose file.
+
+When services are added individually (not via one-shot Compose import), private DNS uses **`{service-name}.railway.internal`** — see [`docker/openmeter/config.railway.yaml`](../docker/openmeter/config.railway.yaml). Deploy the API with `/entrypoint.sh openmeter` so the rendered config is loaded (not the binary default `127.0.0.1:29092` Kafka).
 
 > Compose import is typically a **one-time** scaffold. For ongoing deploys, connect each service to this GitHub repo or redeploy images from the dashboard.
 
@@ -48,6 +50,7 @@ On the **openmeter** project (or per-service), set:
 | Variable | Where | Example |
 |----------|--------|---------|
 | `OPENMETER_POSTGRES_PASSWORD` | postgres + openmeter + both workers | `openssl rand -hex 24` |
+| `OPENMETER_CLICKHOUSE_SECRET` | openmeter-clickhouse | `openssl rand -hex 24` |
 | `OPENMETER_API_KEY` | optional; set on OM if you enable auth | random secret |
 
 Use the **same** `OPENMETER_POSTGRES_PASSWORD` on `openmeter-postgres`, `openmeter`, `openmeter-sink-worker`, and `openmeter-balance-worker`.

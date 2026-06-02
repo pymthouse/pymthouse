@@ -11,7 +11,7 @@ export const CUSTOM_PLAN_NAME_MAX_LENGTH = 64;
  * Letters, numbers, spaces, hyphen, underscore, period.
  * Must start and end with a letter or number (single char allowed).
  */
-export const CUSTOM_PLAN_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 _.\-]*[A-Za-z0-9])?$/;
+export const CUSTOM_PLAN_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 _.-]*[A-Za-z0-9])?$/;
 
 export function validateCustomPlanName(
   raw: string,
@@ -40,7 +40,7 @@ export function validateCustomPlanName(
 export function normalizeCustomPlanName(raw: string): string {
   const collapsed = raw
     .trim()
-    .replace(/[^A-Za-z0-9 _.\-]+/g, " ")
+    .replace(/[^A-Za-z0-9 _.-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!collapsed) {

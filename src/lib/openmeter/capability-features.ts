@@ -2,16 +2,17 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { billingStableFeatureKeysEnabled } from "@/lib/billing/feature-flags";
 import { NETWORK_FEE_USD_MICROS_METER } from "./constants";
 import {
-  OPENMETER_SLUG_KEY_MAX_LENGTH,
   compactClientSlug,
   isValidOpenMeterSlugKey,
   toOpenMeterSlugKey,
 } from "./slug-keys";
 
-/** @deprecated Use OPENMETER_SLUG_KEY_MAX_LENGTH */
-export const OPENMETER_FEATURE_KEY_MAX_LENGTH = OPENMETER_SLUG_KEY_MAX_LENGTH;
-
-export { isValidOpenMeterSlugKey, OPENMETER_SLUG_KEY_PATTERN } from "./slug-keys";
+export {
+  isValidOpenMeterSlugKey,
+  OPENMETER_SLUG_KEY_MAX_LENGTH as OPENMETER_FEATURE_KEY_MAX_LENGTH,
+  OPENMETER_SLUG_KEY_MAX_LENGTH,
+  OPENMETER_SLUG_KEY_PATTERN,
+} from "./slug-keys";
 
 /** Stable app-level feature key (preferred for OpenMeter rate cards). */
 export function buildAppCapabilityFeatureKey(input: {

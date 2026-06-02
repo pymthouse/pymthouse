@@ -12,7 +12,7 @@ Use this checklist to deploy Pymthouse to Vercel in ~15 minutes.
 3. Railway auto-detects `nixpacks.toml` (downloads binary automatically)
 4. Add environment variables:
    - `SIGNER_NETWORK`: `arbitrum-one-mainnet`
-   - `PORT`: `8081`
+   - Do **not** set `PORT=8081` (that is go-livepeer loopback inside signer-dmz). Railway injects `PORT` for Apache; use `GET /healthz` on the public URL.
    - `ETH_RPC_URL`: `https://arb1.arbitrum.io/rpc`
 5. Add volume: `/app/data` (1GB)
 6. Railway auto-enables public networking

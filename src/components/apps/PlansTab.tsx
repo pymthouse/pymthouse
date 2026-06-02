@@ -353,7 +353,21 @@ function CapabilityChips({
 const SUGGESTED_MARKUP_RATES = [0, 5, 10, 15, 20, 25, 30, 50] as const;
 
 function sanitizePlanNameInput(raw: string): string {
-  return raw.replace(/[^A-Za-z0-9 _.\-]/g, "");
+  return raw.replace(/[^A-Za-z0-9 _.-]/g, "");
+}
+
+function resolvePlanOverageRateUsd(
+  planType: string,
+  defaultMarkupPct: string,
+): string | null {
+  if (planType === "free") {
+    return null;
+  }
+  const defaultMarkup = parseMarkupPercentInput(defaultMarkupPct.trim());
+  if (defaultMarkup == null || defaultMarkup <= 0) {
+    return null;
+  }
+  return markupPercentToRetailRateUsd(defaultMarkup);
 }
 
 function sanitizePercentInput(raw: string): string {
@@ -777,13 +791,7 @@ function buildPlanPayload(
     draft.capabilityMarkupByKey,
   );
 
-  const defaultMarkup = parseMarkupPercentInput(draft.defaultMarkupPct.trim());
-  const overageRateUsd =
-    draft.type === "free"
-      ? null
-      : defaultMarkup != null && defaultMarkup > 0
-        ? markupPercentToRetailRateUsd(defaultMarkup)
-        : null;
+  const overageRateUsd = resolvePlanOverageRateUsd(draft.type, draft.defaultMarkupPct);
 
   const payload: Record<string, unknown> = {
     name: draft.name.trim(),
@@ -1249,7 +1257,7 @@ function StarterPlanCard({
       {expanded && (
         <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
           <label className="block text-sm text-zinc-300">
-            Included usage allowance (USD micros)
+            Included usage allowance (USD micros){" "}
             <input
               type="text"
               inputMode="numeric"

@@ -35,6 +35,7 @@ services:
       - "127.0.0.1:8080:80"
     environment:
       PORT: "80"
+      SIGNER_DMZ_ENABLE_CLI_LISTENER: "0"
       SIGNER_UPSTREAM: http://signer:8081
       SIGNER_CLI_HTTP_ADDR: http://signer:4935
       OIDC_ISSUER: ${OIDC_ISSUER:-https://pymthouse.com/api/v1/oidc}

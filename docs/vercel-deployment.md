@@ -39,7 +39,7 @@ Railway automatically uses the included `nixpacks.toml` configuration:
 5. Add these environment variables:
    ```
    SIGNER_NETWORK=arbitrum-one-mainnet
-   PORT=8081
+   # Do not set PORT=8081 for signer-dmz — Railway injects PORT for Apache (typically 8080).
    ETH_RPC_URL=https://arb1.arbitrum.io/rpc
    ```
    Optional: `SIGNER_ETH_ADDR=0x...` (leave empty otherwise)

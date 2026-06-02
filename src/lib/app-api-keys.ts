@@ -52,7 +52,7 @@ export async function resolveActiveAppApiKey(
     .where(eq(apiKeys.keyHash, keyHash))
     .limit(1);
   const row = keyRows[0];
-  if (!row || row.status !== "active" || !row.appUserId) {
+  if (row?.status !== "active" || !row?.appUserId) {
     return null;
   }
 

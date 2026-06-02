@@ -55,7 +55,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Props) {
   }, [appId]);
 
   useEffect(() => {
-    void load();
+    load().catch(() => undefined);
   }, [load]);
 
   async function connectStripe() {

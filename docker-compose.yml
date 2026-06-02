@@ -22,6 +22,7 @@ services:
       context: .
       dockerfile: docker/signer-dmz/Dockerfile
       target: signer-dmz-local
+    # Host SIGNER_DMZ_HOST_PORT → container PORT (Apache edge; default 8080 in environment below).
     ports:
       - "127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}:8080"
     volumes:

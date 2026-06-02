@@ -1,16 +1,15 @@
-import {
+export {
   applyRetailRateToNetworkMicros,
   defaultRetailRateUsd,
   parseRetailRateUsd,
   retailRateUsdToMarkupPercent,
 } from "@pymthouse/builder-sdk";
 
-export {
-  applyRetailRateToNetworkMicros,
+import {
   defaultRetailRateUsd,
   parseRetailRateUsd,
   retailRateUsdToMarkupPercent,
-};
+} from "@pymthouse/builder-sdk";
 
 export function resolveEffectiveRetailRateUsd(input: {
   capabilityRetailRateUsd: string | null | undefined;

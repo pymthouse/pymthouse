@@ -123,13 +123,13 @@ SET "name" = trim(
     'g'
   )
 )
-WHERE COALESCE("is_network_default", false) = false
+WHERE NOT COALESCE("is_network_default", false)
   AND trim("name") ~ '[^A-Za-z0-9 _.\-]';
 --> statement-breakpoint
 UPDATE "plans"
 SET "name" = 'Plan'
-WHERE COALESCE("is_network_default", false) = false
-  AND (trim("name") = '' OR "name" IS NULL);
+WHERE NOT COALESCE("is_network_default", false)
+  AND COALESCE(trim("name"), '') = '';
 --> statement-breakpoint
 UPDATE "plans"
 SET
@@ -138,7 +138,7 @@ SET
   "last_synced_at" = NULL,
   "sync_error" = NULL
 WHERE
-  COALESCE("is_network_default", false) = false
+  NOT COALESCE("is_network_default", false)
   AND "type" IS DISTINCT FROM 'free'
   AND "status" = 'active';
 --> statement-breakpoint
@@ -184,7 +184,7 @@ WHERE p."is_network_default" = true
     SELECT 1
     FROM "plans" s
     WHERE s."client_id" = p."client_id"
-      AND s."is_starter_default" = true
+      AND s."is_starter_default"
   );
 --> statement-breakpoint
 ALTER TABLE "api_keys" ADD COLUMN IF NOT EXISTS "app_user_id" text;

@@ -1,23 +1,23 @@
-# Railway private networking — hostnames must match Railway service names from
-# docker-compose.openmeter.railway.yml (Compose import or manual service names).
+# Railway private networking — use *.railway.internal (not Docker Compose DNS).
+# Service names must match Railway service names in the preview environment.
 
 ingest:
   kafka:
-    broker: openmeter-kafka:9092
+    broker: openmeter-kafka.railway.internal:9092
     brokerAddressFamily: v4
     socketKeepAliveEnable: true
     topicMetadataRefreshInterval: 10s
 
 aggregation:
   clickhouse:
-    address: openmeter-clickhouse:9000
+    address: openmeter-clickhouse.railway.internal:9000
 
 sink:
   minCommitCount: 1
   namespaceRefetch: 1s
   namespaceRefetchTimeout: 1s
   kafka:
-    brokers: openmeter-kafka:9092
+    brokers: openmeter-kafka.railway.internal:9092
     brokerAddressFamily: v4
     socketKeepAliveEnable: true
     topicMetadataRefreshInterval: 10s
@@ -25,12 +25,12 @@ sink:
     enabled: true
     driver: redis
     config:
-      address: openmeter-redis:6379
+      address: openmeter-redis.railway.internal:6379
       database: 0
       expiration: 768h # 32d
 
 postgres:
-  url: postgres://postgres:${OPENMETER_POSTGRES_PASSWORD}@openmeter-postgres:5432/postgres?sslmode=disable
+  url: postgres://postgres:${OPENMETER_POSTGRES_PASSWORD}@openmeter-postgres.railway.internal:5432/postgres?sslmode=disable
   autoMigrate: migration
 
 telemetry:

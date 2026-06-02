@@ -38,6 +38,13 @@ function formatXTick(dayKey: string, todayKey: string): string {
   return dayKey.slice(5);
 }
 
+function chartPointRadius(activeIndex: number | null, index: number, value: number): number {
+  if (activeIndex === index) {
+    return 4.5;
+  }
+  return value > 0 ? 3 : 2;
+}
+
 function buildYTicks(maxValue: number, tickCount = 4): number[] {
   if (maxValue <= 0) {
     return [0];
@@ -194,9 +201,7 @@ export default function UsageLineChart({
             key={d.date}
             cx={xAt(i)}
             cy={yAt(d.value)}
-            r={
-              activeIndex === i ? 4.5 : d.value > 0 ? 3 : 2
-            }
+            r={chartPointRadius(activeIndex, i, d.value)}
             fill="rgb(16 185 129)"
             stroke={activeIndex === i ? "rgb(24 24 27)" : "none"}
             strokeWidth={activeIndex === i ? 1.5 : 0}
@@ -248,6 +253,12 @@ export default function UsageLineChart({
 
       <div
         ref={plotRef}
+        role="slider"
+        tabIndex={0}
+        aria-label={valueLabel}
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, data.length - 1)}
+        aria-valuenow={activeIndex ?? 0}
         className="absolute"
         style={{
           left: `${(padLeft / width) * 100}%`,
@@ -259,6 +270,17 @@ export default function UsageLineChart({
         onMouseMove={(e) => {
           const idx = resolveIndexFromClientX(e.clientX);
           setHoverIndex(idx);
+        }}
+        onKeyDown={(e) => {
+          if (data.length === 0) {
+            return;
+          }
+          const current = activeIndex ?? 0;
+          if (e.key === "ArrowLeft" && current > 0) {
+            setHoverIndex(current - 1);
+          } else if (e.key === "ArrowRight" && current < data.length - 1) {
+            setHoverIndex(current + 1);
+          }
         }}
       >
         <div className="flex h-full w-full">

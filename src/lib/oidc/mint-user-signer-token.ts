@@ -1,5 +1,5 @@
 import { SignJWT } from "jose";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";

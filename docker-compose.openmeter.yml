@@ -1,13 +1,16 @@
 # Self-hosted OpenMeter stack for local dev and staging.
 # Usage: docker compose -f docker-compose.openmeter.yml up -d
 # API: http://127.0.0.1:48888
+# Local secrets: set OPENMETER_POSTGRES_SECRET and OPENMETER_CLICKHOUSE_SECRET in .env (see .env.example).
+
+x-openmeter-image: &openmeter-image ghcr.io/openmeterio/openmeter:v1.0.0-beta.228
 
 services:
   openmeter-postgres:
     image: postgres:14-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${OPENMETER_POSTGRES_SECRET}
       POSTGRES_DB: postgres
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
@@ -46,7 +49,7 @@ services:
     image: clickhouse/clickhouse-server:25.12.3-alpine
     environment:
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: default
+      CLICKHOUSE_PASSWORD: ${OPENMETER_CLICKHOUSE_SECRET}
       CLICKHOUSE_DB: openmeter
     ulimits:
       nofile:
@@ -68,7 +71,7 @@ services:
       retries: 20
 
   openmeter:
-    image: ghcr.io/openmeterio/openmeter:latest
+    image: *openmeter-image
     command: openmeter --address 0.0.0.0:8888 --config /etc/openmeter/config.yaml
     restart: unless-stopped
     ports:
@@ -91,7 +94,7 @@ services:
       retries: 30
 
   openmeter-sink-worker:
-    image: ghcr.io/openmeterio/openmeter:latest
+    image: *openmeter-image
     command: openmeter-sink-worker --config /etc/openmeter/config.yaml
     restart: unless-stopped
     volumes:
@@ -107,7 +110,7 @@ services:
         condition: service_healthy
 
   openmeter-balance-worker:
-    image: ghcr.io/openmeterio/openmeter:latest
+    image: *openmeter-image
     command: openmeter-balance-worker --config /etc/openmeter/config.yaml
     restart: unless-stopped
     volumes:

@@ -7,13 +7,18 @@ PASS="${OPENMETER_POSTGRES_PASSWORD:-postgres}"
 sed "s|\${OPENMETER_POSTGRES_PASSWORD}|${PASS}|g" \
   /etc/openmeter/config.railway.yaml >"${CONFIG_OUT}"
 
-if [ "${1:-}" = "openmeter" ]; then
-  shift
-  exec openmeter --address "0.0.0.0:${PORT:-8888}" --config "${CONFIG_OUT}" "$@"
-fi
+CMD="${1:-openmeter}"
+shift || true
 
-if [ "$#" -gt 0 ]; then
-  exec "$@" --config "${CONFIG_OUT}"
-fi
-
-exec openmeter --address "0.0.0.0:${PORT:-8888}" --config "${CONFIG_OUT}"
+case "$CMD" in
+  openmeter)
+    exec openmeter --address "0.0.0.0:${PORT:-8888}" --config "${CONFIG_OUT}" "$@"
+    ;;
+  openmeter-sink-worker | openmeter-balance-worker)
+    exec "$CMD" --config "${CONFIG_OUT}" "$@"
+    ;;
+  *)
+    echo "entrypoint: unknown command ${CMD} (expected openmeter, openmeter-sink-worker, or openmeter-balance-worker)" >&2
+    exit 1
+    ;;
+esac

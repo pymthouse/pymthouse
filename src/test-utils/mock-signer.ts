@@ -32,7 +32,12 @@ function synthesizeGenerateLivePaymentResponse(
       ? Math.max(0, Math.trunc(requestBody.preloadSeconds))
       : 0;
 
-  const units = inPixels > 0 ? inPixels : preloadSeconds > 0 ? preloadSeconds : 1;
+  let units = 1;
+  if (inPixels > 0) {
+    units = inPixels;
+  } else if (preloadSeconds > 0) {
+    units = preloadSeconds;
+  }
   const pricePerUnit = 1_000_000_000n;
   const pixelsPerUnit = 1n;
   const computedFeeWei = (BigInt(units) * pricePerUnit) / pixelsPerUnit;
