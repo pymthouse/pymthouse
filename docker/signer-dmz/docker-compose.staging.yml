@@ -1,0 +1,14 @@
+# Staging signer DMZ: different host port, datadir, and OIDC issuer than the default stack.
+#
+#   ./docker/signer-dmz/scripts/init-staging-data.sh
+#   docker compose -f docker-compose.yml -f docker/signer-dmz/docker-compose.staging.yml \
+#     --env-file docker/signer-dmz/config/staging.env -p pymthouse-signer-staging up -d --build
+#
+# Staging Vercel: SIGNER_INTERNAL_URL=http://<host>:8090
+#   SIGNER_CLI_URL=http://<host>:8090/__signer_cli
+
+services:
+  signer-dmz:
+    container_name: pymthouse-signer-dmz-staging
+    volumes:
+      - ${SIGNER_DATA_DIR:-./data-staging}:/data
