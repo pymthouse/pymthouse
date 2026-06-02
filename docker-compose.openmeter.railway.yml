@@ -1,0 +1,152 @@
+# OpenMeter stack for Railway (separate project from pymthouse signer).
+#
+# Initial provision: Railway dashboard → New Project → Empty → Add services →
+#   "Deploy from Docker Compose" and upload this file (or paste from repo).
+# GitHub CD: connect each service to this repo; use build.dockerfilePath below.
+#
+# After deploy:
+#   1. Attach a volume to openmeter-postgres, openmeter-clickhouse, openmeter-kafka, openmeter-redis
+#   2. Generate a public domain on the `openmeter` service (port = Railway $PORT)
+#   3. Set shared variable OPENMETER_POSTGRES_PASSWORD on all OpenMeter app services
+#   4. Run bootstrap: npm run openmeter:railway:bootstrap (see docs/openmeter-railway.md)
+#   5. Vercel: OPENMETER_URL=https://<openmeter>.up.railway.app
+
+name: pymthouse-openmeter
+
+services:
+  openmeter-postgres:
+    image: postgres:14-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${OPENMETER_POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - openmeter-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  openmeter-kafka:
+    image: confluentinc/cp-kafka:8.0.3
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: ca497efe-9f82-4b84-890b-d9969a9a2e1c
+      KAFKA_BROKER_ID: 0
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@openmeter-kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://openmeter-kafka:9092
+      KAFKA_LISTENERS: INTERNAL://openmeter-kafka:9092,CONTROLLER://openmeter-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - openmeter-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-topics --bootstrap-server openmeter-kafka:9092 --list",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  openmeter-clickhouse:
+    image: clickhouse/clickhouse-server:25.12.3-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${OPENMETER_CLICKHOUSE_SECRET}
+      CLICKHOUSE_DB: openmeter
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - openmeter-clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://openmeter-clickhouse:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+
+  openmeter-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - openmeter-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  openmeter:
+    build:
+      context: .
+      dockerfile: deploy/openmeter/Dockerfile
+    restart: unless-stopped
+    environment:
+      OPENMETER_POSTGRES_PASSWORD: ${OPENMETER_POSTGRES_PASSWORD:-postgres}
+    command: ["openmeter"]
+    depends_on:
+      openmeter-kafka:
+        condition: service_healthy
+      openmeter-clickhouse:
+        condition: service_healthy
+      openmeter-postgres:
+        condition: service_healthy
+      openmeter-redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --spider \"http://127.0.0.1:$${PORT:-8888}/api/v1/debug/metrics\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+
+  openmeter-sink-worker:
+    build:
+      context: .
+      dockerfile: deploy/openmeter/Dockerfile
+    restart: unless-stopped
+    environment:
+      OPENMETER_POSTGRES_PASSWORD: ${OPENMETER_POSTGRES_PASSWORD:-postgres}
+    command: ["openmeter-sink-worker"]
+    depends_on:
+      openmeter:
+        condition: service_healthy
+
+  openmeter-balance-worker:
+    build:
+      context: .
+      dockerfile: deploy/openmeter/Dockerfile
+    restart: unless-stopped
+    environment:
+      OPENMETER_POSTGRES_PASSWORD: ${OPENMETER_POSTGRES_PASSWORD:-postgres}
+    command: ["openmeter-balance-worker"]
+    depends_on:
+      openmeter:
+        condition: service_healthy
+
+volumes:
+  openmeter-postgres-data:
+  openmeter-kafka-data:
+  openmeter-clickhouse-data:
+  openmeter-redis-data:

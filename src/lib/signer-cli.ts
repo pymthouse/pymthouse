@@ -48,13 +48,17 @@ export interface SenderInfo {
 
 export interface SignerCliStatus {
   reachable: boolean;
+  ethAddress: string | null;
   senderInfo: SenderInfo | null;
   ethBalance: string | null;
   tokenBalance: string | null;
   fetchedAt: string;
 }
 
-async function cliGet<T>(path: string): Promise<T> {
+async function cliFetch(
+  path: string,
+  parse: "json" | "text",
+): Promise<string> {
   const url = `${getSignerCliUrl()}${path}`;
   const headers: Record<string, string> = {};
   const bearer = await getCliDmzBearer();
@@ -71,7 +75,19 @@ async function cliGet<T>(path: string): Promise<T> {
   }
   const text = await res.text();
   if (!text) throw new Error(`CLI GET ${path} returned empty body`);
+  if (parse === "text") {
+    return text;
+  }
+  return text;
+}
+
+async function cliGet<T>(path: string): Promise<T> {
+  const text = await cliFetch(path, "json");
   return JSON.parse(text) as T;
+}
+
+async function cliGetText(path: string): Promise<string> {
+  return cliFetch(path, "text");
 }
 
 /**
@@ -105,6 +121,21 @@ export async function getSenderInfo(): Promise<SenderInfo | null> {
 }
 
 /**
+ * GET /ethAddr — Ethereum account address (plain text, not JSON).
+ */
+export async function getEthAddr(): Promise<string | null> {
+  try {
+    const raw = (await cliGetText("/ethAddr")).trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(raw)) {
+      return raw;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * GET /ethBalance — ETH balance of the signer account.
  */
 export async function getEthBalance(): Promise<string | null> {
@@ -132,13 +163,15 @@ export async function getTokenBalance(): Promise<string | null> {
  * Fetch all live CLI state in parallel.
  */
 export async function fetchSignerCliStatus(): Promise<SignerCliStatus> {
-  const [senderInfo, ethBalance, tokenBalance] = await Promise.all([
+  const [senderInfo, ethBalance, tokenBalance, ethAddress] = await Promise.all([
     getSenderInfo(),
     getEthBalance(),
     getTokenBalance(),
+    getEthAddr(),
   ]);
   return {
     reachable: senderInfo !== null,
+    ethAddress,
     senderInfo,
     ethBalance,
     tokenBalance,

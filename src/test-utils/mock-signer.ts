@@ -10,6 +10,63 @@ export interface RecordedFetchCall {
   body: unknown;
 }
 
+function synthesizeGenerateLivePaymentResponse(
+  requestBody: Record<string, unknown>,
+): Record<string, unknown> {
+  const requestId =
+    (typeof requestBody.RequestID === "string" && requestBody.RequestID.trim()) ||
+    (typeof requestBody.requestId === "string" && requestBody.requestId.trim()) ||
+    "";
+  const base: Record<string, unknown> = { payment: "mock-payment" };
+  if (!requestId) {
+    return base;
+  }
+
+  const inPixels =
+    typeof requestBody.InPixels === "number" && Number.isFinite(requestBody.InPixels)
+      ? Math.max(0, Math.trunc(requestBody.InPixels))
+      : 0;
+  const preloadSeconds =
+    typeof requestBody.preloadSeconds === "number" &&
+    Number.isFinite(requestBody.preloadSeconds)
+      ? Math.max(0, Math.trunc(requestBody.preloadSeconds))
+      : 0;
+
+  let units = 1;
+  if (inPixels > 0) {
+    units = inPixels;
+  } else if (preloadSeconds > 0) {
+    units = preloadSeconds;
+  }
+  const pricePerUnit = 1_000_000_000n;
+  const pixelsPerUnit = 1n;
+  const computedFeeWei = (BigInt(units) * pricePerUnit) / pixelsPerUnit;
+
+  const ethUsd = Number(process.env.ETH_USD_PRICE ?? "3000");
+  const ethUsdMicros = BigInt(Math.round(ethUsd * 1_000_000));
+  const computedFeeUsdMicros = (computedFeeWei * ethUsdMicros) / 10n ** 18n;
+
+  const usage: Record<string, unknown> = {
+    request_id: requestId,
+    computed_fee_wei: computedFeeWei.toString(),
+    computed_fee_usd_micros: computedFeeUsdMicros.toString(),
+    eth_usd_price: ethUsd.toString(),
+    eth_usd_updated_at: new Date().toISOString(),
+  };
+
+  if (typeof requestBody.pipeline === "string" && requestBody.pipeline.trim()) {
+    usage.pipeline = requestBody.pipeline.trim();
+  }
+  if (typeof requestBody.modelId === "string" && requestBody.modelId.trim()) {
+    usage.model_id = requestBody.modelId.trim();
+  }
+  if (inPixels > 0) {
+    usage.pixels = String(inPixels);
+  }
+
+  return { ...base, usage };
+}
+
 export interface MockSignerController {
   calls: RecordedFetchCall[];
   restore: () => void;
@@ -26,7 +83,7 @@ export function mockSignerFetch(opts?: {
   dashboardPricingResponse?: unknown;
   pipelineCatalogResponse?: unknown;
 }): MockSignerController {
-  const signerHost = opts?.signerHost ?? "http://test-signer.invalid";
+  const signerHost = opts?.signerHost ?? "https://test-signer.invalid";
   const signerOrigin = new URL(signerHost).origin;
   const original = globalThis.fetch;
 
@@ -106,8 +163,17 @@ export function mockSignerFetch(opts?: {
       });
     }
 
-    const responseBody =
+    let responseBody =
       pathDefaults[path] ?? { ok: true, echoed: { path, body } };
+
+    if (
+      path === "/generate-live-payment" &&
+      opts?.generateLivePaymentResponse === undefined &&
+      body !== null &&
+      typeof body === "object"
+    ) {
+      responseBody = synthesizeGenerateLivePaymentResponse(body as Record<string, unknown>);
+    }
 
     return new Response(JSON.stringify(responseBody), {
       status: 200,

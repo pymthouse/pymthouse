@@ -82,39 +82,12 @@ CustomLog /dev/stdout signer_combined
 		# Strip the bearer before proxying upstream, but not before mod_authnz_jwt verifies it.
 		RequestHeader unset Authorization
 
+		# Map verified JWT claims to go-livepeer trusted_headers identity (remoteSignerUsageIdentityMode=trusted_headers).
+		RequestHeader set X-Livepeer-Usage-Issuer "${OIDC_ISSUER}" env=AUTHJWT_AUTHENTICATED
+		RequestHeader set X-Livepeer-Usage-Subject-Type "external_user_id" env=AUTHJWT_AUTHENTICATED
+		RequestHeader set X-Livepeer-Client-ID "expr=%{reqenv:AUTHJWT_CLAIM_client_id}" env=AUTHJWT_CLAIM_client_id
+		RequestHeader set X-Livepeer-Usage-Subject "expr=%{reqenv:AUTHJWT_CLAIM_external_user_id}" env=AUTHJWT_CLAIM_external_user_id
+
 		Require jwt-claim scope=sign:job
-	</LocationMatch>
-</VirtualHost>
-
-# Dedicated admin CLI listener. Same upstream as /__signer_cli, but its own
-# port so ops can firewall/observe it separately. Requires scope=admin.
-<VirtualHost *:${CLI_PORT}>
-	ServerName localhost
-	ProxyPreserveHost On
-	ProxyRequests Off
-
-	ProxyPass /healthz !
-	Alias /healthz /var/www/static/healthz
-	<Location "/healthz">
-		AuthType None
-		Require all granted
-	</Location>
-
-	ProxyPass / ${SIGNER_CLI_HTTP_ADDR}/
-	ProxyPassReverse / ${SIGNER_CLI_HTTP_ADDR}/
-
-	<LocationMatch "^/(?!healthz(?:/|$))">
-		AuthType jwt-bearer
-		AuthName "pymthouse-signer-cli-port"
-		AuthJWTSignatureAlgorithm RS256
-		AuthJWTSignaturePublicKeyFile ${JWT_PEM_PATH}
-		AuthJWTIss "${OIDC_ISSUER}"
-		AuthJWTAud "${OIDC_AUDIENCE}"
-		AuthJWTAttributeUsername sub
-		AuthJWTLeeway 10
-
-		RequestHeader unset Authorization
-
-		Require jwt-claim scope=admin
 	</LocationMatch>
 </VirtualHost>

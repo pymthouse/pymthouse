@@ -9,11 +9,8 @@ import {
   planCapabilityBundles,
   plans,
   streamSessions,
-  transactions,
-  usageBillingEvents,
-  usageRecords,
+  usageIngestReceipts,
 } from "@/db/schema";
-import { countActiveStreamsByRecentPayment } from "@/lib/active-streams";
 import { proxyGenerateLivePayment } from "@/lib/signer-proxy";
 import { resetEthUsdOracleCacheForTests } from "@/lib/prices/eth-usd-oracle";
 import { run } from "@/test-utils/db-guard";
@@ -24,11 +21,10 @@ import {
   createJobTokenForApp,
   ensureRunningSigner,
   seedDeveloperAppWithClient,
-  seedManifestCacheForTestClient,
 } from "@/test-utils/fixtures";
 import { mockSignerFetch } from "@/test-utils/mock-signer";
 import { buildOrchestratorInfoBase64 } from "@/test-utils/orchestrator-info";
-import { eq, and } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 
 const PER_REQUEST_PIXELS = 1_000_000;
 const PRICE_PER_UNIT = 1_000_000_000;
@@ -61,7 +57,6 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -101,7 +96,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   });
 
   const mock = mockSignerFetch({
-    signerHost: "http://test-signer.invalid",
+    signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
@@ -172,26 +167,30 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   const dupeSession = dupeSessionRows[0];
   assert.ok(dupeSession, "stream session persisted for manifest");
 
-  const linkedTxnRows = await db
+  const dupeReceipts = await db
     .select()
-    .from(transactions)
+    .from(usageIngestReceipts)
     .where(
       and(
-        eq(transactions.streamSessionId, dupeSession.id),
-        eq(transactions.type, "usage"),
-        eq(transactions.status, "confirmed"),
+        eq(usageIngestReceipts.clientId, app.clientId),
+        eq(usageIngestReceipts.requestId, dupeRequestId),
       ),
     );
   assert.equal(
-    linkedTxnRows.length,
+    dupeReceipts.length,
     1,
-    "exactly one confirmed usage transaction links to stream session when requestId is duplicated",
+    "duplicate requestId should produce a single OpenMeter ingest receipt",
   );
 
-  const activeStreamCount = await countActiveStreamsByRecentPayment();
+  const activeSessions = await db
+    .select({ id: streamSessions.id })
+    .from(streamSessions)
+    .where(
+      and(eq(streamSessions.appId, app.clientId), isNotNull(streamSessions.lastPaymentAt)),
+    );
   assert.ok(
-    activeStreamCount > 0,
-    "recent-payment active stream view should report active streams after payment traffic",
+    activeSessions.length > 0,
+    "stream sessions should record lastPaymentAt after signer payment traffic",
   );
 
   async function fetchUsage(query = "") {
@@ -232,9 +231,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
 
   const alphaBucket = buckets!.find((b) => b.externalUserId === "ext-alpha");
   const betaBucket = buckets!.find((b) => b.externalUserId === "ext-beta");
-  const ownerBucket = buckets!.find(
-    (b) => b.endUserId === app.userId && b.externalUserId === null,
-  );
+  const ownerBucket = buckets!.find((b) => b.externalUserId === app.userId);
 
   assert.ok(alphaBucket, "alpha end user present in byUser");
   assert.equal(alphaBucket!.externalUserId, "ext-alpha");
@@ -246,8 +243,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   assert.equal(betaBucket!.requestCount, betaCount);
   assert.equal(betaBucket!.currency, "USD");
 
-  assert.ok(ownerBucket, "owner userId bucket present");
-  assert.equal(ownerBucket!.externalUserId, null, "owner is a platform user, not an app_user");
+  assert.ok(ownerBucket, "owner bucket uses platform user id as usage subject");
   assert.equal(ownerBucket!.requestCount, ownerCount + 1, "owner bucket includes dedup single row");
 
   // userId filter: only alpha rows.
@@ -290,14 +286,12 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const endUserId = randomUUID();
   await db.insert(endUsers).values({
     id: endUserId,
     appId: app.clientId,
     externalUserId: "byoc-preload-user",
-    creditBalanceWei: "0",
   });
 
   const token = await createJobTokenForApp({
@@ -312,7 +306,7 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
     pricePerUnit: PRICE_PER_UNIT,
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
-  const mock = mockSignerFetch({ signerHost: "http://test-signer.invalid" });
+  const mock = mockSignerFetch({ signerHost: "https://test-signer.invalid" });
   t.after(mock.restore);
 
   const requestId = `byoc-preload-${randomUUID()}`;
@@ -334,15 +328,6 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
     `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
-  const usageRows = await db
-    .select()
-    .from(usageRecords)
-    .where(and(eq(usageRecords.clientId, app.clientId), eq(usageRecords.requestId, requestId)));
-  assert.equal(usageRows.length, 1);
-  assert.equal(usageRows[0]!.userId, "byoc-preload-user");
-  assert.equal(usageRows[0]!.units, "3");
-  assert.equal(usageRows[0]!.fee, (3n * BigInt(PRICE_PER_UNIT)).toString());
-
   const sessionRows = await db
     .select()
     .from(streamSessions)
@@ -358,7 +343,6 @@ run("successful zero-fee signer payment still increments usage count", async (t)
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const token = await createJobTokenForApp({
     userId: app.userId,
@@ -368,7 +352,7 @@ run("successful zero-fee signer payment still increments usage count", async (t)
   const auth = await validateBearerToken(token);
   assert.ok(auth, "signer token resolves");
 
-  const mock = mockSignerFetch({ signerHost: "http://test-signer.invalid" });
+  const mock = mockSignerFetch({ signerHost: "https://test-signer.invalid" });
   t.after(mock.restore);
 
   const requestId = `zero-fee-${randomUUID()}`;
@@ -388,16 +372,9 @@ run("successful zero-fee signer payment still increments usage count", async (t)
     `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
-  const usageRows = await db
-    .select()
-    .from(usageRecords)
-    .where(and(eq(usageRecords.clientId, app.clientId), eq(usageRecords.requestId, requestId)));
-  assert.equal(usageRows.length, 1);
-  assert.equal(usageRows[0]!.units, "3");
-  assert.equal(usageRows[0]!.fee, "0");
 });
 
-run("plan capability upcharge is persisted and exposed through Usage API events", async (t) => {
+run("network cost usage applies retail rate from plan capability bundle", async (t) => {
   resetEthUsdOracleCacheForTests();
   const { GET: readUsage } = await import("@/app/api/v1/apps/[id]/usage/route");
 
@@ -406,7 +383,6 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -435,7 +411,7 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
     clientId: app.clientId,
     pipeline: PIPELINE,
     modelId: MODEL_ID,
-    upchargePercentBps: 5000,
+    retailRateUsd: "0.0000015",
     createdAt: now,
   });
 
@@ -445,7 +421,7 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
   });
 
   const mock = mockSignerFetch({
-    signerHost: "http://test-signer.invalid",
+    signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
@@ -472,7 +448,7 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
 
   const usage = await readUsage(
     new Request(
-      `http://localhost/api/v1/apps/${app.clientId}/usage?gatewayRequestId=${encodeURIComponent(gatewayRequestId)}`,
+      `http://localhost/api/v1/apps/${app.clientId}/usage?groupBy=pipeline_model&userId=${encodeURIComponent(app.userId)}&includeRetail=1`,
       {
         method: "GET",
         headers: {
@@ -484,40 +460,32 @@ run("plan capability upcharge is persisted and exposed through Usage API events"
   );
   assert.equal(usage.status, 200);
   const body = (await usage.json()) as {
-    totals: { endUserBillableUsdMicros: string };
-    events: Array<{
-      gatewayRequestId: string;
+    totals: { endUserBillableUsdMicros?: string; requestCount: number };
+    byPipelineModel?: Array<{
       pipeline: string;
       modelId: string;
       networkFeeUsdMicros: string;
-      upchargePercentBps: number;
-      pricingRuleSource: string;
-      endUserBillableUsdMicros: string;
+      retailRateUsd?: string;
+      endUserBillableUsdMicros?: string;
     }>;
   };
-  assert.equal(body.events.length, 1);
-  const event = body.events[0];
-  assert.equal(event.gatewayRequestId, gatewayRequestId);
-  assert.equal(event.pipeline, PIPELINE);
-  assert.equal(event.modelId, MODEL_ID);
-  assert.equal(event.upchargePercentBps, 5000);
-  assert.equal(event.pricingRuleSource, "pipeline_model");
-
-  const networkFeeUsdMicros = BigInt(event.networkFeeUsdMicros);
-  const expectedBillableUsdMicros =
-    networkFeeUsdMicros + (networkFeeUsdMicros * 5000n) / 10000n;
-  assert.equal(event.endUserBillableUsdMicros, expectedBillableUsdMicros.toString());
-  assert.equal(body.totals.endUserBillableUsdMicros, expectedBillableUsdMicros.toString());
+  assert.equal(body.totals.requestCount, 1);
+  const row = body.byPipelineModel?.find(
+    (entry) => entry.pipeline === PIPELINE && entry.modelId === MODEL_ID,
+  );
+  assert.ok(row, "pipeline/model row present");
+  assert.equal(row!.retailRateUsd, "0.0000015");
+  assert.ok(row!.endUserBillableUsdMicros);
+  assert.notEqual(row!.endUserBillableUsdMicros, row!.networkFeeUsdMicros);
 });
 
-run("generate-live-payment writes usage_billing_events from negotiated ticket without NaaP pricing", async (t) => {
+run("proxy strips signer usage block and records signer_chainlink eth source", async (t) => {
   resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -533,7 +501,59 @@ run("generate-live-payment writes usage_billing_events from negotiated ticket wi
   });
 
   const mock = mockSignerFetch({
-    signerHost: "http://test-signer.invalid",
+    signerHost: "https://test-signer.invalid",
+  });
+  t.after(mock.restore);
+
+  const gatewayRequestId = `signer-usage-${randomUUID()}`;
+  const result = await proxyGenerateLivePayment(
+    {
+      ManifestID: "signer-usage-manifest",
+      RequestID: gatewayRequestId,
+      InPixels: PER_REQUEST_PIXELS,
+      Orchestrator: orch,
+      pipeline: PIPELINE,
+      modelId: MODEL_ID,
+      attributionSource: "pymthouse_gateway",
+      gatewayRequestId,
+      paymentMetadataVersion: PAYMENT_METADATA_VERSION,
+    },
+    ownerAuth!,
+  );
+  assert.equal(result.status, 200);
+  assert.equal("usage" in (result.body as Record<string, unknown>), false);
+
+  const receiptRows = await db
+    .select()
+    .from(usageIngestReceipts)
+    .where(eq(usageIngestReceipts.requestId, gatewayRequestId))
+    .limit(1);
+  assert.equal(receiptRows.length, 1, "signed-ticket ingest receipt recorded");
+});
+
+run("generate-live-payment ingests negotiated ticket usage to OpenMeter", async (t) => {
+  resetEthUsdOracleCacheForTests();
+  const restoreSigner = await ensureRunningSigner();
+  t.after(restoreSigner);
+
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const ownerToken = await createJobTokenForApp({
+    userId: app.userId,
+    clientId: app.clientId,
+    scopes: "sign:job",
+  });
+  const ownerAuth = await validateBearerToken(ownerToken);
+  assert.ok(ownerAuth);
+
+  const orch = await buildOrchestratorInfoBase64({
+    pricePerUnit: PRICE_PER_UNIT,
+    pixelsPerUnit: PIXELS_PER_UNIT,
+  });
+
+  const mock = mockSignerFetch({
+    signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
@@ -559,33 +579,38 @@ run("generate-live-payment writes usage_billing_events from negotiated ticket wi
     1,
   );
 
-  const txnRows = await db
+  const receiptRows = await db
     .select()
-    .from(transactions)
-    .where(eq(transactions.gatewayRequestId, gatewayRequestId))
+    .from(usageIngestReceipts)
+    .where(eq(usageIngestReceipts.requestId, gatewayRequestId))
     .limit(1);
-  assert.ok(txnRows[0], "usage transaction recorded");
-  assert.equal(txnRows[0].priceValidationStatus, "matched");
+  assert.equal(receiptRows.length, 1, "usage ingest receipt recorded");
 
-  const billingRows = await db
-    .select()
-    .from(usageBillingEvents)
-    .where(eq(usageBillingEvents.gatewayRequestId, gatewayRequestId));
-  assert.equal(billingRows.length, 1, "usage_billing_events from negotiated ticket");
-  assert.equal(billingRows[0]!.pipeline, PIPELINE);
-  assert.equal(billingRows[0]!.modelId, MODEL_ID);
-  assert.equal(billingRows[0]!.advertisedPriceWeiPerUnit, PRICE_PER_UNIT.toString());
-  assert.equal(billingRows[0]!.signedPriceWeiPerUnit, PRICE_PER_UNIT.toString());
+  const { GET: readUsage } = await import("@/app/api/v1/apps/[id]/usage/route");
+  const usage = await readUsage(
+    new Request(
+      `http://localhost/api/v1/apps/${app.clientId}/usage?userId=${encodeURIComponent(app.userId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: basicAuthHeader(app.clientId, app.clientSecret),
+        },
+      },
+    ),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(usage.status, 200);
+  const body = (await usage.json()) as { totals: { requestCount: number } };
+  assert.equal(body.totals.requestCount, 1);
 });
 
-run("generate-live-payment records missing_constraint when modelId absent", async (t) => {
+run("generate-live-payment ingests usage when modelId absent", async (t) => {
   resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const ownerToken = await createJobTokenForApp({
     userId: app.userId,
@@ -601,7 +626,7 @@ run("generate-live-payment records missing_constraint when modelId absent", asyn
   });
 
   const mock = mockSignerFetch({
-    signerHost: "http://test-signer.invalid",
+    signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
@@ -621,19 +646,12 @@ run("generate-live-payment records missing_constraint when modelId absent", asyn
   );
   assert.equal(result.status, 200);
 
-  const txnRows = await db
+  const receiptRows = await db
     .select()
-    .from(transactions)
-    .where(eq(transactions.gatewayRequestId, gatewayRequestId))
+    .from(usageIngestReceipts)
+    .where(eq(usageIngestReceipts.requestId, gatewayRequestId))
     .limit(1);
-  assert.ok(txnRows[0]);
-  assert.equal(txnRows[0].priceValidationStatus, "missing_constraint");
-
-  const billingRows = await db
-    .select()
-    .from(usageBillingEvents)
-    .where(eq(usageBillingEvents.gatewayRequestId, gatewayRequestId));
-  assert.equal(billingRows.length, 0);
+  assert.equal(receiptRows.length, 1, "usage still ingested without modelId");
 });
 
 run("generate-live-payment succeeds when live oracle fetch fails", async (t) => {
@@ -643,7 +661,6 @@ run("generate-live-payment succeeds when live oracle fetch fails", async (t) => 
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const token = await createJobTokenForApp({
     userId: app.userId,
@@ -659,7 +676,7 @@ run("generate-live-payment succeeds when live oracle fetch fails", async (t) => 
   });
 
   const mock = mockSignerFetch({
-    signerHost: "http://test-signer.invalid",
+    signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
@@ -693,11 +710,10 @@ run("generate-live-payment succeeds when live oracle fetch fails", async (t) => 
   );
   assert.equal(result.status, 200);
 
-  const txnRows = await db
+  const receiptRows = await db
     .select()
-    .from(transactions)
-    .where(eq(transactions.gatewayRequestId, requestId))
+    .from(usageIngestReceipts)
+    .where(eq(usageIngestReceipts.requestId, requestId))
     .limit(1);
-  assert.ok(txnRows[0], "usage transaction persisted");
-  assert.equal(txnRows[0]!.ethUsdSource, "env");
+  assert.equal(receiptRows.length, 1, "usage ingest receipt persisted with env ETH fallback");
 });

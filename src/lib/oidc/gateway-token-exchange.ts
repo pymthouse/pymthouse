@@ -13,6 +13,7 @@ import {
 } from "@/lib/oidc/client-sibling";
 import { verifyAccessToken } from "./access-token-verify";
 import { getIssuer } from "./issuer-urls";
+import { LIVEPEER_REMOTE_SIGNER_AUDIENCE } from "./mint-user-signer-token";
 import { TokenExchangeError } from "./token-exchange";
 
 export type GatewayTokenExchangeDeps = {
@@ -272,14 +273,6 @@ export async function handleGatewayTokenExchange(
     expiresInDays: 90,
   });
 
-  void import("@/lib/app-manifest-cache")
-    .then(({ warmAppManifestCacheForPublicClientWithRetry }) =>
-      warmAppManifestCacheForPublicClientWithRetry(publicClientId, "token_mint"),
-    )
-    .catch((err) => {
-      console.warn("[oidc] manifest cache warm failed after gateway token exchange:", err);
-    });
-
   const correlationId = deps.createCorrelationId();
   await deps.writeAuditLog({
     clientId: developerAppId,
@@ -354,10 +347,19 @@ export function isGatewayTokenExchangeRequest(params: {
   clientId: string;
   subjectTokenType: string;
   resource: string | null | undefined;
+  audience?: string[];
 }): boolean {
   const resource = params.resource?.trim() ?? "";
   if (resource.startsWith("urn:pmth:device_code:")) {
     return false;
+  }
+  if (resource === LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
+    return false;
+  }
+  for (const raw of params.audience ?? []) {
+    if (raw.trim() === LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
+      return false;
+    }
   }
   return (
     params.grantType ===

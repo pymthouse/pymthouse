@@ -30,6 +30,7 @@ export default function AppDetailPage() {
     deviceThirdPartyInitiateLogin: boolean;
     canEdit: boolean;
     canSubmitForReview: boolean;
+    canManageBilling: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -78,6 +79,7 @@ export default function AppDetailPage() {
             data.oidcClient?.deviceThirdPartyInitiateLogin === true,
           canEdit: data.canEdit === true,
           canSubmitForReview: data.canSubmitForReview === true,
+          canManageBilling: data.canManageBilling === true,
         });
       })
       .catch(() => setAppData(null))
@@ -159,6 +161,7 @@ export default function AppDetailPage() {
         }
         canEdit={appData.canEdit}
         canSubmitForReview={appData.canSubmitForReview}
+        canManageBilling={appData.canManageBilling}
         onReviewSubmitted={handleReviewSubmitted}
         onRevertedToDraft={handleRevertedToDraft}
         initialTab={initialTab}

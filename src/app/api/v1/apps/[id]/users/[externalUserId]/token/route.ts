@@ -4,7 +4,6 @@ import { authenticateAppClient, hasScope } from "@/lib/auth";
 import { db } from "@/db/index";
 import { appUsers, oidcClients } from "@/db/schema";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
-import { warmAppManifestCacheForPublicClient } from "@/lib/app-manifest-cache";
 import { issueProgrammaticTokens, ProgrammaticTokenError } from "@/lib/oidc/programmatic-tokens";
 import { getProviderApp } from "@/lib/provider-apps";
 
@@ -134,14 +133,6 @@ export async function POST(
       },
       { status: 404 },
     );
-  }
-
-  if (scopes.includes("sign:job")) {
-    try {
-      await warmAppManifestCacheForPublicClient(clientId, "token_mint");
-    } catch (err) {
-      console.warn("[api] manifest cache warm failed before token mint:", err);
-    }
   }
 
   let tokens;

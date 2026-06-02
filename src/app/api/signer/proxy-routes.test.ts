@@ -7,7 +7,6 @@ import {
   createTestUserWithCleanup,
   ensureRunningSigner,
   seedDeveloperAppWithClient,
-  seedManifestCacheForTestClient,
 } from "@/test-utils/fixtures";
 import { mockSignerFetch } from "@/test-utils/mock-signer";
 import { buildOrchestratorInfoBase64 } from "@/test-utils/orchestrator-info";
@@ -27,7 +26,6 @@ run("signer proxy routes enforce auth and forward to the signer", async (t) => {
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId);
 
   const jobToken = await createJobTokenForApp({
     userId: app.userId,
@@ -118,7 +116,7 @@ run("signer proxy routes enforce auth and forward to the signer", async (t) => {
   assert.ok(Array.isArray(discoverBody.orchestrators));
 
   // Confirm every call above went to the mocked signer host.
-  const expectedSignerOrigin = new URL("http://test-signer.invalid").origin;
+  const expectedSignerOrigin = new URL("https://test-signer.invalid").origin;
   assert.ok(
     mock.calls.every((c) => {
       try {
@@ -178,82 +176,4 @@ run("generate-live-payment rejects requests against unapproved apps", async (t) 
     0,
     "approval check happens before any signer forwarding",
   );
-});
-
-run("generate-live-payment rejects disallowed pipeline before signer", async (t) => {
-  const { POST: generateLivePayment } = await import("./generate-live-payment/route");
-
-  const restoreSigner = await ensureRunningSigner();
-  t.after(restoreSigner);
-
-  const app = await seedDeveloperAppWithClient({ status: "approved" });
-  t.after(() => cleanupTestApp(app));
-  seedManifestCacheForTestClient(app.clientId, [
-    { pipeline: "text-to-image", modelId: "allowed-only" },
-  ]);
-
-  const token = await createJobTokenForApp({
-    userId: app.userId,
-    clientId: app.clientId,
-    scopes: "sign:job",
-  });
-
-  const mock = mockSignerFetch();
-  t.after(mock.restore);
-
-  const res = await generateLivePayment(
-    new Request("http://localhost/api/signer/generate-live-payment", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        pipeline: "text-to-image",
-        modelId: "stabilityai/sdxl",
-        InPixels: 100,
-      }),
-    }) as never,
-  );
-  assert.equal(res.status, 403);
-  const body = (await res.json()) as { error: string };
-  assert.equal(body.error, "capability_not_allowed");
-  assert.equal(mock.calls.length, 0);
-});
-
-run("sign-byoc-job rejects when manifest cache is cold", async (t) => {
-  const { POST: signByocJob } = await import("./sign-byoc-job/route");
-  const { resetManifestPolicyCacheForTests } = await import("@/lib/app-manifest-cache");
-
-  const restoreSigner = await ensureRunningSigner();
-  t.after(restoreSigner);
-
-  resetManifestPolicyCacheForTests();
-
-  const app = await seedDeveloperAppWithClient({ status: "approved" });
-  t.after(() => cleanupTestApp(app));
-
-  const token = await createJobTokenForApp({
-    userId: app.userId,
-    clientId: app.clientId,
-    scopes: "sign:job",
-  });
-
-  const mock = mockSignerFetch();
-  t.after(mock.restore);
-
-  const res = await signByocJob(
-    new Request("http://localhost/api/signer/sign-byoc-job", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ pipeline: "pipeline-not-in-manifest" }),
-    }) as never,
-  );
-  assert.equal(res.status, 403);
-  const body = (await res.json()) as { error: string };
-  assert.equal(body.error, "manifest_cache_unavailable");
-  assert.equal(mock.calls.length, 0);
 });

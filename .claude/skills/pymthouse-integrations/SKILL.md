@@ -46,6 +46,27 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 - Auth: Basic (`m2m_…` + secret) or Bearer (machine token).
 - **Upsert user**: `POST .../users` with `externalUserId` (idempotent; use DB upsert to avoid duplicate-key races under concurrency).
 - **Mint user access token**: `POST .../users/{externalUserId}/token` with optional `{ "scope": "sign:job" }`. Issued JWT `sub` is **`app_users.id`** (app user row), not necessarily a `users` / `end_users` row by itself.
+- **Clearinghouse direct signer mint**: M2M `POST {issuer}/token` with `scope=sign:mint_user_token`, `external_user_id`, `audience=livepeer-remote-signer` — see `src/lib/oidc/mint-user-signer-token.ts`. Requires M2M `sign:mint_user_token` (inherited when public client has `sign:job`).
+- **Allowances**: `POST .../users/{externalUserId}/allowances`, balance `GET .../usage/balance?externalUserId=...` — OpenMeter entitlements on hosted instance.
+
+## OpenMeter / usage ingest
+
+| Area | File |
+| --- | --- |
+| **Sole OpenMeter writer (signer-proxy)** | `src/lib/signer-proxy.ts` → `recordSignedTicketToOpenMeter` using synchronous signer `usage` block |
+| Signer usage parse/strip | `src/lib/signer-usage-response.ts` |
+| Ingest relay (diagnostics only) | `src/app/api/v1/internal/ingest/signed-ticket/route.ts` — receipt logging; **no** OpenMeter write |
+| OpenMeter facade | `src/lib/openmeter/` — `customers.ts` (`ensureOpenMeterCustomer` → `{ id, key }`), `invoices.ts`, `plans-sync.ts`, `usage-read.ts`, `stripe-connect.ts` |
+| OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |
+| Usage API OpenMeter reads | `src/lib/openmeter/usage-read.ts` (requires `OPENMETER_URL`) |
+| Merchant billing routes | `src/app/api/v1/apps/[id]/billing/*` (Stripe connect, invoices, checkout) |
+| Bootstrap meters/features | `npm run openmeter:bootstrap`, `docker-compose.openmeter.yml` |
+
+**Flow:** go-livepeer returns authoritative billing snapshot in `RemotePaymentResponse.usage` → pymthouse proxy records network cost to OpenMeter → strips `usage` from gateway response. Async monitor events to `/ingest/events` are diagnostic only.
+
+**Retail pricing:** OpenMeter-native plans/rate cards synced on plan publish — not bps markup on network cost in the proxy.
+
+**Identity:** Apache signer-DMZ validates JWT and sets `X-Livepeer-Usage-Issuer`, `X-Livepeer-Client-ID`, `X-Livepeer-Usage-Subject`, `X-Livepeer-Usage-Subject-Type`. go-livepeer must run with `-remoteSignerUsageIdentityMode=trusted_headers`.
 
 ## Device flow (RFC 8628) + third-party initiate
 

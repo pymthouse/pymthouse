@@ -17,7 +17,8 @@ export type ResolvedPlanCapability = {
   modelId: string;
   slaTargetP95Ms: number | null;
   maxPricePerUnit: string | null;
-  upchargePercentBps: number | null;
+  retailRateUsd: string | null;
+  openmeterFeatureKey: string | null;
   createdAt: string;
   discoveryPolicy: DiscoveryPolicy | null;
 };
@@ -106,7 +107,8 @@ export async function resolvePlansDiscoveryForApp(
           modelId: bundle.modelId,
           slaTargetP95Ms: bundle.slaTargetP95Ms,
           maxPricePerUnit: bundle.maxPricePerUnit,
-          upchargePercentBps: bundle.upchargePercentBps,
+          retailRateUsd: bundle.retailRateUsd,
+          openmeterFeatureKey: bundle.openmeterFeatureKey,
           createdAt: bundle.createdAt,
           discoveryPolicy: discRow ? discoveryPolicyFromDb(discRow.discoveryPolicy) : null,
         };

@@ -182,9 +182,8 @@ function getComposeCommand(action: string): string {
   switch (action) {
     case "start":
     case "restart":
-      // --build: image is not on Docker Hub; build from docker/signer-dmz/Dockerfile (avoids pull errors).
-      // --force-recreate: fresh container; --remove-orphans: clean stale containers
-      return `docker compose up -d --build --force-recreate --remove-orphans ${svc}`;
+      // build-local-signer.sh builds go-livepeer (lpclearinghouse) then signer-dmz.
+      return `./scripts/build-local-signer.sh && docker compose up -d --force-recreate --remove-orphans ${svc}`;
     case "stop":
       return `docker compose stop ${svc}`;
     default:

@@ -230,9 +230,46 @@ scope=...
 
 ---
 
+## Clearinghouse signer mint (Option A)
+
+M2M clients with `sign:mint_user_token` (auto-added when public client has `sign:job`):
+
+```http
+POST /api/v1/oidc/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&
+client_id=<m2m_client_id>&
+client_secret=<m2m_client_secret>&
+scope=sign:mint_user_token&
+external_user_id=<platform-user-id>&
+audience=livepeer-remote-signer
+```
+
+Response includes `access_token` (user-scoped JWT, `aud=livepeer-remote-signer`), `balanceUsdMicros`, and `lifetimeGrantedUsdMicros`.
+
+Direct signing uses `@pymthouse/builder-sdk/signer/server` — cached JWT forwarded to signer-dmz; Apache maps JWT claims → `X-Livepeer-*` headers for go-livepeer `trusted_headers` identity mode.
+
+**Usage metering (signer-authoritative, proxy writes OpenMeter):**
+
+1. **Synchronous path:** go-livepeer remote signer returns a `usage` block on `RemotePaymentResponse` (`computed_fee_wei`, `computed_fee_usd_micros`, Chainlink ETH/USD snapshot, `pipeline`, `model_id`, `request_id`). The pymthouse **signer-proxy** is the **sole OpenMeter writer**: it parses the block, records `network_fee_usd_micros` keyed by `requestId`, then **strips** `usage` before returning to the gateway.
+2. **Async diagnostics:** go-livepeer still POSTs `create_signed_ticket` monitor events to `POST /api/v1/ingest/events` (alias of internal signed-ticket route) with `Bearer INGEST_SHARED_SECRET`. That endpoint stores diagnostic receipts only — it does **not** write to OpenMeter.
+
+Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost in the proxy.
+
+---
+
 ## Usage API
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
+
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs the signer's `computed_fee_usd_micros` per `(client_id, external_user_id)`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+
+**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns OpenMeter entitlement balance (`balanceUsdMicros`, `hasAccess`, etc.) from the user’s active plan subscription (Starter free tier or paid checkout).
+
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter with a `network_spend` rate card and included usage from `includedUsdMicros`. Providers edit allowance via `PUT /api/v1/apps/{clientId}/starter-plan` with `{ "includedUsdMicros": "5000000" }` (triggers OpenMeter plan sync). New end users are auto-subscribed to Starter when provisioned (`POST /users`, signer mint, signed-ticket ingest) if they have no existing subscription row.
+
+**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only; additive `createGrant` on top of Starter subscription included usage).
 
 **Endpoint:** `GET /api/v1/apps/{clientId}/usage`
 
@@ -256,7 +293,7 @@ Requests that fail auth or tenant match receive **`404 Not Found`** (not `401`/`
 | --- | --- | --- | --- |
 | `startDate` | ISO 8601 | — | Inclusive lower bound on `usage_records.created_at` |
 | `endDate` | ISO 8601 | — | Inclusive upper bound |
-| `groupBy` | `none` \| `user` \| `pipeline_model` | `none` | `user` adds `byUser`; `pipeline_model` adds `byPipelineModel` (requires matching billing events) |
+| `groupBy` | `none` \| `user` \| `pipeline_model` \| `daily_pipeline` | `none` | `user` adds `byUser`; `pipeline_model` adds `byPipelineModel`; `daily_pipeline` adds `byDailyPipeline` (requires `userId`, OpenMeter DAY windows) |
 | `userId` | string | — | Filter to one internal **`usage_records.user_id`** (not `externalUserId`) |
 | `gatewayRequestId` | string | — | When set, filters billing events to that gateway request and may include `events` detail |
 
@@ -369,23 +406,20 @@ The oracle source and observation timestamp are stored with each transaction so 
 
 Returns `{ ethUsd: { priceUsd, source, observedAt, isFallback } }`.
 
-### Manifest enforcement on signing (hot path)
+### App network capability manifest
 
-`POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` enforce the app **network capability manifest** before forwarding to go-livepeer. Enforcement uses a **process-local in-memory cache** keyed by the token’s public `client_id` (`app_…`); the signing path does **not** query the database for manifest rows.
+`GET`/`PUT /api/v1/apps/{clientId}/manifest` expose the app **network capability manifest** for integrators and discovery. **`GET`** returns a fixed allow-all body (`capabilities: []`, `excludedCapabilities: []`, `manifestVersion: "empty"`) without NaaP or plan resolution. **`PUT`** still updates Network-Price exclusions and returns the fully resolved manifest. The manifest is **not** enforced on the signing hot path: `POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` forward to go-livepeer without consulting it.
 
-1. **Pipeline required:** The request must include a resolvable `pipeline` (direct body fields, gateway metadata, or derivable `capabilities`). Requests without a pipeline are rejected with **`403`** and `error: "capability_not_allowed"`.
-2. **Model optional:** When `modelId` is present, the exact `(pipeline, modelId)` pair must appear in the cached manifest `capabilities`. When `modelId` is omitted, the pipeline must have at least one allowed model in the manifest.
-3. **Cache warm / miss:** The cache is populated off the hot path by `GET`/`PUT …/manifest`, programmatic user-token mint (`sign:job`), and gateway token exchange. If the cache has no entry for the app, signing returns **`403`** with `error: "manifest_cache_unavailable"` (fail-closed).
-4. **Not enforced on:** `POST /api/signer/sign-orchestrator-info` and `GET /api/signer/discover-orchestrators` (no pipeline/model contract on those routes today).
+The previous process-local in-memory enforcement cache (`manifest_cache_unavailable` / `capability_not_allowed` fail-closed gate) was removed: it failed closed on any process that had not warmed the cache (extra replicas, restarts, or before the off-hot-path warm completed), rejecting otherwise-valid signing requests. Capability scoping is still expressed through the manifest exclusions surfaced on `…/manifest`; billing attribution below is independent of it.
 
 ### Trusted pipeline/model attribution
 
 Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
-1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Manifest enforcement may allow pipeline-only requests; billing still requires both fields for **`usage_billing_events`**.
+1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Billing requires both fields for **`usage_billing_events`**.
 2. **No NaaP fetch on signing:** `POST /api/signer/generate-live-payment` does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** still proxies NaaP for UIs; it uses **`fetchDashboardPricing()`** without an in-process pricing cache.
 3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
-4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing may still succeed when the manifest allows the pipeline.
+4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing still succeeds regardless.
 
 **Usage API:** `groupBy=pipeline_model` aggregates from **`usage_billing_events`**, so breakdown rows appear for new traffic that includes `pipeline` + `modelId` (or derivable capabilities) on each payment.
 
@@ -428,11 +462,12 @@ Response totals now include:
 | --- | --- |
 | `totalFeeWei` | Total network fee (existing). |
 | `totalFeeEth` | Decimal ETH. |
-| `networkFeeUsdMicros` | Transaction-time USD micros. |
+| `networkFeeUsdMicros` | Transaction-time USD micros (network cost from signer meter). |
 | `ownerChargeWei` | Network fee + platform cut. |
 | `ownerChargeUsdMicros` | Transaction-time USD micros. |
 | `platformFeeWei` | PymtHouse platform cut. |
-| `endUserBillableUsdMicros` | Retail after upcharge. |
+
+Retail totals (`endUserBillableUsdMicros`) on Postgres-backed usage rows mirror network cost for diagnostics; **authoritative retail** is computed by OpenMeter from synced plan rate cards and invoices.
 
 ### Billing summary
 
@@ -448,11 +483,43 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 | `billingCycle` | `"monthly"` (default). |
 | `discoveryProfileId` | Optional FK to legacy **`discovery_profiles`** rows. Omitted from billing summary payloads today; may still appear on **`GET .../plans`**. Integrator network capability limits use **`GET .../manifest`**. |
 
-#### Capability bundle fields (new)
+#### Capability bundle fields (legacy)
 
 | Field | Description |
 | --- | --- |
-| `upchargePercentBps` | Pipeline/model-specific upcharge, basis points. |
+| `overageRateUsd` | Plan-level retail USD per network USD-micro (decimal string, e.g. `0.0000015` = 50% markup over pass-through). Synced to OpenMeter usage rate cards. |
+| `capabilities[].retailRateUsd` | Per pipeline/model retail override (decimal USD per micro). Creates filtered OpenMeter features + rate cards on plan publish. |
+
+### Merchant billing (OpenMeter behind Builder API)
+
+Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. All billing mutations and reads go through Builder API routes backed by `src/lib/openmeter/*`.
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Stripe Connect status for the app |
+| `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start Stripe Connect OAuth |
+| `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect Stripe |
+| `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
+| `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session | End-user checkout via OpenMeter subscription + Stripe Checkout |
+
+**Plan → OpenMeter sync:** Publishing a paid plan (`status: active`) creates/updates an OpenMeter plan keyed `{clientId}:{planId}` with flat subscription fee, included allowance on `network_fee_usd_micros`, and usage rate cards. Plans expose `openmeterPlanId`, `lastSyncedAt`, and `syncError` in the dashboard. Sync requires `OPENMETER_URL` / `OPENMETER_API_KEY`; Stripe Connect is for invoicing/checkout, not for provisioning plans in OpenMeter. Stale `openmeterPlanId` values are recreated automatically when OpenMeter returns plan-not-found.
+
+**Billing API v2 (loosely coupled):**
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/apps/{clientId}/plans?apiVersion=2` | Returns `products[]` (`BillingProduct` DTOs with `sync`, `capabilities[].effectiveRetailRateUsd`) |
+| `POST` | `/api/v1/apps/{clientId}/plans/{planId}/sync` | Explicit OpenMeter sync command |
+| `POST` | `/api/v1/apps/{clientId}/usage/signed-tickets` | Idempotent usage ingest (platform direct-DMZ path) |
+| `GET` | `/api/v1/apps/{clientId}/signer/routing` | Signer facade vs platform-ingest routing config |
+| `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Unified grants (source: `trial`, `manual`, `promo`, `plan_adjustment`) |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | End-user subscription read model |
+
+**Retail validation:** `GET .../usage?include=retail&groupBy=pipeline_model` estimates `endUserBillableUsdMicros` from active plan retail rates (network meter × configured retail $/micro). Authoritative invoicing remains OpenMeter after plan sync.
+
+**Signer metering:** The signing hot path writes only to OpenMeter (`ingestSignedTicketUsage`) and updates `stream_sessions` for internal ops; it does not insert `usage_records` or `transactions`.
+
+**Implementation:** [`src/lib/openmeter/plans-sync.ts`](../src/lib/openmeter/plans-sync.ts), [`src/lib/openmeter/customers.ts`](../src/lib/openmeter/customers.ts), [`src/lib/openmeter/invoices.ts`](../src/lib/openmeter/invoices.ts), [`src/lib/openmeter/usage-read.ts`](../src/lib/openmeter/usage-read.ts), [`src/lib/provider-apps.ts`](../src/lib/provider-apps.ts) (`canManageMerchantBilling`).
 
 ### Authentication (billing summary)
 
@@ -583,7 +650,7 @@ Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each row includes **`isNetworkDefault`** and, on the Network Price plan, **`discoveryExcludedCapabilities`**. Optional legacy **`discoveryProfileId`** and resolved **`discoveryPolicy`** when a profile is linked. |
-| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Price`** / internal default name rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. |
+| `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Price`** / internal default name rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), legacy upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. On publish (`status: active`), syncs to OpenMeter when configured. |
 | `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /manifest`** or the Plans UI. Optional **`discoveryProfileId`** (`null` clears the link). |
 | `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles. Deleting the **Network Price** default plan returns **`409`**. |
 
@@ -678,7 +745,9 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 
 **Billing oracle and catalog**
 
-- [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, upcharge resolution, USD micros)
+- [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, USD micros; legacy `resolveUpcharge` deprecated)
+- [`src/lib/signer-proxy.ts`](../src/lib/signer-proxy.ts) (authoritative signer `usage` block → OpenMeter write)
+- [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
 - [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts) (NaaP catalog with TTL cache; pricing fetch is uncached)

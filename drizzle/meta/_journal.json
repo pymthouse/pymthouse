@@ -148,6 +148,13 @@
       "when": 1777500000000,
       "tag": "0019_app_billing_oracle_config",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1777600000000,
+      "tag": "0020_openmeter_billing",
+      "breakpoints": true
     }
   ]
 }

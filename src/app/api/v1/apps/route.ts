@@ -12,7 +12,10 @@ import {
 import { resetProvider } from "@/lib/oidc/provider";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { ensureProviderAdminMembership } from "@/lib/provider-apps";
+import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
 import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
+import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -170,9 +173,10 @@ export async function POST(request: NextRequest) {
         updatedAt: now,
       });
       await getOrCreateNetworkDefaultPlan(appId, tx);
+      await getOrCreateStarterPlan(appId, tx);
     });
   } catch (err) {
-    console.error("Failed to create app with network default plan:", err);
+    console.error("Failed to create app with default plans:", err);
     return NextResponse.json(
       { error: "Failed to create app" },
       { status: 500 },
@@ -184,6 +188,15 @@ export async function POST(request: NextRequest) {
       appInternalId: appId,
       appDisplayName: name.trim(),
     });
+  }
+
+  if (isHostedAdminClientAvailable()) {
+    try {
+      const starter = await getOrCreateStarterPlan(appId);
+      await syncPlanToOpenMeter(starter.id);
+    } catch (err) {
+      console.error("Starter plan OpenMeter sync failed for new app:", err);
+    }
   }
 
   resetProvider();

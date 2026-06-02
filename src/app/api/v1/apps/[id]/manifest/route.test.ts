@@ -4,7 +4,10 @@ import test from "node:test";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
-import { computeManifestRevision } from "@/lib/discovery-allowlist";
+import {
+  ALLOW_ALL_MANIFEST_ETAG,
+  ALLOW_ALL_MANIFEST_RESPONSE,
+} from "@/lib/discovery-allowlist";
 import { run } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import {
@@ -43,7 +46,7 @@ test.after(() => {
 });
 
 run("manifest GET and PUT", async (t) => {
-  await t.test("GET returns full catalog and manifestVersion when exclusions empty", async (t) => {
+  await t.test("GET returns allow-all manifest without catalog fetch", async (t) => {
     catalogFetchCount = 0;
     catalogThrows = false;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -59,30 +62,13 @@ run("manifest GET and PUT", async (t) => {
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
-    assert.equal(catalogFetchCount, 1);
-    const body = (await res.json()) as {
-      capabilities: unknown[];
-      excludedCapabilities: unknown[];
-      manifestVersion: string;
-    };
-    assert.deepEqual(body.capabilities, [
-      { pipeline: "pipe-a", modelId: "m1" },
-      { pipeline: "pipe-a", modelId: "m2" },
-      { pipeline: "pipe-b", modelId: "only" },
-    ]);
-    assert.deepEqual(body.excludedCapabilities, []);
-    assert.equal(
-      body.manifestVersion,
-      computeManifestRevision({
-        capabilities: body.capabilities as { pipeline: string; modelId: string }[],
-        excludedCapabilities: [],
-      }),
-    );
-    const etag = res.headers.get("etag");
-    assert.ok(etag, "GET should return ETag header");
+    assert.equal(catalogFetchCount, 0);
+    const body = await res.json();
+    assert.deepEqual(body, ALLOW_ALL_MANIFEST_RESPONSE);
+    assert.equal(res.headers.get("etag"), ALLOW_ALL_MANIFEST_ETAG);
   });
 
-  await t.test("HEAD returns ETag and honors If-None-Match without catalog fetch", async (t) => {
+  await t.test("HEAD returns allow-all ETag and honors If-None-Match without catalog fetch", async (t) => {
     catalogFetchCount = 0;
     catalogThrows = false;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -100,9 +86,9 @@ run("manifest GET and PUT", async (t) => {
     );
     assert.equal(headRes.status, 200);
     const etag = headRes.headers.get("etag");
-    assert.ok(etag, "HEAD should include ETag");
+    assert.equal(etag, ALLOW_ALL_MANIFEST_ETAG);
     assert.equal(await headRes.text(), "");
-    assert.equal(catalogFetchCount, 0, "HEAD should avoid catalog fetch");
+    assert.equal(catalogFetchCount, 0);
 
     const notModifiedHeadRes = await HEAD(
       new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`, {
@@ -113,7 +99,7 @@ run("manifest GET and PUT", async (t) => {
     assert.equal(notModifiedHeadRes.status, 304);
     assert.equal(notModifiedHeadRes.headers.get("etag"), etag);
     assert.equal(await notModifiedHeadRes.text(), "");
-    assert.equal(catalogFetchCount, 0, "conditional HEAD should avoid catalog fetch");
+    assert.equal(catalogFetchCount, 0);
 
     const getRes = await GET(
       new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
@@ -121,9 +107,10 @@ run("manifest GET and PUT", async (t) => {
     );
     assert.equal(getRes.status, 200);
     assert.equal(getRes.headers.get("etag"), etag);
+    assert.deepEqual(await getRes.json(), ALLOW_ALL_MANIFEST_RESPONSE);
   });
 
-  await t.test("GET resolves exclusions against catalog on Network Price plan", async (t) => {
+  await t.test("GET ignores stored exclusions (integrator fail-open)", async (t) => {
     catalogFetchCount = 0;
     catalogThrows = false;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -150,54 +137,11 @@ run("manifest GET and PUT", async (t) => {
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
-    assert.ok(catalogFetchCount >= 1);
-    const body = (await res.json()) as {
-      capabilities: Array<{ pipeline: string; modelId: string }>;
-      excludedCapabilities: Array<{ pipeline: string; modelId: string }>;
-      manifestVersion: string;
-    };
-    assert.deepEqual(body.excludedCapabilities, [
-      { pipeline: "pipe-a", modelId: "m1" },
-    ]);
-    assert.deepEqual(body.capabilities, [
-      { pipeline: "pipe-a", modelId: "m2" },
-      { pipeline: "pipe-b", modelId: "only" },
-    ]);
-    assert.ok(body.manifestVersion.length >= 5);
+    assert.equal(catalogFetchCount, 0);
+    assert.deepEqual(await res.json(), ALLOW_ALL_MANIFEST_RESPONSE);
   });
 
-  await t.test("GET applies pipeline wildcard exclusion", async (t) => {
-    catalogThrows = false;
-    const app = await seedDeveloperAppWithClient({ status: "approved" });
-    authorizedApp = app;
-    t.after(async () => {
-      authorizedApp = null;
-      await cleanupTestApp(app);
-    });
-
-    const def = await selectNetworkDefaultPlan(app.clientId, db);
-    await db
-      .update(plans)
-      .set({
-        discoveryExcludedCapabilities: {
-          capabilities: [{ pipeline: "pipe-a", modelId: "*" }],
-        },
-      })
-      .where(eq(plans.id, def!.id));
-
-    const { GET } = await import("./route");
-    const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
-      { params: Promise.resolve({ id: app.clientId }) },
-    );
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as {
-      capabilities: Array<{ pipeline: string; modelId: string }>;
-    };
-    assert.deepEqual(body.capabilities, [{ pipeline: "pipe-b", modelId: "only" }]);
-  });
-
-  await t.test("GET returns degraded manifest when catalog fetch throws", async (t) => {
+  await t.test("GET stays allow-all when catalog would throw", async (t) => {
     catalogThrows = true;
     const app = await seedDeveloperAppWithClient({ status: "approved" });
     authorizedApp = app;
@@ -207,32 +151,14 @@ run("manifest GET and PUT", async (t) => {
       await cleanupTestApp(app);
     });
 
-    const def = await selectNetworkDefaultPlan(app.clientId, db);
-    await db
-      .update(plans)
-      .set({
-        discoveryExcludedCapabilities: {
-          capabilities: [{ pipeline: "pipe-a", modelId: "m1" }],
-        },
-      })
-      .where(eq(plans.id, def!.id));
-
     const { GET } = await import("./route");
     const res = await GET(
       new Request(`http://localhost/api/v1/apps/${app.clientId}/manifest`) as never,
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
-    const body = (await res.json()) as {
-      capabilities: unknown[];
-      excludedCapabilities: Array<{ pipeline: string; modelId: string }>;
-      manifestVersion: string;
-    };
-    assert.deepEqual(body.capabilities, []);
-    assert.deepEqual(body.excludedCapabilities, [
-      { pipeline: "pipe-a", modelId: "m1" },
-    ]);
-    assert.ok(body.manifestVersion);
+    assert.equal(catalogFetchCount, 0);
+    assert.deepEqual(await res.json(), ALLOW_ALL_MANIFEST_RESPONSE);
   });
 
   await t.test("PUT persists exclusions on network default plan row", async (t) => {
@@ -311,7 +237,7 @@ run("manifest GET and PUT", async (t) => {
       modelId: "only",
       slaTargetP95Ms: null,
       maxPricePerUnit: null,
-      upchargePercentBps: 100,
+      retailRateUsd: "0.0000011",
       createdAt: now,
     });
 

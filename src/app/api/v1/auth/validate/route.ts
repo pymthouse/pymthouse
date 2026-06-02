@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
     plan: {
       ...plan,
       includedUnits: plan.includedUnits != null ? plan.includedUnits.toString() : null,
-      overageRateWei: plan.overageRateWei != null ? plan.overageRateWei.toString() : null,
+      overageRateUsd: plan.overageRateUsd ?? null,
     },
     allowedModels: capabilities.map((bundle) => bundle.modelId).filter(Boolean),
   });

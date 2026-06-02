@@ -14,8 +14,14 @@ Everything needed to run the go-livepeer signer with an optional **Apache + mod_
 **Compose (from repo root):**
 
 ```bash
-docker compose -f docker/signer-dmz/docker-compose.yml up --build
+# Builds go-livepeer from ../go-livepeer (lpclearinghouse build-remote-signer.sh), then signer-dmz.
+./scripts/build-local-signer.sh
+docker compose up -d signer-dmz
 ```
+
+**Production / Railway** uses the default `signer-dmz` target (pinned CI binary from build.livepeer.live).
+
+**Compose (legacy two-container stack):**
 
 **Build the standalone signer image (from repo root):**
 
@@ -59,7 +65,7 @@ The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, pro
 5. **Health check**  
    Use **`GET /healthz`** (200, body `OK`) from the public URL.
 
-The Dockerfile declares **`EXPOSE 8080 8082`** as documentation for platforms that infer default ports from the image.
+The production image **`EXPOSE`s only `8080`** (Apache). Local **`signer-dmz-local`** may also expose **`8082`** when `SIGNER_DMZ_ENABLE_CLI_LISTENER=1`. Railway health checks use **`GET /healthz`** on **`$PORT`** (see root `railway.json`).
 
 ## Troubleshooting DMZ `401` (HTML body from PymtHouse `/api/signer/*`)
 

@@ -136,6 +136,14 @@ export function toAppManifestResponse(resolved: AppManifestResolved): AppManifes
   };
 }
 
+/** Integrator fail-open: no exclusions; NaaP allows full catalog. Used by GET …/manifest (no NaaP/DB resolve). */
+export const ALLOW_ALL_MANIFEST_RESPONSE: AppManifestResponse = toAppManifestResponse({
+  capabilities: [],
+  excludedCapabilities: [],
+});
+
+export const ALLOW_ALL_MANIFEST_ETAG = '"manifest-allow-all"';
+
 /**
  * When the pipeline catalog cannot be loaded, return stored exclusions with empty
  * `capabilities` (integrator fail-open). Dashboard UI uses `/pipeline-catalog` separately.

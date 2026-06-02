@@ -6,8 +6,8 @@ import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients, signerConfig, users } from "@/db/schema";
 import { createAppClient, rotateClientSecret } from "@/lib/oidc/clients";
 import { createSession } from "@/lib/auth";
-import { seedCachedManifestPolicyForTests } from "@/lib/app-manifest-cache";
 import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
+import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 
 export interface SeededDeveloperApp {
   /**
@@ -85,28 +85,9 @@ export async function seedDeveloperAppWithClient(opts?: {
   });
 
   await getOrCreateNetworkDefaultPlan(clientId, db);
+  await getOrCreateStarterPlan(clientId, db);
 
   return { clientId, oidcClientRowId, userId, clientSecret };
-}
-
-/** Capabilities allowed for signer proxy tests (manifest enforcement). */
-export const DEFAULT_TEST_MANIFEST_CAPABILITIES = [
-  { pipeline: "text-to-image", modelId: "stabilityai/sdxl" },
-  { pipeline: "byoc", modelId: "default" },
-] as const;
-
-/**
- * Seed in-memory manifest policy for signer tests (no DB on signing hot path).
- */
-export function seedManifestCacheForTestClient(
-  clientId: string,
-  capabilities: ReadonlyArray<{ pipeline: string; modelId: string }> = DEFAULT_TEST_MANIFEST_CAPABILITIES,
-): void {
-  seedCachedManifestPolicyForTests(clientId, {
-    capabilities: [...capabilities],
-    excludedCapabilities: [],
-    manifestVersion: "test-fixture",
-  });
 }
 
 export async function createJobTokenForApp(opts: {
@@ -152,7 +133,7 @@ export async function createAppUser(opts: {
  * process-local env override so it never leaks into the shared `signer_config`
  * row that local dev and deployed instances read.
  */
-export const TEST_SIGNER_URL = "http://test-signer.invalid";
+export const TEST_SIGNER_URL = "https://test-signer.invalid";
 
 function assertNonProdDatabase(): void {
   const url = process.env.DATABASE_URL ?? "";
@@ -331,6 +312,11 @@ export async function cleanupTestApp(
 
   await db.execute(sql`DELETE FROM stream_sessions WHERE app_id = ${appId}`);
   await db.execute(sql`DELETE FROM end_users WHERE app_id = ${appId}`);
+
+  await deleteFromOptionalTable("usage_ingest_receipts", "client_id", appId);
+  await deleteFromOptionalTable("app_openmeter_config", "client_id", appId);
+  await deleteFromOptionalTable("app_billing_config", "client_id", appId);
+  await deleteFromOptionalTable("app_billing_oauth_states", "client_id", appId);
 
   await db.execute(sql`DELETE FROM developer_apps WHERE id = ${appId}`);
   await db.execute(sql`DELETE FROM oidc_clients WHERE id = ${oidcClientPk}`);

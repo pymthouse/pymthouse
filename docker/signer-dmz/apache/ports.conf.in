@@ -1,2 +1,2 @@
-Listen ${PORT}
-Listen ${CLI_PORT}
+# Bind all interfaces so Railway / Docker published ports reach Apache (not loopback-only).
+Listen 0.0.0.0:${PORT}

@@ -11,13 +11,30 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
+import { billingPlansApiV2Enabled } from "@/lib/billing/feature-flags";
+import { listBillingProducts } from "@/lib/billing/backend";
+import { toLegacyPlanRow } from "@/lib/billing/product-dto";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import {
+  archivePlanInOpenMeter,
+  syncPlanToOpenMeter,
+} from "@/lib/openmeter/plans-sync";
 import {
   assertCapabilityRowsDiscoverable,
   loadDiscoverableSetForApp,
   NETWORK_DEFAULT_PLAN_DISPLAY_NAME,
   NETWORK_DEFAULT_PLAN_INTERNAL_NAME,
 } from "@/lib/network-default-plan";
+import {
+  STARTER_DEFAULT_PLAN_DISPLAY_NAME,
+  STARTER_DEFAULT_PLAN_INTERNAL_NAME,
+} from "@/lib/starter-default-plan-display";
+import { parseRetailRateUsd, defaultRetailRateUsd } from "@/lib/plan-pricing";
+import {
+  resolveCapabilityFeatureKey,
+  validateCapabilityFeatureKeys,
+} from "@/lib/openmeter/capability-features";
+import { validateCustomPlanName } from "@/lib/openmeter/plan-naming";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -44,19 +61,23 @@ function isNonNegativeIntegerString(s: string): boolean {
   return /^\d+$/.test(s);
 }
 
-function parseOptionalNonNegativeBps(
-  raw: unknown,
-  fieldName: string,
-): { ok: true; value: number | null } | { ok: false; error: string } {
-  if (raw === undefined || raw === null) return { ok: true, value: null };
-  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
-  if (!Number.isInteger(n) || n < 0) {
-    return { ok: false, error: `${fieldName} must be a non-negative integer (basis points)` };
+function coerceJsonScalarString(raw: unknown, fallback = ""): string {
+  if (raw === undefined || raw === null) {
+    return fallback;
   }
-  return { ok: true, value: n };
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (
+    typeof raw === "number" ||
+    typeof raw === "boolean" ||
+    typeof raw === "bigint"
+  ) {
+    return String(raw);
+  }
+  return fallback;
 }
 
-/** Present empty → null; present non-empty must match non-negative integer digits. */
 function parseOptionalNonNegativeIntString(
   raw: unknown,
   fieldName: string,
@@ -64,7 +85,7 @@ function parseOptionalNonNegativeIntString(
   if (raw === undefined || raw === null) {
     return { ok: true, value: null };
   }
-  const s = String(raw).trim();
+  const s = coerceJsonScalarString(raw).trim();
   if (s === "") {
     return { ok: true, value: null };
   }
@@ -77,93 +98,50 @@ function parseOptionalNonNegativeIntString(
   return { ok: true, value: s };
 }
 
-function resolveBillingFieldsForPost(
-  planType: string,
-  body: Record<string, unknown>,
-):
-  | { ok: true; includedUnits: string | null; overageRateWei: string | null }
-  | { ok: false; error: string } {
-  if (planType === "free") {
-    return { ok: true, includedUnits: null, overageRateWei: null };
-  }
-  if (planType === "subscription") {
-    const inc = parseOptionalNonNegativeIntString(body.includedUnits, "includedUnits");
-    const ovr = parseOptionalNonNegativeIntString(body.overageRateWei, "overageRateWei");
-    if (!inc.ok) return inc;
-    if (!ovr.ok) return ovr;
-    if (inc.value === null || ovr.value === null) {
-      return {
-        ok: false,
-        error: "includedUnits and overageRateWei are required for subscription plans",
-      };
-    }
-    return { ok: true, includedUnits: inc.value, overageRateWei: ovr.value };
-  }
-  if (planType === "usage") {
-    const inc = parseOptionalNonNegativeIntString(body.includedUnits, "includedUnits");
-    const ovr = parseOptionalNonNegativeIntString(body.overageRateWei, "overageRateWei");
-    if (!inc.ok) return inc;
-    if (!ovr.ok) return ovr;
-    return { ok: true, includedUnits: inc.value, overageRateWei: ovr.value };
-  }
-  return { ok: true, includedUnits: null, overageRateWei: null };
-}
-
-function mergeBillingFieldForPut(
-  rawBody: unknown,
-  existing: string | null,
+function parseOptionalRetailRateUsd(
+  raw: unknown,
   fieldName: string,
 ): { ok: true; value: string | null } | { ok: false; error: string } {
-  if (rawBody === undefined) {
-    if (existing === null || existing === undefined) {
-      return { ok: true, value: null };
-    }
-    const t = String(existing).trim();
-    if (t === "") {
-      return { ok: true, value: null };
-    }
-    if (!isNonNegativeIntegerString(t)) {
-      return {
-        ok: false,
-        error: `${fieldName} must be a non-negative integer string`,
-      };
-    }
-    return { ok: true, value: t };
+  if (raw === undefined || raw === null) {
+    return { ok: true, value: null };
   }
-  return parseOptionalNonNegativeIntString(rawBody, fieldName);
+  const s = coerceJsonScalarString(raw).trim();
+  if (!s) {
+    return { ok: true, value: null };
+  }
+  const parsed = parseRetailRateUsd(s);
+  if (!parsed) {
+    return { ok: false, error: `${fieldName} must be a non-negative decimal USD amount` };
+  }
+  return { ok: true, value: parsed };
 }
 
-function resolveBillingFieldsForPut(
-  effectiveType: string,
+function resolveOverageRateUsdForPost(
+  planType: string,
   body: Record<string, unknown>,
-  existing: { includedUnits: string | null; overageRateWei: string | null },
-):
-  | { ok: true; includedUnits: string | null; overageRateWei: string | null }
-  | { ok: false; error: string } {
-  if (effectiveType === "free") {
-    return { ok: true, includedUnits: null, overageRateWei: null };
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (planType === "free") {
+    return { ok: true, value: null };
   }
-  if (effectiveType === "subscription") {
-    const inc = mergeBillingFieldForPut(body.includedUnits, existing.includedUnits, "includedUnits");
-    const ovr = mergeBillingFieldForPut(body.overageRateWei, existing.overageRateWei, "overageRateWei");
-    if (!inc.ok) return inc;
-    if (!ovr.ok) return ovr;
-    if (inc.value === null || ovr.value === null) {
-      return {
-        ok: false,
-        error: "includedUnits and overageRateWei are required for subscription plans",
-      };
-    }
-    return { ok: true, includedUnits: inc.value, overageRateWei: ovr.value };
+  const parsed = parseOptionalRetailRateUsd(body.overageRateUsd, "overageRateUsd");
+  if (!parsed.ok) {
+    return parsed;
   }
-  if (effectiveType === "usage") {
-    const inc = mergeBillingFieldForPut(body.includedUnits, existing.includedUnits, "includedUnits");
-    const ovr = mergeBillingFieldForPut(body.overageRateWei, existing.overageRateWei, "overageRateWei");
-    if (!inc.ok) return inc;
-    if (!ovr.ok) return ovr;
-    return { ok: true, includedUnits: inc.value, overageRateWei: ovr.value };
+  return { ok: true, value: parsed.value ?? defaultRetailRateUsd() };
+}
+
+function resolveOverageRateUsdForPut(
+  planType: string,
+  body: Record<string, unknown>,
+  existing: string | null,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (planType === "free") {
+    return { ok: true, value: null };
   }
-  return { ok: true, includedUnits: null, overageRateWei: null };
+  if (body.overageRateUsd === undefined) {
+    return { ok: true, value: existing ?? defaultRetailRateUsd() };
+  }
+  return parseOptionalRetailRateUsd(body.overageRateUsd, "overageRateUsd");
 }
 
 function parseCapabilities(input: unknown): {
@@ -171,7 +149,7 @@ function parseCapabilities(input: unknown): {
     pipeline: string;
     modelId: string;
     maxPricePerUnit: string | null;
-    upchargePercentBps: number | null;
+    retailRateUsd: string | null;
   }>;
   error?: string;
 } {
@@ -196,14 +174,16 @@ function parseCapabilities(input: unknown): {
       throw new Error(`capabilities[${index}].modelId is required`);
     }
 
-    const rawUpcharge = value.upchargePercentBps;
-    let parsedUpchargeBps: number | null = null;
-    if (rawUpcharge !== null && rawUpcharge !== undefined) {
-      const n = typeof rawUpcharge === "number" ? rawUpcharge : Number(String(rawUpcharge).trim());
-      if (!Number.isInteger(n) || n < 0) {
-        throw new Error(`capabilities[${index}].upchargePercentBps must be a non-negative integer`);
+    const rawRetail = value.retailRateUsd;
+    let parsedRetailUsd: string | null = null;
+    if (rawRetail !== null && rawRetail !== undefined) {
+      const s = coerceJsonScalarString(rawRetail).trim();
+      if (s) {
+        parsedRetailUsd = parseRetailRateUsd(s);
+        if (!parsedRetailUsd) {
+          throw new Error(`capabilities[${index}].retailRateUsd must be a non-negative decimal USD amount`);
+        }
       }
-      parsedUpchargeBps = n;
     }
 
     return {
@@ -212,8 +192,8 @@ function parseCapabilities(input: unknown): {
       maxPricePerUnit:
         value.maxPricePerUnit === null || value.maxPricePerUnit === undefined
           ? null
-          : String(value.maxPricePerUnit),
-      upchargePercentBps: parsedUpchargeBps,
+          : coerceJsonScalarString(value.maxPricePerUnit),
+      retailRateUsd: parsedRetailUsd,
     };
   });
 
@@ -241,32 +221,35 @@ export async function GET(
   }
   const appId = app.id;
 
+  const url = new URL(request.url);
+  const includeInternals =
+    url.searchParams.get("includeInternals") === "1" ||
+    url.searchParams.get("includeInternals") === "true";
+  const apiVersion = url.searchParams.get("apiVersion") || "1";
+
+  if (billingPlansApiV2Enabled() && (apiVersion === "2" || url.searchParams.get("format") === "billing")) {
+    const products = await listBillingProducts(appId);
+    return NextResponse.json({
+      apiVersion: 2,
+      products,
+      plans: products,
+    });
+  }
+
   const resolved = await resolvePlansDiscoveryForApp(appId);
 
   return NextResponse.json({
-    plans: resolved.map((r) => {
-      const plan = r.plan;
-      return {
-        ...plan,
-        isNetworkDefault: plan.isNetworkDefault,
-        discoveryExcludedCapabilities: plan.discoveryExcludedCapabilities ?? null,
-        discoveryProfileId: plan.discoveryProfileId ?? null,
-        discoveryPolicy: r.discoveryPolicy,
-        includedUnits:
-          plan.includedUnits !== null && plan.includedUnits !== undefined
-            ? plan.includedUnits.toString()
-            : null,
-        overageRateWei:
-          plan.overageRateWei !== null && plan.overageRateWei !== undefined
-            ? plan.overageRateWei.toString()
-            : null,
+    apiVersion: 1,
+    plans: resolved.map((r) =>
+      toLegacyPlanRow({
         clientId,
-        capabilities: r.capabilities.map((c) => ({
-          ...c,
-          clientId,
-        })),
-      };
-    }),
+        resolved: {
+          ...r,
+          discoveryProfileId: r.discoveryProfileId ?? r.plan.discoveryProfileId,
+        },
+        includeInternals,
+      }),
+    ),
   });
 }
 
@@ -292,19 +275,26 @@ export async function POST(
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
-  const name = String(body.name || "").trim();
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
+  const nameCheck = validateCustomPlanName(coerceJsonScalarString(body.name));
+  if (!nameCheck.ok) {
+    return NextResponse.json({ error: nameCheck.error }, { status: 400 });
   }
+  const name = nameCheck.value;
   if (name === NETWORK_DEFAULT_PLAN_INTERNAL_NAME || name === NETWORK_DEFAULT_PLAN_DISPLAY_NAME) {
     return NextResponse.json(
       { error: "This plan name is reserved for the Network Price default plan" },
       { status: 400 },
     );
   }
-  if ("is_network_default" in body) {
+  if (name === STARTER_DEFAULT_PLAN_INTERNAL_NAME || name === STARTER_DEFAULT_PLAN_DISPLAY_NAME) {
     return NextResponse.json(
-      { error: "is_network_default cannot be set on created plans" },
+      { error: "This plan name is reserved for the Starter default plan" },
+      { status: 400 },
+    );
+  }
+  if ("is_network_default" in body || "is_starter_default" in body) {
+    return NextResponse.json(
+      { error: "is_network_default and is_starter_default cannot be set on created plans" },
       { status: 400 },
     );
   }
@@ -365,16 +355,17 @@ export async function POST(
       );
     }
   }
-  const planType = String(body.type || "free");
-  const billing = resolveBillingFieldsForPost(planType, body);
-  if (!billing.ok) {
-    return NextResponse.json({ error: billing.error }, { status: 400 });
+
+  const planType = coerceJsonScalarString(body.type, "free");
+  const overageRate = resolveOverageRateUsdForPost(planType, body);
+  if (!overageRate.ok) {
+    return NextResponse.json({ error: overageRate.error }, { status: 400 });
   }
 
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
   if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
-    const s = String(rawIncludedUsd).trim();
+    const s = coerceJsonScalarString(rawIncludedUsd).trim();
     if (s !== "" && !isNonNegativeIntegerString(s)) {
       return NextResponse.json({ error: "includedUsdMicros must be a non-negative integer string" }, { status: 400 });
     }
@@ -382,6 +373,16 @@ export async function POST(
   }
 
   const planId = uuidv4();
+  if (planType !== "free" && parsedCapabilities.capabilities.length > 0) {
+    const featureKeys = validateCapabilityFeatureKeys({
+      clientId: appId,
+      planId,
+      capabilities: parsedCapabilities.capabilities,
+    });
+    if (!featureKeys.ok) {
+      return NextResponse.json({ error: featureKeys.error }, { status: 400 });
+    }
+  }
   const now = new Date().toISOString();
   try {
     await db.transaction(async (tx) => {
@@ -394,17 +395,15 @@ export async function POST(
         clientId: appId,
         name,
         type: planType,
-        priceAmount: String(body.priceAmount || "0"),
-        priceCurrency: String(body.priceCurrency || "USD"),
-        status: String(body.status || "active"),
-        includedUnits:
-          billing.includedUnits !== null ? BigInt(billing.includedUnits) : null,
-        overageRateWei:
-          billing.overageRateWei !== null ? BigInt(billing.overageRateWei) : null,
+        priceAmount: coerceJsonScalarString(body.priceAmount, "0"),
+        priceCurrency: coerceJsonScalarString(body.priceCurrency, "USD"),
+        status: coerceJsonScalarString(body.status, "active"),
+        overageRateUsd: overageRate.value,
         includedUsdMicros,
         billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
         discoveryProfileId,
         isNetworkDefault: false,
+        isStarterDefault: false,
         discoveryExcludedCapabilities: null,
         createdAt: now,
         updatedAt: now,
@@ -419,7 +418,13 @@ export async function POST(
           modelId: capability.modelId,
           slaTargetP95Ms: null,
           maxPricePerUnit: capability.maxPricePerUnit,
-          upchargePercentBps: capability.upchargePercentBps,
+          retailRateUsd: capability.retailRateUsd,
+          openmeterFeatureKey: resolveCapabilityFeatureKey({
+            clientId: appId,
+            planId,
+            pipeline: capability.pipeline,
+            modelId: capability.modelId,
+          }),
           createdAt: now,
         });
       }
@@ -435,6 +440,14 @@ export async function POST(
       return NextResponse.json({ error: e.message }, { status: 400 });
     }
     throw e;
+  }
+
+  const planStatus = coerceJsonScalarString(body.status, "active");
+  if (planStatus === "active") {
+    const sync = await syncPlanToOpenMeter(planId);
+    if (!sync.ok) {
+      return NextResponse.json({ id: planId, syncError: sync.error }, { status: 201 });
+    }
   }
 
   return NextResponse.json({ id: planId }, { status: 201 });
@@ -476,14 +489,22 @@ export async function PUT(
     );
   }
 
-  if (typeof body.name === "string" && body.name.trim()) {
-    const nm = body.name.trim();
-    if (nm === NETWORK_DEFAULT_PLAN_INTERNAL_NAME || nm === NETWORK_DEFAULT_PLAN_DISPLAY_NAME) {
+  let putPlanName: string | undefined;
+  if (body.name !== undefined) {
+    const nameCheck = validateCustomPlanName(coerceJsonScalarString(body.name));
+    if (!nameCheck.ok) {
+      return NextResponse.json({ error: nameCheck.error }, { status: 400 });
+    }
+    if (
+      nameCheck.value === NETWORK_DEFAULT_PLAN_INTERNAL_NAME ||
+      nameCheck.value === NETWORK_DEFAULT_PLAN_DISPLAY_NAME
+    ) {
       return NextResponse.json(
         { error: "This plan name is reserved for the Network Price default plan" },
         { status: 400 },
       );
     }
+    putPlanName = nameCheck.value;
   }
 
   let discoveryProfileIdPut: string | null | undefined = undefined;
@@ -542,6 +563,15 @@ export async function PUT(
         { status: 400 },
       );
     }
+
+    const featureKeys = validateCapabilityFeatureKeys({
+      clientId: appId,
+      planId,
+      capabilities: parsedCapabilities.capabilities,
+    });
+    if (!featureKeys.ok) {
+      return NextResponse.json({ error: featureKeys.error }, { status: 400 });
+    }
   }
 
   const now = new Date().toISOString();
@@ -559,6 +589,9 @@ export async function PUT(
     if (existing.isNetworkDefault) {
       return { tag: "network_default" as const };
     }
+    if (existing.isStarterDefault) {
+      return { tag: "starter_default" as const };
+    }
 
     if (discoveryProfileIdPut !== undefined && discoveryProfileIdPut !== null) {
       const profCheck = await requireOwnedDiscoveryProfile(appId, discoveryProfileIdPut, tx);
@@ -567,15 +600,11 @@ export async function PUT(
       }
     }
 
-    const nextType = body.type !== undefined ? String(body.type) : existing.type;
-    const billing = resolveBillingFieldsForPut(nextType, body, {
-      includedUnits:
-        existing.includedUnits != null ? String(existing.includedUnits) : null,
-      overageRateWei:
-        existing.overageRateWei != null ? String(existing.overageRateWei) : null,
-    });
-    if (!billing.ok) {
-      return { tag: "validation" as const, error: billing.error };
+    const nextType =
+      body.type === undefined ? existing.type : coerceJsonScalarString(body.type);
+    const overageRate = resolveOverageRateUsdForPut(nextType, body, existing.overageRateUsd);
+    if (!overageRate.ok) {
+      return { tag: "validation" as const, error: overageRate.error };
     }
 
     const rawIncludedUsdPut = body.includedUsdMicros;
@@ -584,7 +613,7 @@ export async function PUT(
       if (rawIncludedUsdPut === null) {
         includedUsdMicrosPut = null;
       } else {
-        const s = String(rawIncludedUsdPut).trim();
+        const s = coerceJsonScalarString(rawIncludedUsdPut).trim();
         if (s !== "" && !isNonNegativeIntegerString(s)) {
           return { tag: "validation" as const, error: "includedUsdMicros must be a non-negative integer string" };
         }
@@ -595,17 +624,23 @@ export async function PUT(
     const updated = await tx
       .update(plans)
       .set({
-        name: body.name !== undefined ? String(body.name) : existing.name,
+        name: putPlanName ?? existing.name,
         type: nextType,
-        priceAmount: body.priceAmount !== undefined ? String(body.priceAmount) : existing.priceAmount,
-        priceCurrency: body.priceCurrency !== undefined ? String(body.priceCurrency) : existing.priceCurrency,
-        status: body.status !== undefined ? String(body.status) : existing.status,
-        includedUnits:
-          billing.includedUnits !== null ? BigInt(billing.includedUnits) : null,
-        overageRateWei:
-          billing.overageRateWei !== null ? BigInt(billing.overageRateWei) : null,
+        priceAmount:
+          body.priceAmount === undefined
+            ? existing.priceAmount
+            : coerceJsonScalarString(body.priceAmount),
+        priceCurrency:
+          body.priceCurrency === undefined
+            ? existing.priceCurrency
+            : coerceJsonScalarString(body.priceCurrency),
+        status:
+          body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
+        overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
-        ...(body.billingCycle !== undefined ? { billingCycle: String(body.billingCycle) } : {}),
+        ...(body.billingCycle === undefined
+          ? {}
+          : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
         ...(discoveryProfileIdPut !== undefined
           ? { discoveryProfileId: discoveryProfileIdPut }
           : {}),
@@ -636,7 +671,13 @@ export async function PUT(
           modelId: capability.modelId,
           slaTargetP95Ms: null,
           maxPricePerUnit: capability.maxPricePerUnit,
-          upchargePercentBps: capability.upchargePercentBps,
+          retailRateUsd: capability.retailRateUsd,
+          openmeterFeatureKey: resolveCapabilityFeatureKey({
+            clientId: appId,
+            planId,
+            pipeline: capability.pipeline,
+            modelId: capability.modelId,
+          }),
           createdAt: now,
         });
       }
@@ -660,8 +701,29 @@ export async function PUT(
       { status: 400 },
     );
   }
+  if (txnResult.tag === "starter_default") {
+    return NextResponse.json(
+      {
+        error:
+          "The Starter default plan cannot be edited via this endpoint; use PUT /starter-plan",
+      },
+      { status: 400 },
+    );
+  }
 
-  return NextResponse.json({ success: true });
+  const updatedStatus =
+    body.status === undefined ? undefined : coerceJsonScalarString(body.status);
+  const shouldSync =
+    (updatedStatus ?? "active") === "active" &&
+    txnResult.tag === "ok";
+  if (shouldSync) {
+    const sync = await syncPlanToOpenMeter(planId);
+    if (!sync.ok) {
+      return NextResponse.json({ success: true, id: planId, syncError: sync.error });
+    }
+  }
+
+  return NextResponse.json({ success: true, id: planId });
 }
 
 export async function DELETE(
@@ -687,7 +749,11 @@ export async function DELETE(
 
   const deleted = await db.transaction(async (tx) => {
     const planRows = await tx
-      .select({ id: plans.id, isNetworkDefault: plans.isNetworkDefault })
+      .select({
+        id: plans.id,
+        isNetworkDefault: plans.isNetworkDefault,
+        isStarterDefault: plans.isStarterDefault,
+      })
       .from(plans)
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
       .limit(1);
@@ -697,6 +763,9 @@ export async function DELETE(
     }
     if (planRows[0].isNetworkDefault) {
       return "network_default" as const;
+    }
+    if (planRows[0].isStarterDefault) {
+      return "starter_default" as const;
     }
 
     await tx
@@ -722,6 +791,18 @@ export async function DELETE(
       { error: "The Network Price default plan cannot be deleted" },
       { status: 409 },
     );
+  }
+  if (deleted === "starter_default") {
+    return NextResponse.json(
+      { error: "The Starter default plan cannot be deleted" },
+      { status: 409 },
+    );
+  }
+
+  try {
+    await archivePlanInOpenMeter(planId);
+  } catch {
+    /* best effort */
   }
 
   return NextResponse.json({ success: true });

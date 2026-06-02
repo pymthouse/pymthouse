@@ -10,7 +10,7 @@ import {
   resolveGatewayAttribution,
   resolvePaymentPipelineModelConstraint,
   resolveRequestPipelineModelConstraint,
-  resolveUpcharge,
+  resolveUpcharge, // NOSONAR S1874 - intentional contract test for deprecated API
   weiToEthString,
 } from "./billing-runtime";
 
@@ -236,12 +236,16 @@ const basePlan = {
   priceCurrency: "USD",
   status: "active",
   includedUnits: null,
-  overageRateWei: null,
+  overageRateUsd: null,
   includedUsdMicros: null,
   billingCycle: "monthly",
   discoveryProfileId: null,
   isNetworkDefault: false,
   discoveryExcludedCapabilities: null,
+  openmeterPlanId: null,
+  openmeterPlanVersion: null,
+  lastSyncedAt: null,
+  syncError: null,
   createdAt: "",
   updatedAt: "",
 } as const;
@@ -254,72 +258,14 @@ const baseBundle = {
   modelId: "stabilityai/sdxl",
   slaTargetP95Ms: null,
   maxPricePerUnit: null,
-  upchargePercentBps: 5000, // 50% override
+  retailRateUsd: "0.0000015",
   createdAt: "",
 } as const;
 
-test("resolveUpcharge: pipeline/model bundle upcharge applies", () => {
-  const result = resolveUpcharge({
+test("resolveUpcharge is deprecated and always returns unpriced", () => {
+  const result = resolveUpcharge({ // NOSONAR S1874
     plan: basePlan,
     bundles: [baseBundle],
-    pipeline: "text-to-image",
-    modelId: "stabilityai/sdxl",
-  });
-  assert.equal(result.bps, 5000);
-  assert.equal(result.source, "pipeline_model");
-});
-
-test("resolveUpcharge: pipeline wildcard bundle applies to concrete model", () => {
-  const result = resolveUpcharge({
-    plan: basePlan,
-    bundles: [{ ...baseBundle, modelId: "*", upchargePercentBps: 3500 }],
-    pipeline: "text-to-image",
-    modelId: "black-forest-labs/flux",
-  });
-  assert.equal(result.bps, 3500);
-  assert.equal(result.source, "pipeline_model");
-});
-
-test("resolveUpcharge: exact bundle wins over pipeline wildcard", () => {
-  const result = resolveUpcharge({
-    plan: basePlan,
-    bundles: [
-      { ...baseBundle, modelId: "*", upchargePercentBps: 3500 },
-      { ...baseBundle, modelId: "stabilityai/sdxl", upchargePercentBps: 5000 },
-    ],
-    pipeline: "text-to-image",
-    modelId: "stabilityai/sdxl",
-  });
-  assert.equal(result.bps, 5000);
-  assert.equal(result.source, "pipeline_model");
-});
-
-test("resolveUpcharge: returns 0/unpriced when no bundle matches", () => {
-  const result = resolveUpcharge({
-    plan: basePlan,
-    bundles: [],
-    pipeline: "text-to-image",
-    modelId: "stabilityai/sdxl",
-  });
-  assert.equal(result.bps, 0);
-  assert.equal(result.source, "unpriced");
-});
-
-test("resolveUpcharge: returns 0/unpriced when no plan", () => {
-  const result = resolveUpcharge({
-    plan: null,
-    bundles: [],
-    pipeline: "text-to-image",
-    modelId: "stabilityai/sdxl",
-  });
-  assert.equal(result.bps, 0);
-  assert.equal(result.source, "unpriced");
-});
-
-test("resolveUpcharge: non-matching bundle does not apply", () => {
-  const result = resolveUpcharge({
-    plan: basePlan,
-    bundles: [{ ...baseBundle, pipeline: "image-to-image", modelId: "other/model" }],
     pipeline: "text-to-image",
     modelId: "stabilityai/sdxl",
   });

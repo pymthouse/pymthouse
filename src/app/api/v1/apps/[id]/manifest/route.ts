@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { authenticateAppClient } from "@/lib/auth";
-import { publishCachedManifestPolicy } from "@/lib/app-manifest-cache";
 import { buildAppManifestForApp } from "@/lib/app-manifest";
 import {
   canEditProviderApp,
@@ -11,6 +10,8 @@ import {
   getProviderApp,
 } from "@/lib/provider-apps";
 import {
+  ALLOW_ALL_MANIFEST_ETAG,
+  ALLOW_ALL_MANIFEST_RESPONSE,
   DiscoveryAllowlistUpdateBodySchema,
   normalizeDiscoveryAllowlistDoc,
 } from "@/lib/discovery-allowlist";
@@ -18,7 +19,6 @@ import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
   findCustomPlansBlockingNewExclusions,
   getOrCreateNetworkDefaultPlan,
-  selectNetworkDefaultPlan,
 } from "@/lib/network-default-plan";
 
 async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
@@ -29,11 +29,6 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
 
   const auth = await getAuthorizedProviderApp(clientId, request);
   return auth?.app ?? null;
-}
-
-function buildManifestEtagFromPlanUpdatedAt(updatedAt: string | undefined): string {
-  const stamp = updatedAt?.trim() || "missing";
-  return `"manifest-plan-${stamp}"`;
 }
 
 function requestMatchesIfNoneMatch(request: NextRequest, etag: string): boolean {
@@ -53,7 +48,7 @@ function requestMatchesIfNoneMatch(request: NextRequest, etag: string): boolean 
 
 /**
  * App network capability manifest for integrators (e.g. NaaP).
- * GET: resolved discoverable set + exclusions + manifestVersion. M2M Basic or provider session.
+ * GET: allow-all snapshot (empty capabilities/exclusions). M2M Basic or provider session.
  * PUT: provider session — update Network Price exclusions only.
  */
 export async function GET(
@@ -66,17 +61,15 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await buildAppManifestForApp(app.id);
-  publishCachedManifestPolicy(clientId, body, "manifest_get");
-  const networkPlan = await selectNetworkDefaultPlan(app.id, db);
-  const etag = buildManifestEtagFromPlanUpdatedAt(networkPlan?.updatedAt);
-  if (requestMatchesIfNoneMatch(request, etag)) {
+  if (requestMatchesIfNoneMatch(request, ALLOW_ALL_MANIFEST_ETAG)) {
     return new NextResponse(null, {
       status: 304,
-      headers: { ETag: etag },
+      headers: { ETag: ALLOW_ALL_MANIFEST_ETAG },
     });
   }
-  return NextResponse.json(body, { headers: { ETag: etag } });
+  return NextResponse.json(ALLOW_ALL_MANIFEST_RESPONSE, {
+    headers: { ETag: ALLOW_ALL_MANIFEST_ETAG },
+  });
 }
 
 export async function HEAD(
@@ -89,18 +82,16 @@ export async function HEAD(
     return new NextResponse(null, { status: 404 });
   }
 
-  const networkPlan = await selectNetworkDefaultPlan(app.id, db);
-  const etag = buildManifestEtagFromPlanUpdatedAt(networkPlan?.updatedAt);
-  if (requestMatchesIfNoneMatch(request, etag)) {
+  if (requestMatchesIfNoneMatch(request, ALLOW_ALL_MANIFEST_ETAG)) {
     return new NextResponse(null, {
       status: 304,
-      headers: { ETag: etag },
+      headers: { ETag: ALLOW_ALL_MANIFEST_ETAG },
     });
   }
 
   return new NextResponse(null, {
     status: 200,
-    headers: { ETag: etag },
+    headers: { ETag: ALLOW_ALL_MANIFEST_ETAG },
   });
 }
 
@@ -181,6 +172,5 @@ export async function PUT(
   }
 
   const responseBody = await buildAppManifestForApp(auth.app.id);
-  publishCachedManifestPolicy(clientId, responseBody, "manifest_put");
   return NextResponse.json(responseBody);
 }

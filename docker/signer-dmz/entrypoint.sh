@@ -6,6 +6,12 @@ export PORT="${PORT:-8080}"
 # In-container dedicated CLI vhost (optional second listener; local compose uses /__signer_cli on PORT only).
 export CLI_PORT="${CLI_PORT:-8082}"
 export SIGNER_PORT="${SIGNER_PORT:-8081}"
+
+# PORT is the public edge (Apache). SIGNER_PORT is loopback-only go-livepeer HTTP.
+if [ "$PORT" = "$SIGNER_PORT" ]; then
+  echo "entrypoint: PORT ($PORT) must not equal SIGNER_PORT (go-livepeer loopback). Set PORT to Apache (e.g. 8080); Railway injects PORT automatically — do not set PORT=8081." >&2
+  exit 1
+fi
 # Align Apache iss/aud with DMZ JWTs from this app (getIssuer). Pass NEXTAUTH_URL
 # from the host .env (same as the Next app); when OIDC_ISSUER is unset, derive it.
 export NEXTAUTH_URL="${NEXTAUTH_URL:-http://localhost:3001}"
@@ -88,7 +94,7 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   if [ ! -f /data/.eth-password ]; then
     echo "" >/data/.eth-password
   fi
-  ARGS="-remoteSigner -network=${SIGNER_NETWORK:-arbitrum-one-mainnet} -httpAddr=127.0.0.1:${SIGNER_PORT} -cliAddr=127.0.0.1:4935 -ethUrl=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc} -ethPassword=/data/.eth-password -datadir=/data -v=99"
+  ARGS="-remoteSigner -network=${SIGNER_NETWORK:-arbitrum-one-mainnet} -httpAddr=127.0.0.1:${SIGNER_PORT} -cliAddr=127.0.0.1:4935 -ethUrl=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc} -ethPassword=/data/.eth-password -datadir=/data -v=99 -remoteSignerUsageIdentityMode=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}"
   if [ -n "${SIGNER_ETH_ADDR:-}" ]; then
     ARGS="$ARGS -ethAcctAddr=${SIGNER_ETH_ADDR}"
   fi
@@ -147,11 +153,26 @@ export APACHE_AUTH_JWT_LOG_LEVEL="${APACHE_AUTH_JWT_LOG_LEVEL:-info}"
   printf '  JWT_PEM_PATH=%s (public keys: %s)\n' "$JWT_PEM_PATH" "$_pem_kids"
   printf '  SIGNER_HTTP_ADDR=%s\n' "$SIGNER_HTTP_ADDR"
   printf '  SIGNER_CLI_HTTP_ADDR=%s\n' "$SIGNER_CLI_HTTP_ADDR"
+  printf '  APACHE_PUBLIC_BIND=0.0.0.0:%s\n' "$PORT"
   printf '  APACHE_AUTH_JWT_LOG_LEVEL=%s\n' "$APACHE_AUTH_JWT_LOG_LEVEL"
 } >&2
 
-envsubst '${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}' < /etc/apache2/templates/ports.conf.in >/etc/apache2/ports.conf
-envsubst '${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}' < /etc/apache2/templates/signer-dmz.conf.in >/etc/apache2/sites-available/signer-dmz.conf
+_envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}'
+
+envsubst "$_envsubst_apache" < /etc/apache2/templates/ports.conf.in >/etc/apache2/ports.conf
+_enable_cli_listener="${SIGNER_DMZ_ENABLE_CLI_LISTENER:-1}"
+case "$_enable_cli_listener" in
+  0 | false | FALSE | no | NO) _enable_cli_listener=0 ;;
+  *) _enable_cli_listener=1 ;;
+esac
+if [ "$_enable_cli_listener" = "1" ]; then
+  printf 'Listen 0.0.0.0:%s\n' "$CLI_PORT" >>/etc/apache2/ports.conf
+fi
+
+envsubst "$_envsubst_apache" < /etc/apache2/templates/signer-dmz.conf.in >/etc/apache2/sites-available/signer-dmz.conf
+if [ "$_enable_cli_listener" = "1" ]; then
+  envsubst "$_envsubst_apache" < /etc/apache2/templates/signer-dmz-cli-vhost.conf.in >>/etc/apache2/sites-available/signer-dmz.conf
+fi
 
 # Do not use a2ensite/a2dissite as non-root: they touch /var/lib/apache2/site/enabled_by_admin/
 # (root-only). sites-enabled is chowned to APACHE_RUN_USER in the image — symlink directly.

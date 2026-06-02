@@ -10,13 +10,11 @@ import {
   findOrCreateEndUser,
   verifyTurnkeySessionJwt,
 } from "@/lib/turnkey";
-import { addCredits, deductCredits } from "@/lib/billing";
 
 /**
  * GET /api/v1/end-users -- List end users (admin auth) or get current end user (Turnkey session JWT)
  */
 export async function GET(request: NextRequest) {
-  // Check for admin access first
   const adminUser = await getAdminUser(request);
   if (adminUser) {
     const allEndUsers = await db.select().from(endUsers);
@@ -29,7 +27,7 @@ export async function GET(request: NextRequest) {
     if (!claims) {
       return NextResponse.json(
         { error: "Invalid Turnkey session" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -43,7 +41,7 @@ export async function GET(request: NextRequest) {
     if (!endUser) {
       return NextResponse.json(
         { error: "End user not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -59,7 +57,6 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
-  // Admin creating an end user manually
   const adminUser = await getAdminUser(request);
   if (adminUser) {
     const id = uuidv4();
@@ -67,7 +64,6 @@ export async function POST(request: NextRequest) {
       id,
       turnkeyUserId: body.turnkeyUserId || null,
       walletAddress: body.walletAddress || null,
-      creditBalanceWei: body.creditBalanceWei || "0",
     });
 
     const createdRows = await db
@@ -86,7 +82,7 @@ export async function POST(request: NextRequest) {
     if (!claims) {
       return NextResponse.json(
         { error: "Invalid Turnkey session" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -104,68 +100,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       { endUser, isNew },
-      { status: isNew ? 201 : 200 }
+      { status: isNew ? 201 : 200 },
     );
   }
 
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-}
-
-/**
- * PATCH /api/v1/end-users -- Update end user credits (admin auth)
- */
-export async function PATCH(request: NextRequest) {
-  const adminUser = await getAdminUser(request);
-  if (!adminUser) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
-  const endUserId = body.id;
-  const action = body.action; // "add_credits" | "deduct_credits"
-  const amountWei = body.amountWei;
-
-  if (!endUserId || !action || !amountWei) {
-    return NextResponse.json(
-      { error: "id, action, and amountWei are required" },
-      { status: 400 }
-    );
-  }
-
-  if (!/^\d+$/.test(String(amountWei))) {
-    return NextResponse.json(
-      { error: "amountWei must be a non-negative integer string" },
-      { status: 400 }
-    );
-  }
-
-  const amount = BigInt(amountWei);
-
-  if (action === "add_credits") {
-    await addCredits(endUserId, amount);
-  } else if (action === "deduct_credits") {
-    const success = await deductCredits(endUserId, amount);
-    if (!success) {
-      return NextResponse.json(
-        { error: "Insufficient balance" },
-        { status: 400 }
-      );
-    }
-  } else {
-    return NextResponse.json(
-      { error: "action must be 'add_credits' or 'deduct_credits'" },
-      { status: 400 }
-    );
-  }
-
-  const updatedRows = await db
-    .select()
-    .from(endUsers)
-    .where(eq(endUsers.id, endUserId))
-    .limit(1);
-  const updated = updatedRows[0];
-
-  return NextResponse.json({ endUser: updated });
 }
 
 async function getAdminUser(request: NextRequest) {
@@ -195,7 +134,6 @@ async function getAdminUser(request: NextRequest) {
   return null;
 }
 
-/** Turnkey session JWT from `x-turnkey-session` or `Authorization: Bearer`. */
 function getTurnkeySessionJwtFromRequest(request: NextRequest): string | null {
   const header = request.headers.get("x-turnkey-session")?.trim();
   if (header) return header;

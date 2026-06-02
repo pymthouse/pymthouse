@@ -11,6 +11,7 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
+import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 
 async function canAccessUsers(request: NextRequest, clientId: string, requiredScope: string) {
   const app = await getProviderApp(clientId);
@@ -109,6 +110,15 @@ export async function POST(
     })
     .returning();
   const row = upserted[0] ?? newUser;
+
+  try {
+    await provisionAppUserBilling({
+      clientId: access.app.id,
+      externalUserId,
+    });
+  } catch (err) {
+    console.error("provisionAppUserBilling failed on user upsert:", err);
+  }
 
   await writeAuditLog({
     clientId: access.app.id,

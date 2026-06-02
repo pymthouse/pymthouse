@@ -1,0 +1,159 @@
+import type { OpenMeter } from "@openmeter/sdk";
+import {
+  CREATE_SIGNED_TICKET_EVENT_TYPE,
+  NETWORK_FEE_USD_MICROS_METER,
+  SIGNED_TICKET_COUNT_METER,
+  SIGNED_TICKET_EVENT_SOURCE,
+} from "./constants";
+import { buildOpenMeterCustomerKey } from "./customer-key";
+import { ensureOpenMeterCustomer } from "./customers";
+import {
+  getHostedTrialOpenMeterClient,
+  getTrialFeatureKeyForApp,
+} from "./client-factory";
+
+export type { OpenMeterCustomerIdentity } from "./customers";
+export { ensureOpenMeterCustomer } from "./customers";
+
+export type TrialCreditBalance = {
+  hasAccess: boolean;
+  balanceUsdMicros: string;
+  consumedUsdMicros: string;
+  lifetimeGrantedUsdMicros: string;
+};
+
+export async function grantTrialCredits(input: {
+  client: OpenMeter;
+  customerKey: string;
+  featureKey: string;
+  amountUsdMicros: bigint;
+}): Promise<void> {
+  await input.client.customers.entitlements.createGrant(
+    input.customerKey,
+    input.featureKey,
+    {
+      amount: Number(input.amountUsdMicros),
+      priority: 1,
+      effectiveAt: new Date(),
+      expiration: { duration: "YEAR", count: 1 },
+    },
+  );
+}
+
+export async function getTrialCreditBalance(input: {
+  clientId: string;
+  externalUserId: string;
+  featureKey?: string;
+}): Promise<TrialCreditBalance | null> {
+  const client = getHostedTrialOpenMeterClient();
+  if (!client) {
+    return null;
+  }
+
+  const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
+  const featureKey = input.featureKey || (await getTrialFeatureKeyForApp(input.clientId));
+
+  await ensureOpenMeterCustomer(client, customerKey);
+
+  const value = await client.customers.entitlements.value(customerKey, featureKey);
+  if (!value) {
+    return {
+      hasAccess: false,
+      balanceUsdMicros: "0",
+      consumedUsdMicros: "0",
+      lifetimeGrantedUsdMicros: "0",
+    };
+  }
+
+  const balance = Math.max(0, Math.floor(value.balance ?? 0));
+  const usage = Math.max(0, Math.floor(value.usage ?? 0));
+  const granted = Math.max(
+    0,
+    Math.floor(value.totalAvailableGrantAmount ?? balance + usage),
+  );
+
+  return {
+    hasAccess: Boolean(value.hasAccess) && balance > 0,
+    balanceUsdMicros: String(balance),
+    consumedUsdMicros: String(usage),
+    lifetimeGrantedUsdMicros: String(granted),
+  };
+}
+
+export type SignedTicketOpenMeterEvent = {
+  requestId: string;
+  clientId: string;
+  externalUserId: string;
+  networkFeeUsdMicros: string;
+  feeWei?: string;
+  pixels?: string;
+  pipeline?: string;
+  modelId?: string;
+  gatewayRequestId?: string;
+  ethUsdPrice?: string;
+  ethUsdRoundId?: string;
+  ethUsdObservedAt?: string;
+};
+
+export async function ingestSignedTicketEvent(input: {
+  client: OpenMeter;
+  event: SignedTicketOpenMeterEvent;
+}): Promise<void> {
+  const subject = buildOpenMeterCustomerKey(input.event.clientId, input.event.externalUserId);
+
+  await input.client.events.ingest({
+    specversion: "1.0",
+    type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    id: input.event.requestId,
+    source: SIGNED_TICKET_EVENT_SOURCE,
+    subject,
+    data: {
+      client_id: input.event.clientId,
+      external_user_id: input.event.externalUserId,
+      network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
+      fee_wei: input.event.feeWei,
+      pixels: input.event.pixels,
+      pipeline: input.event.pipeline || "unknown",
+      model_id: input.event.modelId || "unknown",
+      gateway_request_id: input.event.gatewayRequestId,
+      eth_usd_price: input.event.ethUsdPrice,
+      eth_usd_round_id: input.event.ethUsdRoundId,
+      eth_usd_observed_at: input.event.ethUsdObservedAt,
+    },
+  });
+}
+
+export const OPENMETER_METER_DEFINITIONS = [
+  {
+    slug: NETWORK_FEE_USD_MICROS_METER,
+    description:
+      "Livepeer signed-ticket network fee (USD micros) — SUM of signer computed_fee_usd_micros; grouped by client, user, pipeline, model",
+    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "SUM" as const,
+    valueProperty: "$.network_fee_usd_micros",
+    groupBy: {
+      client_id: "$.client_id",
+      external_user_id: "$.external_user_id",
+      pipeline: "$.pipeline",
+      model_id: "$.model_id",
+    },
+  },
+  {
+    slug: SIGNED_TICKET_COUNT_METER,
+    description: "Signed ticket count per user",
+    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "COUNT" as const,
+    groupBy: {
+      client_id: "$.client_id",
+      external_user_id: "$.external_user_id",
+      pipeline: "$.pipeline",
+      model_id: "$.model_id",
+    },
+  },
+];
+
+export {
+  DEFAULT_TRIAL_FEATURE_KEY,
+  NETWORK_FEE_USD_MICROS_METER,
+  SIGNED_TICKET_COUNT_METER,
+} from "./constants";
