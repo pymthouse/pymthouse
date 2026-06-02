@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Push staging env vars to Vercel project pymthouse-staging (production scope on that project).
+# One-time / rare sync of staging env vars from local .env.local → Vercel dashboard.
+#
+# Normal deploys (scripts/deploy-staging-vercel.sh or deploy-staging-vercel.yml) do NOT
+# run this script. Secrets should live in the Vercel dashboard; never commit
+# .env.vercel.production or .env.vercel.preview.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"

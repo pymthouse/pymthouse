@@ -1,0 +1,49 @@
+name: Deploy staging (Vercel)
+
+# Non-main branches deploy to the pymthouse-staging Vercel project as Production.
+# The pymthouse project (main only) continues to use Vercel's native Git integration.
+# Env vars are configured in the Vercel dashboard — not in this workflow.
+
+on:
+  push:
+    branches-ignore:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging-vercel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
+      VERCEL_PROJECT_ID: prj_wzb1ad2UlUxia7bHdwFCopBScP9Z
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Build
+        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy to pymthouse-staging production
+        run: vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
