@@ -24,9 +24,11 @@ services:
       target: signer-dmz-local
     # Host SIGNER_DMZ_HOST_PORT → container PORT (Apache edge; default 8080 in environment below).
     ports:
-      - "127.0.0.1:${SIGNER_DMZ_HOST_PORT:-8080}:8080"
+      - target: 8080
+        published: ${SIGNER_DMZ_HOST_PORT:-8080}
+        host_ip: ${SIGNER_DMZ_BIND_HOST:-127.0.0.1}
     volumes:
-      - ./data:/data
+      - ${SIGNER_DATA_DIR:-./data}:/data
     environment:
       - PORT=8080
       - CLI_PORT=8082

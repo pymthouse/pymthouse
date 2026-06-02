@@ -31,6 +31,18 @@ docker build -f docker/signer-dmz/Dockerfile.signer -t pymthouse-signer .
 
 Platform config (`railway.json`, `render.yaml`) builds `docker/signer-dmz/Dockerfile` (final image: Apache JWT DMZ + livepeer). For **livepeer only** (no Apache), use `Dockerfile.signer` instead. See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md) and [docs/signer-deployment-options.md](../../docs/signer-deployment-options.md).
 
+## Host publish (local compose)
+
+Repo **`docker-compose.yml`** and **`docker/signer-dmz/docker-compose.yml`** map the Apache DMZ to the host using **`SIGNER_DMZ_HOST_PORT`** (default **8080**) and **`SIGNER_DMZ_BIND_HOST`** (default **`127.0.0.1`**). Apache inside the container already listens on all interfaces; only the Docker publish is loopback by default.
+
+To accept connections from other hosts on the server (LAN, public IP, reverse proxy on another interface), set in `.env` or the shell before `docker compose up`:
+
+```bash
+SIGNER_DMZ_BIND_HOST=0.0.0.0
+```
+
+PymtHouse on the same machine can keep **`SIGNER_INTERNAL_URL=http://127.0.0.1:8080`**. Open the port in the host firewall and terminate TLS at the edge; signing still requires valid DMZ JWTs (`scope=sign:job` / `admin`).
+
 ## Railway networking (Docker DMZ)
 
 The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, proxied signer API) and **`$CLI_PORT`** (default **8082**, dedicated CLI-only vhost). **go-livepeer** binds **127.0.0.1:8081** (HTTP) and **127.0.0.1:4935** (CLI) inside the container — they are **not** the ports Railway’s public hostname should target.

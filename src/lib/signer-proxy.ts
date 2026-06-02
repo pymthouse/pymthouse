@@ -188,6 +188,13 @@ export function getClientSignerApiUrl(): string {
   return `${normalizeSignerBaseUrl(base)}/api/signer`;
 }
 
+
+// 127.0.0.1 (not "localhost"): default docker-compose publish is loopback-only
+// (SIGNER_DMZ_BIND_HOST); some hosts resolve "localhost" to IPv6 or LAN IPv4
+// via nsswitch/mDNS, producing ECONNREFUSED even when the container is healthy.
+// Legacy rows had signer_port=8081 (bare go-livepeer HTTP). That's now the
+// in-container port; publicly we hit Apache on 8080. Coerce so an un-upgraded
+// row still lands on the DMZ listener.
 export function getSignerUrl(signer?: typeof signerConfig.$inferSelect | null): string {
   const testSignerUrl =
     process.env.NODE_ENV === "test"
