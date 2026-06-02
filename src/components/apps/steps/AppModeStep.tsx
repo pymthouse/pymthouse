@@ -31,11 +31,11 @@ export default function AppModeStep({
 }: Props) {
   const scopes = data.allowedScopes.split(/\s+/).filter(Boolean);
   const hasDeviceCode = data.grantTypes.includes(DEVICE_CODE_GRANT);
-  const requiresIssueUserTokens =
-    hasDeviceCode && data.deviceThirdPartyInitiateLogin && isValidInitiateLoginUri(data.initiateLoginUri);
+  const hasConfidentialClient = Boolean(data.backendDeviceHelper);
+  const requiresIssueUserTokens = hasConfidentialClient;
   const hasIssueUserTokens = scopes.includes("users:token");
 
-  // openid (required) + sign:job always visible; users:token only when helper is on
+  // openid (required) + sign:job always visible; users:token shown when confidential client is on
   const baseScopes = OIDC_SCOPES.filter((s) => ["openid", "sign:job"].includes(s.value));
   const helperScopes = OIDC_SCOPES.filter((s) => s.value === "users:token");
 
@@ -64,7 +64,7 @@ export default function AppModeStep({
   };
 
   const toggleDeviceCode = () => {
-    if (readOnly || !data.backendDeviceHelper) return;
+    if (readOnly) return;
     if (hasDeviceCode) {
       onChange({
         grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
@@ -84,9 +84,6 @@ export default function AppModeStep({
     } else {
       onChange({
         backendDeviceHelper: false,
-        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
-        initiateLoginUri: "",
-        deviceThirdPartyInitiateLogin: false,
         allowedScopes: scopes.filter((s) => s !== "users:token").join(" "),
       });
     }
@@ -140,12 +137,12 @@ export default function AppModeStep({
 
       <div className="space-y-6 border-t border-zinc-800 pt-6">
 
-        {/* ── Confidential client (top-level parent) ── */}
+        {/* ── Confidential client (machine-to-machine) ── */}
         <div className="rounded-xl border border-zinc-700/80 bg-zinc-800/20 p-4 space-y-3">
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
-              checked={Boolean(data.backendDeviceHelper)}
+              checked={hasConfidentialClient}
               onChange={(e) => toggleHelper(e.target.checked)}
               disabled={readOnly}
               className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
@@ -170,61 +167,63 @@ export default function AppModeStep({
             </div>
           </label>
 
-          {data.backendDeviceHelper && (
-            <>
-              {/* Companion scopes info chip */}
-              <div className="rounded-lg border border-zinc-700/70 bg-zinc-800/30 px-3 py-2 text-xs text-zinc-400">
-                Companion client always includes{" "}
-                <code className="font-mono text-zinc-300">
-                  users:token users:write device:approve
-                </code>
-                , plus <code className="font-mono text-zinc-300">sign:job</code> and/or{" "}
-                <code className="font-mono text-zinc-300">users:read</code> when your
-                public app has those scopes.
-              </div>
-
-              {/* ── Device Authorization Flow (child of helper) ── */}
-              <div className="border-t border-zinc-700/60 pt-3 space-y-3">
-                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Device login
-                </p>
-                <label
-                  className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
-                    hasDeviceCode
-                      ? "border-emerald-500/30 bg-emerald-500/5"
-                      : "border-zinc-700 bg-zinc-800/20 hover:border-zinc-600"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={hasDeviceCode}
-                    onChange={toggleDeviceCode}
-                    disabled={readOnly}
-                    className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-zinc-200">
-                      Device Authorization Flow{" "}
-                      <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
-                        (RFC 8628)
-                      </span>
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Allow CLI tools, SDKs, and headless clients to authenticate
-                      via a user code on a secondary device.
-                    </p>
-
-                    {hasDeviceCode && (
-                      <p className="mt-3 border-t border-zinc-700/50 pt-3 text-xs text-zinc-500">
-                        Configure the third-party initiate login URL from{" "}
-                        <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
-                      </p>
-                    )}
-                  </div>
-                </label>
-              </div>
-            </>
+          {hasConfidentialClient && (
+            <div className="rounded-lg border border-zinc-700/70 bg-zinc-800/30 px-3 py-2 text-xs text-zinc-400">
+              Companion client always includes{" "}
+              <code className="font-mono text-zinc-300">
+                users:token users:write device:approve
+              </code>
+              , plus <code className="font-mono text-zinc-300">sign:job</code> and/or{" "}
+              <code className="font-mono text-zinc-300">users:read</code> when your
+              public app has those scopes.
+            </div>
           )}
+        </div>
+
+        {/* ── Device Authorization Flow (independent of Confidential Client) ── */}
+        <div className="rounded-xl border border-zinc-700/80 bg-zinc-800/20 p-4 space-y-3">
+          <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+            Device login
+          </p>
+          <label
+            className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
+              hasDeviceCode
+                ? "border-emerald-500/30 bg-emerald-500/5"
+                : "border-zinc-700 bg-zinc-800/20 hover:border-zinc-600"
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={hasDeviceCode}
+              onChange={toggleDeviceCode}
+              disabled={readOnly}
+              className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-zinc-200">
+                Device Authorization Flow{" "}
+                <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
+                  (RFC 8628)
+                </span>
+              </p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Allow CLI tools, SDKs, and headless clients to authenticate
+                via a user code on a secondary device.
+              </p>
+
+              {hasDeviceCode && (
+                <p className="mt-3 border-t border-zinc-700/50 pt-3 text-xs text-zinc-500">
+                  Configure the third-party initiate login URL from{" "}
+                  <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
+                  {!hasConfidentialClient && (
+                    <span className="block mt-1 text-amber-400/80">
+                      Enable <strong>Confidential client</strong> above for custom login flows via device code authorization (RFC 8693 token exchange).
+                    </span>
+                  )}
+                </p>
+              )}
+            </div>
+          </label>
         </div>
 
         {/* ── Grant Types (auth_code always required; refresh_token optional) ── */}
@@ -294,7 +293,7 @@ export default function AppModeStep({
           </div>
           <div className="space-y-2">
             {baseScopes.map((s) => scopeRow(s))}
-            {data.backendDeviceHelper && helperScopes.map((s) => scopeRow(s))}
+            {hasConfidentialClient && helperScopes.map((s) => scopeRow(s))}
           </div>
         </div>
       </div>

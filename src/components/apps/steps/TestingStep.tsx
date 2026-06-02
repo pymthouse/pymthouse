@@ -369,49 +369,112 @@ export default function TestingStep({
             </div>
           )}
 
-          {backendDeviceHelper && hasDeviceCode && (
-            <div className="border-t border-zinc-800 pt-5">
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-zinc-300">
-                  Third-party initiate login URI
-                </label>
-                <input
-                  type="url"
-                  value={initiateLoginUri}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    const isValid = isValidInitiateLoginUri(value);
-                    const scopes = allowedScopes.split(/\s+/).filter(Boolean);
-                    const nextScopes = isValid
-                      ? scopes.includes("users:token")
-                        ? scopes
-                        : [...scopes, "users:token"]
-                      : scopes.filter((s) => s !== "users:token");
-                    onChange({
-                      initiateLoginUri: value,
-                      deviceThirdPartyInitiateLogin: isValid,
-                      allowedScopes: nextScopes.join(" "),
-                    });
-                  }}
-                  placeholder="https://example.com/api/auth/initiate-login"
-                  disabled={readOnly}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <p className="text-xs text-zinc-500">
-                  OIDC <code className="font-mono text-zinc-400">initiate_login_uri</code>.
-                  When set, unauthenticated device verification redirects here with{" "}
-                  <code className="font-mono text-zinc-400">iss</code> and{" "}
-                  <code className="font-mono text-zinc-400">target_link_uri</code>. Your app must
-                  return users to <code className="font-mono text-zinc-400">target_link_uri</code>{" "}
-                  after login.
-                </p>
-                {initiateLoginUri.trim() && !deviceThirdPartyInitiateLogin && (
-                  <p className="text-xs text-amber-300">
-                    Enter a valid HTTPS initiate login URI. HTTP is only accepted for loopback hosts
-                    in development.
+          {hasDeviceCode && (
+            <div className="border-t border-zinc-800 pt-5 space-y-5">
+              {/* Device code test with oidcdebugger.com */}
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-zinc-200">Test Device Authorization Flow</h4>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Use{" "}
+                    <a
+                      href="https://oidcdebugger.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-emerald-400 hover:text-emerald-300 underline"
+                    >
+                      oidcdebugger.com
+                    </a>{" "}
+                    or start a device code request directly to verify your device login flow end to end.
                   </p>
+                </div>
+                {clientId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const params = new URLSearchParams({
+                        authorize_uri: `${window.location.origin}/api/v1/oidc/device/authorize`,
+                        client_id: clientId,
+                        scope: effectiveScopes,
+                        response_type: "device_code",
+                      });
+                      const url = `https://oidcdebugger.com/debug?${params.toString()}`;
+                      const newWin = window.open(url, "_blank", "noopener,noreferrer");
+                      if (newWin) newWin.opener = null;
+                    }}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
+                  >
+                    Test Device Flow on oidcdebugger.com
+                  </button>
                 )}
               </div>
+
+              {/* Third-party initiate login URI */}
+              {backendDeviceHelper && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-zinc-300">
+                    Third-party initiate login URI
+                  </label>
+                  <input
+                    type="url"
+                    value={initiateLoginUri}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      const isValid = isValidInitiateLoginUri(value);
+                      const scopes = allowedScopes.split(/\s+/).filter(Boolean);
+                      const nextScopes = isValid
+                        ? scopes.includes("users:token")
+                          ? scopes
+                          : [...scopes, "users:token"]
+                        : scopes.filter((s) => s !== "users:token");
+                      onChange({
+                        initiateLoginUri: value,
+                        deviceThirdPartyInitiateLogin: isValid,
+                        allowedScopes: nextScopes.join(" "),
+                      });
+                    }}
+                    placeholder="https://example.com/api/auth/initiate-login"
+                    disabled={readOnly}
+                    className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <p className="text-xs text-zinc-500">
+                    OIDC <code className="font-mono text-zinc-400">initiate_login_uri</code>.
+                    When set, unauthenticated device verification redirects here with{" "}
+                    <code className="font-mono text-zinc-400">iss</code> and{" "}
+                    <code className="font-mono text-zinc-400">target_link_uri</code>. Your app must
+                    return users to <code className="font-mono text-zinc-400">target_link_uri</code>{" "}
+                    after login.
+                  </p>
+                  {initiateLoginUri.trim() && !deviceThirdPartyInitiateLogin && (
+                    <p className="text-xs text-amber-300">
+                      Enter a valid HTTPS initiate login URI. HTTP is only accepted for loopback hosts
+                      in development.
+                    </p>
+                  )}
+                  {deviceThirdPartyInitiateLogin && isValidInitiateLoginUri(initiateLoginUri) && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-zinc-500">
+                        Test third-party initiated login by simulating the redirect that PymtHouse sends to your app:
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const params = new URLSearchParams({
+                            iss: window.location.origin,
+                            target_link_uri: `${window.location.origin}/api/v1/oidc/device/verify?user_code=TEST_CODE`,
+                          });
+                          const url = `${initiateLoginUri.trim()}?${params.toString()}`;
+                          const newWin = window.open(url, "_blank", "noopener,noreferrer");
+                          if (newWin) newWin.opener = null;
+                        }}
+                        className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+                      >
+                        Test Third-Party Initiated Login
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
