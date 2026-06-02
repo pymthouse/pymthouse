@@ -6,9 +6,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build:sdk": "pnpm --dir ../builder-sdk run build",
-    "ensure:sdk": "test -f ../builder-sdk/dist/index.js || npm run build:sdk",
-    "predev": "npm run db:prepare && npm run ensure:sdk",
+    "predev": "npm run db:prepare",
     "dev": "next dev -p 3001 --webpack",
     "prebuild": "[ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare",
     "build": "next build --webpack",
@@ -29,7 +27,7 @@
   "dependencies": {
     "@braintree/sanitize-url": "^7.1.2",
     "@openmeter/sdk": "^1.0.0-beta.228",
-    "@pymthouse/builder-sdk": "file:../builder-sdk",
+    "@pymthouse/builder-sdk": "0.3.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@turnkey/crypto": "^2.8.14",
     "@turnkey/react-wallet-kit": "^1.11.1",

@@ -7,15 +7,6 @@ const nextConfig: NextConfig = {
     "@pymthouse/builder-sdk",
     "@pymthouse/builder-sdk/signer/server",
   ],
-  turbopack: {
-    resolveAlias: {
-      "@pymthouse/builder-sdk": "../builder-sdk/dist/index.js",
-      "@pymthouse/builder-sdk/plan-pricing":
-        "../builder-sdk/dist/plan-pricing.js",
-      "@pymthouse/builder-sdk/signer/server":
-        "../builder-sdk/dist/signer/server.js",
-    },
-  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       const prev = config.externals;

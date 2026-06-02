@@ -38,30 +38,12 @@ jobs:
       - name: Checkout pymthouse
         uses: actions/checkout@v4
 
-      - name: Checkout builder-sdk
-        uses: actions/checkout@v4
-        with:
-          repository: pymthouse/builder-sdk
-          ref: feat/new-signer
-          path: builder-sdk
-
-      - name: Link builder-sdk for file dependency
-        run: ln -sfn "${{ github.workspace }}/builder-sdk" "$(dirname "${{ github.workspace }}")/builder-sdk"
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            builder-sdk/package-lock.json
-
-      - name: Build builder-sdk
-        working-directory: builder-sdk
-        run: |
-          npm ci
-          npm run build
+          cache-dependency-path: package-lock.json
 
       - name: Cache node_modules
         uses: actions/cache@v4
