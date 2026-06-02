@@ -4,10 +4,25 @@ import { ingestSignedTicketUsage } from "@/lib/billing/signed-ticket-ingest";
 import type { SignedTicketIngestInput } from "@/lib/billing/types";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
+function optionalStringField(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
+}
+
+function requiredStringField(body: Record<string, unknown>, key: string): string {
+  return optionalStringField(body[key]) ?? "";
+}
+
 function parseTicketBody(body: Record<string, unknown>): SignedTicketIngestInput | null {
-  const requestId = String(body.requestId || "").trim();
-  const externalUserId = String(body.externalUserId || "").trim();
-  const networkFeeUsdMicros = String(body.networkFeeUsdMicros || "").trim();
+  const requestId = requiredStringField(body, "requestId");
+  const externalUserId = requiredStringField(body, "externalUserId");
+  const networkFeeUsdMicros = requiredStringField(body, "networkFeeUsdMicros");
   if (!requestId || !externalUserId || !networkFeeUsdMicros) {
     return null;
   }
@@ -15,16 +30,14 @@ function parseTicketBody(body: Record<string, unknown>): SignedTicketIngestInput
     requestId,
     externalUserId,
     networkFeeUsdMicros,
-    feeWei: body.feeWei != null ? String(body.feeWei) : undefined,
-    pixels: body.pixels != null ? String(body.pixels) : undefined,
-    pipeline: body.pipeline != null ? String(body.pipeline) : undefined,
-    modelId: body.modelId != null ? String(body.modelId) : undefined,
-    gatewayRequestId:
-      body.gatewayRequestId != null ? String(body.gatewayRequestId) : undefined,
-    ethUsdPrice: body.ethUsdPrice != null ? String(body.ethUsdPrice) : undefined,
-    ethUsdRoundId: body.ethUsdRoundId != null ? String(body.ethUsdRoundId) : undefined,
-    ethUsdObservedAt:
-      body.ethUsdObservedAt != null ? String(body.ethUsdObservedAt) : undefined,
+    feeWei: optionalStringField(body.feeWei),
+    pixels: optionalStringField(body.pixels),
+    pipeline: optionalStringField(body.pipeline),
+    modelId: optionalStringField(body.modelId),
+    gatewayRequestId: optionalStringField(body.gatewayRequestId),
+    ethUsdPrice: optionalStringField(body.ethUsdPrice),
+    ethUsdRoundId: optionalStringField(body.ethUsdRoundId),
+    ethUsdObservedAt: optionalStringField(body.ethUsdObservedAt),
   };
 }
 

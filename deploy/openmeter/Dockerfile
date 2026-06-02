@@ -4,4 +4,5 @@ FROM ghcr.io/openmeterio/openmeter:latest
 COPY docker/openmeter/config.railway.yaml /etc/openmeter/config.railway.yaml
 COPY deploy/openmeter/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+USER nobody
 ENTRYPOINT ["/entrypoint.sh"]

@@ -116,7 +116,7 @@ run("signer proxy routes enforce auth and forward to the signer", async (t) => {
   assert.ok(Array.isArray(discoverBody.orchestrators));
 
   // Confirm every call above went to the mocked signer host.
-  const expectedSignerOrigin = new URL("http://test-signer.invalid").origin;
+  const expectedSignerOrigin = new URL("https://test-signer.invalid").origin;
   assert.ok(
     mock.calls.every((c) => {
       try {

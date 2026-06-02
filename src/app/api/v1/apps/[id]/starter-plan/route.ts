@@ -78,7 +78,17 @@ export async function PUT(
       { status: 400 },
     );
   }
-  const includedUsdMicros = String(raw).trim();
+  let includedUsdMicros: string;
+  if (typeof raw === "string") {
+    includedUsdMicros = raw.trim();
+  } else if (typeof raw === "number" && Number.isFinite(raw)) {
+    includedUsdMicros = String(Math.trunc(raw));
+  } else {
+    return NextResponse.json(
+      { error: "includedUsdMicros must be a non-negative integer string" },
+      { status: 400 },
+    );
+  }
   if (!isNonNegativeIntegerString(includedUsdMicros)) {
     return NextResponse.json(
       { error: "includedUsdMicros must be a non-negative integer string" },

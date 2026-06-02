@@ -78,7 +78,7 @@ export function mockSignerFetch(opts?: {
   dashboardPricingResponse?: unknown;
   pipelineCatalogResponse?: unknown;
 }): MockSignerController {
-  const signerHost = opts?.signerHost ?? "http://test-signer.invalid";
+  const signerHost = opts?.signerHost ?? "https://test-signer.invalid";
   const signerOrigin = new URL(signerHost).origin;
   const original = globalThis.fetch;
 

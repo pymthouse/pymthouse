@@ -3,6 +3,9 @@ export const OPENMETER_SLUG_KEY_PATTERN = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
 
 export const OPENMETER_SLUG_KEY_MAX_LENGTH = 64;
 
+/** Cap segment length before slug normalization (ReDoS-safe linear passes). */
+const MAX_SLUG_SEGMENT_LENGTH = 512;
+
 export function isValidOpenMeterSlugKey(key: string): boolean {
   return (
     key.length > 0 &&
@@ -11,11 +14,36 @@ export function isValidOpenMeterSlugKey(key: string): boolean {
   );
 }
 
+function trimCharEdges(value: string, ch: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === ch) {
+    start += 1;
+  }
+  while (end > start && value[end - 1] === ch) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
+function collapseRepeatedChar(value: string, ch: string): string {
+  let out = "";
+  let prev = "";
+  for (const c of value) {
+    if (c === ch && prev === ch) {
+      continue;
+    }
+    out += c;
+    prev = c;
+  }
+  return out;
+}
+
 function slugPart(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  const input =
+    raw.length > MAX_SLUG_SEGMENT_LENGTH ? raw.slice(0, MAX_SLUG_SEGMENT_LENGTH) : raw;
+  const normalized = input.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return trimCharEdges(normalized, "_");
 }
 
 function hash32(value: string, seed: number): string {
@@ -37,7 +65,7 @@ function hashSlugIdentity(parts: string[]): string {
  */
 export function toOpenMeterSlugKey(...segments: string[]): string {
   const parts = segments.map(slugPart).filter((part) => part.length > 0);
-  let key = parts.join("_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  let key = trimCharEdges(collapseRepeatedChar(parts.join("_"), "_"), "_");
 
   if (!key || !OPENMETER_SLUG_KEY_PATTERN.test(key)) {
     key = `om_${hashSlugIdentity(segments)}`;

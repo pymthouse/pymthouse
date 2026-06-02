@@ -40,3 +40,8 @@ test("buildOpenMeterRateCardKey matches slug pattern", () => {
   assert.match(key, /^usage_live_video_to_video_all$/);
   assert.ok(isValidOpenMeterSlugKey(key));
 });
+
+test("toOpenMeterSlugKey handles long underscore runs without hanging", () => {
+  const key = toOpenMeterSlugKey(`app_${"_".repeat(10_000)}live`);
+  assert.ok(isValidOpenMeterSlugKey(key));
+});

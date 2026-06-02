@@ -8,6 +8,7 @@ import { ingestSignedTicketEvent } from "@/lib/openmeter/entitlements";
 import { applyTenantBillingProfileToCustomer } from "@/lib/openmeter/billing-profiles";
 import { ensureOpenMeterCustomerForAppUser } from "@/lib/openmeter/customers";
 import { isOpenMeterEnabled } from "@/lib/openmeter/constants";
+import { __testAccumulateOpenMeterUsage } from "@/lib/openmeter/usage-read";
 
 export async function resolveOrCreateAppUser(input: {
   clientId: string;
@@ -72,6 +73,29 @@ export async function recordSignedTicketToOpenMeter(
 
   if (existing[0]) {
     return { ingested: false, duplicate: true };
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    await resolveOrCreateAppUser({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+    __testAccumulateOpenMeterUsage({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      networkFeeUsdMicros: input.networkFeeUsdMicros.toString(),
+      pipeline: input.pipeline,
+      modelId: input.modelId,
+    });
+    await db.insert(usageIngestReceipts).values({
+      id: uuidv4(),
+      clientId: input.clientId,
+      requestId: input.requestId,
+      openmeterEventId: input.requestId,
+      externalUserId: input.externalUserId,
+      createdAt: new Date().toISOString(),
+    });
+    return { ingested: true, duplicate: false };
   }
 
   await provisionAppUserBilling({

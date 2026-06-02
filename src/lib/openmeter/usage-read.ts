@@ -72,11 +72,26 @@ function buildMeterQuery(input: {
   return query;
 }
 
+function groupByString(
+  group: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
+  const value = group[key];
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return fallback;
+}
+
 function clientIdFromGroup(
   group: Record<string, unknown>,
   fallbackClientId: string,
 ): string {
-  return String(group.client_id || fallbackClientId);
+  return groupByString(group, "client_id", fallbackClientId);
 }
 
 /** UTC date key (YYYY-MM-DD) from an OpenMeter meter query row window. */
@@ -101,7 +116,7 @@ function aggregateUserRows(input: {
   const countByUser = new Map<string, number>();
   for (const row of input.countRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
-    const externalUserId = String(group.external_user_id || "");
+    const externalUserId = groupByString(group, "external_user_id", "");
     if (!externalUserId) continue;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
     countByUser.set(
@@ -113,7 +128,7 @@ function aggregateUserRows(input: {
   const feeByUser = new Map<string, bigint>();
   for (const row of input.feeRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
-    const externalUserId = String(group.external_user_id || "");
+    const externalUserId = groupByString(group, "external_user_id", "");
     if (!externalUserId) continue;
     if (input.filterExternalUserId && externalUserId !== input.filterExternalUserId) continue;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
@@ -152,8 +167,8 @@ export function aggregatePipelineModelRows(input: {
   for (const row of input.countRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-    const pipeline = String(group.pipeline || "unknown");
-    const modelId = String(group.model_id || "unknown");
+    const pipeline = groupByString(group, "pipeline", "unknown");
+    const modelId = groupByString(group, "model_id", "unknown");
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     countByKey.set(
@@ -166,8 +181,8 @@ export function aggregatePipelineModelRows(input: {
   for (const row of input.feeRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-    const pipeline = String(group.pipeline || "unknown");
-    const modelId = String(group.model_id || "unknown");
+    const pipeline = groupByString(group, "pipeline", "unknown");
+    const modelId = groupByString(group, "model_id", "unknown");
     const key = `${pipeline}|${modelId}`;
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
@@ -212,8 +227,8 @@ export function aggregateDailyPipelineModelRows(input: {
   for (const row of input.countRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-    const pipeline = String(group.pipeline || "unknown");
-    const modelId = String(group.model_id || "unknown");
+    const pipeline = groupByString(group, "pipeline", "unknown");
+    const modelId = groupByString(group, "model_id", "unknown");
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -231,8 +246,8 @@ export function aggregateDailyPipelineModelRows(input: {
   for (const row of input.feeRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-    const pipeline = String(group.pipeline || "unknown");
-    const modelId = String(group.model_id || "unknown");
+    const pipeline = groupByString(group, "pipeline", "unknown");
+    const modelId = groupByString(group, "model_id", "unknown");
     const day = dateKeyFromMeterWindow(row);
     if (!day) continue;
     const key = `${pipeline}|${modelId}|${day}`;
@@ -284,6 +299,124 @@ export function aggregateDailyRequestCounts(input: {
 
 const testUsageRowsByClient = new Map<string, OpenMeterUsageRow[]>();
 const testDashboardByClient = new Map<string, OpenMeterAppDashboardUsage>();
+const testIngestLogByClient = new Map<
+  string,
+  Array<{
+    externalUserId: string;
+    networkFeeUsdMicros: bigint;
+    pipeline: string;
+    modelId: string;
+    ingestedAtMs: number;
+  }>
+>();
+const testUsagePeriodByClient = new Map<string, { oldestMs: number; newestMs: number }>();
+
+/** Accumulate signed-ticket ingest into in-memory meter stubs (NODE_ENV=test only). */
+export function __testAccumulateOpenMeterUsage(input: {
+  clientId: string;
+  externalUserId: string;
+  networkFeeUsdMicros: string;
+  pipeline?: string;
+  modelId?: string;
+}): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testAccumulateOpenMeterUsage is only available in test");
+  }
+
+  const fee = BigInt(input.networkFeeUsdMicros || "0");
+  if (fee <= 0n) {
+    return;
+  }
+
+  const pipeline = input.pipeline?.trim() || "unknown";
+  const modelId = input.modelId?.trim() || "unknown";
+  const rows = testUsageRowsByClient.get(input.clientId) ?? [];
+  const existing = rows.find((row) => row.externalUserId === input.externalUserId);
+  if (existing) {
+    existing.requestCount += 1;
+    existing.networkFeeUsdMicros = (
+      BigInt(existing.networkFeeUsdMicros) + fee
+    ).toString();
+  } else {
+    rows.push({
+      externalUserId: input.externalUserId,
+      requestCount: 1,
+      networkFeeUsdMicros: fee.toString(),
+    });
+  }
+  testUsageRowsByClient.set(input.clientId, rows);
+
+  const ingestedAtMs = Date.now();
+  const log = testIngestLogByClient.get(input.clientId) ?? [];
+  log.push({
+    externalUserId: input.externalUserId,
+    networkFeeUsdMicros: fee,
+    pipeline,
+    modelId,
+    ingestedAtMs,
+  });
+  testIngestLogByClient.set(input.clientId, log);
+
+  const period = testUsagePeriodByClient.get(input.clientId);
+  if (period) {
+    period.oldestMs = Math.min(period.oldestMs, ingestedAtMs);
+    period.newestMs = Math.max(period.newestMs, ingestedAtMs);
+  } else {
+    testUsagePeriodByClient.set(input.clientId, {
+      oldestMs: ingestedAtMs,
+      newestMs: ingestedAtMs,
+    });
+  }
+}
+
+function testStubOverlapsQueryWindow(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+}): boolean {
+  if (!input.startDate && !input.endDate) {
+    return true;
+  }
+  const period = testUsagePeriodByClient.get(input.clientId);
+  if (!period) {
+    return false;
+  }
+  const startMs = input.startDate ? Date.parse(input.startDate) : Number.NEGATIVE_INFINITY;
+  const endMs = input.endDate ? Date.parse(input.endDate) : Number.POSITIVE_INFINITY;
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+    return true;
+  }
+  return period.newestMs >= startMs && period.oldestMs <= endMs;
+}
+
+function aggregateTestPipelineRowsForUser(input: {
+  clientId: string;
+  externalUserId: string;
+}): OpenMeterPipelineModelRow[] {
+  const log = testIngestLogByClient.get(input.clientId) ?? [];
+  const byKey = new Map<string, OpenMeterPipelineModelRow>();
+  for (const event of log) {
+    if (event.externalUserId !== input.externalUserId) {
+      continue;
+    }
+    const key = `${event.pipeline}|${event.modelId}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.requestCount += 1;
+      existing.networkFeeUsdMicros = (
+        BigInt(existing.networkFeeUsdMicros) + event.networkFeeUsdMicros
+      ).toString();
+    } else {
+      byKey.set(key, {
+        pipeline: event.pipeline,
+        modelId: event.modelId,
+        requestCount: 1,
+        networkFeeUsdMicros: event.networkFeeUsdMicros.toString(),
+      });
+    }
+  }
+  return [...byKey.values()];
+}
 
 /** Register OpenMeter meter rows for integration tests (NODE_ENV=test only). */
 export function __testSetOpenMeterUsageRows(
@@ -310,6 +443,8 @@ export function __testClearOpenMeterUsageStubs(): void {
   testUsageRowsByClient.clear();
   testDashboardByClient.clear();
   testDailyByClient.clear();
+  testIngestLogByClient.clear();
+  testUsagePeriodByClient.clear();
 }
 
 function filterTestUsageRows(
@@ -334,6 +469,13 @@ export async function queryOpenMeterUserPipelineByModel(input: {
   }
 
   if (process.env.NODE_ENV === "test") {
+    const fromIngest = aggregateTestPipelineRowsForUser({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+    if (fromIngest.length > 0) {
+      return fromIngest;
+    }
     const daily = testDailyByClient.get(input.clientId);
     if (daily) {
       const byKey = new Map<string, OpenMeterPipelineModelRow>();
@@ -454,8 +596,11 @@ export async function queryOpenMeterUsage(input: {
 
   if (process.env.NODE_ENV === "test") {
     const stub = testUsageRowsByClient.get(input.clientId);
-    if (stub) {
+    if (stub && testStubOverlapsQueryWindow(input)) {
       return filterTestUsageRows(stub, input);
+    }
+    if (stub) {
+      return [];
     }
   }
 
