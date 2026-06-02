@@ -21,6 +21,8 @@
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
+    "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",
+    "railway:stack:deploy": "bash scripts/railway-deploy-stack.sh",
     "validate:env": "node scripts/validate-env.js",
     "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\""
   },

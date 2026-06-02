@@ -1,0 +1,64 @@
+name: Deploy Railway production stack
+
+# Mirrors the preview stack (OpenMeter + signer DMZ) in the Railway "production" environment.
+# Enable with repository variable: VERCEL_STAGING_AUTO_DEPLOY is NOT used here — use:
+#   RAILWAY_PRODUCTION_AUTO_DEPLOY=true
+#
+# Required secrets:
+#   RAILWAY_TOKEN
+#   OPENMETER_POSTGRES_PASSWORD  (production — use distinct value from preview)
+# Optional:
+#   OPENMETER_API_KEY, OPENMETER_CLICKHOUSE_SECRET
+#   NEXTAUTH_URL, OIDC_ISSUER, DATABASE_URL, AUTH_TOKEN_PEPPER, NEXTAUTH_SECRET (signer / pymthouse service)
+#   OPENMETER_URL — for post-deploy bootstrap only
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-railway-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.RAILWAY_PRODUCTION_AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_ENVIRONMENT: production
+      RAILWAY_PROJECT_ID: dab233aa-dd5f-429d-8cc4-9042e8735e2b
+      OPENMETER_POSTGRES_PASSWORD: ${{ secrets.OPENMETER_POSTGRES_PASSWORD }}
+      OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
+      OPENMETER_CLICKHOUSE_SECRET: ${{ secrets.OPENMETER_CLICKHOUSE_SECRET }}
+      NEXTAUTH_URL: ${{ vars.RAILWAY_PRODUCTION_NEXTAUTH_URL }}
+      OIDC_ISSUER: ${{ vars.RAILWAY_PRODUCTION_OIDC_ISSUER }}
+      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+      SIGNER_NETWORK: ${{ vars.SIGNER_NETWORK }}
+      DATABASE_URL: ${{ secrets.RAILWAY_PRODUCTION_DATABASE_URL }}
+      AUTH_TOKEN_PEPPER: ${{ secrets.RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER }}
+      NEXTAUTH_SECRET: ${{ secrets.RAILWAY_PRODUCTION_NEXTAUTH_SECRET }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli@latest
+
+      - name: Apply production environment variables
+        run: bash scripts/railway-apply-stack-env.sh
+
+      - name: Deploy full stack
+        run: bash scripts/railway-deploy-stack.sh production
+
+      - name: Bootstrap OpenMeter meters
+        if: vars.RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER == 'true'
+        env:
+          OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
+          OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
+        run: |
+          npm ci
+          npm run openmeter:railway:bootstrap

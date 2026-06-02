@@ -131,6 +131,55 @@ For the three OpenMeter app images (`openmeter`, `openmeter-sink-worker`, `openm
 
 See [`deploy/openmeter/railway.toml`](../deploy/openmeter/railway.toml) for API-only deploy hints.
 
+## Preview vs production (same stack)
+
+The **PymtHouse** Railway project uses two environments with the **same eight services**:
+
+| Service | Role |
+|---------|------|
+| `openmeter-postgres`, `openmeter-redis`, `openmeter-kafka`, `openmeter-clickhouse` | Stateful infra (private) |
+| `openmeter` | Public OpenMeter API |
+| `openmeter-sink-worker`, `openmeter-balance-worker` | Workers |
+| `pymthouse` | Remote signer DMZ (`docker/signer-dmz/Dockerfile`) |
+
+**Preview** is the reference stack (`openmeter-preview.up.railway.app`, `pymthouse-preview.up.railway.app`).
+
+**Production** must have the same services deployed in the `production` environment (not only `pymthouse`). Service definitions are shared at the project level; each environment needs its own deploy, volumes, domains, and secrets.
+
+### One-time production setup
+
+1. In Railway → **PymtHouse** → **production**, confirm all eight services appear (create missing ones via the same compose import as preview if needed).
+2. Attach **volumes** on the four stateful services (same mount paths as preview).
+3. Generate public domains on **`openmeter`** and **`pymthouse`** in production.
+4. Set production secrets (use **distinct** passwords from preview). Template: [`config/railway/production.env.example`](../config/railway/production.env.example).
+
+### CI deploy (main → production)
+
+Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`**.
+
+Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) on push to `main`:
+
+1. `scripts/railway-apply-stack-env.sh` — applies env from GitHub secrets
+2. `scripts/railway-deploy-stack.sh production` — redeploys infra + uploads OpenMeter + signer images
+
+**Required GitHub secrets:** `RAILWAY_TOKEN`, `OPENMETER_POSTGRES_PASSWORD` (production value).
+
+**Recommended:** `OPENMETER_API_KEY`, `OPENMETER_URL` (production OpenMeter URL for bootstrap), `RAILWAY_PRODUCTION_DATABASE_URL`, `RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER`, `RAILWAY_PRODUCTION_NEXTAUTH_SECRET` for the signer service.
+
+**Optional variables:** `RAILWAY_PRODUCTION_NEXTAUTH_URL` (default `https://pymthouse.com`), `RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true` to run meter bootstrap after deploy.
+
+Manual deploy:
+
+```bash
+export RAILWAY_TOKEN=...
+export OPENMETER_POSTGRES_PASSWORD=...
+export NEXTAUTH_URL=https://pymthouse.com
+bash scripts/railway-apply-stack-env.sh
+bash scripts/railway-deploy-stack.sh production
+```
+
+Stack metadata: [`config/railway/stack.json`](../config/railway/stack.json).
+
 ## CI bootstrap
 
 `.github/workflows/openmeter-railway-bootstrap.yml` — manual workflow with secret `OPENMETER_URL` (and optional `OPENMETER_API_KEY`).

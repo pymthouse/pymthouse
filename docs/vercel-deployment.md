@@ -143,7 +143,14 @@ PymtHouse uses **two separate Vercel projects**, not preview URLs on one project
 | `pymthouse` | `https://pymthouse.vercel.app` | `main` → Production (native Git integration) |
 | `pymthouse-staging` | `https://pymthouse-staging.vercel.app` | Non-`main` branches → Production via [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) or [scripts/deploy-staging-vercel.sh](../scripts/deploy-staging-vercel.sh) |
 
-Railway (signer, OpenMeter) is unchanged — point staging env vars at the preview Railway services in the **pymthouse-staging** Vercel dashboard (Production scope).
+Railway (signer, OpenMeter) uses the **PymtHouse** project with two environments:
+
+| Railway environment | Vercel target | Stack |
+|---------------------|---------------|--------|
+| `preview` | **pymthouse-staging** (and local dev) | Full 8-service stack (OpenMeter + signer `pymthouse`) |
+| `production` | **pymthouse** (main / pymthouse.com) | Same stack — deploy via [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) when `RAILWAY_PRODUCTION_AUTO_DEPLOY=true` |
+
+Point each Vercel project’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the matching Railway environment’s public domains.
 
 **Dashboard setup for `pymthouse-staging`:**
 

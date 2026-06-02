@@ -145,6 +145,19 @@ services:
       openmeter:
         condition: service_healthy
 
+  # Remote signer DMZ — Railway service name is `pymthouse` (see deploy/pymthouse/railway.json).
+  pymthouse:
+    build:
+      context: .
+      dockerfile: docker/signer-dmz/Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider \"http://127.0.0.1:$${PORT:-8080}/healthz\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+
 volumes:
   openmeter-postgres-data:
   openmeter-kafka-data:

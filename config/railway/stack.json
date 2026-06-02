@@ -1,0 +1,44 @@
+{
+  "projectId": "dab233aa-dd5f-429d-8cc4-9042e8735e2b",
+  "projectName": "PymtHouse",
+  "environments": {
+    "preview": "f2e1c8a8-432b-4977-a9ca-5660a1905887",
+    "production": "eb6ec297-3a7c-4437-b211-8dfff2999db1"
+  },
+  "deployOrder": [
+    "openmeter-postgres",
+    "openmeter-redis",
+    "openmeter-kafka",
+    "openmeter-clickhouse",
+    "openmeter",
+    "openmeter-sink-worker",
+    "openmeter-balance-worker",
+    "pymthouse"
+  ],
+  "services": {
+    "openmeter-postgres": { "kind": "image" },
+    "openmeter-redis": { "kind": "image" },
+    "openmeter-kafka": { "kind": "image" },
+    "openmeter-clickhouse": { "kind": "image" },
+    "openmeter": {
+      "kind": "repo",
+      "manifest": "deploy/openmeter/railway.json",
+      "startCommand": "/entrypoint.sh openmeter"
+    },
+    "openmeter-sink-worker": {
+      "kind": "repo",
+      "manifest": "deploy/openmeter/railway.json",
+      "startCommand": "/entrypoint.sh openmeter-sink-worker"
+    },
+    "openmeter-balance-worker": {
+      "kind": "repo",
+      "manifest": "deploy/openmeter/railway.json",
+      "startCommand": "/entrypoint.sh openmeter-balance-worker"
+    },
+    "pymthouse": {
+      "kind": "repo",
+      "manifest": "deploy/pymthouse/railway.json",
+      "description": "Remote signer DMZ (Apache JWT + go-livepeer). Service name is pymthouse for historical reasons."
+    }
+  }
+}
