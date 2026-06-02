@@ -9,8 +9,7 @@ import { applyTenantBillingProfileToCustomer } from "./billing-profiles";
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import { isOpenMeterConflictError } from "./plan-errors";
-import { buildOpenMeterPlanKey } from "./plans-sync";
-import { syncPlanToOpenMeter } from "./plans-sync";
+import { buildOpenMeterPlanKey, syncPlanToOpenMeter } from "./plans-sync";
 
 const ACTIVE_SUBSCRIPTION_STATUSES = ["active", "pending"] as const;
 

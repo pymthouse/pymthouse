@@ -35,12 +35,13 @@ export async function findOrCreateAppEndUser(
     const msg = err instanceof Error ? err.message : String(err);
     const code =
       typeof err === "object" && err !== null && "code" in err
-        ? (err as { code: unknown }).code
+        ? (err as Record<string, unknown>).code
         : undefined;
     const isUniqueViolation =
       msg.includes("unique") ||
       msg.includes("duplicate") ||
-      code === "23505";
+      code === "23505" ||
+      code === 23505;
     if (isUniqueViolation) {
       const retryRows = await db
         .select()

@@ -216,7 +216,7 @@ run("usage API groupBy=daily_pipeline requires userId and returns day buckets", 
       {
         headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
       },
-    ) as never,
+    ),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(missingUser.status, 400);
@@ -227,7 +227,7 @@ run("usage API groupBy=daily_pipeline requires userId and returns day buckets", 
       {
         headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
       },
-    ) as never,
+    ),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(res.status, 200);

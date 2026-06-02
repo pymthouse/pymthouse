@@ -596,7 +596,7 @@ run("generate-live-payment ingests negotiated ticket usage to OpenMeter", async 
           Authorization: basicAuthHeader(app.clientId, app.clientSecret),
         },
       },
-    ) as never,
+    ),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(usage.status, 200);

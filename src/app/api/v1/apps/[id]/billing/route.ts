@@ -5,7 +5,6 @@ import { plans, signerConfig, subscriptions } from "@/db/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
-import { weiToEthString } from "@/lib/billing-runtime";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import {
   queryOpenMeterAppDashboardUsage,
@@ -158,10 +157,7 @@ export async function GET(
     ? BigInt(planRow.includedUsdMicros)
     : 0n;
 
-  const consumedUsdMicrosFinal =
-    omEndUserBillableUsdMicros < includedUsdMicros
-      ? omEndUserBillableUsdMicros
-      : includedUsdMicros;
+  const consumedUsdMicrosFinal = Math.min(omEndUserBillableUsdMicros, includedUsdMicros);
   const remainingUsdMicrosFinal =
     includedUsdMicros > consumedUsdMicrosFinal
       ? includedUsdMicros - consumedUsdMicrosFinal

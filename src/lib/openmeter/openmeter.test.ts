@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
-import { ensureOpenMeterCustomer, listTenantCustomerIds } from "./customers";
+import { ensureOpenMeterCustomer } from "./customers";
 import { listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
@@ -80,9 +80,11 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
     ] as never,
   });
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.pipeline, "text-to-image");
-  assert.equal(rows[0]!.requestCount, 2);
-  assert.equal(rows[0]!.networkFeeUsdMicros, "1500");
+  const row = rows[0];
+  assert.ok(row);
+  assert.equal(row.pipeline, "text-to-image");
+  assert.equal(row.requestCount, 2);
+  assert.equal(row.networkFeeUsdMicros, "1500");
 });
 
 test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day", () => {
@@ -121,10 +123,13 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
     ] as never,
   });
   assert.equal(rows.length, 2);
-  assert.equal(rows[0]!.date, "2026-06-02");
-  assert.equal(rows[0]!.requestCount, 5);
-  assert.equal(rows[1]!.date, "2026-06-03");
-  assert.equal(rows[1]!.requestCount, 14);
+  const first = rows[0];
+  const second = rows[1];
+  assert.ok(first && second);
+  assert.equal(first.date, "2026-06-02");
+  assert.equal(first.requestCount, 5);
+  assert.equal(second.date, "2026-06-03");
+  assert.equal(second.requestCount, 14);
 });
 
 test("aggregateDailyRequestCounts sums requests per day", () => {
@@ -171,12 +176,11 @@ test("buildOpenMeterUsageResponse aggregates totals and byUser", () => {
       },
     ],
   });
-  assert.equal((response.totals as { requestCount: number }).requestCount, 3);
-  assert.equal(
-    (response.totals as { networkFeeUsdMicros: string }).networkFeeUsdMicros,
-    "1500",
-  );
-  assert.equal((response.byUser as unknown[]).length, 2);
+  const totals = response.totals;
+  assert.ok(totals && typeof totals === "object");
+  assert.equal((totals as { requestCount: number }).requestCount, 3);
+  assert.equal((totals as { networkFeeUsdMicros: string }).networkFeeUsdMicros, "1500");
+  assert.equal(Array.isArray(response.byUser) ? response.byUser.length : 0, 2);
 });
 
 test("buildOpenMeterUsageResponse does not copy network fee into endUserBillable", () => {
@@ -209,7 +213,7 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
   };
 
   const identity = await ensureOpenMeterCustomer(
-    client as never,
+    client,
     "app_1:user-1",
     "User One",
   );
@@ -229,7 +233,7 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
     },
   };
 
-  const identity = await ensureOpenMeterCustomer(client as never, "app_1:user-2");
+  const identity = await ensureOpenMeterCustomer(client, "app_1:user-2");
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
 });
 
@@ -313,12 +317,15 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
 
   assert.ok(omPlan);
   const { buildOpenMeterPlanKey } = await import("./plans-sync");
-  assert.equal(omPlan!.key, buildOpenMeterPlanKey("app_1", "plan-1"));
-  assert.equal(omPlan!.phases[0]!.rateCards.length, 2);
-  const flatFee = omPlan!.phases[0]!.rateCards[0] as { type: string; price: { amount: string } };
+  const phase = omPlan.phases[0];
+  assert.ok(phase);
+  assert.equal(omPlan.key, buildOpenMeterPlanKey("app_1", "plan-1"));
+  assert.equal(phase.rateCards.length, 2);
+  const flatFee = phase.rateCards[0];
+  const usage = phase.rateCards[1];
+  assert.ok(flatFee && usage);
   assert.equal(flatFee.type, "flat_fee");
   assert.equal(flatFee.price.amount, "29.00");
-  const usage = omPlan!.phases[0]!.rateCards[1] as { price: { amount: string } };
   assert.equal(usage.price.amount, "0.0000015");
 });
 
@@ -374,9 +381,12 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
   });
 
   assert.ok(omPlan);
-  assert.equal(omPlan!.phases[0]!.rateCards.length, 1);
+  const phase = omPlan.phases[0];
+  assert.ok(phase);
+  assert.equal(phase.rateCards.length, 1);
   assert.equal(createdFeatures.length, 1);
-  const usage = omPlan!.phases[0]!.rateCards[0] as { price: { amount: string } };
+  const usage = phase.rateCards[0];
+  assert.ok(usage);
   assert.equal(usage.price.amount, "0.000002");
 });
 
@@ -468,12 +478,11 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   });
 
   assert.ok(omPlan);
-  assert.equal(omPlan!.phases[0]!.rateCards.length, 1);
-  const usage = omPlan!.phases[0]!.rateCards[0] as {
-    key: string;
-    featureKey: string;
-    entitlementTemplate?: { issueAfterReset: number };
-  };
+  const phase = omPlan.phases[0];
+  assert.ok(phase);
+  assert.equal(phase.rateCards.length, 1);
+  const usage = phase.rateCards[0];
+  assert.ok(usage);
   assert.equal(usage.key, "network_spend");
   assert.equal(usage.featureKey, "network_spend");
   assert.equal(usage.entitlementTemplate?.issueAfterReset, 5_000_000);

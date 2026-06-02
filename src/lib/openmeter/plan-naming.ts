@@ -1,8 +1,4 @@
-import {
-  OPENMETER_SLUG_KEY_MAX_LENGTH,
-  compactClientSlug,
-  toOpenMeterSlugKey,
-} from "./slug-keys";
+import { compactClientSlug, toOpenMeterSlugKey } from "./slug-keys";
 
 /** Max length for custom plan names (OpenMeter + dashboard). */
 export const CUSTOM_PLAN_NAME_MAX_LENGTH = 64;

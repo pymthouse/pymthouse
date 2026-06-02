@@ -1,23 +1,19 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
-  DEFAULT_TRIAL_FEATURE_KEY,
   NETWORK_FEE_USD_MICROS_METER,
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
 } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
-import {
-  ensureOpenMeterCustomer,
-  type OpenMeterCustomerIdentity,
-} from "./customers";
+import { ensureOpenMeterCustomer } from "./customers";
 import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "./client-factory";
 
-export type { OpenMeterCustomerIdentity };
-export { ensureOpenMeterCustomer };
+export type { OpenMeterCustomerIdentity } from "./customers";
+export { ensureOpenMeterCustomer } from "./customers";
 
 export type TrialCreditBalance = {
   hasAccess: boolean;
@@ -156,4 +152,8 @@ export const OPENMETER_METER_DEFINITIONS = [
   },
 ];
 
-export { DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER, SIGNED_TICKET_COUNT_METER };
+export {
+  DEFAULT_TRIAL_FEATURE_KEY,
+  NETWORK_FEE_USD_MICROS_METER,
+  SIGNED_TICKET_COUNT_METER,
+} from "./constants";

@@ -39,7 +39,21 @@ test("deriveSyncState maps pending when active plan has no OM id", () => {
     lastSyncedAt: null,
     syncError: null,
     openmeterPlanVersion: null,
-  } as never);
+    status: "active",
+    clientId: "app_1",
+    name: "Test",
+    priceAmount: "0",
+    priceCurrency: "USD",
+    includedUsdMicros: null,
+    overageRateUsd: null,
+    includedUnits: null,
+    billingCycle: "monthly",
+    discoveryProfileId: null,
+    isStarterDefault: false,
+    discoveryExcludedCapabilities: null,
+    createdAt: "",
+    updatedAt: "",
+  });
   assert.equal(sync.status, "pending");
 });
 

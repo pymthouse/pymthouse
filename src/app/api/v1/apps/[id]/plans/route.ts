@@ -61,6 +61,23 @@ function isNonNegativeIntegerString(s: string): boolean {
   return /^\d+$/.test(s);
 }
 
+function coerceJsonScalarString(raw: unknown, fallback = ""): string {
+  if (raw === undefined || raw === null) {
+    return fallback;
+  }
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (
+    typeof raw === "number" ||
+    typeof raw === "boolean" ||
+    typeof raw === "bigint"
+  ) {
+    return String(raw);
+  }
+  return fallback;
+}
+
 function parseOptionalNonNegativeIntString(
   raw: unknown,
   fieldName: string,
@@ -68,7 +85,7 @@ function parseOptionalNonNegativeIntString(
   if (raw === undefined || raw === null) {
     return { ok: true, value: null };
   }
-  const s = String(raw).trim();
+  const s = coerceJsonScalarString(raw).trim();
   if (s === "") {
     return { ok: true, value: null };
   }
@@ -88,7 +105,7 @@ function parseOptionalRetailRateUsd(
   if (raw === undefined || raw === null) {
     return { ok: true, value: null };
   }
-  const s = String(raw).trim();
+  const s = coerceJsonScalarString(raw).trim();
   if (!s) {
     return { ok: true, value: null };
   }
@@ -160,7 +177,7 @@ function parseCapabilities(input: unknown): {
     const rawRetail = value.retailRateUsd;
     let parsedRetailUsd: string | null = null;
     if (rawRetail !== null && rawRetail !== undefined) {
-      const s = String(rawRetail).trim();
+      const s = coerceJsonScalarString(rawRetail).trim();
       if (s) {
         parsedRetailUsd = parseRetailRateUsd(s);
         if (!parsedRetailUsd) {
@@ -175,7 +192,7 @@ function parseCapabilities(input: unknown): {
       maxPricePerUnit:
         value.maxPricePerUnit === null || value.maxPricePerUnit === undefined
           ? null
-          : String(value.maxPricePerUnit),
+          : coerceJsonScalarString(value.maxPricePerUnit),
       retailRateUsd: parsedRetailUsd,
     };
   });
@@ -258,7 +275,7 @@ export async function POST(
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
-  const nameCheck = validateCustomPlanName(String(body.name || ""));
+  const nameCheck = validateCustomPlanName(coerceJsonScalarString(body.name));
   if (!nameCheck.ok) {
     return NextResponse.json({ error: nameCheck.error }, { status: 400 });
   }
@@ -339,7 +356,7 @@ export async function POST(
     }
   }
 
-  const planType = String(body.type || "free");
+  const planType = coerceJsonScalarString(body.type, "free");
   const overageRate = resolveOverageRateUsdForPost(planType, body);
   if (!overageRate.ok) {
     return NextResponse.json({ error: overageRate.error }, { status: 400 });
@@ -348,7 +365,7 @@ export async function POST(
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
   if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
-    const s = String(rawIncludedUsd).trim();
+    const s = coerceJsonScalarString(rawIncludedUsd).trim();
     if (s !== "" && !isNonNegativeIntegerString(s)) {
       return NextResponse.json({ error: "includedUsdMicros must be a non-negative integer string" }, { status: 400 });
     }
@@ -378,9 +395,9 @@ export async function POST(
         clientId: appId,
         name,
         type: planType,
-        priceAmount: String(body.priceAmount || "0"),
-        priceCurrency: String(body.priceCurrency || "USD"),
-        status: String(body.status || "active"),
+        priceAmount: coerceJsonScalarString(body.priceAmount, "0"),
+        priceCurrency: coerceJsonScalarString(body.priceCurrency, "USD"),
+        status: coerceJsonScalarString(body.status, "active"),
         overageRateUsd: overageRate.value,
         includedUsdMicros,
         billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
@@ -425,7 +442,7 @@ export async function POST(
     throw e;
   }
 
-  const planStatus = String(body.status || "active");
+  const planStatus = coerceJsonScalarString(body.status, "active");
   if (planStatus === "active") {
     const sync = await syncPlanToOpenMeter(planId);
     if (!sync.ok) {
@@ -474,7 +491,7 @@ export async function PUT(
 
   let putPlanName: string | undefined;
   if (body.name !== undefined) {
-    const nameCheck = validateCustomPlanName(String(body.name));
+    const nameCheck = validateCustomPlanName(coerceJsonScalarString(body.name));
     if (!nameCheck.ok) {
       return NextResponse.json({ error: nameCheck.error }, { status: 400 });
     }
@@ -583,7 +600,8 @@ export async function PUT(
       }
     }
 
-    const nextType = body.type !== undefined ? String(body.type) : existing.type;
+    const nextType =
+      body.type === undefined ? existing.type : coerceJsonScalarString(body.type);
     const overageRate = resolveOverageRateUsdForPut(nextType, body, existing.overageRateUsd);
     if (!overageRate.ok) {
       return { tag: "validation" as const, error: overageRate.error };
@@ -595,7 +613,7 @@ export async function PUT(
       if (rawIncludedUsdPut === null) {
         includedUsdMicrosPut = null;
       } else {
-        const s = String(rawIncludedUsdPut).trim();
+        const s = coerceJsonScalarString(rawIncludedUsdPut).trim();
         if (s !== "" && !isNonNegativeIntegerString(s)) {
           return { tag: "validation" as const, error: "includedUsdMicros must be a non-negative integer string" };
         }
@@ -606,14 +624,23 @@ export async function PUT(
     const updated = await tx
       .update(plans)
       .set({
-        name: putPlanName !== undefined ? putPlanName : existing.name,
+        name: putPlanName ?? existing.name,
         type: nextType,
-        priceAmount: body.priceAmount !== undefined ? String(body.priceAmount) : existing.priceAmount,
-        priceCurrency: body.priceCurrency !== undefined ? String(body.priceCurrency) : existing.priceCurrency,
-        status: body.status !== undefined ? String(body.status) : existing.status,
+        priceAmount:
+          body.priceAmount === undefined
+            ? existing.priceAmount
+            : coerceJsonScalarString(body.priceAmount),
+        priceCurrency:
+          body.priceCurrency === undefined
+            ? existing.priceCurrency
+            : coerceJsonScalarString(body.priceCurrency),
+        status:
+          body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
         overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
-        ...(body.billingCycle !== undefined ? { billingCycle: String(body.billingCycle) } : {}),
+        ...(body.billingCycle === undefined
+          ? {}
+          : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
         ...(discoveryProfileIdPut !== undefined
           ? { discoveryProfileId: discoveryProfileIdPut }
           : {}),
@@ -685,7 +712,7 @@ export async function PUT(
   }
 
   const updatedStatus =
-    body.status !== undefined ? String(body.status) : undefined;
+    body.status === undefined ? undefined : coerceJsonScalarString(body.status);
   const shouldSync =
     (updatedStatus ?? "active") === "active" &&
     txnResult.tag === "ok";

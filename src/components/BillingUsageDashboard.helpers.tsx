@@ -46,12 +46,12 @@ export function BillingDashboardHeader({
   singleAppName,
   cycle,
   isOpenMeter,
-}: {
+}: Readonly<{
   scope: BillingUsageDashboardPayload["scope"];
   singleAppName: string | null | undefined;
   cycle: BillingUsageDashboardPayload["cycle"];
   isOpenMeter: boolean;
-}) {
+}>) {
   const sourceClass = isOpenMeter ? "text-emerald-500/90" : "text-zinc-500";
   const sourceLabel = isOpenMeter ? "OpenMeter" : "Postgres";
   const cycleLine = (
@@ -105,13 +105,13 @@ export function AppUsageSection({
   isAdmin,
   isOpenMeter,
   userId,
-}: {
+}: Readonly<{
   entry: AppUsageEntry;
   scope: BillingUsageDashboardPayload["scope"];
   isAdmin: boolean;
   isOpenMeter: boolean;
   userId: string;
-}) {
+}>) {
   return (
     <section
       key={entry.app.id}
@@ -208,10 +208,10 @@ export function AppUsageSection({
 function AppUsageUserTable({
   entry,
   isOpenMeter,
-}: {
+}: Readonly<{
   entry: AppUsageEntry;
   isOpenMeter: boolean;
-}) {
+}>) {
   return (
     <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
       <table className="w-full text-sm min-w-[32rem]">

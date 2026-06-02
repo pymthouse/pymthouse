@@ -24,7 +24,7 @@ type Props = {
   canManageBilling: boolean;
 };
 
-export default function PaymentsTab({ appId, canManageBilling }: Props) {
+export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>) {
   const [status, setStatus] = useState<StripeStatus | null>(null);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +69,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Props) {
       if (!res.ok || !body.url) {
         throw new Error(body.error || "Connect failed");
       }
-      window.location.href = body.url;
+      globalThis.location.href = body.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
@@ -77,7 +77,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Props) {
   }
 
   async function disconnectStripe() {
-    if (!window.confirm("Disconnect Stripe from this app?")) {
+    if (!globalThis.confirm("Disconnect Stripe from this app?")) {
       return;
     }
     setBusy(true);
@@ -140,16 +140,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Props) {
 
         {canManageBilling && (
           <div className="flex gap-2">
-            {!connected ? (
-              <button
-                type="button"
-                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void connectStripe()}
-              >
-                Connect Stripe
-              </button>
-            ) : (
+            {connected ? (
               <button
                 type="button"
                 className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
@@ -157,6 +148,15 @@ export default function PaymentsTab({ appId, canManageBilling }: Props) {
                 onClick={() => void disconnectStripe()}
               >
                 Disconnect
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void connectStripe()}
+              >
+                Connect Stripe
               </button>
             )}
           </div>

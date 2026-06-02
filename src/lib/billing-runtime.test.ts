@@ -10,7 +10,7 @@ import {
   resolveGatewayAttribution,
   resolvePaymentPipelineModelConstraint,
   resolveRequestPipelineModelConstraint,
-  resolveUpcharge,
+  resolveUpcharge, // NOSONAR S1874 - intentional contract test for deprecated API
   weiToEthString,
 } from "./billing-runtime";
 
@@ -263,7 +263,7 @@ const baseBundle = {
 } as const;
 
 test("resolveUpcharge is deprecated and always returns unpriced", () => {
-  const result = resolveUpcharge({
+  const result = resolveUpcharge({ // NOSONAR S1874
     plan: basePlan,
     bundles: [baseBundle],
     pipeline: "text-to-image",

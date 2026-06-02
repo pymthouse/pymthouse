@@ -48,24 +48,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const payload = body as GatewayEventPayload | Record<string, unknown>;
+  const payload: Record<string, unknown> =
+    typeof body === "object" && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
+  const gatewayPayload = payload as GatewayEventPayload;
   const data =
-    (payload as GatewayEventPayload).data &&
-    typeof (payload as GatewayEventPayload).data === "object"
-      ? ((payload as GatewayEventPayload).data as Record<string, unknown>)
-      : (payload as Record<string, unknown>);
+    gatewayPayload.data && typeof gatewayPayload.data === "object"
+      ? gatewayPayload.data
+      : payload;
 
-  const eventType =
-    pickString(payload as Record<string, unknown>, "type") || "create_signed_ticket";
+  const eventType = pickString(payload, "type") || "create_signed_ticket";
   if (eventType !== "create_signed_ticket") {
     return NextResponse.json({ error: "Unsupported event type" }, { status: 400 });
   }
 
   const clientId = pickString(data, "client_id");
   const externalUserId = pickString(data, "usage_subject", "external_user_id");
-  const requestId =
-    pickString(data, "request_id") ||
-    pickString(payload as Record<string, unknown>, "id");
+  const requestId = pickString(data, "request_id") || pickString(payload, "id");
 
   if (!clientId || !externalUserId || !requestId) {
     return NextResponse.json(

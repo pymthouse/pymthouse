@@ -35,7 +35,7 @@ async function postPlan(clientId: string, body: Record<string, unknown>) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }) as never,
+    }),
     { params: Promise.resolve({ id: clientId }) },
   );
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -61,7 +61,7 @@ run("plans API: network default plan rules", async (t) => {
 
     const { GET } = await import("./route");
     const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`) as never,
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
@@ -103,7 +103,7 @@ run("plans API: network default plan rules", async (t) => {
 
     const { GET } = await import("./route");
     const res = await GET(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`) as never,
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/plans`),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);
@@ -112,7 +112,8 @@ run("plans API: network default plan rules", async (t) => {
     };
     const starters = body.plans.filter((p) => p.isStarterDefault);
     assert.equal(starters.length, 1);
-    assert.ok(starters[0]!.includedUsdMicros);
+    const starter = starters[0];
+    assert.ok(starter?.includedUsdMicros);
   });
 
   await t.test("DELETE starter default plan returns 409", async (t) => {
@@ -133,7 +134,7 @@ run("plans API: network default plan rules", async (t) => {
     const res = await DELETE(
       new Request(
         `http://localhost/api/v1/apps/${app.clientId}/plans?planId=${starterRows[0]!.id}`,
-      ) as never,
+      ),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 409);
@@ -210,7 +211,7 @@ run("plans API: network default plan rules", async (t) => {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: defRows[0]!.id, name: "Renamed" }),
-      }) as never,
+      }),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 400);
@@ -239,7 +240,7 @@ run("plans API: network default plan rules", async (t) => {
     const res = await DELETE(
       new Request(
         `http://localhost/api/v1/apps/${app.clientId}/plans?planId=${defRows[0]!.id}`,
-      ) as never,
+      ),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 409);

@@ -38,7 +38,7 @@ run("starter-plan API", async (t) => {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ includedUsdMicros: "7500000" }),
-      }) as never,
+      }),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     assert.equal(res.status, 200);

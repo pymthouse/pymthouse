@@ -21,9 +21,14 @@ function isUniqueConstraintError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   const code =
     typeof err === "object" && err !== null && "code" in err
-      ? (err as { code: unknown }).code
+      ? (err as Record<string, unknown>).code
       : undefined;
-  return msg.includes("unique") || msg.includes("duplicate") || code === "23505";
+  return (
+    msg.includes("unique") ||
+    msg.includes("duplicate") ||
+    code === "23505" ||
+    code === 23505
+  );
 }
 
 export async function selectStarterDefaultPlan(

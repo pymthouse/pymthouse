@@ -1142,12 +1142,12 @@ function StarterPlanCard({
   plan,
   canEdit,
   onSaved,
-}: {
+}: Readonly<{
   appId: string;
   plan: PlanRow;
   canEdit: boolean;
   onSaved: () => void | Promise<void>;
-}) {
+}>) {
   const [expanded, setExpanded] = useState(false);
   const [includedUsdMicros, setIncludedUsdMicros] = useState(plan.includedUsdMicros ?? "5000000");
   const [saving, setSaving] = useState(false);
