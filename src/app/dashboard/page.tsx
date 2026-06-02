@@ -13,6 +13,7 @@ import {
   countActiveStreamsByRecentPayment,
   getActiveStreamSessionsByRecentPayment,
 } from "@/lib/active-streams";
+import { syncSignerStatus } from "@/lib/signer-proxy";
 
 function formatWei(wei: string): string {
   if (wei === "0") return "0 ETH";
@@ -36,12 +37,22 @@ export default async function DashboardPage() {
 }
 
 async function AdminDashboard() {
+  await syncSignerStatus();
+
   const signerRows = await db
     .select()
     .from(signerConfig)
     .where(eq(signerConfig.id, "default"))
     .limit(1);
   const signer = signerRows[0];
+
+  const signerOnline = signer?.status === "running";
+  let signerSub = "no address";
+  if (signer?.ethAddress) {
+    signerSub = `${signer.ethAddress.slice(0, 6)}...${signer.ethAddress.slice(-4)}`;
+  } else if (signerOnline) {
+    signerSub = "connected";
+  }
 
   const [activeStreamCount, recentActiveSessions, allTransactions, allEndUsers] =
     await Promise.all([
@@ -66,11 +77,9 @@ async function AdminDashboard() {
   const stats = [
     {
       label: "Signer",
-      value: signer?.status === "running" ? "Online" : signer?.status || "N/A",
-      sub: signer?.ethAddress
-        ? `${signer.ethAddress.slice(0, 6)}...${signer.ethAddress.slice(-4)}`
-        : "no address",
-      color: signer?.status === "running" ? "text-emerald-400" : "text-zinc-400",
+      value: signerOnline ? "Online" : signer?.status || "N/A",
+      sub: signerSub,
+      color: signerOnline ? "text-emerald-400" : "text-zinc-400",
     },
     {
       label: "Active Streams",

@@ -17,7 +17,7 @@ import {
 } from "./proto";
 import type { AuthResult } from "./auth";
 import { issueSignerDmzToken } from "./signer-dmz-token";
-import { getSenderInfo } from "./signer-cli";
+import { fetchSignerCliStatus, getSenderInfo } from "./signer-cli";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "./signer-local-compose";
 import { getIssuer } from "./oidc/issuer-urls";
 import { getEthUsdOracle } from "./prices/eth-usd-oracle";
@@ -82,6 +82,23 @@ export async function getSignerRoutingContext(authAppId?: string | null) {
   const signer = await getDefaultSigner();
   const providerAppId = await resolveDeveloperAppIdFromAuthAppId(authAppId);
   return { signer, providerAppId };
+}
+
+/**
+ * Whether the clearinghouse signer can accept proxied signing traffic.
+ * Uses DB status when already "running"; otherwise probes CLI (same path as Live Signer State).
+ */
+export async function isSignerOperational(
+  signer: typeof signerConfig.$inferSelect | null | undefined,
+): Promise<boolean> {
+  if (!signer) {
+    return false;
+  }
+  if (signer.status === "running") {
+    return true;
+  }
+  const senderInfo = await getSenderInfo();
+  return senderInfo !== null;
 }
 
 interface BillingOracleSelection {
@@ -336,7 +353,7 @@ export async function proxySignOrchestratorInfo(
   auth: AuthResult
 ): Promise<ProxyResult> {
   const { signer } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
+  if (!signer || !(await isSignerOperational(signer))) {
     return { status: 503, body: { error: "Signer is not running" } };
   }
 
@@ -387,7 +404,7 @@ export async function proxyGenerateLivePayment(
   auth: AuthResult
 ): Promise<ProxyResult> {
   const { signer, providerAppId } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
+  if (!signer || !(await isSignerOperational(signer))) {
     return { status: 503, body: { error: "Signer is not running" } };
   }
 
@@ -633,7 +650,7 @@ export async function proxySignByocJob(
   auth: AuthResult
 ): Promise<ProxyResult> {
   const { signer } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
+  if (!signer || !(await isSignerOperational(signer))) {
     return { status: 503, body: { error: "Signer is not running" } };
   }
 
@@ -666,7 +683,7 @@ export async function proxyDiscoverOrchestrators(
   auth: AuthResult
 ): Promise<ProxyResult> {
   const { signer } = await getSignerRoutingContext(auth.appId);
-  if (!signer || signer.status !== "running") {
+  if (!signer || !(await isSignerOperational(signer))) {
     return { status: 503, body: { error: "Signer is not running" } };
   }
 
@@ -693,25 +710,33 @@ export async function proxyDiscoverOrchestrators(
 }
 
 /**
- * Sync signer status by checking both the Docker container and the HTTP endpoint.
+ * Sync signer status: HTTP DMZ probe, CLI live state (SIGNER_CLI_URL), and optional local Docker.
+ * Remote signers often answer CLI while HTTP /status or sign-orchestrator probes fail; CLI is treated as live.
  */
 export async function syncSignerStatus(): Promise<{
   reachable: boolean;
   ethAddress?: string;
   containerRunning?: boolean;
 }> {
-  // HTTP reachability: /healthz + /status (with server DMZ JWT, same as proxy traffic)
-  let reachable = false;
-  let ethAddress: string | undefined;
+  const defaultSigner = await getDefaultSigner();
+  const signerUrl = getSignerUrl(defaultSigner);
 
-  try {
-    const defaultSigner = await getDefaultSigner();
-    const probe = await probeSignerHttpReachability(getSignerUrl(defaultSigner));
-    reachable = probe.reachable;
-    ethAddress = probe.ethAddress;
-  } catch {}
+  const [httpProbe, cliStatus] = await Promise.all([
+    probeSignerHttpReachability(signerUrl).catch(() => ({
+      reachable: false as const,
+      ethAddress: undefined as string | undefined,
+    })),
+    fetchSignerCliStatus(),
+  ]);
 
-  // Check Docker container state
+  const reachable = httpProbe.reachable || cliStatus.reachable;
+  const ethAddress =
+    httpProbe.ethAddress ||
+    cliStatus.ethAddress ||
+    defaultSigner?.ethAcctAddr ||
+    undefined;
+
+  // Check Docker container state (local dev only; absent on Vercel)
   let containerRunning = false;
   let lastError: string | null = null;
   try {
@@ -731,7 +756,6 @@ export async function syncSignerStatus(): Promise<{
 
       if (!containerRunning && state) {
         lastError = `Container state: ${state}`;
-        // Grab last few log lines for the error
         try {
           const { stdout: logs } = await execAsync(
             `docker compose logs --no-color --tail=3 ${DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE} 2>&1`,
@@ -752,28 +776,24 @@ export async function syncSignerStatus(): Promise<{
     }
   } catch {}
 
-  // Determine status
   let status: string;
   if (reachable) {
     status = "running";
     lastError = null;
   } else if (containerRunning) {
-    status = "running"; // container up but HTTP not ready yet
+    status = "running";
   } else {
     status = "stopped";
   }
 
-  // Fetch deposit/reserve from CLI port (same data livepeer_cli reads).
-  // Best-effort: only updates if the CLI is reachable.
   const dbSet: Record<string, unknown> = {
     status,
     ethAddress: ethAddress || null,
     lastError,
   };
-  const senderInfo = await getSenderInfo();
-  if (senderInfo) {
-    dbSet.depositWei = senderInfo.deposit;
-    dbSet.reserveWei = senderInfo.reserve.fundsRemaining;
+  if (cliStatus.senderInfo) {
+    dbSet.depositWei = cliStatus.senderInfo.deposit;
+    dbSet.reserveWei = cliStatus.senderInfo.reserve.fundsRemaining;
   }
 
   await db

@@ -20,7 +20,7 @@ import {
   getJwksUrlForLocalSignerDmzContainer,
 } from "@/lib/oidc/issuer-urls";
 import { resolveDmzHostPort } from "@/lib/signer-dmz-host-port";
-import { getSignerUrl } from "@/lib/signer-proxy";
+import { getSignerUrl, syncSignerStatus } from "@/lib/signer-proxy";
 
 function formatWei(wei: string | null): string {
   if (!wei || wei === "0") return "0 WEI";
@@ -38,6 +38,8 @@ export default async function SignerPage() {
   if (!session?.user || role !== "admin") {
     redirect("/");
   }
+
+  await syncSignerStatus();
 
   const signerRows = await db
     .select()
