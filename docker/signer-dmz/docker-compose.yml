@@ -5,8 +5,10 @@
 # From this directory:
 #   docker compose up --build
 #
-# Gateway listens on localhost:8080 → Apache on port 80 inside the gateway container.
-# Signer is not published; only the gateway can reach it on the internal network.
+# Gateway host publish defaults to 127.0.0.1:8080 → Apache :80 in the container.
+# Set SIGNER_DMZ_BIND_HOST=0.0.0.0 (and SIGNER_DMZ_HOST_PORT if needed) for
+# external access from the server. Signer is not published; only the gateway
+# reaches it on the internal network.
 
 services:
   signer:
@@ -32,7 +34,9 @@ services:
       dockerfile: docker/signer-dmz/Dockerfile
       target: gateway
     ports:
-      - "127.0.0.1:8080:80"
+      - target: 80
+        published: ${SIGNER_DMZ_HOST_PORT:-8080}
+        host_ip: ${SIGNER_DMZ_BIND_HOST:-127.0.0.1}
     environment:
       PORT: "80"
       SIGNER_UPSTREAM: http://signer:8081
