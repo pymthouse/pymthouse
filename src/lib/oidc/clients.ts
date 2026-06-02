@@ -345,6 +345,56 @@ export async function syncBackendM2mAllowedScopesFromPublicApp(
 }
 
 /**
+ * When a confidential m2m_ sibling exists, the primary app_ row must remain public.
+ * Repairs legacy rows that still have a secret or client_credentials on app_.
+ */
+export async function demotePublicClientWhenM2mSiblingExists(
+  appInternalId: string,
+): Promise<boolean> {
+  const appRows = await db
+    .select()
+    .from(developerApps)
+    .where(eq(developerApps.id, appInternalId))
+    .limit(1);
+  const app = appRows[0];
+  if (!app?.oidcClientId || !app.m2mOidcClientId) {
+    return false;
+  }
+
+  const pubRows = await db
+    .select()
+    .from(oidcClients)
+    .where(eq(oidcClients.id, app.oidcClientId))
+    .limit(1);
+  const pub = pubRows[0];
+  if (!pub) {
+    return false;
+  }
+
+  const grants = pub.grantTypes.split(",").filter(Boolean);
+  const nextGrants = grants.filter((g) => g !== "client_credentials");
+  const needsUpdate =
+    pub.clientSecretHash != null ||
+    pub.tokenEndpointAuthMethod !== "none" ||
+    grants.length !== nextGrants.length;
+
+  if (!needsUpdate) {
+    return false;
+  }
+
+  await db
+    .update(oidcClients)
+    .set({
+      clientSecretHash: null,
+      tokenEndpointAuthMethod: "none",
+      grantTypes: nextGrants.join(","),
+    })
+    .where(eq(oidcClients.id, app.oidcClientId));
+
+  return true;
+}
+
+/**
  * Ensures a confidential M2M OIDC row exists for interactive apps that need
  * Builder API / device approval without turning the public client confidential.
  */
@@ -369,6 +419,7 @@ export async function ensureM2mBackendClient(params: {
       .where(eq(oidcClients.id, app.m2mOidcClientId))
       .limit(1);
     if (existing[0]) {
+      await demotePublicClientWhenM2mSiblingExists(params.appInternalId);
       return { id: existing[0].id, clientId: existing[0].clientId };
     }
   }
@@ -402,6 +453,8 @@ export async function ensureM2mBackendClient(params: {
     .update(developerApps)
     .set({ m2mOidcClientId: id })
     .where(eq(developerApps.id, params.appInternalId));
+
+  await demotePublicClientWhenM2mSiblingExists(params.appInternalId);
 
   return { id, clientId };
 }

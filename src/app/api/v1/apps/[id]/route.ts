@@ -11,6 +11,7 @@ import {
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import {
+  demotePublicClientWhenM2mSiblingExists,
   ensureM2mBackendClient,
   syncBackendM2mAllowedScopesFromPublicApp,
   updateClientConfig,
@@ -93,7 +94,11 @@ export async function GET(
         allowedScopes: client.allowedScopes,
         grantTypes: client.grantTypes,
         tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
-        hasSecret: !!client.clientSecretHash,
+        // Public app_ row must never report a secret when a confidential m2m_ sibling exists.
+        hasSecret: app.m2mOidcClientId
+          ? false
+          : client.tokenEndpointAuthMethod !== "none" &&
+            !!client.clientSecretHash,
         postLogoutRedirectUris: client.postLogoutRedirectUris
           ? (JSON.parse(client.postLogoutRedirectUris) as string[])
           : [],
@@ -306,6 +311,10 @@ export async function PUT(
         await updateClientConfig(client.clientId, clientUpdates);
         resetProvider();
       }
+
+      if (app.m2mOidcClientId && (await demotePublicClientWhenM2mSiblingExists(app.id))) {
+        resetProvider();
+      }
     }
   }
 
@@ -317,7 +326,9 @@ export async function PUT(
         ? body.name.trim()
         : app.name,
     });
-    resetProvider();
+    if (await demotePublicClientWhenM2mSiblingExists(app.id)) {
+      resetProvider();
+    }
     const refreshed = await db
       .select({ m2mOidcClientId: developerApps.m2mOidcClientId })
       .from(developerApps)

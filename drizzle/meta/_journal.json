@@ -148,6 +148,20 @@
       "when": 1777500000000,
       "tag": "0019_app_billing_oracle_config",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1777600000000,
+      "tag": "0020_clear_public_client_secrets",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1777700000000,
+      "tag": "0021_demote_public_client_when_m2m_sibling",
+      "breakpoints": true
     }
   ]
 }
