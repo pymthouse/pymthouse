@@ -12,5 +12,3 @@ watchPatterns = ["deploy/openmeter/**", "docker/openmeter/**"]
 [deploy]
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
-healthcheckPath = "/api/v1/debug/metrics"
-healthcheckTimeout = 300

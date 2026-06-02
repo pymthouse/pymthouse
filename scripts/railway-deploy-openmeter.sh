@@ -41,10 +41,9 @@ with open(path) as f:
     data = json.load(f)
 deploy = data.setdefault("deploy", {})
 deploy["startCommand"] = f"/entrypoint.sh {cmd}"
-# Workers are not HTTP servers; the API healthcheck path would never pass on them.
-if cmd != "openmeter":
-    deploy.pop("healthcheckPath", None)
-    deploy.pop("healthcheckTimeout", None)
+# Railway service health checks can fail before the full OpenMeter stack settles.
+deploy.pop("healthcheckPath", None)
+deploy.pop("healthcheckTimeout", None)
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
