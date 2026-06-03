@@ -45,6 +45,6 @@ trap restore_manifest EXIT
 cp "$TMP_MANIFEST" "$ROOT/railway.json"
 
 # shellcheck disable=SC2086
-railway up -s "$SERVICE" $PE_FLAGS -d -m "signer DMZ deploy ($ENV)"
+railway_retry railway up -s "$SERVICE" $PE_FLAGS -d -m "signer DMZ deploy ($ENV)"
 
 echo "Deployed signer DMZ to $SERVICE in $ENV"

@@ -47,3 +47,43 @@ railway_export_auth() {
 railway_pe_flags() {
   echo "-p $(railway_default_project_id) -e $1"
 }
+
+# True when stderr looks like a transient network / API failure (retryable).
+railway_retryable_failure() {
+  local err_file="$1"
+  grep -qiE \
+    'timed out|timeout|Failed to fetch|error sending request|connection reset|connection refused|temporarily unavailable|\b502\b|\b503\b|\b429\b' \
+    "$err_file"
+}
+
+# Run a Railway CLI command with exponential backoff on transient failures.
+# Usage: railway_retry railway variable set KEY=val ...
+railway_retry() {
+  local max_attempts="${RAILWAY_CLI_MAX_ATTEMPTS:-5}"
+  local delay="${RAILWAY_CLI_RETRY_DELAY_SEC:-5}"
+  local attempt=1
+  local rc err_file
+
+  err_file="$(mktemp)"
+
+  while true; do
+    : >"$err_file"
+    if "$@" 2>"$err_file"; then
+      rm -f "$err_file"
+      return 0
+    fi
+    rc=$?
+    cat "$err_file" >&2
+    if [[ $attempt -ge $max_attempts ]] || ! railway_retryable_failure "$err_file"; then
+      rm -f "$err_file"
+      return "$rc"
+    fi
+    echo "Railway CLI attempt $attempt/$max_attempts failed (transient); retrying in ${delay}s..." >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+    if [[ $delay -gt 60 ]]; then
+      delay=60
+    fi
+  done
+}

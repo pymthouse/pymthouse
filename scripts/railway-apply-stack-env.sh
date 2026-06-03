@@ -34,11 +34,16 @@ set_kv() {
   local service="$1"
   shift
   # shellcheck disable=SC2086
-  railway variable set "$@" --service "$service" $PE_FLAGS --skip-deploys >/dev/null
+  railway_retry railway variable set "$@" --service "$service" $PE_FLAGS --skip-deploys >/dev/null
   echo "  $service: set $# variable(s)"
 }
 
 echo "Applying stack env to Railway environment: $ENV (project $PROJECT_ID)"
+
+# Warm up API connectivity before bulk writes (CI runners sometimes hit a slow first request).
+# shellcheck disable=SC2086
+railway_retry railway variables --service pymthouse $PE_FLAGS >/dev/null
+echo "Railway API reachable."
 
 # Postgres
 set_kv openmeter-postgres \
@@ -108,15 +113,15 @@ if [[ -n "$NEXTAUTH_URL" ]]; then
     "JWKS_URI=${JWKS_URI}"
   if [[ -n "${DATABASE_URL:-}" ]]; then
     # shellcheck disable=SC2086
-    railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
+    railway_retry railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
   fi
   if [[ -n "${AUTH_TOKEN_PEPPER:-}" ]]; then
     # shellcheck disable=SC2086
-    railway variable set "AUTH_TOKEN_PEPPER=${AUTH_TOKEN_PEPPER}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
+    railway_retry railway variable set "AUTH_TOKEN_PEPPER=${AUTH_TOKEN_PEPPER}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
   fi
   if [[ -n "${NEXTAUTH_SECRET:-}" ]]; then
     # shellcheck disable=SC2086
-    railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
+    railway_retry railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
   fi
   echo "  pymthouse: NEXTAUTH_URL=${NEXTAUTH_URL} OIDC_ISSUER=${ISSUER} (+ optional DB/OIDC secrets)"
 fi
