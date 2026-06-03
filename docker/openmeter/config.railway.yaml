@@ -25,7 +25,7 @@ sink:
     enabled: true
     driver: redis
     config:
-      address: openmeter-redis.railway.internal:6379
+      address: ${OPENMETER_REDIS_ADDRESS}
       database: 0
       expiration: 768h # 32d
 
