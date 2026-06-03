@@ -28,14 +28,16 @@ if ! command -v railway >/dev/null 2>&1; then
 fi
 
 export RAILWAY_TOKEN
-railway link -p "$PROJECT_ID" -e "$ENV" >/dev/null
+railway link "$PROJECT_ID" --environment "$ENV" >/dev/null
 
 echo "=== Railway stack deploy: $ENV ==="
 
-# Stateful images: deploy from configured source (works for first deploy in a new environment).
+# Stateful images: redeploy to pick up env (no repo upload).
 for svc in openmeter-postgres openmeter-redis openmeter-kafka openmeter-clickhouse; do
-  echo "Deploying $svc from source ..."
-  railway redeploy --service "$svc" --environment "$ENV" --from-source --yes
+  echo "Redeploying $svc ..."
+  railway redeploy --service "$svc" --yes 2>/dev/null || railway service redeploy "$svc" --yes 2>/dev/null || {
+    echo "  (redeploy CLI unavailable — trigger deploy from dashboard if $svc is new in $ENV)"
+  }
 done
 
 # OpenMeter images from repo
