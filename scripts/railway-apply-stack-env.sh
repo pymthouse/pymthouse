@@ -46,7 +46,8 @@ set_kv openmeter-postgres \
   "POSTGRES_USER=postgres" \
   "POSTGRES_DB=postgres" \
   "POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}" \
-  "OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}"
+  "OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}" \
+  "PGDATA=/var/lib/postgresql/data/pgdata"
 
 # ClickHouse
 CLICKHOUSE_PASSWORD="${OPENMETER_CLICKHOUSE_SECRET:-default}"
@@ -73,10 +74,17 @@ set_kv openmeter-kafka \
   "KAFKA_AUTO_CREATE_TOPICS_ENABLE=false"
 
 # OpenMeter app services
+REDIS_ADDR="${OPENMETER_REDIS_ADDRESS:-}"
+if [[ "$ENV" == "production" && -z "$REDIS_ADDR" ]]; then
+  REDIS_ADDR="openmeter-redis-prod.railway.internal:6379"
+fi
 for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
   args=("OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}")
   if [[ -n "${OPENMETER_API_KEY:-}" ]]; then
     args+=("OPENMETER_API_KEY=${OPENMETER_API_KEY}")
+  fi
+  if [[ -n "$REDIS_ADDR" ]]; then
+    args+=("OPENMETER_REDIS_ADDRESS=${REDIS_ADDR}")
   fi
   set_kv "$svc" "${args[@]}"
 done

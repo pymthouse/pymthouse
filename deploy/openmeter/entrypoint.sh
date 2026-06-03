@@ -4,7 +4,9 @@ set -eu
 
 CONFIG_OUT="/tmp/openmeter.config.yaml"
 PASS="${OPENMETER_POSTGRES_PASSWORD:-postgres}"
-sed "s|\${OPENMETER_POSTGRES_PASSWORD}|${PASS}|g" \
+REDIS_ADDR="${OPENMETER_REDIS_ADDRESS:-openmeter-redis.railway.internal:6379}"
+sed -e "s|\${OPENMETER_POSTGRES_PASSWORD}|${PASS}|g" \
+  -e "s|\${OPENMETER_REDIS_ADDRESS}|${REDIS_ADDR}|g" \
   /etc/openmeter/config.railway.yaml >"${CONFIG_OUT}"
 
 CMD="${1:-openmeter}"
