@@ -12,14 +12,24 @@ railway_default_project_id() {
 }
 
 railway_export_auth() {
+  # The Railway CLI treats RAILWAY_TOKEN as a project token whenever it is
+  # PRESENT — even as an empty string (e.g. `RAILWAY_TOKEN: ${{ secrets.X }}`
+  # in CI when the secret is unset). An empty project token => Unauthorized,
+  # even when RAILWAY_API_TOKEN is valid. So always unset the token we are not
+  # using before invoking the CLI.
   if [[ -n "${RAILWAY_API_TOKEN:-}" ]]; then
+    unset RAILWAY_TOKEN
     export RAILWAY_API_TOKEN
     return 0
   fi
   if [[ -n "${RAILWAY_TOKEN:-}" ]]; then
+    unset RAILWAY_API_TOKEN
     export RAILWAY_TOKEN
     return 0
   fi
+  # Neither token has a value: drop any empty vars so the CLI falls back to a
+  # local `railway login` session instead of failing on an empty token.
+  unset RAILWAY_API_TOKEN RAILWAY_TOKEN
   if railway whoami >/dev/null 2>&1; then
     return 0
   fi
