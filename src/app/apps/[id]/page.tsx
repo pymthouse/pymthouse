@@ -5,7 +5,11 @@ import { useParams, useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppSettingsScreen from "@/components/apps/AppSettingsScreen";
 import type { AppFormData, AppState } from "@/components/apps/AppWizard";
-import { DEFAULT_OIDC_SCOPES } from "@/lib/oidc/scopes";
+import {
+  DEFAULT_PUBLIC_GRANT_TYPES,
+  ensureAuthorizationCodeGrant,
+} from "@/lib/oidc/grants";
+import { DEFAULT_OIDC_SCOPES, ensureOpenIdScope } from "@/lib/oidc/scopes";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: "Draft", color: "bg-zinc-700 text-zinc-300" },
@@ -51,11 +55,14 @@ export default function AppDetailPage() {
             developerName: data.developerName || "",
             websiteUrl: data.websiteUrl || "",
             redirectUris: data.oidcClient?.redirectUris || [],
-            allowedScopes: data.oidcClient?.allowedScopes || DEFAULT_OIDC_SCOPES,
-            grantTypes: data.oidcClient?.grantTypes?.split(",").filter(Boolean) || [
-              "authorization_code",
-              "refresh_token",
-            ],
+            allowedScopes: ensureOpenIdScope(
+              data.oidcClient?.allowedScopes || DEFAULT_OIDC_SCOPES,
+            ),
+            grantTypes: ensureAuthorizationCodeGrant(
+              data.oidcClient?.grantTypes?.split(",").filter(Boolean) || [
+                ...DEFAULT_PUBLIC_GRANT_TYPES,
+              ],
+            ),
             tokenEndpointAuthMethod:
               data.oidcClient?.tokenEndpointAuthMethod || "none",
             backendDeviceHelper: Boolean(data.m2mOidcClient),

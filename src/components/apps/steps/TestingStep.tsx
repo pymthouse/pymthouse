@@ -562,13 +562,9 @@ export default function TestingStep({
       )}
 
       {/*
-        Backend helper (confidential m2m_) section.
-        Shown whenever a backend helper exists in the DB, independent of the
-        `backendDeviceHelper` form toggle (which lives on the Auth & Scopes
-        tab). Hints below cover the not-yet-provisioned and off states for
-        interactive apps; M2M-only apps treat the m2m_ as optional, so we
-        skip the hints there to avoid confusion (their primary app_* client
-        is already confidential).
+        Backend helper (confidential m2m_) — driven by server state
+        (`backendHelper` / `backendDeviceHelper`), refreshed when the
+        Credentials tab loads and after save.
       */}
       {backendHelper ? (
         <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">

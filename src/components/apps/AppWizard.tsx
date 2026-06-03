@@ -3,11 +3,16 @@
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
-import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
+import {
+  AUTHORIZATION_CODE_GRANT,
+  DEFAULT_PUBLIC_GRANT_TYPES,
+  DEVICE_CODE_GRANT,
+  ensureAuthorizationCodeGrant,
+  REFRESH_TOKEN_GRANT,
+} from "@/lib/oidc/grants";
+import { DEFAULT_OIDC_SCOPES, ensureOpenIdScope, OIDC_SCOPES } from "@/lib/oidc/scopes";
 
-const AUTHORIZATION_CODE_GRANT = "authorization_code";
-const REFRESH_TOKEN_GRANT = "refresh_token";
-const DEVICE_FLOW_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const DEVICE_FLOW_GRANT = DEVICE_CODE_GRANT;
 
 const USERS_TOKEN_SCOPE = OIDC_SCOPES.find((s) => s.value === "users:token")!;
 
@@ -39,8 +44,7 @@ export interface AppState {
 }
 
 const DEFAULT_GRANT_TYPES_WITH_DEVICE = [
-  AUTHORIZATION_CODE_GRANT,
-  REFRESH_TOKEN_GRANT,
+  ...DEFAULT_PUBLIC_GRANT_TYPES,
   DEVICE_FLOW_GRANT,
 ] as const;
 
@@ -108,7 +112,7 @@ export default function AppWizard({ initialData }: Props) {
           ...prev,
           backendDeviceHelper: false,
           grantTypes: prev.grantTypes.filter((g) => g !== DEVICE_FLOW_GRANT),
-          allowedScopes: joinScopes(scopes),
+          allowedScopes: ensureOpenIdScope(joinScopes(scopes)),
           initiateLoginUri: "",
           deviceThirdPartyInitiateLogin: false,
         };
@@ -121,7 +125,7 @@ export default function AppWizard({ initialData }: Props) {
       return {
         ...prev,
         backendDeviceHelper: true,
-        allowedScopes: joinScopes(nextScopes),
+        allowedScopes: ensureOpenIdScope(joinScopes(nextScopes)),
       };
     });
   };
@@ -146,7 +150,7 @@ export default function AppWizard({ initialData }: Props) {
     const next = hasIssueUserTokens
       ? scopes.filter((s) => s !== "users:token")
       : [...scopes, "users:token"];
-    set("allowedScopes", joinScopes(next));
+    set("allowedScopes", ensureOpenIdScope(joinScopes(next)));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -169,7 +173,8 @@ export default function AppWizard({ initialData }: Props) {
           );
       const payload: AppFormData = {
         ...formData,
-        grantTypes,
+        grantTypes: ensureAuthorizationCodeGrant(grantTypes),
+        allowedScopes: ensureOpenIdScope(formData.allowedScopes),
       };
       const res = await fetch("/api/v1/apps", {
         method: "POST",

@@ -9,16 +9,33 @@ export interface ScopeDefinition {
   /** Short description shown on the consent screen and in app settings. */
   description: string;
   required?: boolean;
+  /** Omitted from provider app Auth & Scopes UI; applied automatically on every public client. */
+  hiddenInAppConfig?: boolean;
 }
+
+export const OPENID_SCOPE = "openid";
 
 export const DEFAULT_OIDC_SCOPES = "openid sign:job";
 
+/** Public app clients always include `openid`; callers must not rely on the UI to add it. */
+export function ensureOpenIdScope(allowedScopes: string): string {
+  const tokens = allowedScopes
+    .split(/[,\s]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.includes(OPENID_SCOPE)) {
+    return tokens.join(" ");
+  }
+  return [OPENID_SCOPE, ...tokens].join(" ");
+}
+
 export const OIDC_SCOPES: ScopeDefinition[] = [
   {
-    value: "openid",
+    value: OPENID_SCOPE,
     label: "OpenID",
     description: "Confirm which PymtHouse account you are signed in with",
     required: true,
+    hiddenInAppConfig: true,
   },
   {
     value: "sign:mint_user_token",

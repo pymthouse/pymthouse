@@ -9,7 +9,8 @@ import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-pro
 import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
 import { getIssuer } from "./issuer-urls";
-import { hashClientSecret } from "./clients";
+import { hashClientSecret, normalizePublicAllowedScopes } from "./clients";
+import { normalizePublicGrantTypes, parseGrantTypes } from "./grants";
 import { getTrustedLoginHosts, normalizeDomain } from "./custom-domains";
 import { ensureSigningKey } from "./jwks";
 import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-login";
@@ -82,7 +83,9 @@ async function loadClients(): Promise<ClientMetadata[]> {
         return expanded;
       });
 
-    const grantTypes = row.grantTypes.split(",").filter(Boolean);
+    const grantTypes = parseGrantTypes(
+      normalizePublicGrantTypes(row.grantTypes, row.clientId),
+    );
 
     // node-oidc-provider requires at least one redirect_uri for all clients.
     // For device-flow-only clients that may have none configured, use a
@@ -98,7 +101,7 @@ async function loadClients(): Promise<ClientMetadata[]> {
       redirect_uris: effectiveRedirectUris,
       grant_types: grantTypes,
       token_endpoint_auth_method: row.tokenEndpointAuthMethod as "none" | "client_secret_post" | "client_secret_basic",
-      scope: row.allowedScopes,
+      scope: normalizePublicAllowedScopes(row.allowedScopes, row.clientId),
     };
     meta.response_types = grantTypes.includes("authorization_code") ? ["code"] : [];
 

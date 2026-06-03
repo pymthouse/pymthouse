@@ -179,6 +179,34 @@ export default function AppSettingsScreen({
     [],
   );
 
+  const syncCredentialsFromServer = useCallback(async () => {
+    const res = await fetch(`/api/v1/apps/${appId}`);
+    if (!res.ok) {
+      return;
+    }
+    const data = (await res.json()) as {
+      m2mOidcClient?: { clientId: string; hasSecret: boolean } | null;
+      oidcClient?: { hasSecret?: boolean; clientId?: string } | null;
+    };
+    setAppState((s) => ({
+      ...s,
+      backendHelper: data.m2mOidcClient ?? null,
+      hasSecret: data.oidcClient?.hasSecret ?? s.hasSecret,
+      clientId: data.oidcClient?.clientId ?? s.clientId,
+    }));
+    setFormData((prev) => ({
+      ...prev,
+      backendDeviceHelper: Boolean(data.m2mOidcClient),
+    }));
+  }, [appId]);
+
+  useEffect(() => {
+    if (integrationSection !== "credentials") {
+      return;
+    }
+    void syncCredentialsFromServer();
+  }, [integrationSection, syncCredentialsFromServer]);
+
   const saveChanges = useCallback(async () => {
     if (!canEdit) return;
     setSaving(true);
@@ -199,12 +227,14 @@ export default function AppSettingsScreen({
         throw new Error(putJson.error || `Failed to save (${res.status})`);
       }
 
-      if (putJson.m2mOidcClient) {
-        setAppState((s) => ({
-          ...s,
-          backendHelper: putJson.m2mOidcClient ?? null,
-        }));
-      }
+      setAppState((s) => ({
+        ...s,
+        backendHelper: putJson.m2mOidcClient ?? null,
+      }));
+      setFormData((prev) => ({
+        ...prev,
+        backendDeviceHelper: Boolean(putJson.m2mOidcClient),
+      }));
       setSavedGrantTypes([...formData.grantTypes]);
 
       const settingsRes = await fetch(`/api/v1/apps/${appId}/settings`, {

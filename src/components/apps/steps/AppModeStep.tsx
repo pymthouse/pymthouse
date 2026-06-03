@@ -2,10 +2,13 @@
 
 import { useEffect } from "react";
 import type { AppFormData } from "../AppWizard";
-import { OIDC_SCOPES } from "@/lib/oidc/scopes";
+import {
+  AUTHORIZATION_CODE_GRANT,
+  DEVICE_CODE_GRANT,
+  ensureAuthorizationCodeGrant,
+} from "@/lib/oidc/grants";
+import { ensureOpenIdScope, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { validateInitiateLoginUri } from "@/lib/oidc/third-party-initiate-login";
-
-const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 function isValidInitiateLoginUri(uri: string): boolean {
   const t = uri.trim();
@@ -35,44 +38,66 @@ export default function AppModeStep({
     hasDeviceCode && data.deviceThirdPartyInitiateLogin && isValidInitiateLoginUri(data.initiateLoginUri);
   const hasIssueUserTokens = scopes.includes("users:token");
 
-  // openid (required) + sign:job always visible; users:token only when helper is on
-  const baseScopes = OIDC_SCOPES.filter((s) => ["openid", "sign:job"].includes(s.value));
+  // sign:job always visible; openid is implicit; users:token only when helper is on
+  const baseScopes = OIDC_SCOPES.filter(
+    (s) => s.value === "sign:job" && !s.hiddenInAppConfig,
+  );
   const helperScopes = OIDC_SCOPES.filter((s) => s.value === "users:token");
 
+  const setAllowedScopes = (next: string) => {
+    onChange({ allowedScopes: ensureOpenIdScope(next) });
+  };
+
+  useEffect(() => {
+    if (scopes.includes("openid")) return;
+    setAllowedScopes(data.allowedScopes);
+  }, [data.allowedScopes, scopes, onChange]);
+
+  useEffect(() => {
+    if (data.grantTypes.includes(AUTHORIZATION_CODE_GRANT)) return;
+    onChange({ grantTypes: ensureAuthorizationCodeGrant(data.grantTypes) });
+  }, [data.grantTypes, onChange]);
+
+  const setGrantTypes = (next: string[]) => {
+    onChange({ grantTypes: ensureAuthorizationCodeGrant(next) });
+  };
+
   const toggleScope = (scope: string) => {
-    if (readOnly || scope === "openid") return;
+    if (readOnly) return;
     if (scope === "users:token" && requiresIssueUserTokens) return;
     const next = scopes.includes(scope)
       ? scopes.filter((v) => v !== scope)
       : [...scopes, scope];
-    onChange({ allowedScopes: next.join(" ") });
+    setAllowedScopes(next.join(" "));
   };
 
   useEffect(() => {
     if (!requiresIssueUserTokens || hasIssueUserTokens) return;
-    onChange({ allowedScopes: [...scopes, "users:token"].join(" ") });
-  }, [hasIssueUserTokens, onChange, requiresIssueUserTokens, scopes]);
+    setAllowedScopes([...scopes, "users:token"].join(" "));
+  }, [hasIssueUserTokens, requiresIssueUserTokens, scopes]);
 
   const toggleRefreshToken = () => {
     if (readOnly) return;
     const has = data.grantTypes.includes("refresh_token");
-    onChange({
-      grantTypes: has
+    setGrantTypes(
+      has
         ? data.grantTypes.filter((v) => v !== "refresh_token")
         : [...data.grantTypes, "refresh_token"],
-    });
+    );
   };
 
   const toggleDeviceCode = () => {
     if (readOnly || !data.backendDeviceHelper) return;
     if (hasDeviceCode) {
       onChange({
-        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
+        grantTypes: ensureAuthorizationCodeGrant(
+          data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
+        ),
         initiateLoginUri: "",
         deviceThirdPartyInitiateLogin: false,
       });
     } else {
-      onChange({ grantTypes: [...data.grantTypes, DEVICE_CODE_GRANT] });
+      setGrantTypes([...data.grantTypes, DEVICE_CODE_GRANT]);
     }
   };
 
@@ -80,14 +105,21 @@ export default function AppModeStep({
     if (readOnly) return;
     if (checked) {
       const nextScopes = scopes.includes("users:token") ? scopes : [...scopes, "users:token"];
-      onChange({ backendDeviceHelper: true, allowedScopes: nextScopes.join(" ") });
+      onChange({
+        backendDeviceHelper: true,
+        allowedScopes: ensureOpenIdScope(nextScopes.join(" ")),
+      });
     } else {
       onChange({
         backendDeviceHelper: false,
-        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
+        grantTypes: ensureAuthorizationCodeGrant(
+          data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
+        ),
         initiateLoginUri: "",
         deviceThirdPartyInitiateLogin: false,
-        allowedScopes: scopes.filter((s) => s !== "users:token").join(" "),
+        allowedScopes: ensureOpenIdScope(
+          scopes.filter((s) => s !== "users:token").join(" "),
+        ),
       });
     }
   };
@@ -227,7 +259,7 @@ export default function AppModeStep({
           )}
         </div>
 
-        {/* ── Grant Types (auth_code always required; refresh_token optional) ── */}
+        {/* ── Grant Types (authorization_code implicit; refresh_token optional) ── */}
         <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-zinc-300">Grant Types</label>
@@ -236,29 +268,6 @@ export default function AppModeStep({
             </p>
           </div>
           <div className="space-y-2">
-            <div className="rounded-lg border border-zinc-800 bg-zinc-800/20 overflow-hidden">
-              <label className="flex items-center gap-3 p-3 opacity-70 cursor-not-allowed">
-                <input
-                  type="checkbox"
-                  checked
-                  readOnly
-                  disabled
-                  className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-emerald-500 shrink-0"
-                />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-zinc-200">
-                    Authorization Code + PKCE
-                    <span className="ml-1.5 text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
-                      (required)
-                    </span>
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                    Browser redirect flow — the foundation of interactive sign-in. Always required for
-                    this app type.
-                  </p>
-                </div>
-              </label>
-            </div>
             <label
               className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
                 data.grantTypes.includes("refresh_token")

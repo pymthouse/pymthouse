@@ -1,12 +1,20 @@
 import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { developerApps, oidcClients, oidcPayloads } from "@/db/schema";
+import { eq, or, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { randomBytes } from "crypto";
 import {
   computeBackendM2mAllowedScopes,
 } from "@/lib/oidc/backend-m2m-scopes";
-import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
+import {
+  DEFAULT_PUBLIC_GRANT_TYPES,
+  normalizePublicGrantTypes,
+} from "@/lib/oidc/grants";
+import {
+  DEFAULT_OIDC_SCOPES,
+  ensureOpenIdScope,
+  OIDC_SCOPES,
+} from "@/lib/oidc/scopes";
 
 export { computeBackendM2mAllowedScopes };
 import { hashToken } from "@/lib/token-hash";
@@ -25,6 +33,21 @@ export function hashClientSecret(secret: string): string {
   return hashToken(secret);
 }
 
+function isM2mClientId(clientId: string): boolean {
+  return clientId.startsWith("m2m_");
+}
+
+/** Public OIDC clients always carry `openid`; M2M helper clients keep computed scopes as-is. */
+export function normalizePublicAllowedScopes(
+  allowedScopes: string,
+  clientId: string,
+): string {
+  if (isM2mClientId(clientId)) {
+    return allowedScopes;
+  }
+  return ensureOpenIdScope(allowedScopes);
+}
+
 export async function registerClient(config: OidcClientConfig): Promise<void> {
   const existingRows = await db
     .select()
@@ -39,9 +62,13 @@ export async function registerClient(config: OidcClientConfig): Promise<void> {
       .set({
         displayName: config.displayName,
         redirectUris: JSON.stringify(config.redirectUris),
-        allowedScopes: config.allowedScopes || DEFAULT_OIDC_SCOPES,
-        grantTypes: (config.grantTypes || ["authorization_code", "refresh_token"]).join(
-          ",",
+        allowedScopes: normalizePublicAllowedScopes(
+          config.allowedScopes || DEFAULT_OIDC_SCOPES,
+          config.clientId,
+        ),
+        grantTypes: normalizePublicGrantTypes(
+          (config.grantTypes || [...DEFAULT_PUBLIC_GRANT_TYPES]).join(","),
+          config.clientId,
         ),
         tokenEndpointAuthMethod: config.tokenEndpointAuthMethod || "none",
         clientSecretHash: config.clientSecret
@@ -60,8 +87,14 @@ export async function registerClient(config: OidcClientConfig): Promise<void> {
       : null,
     displayName: config.displayName,
     redirectUris: JSON.stringify(config.redirectUris),
-    allowedScopes: config.allowedScopes || DEFAULT_OIDC_SCOPES,
-    grantTypes: (config.grantTypes || ["authorization_code", "refresh_token"]).join(","),
+    allowedScopes: normalizePublicAllowedScopes(
+      config.allowedScopes || DEFAULT_OIDC_SCOPES,
+      config.clientId,
+    ),
+    grantTypes: normalizePublicGrantTypes(
+      (config.grantTypes || [...DEFAULT_PUBLIC_GRANT_TYPES]).join(","),
+      config.clientId,
+    ),
     tokenEndpointAuthMethod: config.tokenEndpointAuthMethod || "none",
   });
 }
@@ -459,6 +492,84 @@ export async function ensureM2mBackendClient(params: {
   return { id, clientId };
 }
 
+async function deleteOidcPayloadsForClientId(oauthClientId: string): Promise<void> {
+  await db.delete(oidcPayloads).where(
+    or(
+      sql`(${oidcPayloads.payload})::jsonb->>'clientId' = ${oauthClientId}`,
+      sql`(${oidcPayloads.payload})::jsonb->>'client_id' = ${oauthClientId}`,
+    ),
+  );
+}
+
+/**
+ * Removes the confidential backend helper (m2m_) for an interactive app.
+ * Clears `developer_apps.m2m_oidc_client_id` and deletes the OIDC client row.
+ */
+export async function removeM2mBackendClient(
+  appInternalId: string,
+): Promise<boolean> {
+  const appRows = await db
+    .select({ m2mOidcClientId: developerApps.m2mOidcClientId })
+    .from(developerApps)
+    .where(eq(developerApps.id, appInternalId))
+    .limit(1);
+  const m2mPk = appRows[0]?.m2mOidcClientId;
+  if (!m2mPk) {
+    return false;
+  }
+
+  const m2mRows = await db
+    .select({ clientId: oidcClients.clientId })
+    .from(oidcClients)
+    .where(eq(oidcClients.id, m2mPk))
+    .limit(1);
+  const oauthClientId = m2mRows[0]?.clientId;
+
+  await db
+    .update(developerApps)
+    .set({ m2mOidcClientId: null })
+    .where(eq(developerApps.id, appInternalId));
+
+  if (oauthClientId) {
+    await deleteOidcPayloadsForClientId(oauthClientId);
+  }
+  await db.delete(oidcClients).where(eq(oidcClients.id, m2mPk));
+
+  return true;
+}
+
+export async function loadM2mOidcClientSummary(
+  appInternalId: string,
+): Promise<{ clientId: string; hasSecret: boolean } | null> {
+  const appRows = await db
+    .select({ m2mOidcClientId: developerApps.m2mOidcClientId })
+    .from(developerApps)
+    .where(eq(developerApps.id, appInternalId))
+    .limit(1);
+  const m2mPk = appRows[0]?.m2mOidcClientId;
+  if (!m2mPk) {
+    return null;
+  }
+
+  const m2mRows = await db
+    .select({
+      clientId: oidcClients.clientId,
+      clientSecretHash: oidcClients.clientSecretHash,
+    })
+    .from(oidcClients)
+    .where(eq(oidcClients.id, m2mPk))
+    .limit(1);
+  const m2m = m2mRows[0];
+  if (!m2m) {
+    return null;
+  }
+
+  return {
+    clientId: m2m.clientId,
+    hasSecret: !!m2m.clientSecretHash,
+  };
+}
+
 export async function updateClientConfig(
   clientId: string,
   config: {
@@ -488,8 +599,18 @@ export async function updateClientConfig(
   const updates: Record<string, unknown> = {};
   if (config.displayName !== undefined) updates.displayName = config.displayName;
   if (config.redirectUris !== undefined) updates.redirectUris = JSON.stringify(config.redirectUris);
-  if (config.allowedScopes !== undefined) updates.allowedScopes = config.allowedScopes;
-  if (config.grantTypes !== undefined) updates.grantTypes = config.grantTypes.join(",");
+  if (config.allowedScopes !== undefined) {
+    updates.allowedScopes = normalizePublicAllowedScopes(
+      config.allowedScopes,
+      clientId,
+    );
+  }
+  if (config.grantTypes !== undefined) {
+    updates.grantTypes = normalizePublicGrantTypes(
+      config.grantTypes.join(","),
+      clientId,
+    );
+  }
   if (config.tokenEndpointAuthMethod !== undefined) {
     updates.tokenEndpointAuthMethod = config.tokenEndpointAuthMethod;
   }

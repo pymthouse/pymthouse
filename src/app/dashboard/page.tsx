@@ -6,7 +6,6 @@ import { redirect } from "next/navigation";
 import { db } from "@/db/index";
 import { signerConfig, transactions, endUsers } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import DashboardLayout from "@/components/DashboardLayout";
 import Link from "next/link";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
@@ -108,7 +107,7 @@ async function AdminDashboard() {
   ];
 
   return (
-    <DashboardLayout>
+    <>
       <div className="mb-8">
         <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-zinc-500 mt-1">Platform overview</p>
@@ -189,7 +188,7 @@ async function AdminDashboard() {
           )}
         </div>
       </div>
-    </DashboardLayout>
+    </>
   );
 }
 
@@ -225,7 +224,7 @@ function FreeUsageBanner() {
 
 function DeveloperDashboard() {
   return (
-    <DashboardLayout>
+    <>
       <div className="mb-8">
         <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-zinc-500 mt-1">Developer overview</p>
@@ -259,6 +258,6 @@ function DeveloperDashboard() {
           </div>
         </div>
       </div>
-    </DashboardLayout>
+    </>
   );
 }
