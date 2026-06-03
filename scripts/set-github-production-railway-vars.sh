@@ -27,3 +27,6 @@ set_var RAILWAY_PRODUCTION_NEXTAUTH_URL "https://pymthouse.com"
 set_var RAILWAY_PRODUCTION_OPENMETER_REDIS_ADDRESS "openmeter-redis-prod.railway.internal:6379"
 
 echo "Done. Enable deploys with: gh variable set RAILWAY_PRODUCTION_AUTO_DEPLOY --body true -R $REPO"
+echo ""
+echo "CI also needs: gh secret set RAILWAY_API_TOKEN -R $REPO"
+echo "  (Railway → Account → Tokens — workspace scope; not Project → Settings → Tokens)"

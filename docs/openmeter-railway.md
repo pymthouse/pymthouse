@@ -162,7 +162,7 @@ Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflo
 1. `scripts/railway-apply-stack-env.sh` — applies env from GitHub secrets
 2. `scripts/railway-deploy-stack.sh production` — redeploys infra + uploads OpenMeter + signer images
 
-**Required GitHub secrets:** `RAILWAY_TOKEN`, `OPENMETER_POSTGRES_PASSWORD` (production value).
+**Required GitHub secrets:** `RAILWAY_API_TOKEN` (Railway **Account → Tokens**, workspace-scoped), `OPENMETER_POSTGRES_PASSWORD` (production value). Optional: `RAILWAY_TOKEN` (project **Settings → Tokens**, production environment) instead of the account token.
 
 **Recommended:** `OPENMETER_API_KEY`, `OPENMETER_URL` (production OpenMeter URL for bootstrap), `RAILWAY_PRODUCTION_DATABASE_URL`, `RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER`, `RAILWAY_PRODUCTION_NEXTAUTH_SECRET` for the signer service.
 
@@ -180,7 +180,7 @@ Do not use `app.pymthouse.com` — production issuer and signer DMZ must match t
 Manual deploy:
 
 ```bash
-export RAILWAY_TOKEN=...
+export RAILWAY_API_TOKEN=...   # or RAILWAY_TOKEN=... (project production token)
 export OPENMETER_POSTGRES_PASSWORD=...
 export NEXTAUTH_URL=https://pymthouse.com
 bash scripts/railway-apply-stack-env.sh

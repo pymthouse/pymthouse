@@ -2,40 +2,37 @@
 # Deploy the full PymtHouse Railway stack (OpenMeter + signer DMZ) to preview or production.
 #
 # Prerequisites:
-#   - RAILWAY_TOKEN
+#   - RAILWAY_API_TOKEN (account) or RAILWAY_TOKEN (project production token)
 #   - Env applied: scripts/railway-apply-stack-env.sh (or dashboard)
 #   - Volumes on stateful services (first-time): see docs/openmeter-railway.md
 #
 # Usage:
-#   RAILWAY_TOKEN=... bash scripts/railway-deploy-stack.sh production
-#   RAILWAY_TOKEN=... bash scripts/railway-deploy-stack.sh preview
+#   RAILWAY_API_TOKEN=... bash scripts/railway-deploy-stack.sh production
+#   RAILWAY_API_TOKEN=... bash scripts/railway-deploy-stack.sh preview
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 ENV="${1:-production}"
-PROJECT_ID="${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}"
-
-if [[ -z "${RAILWAY_TOKEN:-}" ]]; then
-  echo "RAILWAY_TOKEN is required" >&2
-  exit 1
-fi
+# shellcheck source=lib/railway-auth.sh
+source "$ROOT/scripts/lib/railway-auth.sh"
+PE_FLAGS="$(railway_pe_flags "$ENV")"
 
 if ! command -v railway >/dev/null 2>&1; then
   echo "Install Railway CLI: npm install -g @railway/cli" >&2
   exit 1
 fi
 
-export RAILWAY_TOKEN
-railway link -p "$PROJECT_ID" -e "$ENV" >/dev/null
+railway_export_auth || exit 1
 
 echo "=== Railway stack deploy: $ENV ==="
 
 # Stateful images: deploy from configured source (works for first deploy in a new environment).
 for svc in openmeter-postgres openmeter-redis openmeter-kafka openmeter-clickhouse; do
   echo "Deploying $svc from source ..."
-  railway redeploy --service "$svc" --environment "$ENV" --from-source --yes
+  # shellcheck disable=SC2086
+  railway redeploy --service "$svc" $PE_FLAGS --from-source --yes
 done
 
 # OpenMeter images from repo

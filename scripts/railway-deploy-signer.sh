@@ -8,15 +8,16 @@ cd "$ROOT"
 SERVICE="${1:-pymthouse}"
 ENV="${2:-${RAILWAY_ENVIRONMENT:-production}}"
 
-if [[ -z "${RAILWAY_TOKEN:-}" ]]; then
-  echo "RAILWAY_TOKEN is required" >&2
-  exit 1
-fi
+# shellcheck source=lib/railway-auth.sh
+source "$ROOT/scripts/lib/railway-auth.sh"
+PE_FLAGS="$(railway_pe_flags "$ENV")"
 
 if ! command -v railway >/dev/null 2>&1; then
   echo "Install Railway CLI: npm install -g @railway/cli" >&2
   exit 1
 fi
+
+railway_export_auth || exit 1
 
 SIGNER_MANIFEST="$ROOT/deploy/pymthouse/railway.json"
 TMP_MANIFEST="$(mktemp)"
@@ -43,9 +44,7 @@ trap restore_manifest EXIT
 
 cp "$TMP_MANIFEST" "$ROOT/railway.json"
 
-export RAILWAY_TOKEN
-railway link -p "${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}" -e "$ENV" >/dev/null
-railway service link "$SERVICE"
-railway up -s "$SERVICE" -d -m "signer DMZ deploy ($ENV)"
+# shellcheck disable=SC2086
+railway up -s "$SERVICE" $PE_FLAGS -d -m "signer DMZ deploy ($ENV)"
 
 echo "Deployed signer DMZ to $SERVICE in $ENV"

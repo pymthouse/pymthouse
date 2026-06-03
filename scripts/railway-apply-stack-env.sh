@@ -2,7 +2,8 @@
 # Apply OpenMeter + signer env vars to a Railway environment from the current shell.
 # Used by CI (secrets → env) and locally: source a filled .env then run this script.
 #
-#   export RAILWAY_TOKEN=...
+#   export RAILWAY_API_TOKEN=...   # Account → Tokens (best for GitHub Actions)
+#   # or export RAILWAY_TOKEN=...  # Project → Settings → Tokens (production)
 #   export RAILWAY_ENVIRONMENT=production
 #   export OPENMETER_POSTGRES_PASSWORD=...
 #   bash scripts/railway-apply-stack-env.sh
@@ -10,36 +11,34 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=lib/railway-auth.sh
+source "$ROOT/scripts/lib/railway-auth.sh"
 
 ENV="${RAILWAY_ENVIRONMENT:-production}"
-PROJECT_ID="${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}"
-
-if [[ -z "${RAILWAY_TOKEN:-}" ]]; then
-  echo "RAILWAY_TOKEN is required" >&2
-  exit 1
-fi
+PROJECT_ID="$(railway_default_project_id)"
+PE_FLAGS="$(railway_pe_flags "$ENV")"
 
 if ! command -v railway >/dev/null 2>&1; then
   echo "Install Railway CLI: npm install -g @railway/cli" >&2
   exit 1
 fi
 
+railway_export_auth || exit 1
+
 if [[ -z "${OPENMETER_POSTGRES_PASSWORD:-}" ]]; then
   echo "OPENMETER_POSTGRES_PASSWORD is required for the OpenMeter stack" >&2
   exit 1
 fi
 
-export RAILWAY_TOKEN
-railway link -p "$PROJECT_ID" -e "$ENV" >/dev/null
-
 set_kv() {
   local service="$1"
   shift
-  railway variable set "$@" --service "$service" --environment "$ENV" --skip-deploys >/dev/null
+  # shellcheck disable=SC2086
+  railway variable set "$@" --service "$service" $PE_FLAGS --skip-deploys >/dev/null
   echo "  $service: set $# variable(s)"
 }
 
-echo "Applying stack env to Railway environment: $ENV"
+echo "Applying stack env to Railway environment: $ENV (project $PROJECT_ID)"
 
 # Postgres
 set_kv openmeter-postgres \
@@ -108,13 +107,16 @@ if [[ -n "$NEXTAUTH_URL" ]]; then
     "OIDC_AUDIENCE=${OIDC_AUDIENCE:-$ISSUER}" \
     "JWKS_URI=${JWKS_URI}"
   if [[ -n "${DATABASE_URL:-}" ]]; then
-    railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse --environment "$ENV" --skip-deploys >/dev/null
+    # shellcheck disable=SC2086
+    railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
   fi
   if [[ -n "${AUTH_TOKEN_PEPPER:-}" ]]; then
-    railway variable set "AUTH_TOKEN_PEPPER=${AUTH_TOKEN_PEPPER}" --service pymthouse --environment "$ENV" --skip-deploys >/dev/null
+    # shellcheck disable=SC2086
+    railway variable set "AUTH_TOKEN_PEPPER=${AUTH_TOKEN_PEPPER}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
   fi
   if [[ -n "${NEXTAUTH_SECRET:-}" ]]; then
-    railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse --environment "$ENV" --skip-deploys >/dev/null
+    # shellcheck disable=SC2086
+    railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
   fi
   echo "  pymthouse: NEXTAUTH_URL=${NEXTAUTH_URL} OIDC_ISSUER=${ISSUER} (+ optional DB/OIDC secrets)"
 fi

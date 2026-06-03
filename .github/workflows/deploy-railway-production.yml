@@ -5,8 +5,11 @@ name: Deploy Railway production stack
 #   RAILWAY_PRODUCTION_AUTO_DEPLOY=true
 #
 # Required secrets:
-#   RAILWAY_TOKEN
+#   RAILWAY_API_TOKEN  (Account → Tokens — workspace scope; required for CI deploy)
 #   OPENMETER_POSTGRES_PASSWORD  (production — distinct from preview)
+#
+# Optional: RAILWAY_TOKEN (Project → Settings → Tokens, production env only) if you
+# do not use an account token; scripts pass --project so link/whoami are not needed.
 #
 # Optional secrets:
 #   OPENMETER_API_KEY, OPENMETER_CLICKHOUSE_SECRET, OPENMETER_URL (bootstrap)
@@ -37,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_ENVIRONMENT: production
       RAILWAY_PROJECT_ID: dab233aa-dd5f-429d-8cc4-9042e8735e2b

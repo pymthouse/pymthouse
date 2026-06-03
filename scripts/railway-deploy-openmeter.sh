@@ -3,27 +3,25 @@
 # Root railway.json is signer-only; OpenMeter uses deploy/openmeter/railway.json for uploads.
 #
 # Usage:
-#   RAILWAY_TOKEN=... bash scripts/railway-deploy-openmeter.sh openmeter openmeter production
+#   RAILWAY_API_TOKEN=... bash scripts/railway-deploy-openmeter.sh openmeter openmeter production
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=lib/railway-auth.sh
+source "$ROOT/scripts/lib/railway-auth.sh"
 
 CMD="${1:-openmeter}"
 SERVICE="${2:-openmeter}"
 ENV="${3:-${RAILWAY_ENVIRONMENT:-preview}}"
-
-if [[ -z "${RAILWAY_TOKEN:-}" ]]; then
-  echo "RAILWAY_TOKEN is required" >&2
-  exit 1
-fi
+PE_FLAGS="$(railway_pe_flags "$ENV")"
 
 if ! command -v railway >/dev/null 2>&1; then
   echo "Install Railway CLI: npm install -g @railway/cli" >&2
   exit 1
 fi
 
-export RAILWAY_TOKEN
+railway_export_auth || exit 1
 
 case "$CMD" in
   openmeter | openmeter-sink-worker | openmeter-balance-worker) ;;
@@ -79,8 +77,7 @@ trap restore_manifest EXIT
 
 cp "$TMP_MANIFEST" "$ROOT/railway.json"
 
-railway link -p "${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}" -e "$ENV" >/dev/null
-railway service link "$SERVICE"
-railway up -s "$SERVICE" -d -m "openmeter $CMD"
+# shellcheck disable=SC2086
+railway up -s "$SERVICE" $PE_FLAGS -d -m "openmeter $CMD"
 
 echo "Deployed $CMD to service $SERVICE in $ENV"
