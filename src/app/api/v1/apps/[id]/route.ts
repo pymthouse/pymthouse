@@ -13,6 +13,8 @@ import { v4 as uuidv4 } from "uuid";
 import {
   demotePublicClientWhenM2mSiblingExists,
   ensureM2mBackendClient,
+  loadM2mOidcClientSummary,
+  removeM2mBackendClient,
   syncBackendM2mAllowedScopesFromPublicApp,
   updateClientConfig,
 } from "@/lib/oidc/clients";
@@ -319,42 +321,28 @@ export async function PUT(
     }
   }
 
-  let m2mAfter: { clientId: string; hasSecret: boolean } | null = null;
-  if (body.backendDeviceHelper === true) {
+  if (body.backendDeviceHelper === false) {
+    if (await removeM2mBackendClient(app.id)) {
+      resetProvider();
+    }
+  } else if (body.backendDeviceHelper === true) {
     await ensureM2mBackendClient({
       appInternalId: app.id,
-      appDisplayName: typeof body.name === "string" && body.name.trim()
-        ? body.name.trim()
-        : app.name,
+      appDisplayName:
+        typeof body.name === "string" && body.name.trim()
+          ? body.name.trim()
+          : app.name,
     });
     if (await demotePublicClientWhenM2mSiblingExists(app.id)) {
       resetProvider();
-    }
-    const refreshed = await db
-      .select({ m2mOidcClientId: developerApps.m2mOidcClientId })
-      .from(developerApps)
-      .where(eq(developerApps.id, app.id))
-      .limit(1);
-    const m2mPk = refreshed[0]?.m2mOidcClientId;
-    if (m2mPk) {
-      const m2mRows = await db
-        .select()
-        .from(oidcClients)
-        .where(eq(oidcClients.id, m2mPk))
-        .limit(1);
-      const m2m = m2mRows[0];
-      if (m2m) {
-        m2mAfter = {
-          clientId: m2m.clientId,
-          hasSecret: !!m2m.clientSecretHash,
-        };
-      }
     }
   }
 
   if (await syncBackendM2mAllowedScopesFromPublicApp(app.id)) {
     resetProvider();
   }
+
+  const m2mAfter = await loadM2mOidcClientSummary(app.id);
 
   return NextResponse.json({ success: true, m2mOidcClient: m2mAfter });
 }
