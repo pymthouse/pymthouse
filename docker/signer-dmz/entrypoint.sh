@@ -94,7 +94,13 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   if [ ! -f /data/.eth-password ]; then
     echo "" >/data/.eth-password
   fi
-  ARGS="-remoteSigner -network=${SIGNER_NETWORK:-arbitrum-one-mainnet} -httpAddr=127.0.0.1:${SIGNER_PORT} -cliAddr=127.0.0.1:4935 -ethUrl=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc} -ethPassword=/data/.eth-password -datadir=/data -v=99 -remoteSignerUsageIdentityMode=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}"
+  ARGS="-remoteSigner -network=${SIGNER_NETWORK:-arbitrum-one-mainnet} -httpAddr=127.0.0.1:${SIGNER_PORT} -cliAddr=127.0.0.1:4935 -ethUrl=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc} -ethPassword=/data/.eth-password -datadir=/data -v=99"
+  # Pinned CI binaries may predate -remoteSignerUsageIdentityMode (feat/remote-signing-identity).
+  if /usr/local/bin/livepeer -help 2>&1 | grep -q 'remoteSignerUsageIdentityMode'; then
+    ARGS="$ARGS -remoteSignerUsageIdentityMode=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}"
+  else
+    echo "entrypoint: livepeer lacks -remoteSignerUsageIdentityMode; JWT usage identity headers are ignored until LIVEPEER_COMMIT is upgraded" >&2
+  fi
   if [ -n "${SIGNER_ETH_ADDR:-}" ]; then
     ARGS="$ARGS -ethAcctAddr=${SIGNER_ETH_ADDR}"
   fi
