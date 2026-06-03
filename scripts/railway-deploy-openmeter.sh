@@ -31,17 +31,16 @@ case "$CMD" in
     ;;
 esac
 
-if [[ ! -f docker/signer-dmz/railway.json ]]; then
-  echo "missing docker/signer-dmz/railway.json" >&2
+if [[ ! -f "$ROOT/deploy/openmeter/railway.json" ]]; then
+  echo "missing deploy/openmeter/railway.json" >&2
   exit 1
 fi
 
 # Temporarily use OpenMeter config as upload manifest (Railway CLI reads ./railway.json).
-SIGNER_MANIFEST=""
-if [[ -f railway.json ]]; then
-  SIGNER_MANIFEST="$ROOT/railway.json"
-elif [[ -f docker/signer-dmz/railway.json ]]; then
-  SIGNER_MANIFEST="$ROOT/docker/signer-dmz/railway.json"
+ROOT_MANIFEST_BACKUP=""
+if [[ -f "$ROOT/railway.json" ]]; then
+  ROOT_MANIFEST_BACKUP="$(mktemp)"
+  cp "$ROOT/railway.json" "$ROOT_MANIFEST_BACKUP"
 fi
 
 OM_MANIFEST="$ROOT/deploy/openmeter/railway.json"
@@ -62,12 +61,10 @@ with open(path, "w") as f:
     f.write("\n")
 PY
 
-HAD_ROOT_MANIFEST=0
-[[ -f "$ROOT/railway.json" ]] && HAD_ROOT_MANIFEST=1
-
 restore_manifest() {
-  if [[ "$HAD_ROOT_MANIFEST" -eq 1 && -n "$SIGNER_MANIFEST" ]]; then
-    cp "$SIGNER_MANIFEST" "$ROOT/railway.json"
+  if [[ -n "$ROOT_MANIFEST_BACKUP" && -f "$ROOT_MANIFEST_BACKUP" ]]; then
+    cp "$ROOT_MANIFEST_BACKUP" "$ROOT/railway.json"
+    rm -f "$ROOT_MANIFEST_BACKUP"
   else
     rm -f "$ROOT/railway.json"
   fi

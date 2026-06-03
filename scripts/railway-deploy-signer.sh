@@ -42,7 +42,9 @@ restore_manifest() {
 }
 trap restore_manifest EXIT
 
-cp "$TMP_MANIFEST" "$ROOT/railway.json"
+if ! cmp -s "$TMP_MANIFEST" "$ROOT/railway.json" 2>/dev/null; then
+  cp "$TMP_MANIFEST" "$ROOT/railway.json"
+fi
 
 # shellcheck disable=SC2086
 railway_retry railway up -s "$SERVICE" $PE_FLAGS -d -m "signer DMZ deploy ($ENV)"
