@@ -1,16 +1,26 @@
 name: Deploy Railway production stack
 
 # Mirrors the preview stack (OpenMeter + signer DMZ) in the Railway "production" environment.
-# Enable with repository variable: VERCEL_STAGING_AUTO_DEPLOY is NOT used here — use:
+# Enable with repository variable:
 #   RAILWAY_PRODUCTION_AUTO_DEPLOY=true
 #
 # Required secrets:
 #   RAILWAY_TOKEN
-#   OPENMETER_POSTGRES_PASSWORD  (production — use distinct value from preview)
-# Optional:
-#   OPENMETER_API_KEY, OPENMETER_CLICKHOUSE_SECRET
-#   NEXTAUTH_URL, OIDC_ISSUER, DATABASE_URL, AUTH_TOKEN_PEPPER, NEXTAUTH_SECRET (signer / pymthouse service)
-#   OPENMETER_URL — for post-deploy bootstrap only
+#   OPENMETER_POSTGRES_PASSWORD  (production — distinct from preview)
+#
+# Optional secrets:
+#   OPENMETER_API_KEY, OPENMETER_CLICKHOUSE_SECRET, OPENMETER_URL (bootstrap)
+#   RAILWAY_PRODUCTION_DATABASE_URL, RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER,
+#   RAILWAY_PRODUCTION_NEXTAUTH_SECRET, ETH_RPC_URL
+#
+# Optional repository variables (defaults applied when unset):
+#   RAILWAY_PRODUCTION_NEXTAUTH_URL → https://pymthouse.com
+#   RAILWAY_PRODUCTION_OPENMETER_REDIS_ADDRESS → openmeter-redis-prod.railway.internal:6379
+#   RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true — post-deploy meter bootstrap
+#   SIGNER_NETWORK → arbitrum-one-mainnet
+#
+# OIDC_ISSUER / OIDC_AUDIENCE / JWKS_URI on the pymthouse service are derived from
+# NEXTAUTH_URL in scripts/railway-apply-stack-env.sh (see config/railway/production.env.example).
 
 on:
   push:
@@ -33,10 +43,10 @@ jobs:
       OPENMETER_POSTGRES_PASSWORD: ${{ secrets.OPENMETER_POSTGRES_PASSWORD }}
       OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
       OPENMETER_CLICKHOUSE_SECRET: ${{ secrets.OPENMETER_CLICKHOUSE_SECRET }}
-      NEXTAUTH_URL: ${{ vars.RAILWAY_PRODUCTION_NEXTAUTH_URL }}
-      OIDC_ISSUER: ${{ vars.RAILWAY_PRODUCTION_OIDC_ISSUER }}
+      OPENMETER_REDIS_ADDRESS: ${{ vars.RAILWAY_PRODUCTION_OPENMETER_REDIS_ADDRESS || 'openmeter-redis-prod.railway.internal:6379' }}
+      NEXTAUTH_URL: ${{ vars.RAILWAY_PRODUCTION_NEXTAUTH_URL || 'https://pymthouse.com' }}
       ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
-      SIGNER_NETWORK: ${{ vars.SIGNER_NETWORK }}
+      SIGNER_NETWORK: ${{ vars.SIGNER_NETWORK || 'arbitrum-one-mainnet' }}
       DATABASE_URL: ${{ secrets.RAILWAY_PRODUCTION_DATABASE_URL }}
       AUTH_TOKEN_PEPPER: ${{ secrets.RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER }}
       NEXTAUTH_SECRET: ${{ secrets.RAILWAY_PRODUCTION_NEXTAUTH_SECRET }}
