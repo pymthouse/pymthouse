@@ -45,8 +45,8 @@ function chartPointRadius(activeIndex: number | null, index: number, value: numb
   return value > 0 ? 3 : 2;
 }
 
-function buildYTicks(maxValue: number, tickCount = 4): number[] {
-  if (maxValue <= 0) {
+export function buildYTicks(maxValue: number, tickCount = 4): number[] {
+  if (!Number.isFinite(maxValue) || maxValue <= 0) {
     return [0];
   }
   const padded = Math.ceil(maxValue * 1.1);
@@ -57,6 +57,12 @@ function buildYTicks(maxValue: number, tickCount = 4): number[] {
     ticks.push(v);
   }
   return ticks;
+}
+
+/** Y-axis scale maximum; never zero (avoids NaN in SVG coordinates). */
+export function chartYScaleMax(yTicks: number[]): number {
+  const top = yTicks.at(-1) ?? 0;
+  return Number.isFinite(top) && top > 0 ? top : 1;
 }
 
 /**
@@ -76,10 +82,13 @@ export default function UsageLineChart({
   const plotW = width - padLeft - padRight;
   const plotH = height - padTop - padBottom;
 
-  const values = useMemo(() => data.map((d) => d.value), [data]);
-  const maxValue = Math.max(0, ...values);
+  const values = useMemo(
+    () => data.map((d) => (Number.isFinite(d.value) ? Math.max(0, d.value) : 0)),
+    [data],
+  );
+  const maxValue = values.length > 0 ? Math.max(0, ...values) : 0;
   const yTicks = useMemo(() => buildYTicks(maxValue), [maxValue]);
-  const yMax = yTicks.at(-1) ?? 1;
+  const yMax = chartYScaleMax(yTicks);
   const n = data.length;
   const todayKey = utcTodayKey();
 
