@@ -75,8 +75,12 @@ set_kv openmeter-kafka \
 
 # OpenMeter app services
 REDIS_ADDR="${OPENMETER_REDIS_ADDRESS:-}"
-if [[ "$ENV" == "production" && -z "$REDIS_ADDR" ]]; then
-  REDIS_ADDR="openmeter-redis-prod.railway.internal:6379"
+if [[ -z "$REDIS_ADDR" ]]; then
+  if [[ "$ENV" == "production" ]]; then
+    REDIS_ADDR="openmeter-redis-prod.railway.internal:6379"
+  else
+    REDIS_ADDR="openmeter-redis.railway.internal:6379"
+  fi
 fi
 for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
   args=("OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}")
@@ -89,17 +93,20 @@ for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
   set_kv "$svc" "${args[@]}"
 done
 
-# Signer DMZ (pymthouse service)
+# Signer DMZ (pymthouse service) — OIDC URLs are derived from NEXTAUTH_URL so
+# production stays aligned with Vercel (pymthouse.com) without a separate issuer var.
 NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
+NEXTAUTH_URL="${NEXTAUTH_URL%/}"
 if [[ -n "$NEXTAUTH_URL" ]]; then
-  ISSUER="${OIDC_ISSUER:-${NEXTAUTH_URL%/}/api/v1/oidc}"
+  ISSUER="${NEXTAUTH_URL}/api/v1/oidc"
+  JWKS_URI="${NEXTAUTH_URL}/api/v1/oidc/jwks"
   set_kv pymthouse \
     "SIGNER_NETWORK=${SIGNER_NETWORK:-arbitrum-one-mainnet}" \
     "ETH_RPC_URL=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}" \
-    "NEXTAUTH_URL=${NEXTAUTH_URL%/}" \
+    "NEXTAUTH_URL=${NEXTAUTH_URL}" \
     "OIDC_ISSUER=${ISSUER}" \
     "OIDC_AUDIENCE=${OIDC_AUDIENCE:-$ISSUER}" \
-    "JWKS_URI=${JWKS_URI:-${ISSUER}/jwks}"
+    "JWKS_URI=${JWKS_URI}"
   if [[ -n "${DATABASE_URL:-}" ]]; then
     railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse --environment "$ENV" --skip-deploys >/dev/null
   fi
@@ -109,7 +116,7 @@ if [[ -n "$NEXTAUTH_URL" ]]; then
   if [[ -n "${NEXTAUTH_SECRET:-}" ]]; then
     railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse --environment "$ENV" --skip-deploys >/dev/null
   fi
-  echo "  pymthouse: signer + optional DB/OIDC secrets"
+  echo "  pymthouse: NEXTAUTH_URL=${NEXTAUTH_URL} OIDC_ISSUER=${ISSUER} (+ optional DB/OIDC secrets)"
 fi
 
 echo "Done. Run scripts/railway-deploy-stack.sh $ENV to deploy."
