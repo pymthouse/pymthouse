@@ -78,6 +78,6 @@ trap restore_manifest EXIT
 cp "$TMP_MANIFEST" "$ROOT/railway.json"
 
 # shellcheck disable=SC2086
-railway up -s "$SERVICE" $PE_FLAGS -d -m "openmeter $CMD"
+railway_retry railway up -s "$SERVICE" $PE_FLAGS -d -m "openmeter $CMD"
 
 echo "Deployed $CMD to service $SERVICE in $ENV"

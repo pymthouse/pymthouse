@@ -32,7 +32,7 @@ echo "=== Railway stack deploy: $ENV ==="
 for svc in openmeter-postgres openmeter-redis openmeter-kafka openmeter-clickhouse; do
   echo "Deploying $svc from source ..."
   # shellcheck disable=SC2086
-  railway redeploy --service "$svc" $PE_FLAGS --from-source --yes
+  railway_retry railway redeploy --service "$svc" $PE_FLAGS --from-source --yes
 done
 
 # OpenMeter images from repo
