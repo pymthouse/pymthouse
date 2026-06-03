@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
+import { buildBillingProfileSupplier } from "./billing-profiles";
+import { buildStripeConnectInstallUrl, parseStripeAccountIdFromConflict } from "./stripe-connect";
 import { ensureOpenMeterCustomer } from "./customers";
 import { listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
@@ -26,6 +28,36 @@ test("buildOpenMeterCustomerKey encodes client and user", () => {
 
 test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
+});
+
+test("parseStripeAccountIdFromConflict extracts acct id from OpenMeter 409", () => {
+  const err = new Error(
+    "Request failed [409]: conflict error: stripe app already exists with stripe account id: acct_1Tct0f1V1EduUmjw",
+  );
+  assert.equal(parseStripeAccountIdFromConflict(err), "acct_1Tct0f1V1EduUmjw");
+});
+
+test("buildBillingProfileSupplier includes required country on address", () => {
+  process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY = "de";
+  const supplier = buildBillingProfileSupplier("Acme Corp");
+  assert.equal(supplier.name, "Acme Corp");
+  assert.equal(supplier.addresses[0]?.country, "DE");
+  delete process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY;
+});
+
+test("buildStripeConnectInstallUrl adds state and pymthouse callback redirect_uri", () => {
+  process.env.NEXTAUTH_URL = "http://localhost:3001";
+  const url = buildStripeConnectInstallUrl({
+    installUrl: "https://openmeter.example/api/v1/marketplace/listings/stripe/install/oauth2",
+    clientId: "app_test",
+    state: "csrf-state-1",
+  });
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get("state"), "csrf-state-1");
+  assert.equal(
+    parsed.searchParams.get("redirect_uri"),
+    "http://localhost:3001/api/v1/apps/app_test/billing/stripe/callback",
+  );
 });
 
 test("isMintUserSignerTokenRequest detects mint scope", () => {

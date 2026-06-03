@@ -86,8 +86,15 @@ if [[ -z "$REDIS_ADDR" ]]; then
     REDIS_ADDR="openmeter-redis.railway.internal:6379"
   fi
 fi
+OM_APPS_BASE="${OPENMETER_APPS_BASE_URL:-${OPENMETER_URL:-}}"
+OM_APPS_BASE="${OM_APPS_BASE%/}"
+if [[ -z "$OM_APPS_BASE" ]]; then
+  echo "Set OPENMETER_APPS_BASE_URL or OPENMETER_URL (public OpenMeter URL) for Stripe marketplace OAuth" >&2
+  exit 1
+fi
 for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
   args=("OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}")
+  args+=("OPENMETER_APPS_BASE_URL=${OM_APPS_BASE}")
   if [[ -n "${OPENMETER_API_KEY:-}" ]]; then
     args+=("OPENMETER_API_KEY=${OPENMETER_API_KEY}")
   fi

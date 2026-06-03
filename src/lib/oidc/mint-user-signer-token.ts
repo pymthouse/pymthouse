@@ -10,7 +10,19 @@ import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 
 export const SIGN_MINT_USER_TOKEN_SCOPE = "sign:mint_user_token";
 export const LIVEPEER_REMOTE_SIGNER_AUDIENCE = "livepeer-remote-signer";
-const SIGNER_JWT_TTL_SECONDS = 300;
+function signerJwtTtlSeconds(): number {
+  const raw = process.env.SIGNER_JWT_TTL_SECONDS?.trim();
+  if (!raw) {
+    return 300;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 60) {
+    return 300;
+  }
+  return Math.min(parsed, 86_400);
+}
+
+const SIGNER_JWT_TTL_SECONDS = signerJwtTtlSeconds();
 
 export class MintUserSignerTokenError extends Error {
   code: string;
