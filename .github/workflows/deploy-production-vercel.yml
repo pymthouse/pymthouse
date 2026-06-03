@@ -1,28 +1,34 @@
-name: Deploy staging (Vercel)
+name: Deploy production (Vercel)
 
-# Non-main branches deploy to the pymthouse-staging Vercel project as Production.
-# The pymthouse production project (main) deploys via deploy-production-vercel.yml.
-# Env vars are configured in the Vercel dashboard — not in this workflow.
-# Requires repo secret VERCEL_TOKEN and variable VERCEL_STAGING_AUTO_DEPLOY=true.
+# Deploys the pymthouse Vercel project (pymthouse.com) on every push to main.
+# Env vars live in the Vercel dashboard — not in this workflow.
+#
+# Enable with repository variable:
+#   VERCEL_PRODUCTION_AUTO_DEPLOY=true
+#
+# Required secret:
+#   VERCEL_TOKEN
+#
+# Recommended: disable native Git auto-builds on the pymthouse Vercel project
+# (Settings → Git → Ignored Build Step: exit 1) so only this workflow deploys prod.
 
 on:
   push:
-    branches-ignore:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-staging-vercel-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-production-vercel
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    if: vars.VERCEL_STAGING_AUTO_DEPLOY == 'true'
+    if: vars.VERCEL_PRODUCTION_AUTO_DEPLOY == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
-      VERCEL_PROJECT_ID: prj_wzb1ad2UlUxia7bHdwFCopBScP9Z
+      VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
     steps:
@@ -48,5 +54,5 @@ jobs:
       - name: Build
         run: vercel build --prod --token="$VERCEL_TOKEN"
 
-      - name: Deploy to pymthouse-staging production
+      - name: Deploy to pymthouse production
         run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

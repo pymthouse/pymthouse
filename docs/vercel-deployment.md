@@ -138,10 +138,10 @@ Deploy with: `fly deploy`
 
 PymtHouse uses **two separate Vercel projects**, not preview URLs on one project:
 
-| Vercel project | URL | Git trigger |
-|----------------|-----|-------------|
-| `pymthouse` | `https://pymthouse.vercel.app` | `main` → Production (native Git integration) |
-| `pymthouse-staging` | `https://pymthouse-staging.vercel.app` | Non-`main` branches → Production via [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) or [scripts/deploy-staging-vercel.sh](../scripts/deploy-staging-vercel.sh) |
+| Vercel project | URL | Deploy trigger |
+|----------------|-----|----------------|
+| `pymthouse` | `https://pymthouse.com` | `main` → [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) when `VERCEL_PRODUCTION_AUTO_DEPLOY=true` (or [scripts/deploy-production-vercel.sh](../scripts/deploy-production-vercel.sh)) |
+| `pymthouse-staging` | `https://pymthouse-staging.vercel.app` | Non-`main` branches → [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) when `VERCEL_STAGING_AUTO_DEPLOY=true` |
 
 Railway (signer, OpenMeter) uses the **PymtHouse** project with two environments:
 
@@ -162,7 +162,18 @@ Point each Vercel project’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the m
 
 **GitHub secret required for CI deploy:** `VERCEL_TOKEN` (same token used for CLI deploys).
 
-**Enable the deploy workflow:** set repository variable `VERCEL_STAGING_AUTO_DEPLOY=true` after `VERCEL_TOKEN` is configured. Until then the deploy job is skipped so PR checks stay green.
+**Enable deploy workflows** (after `VERCEL_TOKEN` is configured):
+
+| Variable | Workflow |
+|----------|----------|
+| `VERCEL_PRODUCTION_AUTO_DEPLOY=true` | [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) on push to `main` |
+| `VERCEL_STAGING_AUTO_DEPLOY=true` | [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) on non-`main` pushes |
+
+```bash
+bash scripts/set-github-production-vercel-vars.sh
+```
+
+**Avoid double deploys on production:** In the **pymthouse** Vercel project → Settings → Git → **Ignored Build Step**, set `exit 1` so native Git integration does not also build on push (CI owns production deploys).
 
 **Manual staging deploy:**
 
