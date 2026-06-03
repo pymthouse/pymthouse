@@ -166,14 +166,14 @@ Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflo
 
 **Recommended:** `OPENMETER_API_KEY`, `OPENMETER_URL` (production OpenMeter URL for bootstrap), `RAILWAY_PRODUCTION_DATABASE_URL`, `RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER`, `RAILWAY_PRODUCTION_NEXTAUTH_SECRET` for the signer service.
 
-**Optional variables:** `RAILWAY_PRODUCTION_NEXTAUTH_URL` (default `https://app.pymthouse.com`), `RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true` to run meter bootstrap after deploy.
+**Optional variables:** `RAILWAY_PRODUCTION_NEXTAUTH_URL` (default `https://pymthouse.com`), `RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true` to run meter bootstrap after deploy.
 
 Manual deploy:
 
 ```bash
 export RAILWAY_TOKEN=...
 export OPENMETER_POSTGRES_PASSWORD=...
-export NEXTAUTH_URL=https://app.pymthouse.com
+export NEXTAUTH_URL=https://pymthouse.com
 bash scripts/railway-apply-stack-env.sh
 bash scripts/railway-deploy-stack.sh production
 ```
