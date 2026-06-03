@@ -90,7 +90,7 @@ for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
 done
 
 # Signer DMZ (pymthouse service)
-NEXTAUTH_URL="${NEXTAUTH_URL:-https://app.pymthouse.com}"
+NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
 if [[ -n "$NEXTAUTH_URL" ]]; then
   ISSUER="${OIDC_ISSUER:-${NEXTAUTH_URL%/}/api/v1/oidc}"
   set_kv pymthouse \
