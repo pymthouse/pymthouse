@@ -79,7 +79,7 @@ trap restore_manifest EXIT
 
 cp "$TMP_MANIFEST" "$ROOT/railway.json"
 
-railway link "${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}" --environment "$ENV" >/dev/null
+railway link -p "${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}" -e "$ENV" >/dev/null
 railway service link "$SERVICE"
 railway up -s "$SERVICE" -d -m "openmeter $CMD"
 

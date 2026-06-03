@@ -30,7 +30,7 @@ if [[ -z "${OPENMETER_POSTGRES_PASSWORD:-}" ]]; then
 fi
 
 export RAILWAY_TOKEN
-railway link "$PROJECT_ID" --environment "$ENV" >/dev/null
+railway link -p "$PROJECT_ID" -e "$ENV" >/dev/null
 
 set_kv() {
   local service="$1"
@@ -82,7 +82,7 @@ for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
 done
 
 # Signer DMZ (pymthouse service)
-NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
+NEXTAUTH_URL="${NEXTAUTH_URL:-https://app.pymthouse.com}"
 if [[ -n "$NEXTAUTH_URL" ]]; then
   ISSUER="${OIDC_ISSUER:-${NEXTAUTH_URL%/}/api/v1/oidc}"
   set_kv pymthouse \
