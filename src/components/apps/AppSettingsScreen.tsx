@@ -13,6 +13,9 @@ import {
   type AppState,
 } from "./AppWizard";
 
+const REQUIRED_GRANT_TYPES = ["authorization_code", "refresh_token"] as const;
+const REQUIRED_SCOPES = ["openid", "sign:job"] as const;
+
 interface Props {
   appId: string;
   initialData: Partial<AppFormData>;
@@ -55,6 +58,28 @@ function mergeFormData(
     deviceThirdPartyInitiateLogin:
       initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
   };
+}
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeGrantTypesForSave(grantTypes: string[]): string[] {
+  return uniqueValues([...REQUIRED_GRANT_TYPES, ...grantTypes]);
+}
+
+function normalizeAllowedScopesForSave(
+  allowedScopes: string,
+  backendDeviceHelper: boolean,
+): string {
+  const scopes = uniqueValues([
+    ...REQUIRED_SCOPES,
+    ...allowedScopes.split(/\s+/).filter(Boolean),
+  ]);
+  const nextScopes = backendDeviceHelper
+    ? uniqueValues([...scopes, "users:token"])
+    : scopes.filter((scope) => scope !== "users:token");
+  return nextScopes.join(" ");
 }
 
 const INTEGRATION_TABS = [
@@ -213,10 +238,18 @@ export default function AppSettingsScreen({
     setError(null);
     setMessage(null);
     try {
+      const normalizedFormData = {
+        ...formData,
+        grantTypes: normalizeGrantTypesForSave(formData.grantTypes),
+        allowedScopes: normalizeAllowedScopesForSave(
+          formData.allowedScopes,
+          formData.backendDeviceHelper,
+        ),
+      };
       const res = await fetch(`/api/v1/apps/${appId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData }),
+        body: JSON.stringify(normalizedFormData),
       });
       const putJson = (await res.json()) as {
         success?: boolean;
@@ -229,22 +262,22 @@ export default function AppSettingsScreen({
 
       setAppState((s) => ({
         ...s,
-        backendHelper: putJson.m2mOidcClient ?? null,
+        backendHelper: normalizedFormData.backendDeviceHelper
+          ? (putJson.m2mOidcClient ?? s.backendHelper)
+          : null,
       }));
-      setFormData((prev) => ({
-        ...prev,
-        backendDeviceHelper: Boolean(putJson.m2mOidcClient),
-      }));
-      setSavedGrantTypes([...formData.grantTypes]);
+      setFormData(normalizedFormData);
+      setSavedGrantTypes([...normalizedFormData.grantTypes]);
 
       const settingsRes = await fetch(`/api/v1/apps/${appId}/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           postLogoutRedirectUris,
-          initiateLoginUri: formData.initiateLoginUri.trim() || null,
-          deviceThirdPartyInitiateLogin: formData.deviceThirdPartyInitiateLogin,
-          tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
+          initiateLoginUri: normalizedFormData.initiateLoginUri.trim() || null,
+          deviceThirdPartyInitiateLogin:
+            normalizedFormData.deviceThirdPartyInitiateLogin,
+          tokenEndpointAuthMethod: normalizedFormData.tokenEndpointAuthMethod,
         }),
       });
       if (!settingsRes.ok) {

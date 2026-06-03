@@ -35,6 +35,36 @@ import {
 } from "@/lib/prices/fiat-oracle-registry";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const REQUIRED_GRANT_TYPES = ["authorization_code", "refresh_token"] as const;
+const REQUIRED_SCOPES = ["openid", "sign:job"] as const;
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeGrantTypesForSave(values: unknown): string[] | null {
+  if (!Array.isArray(values)) return null;
+  return uniqueValues([
+    ...REQUIRED_GRANT_TYPES,
+    ...values.map((value) => String(value)),
+  ]);
+}
+
+function normalizeAllowedScopesForSave(
+  value: unknown,
+  backendDeviceHelper: boolean,
+): string | null {
+  if (value === undefined) return null;
+  const validScopeValues = new Set(OIDC_SCOPES.map((scope) => scope.value));
+  const requestedScopes = String(value)
+    .split(/[,\s]+/)
+    .filter((scope) => scope && validScopeValues.has(scope));
+  const scopes = uniqueValues([...REQUIRED_SCOPES, ...requestedScopes]);
+  const nextScopes = backendDeviceHelper
+    ? uniqueValues([...scopes, "users:token"])
+    : scopes.filter((scope) => scope !== "users:token");
+  return nextScopes.join(" ") || DEFAULT_OIDC_SCOPES;
+}
 
 export async function GET(
   request: NextRequest,
@@ -280,15 +310,17 @@ export async function PUT(
       if (body.redirectUris) clientUpdates.redirectUris = body.redirectUris;
       if (body.tokenEndpointAuthMethod)
         clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
-      if (body.allowedScopes) {
-        const validScopeValues = new Set(OIDC_SCOPES.map((s) => s.value));
-        const filtered = String(body.allowedScopes)
-          .split(/[,\s]+/)
-          .filter((s) => s && validScopeValues.has(s))
-          .join(" ");
-        clientUpdates.allowedScopes = filtered || DEFAULT_OIDC_SCOPES;
+      const normalizedAllowedScopes = normalizeAllowedScopesForSave(
+        body.allowedScopes,
+        body.backendDeviceHelper === true,
+      );
+      if (normalizedAllowedScopes !== null) {
+        clientUpdates.allowedScopes = normalizedAllowedScopes;
       }
-      if (body.grantTypes) clientUpdates.grantTypes = body.grantTypes;
+      const normalizedGrantTypes = normalizeGrantTypesForSave(body.grantTypes);
+      if (normalizedGrantTypes !== null) {
+        clientUpdates.grantTypes = normalizedGrantTypes;
+      }
 
       const nextGrantTypes = (
         clientUpdates.grantTypes ?? client.grantTypes.split(",").filter(Boolean)

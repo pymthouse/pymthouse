@@ -4,7 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppFormData } from "../AppWizard";
 import { computeBackendM2mAllowedScopes } from "@/lib/oidc/backend-m2m-scopes";
 import { DEFAULT_OIDC_SCOPES, getScopeDefinition, OIDC_SCOPES } from "@/lib/oidc/scopes";
-import { validateInitiateLoginUri } from "@/lib/oidc/third-party-initiate-login";
+import {
+  buildDeviceFlowTargetLinkUri,
+  buildInitiateLoginRedirectUrl,
+  validateInitiateLoginUri,
+} from "@/lib/oidc/third-party-initiate-login";
+import { getIssuer } from "@/lib/oidc/issuer-urls";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -98,6 +103,11 @@ export default function TestingStep({
     typeof window !== "undefined"
       ? `${window.location.origin}/.well-known/openid-configuration`
       : "";
+
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const authorizeEndpoint = origin ? `${origin}/api/v1/oidc/authorize` : "";
+  const tokenEndpoint = origin ? `${origin}/api/v1/oidc/token` : "";
+  const deviceAuthEndpoint = origin ? `${origin}/api/v1/oidc/device/auth` : "";
 
   const parseCredentialsError = async (res: Response): Promise<string> => {
     const text = await res.text();
@@ -383,49 +393,273 @@ export default function TestingStep({
             </div>
           )}
 
-          {backendDeviceHelper && hasDeviceCode && (
-            <div className="border-t border-zinc-800 pt-5">
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-zinc-300">
-                  Third-party initiate login URI
-                </label>
-                <input
-                  type="url"
-                  value={initiateLoginUri}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    const isValid = isValidInitiateLoginUri(value);
-                    const scopes = allowedScopes.split(/\s+/).filter(Boolean);
-                    const nextScopes = isValid
-                      ? scopes.includes("users:token")
-                        ? scopes
-                        : [...scopes, "users:token"]
-                      : scopes.filter((s) => s !== "users:token");
-                    onChange({
-                      initiateLoginUri: value,
-                      deviceThirdPartyInitiateLogin: isValid,
-                      allowedScopes: nextScopes.join(" "),
-                    });
-                  }}
-                  placeholder="https://example.com/api/auth/initiate-login"
-                  disabled={readOnly}
-                  className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <p className="text-xs text-zinc-500">
-                  OIDC <code className="font-mono text-zinc-400">initiate_login_uri</code>.
-                  When set, unauthenticated device verification redirects here with{" "}
-                  <code className="font-mono text-zinc-400">iss</code> and{" "}
-                  <code className="font-mono text-zinc-400">target_link_uri</code>. Your app must
-                  return users to <code className="font-mono text-zinc-400">target_link_uri</code>{" "}
-                  after login.
+          {clientId && selectedRedirectUri && (
+            <div className="space-y-3 border-t border-zinc-800 pt-5">
+              <div>
+                <h4 className="text-sm font-semibold text-zinc-200">Test with OIDCDebugger</h4>
+                <p className="text-xs text-zinc-500 mt-1">
+                  OIDCDebugger can exercise the authorization code + PKCE leg in a browser (it
+                  does the code exchange for you).
                 </p>
-                {initiateLoginUri.trim() && !deviceThirdPartyInitiateLogin && (
-                  <p className="text-xs text-amber-300">
-                    Enter a valid HTTPS initiate login URI. HTTP is only accepted for loopback hosts
-                    in development.
-                  </p>
-                )}
               </div>
+
+              <p className="text-xs text-zinc-500">
+                Configure:
+                <span className="text-zinc-400 ml-2">Authorization URI</span>,{" "}
+                <span className="text-zinc-400">Token URI</span>,{" "}
+                <span className="text-zinc-400">Client ID</span>,{" "}
+                <span className="text-zinc-400">Redirect URI</span>,{" "}
+                <span className="text-zinc-400">Scope</span>. Response type should be{" "}
+                <span className="text-zinc-400">code</span> with PKCE enabled (SHA-256).
+              </p>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono truncate">
+                    {authorizeEndpoint}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(authorizeEndpoint, "oidcdebugger_authz")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors shrink-0"
+                  >
+                    {copied === "oidcdebugger_authz" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono truncate">
+                    {tokenEndpoint}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(tokenEndpoint, "oidcdebugger_token")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors shrink-0"
+                  >
+                    {copied === "oidcdebugger_token" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono truncate">
+                    {clientId}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(clientId, "oidcdebugger_clientid")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors shrink-0"
+                  >
+                    {copied === "oidcdebugger_clientid" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono truncate">
+                    {effectiveScopes}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(effectiveScopes, "oidcdebugger_scope")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors shrink-0"
+                  >
+                    {copied === "oidcdebugger_scope" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-500">
+                Redirect URI:{" "}
+                <code className="text-zinc-400">{selectedRedirectUri}</code>. Start here:{" "}
+                <a
+                  href="https://oidcdebugger.com/debug"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-300 hover:text-emerald-200"
+                >
+                  oidcdebugger.com/debug
+                </a>
+                .
+              </p>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {hasDeviceCode && clientId && origin && (
+        <div className="space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
+          <div className="flex items-start gap-3">
+            <div className="w-2 h-2 rounded-full bg-violet-500 mt-1" />
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-200">Test device authorization flow</h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                Use these RFC 8628 endpoints to validate end-to-end device login.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-400 font-medium">1) Start device authorization</p>
+            <div className="relative">
+              <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
+                {`curl -X POST ${deviceAuthEndpoint} \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "client_id=${clientId}" \\
+  -d "scope=${effectiveScopes}"`}
+              </pre>
+              <button
+                type="button"
+                onClick={() =>
+                  copyToClipboard(
+                    `curl -X POST ${deviceAuthEndpoint} \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "client_id=${clientId}" \\
+  -d "scope=${effectiveScopes}"`,
+                    "device_auth_start",
+                  )
+                }
+                className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+              >
+                {copied === "device_auth_start" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500">
+              The response includes <code className="text-zinc-400">device_code</code>,{" "}
+              <code className="text-zinc-400">user_code</code>, and a verification URI. Open the verification URL
+              and approve the login.
+            </p>
+          </div>
+
+          <div className="space-y-3 border-t border-zinc-800 pt-4">
+            <p className="text-xs text-zinc-400 font-medium">2) Poll for the token</p>
+            <div className="relative">
+              <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
+                {`curl -X POST ${tokenEndpoint} \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "grant_type=${DEVICE_CODE_GRANT}" \\
+  -d "device_code=YOUR_DEVICE_CODE" \\
+  -d "client_id=${clientId}"`}
+              </pre>
+              <button
+                type="button"
+                onClick={() =>
+                  copyToClipboard(
+                    `curl -X POST ${tokenEndpoint} \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "grant_type=${DEVICE_CODE_GRANT}" \\
+  -d "device_code=YOUR_DEVICE_CODE" \\
+  -d "client_id=${clientId}"`,
+                    "device_auth_poll",
+                  )
+                }
+                className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+              >
+                {copied === "device_auth_poll" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500">
+              Replace <code className="text-zinc-400">YOUR_DEVICE_CODE</code> with the value returned from step 1.
+            </p>
+          </div>
+
+          {backendDeviceHelper && (
+            <div className="space-y-2 border-t border-zinc-800 pt-4">
+              <label className="block text-sm font-medium text-zinc-300">
+                Third-party initiate login URI
+              </label>
+              <input
+                type="url"
+                value={initiateLoginUri}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const isValid = isValidInitiateLoginUri(value);
+                  onChange({
+                    initiateLoginUri: value,
+                    deviceThirdPartyInitiateLogin: isValid,
+                  });
+                }}
+                placeholder="https://example.com/api/auth/initiate-login"
+                disabled={readOnly}
+                className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+              <p className="text-xs text-zinc-500">
+                OIDC <code className="font-mono text-zinc-400">initiate_login_uri</code>.
+                When set, unauthenticated device verification redirects here with{" "}
+                <code className="font-mono text-zinc-400">iss</code> and{" "}
+                <code className="font-mono text-zinc-400">target_link_uri</code>. Your app must
+                return users to <code className="font-mono text-zinc-400">target_link_uri</code>{" "}
+                after login.
+              </p>
+              {initiateLoginUri.trim() && !deviceThirdPartyInitiateLogin && (
+                <p className="text-xs text-amber-300">
+                  Enter a valid HTTPS initiate login URI. HTTP is only accepted for loopback hosts
+                  in development.
+                </p>
+              )}
+            </div>
+          )}
+
+          {backendDeviceHelper && deviceThirdPartyInitiateLogin && initiateLoginUri.trim() && (
+            <div className="space-y-3 border-t border-zinc-800 pt-4">
+              <p className="text-xs text-zinc-400 font-medium">
+                Third-party initiated login test (device verification)
+              </p>
+              <p className="text-xs text-zinc-500">
+                When your device code login page runs unauthenticated, PymtHouse will redirect the browser to your
+                registered <code className="text-zinc-400">initiate_login_uri</code> with{" "}
+                <code className="text-zinc-400">iss</code> and <code className="text-zinc-400">target_link_uri</code>.
+                Your integrator must authenticate the user and then redirect back to{" "}
+                <code className="text-zinc-400">target_link_uri</code>.
+                If your integrator authenticates the user via a standard OIDC Authorization Code flow, you
+                can validate that leg with <code className="text-zinc-400">oidcdebugger.com</code>.
+              </p>
+
+              {(() => {
+                try {
+                  const iss = getIssuer();
+                  const targetLinkUri = buildDeviceFlowTargetLinkUri({
+                    user_code: "TEST_USER_CODE",
+                    client_id: clientId,
+                    iss,
+                  });
+                  const exampleInitiateUrl = buildInitiateLoginRedirectUrl(
+                    initiateLoginUri.trim(),
+                    {
+                      iss,
+                      target_link_uri: targetLinkUri,
+                    },
+                  );
+                  return (
+                    <>
+                      <div className="relative">
+                        <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
+                          {exampleInitiateUrl}
+                        </pre>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            copyToClipboard(
+                              exampleInitiateUrl,
+                              "device_thirdparty_initiate",
+                            )
+                          }
+                          className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+                        >
+                          {copied === "device_thirdparty_initiate"
+                            ? "Copied!"
+                            : "Copy"}
+                        </button>
+                      </div>
+                      <p className="text-xs text-zinc-500">
+                        Example <code className="text-zinc-400">target_link_uri</code> returns to{" "}
+                        <code className="text-zinc-400">/oidc/device</code> for device token binding.
+                      </p>
+                    </>
+                  );
+                } catch {
+                  return null;
+                }
+              })()}
             </div>
           )}
         </div>
@@ -562,11 +796,11 @@ export default function TestingStep({
       )}
 
       {/*
-        Backend helper (confidential m2m_) — driven by server state
-        (`backendHelper` / `backendDeviceHelper`), refreshed when the
-        Credentials tab loads and after save.
+        Backend helper (confidential m2m_) section.
+        Reflects the Machine-to-Machine selection from Auth & Scopes. Refreshed when
+        the Credentials tab loads and after save.
       */}
-      {backendHelper ? (
+      {backendDeviceHelper && backendHelper ? (
         <div className="mt-6 p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
           <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
           <p className="text-xs text-zinc-500">
@@ -665,17 +899,9 @@ export default function TestingStep({
         </div>
       ) : !isM2MOnly && backendDeviceHelper ? (
         <p className="text-sm text-zinc-500 mt-4">
-          <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
-          Save the app to provision the Backend device helper and create a confidential{" "}
-          <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
-          approval, then return here.
-        </p>
-      ) : !isM2MOnly ? (
-        <p className="text-sm text-zinc-500 mt-4">
-          Confidential backend helper is off in{" "}
-          <strong className="text-zinc-400">Auth &amp; Scopes</strong>. Turn on{" "}
-          <strong className="text-zinc-400">Confidential client (CLIENT CREDENTIALS)</strong>{" "}
-          there to manage M2M credentials on this tab.
+          <strong className="text-zinc-400">Machine-to-Machine</strong> is enabled but not yet provisioned.
+          Save the app to create the confidential{" "}
+          <code className="font-mono text-zinc-400">m2m_</code> client, then return here to generate credentials.
         </p>
       ) : null}
 
@@ -709,11 +935,18 @@ export default function TestingStep({
             ...(hasAuthCodeFlow
               ? [
                   "Redirect URI is configured and accessible",
-                  "Token exchange works (authorization_code grant)",
+                  "Authorization code + PKCE flow works end-to-end",
                 ]
               : []),
-            "User token issuance works for a provisioned app user",
-            "Refresh token flow works (if enabled)",
+            ...(hasDeviceCode
+              ? ["Device code flow works end-to-end (start → verify → poll)"]
+              : []),
+            ...(backendDeviceHelper
+              ? [
+                  "M2M client credentials tested (client_credentials grant)",
+                  "User token issuance works for a provisioned app user",
+                ]
+              : []),
           ].map((item) => (
             <div key={item} className="flex items-center gap-2">
               <div className="w-4 h-4 rounded border border-zinc-600" />
