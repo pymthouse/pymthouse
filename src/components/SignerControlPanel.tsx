@@ -2,18 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSignerCliStatus } from "@/components/SignerCliStatusProvider";
 
-interface SignerControlPanelProps {
-  currentStatus: string;
-}
-
-export default function SignerControlPanel({
-  currentStatus,
-}: SignerControlPanelProps) {
+export default function SignerControlPanel() {
   const router = useRouter();
+  const { data, loading: cliLoading, refresh } = useSignerCliStatus();
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const cliLive = data?.reachable === true;
 
   async function doAction(action: string) {
     setLoading(action);
@@ -27,17 +25,21 @@ export default function SignerControlPanel({
         body: JSON.stringify({ action }),
       });
 
-      const data = await res.json();
+      const payload = await res.json();
 
-      if (res.ok && data.success) {
+      if (res.ok && payload.success) {
         setMessage(
           action === "sync"
-            ? `Synced. Reachable: ${data.reachable}${data.ethAddress ? `, address: ${data.ethAddress}` : ""}`
-            : `${action} completed successfully`
+            ? `Synced. Reachable: ${payload.reachable}${payload.ethAddress ? `, address: ${payload.ethAddress}` : ""}`
+            : `${action} completed successfully`,
         );
         router.refresh();
+        const delayMs = action === "sync" ? 0 : 2000;
+        window.setTimeout(() => {
+          void refresh();
+        }, delayMs);
       } else {
-        setError(data.error || `${action} failed`);
+        setError(payload.error || `${action} failed`);
       }
     } catch {
       setError(`Failed to ${action} signer`);
@@ -46,14 +48,14 @@ export default function SignerControlPanel({
     }
   }
 
-  const isRunning = currentStatus === "running";
+  const showStartStop = data !== null && !cliLoading;
 
   return (
     <div className="space-y-4">
       <h3 className="font-semibold text-zinc-200">Control Plane</h3>
 
       <div className="flex flex-wrap gap-3">
-        {!isRunning && (
+        {showStartStop && !cliLive && (
           <button
             onClick={() => doAction("start")}
             disabled={!!loading}
@@ -63,7 +65,7 @@ export default function SignerControlPanel({
           </button>
         )}
 
-        {isRunning && (
+        {showStartStop && cliLive && (
           <button
             onClick={() => doAction("stop")}
             disabled={!!loading}
@@ -71,6 +73,12 @@ export default function SignerControlPanel({
           >
             {loading === "stop" ? "Stopping..." : "Stop Signer"}
           </button>
+        )}
+
+        {!showStartStop && (
+          <span className="text-xs text-zinc-500 py-2">
+            {cliLoading ? "Reading CLI status…" : "Waiting for CLI status…"}
+          </span>
         )}
 
         <button

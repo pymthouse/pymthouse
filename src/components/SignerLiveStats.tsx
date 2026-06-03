@@ -1,23 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-interface SenderInfo {
-  deposit: string;
-  withdrawRound: string;
-  reserve: {
-    fundsRemaining: string;
-    claimedInCurrentRound: string;
-  };
-}
-
-interface CliStatus {
-  reachable: boolean;
-  senderInfo: SenderInfo | null;
-  ethBalance: string | null;
-  tokenBalance: string | null;
-  fetchedAt: string;
-}
+import { useSignerCliStatus } from "@/components/SignerCliStatusProvider";
+import type { SignerCliSenderInfo } from "@/components/SignerCliStatusProvider";
 
 function formatWei(wei: string | null | undefined): string {
   if (!wei || wei === "0") return "0";
@@ -71,34 +56,15 @@ function StatCard({
 }
 
 export default function SignerLiveStats() {
-  const [data, setData] = useState<CliStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, refresh } = useSignerCliStatus();
   const [, setTick] = useState(0); // force re-render for time display
 
-  async function fetchStats() {
-    try {
-      const res = await fetch("/api/v1/signer/cli-status");
-      if (res.ok) {
-        setData(await res.json());
-      }
-    } catch {
-      // ignore — keep showing last known state
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    fetchStats();
-    const poll = setInterval(fetchStats, 15000);
     const tick = setInterval(() => setTick((t) => t + 1), 5000);
-    return () => {
-      clearInterval(poll);
-      clearInterval(tick);
-    };
+    return () => clearInterval(tick);
   }, []);
 
-  const si = data?.senderInfo;
+  const si: SignerCliSenderInfo | null | undefined = data?.senderInfo;
   const unreachable = data !== null && !data.reachable;
 
   return (
@@ -129,7 +95,7 @@ export default function SignerLiveStats() {
             </span>
           )}
           <button
-            onClick={fetchStats}
+            onClick={() => void refresh()}
             className="px-2.5 py-1 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-300 hover:bg-zinc-700 transition-colors"
           >
             Refresh
@@ -137,7 +103,7 @@ export default function SignerLiveStats() {
         </div>
       </div>
 
-      {loading ? (
+      {loading && !data ? (
         <p className="text-xs text-zinc-500 animate-pulse">
           Connecting to signer CLI (SIGNER_CLI_URL)…
         </p>

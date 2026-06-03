@@ -7,6 +7,7 @@ import { db } from "@/db/index";
 import { signerConfig, streamSessions, transactions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import DashboardLayout from "@/components/DashboardLayout";
+import { SignerCliStatusProvider } from "@/components/SignerCliStatusProvider";
 import SignerControlPanel from "@/components/SignerControlPanel";
 import SignerConfigForm from "@/components/SignerConfigForm";
 import SignerLogs from "@/components/SignerLogs";
@@ -165,32 +166,34 @@ export default async function SignerPage() {
         </div>
       </div>
 
-      {/* Live signer state: CLI via SIGNER_CLI_URL (DMZ → /__signer_cli) */}
-      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
-        <SignerLiveStats />
-      </div>
+      <SignerCliStatusProvider>
+        {/* Live signer state: CLI via SIGNER_CLI_URL (DMZ → /__signer_cli) */}
+        <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
+          <SignerLiveStats />
+        </div>
 
-      {/* Activity stats from DB */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-        <StatCard
-          label={`Active Streams (${ACTIVE_STREAM_PAYMENT_WINDOW_MINUTES}m)`}
-          value={activeStreamCount.toString()}
-          color="text-emerald-400"
-        />
-        <StatCard label="Total Streams" value={allSessions.length.toString()} />
-        <StatCard label="Total Volume" value={formatWei(totalFeeWei.toString())} />
-        <StatCard label="Transactions" value={allTxns.length.toString()} />
-        <StatCard
-          label="Platform Cut"
-          value={`${signer.defaultCutPercent}%`}
-        />
-        <StatCard label="Billing Mode" value={signer.billingMode} />
-      </div>
+        {/* Activity stats from DB */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+          <StatCard
+            label={`Active Streams (${ACTIVE_STREAM_PAYMENT_WINDOW_MINUTES}m)`}
+            value={activeStreamCount.toString()}
+            color="text-emerald-400"
+          />
+          <StatCard label="Total Streams" value={allSessions.length.toString()} />
+          <StatCard label="Total Volume" value={formatWei(totalFeeWei.toString())} />
+          <StatCard label="Transactions" value={allTxns.length.toString()} />
+          <StatCard
+            label="Platform Cut"
+            value={`${signer.defaultCutPercent}%`}
+          />
+          <StatCard label="Billing Mode" value={signer.billingMode} />
+        </div>
 
-      {/* Control plane */}
-      <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
-        <SignerControlPanel currentStatus={signer.status} />
-      </div>
+        {/* Control plane */}
+        <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
+          <SignerControlPanel />
+        </div>
+      </SignerCliStatusProvider>
 
       {/* Container logs */}
       <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
