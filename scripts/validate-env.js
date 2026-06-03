@@ -55,7 +55,14 @@ const optionalVars = {
   SIGNER_CLI_URL: "",
 };
 
+/** Vercel build skips db:prepare; DATABASE_URL is only required at runtime. */
+const isVercelBuild = process.env.VERCEL === "1";
+const buildOptionalOnVercel = new Set(["DATABASE_URL"]);
+
 console.log("🔍 Validating environment configuration for Vercel deployment...\n");
+if (isVercelBuild) {
+  console.log("   (Vercel build: DATABASE_URL is checked at runtime, not required during next build)\n");
+}
 
 let hasErrors = false;
 let hasWarnings = false;
@@ -66,6 +73,13 @@ for (const [key, config] of Object.entries(requiredVars)) {
   const value = process.env[key];
   
   if (!value) {
+    if (isVercelBuild && buildOptionalOnVercel.has(key)) {
+      console.log(`  ⚠️  ${key}: not set for build (must be in Vercel Production env for runtime)`);
+      console.log(`     → ${config.desc}`);
+      console.log(`     → Example: ${config.example}\n`);
+      hasWarnings = true;
+      continue;
+    }
     console.log(`  ❌ ${key}: MISSING`);
     console.log(`     → ${config.desc}`);
     console.log(`     → Example: ${config.example}\n`);

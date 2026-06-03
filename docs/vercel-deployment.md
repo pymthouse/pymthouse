@@ -331,7 +331,7 @@ npm run db:migrate
 
 - Check Vercel build logs for errors
 - Verify all required environment variables are set
-- Ensure `DATABASE_URL` is available at build time (migrations run in `prebuild`)
+- Set `DATABASE_URL` on the Vercel project (Production scope). It must be present at **runtime**; the build does not run migrations (`prebuild` skips `db:prepare` when `VERCEL=1`). If CI `vercel build` warns that `DATABASE_URL` is missing at build time, add it in the dashboard or enable it for **Build** as well as **Production**.
 
 ### OAuth Redirect Issues
 
