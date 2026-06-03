@@ -6,6 +6,19 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { getHostedAdminClient } from "./admin-client";
 import { assignCustomerBillingProfileOverride } from "./customers";
 
+/** ISO 3166-1 alpha-2; required on billing profile supplier for OpenMeter invoicing. */
+function billingSupplierCountryCode(): string {
+  const raw = process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY?.trim() || "US";
+  return raw.toUpperCase();
+}
+
+export function buildBillingProfileSupplier(displayName: string) {
+  return {
+    name: displayName,
+    addresses: [{ country: billingSupplierCountryCode() }],
+  };
+}
+
 export async function getAppBillingConfig(clientId: string) {
   const rows = await db
     .select()
@@ -26,12 +39,11 @@ export async function ensureTenantBillingProfile(input: {
     return existing.openmeterBillingProfileId;
   }
 
+  const supplierName = input.name || `Tenant ${input.clientId}`;
   const profile = await client.billing.profiles.create({
     name: input.name || `pymthouse-${input.clientId}`,
     default: false,
-    supplier: {
-      name: input.name || `Tenant ${input.clientId}`,
-    },
+    supplier: buildBillingProfileSupplier(supplierName),
     workflow: {
       invoicing: { autoAdvance: true, draftPeriod: "P0D" },
       payment: { collectionMethod: "charge_automatically" },
