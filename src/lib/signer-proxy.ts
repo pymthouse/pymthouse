@@ -174,7 +174,7 @@ async function resolveUsageUserIdentifier(
  */
 /**
  * Public signer API base for external clients (gateway, SDK).
- * Routes through pymthouse `/api/signer/*` so usage is recorded in proxyGenerateLivePayment.
+ * Routes through pymthouse `/api/signer/*` (DMZ legacy paths; generate-live-payment uses builder-sdk direct proxy).
  */
 export function getClientSignerApiUrl(): string {
   const explicit = process.env.PYMTHOUSE_CLIENT_SIGNER_API_URL?.trim();
@@ -408,7 +408,7 @@ export async function proxySignOrchestratorInfo(
  */
 export async function proxyGenerateLivePayment(
   requestBody: Record<string, unknown>,
-  auth: AuthResult
+  auth: AuthResult,
 ): Promise<ProxyResult> {
   const { signer, providerAppId } = await getSignerRoutingContext(auth.appId);
   if (!signer || !(await isSignerOperational(signer))) {

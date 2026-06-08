@@ -8,6 +8,8 @@ import {
   ensureRunningSigner,
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
+import { mockDirectSignerProxyFetch } from "@/test-utils/direct-signer-proxy";
+import { resetGenerateLivePaymentHandlerForTests } from "@/lib/signer-direct-handler";
 import { mockSignerFetch } from "@/test-utils/mock-signer";
 import { buildOrchestratorInfoBase64 } from "@/test-utils/orchestrator-info";
 
@@ -39,7 +41,7 @@ run("signer proxy routes enforce auth and forward to the signer", async (t) => {
     scopes: "openid",
   });
 
-  const mock = mockSignerFetch();
+  const mock = mockDirectSignerProxyFetch();
   t.after(mock.restore);
 
   // Each POST route rejects without Authorization.
@@ -129,6 +131,7 @@ run("signer proxy routes enforce auth and forward to the signer", async (t) => {
 });
 
 run("generate-live-payment rejects requests against unapproved apps", async (t) => {
+  resetGenerateLivePaymentHandlerForTests();
   const { POST: generateLivePayment } = await import("./generate-live-payment/route");
 
   const restoreSigner = await ensureRunningSigner();
@@ -150,7 +153,7 @@ run("generate-live-payment rejects requests against unapproved apps", async (t) 
     pixelsPerUnit: 1,
   });
 
-  const mock = mockSignerFetch();
+  const mock = mockDirectSignerProxyFetch();
   t.after(mock.restore);
 
   const res = await generateLivePayment(

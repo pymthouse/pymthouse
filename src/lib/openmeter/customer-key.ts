@@ -19,3 +19,32 @@ export function parseOpenMeterCustomerKey(key: string): {
     externalUserId: key.slice(idx + 1),
   };
 }
+
+/**
+ * Map go-livepeer Kafka `auth_id` to OpenMeter CloudEvent subject + meter dimensions.
+ * Compound keys (`client:external`) match {@link buildOpenMeterCustomerKey}; opaque strings
+ * use the full auth_id for subject and both groupBy dimensions.
+ */
+export function openMeterDimensionsFromAuthId(authId: string): {
+  subject: string;
+  clientId: string;
+  externalUserId: string;
+} | null {
+  const subject = authId.trim();
+  if (!subject) {
+    return null;
+  }
+  const parsed = parseOpenMeterCustomerKey(subject);
+  if (parsed) {
+    return {
+      subject,
+      clientId: parsed.clientId,
+      externalUserId: parsed.externalUserId,
+    };
+  }
+  return {
+    subject,
+    clientId: subject,
+    externalUserId: subject,
+  };
+}

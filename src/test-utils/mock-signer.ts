@@ -112,10 +112,28 @@ export function mockSignerFetch(opts?: {
   };
 
   const mocked: typeof fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : (input as Request).url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : (input as Request).url;
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     let body: unknown = undefined;
-    const rawBody = init?.body;
+    let rawBody: BodyInit | null | undefined = init?.body;
+    if (
+      (rawBody === undefined || rawBody === null) &&
+      input instanceof Request &&
+      method !== "GET" &&
+      method !== "HEAD"
+    ) {
+      const text = await input.clone().text();
+      rawBody = text.length > 0 ? text : undefined;
+    }
+    if (rawBody !== undefined && rawBody !== null && typeof rawBody !== "string") {
+      const text = await new Response(rawBody as BodyInit).text();
+      rawBody = text.length > 0 ? text : undefined;
+    }
     if (typeof rawBody === "string" && rawBody.length > 0) {
       try {
         body = JSON.parse(rawBody);

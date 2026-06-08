@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
+import {
+  buildOpenMeterCustomerKey,
+  openMeterDimensionsFromAuthId,
+  parseOpenMeterCustomerKey,
+} from "./customer-key";
 import { ensureOpenMeterCustomer } from "./customers";
 import { listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
@@ -26,6 +30,28 @@ test("buildOpenMeterCustomerKey encodes client and user", () => {
 
 test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
+});
+
+test("openMeterDimensionsFromAuthId matches OpenMeter org layout for compound auth_id", () => {
+  const authId = buildOpenMeterCustomerKey("app_abc", "user:with:colons");
+  assert.deepEqual(openMeterDimensionsFromAuthId(authId), {
+    subject: authId,
+    clientId: "app_abc",
+    externalUserId: "user:with:colons",
+  });
+});
+
+test("openMeterDimensionsFromAuthId treats opaque auth_id as flat subject", () => {
+  assert.deepEqual(openMeterDimensionsFromAuthId("webhook-auth-id"), {
+    subject: "webhook-auth-id",
+    clientId: "webhook-auth-id",
+    externalUserId: "webhook-auth-id",
+  });
+});
+
+test("openMeterDimensionsFromAuthId rejects empty auth_id", () => {
+  assert.equal(openMeterDimensionsFromAuthId(""), null);
+  assert.equal(openMeterDimensionsFromAuthId("   "), null);
 });
 
 test("isMintUserSignerTokenRequest detects mint scope", () => {

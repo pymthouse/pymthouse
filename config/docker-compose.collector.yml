@@ -1,0 +1,17 @@
+# OpenMeter Collector for Livepeer signed-ticket metering.
+# Usage: copy .env.livepeer from platform bootstrap, then:
+#   docker compose -f config/docker-compose.collector.yml --env-file .env.livepeer up -d
+
+services:
+  openmeter-collector:
+    image: ghcr.io/openmeterio/openmeter-collector:latest
+    restart: unless-stopped
+    volumes:
+      - ./openmeter-collector.yaml:/config.yaml:ro
+    command: ["-c", "/config.yaml"]
+    environment:
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_GATEWAY_TOPIC: ${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}
+      OPENMETER_URL: ${OPENMETER_URL}
+      OPENMETER_API_KEY: ${OPENMETER_API_KEY}
+      ETH_USD_PRICE: ${ETH_USD_PRICE:-3500}

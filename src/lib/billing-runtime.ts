@@ -2,7 +2,7 @@
  * Runtime billing engine for PymtHouse.
  *
  * Provides small, independently testable functions that are called from
- * proxyGenerateLivePayment() after the go-livepeer remote signer succeeds.
+ * builder-sdk signed-ticket ingest after generate-live-payment succeeds.
  *
  * Core invariant:
  *   A billable usage_billing_events row is created when the signing request

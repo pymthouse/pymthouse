@@ -19,6 +19,13 @@ if (mutableEnv.NODE_ENV === "test" && !process.env.OPENMETER_URL?.trim()) {
   process.env.OPENMETER_URL = "http://127.0.0.1:48888";
 }
 
+if (mutableEnv.NODE_ENV === "test") {
+  process.env.PYMTHOUSE_ISSUER_URL ??= "http://localhost:3001/api/v1/oidc";
+  process.env.PYMTHOUSE_PUBLIC_CLIENT_ID ??= "test-platform-public";
+  process.env.PYMTHOUSE_M2M_CLIENT_ID ??= "test-platform-m2m";
+  process.env.PYMTHOUSE_M2M_CLIENT_SECRET ??= "test-platform-m2m-secret";
+}
+
 process.env.AUTH_TOKEN_PEPPER ??=
   "test-auth-token-pepper-00000000000000000000000000000000";
 process.env.NEXTAUTH_SECRET ??=

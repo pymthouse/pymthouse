@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
-import type { AuthResult } from "@/lib/auth";
 import { validateBearerToken } from "@/lib/auth";
 import { db } from "@/db/index";
 import {
   endUsers,
   planCapabilityBundles,
   plans,
-  streamSessions,
   usageIngestReceipts,
 } from "@/db/schema";
-import { proxyGenerateLivePayment } from "@/lib/signer-proxy";
 import { resetEthUsdOracleCacheForTests } from "@/lib/prices/eth-usd-oracle";
 import { run } from "@/test-utils/db-guard";
 import {
@@ -22,9 +19,12 @@ import {
   ensureRunningSigner,
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
-import { mockSignerFetch } from "@/test-utils/mock-signer";
+import {
+  invokeGenerateLivePayment,
+  mockDirectSignerProxyFetch,
+} from "@/test-utils/direct-signer-proxy";
 import { buildOrchestratorInfoBase64 } from "@/test-utils/orchestrator-info";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 const PER_REQUEST_PIXELS = 1_000_000;
 const PRICE_PER_UNIT = 1_000_000_000;
@@ -40,9 +40,8 @@ const PAYMENT_METADATA_VERSION = "2026-04-usage-attribution-v1";
 /**
  * Integration test:
  *   - Mock the remote signer at the `fetch` boundary.
- *   - Drive **`proxyGenerateLivePayment`** directly (same code as the HTTP route)
- *     with cached **`AuthResult`** from **`validateBearerToken`** — avoids Next
- *     request handling and repeated route auth on every iteration.
+ *   - Drive **`invokeGenerateLivePayment`** (builder-sdk direct proxy route) with
+ *     bearer tokens minted for each test subject.
  *   - Validate persistence + bigint totals via **`GET /api/v1/apps/{id}/usage`**
  *     (Basic auth). Route-level auth for `generate-live-payment` is covered in
  *     **`proxy-routes.test.ts`**.
@@ -95,7 +94,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
 
-  const mock = mockSignerFetch({
+  const mock = mockDirectSignerProxyFetch({
     signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
@@ -114,12 +113,12 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
     };
   }
 
-  async function sendPayment(auth: AuthResult, requestId: string, manifestId: string) {
-    const result = await proxyGenerateLivePayment(paymentBody(requestId, manifestId), auth);
+  async function sendPayment(token: string, requestId: string, manifestId: string) {
+    const result = await invokeGenerateLivePayment(token, paymentBody(requestId, manifestId));
     assert.equal(
       result.status,
       200,
-      `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
+      `invokeGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
     );
   }
 
@@ -131,15 +130,15 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   let successes = 0;
 
   for (let i = 0; i < ownerCount; i++) {
-    await sendPayment(ownerAuth!, `${runId}-owner-req-${i}`, `${runId}-owner-manifest-${i}`);
+    await sendPayment(ownerToken, `${runId}-owner-req-${i}`, `${runId}-owner-manifest-${i}`);
     successes++;
   }
   for (let i = 0; i < alphaCount; i++) {
-    await sendPayment(alphaAuth!, `${runId}-alpha-req-${i}`, `${runId}-alpha-manifest-${i}`);
+    await sendPayment(alphaToken, `${runId}-alpha-req-${i}`, `${runId}-alpha-manifest-${i}`);
     successes++;
   }
   for (let i = 0; i < betaCount; i++) {
-    await sendPayment(betaAuth!, `${runId}-beta-req-${i}`, `${runId}-beta-manifest-${i}`);
+    await sendPayment(betaToken, `${runId}-beta-req-${i}`, `${runId}-beta-manifest-${i}`);
     successes++;
   }
 
@@ -154,18 +153,10 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   // produce additional usage rows.
   const dupeRequestId = `${runId}-dupe-req-0`;
   const dupeManifestId = `${runId}-dupe-manifest-0`;
-  await sendPayment(ownerAuth!, dupeRequestId, dupeManifestId);
-  await sendPayment(ownerAuth!, dupeRequestId, dupeManifestId);
+  await sendPayment(ownerToken, dupeRequestId, dupeManifestId);
+  await sendPayment(ownerToken, dupeRequestId, dupeManifestId);
 
   const expectedRequestCount = VOLUME + 1;
-
-  const dupeSessionRows = await db
-    .select()
-    .from(streamSessions)
-    .where(eq(streamSessions.manifestId, dupeManifestId))
-    .limit(1);
-  const dupeSession = dupeSessionRows[0];
-  assert.ok(dupeSession, "stream session persisted for manifest");
 
   const dupeReceipts = await db
     .select()
@@ -180,17 +171,6 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
     dupeReceipts.length,
     1,
     "duplicate requestId should produce a single OpenMeter ingest receipt",
-  );
-
-  const activeSessions = await db
-    .select({ id: streamSessions.id })
-    .from(streamSessions)
-    .where(
-      and(eq(streamSessions.appId, app.clientId), isNotNull(streamSessions.lastPaymentAt)),
-    );
-  assert.ok(
-    activeSessions.length > 0,
-    "stream sessions should record lastPaymentAt after signer payment traffic",
   );
 
   async function fetchUsage(query = "") {
@@ -279,7 +259,7 @@ run("high-volume signer usage is persisted and summarised via Usage API", async 
   assert.equal(badDate.status, 400);
 });
 
-run("BYOC preload payment creates first usage row for signer sessions", async (t) => {
+run("BYOC preload payment ingests first usage row", async (t) => {
   resetEthUsdOracleCacheForTests();
   const restoreSigner = await ensureRunningSigner();
   t.after(restoreSigner);
@@ -299,41 +279,36 @@ run("BYOC preload payment creates first usage row for signer sessions", async (t
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const auth = await validateBearerToken(token);
-  assert.ok(auth, "signer session token resolves");
 
   const orch = await buildOrchestratorInfoBase64({
     pricePerUnit: PRICE_PER_UNIT,
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
-  const mock = mockSignerFetch({ signerHost: "https://test-signer.invalid" });
+  const mock = mockDirectSignerProxyFetch({ signerHost: "https://test-signer.invalid" });
   t.after(mock.restore);
 
   const requestId = `byoc-preload-${randomUUID()}`;
   const manifestId = `job-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      type: "byoc",
-      RequestID: requestId,
-      manifestID: manifestId,
-      preloadSeconds: 3,
-      Orchestrator: orch,
-      pipeline: "byoc",
-    },
-    auth!,
-  );
+  const result = await invokeGenerateLivePayment(token, {
+    type: "byoc",
+    RequestID: requestId,
+    manifestID: manifestId,
+    preloadSeconds: 3,
+    Orchestrator: orch,
+    pipeline: "byoc",
+  });
   assert.equal(
     result.status,
     200,
-    `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
+    `invokeGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
-  const sessionRows = await db
+  const receiptRows = await db
     .select()
-    .from(streamSessions)
-    .where(eq(streamSessions.manifestId, manifestId));
-  assert.equal(sessionRows.length, 1);
-  assert.equal(sessionRows[0]!.signerPaymentCount, 1);
+    .from(usageIngestReceipts)
+    .where(eq(usageIngestReceipts.requestId, requestId))
+    .limit(1);
+  assert.equal(receiptRows.length, 1, "BYOC preload usage ingest receipt recorded");
 });
 
 run("successful zero-fee signer payment still increments usage count", async (t) => {
@@ -349,27 +324,22 @@ run("successful zero-fee signer payment still increments usage count", async (t)
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const auth = await validateBearerToken(token);
-  assert.ok(auth, "signer token resolves");
 
-  const mock = mockSignerFetch({ signerHost: "https://test-signer.invalid" });
+  const mock = mockDirectSignerProxyFetch({ signerHost: "https://test-signer.invalid" });
   t.after(mock.restore);
 
   const requestId = `zero-fee-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      type: "byoc",
-      RequestID: requestId,
-      manifestID: `job-${randomUUID()}`,
-      preloadSeconds: 3,
-      pipeline: "byoc",
-    },
-    auth!,
-  );
+  const result = await invokeGenerateLivePayment(token, {
+    type: "byoc",
+    RequestID: requestId,
+    manifestID: `job-${randomUUID()}`,
+    preloadSeconds: 3,
+    pipeline: "byoc",
+  });
   assert.equal(
     result.status,
     200,
-    `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
+    `invokeGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
 });
@@ -389,9 +359,6 @@ run("network cost usage applies retail rate from plan capability bundle", async 
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const ownerAuth = await validateBearerToken(ownerToken);
-  assert.ok(ownerAuth, "owner token resolves");
-
   const planId = randomUUID();
   const now = new Date().toISOString();
   await db.insert(plans).values({
@@ -420,30 +387,27 @@ run("network cost usage applies retail rate from plan capability bundle", async 
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
 
-  const mock = mockSignerFetch({
+  const mock = mockDirectSignerProxyFetch({
     signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
   const gatewayRequestId = `plan-upcharge-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      ManifestID: "plan-upcharge-manifest",
-      RequestID: gatewayRequestId,
-      InPixels: PER_REQUEST_PIXELS,
-      Orchestrator: orch,
-      pipeline: PIPELINE,
-      modelId: MODEL_ID,
-      attributionSource: "pymthouse_gateway",
-      gatewayRequestId,
-      paymentMetadataVersion: PAYMENT_METADATA_VERSION,
-    },
-    ownerAuth!,
-  );
+  const result = await invokeGenerateLivePayment(ownerToken, {
+    ManifestID: "plan-upcharge-manifest",
+    RequestID: gatewayRequestId,
+    InPixels: PER_REQUEST_PIXELS,
+    Orchestrator: orch,
+    pipeline: PIPELINE,
+    modelId: MODEL_ID,
+    attributionSource: "pymthouse_gateway",
+    gatewayRequestId,
+    paymentMetadataVersion: PAYMENT_METADATA_VERSION,
+  });
   assert.equal(
     result.status,
     200,
-    `proxyGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
+    `invokeGenerateLivePayment expected 200, got ${result.status}: ${JSON.stringify(result.body)}`,
   );
 
   const usage = await readUsage(
@@ -492,34 +456,28 @@ run("proxy strips signer usage block and records signer_chainlink eth source", a
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const ownerAuth = await validateBearerToken(ownerToken);
-  assert.ok(ownerAuth);
-
   const orch = await buildOrchestratorInfoBase64({
     pricePerUnit: PRICE_PER_UNIT,
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
 
-  const mock = mockSignerFetch({
+  const mock = mockDirectSignerProxyFetch({
     signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
   const gatewayRequestId = `signer-usage-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      ManifestID: "signer-usage-manifest",
-      RequestID: gatewayRequestId,
-      InPixels: PER_REQUEST_PIXELS,
-      Orchestrator: orch,
-      pipeline: PIPELINE,
-      modelId: MODEL_ID,
-      attributionSource: "pymthouse_gateway",
-      gatewayRequestId,
-      paymentMetadataVersion: PAYMENT_METADATA_VERSION,
-    },
-    ownerAuth!,
-  );
+  const result = await invokeGenerateLivePayment(ownerToken, {
+    ManifestID: "signer-usage-manifest",
+    RequestID: gatewayRequestId,
+    InPixels: PER_REQUEST_PIXELS,
+    Orchestrator: orch,
+    pipeline: PIPELINE,
+    modelId: MODEL_ID,
+    attributionSource: "pymthouse_gateway",
+    gatewayRequestId,
+    paymentMetadataVersion: PAYMENT_METADATA_VERSION,
+  });
   assert.equal(result.status, 200);
   assert.equal("usage" in (result.body as Record<string, unknown>), false);
 
@@ -544,34 +502,28 @@ run("generate-live-payment ingests negotiated ticket usage to OpenMeter", async 
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const ownerAuth = await validateBearerToken(ownerToken);
-  assert.ok(ownerAuth);
-
   const orch = await buildOrchestratorInfoBase64({
     pricePerUnit: PRICE_PER_UNIT,
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
 
-  const mock = mockSignerFetch({
+  const mock = mockDirectSignerProxyFetch({
     signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
   const gatewayRequestId = `negotiated-ticket-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      ManifestID: "negotiated-manifest",
-      RequestID: gatewayRequestId,
-      InPixels: PER_REQUEST_PIXELS,
-      Orchestrator: orch,
-      pipeline: PIPELINE,
-      modelId: MODEL_ID,
-      attributionSource: "pymthouse_gateway",
-      gatewayRequestId,
-      paymentMetadataVersion: PAYMENT_METADATA_VERSION,
-    },
-    ownerAuth!,
-  );
+  const result = await invokeGenerateLivePayment(ownerToken, {
+    ManifestID: "negotiated-manifest",
+    RequestID: gatewayRequestId,
+    InPixels: PER_REQUEST_PIXELS,
+    Orchestrator: orch,
+    pipeline: PIPELINE,
+    modelId: MODEL_ID,
+    attributionSource: "pymthouse_gateway",
+    gatewayRequestId,
+    paymentMetadataVersion: PAYMENT_METADATA_VERSION,
+  });
   assert.equal(result.status, 200);
 
   assert.equal(
@@ -617,33 +569,27 @@ run("generate-live-payment ingests usage when modelId absent", async (t) => {
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const ownerAuth = await validateBearerToken(ownerToken);
-  assert.ok(ownerAuth);
-
   const orch = await buildOrchestratorInfoBase64({
     pricePerUnit: PRICE_PER_UNIT,
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
 
-  const mock = mockSignerFetch({
+  const mock = mockDirectSignerProxyFetch({
     signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
   const gatewayRequestId = `missing-constraint-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      ManifestID: "no-model-manifest",
-      RequestID: gatewayRequestId,
-      InPixels: PER_REQUEST_PIXELS,
-      Orchestrator: orch,
-      pipeline: PIPELINE,
-      attributionSource: "pymthouse_gateway",
-      gatewayRequestId,
-      paymentMetadataVersion: PAYMENT_METADATA_VERSION,
-    },
-    ownerAuth!,
-  );
+  const result = await invokeGenerateLivePayment(ownerToken, {
+    ManifestID: "no-model-manifest",
+    RequestID: gatewayRequestId,
+    InPixels: PER_REQUEST_PIXELS,
+    Orchestrator: orch,
+    pipeline: PIPELINE,
+    attributionSource: "pymthouse_gateway",
+    gatewayRequestId,
+    paymentMetadataVersion: PAYMENT_METADATA_VERSION,
+  });
   assert.equal(result.status, 200);
 
   const receiptRows = await db
@@ -667,47 +613,41 @@ run("generate-live-payment succeeds when live oracle fetch fails", async (t) => 
     clientId: app.clientId,
     scopes: "sign:job",
   });
-  const auth = await validateBearerToken(token);
-  assert.ok(auth);
 
   const orch = await buildOrchestratorInfoBase64({
     pricePerUnit: PRICE_PER_UNIT,
     pixelsPerUnit: PIXELS_PER_UNIT,
   });
 
-  const mock = mockSignerFetch({
+  const mock = mockDirectSignerProxyFetch({
     signerHost: "https://test-signer.invalid",
   });
   t.after(mock.restore);
 
   const originalEthUsd = process.env.ETH_USD_PRICE;
-  const originalFetch = globalThis.fetch;
+  const directFetch = globalThis.fetch;
   process.env.ETH_USD_PRICE = "2777.77";
   globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url.includes("binance") || url.includes("kraken")) {
       return { ok: false, status: 503, json: async () => ({}) } as Response;
     }
-    return originalFetch(input as never, init);
+    return directFetch(input as never, init);
   };
   t.after(() => {
     process.env.ETH_USD_PRICE = originalEthUsd;
-    globalThis.fetch = originalFetch;
   });
 
   const requestId = `oracle-fallback-${randomUUID()}`;
-  const result = await proxyGenerateLivePayment(
-    {
-      ManifestID: "oracle-fallback-manifest",
-      RequestID: requestId,
-      InPixels: PER_REQUEST_PIXELS,
-      Orchestrator: orch,
-      pipeline: PIPELINE,
-      modelId: MODEL_ID,
-      gatewayRequestId: requestId,
-    },
-    auth!,
-  );
+  const result = await invokeGenerateLivePayment(token, {
+    ManifestID: "oracle-fallback-manifest",
+    RequestID: requestId,
+    InPixels: PER_REQUEST_PIXELS,
+    Orchestrator: orch,
+    pipeline: PIPELINE,
+    modelId: MODEL_ID,
+    gatewayRequestId: requestId,
+  });
   assert.equal(result.status, 200);
 
   const receiptRows = await db
