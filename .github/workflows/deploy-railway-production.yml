@@ -15,6 +15,9 @@ name: Deploy Railway production stack
 #   OPENMETER_API_KEY, OPENMETER_CLICKHOUSE_SECRET, OPENMETER_URL (bootstrap)
 #   RAILWAY_PRODUCTION_DATABASE_URL, RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER,
 #   RAILWAY_PRODUCTION_NEXTAUTH_SECRET, ETH_RPC_URL
+#   Turnkey signer bootstrap (all four required together on pymthouse service):
+#   TURNKEY_ORG_ID, TURNKEY_API_PUBLIC_KEY, TURNKEY_API_PRIVATE_KEY,
+#   SIGNER_ETH_KEYSTORE_PASSWORD
 #
 # Optional repository variables (defaults applied when unset):
 #   RAILWAY_PRODUCTION_NEXTAUTH_URL → https://pymthouse.com
@@ -53,6 +56,12 @@ jobs:
       DATABASE_URL: ${{ secrets.RAILWAY_PRODUCTION_DATABASE_URL }}
       AUTH_TOKEN_PEPPER: ${{ secrets.RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER }}
       NEXTAUTH_SECRET: ${{ secrets.RAILWAY_PRODUCTION_NEXTAUTH_SECRET }}
+      TURNKEY_ORG_ID: ${{ secrets.TURNKEY_ORG_ID }}
+      TURNKEY_API_PUBLIC_KEY: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
+      TURNKEY_API_PRIVATE_KEY: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
+      SIGNER_ETH_KEYSTORE_PASSWORD: ${{ secrets.SIGNER_ETH_KEYSTORE_PASSWORD }}
+      TURNKEY_WALLET_NAME: ${{ vars.TURNKEY_WALLET_NAME }}
+      SIGNER_ETH_ADDR: ${{ vars.SIGNER_ETH_ADDR }}
 
     steps:
       - name: Checkout

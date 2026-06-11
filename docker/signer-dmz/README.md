@@ -81,6 +81,21 @@ The `signer-dmz` image can bootstrap an ephemeral `/data/keystore` from Turnkey 
 - Bootstrap failures are fatal (bad creds, missing wallet/account, export/decrypt errors): container exits with logs.
 - After livepeer becomes ready, `/data/keystore/*` and `/data/.eth-password` are deleted.
 
+### Railway / production (CLI)
+
+```bash
+cp config/railway/signer.env.example config/railway/signer.env
+# edit Turnkey + NEXTAUTH_URL (production: https://pymthouse.com)
+railway login   # or export RAILWAY_API_TOKEN=...
+
+pnpm railway:signer:env production          # push env vars
+pnpm railway:signer:env production --deploy # push + redeploy signer image
+```
+
+`config/railway/signer.env` is gitignored. Full stack (OpenMeter + signer): `pnpm railway:stack:env` / CI [`.github/workflows/deploy-railway-production.yml`](../../.github/workflows/deploy-railway-production.yml).
+
+Railway uses one public port (`SIGNER_DMZ_ENABLE_CLI_LISTENER=0`); CLI is `/__signer_cli` on the same host. Set Vercel `SIGNER_INTERNAL_URL` / `SIGNER_CLI_URL` to the Railway public domain.
+
 ### Turnkey env vars
 
 | Variable | Required | Notes |

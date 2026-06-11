@@ -23,6 +23,8 @@
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
     "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",
     "railway:stack:deploy": "bash scripts/railway-deploy-stack.sh",
+    "railway:signer:env": "bash scripts/railway-apply-signer-env.sh",
+    "railway:signer:deploy": "bash scripts/railway-apply-signer-env.sh production --deploy",
     "validate:env": "node scripts/validate-env.js",
     "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\""
   },

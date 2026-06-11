@@ -13,6 +13,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck source=lib/railway-auth.sh
 source "$ROOT/scripts/lib/railway-auth.sh"
+# shellcheck source=lib/railway-signer-env.sh
+source "$ROOT/scripts/lib/railway-signer-env.sh"
 
 ENV="${RAILWAY_ENVIRONMENT:-production}"
 PROJECT_ID="$(railway_default_project_id)"
@@ -97,55 +99,8 @@ for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
   set_kv "$svc" "${args[@]}"
 done
 
-# Signer DMZ (pymthouse service) — OIDC URLs are derived from NEXTAUTH_URL so
-# production stays aligned with Vercel (pymthouse.com) without a separate issuer var.
-NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
-NEXTAUTH_URL="${NEXTAUTH_URL%/}"
-if [[ -n "$NEXTAUTH_URL" ]]; then
-  ISSUER="${NEXTAUTH_URL}/api/v1/oidc"
-  JWKS_URI="${NEXTAUTH_URL}/api/v1/oidc/jwks"
-  signer_args=(
-    "SIGNER_NETWORK=${SIGNER_NETWORK:-arbitrum-one-mainnet}" \
-    "ETH_RPC_URL=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}" \
-    "NEXTAUTH_URL=${NEXTAUTH_URL}" \
-    "OIDC_ISSUER=${ISSUER}" \
-    "OIDC_AUDIENCE=${OIDC_AUDIENCE:-$ISSUER}" \
-    "JWKS_URI=${JWKS_URI}" \
-    "TURNKEY_WALLET_NAME=${TURNKEY_WALLET_NAME:-livepeer-remote-signer}" \
-    "TURNKEY_API_HOST=${TURNKEY_API_HOST:-api.turnkey.com}"
-  )
-  if [[ -n "${TURNKEY_ORG_ID:-}" ]]; then
-    signer_args+=("TURNKEY_ORG_ID=${TURNKEY_ORG_ID}")
-  fi
-  if [[ -n "${SIGNER_ETH_ADDR:-}" ]]; then
-    signer_args+=("SIGNER_ETH_ADDR=${SIGNER_ETH_ADDR}")
-  fi
-  set_kv pymthouse "${signer_args[@]}"
-  if [[ -n "${TURNKEY_API_PUBLIC_KEY:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "TURNKEY_API_PUBLIC_KEY=${TURNKEY_API_PUBLIC_KEY}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${TURNKEY_API_PRIVATE_KEY:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "TURNKEY_API_PRIVATE_KEY=${TURNKEY_API_PRIVATE_KEY}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${SIGNER_ETH_KEYSTORE_PASSWORD:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "SIGNER_ETH_KEYSTORE_PASSWORD=${SIGNER_ETH_KEYSTORE_PASSWORD}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${DATABASE_URL:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${AUTH_TOKEN_PEPPER:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "AUTH_TOKEN_PEPPER=${AUTH_TOKEN_PEPPER}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${NEXTAUTH_SECRET:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  echo "  pymthouse: NEXTAUTH_URL=${NEXTAUTH_URL} OIDC_ISSUER=${ISSUER} (+ optional DB/OIDC secrets)"
-fi
+# Signer DMZ (pymthouse service). For signer-only updates use scripts/railway-apply-signer-env.sh.
+export NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
+railway_apply_signer_env pymthouse "$PE_FLAGS"
 
 echo "Done. Run scripts/railway-deploy-stack.sh $ENV to deploy."
