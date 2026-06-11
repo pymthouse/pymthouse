@@ -50,6 +50,15 @@ RUN git clone https://github.com/AnthonyDeroche/mod_authnz_jwt.git && \
     make && \
     make install
 
+FROM golang:1.25-bookworm AS turnkey-bootstrap-build
+
+WORKDIR /src
+COPY docker/signer-dmz/turnkey-bootstrap/go.mod ./go.mod
+COPY docker/signer-dmz/turnkey-bootstrap/go.sum ./go.sum
+RUN go mod download
+COPY docker/signer-dmz/turnkey-bootstrap/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/signer-turnkey-bootstrap .
+
 FROM debian:bookworm-slim AS gateway
 
 # Non-root runtime identity. Fixed UID/GID so bind-mounts and volumes are predictable.
@@ -69,6 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build-mod /usr/local/lib/libjwt.so* /usr/local/lib/
 COPY --from=build-mod /usr/lib/apache2/modules/mod_authnz_jwt.so /usr/lib/apache2/modules/mod_authnz_jwt.so
+COPY --from=turnkey-bootstrap-build /out/signer-turnkey-bootstrap /usr/local/bin/signer-turnkey-bootstrap
 
 RUN ldconfig && \
     printf '%s\n' 'LoadModule auth_jwt_module /usr/lib/apache2/modules/mod_authnz_jwt.so' \
@@ -77,12 +87,16 @@ RUN ldconfig && \
     a2enmod alias proxy proxy_http headers rewrite authn_core authz_core
 
 COPY docker/signer-dmz/scripts/jwks_to_pem.py /opt/pymthouse/scripts/jwks_to_pem.py
+COPY docker/signer-dmz/scripts/cleanup-ephemeral-keystore.sh /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh
 COPY docker/signer-dmz/apache/ports.conf.in /etc/apache2/templates/ports.conf.in
 COPY docker/signer-dmz/apache/signer-dmz.conf.in /etc/apache2/templates/signer-dmz.conf.in
 COPY docker/signer-dmz/apache/signer-dmz-cli-vhost.conf.in /etc/apache2/templates/signer-dmz-cli-vhost.conf.in
 COPY docker/signer-dmz/entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /entrypoint.sh /opt/pymthouse/scripts/jwks_to_pem.py
+RUN chmod +x /entrypoint.sh \
+    /usr/local/bin/signer-turnkey-bootstrap \
+    /opt/pymthouse/scripts/jwks_to_pem.py \
+    /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh
 
 RUN mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz
 
@@ -92,7 +106,7 @@ RUN mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz
 RUN groupadd --system --gid "${APP_GID}" "${APP_USER}" && \
     useradd --system --uid "${APP_UID}" --gid "${APP_GID}" \
       --home-dir /home/${APP_USER} --create-home --shell /usr/sbin/nologin "${APP_USER}" && \
-    mkdir -p /run/jwt /run/apache2 /var/lock/apache2 /var/log/apache2 /data && \
+    mkdir -p /run/jwt /run/signer-bootstrap /run/apache2 /var/lock/apache2 /var/log/apache2 /data && \
     sed -i \
       -e "s|^export APACHE_RUN_USER=.*|export APACHE_RUN_USER=${APP_USER}|" \
       -e "s|^export APACHE_RUN_GROUP=.*|export APACHE_RUN_GROUP=${APP_USER}|" \
@@ -105,6 +119,7 @@ RUN groupadd --system --gid "${APP_GID}" "${APP_USER}" && \
       /var/lock/apache2 \
       /run/apache2 \
       /run/jwt \
+      /run/signer-bootstrap \
       /var/www/static \
       /opt/pymthouse \
       /data && \

@@ -104,13 +104,35 @@ NEXTAUTH_URL="${NEXTAUTH_URL%/}"
 if [[ -n "$NEXTAUTH_URL" ]]; then
   ISSUER="${NEXTAUTH_URL}/api/v1/oidc"
   JWKS_URI="${NEXTAUTH_URL}/api/v1/oidc/jwks"
-  set_kv pymthouse \
+  signer_args=(
     "SIGNER_NETWORK=${SIGNER_NETWORK:-arbitrum-one-mainnet}" \
     "ETH_RPC_URL=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}" \
     "NEXTAUTH_URL=${NEXTAUTH_URL}" \
     "OIDC_ISSUER=${ISSUER}" \
     "OIDC_AUDIENCE=${OIDC_AUDIENCE:-$ISSUER}" \
-    "JWKS_URI=${JWKS_URI}"
+    "JWKS_URI=${JWKS_URI}" \
+    "TURNKEY_WALLET_NAME=${TURNKEY_WALLET_NAME:-livepeer-remote-signer}" \
+    "TURNKEY_API_HOST=${TURNKEY_API_HOST:-api.turnkey.com}"
+  )
+  if [[ -n "${TURNKEY_ORG_ID:-}" ]]; then
+    signer_args+=("TURNKEY_ORG_ID=${TURNKEY_ORG_ID}")
+  fi
+  if [[ -n "${SIGNER_ETH_ADDR:-}" ]]; then
+    signer_args+=("SIGNER_ETH_ADDR=${SIGNER_ETH_ADDR}")
+  fi
+  set_kv pymthouse "${signer_args[@]}"
+  if [[ -n "${TURNKEY_API_PUBLIC_KEY:-}" ]]; then
+    # shellcheck disable=SC2086
+    railway_retry railway variable set "TURNKEY_API_PUBLIC_KEY=${TURNKEY_API_PUBLIC_KEY}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
+  fi
+  if [[ -n "${TURNKEY_API_PRIVATE_KEY:-}" ]]; then
+    # shellcheck disable=SC2086
+    railway_retry railway variable set "TURNKEY_API_PRIVATE_KEY=${TURNKEY_API_PRIVATE_KEY}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
+  fi
+  if [[ -n "${SIGNER_ETH_KEYSTORE_PASSWORD:-}" ]]; then
+    # shellcheck disable=SC2086
+    railway_retry railway variable set "SIGNER_ETH_KEYSTORE_PASSWORD=${SIGNER_ETH_KEYSTORE_PASSWORD}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
+  fi
   if [[ -n "${DATABASE_URL:-}" ]]; then
     # shellcheck disable=SC2086
     railway_retry railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null

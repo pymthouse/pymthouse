@@ -72,6 +72,58 @@ docker exec signer-dmz-smoke /usr/local/bin/livepeer -version
 
 On Railway, the image is built from the same Dockerfile; no local tag is required.
 
+## Turnkey Ephemeral Keystore Mode
+
+The `signer-dmz` image can bootstrap an ephemeral `/data/keystore` from Turnkey at boot using `/usr/local/bin/signer-turnkey-bootstrap`.
+
+- Activation is automatic: if all of `TURNKEY_ORG_ID`, `TURNKEY_API_PUBLIC_KEY`, and `TURNKEY_API_PRIVATE_KEY` are set, bootstrap runs.
+- If any of those are unset, startup falls back to existing path-based keystore behavior.
+- Bootstrap failures are fatal (bad creds, missing wallet/account, export/decrypt errors): container exits with logs.
+- After livepeer becomes ready, `/data/keystore/*` and `/data/.eth-password` are deleted.
+
+### Turnkey env vars
+
+| Variable | Required | Notes |
+|---|---|---|
+| `TURNKEY_ORG_ID` | yes (for Turnkey mode) | Turnkey organization ID |
+| `TURNKEY_API_PUBLIC_KEY` | yes (secret) | API public key (`02...`) |
+| `TURNKEY_API_PRIVATE_KEY` | yes (secret) | API private key |
+| `SIGNER_ETH_KEYSTORE_PASSWORD` | yes (secret) | Written to `/data/.eth-password` before livepeer starts |
+| `TURNKEY_WALLET_NAME` | no | Default `livepeer-remote-signer` |
+| `TURNKEY_API_HOST` | no | Default `api.turnkey.com` |
+| `SIGNER_ETH_ADDR` | no | Optional pin; otherwise first ETH account is used/created |
+
+### Local turnkey flow
+
+1. Create env file from template:
+
+```bash
+cp docker/signer-dmz/config/turnkey.env.example docker/signer-dmz/config/turnkey.env
+```
+
+2. Fill `TURNKEY_*` and `SIGNER_ETH_KEYSTORE_PASSWORD` values in `docker/signer-dmz/config/turnkey.env`.
+
+3. Build and run:
+
+```bash
+docker build --pull --no-cache -f docker/signer-dmz/Dockerfile -t pymthouse/signer-dmz:latest .
+docker rm -f signer-dmz-turnkey-test 2>/dev/null
+docker run -d --name signer-dmz-turnkey-test \
+  --env-file docker/signer-dmz/config/turnkey.env \
+  -e PORT=8080 -e NEXTAUTH_URL=http://localhost:3001 \
+  -v "$(pwd)/data/signer-turnkey:/data" \
+  --add-host=host.docker.internal:host-gateway \
+  pymthouse/signer-dmz:latest
+```
+
+4. Verify:
+
+```bash
+docker logs signer-dmz-turnkey-test 2>&1 | grep -E 'turnkey|keystore|bootstrap'
+curl -sf http://127.0.0.1:8080/healthz
+docker exec signer-dmz-turnkey-test ls /data/keystore  # expect empty after ready
+```
+
 ### Legacy: two-container stack (gateway + signer)
 
 Apache DMZ and go-livepeer run as separate containers (`gateway` target + `Dockerfile.signer`):

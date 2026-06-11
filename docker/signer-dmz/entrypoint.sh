@@ -40,6 +40,11 @@ print(urlunparse(u))
 fi
 export JWT_PEM_PATH="${JWT_PEM_PATH:-/run/jwt/jwks.pem}"
 
+TURNKEY_MODE=0
+if [ -n "${TURNKEY_ORG_ID:-}" ] && [ -n "${TURNKEY_API_PUBLIC_KEY:-}" ] && [ -n "${TURNKEY_API_PRIVATE_KEY:-}" ]; then
+  TURNKEY_MODE=1
+fi
+
 if [ -n "${SIGNER_UPSTREAM:-}" ]; then
   export SIGNER_HTTP_ADDR="${SIGNER_UPSTREAM}"
   # Derive the CLI address from SIGNER_UPSTREAM when not explicitly set, preserving scheme+host.
@@ -91,7 +96,19 @@ fi
 ) &
 
 if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
-  if [ ! -f /data/.eth-password ]; then
+  if [ "$TURNKEY_MODE" = "1" ]; then
+    if ! /usr/local/bin/signer-turnkey-bootstrap; then
+      echo "entrypoint: turnkey keystore bootstrap failed" >&2
+      exit 1
+    fi
+    _resolved_addr_file="${SIGNER_ADDRESS_OUT:-/run/signer-bootstrap/signer-eth-addr}"
+    if [ ! -s "$_resolved_addr_file" ]; then
+      echo "entrypoint: turnkey bootstrap did not write signer address to ${_resolved_addr_file}" >&2
+      exit 1
+    fi
+    SIGNER_ETH_ADDR="$(tr -d '[:space:]' <"$_resolved_addr_file")"
+    export SIGNER_ETH_ADDR
+  elif [ ! -f /data/.eth-password ]; then
     echo "" >/data/.eth-password
   fi
   ARGS="-remoteSigner -network=${SIGNER_NETWORK:-arbitrum-one-mainnet} -httpAddr=127.0.0.1:${SIGNER_PORT} -cliAddr=127.0.0.1:4935 -ethUrl=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc} -ethPassword=/data/.eth-password -datadir=/data -v=99"
@@ -136,6 +153,12 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
       wait "$LIVEPEER_PID" 2>/dev/null || true
     fi
     exit 1
+  fi
+  if [ "$TURNKEY_MODE" = "1" ]; then
+    if ! /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh; then
+      echo "entrypoint: failed to cleanup ephemeral keystore artifacts" >&2
+      exit 1
+    fi
   fi
 fi
 
