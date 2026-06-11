@@ -8,9 +8,8 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /data /usr/local/cuda/targets/x86_64-linux/lib
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data /usr/local/cuda/targets/x86_64-linux/lib
 
 COPY --from=livepeer-src /usr/local/bin/livepeer /usr/local/bin/livepeer
 COPY --from=livepeer-src /usr/local/lib/ /usr/local/lib/
