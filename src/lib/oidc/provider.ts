@@ -23,6 +23,13 @@ import * as jose from "jose";
 const KEY_ALGORITHM = "RS256";
 
 /**
+ * Grants that depend on a registered redirect_uri (RFC 6749 §3.1.2). All other
+ * grants — notably the Device Authorization Grant (RFC 8628) and Client
+ * Credentials — never use a redirect_uri.
+ */
+const REDIRECT_DEPENDENT_GRANTS = new Set(["authorization_code", "implicit"]);
+
+/**
  * Load JWKS from the `oidc_signing_keys` table.
  *
  * Ensures at least one active signing key exists so node-oidc-provider can
@@ -85,15 +92,28 @@ async function loadClients(): Promise<ClientMetadata[]> {
 
     const grantTypes = parseGrantTypes(row.grantTypes);
 
+    // Device Authorization (RFC 8628) and Client Credentials never use a
+    // redirect_uri, but node-oidc-provider rejects a client that advertises the
+    // `code` response type without one — which would make a device-flow-only
+    // client fail client authentication at BOTH the device and token endpoints.
+    // A client with no redirect_uri cannot complete a redirect-based flow
+    // anyway, so drop only the redirect-dependent grants for the provider rather
+    // than registering a fake redirect_uri. Adding a redirect_uri later
+    // transparently re-enables Authorization Code login for the same client.
+    const hasRedirectUris = redirectUris.length > 0;
+    const providerGrantTypes = hasRedirectUris
+      ? grantTypes
+      : grantTypes.filter((grant) => !REDIRECT_DEPENDENT_GRANTS.has(grant));
+
     const meta: ClientMetadata = {
       client_id: row.clientId,
       client_name: row.displayName,
       redirect_uris: redirectUris,
-      grant_types: grantTypes,
+      grant_types: providerGrantTypes,
       token_endpoint_auth_method: row.tokenEndpointAuthMethod as "none" | "client_secret_post" | "client_secret_basic",
       scope: normalizePublicAllowedScopes(row.allowedScopes, row.clientId),
     };
-    meta.response_types = grantTypes.includes("authorization_code") ? ["code"] : [];
+    meta.response_types = providerGrantTypes.includes("authorization_code") ? ["code"] : [];
 
     if (row.clientSecretHash) {
       meta.client_secret = row.clientSecretHash;
