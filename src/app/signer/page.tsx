@@ -20,7 +20,12 @@ import {
   getJwksUrlForLocalSignerDmzContainer,
 } from "@/lib/oidc/issuer-urls";
 import { resolveDmzHostPort } from "@/lib/signer-dmz-host-port";
-import { getSignerUrl, syncSignerStatus } from "@/lib/signer-proxy";
+import {
+  getSignerUrl,
+  getSignerUrlSource,
+  isManagedRemoteSigner,
+  syncSignerStatus,
+} from "@/lib/signer-proxy";
 
 function formatWei(wei: string | null): string {
   if (!wei || wei === "0") return "0 WEI";
@@ -80,14 +85,19 @@ export default async function SignerPage() {
   const oidcJwksUrl = getJwksUrlForLocalSignerDmzContainer();
   const dmzHostPort = resolveDmzHostPort(signer.signerPort);
   const effectiveSignerUrl = getSignerUrl(signer);
-  const signerUrlSource = signer.signerUrl
-    ? "saved"
-    : process.env.SIGNER_INTERNAL_URL
-      ? "env"
-      : "default";
+  const signerUrlSource = getSignerUrlSource(signer);
+  const managedRemote = isManagedRemoteSigner(signer);
 
   return (
     <DashboardLayout>
+      {managedRemote && (
+        <div className="mb-6 px-4 py-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-200 text-sm">
+          <span className="font-medium">Remote signer</span> — go-livepeer runs on{" "}
+          <code className="text-blue-100/90">{effectiveSignerUrl}</code>, not on
+          this host. Use <strong>Sync Status</strong> and live stats below; start/stop
+          and container logs require Railway (or your deployment dashboard).
+        </div>
+      )}
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-2">
           <h2 className="text-2xl font-bold tracking-tight">Signer Admin</h2>
@@ -117,9 +127,9 @@ export default async function SignerPage() {
             go-livepeer Remote Signer
           </h3>
           <p className="text-xs text-zinc-500 mt-0.5">
-            OIDC/JWKS match what the local signer-dmz container uses: same issuer
-            as DMZ tokens from this app; JWKS URL is rewritten for Docker (
-            <code className="text-zinc-400">host.docker.internal</code>).
+            {managedRemote
+              ? "OIDC/JWKS on the remote signer DMZ must match this app’s issuer (NEXTAUTH_URL). Configure ETH_RPC_URL and discovery on Railway."
+              : "OIDC/JWKS match what the local signer-dmz container uses: same issuer as DMZ tokens from this app; JWKS URL is rewritten for Docker (host.docker.internal)."}
           </p>
         </div>
         <div className="font-mono text-sm">
@@ -189,12 +199,18 @@ export default async function SignerPage() {
 
       {/* Control plane */}
       <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
-        <SignerControlPanel currentStatus={signer.status} />
+        <SignerControlPanel
+          currentStatus={signer.status}
+          managedRemote={managedRemote}
+        />
       </div>
 
       {/* Container logs */}
       <div className="border border-zinc-800 rounded-xl p-6 bg-zinc-900/30 mb-8">
-        <SignerLogs />
+        <SignerLogs
+          managedRemote={managedRemote}
+          signerBaseUrl={effectiveSignerUrl}
+        />
       </div>
 
       {/* pymthouse configuration */}
@@ -218,6 +234,7 @@ export default async function SignerPage() {
             oidcJwksUrl,
             effectiveSignerUrl,
             signerUrlSource,
+            managedRemote,
           }}
         />
       </div>

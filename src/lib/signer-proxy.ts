@@ -195,6 +195,44 @@ export function getClientSignerApiUrl(): string {
 // Legacy rows had signer_port=8081 (bare go-livepeer HTTP). That's now the
 // in-container port; publicly we hit Apache on 8080. Coerce so an un-upgraded
 // row still lands on the DMZ listener.
+export type SignerUrlSource = "env" | "saved" | "default";
+
+const LOCAL_SIGNER_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "host.docker.internal",
+  "::1",
+]);
+
+/** True when the signer HTTP base URL is not loopback (Railway, custom domain, etc.). */
+export function isRemoteSignerHttpUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return !LOCAL_SIGNER_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Signer runs outside this app's host (e.g. Railway). Local Docker control/logs
+ * and compose-only DB fields do not apply.
+ */
+export function isManagedRemoteSigner(
+  signer?: { signerUrl?: string | null } | null,
+): boolean {
+  return isRemoteSignerHttpUrl(getSignerUrl(signer));
+}
+
+/** Matches resolveSignerBaseUrl precedence (env → DB → localhost default). */
+export function getSignerUrlSource(
+  signer?: { signerUrl?: string | null } | null,
+): SignerUrlSource {
+  if (process.env.SIGNER_INTERNAL_URL?.trim()) return "env";
+  if (signer?.signerUrl?.trim()) return "saved";
+  return "default";
+}
+
 export function getSignerUrl(signer?: typeof signerConfig.$inferSelect | null): string {
   const testSignerUrl =
     process.env.NODE_ENV === "test"
