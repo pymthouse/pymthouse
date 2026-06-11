@@ -1,7 +1,7 @@
 # Apache + mod_authnz_jwt in front of go-livepeer (DMZ). Targets:
 #   gateway         — Apache only; set SIGNER_UPSTREAM (e.g. http://signer:8081) for docker compose.
 #   signer-dmz-local — local dev; livepeer copied from go-livepeer-remote-signer:local (see scripts/build-local-signer.sh).
-#   signer-dmz      — production; pinned CI binary from build.livepeer.live (Railway single service).
+#   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -149,26 +149,25 @@ ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
 
 EXPOSE 8080 8082
 
-# Production / Railway: pinned CI binary from build.livepeer.live (default final stage).
+# Production / Railway: livepeer from official Docker image (default final stage).
+FROM livepeer/go-livepeer:0.8.10-d909a4c3 AS livepeer-prod
+
 FROM gateway AS signer-dmz
 
 USER root
-# Source artifact: https://github.com/livepeer/go-livepeer/actions/runs/25226599716/artifacts/6796975695
-# Node reports: Livepeer Node Version 0.8.10-0a1919e0
-ARG LIVEPEER_COMMIT=0a1919e0c58986375df158433445563a45a04df8
-ARG LIVEPEER_SHA256=0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade
 
-RUN apt-get update && apt-get install -y --no-install-recommends wget && \
-    wget -q "https://build.livepeer.live/go-livepeer/${LIVEPEER_COMMIT}/livepeer-linux-amd64.tar.gz" -O livepeer-linux-amd64.tar.gz && \
-    echo "${LIVEPEER_SHA256}  livepeer-linux-amd64.tar.gz" | sha256sum -c - && \
-    tar -xzf livepeer-linux-amd64.tar.gz && \
-    mv livepeer-linux-amd64/livepeer /usr/local/bin/livepeer && \
-    chmod +x /usr/local/bin/livepeer && \
-    rm -rf livepeer-linux-amd64.tar.gz livepeer-linux-amd64 && \
-    apt-get purge -y --auto-remove wget && \
-    rm -rf /var/lib/apt/lists/*
+# go-livepeer links against CUDA NPP (libnppig, libnppicc, libnppc).
+RUN mkdir -p /usr/local/cuda/targets/x86_64-linux/lib
 
-# /data was created in the gateway stage and already chown'd; nothing more to do here.
+COPY --from=livepeer-prod /usr/local/bin/livepeer /usr/local/bin/livepeer
+COPY --from=livepeer-prod /usr/local/lib/ /usr/local/lib/
+COPY --from=livepeer-prod /usr/local/cuda/targets/x86_64-linux/lib/libnppc.so* /usr/local/cuda/targets/x86_64-linux/lib/
+COPY --from=livepeer-prod /usr/local/cuda/targets/x86_64-linux/lib/libnppig.so* /usr/local/cuda/targets/x86_64-linux/lib/
+COPY --from=livepeer-prod /usr/local/cuda/targets/x86_64-linux/lib/libnppicc.so* /usr/local/cuda/targets/x86_64-linux/lib/
+
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib:/usr/local/lib
+
+RUN chmod +x /usr/local/bin/livepeer && ldconfig
 
 USER pymthouse
 

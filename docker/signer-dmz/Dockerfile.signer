@@ -1,42 +1,34 @@
-# Dockerfile for deploying go-livepeer signer separately
-# This downloads the binary release instead of using the full Docker image
-# Smaller, faster, and more platform-compatible!
+# go-livepeer remote signer only (no Apache DMZ).
+# Copies livepeer + required CUDA NPP libs from the official image — do not wget
+# a bare binary into debian:slim; the binary links libnppig.so and other NPP libs.
+
+FROM livepeer/go-livepeer:0.8.10-d909a4c3 AS livepeer-src
 
 FROM debian:bookworm-slim
 
-# Install wget and ca-certificates for downloading the binary
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    wget \
-    ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data /usr/local/cuda/targets/x86_64-linux/lib
 
-# CI build (0.8.10-0a1919e0); mirrored from the same upload pipeline as GitHub Actions artifacts.
-ARG LIVEPEER_COMMIT=0a1919e0c58986375df158433445563a45a04df8
-ARG LIVEPEER_SHA256=0ba7b032a95bf1969b6983dfe065bc802105d982242e141840df422be1a6bade
+COPY --from=livepeer-src /usr/local/bin/livepeer /usr/local/bin/livepeer
+COPY --from=livepeer-src /usr/local/lib/ /usr/local/lib/
+COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppc.so* /usr/local/cuda/targets/x86_64-linux/lib/
+COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppig.so* /usr/local/cuda/targets/x86_64-linux/lib/
+COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppicc.so* /usr/local/cuda/targets/x86_64-linux/lib/
 
-# Download and extract livepeer binary
-RUN wget -q "https://build.livepeer.live/go-livepeer/${LIVEPEER_COMMIT}/livepeer-linux-amd64.tar.gz" -O livepeer-linux-amd64.tar.gz && \
-    echo "${LIVEPEER_SHA256}  livepeer-linux-amd64.tar.gz" | sha256sum -c - && \
-    tar -xzf livepeer-linux-amd64.tar.gz && \
-    mv livepeer-linux-amd64/livepeer /usr/local/bin/livepeer && \
-    chmod +x /usr/local/bin/livepeer && \
-    rm -rf livepeer-linux-amd64.tar.gz livepeer-linux-amd64
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib:/usr/local/lib
 
-# Create data directory
-RUN mkdir -p /data
+RUN chmod +x /usr/local/bin/livepeer && ldconfig
 
-# Environment variables (can be overridden at runtime)
 ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081
 ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
 ENV SIGNER_REMOTE_DISCOVERY=0
 
-# Expose ports
 EXPOSE 8081 4935
 
-# Create password file and start livepeer
 CMD /bin/sh -c ' \
   if [ ! -f /data/.eth-password ]; then \
     echo "" > /data/.eth-password; \

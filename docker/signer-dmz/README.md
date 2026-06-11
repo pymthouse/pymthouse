@@ -4,32 +4,92 @@ Everything needed to run the go-livepeer signer with an optional **Apache + mod_
 
 | File / directory | Purpose |
 |------------------|---------|
-| `Dockerfile.signer` | Minimal Debian image that downloads go-livepeer (Railway/Render-style single-service signer). |
-| `Dockerfile` | Multi-stage build: Apache gateway (`gateway` target) and combined Apache + livepeer (`signer-dmz` target). |
+| `Dockerfile.signer` | go-livepeer only, no Apache DMZ (legacy two-container stack; not for public deploy). |
+| `Dockerfile` | Multi-stage: `gateway` (Apache only), `signer-dmz-local` (local dev), `signer-dmz` (production). |
 | `docker-compose.yml` | Local two-container stack: signer + gateway (JWT DMZ). |
 | `apache/` | `envsubst` templates for Apache (`ports.conf`, `signer-dmz` vhost). |
 | `entrypoint.sh` | JWKS → PEM sync, optional livepeer spawn, Apache foreground. |
 | `scripts/jwks_to_pem.py` | Fetches OIDC JWKS and writes one RSA public key as PEM for `mod_authnz_jwt`. |
 
-**Compose (from repo root):**
+## Build commands (from repo root)
+
+| Image | Dockerfile | go-livepeer source | Use |
+|-------|------------|--------------------|-----|
+| `pymthouse/signer-dmz:local` | `Dockerfile` → `signer-dmz-local` | `../go-livepeer` via `lpclearinghouse` | **Local dev** with PymtHouse (`docker-compose.yml`) |
+| `pymthouse/signer-dmz:latest` | `Dockerfile` → `signer-dmz` (default) | `livepeer/go-livepeer:0.8.10-d909a4c3` | **Production** (Railway / Render) and prod smoke tests |
+| `pymthouse-signer:local` | `Dockerfile.signer` | `livepeer/go-livepeer:0.8.10-d909a4c3` | **Livepeer only** (no Apache; not for public deploy) |
+
+### Force rebuild
+
+Use `--pull --no-cache` when bumping the pinned `livepeer/go-livepeer` tag or Docker is serving a stale cached layer:
 
 ```bash
-# Builds go-livepeer from ../go-livepeer (lpclearinghouse build-remote-signer.sh), then signer-dmz.
-./scripts/build-local-signer.sh
+# Production DMZ (Apache + livepeer)
+docker build --pull --no-cache -f docker/signer-dmz/Dockerfile -t pymthouse/signer-dmz:latest .
+
+# Livepeer only (no Apache)
+docker build --pull --no-cache -f docker/signer-dmz/Dockerfile.signer -t pymthouse-signer:local .
+
+# Verify version after rebuild
+docker run --rm --entrypoint /usr/local/bin/livepeer pymthouse-signer:local -version
+docker run --rm --entrypoint /usr/local/bin/livepeer pymthouse/signer-dmz:latest -version
+# expect: Livepeer Node Version: 0.8.10-d909a4c3
+```
+
+### Local dev
+
+Builds go-livepeer from your `../go-livepeer` checkout, layers it into the Apache DMZ image, then starts the stack:
+
+```bash
+./scripts/build-local-signer.sh          # → pymthouse/signer-dmz:local
 docker compose up -d signer-dmz
+curl -sf http://127.0.0.1:8080/healthz  # expect: OK
 ```
 
-**Production / Railway** uses the default `signer-dmz` target (pinned CI binary from build.livepeer.live).
+`build-local-signer.sh` sets `SIGNER_DMZ_IMAGE` (default `pymthouse/signer-dmz:local`). Override with `SIGNER_DMZ_IMAGE=…` if needed.
 
-**Compose (legacy two-container stack):**
+Requires the Next app running so JWKS sync works (`NEXTAUTH_URL` in `docker-compose.yml`, default `http://localhost:3001`).
 
-**Build the standalone signer image (from repo root):**
+### Production build (smoke test)
+
+Same Dockerfile Railway uses (`railway.json`, `render.yaml`). Default final stage is `signer-dmz`:
 
 ```bash
-docker build -f docker/signer-dmz/Dockerfile.signer -t pymthouse-signer .
+docker build -f docker/signer-dmz/Dockerfile -t pymthouse/signer-dmz:latest .
+
+docker rm -f signer-dmz-smoke 2>/dev/null
+docker run -d --name signer-dmz-smoke \
+  -p 127.0.0.1:8080:8080 \
+  -e PORT=8080 \
+  -e NEXTAUTH_URL=http://localhost:3001 \
+  -v "$(pwd)/data/signer-dmz:/data" \
+  --add-host=host.docker.internal:host-gateway \
+  pymthouse/signer-dmz:latest
+
+curl -sf http://127.0.0.1:8080/healthz   # expect: OK (Next app must be up for JWKS)
+docker exec signer-dmz-smoke /usr/local/bin/livepeer -version
 ```
 
-Platform config (`railway.json`, `render.yaml`) builds `docker/signer-dmz/Dockerfile` (final image: Apache JWT DMZ + livepeer). For **livepeer only** (no Apache), use `Dockerfile.signer` instead. See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md) and [docs/signer-deployment-options.md](../../docs/signer-deployment-options.md).
+On Railway, the image is built from the same Dockerfile; no local tag is required.
+
+### Legacy: two-container stack (gateway + signer)
+
+Apache DMZ and go-livepeer run as separate containers (`gateway` target + `Dockerfile.signer`):
+
+```bash
+docker compose -f docker/signer-dmz/docker-compose.yml up --build
+```
+
+### Not for production: livepeer only (no Apache JWT gate)
+
+`Dockerfile.signer` is a minimal go-livepeer image **without** the DMZ. Do not expose it publicly.
+
+```bash
+docker build --pull --no-cache -f docker/signer-dmz/Dockerfile.signer -t pymthouse-signer:local .
+docker run --rm --entrypoint /usr/local/bin/livepeer pymthouse-signer:local -version
+```
+
+See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md) and [docs/signer-deployment-options.md](../../docs/signer-deployment-options.md).
 
 ## Host publish (local compose)
 
