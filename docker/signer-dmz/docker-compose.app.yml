@@ -1,0 +1,15 @@
+# Public signer DMZ: port 8091, keystore copy from primary, pymthouse.com OIDC/JWKS.
+#
+#   ./docker/signer-dmz/scripts/init-app-data.sh
+#   docker compose -f docker-compose.yml -f docker/signer-dmz/docker-compose.app.yml \
+#     --env-file docker/signer-dmz/config/app.env -p pymthouse-signer-app up -d --build
+#
+# Public: https://signer.pymthouse.com (host Apache → 127.0.0.1:8091)
+# App env: SIGNER_INTERNAL_URL=https://signer.pymthouse.com
+#         SIGNER_CLI_URL=https://signer.pymthouse.com/__signer_cli
+
+services:
+  signer-dmz:
+    container_name: pymthouse-signer-dmz-app
+    volumes:
+      - ${SIGNER_DATA_DIR:-./data-app}:/data

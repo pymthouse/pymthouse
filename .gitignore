@@ -43,6 +43,7 @@ next-env.d.ts
 # database
 /data/
 /data-staging/
+/data-app/
 *.db
 *.db-wal
 *.db-shm
