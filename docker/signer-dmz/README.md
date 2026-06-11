@@ -92,6 +92,30 @@ The `signer-dmz` image can bootstrap an ephemeral `/data/keystore` from Turnkey 
 | `TURNKEY_WALLET_NAME` | no | Default `livepeer-remote-signer` |
 | `TURNKEY_API_HOST` | no | Default `api.turnkey.com` |
 | `SIGNER_ETH_ADDR` | no | Optional pin; otherwise first ETH account is used/created |
+| `SIGNER_DMZ_DISABLE_AUTH` | no | Set `1` to skip JWKS sync and Apache JWT checks (local dev only) |
+
+### Local dev without JWT (`SIGNER_DMZ_DISABLE_AUTH=1`)
+
+Use the full `signer-dmz` image (Turnkey bootstrap, ephemeral keystore cleanup, etc.) but **without** requiring PymtHouse JWKS or bearer tokens on signing/CLI routes. **Do not enable on Railway or any public host.**
+
+```bash
+docker run -d --name signer-dmz-noauth \
+  --env-file docker/signer-dmz/config/turnkey.env \
+  -e SIGNER_DMZ_DISABLE_AUTH=1 \
+  -p 127.0.0.1:8080:8080 \
+  -p 127.0.0.1:8082:8082 \
+  -v /tmp/signer-turnkey-data:/data \
+  pymthouse/signer-dmz:latest
+
+curl -sf http://127.0.0.1:8080/healthz
+curl -sf -X POST http://127.0.0.1:8080/sign-orchestrator-info \
+  -H 'Content-Type: application/json' -d '{}'
+# livepeer-cli uses CLI_PORT (8082) — same paths as a bare node, no /__signer_cli prefix:
+curl -sf http://127.0.0.1:8082/contractAddresses
+livepeer_cli -http 8082
+```
+
+`NEXTAUTH_URL` / `JWKS_URI` are not required when auth is disabled. Startup logs include `SIGNER_DMZ_DISABLE_AUTH=1` and `JWT_VERIFICATION=disabled`.
 
 ### Local turnkey flow
 
@@ -111,6 +135,7 @@ docker rm -f signer-dmz-turnkey-test 2>/dev/null
 docker run -d --name signer-dmz-turnkey-test \
   --env-file docker/signer-dmz/config/turnkey.env \
   -e PORT=8080 -e NEXTAUTH_URL=http://localhost:3001 \
+  -p 127.0.0.1:8080:8080 -p 127.0.0.1:8082:8082 \
   -v "$(pwd)/data/signer-turnkey:/data" \
   --add-host=host.docker.internal:host-gateway \
   pymthouse/signer-dmz:latest
@@ -163,7 +188,8 @@ The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, pro
    Point the primary Railway hostname at **Apache’s port**, i.e. whatever **`PORT`** is at runtime (Railway usually sets **`PORT=8080`**). Do **not** set the edge to **8081** or **4935**; that produces **502**s because nothing listens on all interfaces there.
 
 2. **CLI from the internet**  
-   You can use **one** public URL on **`PORT`** only: Apache already proxies **`/__signer_cli/`** on that same listener (see `apache/signer-dmz.conf.in`). Alternatively, expose **`CLI_PORT` (8082)** with a second hostname if you want the dedicated CLI vhost.
+   **Local / livepeer-cli:** publish **`CLI_PORT` (8082)** — Apache proxies livepeer-cli routes at **`/`** (`/contractAddresses`, `/ethAddr`, …) with no `/__signer_cli` prefix. Run `livepeer_cli -http 8082`.  
+   **Single-port (Railway):** use **`/__signer_cli/`** on **`PORT`** (see `apache/signer-dmz.conf.in`), or expose **`CLI_PORT`** on a second hostname.
 
 3. **`/__signer_cli` and PymtHouse — not automatic**  
    Apache serves **`https://<your-dmz-host>/__signer_cli`** on the **same** port as **`SIGNER_INTERNAL_URL`** (no extra path needed in `SIGNER_INTERNAL_URL`). The Next app **does not** infer that URL: **`getSignerCliUrl()`** uses **`SIGNER_CLI_URL`** if set, otherwise defaults to **`http://127.0.0.1:8080/__signer_cli`** (local compose’s single published port). For Railway single-port DMZ, set explicitly, for example:  
@@ -177,7 +203,7 @@ The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, pro
 5. **Health check**  
    Use **`GET /healthz`** (200, body `OK`) from the public URL.
 
-The production image **`EXPOSE`s only `8080`** (Apache). Local **`signer-dmz-local`** may also expose **`8082`** when `SIGNER_DMZ_ENABLE_CLI_LISTENER=1`. Railway health checks use **`GET /healthz`** on **`$PORT`** (see root `railway.json`).
+The image **`EXPOSE`s `8080`** (signing) and **`8082`** (CLI). Set **`SIGNER_DMZ_ENABLE_CLI_LISTENER=0`** to disable the CLI listener (Railway single-port only). Railway health checks use **`GET /healthz`** on **`$PORT`** (see root `railway.json`).
 
 ## Troubleshooting DMZ `401` (HTML body from PymtHouse `/api/signer/*`)
 
