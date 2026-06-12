@@ -54,6 +54,7 @@ async function buildKonnectRequest(request: Request): Promise<Request> {
     request.method !== "HEAD" &&
     contentType.includes("application/json")
   ) {
+    const reqClone = request.clone();
     try {
       const json = await request.json();
       const body = rewriteKonnectRequestBody(rewritten.pathname, request.method, json);
@@ -71,7 +72,7 @@ async function buildKonnectRequest(request: Request): Promise<Request> {
         referrerPolicy: request.referrerPolicy,
       });
     } catch {
-      // Fall through with original body when JSON parsing fails.
+      return new Request(rewritten.toString(), reqClone);
     }
   }
 

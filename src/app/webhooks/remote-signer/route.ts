@@ -44,7 +44,7 @@ export async function POST(request: Request): Promise<Response> {
   const webhookSecret = process.env.WEBHOOK_SECRET?.trim() || "";
   if (!webhookSecret) {
     return Response.json(
-      { status: 500, reason: "missing WEBHOOK_SECRET" },
+      { status: 500, reason: "server misconfiguration" },
       { status: 500 },
     );
   }

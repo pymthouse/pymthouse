@@ -3,17 +3,25 @@ export function camelToSnakeKey(key: string): string {
   return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
-export function deepCamelToSnake(value: unknown): unknown {
+export function deepCamelToSnake(value: unknown, visited = new WeakSet<object>()): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => deepCamelToSnake(item));
+    if (visited.has(value)) {
+      return null;
+    }
+    visited.add(value);
+    return value.map((item) => deepCamelToSnake(item, visited));
   }
   if (value && typeof value === "object") {
+    if (visited.has(value)) {
+      return null;
+    }
+    visited.add(value);
     const out: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
       if (nested === undefined) {
         continue;
       }
-      out[camelToSnakeKey(key)] = deepCamelToSnake(nested);
+      out[camelToSnakeKey(key)] = deepCamelToSnake(nested, visited);
     }
     return out;
   }
@@ -59,7 +67,6 @@ function normalizeKonnectPlanPhases(phases: unknown): unknown {
             price.payment_term = price.paymentTerm;
             delete price.paymentTerm;
           }
-          delete price.paymentTerm;
           rateCard.price = price;
         }
 

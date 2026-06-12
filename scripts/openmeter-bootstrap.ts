@@ -36,7 +36,7 @@ async function waitForKonnectHealthy(
 ): Promise<void> {
   for (let i = 0; i < attempts; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/meters`, {
+      const resp = await fetch(`${baseUrl}/healthz/ready`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (resp.ok) {
@@ -47,7 +47,7 @@ async function waitForKonnectHealthy(
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  throw new Error(`Konnect Metering & Billing not reachable at ${baseUrl}`);
+  throw new Error(`Konnect Metering & Billing not ready at ${baseUrl}/healthz/ready`);
 }
 
 async function main() {

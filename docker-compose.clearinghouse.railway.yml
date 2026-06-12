@@ -69,7 +69,7 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
       # Explicit JWKS URL for in-container fetch (loopback in NEXTAUTH_URL is not reachable).
-      JWKS_URI: ${JWKS_URI:-${SIGNER_DMZ_JWKS_URL:-http://host.docker.internal:3001/api/v1/oidc/jwks}}
+      JWKS_URI: ${JWKS_URI:-${SIGNER_DMZ_JWKS_URL:-}}
       JWKS_TLS_INSECURE: ${JWKS_TLS_INSECURE:-}
       REMOTE_SIGNER_WEBHOOK_URL: ${REMOTE_SIGNER_WEBHOOK_URL:-http://host.docker.internal:3001/webhooks/remote-signer}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}

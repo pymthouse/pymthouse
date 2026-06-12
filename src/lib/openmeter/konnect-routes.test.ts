@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { unwrapOpenMeterListResult } from "./konnect-catalog";
 import {
   buildKonnectUsageRateCard,
+  deepCamelToSnake,
   rewriteKonnectPlanRequestBody,
 } from "./konnect-plan-body";
 import {
@@ -58,6 +59,12 @@ test("unwrapOpenMeterListResult accepts arrays and Konnect page envelopes", () =
   assert.deepEqual(unwrapOpenMeterListResult({ data: [{ id: "2" }] }), [{ id: "2" }]);
   assert.deepEqual(unwrapOpenMeterListResult({ items: [{ id: "3" }] }), [{ id: "3" }]);
   assert.deepEqual(unwrapOpenMeterListResult({}), []);
+});
+
+test("deepCamelToSnake handles circular references", () => {
+  const circular: Record<string, unknown> = { a: 1 };
+  circular.self = circular;
+  assert.deepEqual(deepCamelToSnake(circular), { a: 1, self: null });
 });
 
 test("rewriteKonnectPlanRequestBody maps plan phases to Konnect snake_case", () => {
