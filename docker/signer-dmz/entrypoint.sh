@@ -44,6 +44,7 @@ _disable_auth_raw="${SIGNER_DMZ_DISABLE_AUTH:-0}"
 SIGNER_DMZ_DISABLE_AUTH=0
 case "$_disable_auth_raw" in
   1 | true | TRUE | yes | YES) SIGNER_DMZ_DISABLE_AUTH=1 ;;
+  *) SIGNER_DMZ_DISABLE_AUTH=0 ;;
 esac
 export SIGNER_DMZ_DISABLE_AUTH
 if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
