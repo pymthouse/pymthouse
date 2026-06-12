@@ -1,0 +1,54 @@
+name: Deploy Railway preview stack
+
+# Non-main branches (including feat/*) deploy the signer DMZ to Railway preview.
+# main → production via deploy-railway-production.yml.
+#
+# Branch filters live here — railway.json only controls build/deploy settings and
+# watchPatterns (file paths), not which git branches trigger a deploy.
+#
+# Preview env vars are managed in the Railway dashboard (this workflow does not
+# run railway-apply-stack-env.sh, unlike production).
+#
+# Enable with repository variable:
+#   RAILWAY_PREVIEW_AUTO_DEPLOY=true
+#
+# Required secret: RAILWAY_API_TOKEN (same account token as production deploy)
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - "docker/signer-dmz/**"
+      - "deploy/pymthouse/**"
+      - "scripts/jwks_to_pem.py"
+      - "scripts/cleanup-ephemeral-keystore.sh"
+      - "scripts/railway-deploy-signer.sh"
+      - "scripts/lib/railway-auth.sh"
+      - "railway.json"
+      - ".github/workflows/deploy-railway-preview.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-railway-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: vars.RAILWAY_PREVIEW_AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_ENVIRONMENT: preview
+      RAILWAY_PROJECT_ID: dab233aa-dd5f-429d-8cc4-9042e8735e2b
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli@latest
+
+      - name: Deploy signer DMZ to preview
+        run: bash scripts/railway-deploy-signer.sh pymthouse preview

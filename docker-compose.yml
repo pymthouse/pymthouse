@@ -54,7 +54,6 @@ services:
       - JWKS_URI=${JWKS_URI:-}
       # Set to 1 when JWKS is HTTPS with a self-signed / corporate CA (local dev).
       - JWKS_TLS_INSECURE=${JWKS_TLS_INSECURE:-}
-      - REMOTE_SIGNER_USAGE_IDENTITY_MODE=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { users } from "@/db/schema";
+import { signerConfig, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authenticateRequest, hasScope } from "@/lib/auth";
 import { spawn } from "child_process";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "@/lib/signer-local-compose";
+import { isManagedRemoteSigner } from "@/lib/signer-proxy";
 
 const DEFAULT_TAIL = 50;
 const MAX_TAIL = 1000;
@@ -22,6 +23,22 @@ export async function GET(request: NextRequest) {
   }
 
   const responseTail = parseTail(request.nextUrl.searchParams.get("tail"));
+
+  const signerRows = await db
+    .select()
+    .from(signerConfig)
+    .where(eq(signerConfig.id, "default"))
+    .limit(1);
+  if (isManagedRemoteSigner(signerRows[0])) {
+    return NextResponse.json({
+      lines: [
+        "Container logs are only available for a local Docker signer.",
+        "Use your deployment provider (e.g. Railway) to view remote signer logs.",
+      ],
+      count: 2,
+      remote: true,
+    });
+  }
 
   try {
     const { stdout, stderr } = await getSignerLogs();

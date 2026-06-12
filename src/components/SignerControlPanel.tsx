@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 
 interface SignerControlPanelProps {
   currentStatus: string;
+  managedRemote?: boolean;
 }
 
 export default function SignerControlPanel({
   currentStatus,
+  managedRemote = false,
 }: SignerControlPanelProps) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
@@ -52,8 +54,14 @@ export default function SignerControlPanel({
     <div className="space-y-4">
       <h3 className="font-semibold text-zinc-200">Control Plane</h3>
 
+      {managedRemote && (
+        <p className="text-xs text-zinc-500">
+          Start, stop, and restart use local Docker and are unavailable on Vercel.
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-3">
-        {!isRunning && (
+        {!managedRemote && !isRunning && (
           <button
             onClick={() => doAction("start")}
             disabled={!!loading}
@@ -63,7 +71,7 @@ export default function SignerControlPanel({
           </button>
         )}
 
-        {isRunning && (
+        {!managedRemote && isRunning && (
           <button
             onClick={() => doAction("stop")}
             disabled={!!loading}
@@ -73,13 +81,15 @@ export default function SignerControlPanel({
           </button>
         )}
 
-        <button
-          onClick={() => doAction("restart")}
-          disabled={!!loading}
-          className="px-4 py-2 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-lg text-sm font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
-        >
-          {loading === "restart" ? "Restarting..." : "Restart"}
-        </button>
+        {!managedRemote && (
+          <button
+            onClick={() => doAction("restart")}
+            disabled={!!loading}
+            className="px-4 py-2 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-lg text-sm font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+          >
+            {loading === "restart" ? "Restarting..." : "Restart"}
+          </button>
+        )}
 
         <button
           onClick={() => doAction("sync")}

@@ -101,16 +101,50 @@ Redeploy Vercel. Usage, balance, and allowances return **503** without `OPENMETE
 
 Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMeter directly.
 
-## 8. Signer (unchanged)
+## 8. Signer (`pymthouse` Railway service)
 
-Keep the signer on its **own** Railway service ([`railway.json`](../railway.json) → `docker/signer-dmz/Dockerfile`):
+The **`pymthouse`** service runs the signer DMZ ([`deploy/pymthouse/railway.json`](../deploy/pymthouse/railway.json) → `docker/signer-dmz/Dockerfile`). Point the **Vercel** app at its public domain:
 
 ```env
-SIGNER_INTERNAL_URL=https://your-signer.up.railway.app
-SIGNER_CLI_URL=https://your-signer.up.railway.app/__signer_cli
+SIGNER_INTERNAL_URL=https://your-pymthouse.up.railway.app
+SIGNER_CLI_URL=https://your-pymthouse.up.railway.app/__signer_cli
 ```
 
 Signed-ticket metering: signer → PymtHouse ingest → OpenMeter (async). The signer container does **not** need `OPENMETER_URL`.
+
+### Turnkey bootstrap on Railway
+
+Ephemeral keystore export activates when **all** of these are set on the **`pymthouse`** service:
+
+| Variable | Secret? | Notes |
+|----------|---------|--------|
+| `TURNKEY_ORG_ID` | yes (CI) | Turnkey organization ID |
+| `TURNKEY_API_PUBLIC_KEY` | yes | API key public half |
+| `TURNKEY_API_PRIVATE_KEY` | yes | API key private half |
+| `SIGNER_ETH_KEYSTORE_PASSWORD` | yes | Ephemeral `.eth-password` for livepeer startup |
+| `TURNKEY_WALLET_NAME` | no | Default `livepeer-remote-signer` |
+| `SIGNER_ETH_ADDR` | no | Optional pin to a specific wallet account |
+
+Also applied by [`scripts/railway-apply-stack-env.sh`](../scripts/railway-apply-stack-env.sh): `NEXTAUTH_URL`, derived `OIDC_ISSUER` / `JWKS_URI`, `SIGNER_DMZ_ENABLE_CLI_LISTENER=0` (single Railway port), `ETH_RPC_URL`, `SIGNER_NETWORK`.
+
+**GitHub Actions (production):** add the four Turnkey secrets to the repo; [`deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) passes them into `railway-apply-stack-env.sh`. Template: [`config/railway/production.env.example`](../config/railway/production.env.example).
+
+**Manual:**
+
+```bash
+export RAILWAY_API_TOKEN=...
+export RAILWAY_ENVIRONMENT=production
+export OPENMETER_POSTGRES_PASSWORD=...
+export NEXTAUTH_URL=https://pymthouse.com
+export TURNKEY_ORG_ID=...
+export TURNKEY_API_PUBLIC_KEY=...
+export TURNKEY_API_PRIVATE_KEY=...
+export SIGNER_ETH_KEYSTORE_PASSWORD=...
+bash scripts/railway-apply-stack-env.sh
+bash scripts/railway-deploy-stack.sh production
+```
+
+Turnkey org policy must allow non-interactive `EXPORT_WALLET_ACCOUNT` for the API key. Attach a **volume** at `/data` for livepeer datadir persistence (keystore is ephemeral and deleted after boot).
 
 ## Sizing (starting point)
 
@@ -153,6 +187,27 @@ The **PymtHouse** Railway project uses two environments with the **same eight se
 3. Generate public domains on **`openmeter`** and **`pymthouse`** in production.
 4. Set production secrets (use **distinct** passwords from preview). Template: [`config/railway/production.env.example`](../config/railway/production.env.example).
 
+### CI deploy (non-main → preview)
+
+Enable repository variable **`RAILWAY_PREVIEW_AUTO_DEPLOY=true`**.
+
+Workflow: [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) on push to any branch except `main` (including `feat/*`):
+
+1. `scripts/railway-deploy-signer.sh pymthouse preview` — uploads the signer DMZ image from the pushed commit
+
+Preview env vars are **not** overwritten by CI (configure in the Railway dashboard or run `railway-apply-stack-env.sh` locally with `RAILWAY_ENVIRONMENT=preview`). Disable native GitHub autodeploy on preview `pymthouse` if you rely on this workflow, so pushes do not double-deploy.
+
+**Required GitHub secret:** `RAILWAY_API_TOKEN` (same account token as production).
+
+Manual preview deploy from your current branch:
+
+```bash
+pnpm railway:preview:deploy
+# or: bash scripts/railway-deploy-signer.sh pymthouse preview
+```
+
+Full preview stack (OpenMeter + signer): `bash scripts/railway-deploy-stack.sh preview`.
+
 ### CI deploy (main → production)
 
 Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`**.
@@ -165,6 +220,8 @@ Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflo
 **Required GitHub secrets:** `RAILWAY_API_TOKEN` (Railway **Account → Tokens**, workspace-scoped), `OPENMETER_POSTGRES_PASSWORD` (production value). Optional: `RAILWAY_TOKEN` (project **Settings → Tokens**, production environment) instead of the account token.
 
 **Recommended:** `OPENMETER_API_KEY`, `OPENMETER_URL` (production OpenMeter URL for bootstrap), `RAILWAY_PRODUCTION_DATABASE_URL`, `RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER`, `RAILWAY_PRODUCTION_NEXTAUTH_SECRET` for the signer service.
+
+**Turnkey bootstrap (optional, all four together):** `TURNKEY_ORG_ID`, `TURNKEY_API_PUBLIC_KEY`, `TURNKEY_API_PRIVATE_KEY`, `SIGNER_ETH_KEYSTORE_PASSWORD`. Optional vars: `TURNKEY_WALLET_NAME`, `SIGNER_ETH_ADDR`.
 
 **Optional repository variables:**
 

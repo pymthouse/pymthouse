@@ -13,6 +13,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck source=lib/railway-auth.sh
 source "$ROOT/scripts/lib/railway-auth.sh"
+# shellcheck source=lib/railway-signer-env.sh
+source "$ROOT/scripts/lib/railway-signer-env.sh"
 
 ENV="${RAILWAY_ENVIRONMENT:-production}"
 PROJECT_ID="$(railway_default_project_id)"
@@ -97,33 +99,8 @@ for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
   set_kv "$svc" "${args[@]}"
 done
 
-# Signer DMZ (pymthouse service) — OIDC URLs are derived from NEXTAUTH_URL so
-# production stays aligned with Vercel (pymthouse.com) without a separate issuer var.
-NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
-NEXTAUTH_URL="${NEXTAUTH_URL%/}"
-if [[ -n "$NEXTAUTH_URL" ]]; then
-  ISSUER="${NEXTAUTH_URL}/api/v1/oidc"
-  JWKS_URI="${NEXTAUTH_URL}/api/v1/oidc/jwks"
-  set_kv pymthouse \
-    "SIGNER_NETWORK=${SIGNER_NETWORK:-arbitrum-one-mainnet}" \
-    "ETH_RPC_URL=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}" \
-    "NEXTAUTH_URL=${NEXTAUTH_URL}" \
-    "OIDC_ISSUER=${ISSUER}" \
-    "OIDC_AUDIENCE=${OIDC_AUDIENCE:-$ISSUER}" \
-    "JWKS_URI=${JWKS_URI}"
-  if [[ -n "${DATABASE_URL:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "DATABASE_URL=${DATABASE_URL}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${AUTH_TOKEN_PEPPER:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "AUTH_TOKEN_PEPPER=${AUTH_TOKEN_PEPPER}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  if [[ -n "${NEXTAUTH_SECRET:-}" ]]; then
-    # shellcheck disable=SC2086
-    railway_retry railway variable set "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" --service pymthouse $PE_FLAGS --skip-deploys >/dev/null
-  fi
-  echo "  pymthouse: NEXTAUTH_URL=${NEXTAUTH_URL} OIDC_ISSUER=${ISSUER} (+ optional DB/OIDC secrets)"
-fi
+# Signer DMZ (pymthouse service). For signer-only updates use scripts/railway-apply-signer-env.sh.
+export NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
+railway_apply_signer_env pymthouse "$PE_FLAGS"
 
 echo "Done. Run scripts/railway-deploy-stack.sh $ENV to deploy."

@@ -11,9 +11,17 @@ function parseTailOption(value: string): TailOption {
   return TAIL_OPTIONS.includes(parsed as TailOption) ? (parsed as TailOption) : 50;
 }
 
-export default function SignerLogs() {
+interface SignerLogsProps {
+  managedRemote?: boolean;
+  signerBaseUrl?: string;
+}
+
+export default function SignerLogs({
+  managedRemote = false,
+  signerBaseUrl = "",
+}: Readonly<SignerLogsProps>) {
   const [lines, setLines] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!managedRemote);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [tail, setTail] = useState<TailOption>(50);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -34,16 +42,17 @@ export default function SignerLogs() {
   }, [tail]);
 
   useEffect(() => {
+    if (managedRemote) return;
     fetchLogs();
-  }, [fetchLogs]);
+  }, [fetchLogs, managedRemote]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (managedRemote || !autoRefresh) return;
     const interval = setInterval(() => {
       void fetchLogs();
     }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [autoRefresh, fetchLogs]);
+  }, [autoRefresh, fetchLogs, managedRemote]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -59,6 +68,24 @@ export default function SignerLogs() {
     if (line.startsWith("I0")) return "text-zinc-400";
     if (line.startsWith("*") || line.startsWith("|")) return "text-zinc-500";
     return "text-zinc-400";
+  }
+
+  if (managedRemote) {
+    return (
+      <div>
+        <h3 className="font-semibold text-zinc-200 mb-2">Container Logs</h3>
+        <p className="text-sm text-zinc-500">
+          Logs are not available from this app when the signer runs remotely.
+          Open your deployment provider (e.g. Railway → <code className="text-zinc-400">pymthouse</code>{" "}
+          service → Deployments → View logs).
+        </p>
+        {signerBaseUrl && (
+          <p className="text-xs text-zinc-600 mt-2 font-mono break-all">
+            Signer: {signerBaseUrl}
+          </p>
+        )}
+      </div>
+    );
   }
 
   return (

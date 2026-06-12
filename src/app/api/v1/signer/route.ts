@@ -5,7 +5,7 @@ import { db } from "@/db/index";
 import { signerConfig, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authenticateRequest, hasScope } from "@/lib/auth";
-import { syncSignerStatus } from "@/lib/signer-proxy";
+import { isManagedRemoteSigner, syncSignerStatus } from "@/lib/signer-proxy";
 
 const SUPPORTED_NETWORK = "arbitrum-one-mainnet";
 
@@ -177,9 +177,27 @@ export async function PATCH(request: NextRequest) {
     .limit(1);
   const updated = updatedRows[0];
 
+  const remote = isManagedRemoteSigner(updated);
+  const localComposeTouched =
+    body.ethRpcUrl !== undefined ||
+    body.signerPort !== undefined ||
+    body.ethAcctAddr !== undefined ||
+    body.remoteDiscovery !== undefined ||
+    body.orchWebhookUrl !== undefined ||
+    body.liveAICapReportInterval !== undefined;
+
+  let message = "Config updated.";
+  if (remote) {
+    message = localComposeTouched
+      ? "Platform settings saved. Signer process settings (RPC, port, discovery) must be changed on the remote host."
+      : "Platform settings saved.";
+  } else if (localComposeTouched) {
+    message = "Config updated. Restart the signer for changes to take effect.";
+  }
+
   return NextResponse.json({
     signer: updated,
-    message: "Config updated. Restart the signer for changes to take effect.",
+    message,
   });
 }
 
