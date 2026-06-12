@@ -20,7 +20,6 @@ railway_apply_signer_env() {
     "OIDC_AUDIENCE=${audience}"
     "JWKS_URI=${jwks_uri}"
     "SIGNER_DMZ_ENABLE_CLI_LISTENER=${SIGNER_DMZ_ENABLE_CLI_LISTENER:-0}"
-    "REMOTE_SIGNER_USAGE_IDENTITY_MODE=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}"
     "TURNKEY_WALLET_NAME=${TURNKEY_WALLET_NAME:-livepeer-remote-signer}"
     "TURNKEY_API_HOST=${TURNKEY_API_HOST:-api.turnkey.com}"
   )
