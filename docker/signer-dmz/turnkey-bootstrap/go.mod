@@ -1,6 +1,6 @@
 module github.com/pymthouse/signer-turnkey-bootstrap
 
-go 1.25.3
+go 1.25.11
 
 require (
 	github.com/ethereum/go-ethereum v1.17.3
