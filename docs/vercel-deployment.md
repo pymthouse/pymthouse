@@ -167,7 +167,7 @@ Point each Vercel project’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the m
 | Variable | Workflow | GitHub Environment |
 |----------|----------|-------------------|
 | `VERCEL_PRODUCTION_AUTO_DEPLOY=true` | [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) on `main` | `vercel / production` |
-| `VERCEL_STAGING_AUTO_DEPLOY=true` | [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) on non-`main` | `vercel / staging` |
+| `VERCEL_STAGING_AUTO_DEPLOY=true` | [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) on non-`main` | `vercel / preview` (deploys `pymthouse-staging` project) |
 | `RAILWAY_PREVIEW_AUTO_DEPLOY=true` | [deploy-railway-preview.yml](../.github/workflows/deploy-railway-preview.yml) | `railway / preview` |
 | `RAILWAY_PRODUCTION_AUTO_DEPLOY=true` | [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) on `main` | `railway / production` |
 

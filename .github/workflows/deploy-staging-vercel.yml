@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
-      name: vercel / staging
+      name: vercel / preview
       url: ${{ vars.VERCEL_STAGING_URL || 'https://pymthouse-staging.vercel.app' }}
     env:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
