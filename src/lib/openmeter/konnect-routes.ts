@@ -78,6 +78,141 @@ export function rewriteKonnectRequestUrl(url: URL, method: string): URL {
   return next;
 }
 
+/** Konnect meter queries use POST with a JSON body; the SDK issues GET + query string. */
+export function isKonnectMeterQueryPath(pathname: string): boolean {
+  const normalized = rewriteKonnectPathname(pathname, "GET");
+  return /\/meters\/[^/]+\/query$/.test(normalized);
+}
+
+export function isKonnectMeterQueryGet(pathname: string, method: string): boolean {
+  if (method.toUpperCase() !== "GET") {
+    return false;
+  }
+  return isKonnectMeterQueryPath(pathname);
+}
+
+export function mapKonnectMeterGranularity(windowSize?: string | null): string | undefined {
+  switch (windowSize?.trim().toUpperCase()) {
+    case "MONTH":
+      return "P1M";
+    case "DAY":
+      return "P1D";
+    case "HOUR":
+      return "PT1H";
+    case "MINUTE":
+      return "PT1M";
+    default:
+      return undefined;
+  }
+}
+
+function konnectDimensionFilter(
+  values: string[],
+): { eq: string } | { in: string[] } | undefined {
+  const trimmed = values.map((value) => value.trim()).filter(Boolean);
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  if (trimmed.length === 1) {
+    return { eq: trimmed[0] };
+  }
+  return { in: trimmed };
+}
+
+/** Map OpenMeter SDK meter query params to Konnect MeterQueryRequest. */
+export function buildKonnectMeterQueryBody(searchParams: URLSearchParams): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+
+  const groupBy = searchParams.getAll("groupBy");
+  if (groupBy.length > 0) {
+    body.group_by_dimensions = groupBy;
+  }
+
+  const from = searchParams.get("from")?.trim();
+  const to = searchParams.get("to")?.trim();
+  if (from) {
+    body.from = from;
+  }
+  if (to) {
+    body.to = to;
+  }
+
+  const granularity = mapKonnectMeterGranularity(searchParams.get("windowSize"));
+  if (granularity) {
+    body.granularity = granularity;
+  }
+
+  const timeZone = searchParams.get("windowTimeZone")?.trim();
+  if (timeZone) {
+    body.time_zone = timeZone;
+  }
+
+  const dimensionFilters: Record<string, { eq: string } | { in: string[] }> = {};
+  const subjects = searchParams.getAll("subject");
+  const subjectValues =
+    subjects.length > 0
+      ? subjects
+      : searchParams.get("subject")?.trim()
+        ? [searchParams.get("subject")!.trim()]
+        : [];
+  const subjectFilter = konnectDimensionFilter(subjectValues);
+  if (subjectFilter) {
+    dimensionFilters.subject = subjectFilter;
+  }
+
+  const clientId = searchParams.get("clientId")?.trim();
+  if (clientId) {
+    dimensionFilters.client_id = { eq: clientId };
+  }
+
+  if (Object.keys(dimensionFilters).length > 0) {
+    body.filters = { dimensions: dimensionFilters };
+  }
+
+  return body;
+}
+
+/** Map Konnect meter query rows (dimensions/from/to) to OpenMeter SDK MeterQueryRow shape. */
+export function normalizeKonnectMeterQueryResponse(body: unknown): unknown {
+  if (!body || typeof body !== "object") {
+    return body;
+  }
+
+  const record = body as Record<string, unknown>;
+  if (!Array.isArray(record.data)) {
+    return body;
+  }
+
+  const data = record.data.map((row) => {
+    if (!row || typeof row !== "object") {
+      return row;
+    }
+
+    const item = { ...(row as Record<string, unknown>) };
+    if (item.dimensions && typeof item.dimensions === "object" && !item.groupBy) {
+      item.groupBy = item.dimensions;
+      delete item.dimensions;
+    }
+    if (item.from && !item.windowStart) {
+      item.windowStart = item.from;
+      delete item.from;
+    }
+    if (item.to && !item.windowEnd) {
+      item.windowEnd = item.to;
+      delete item.to;
+    }
+    if (typeof item.value === "string" && item.value.trim() !== "") {
+      const parsed = Number(item.value);
+      if (Number.isFinite(parsed)) {
+        item.value = parsed;
+      }
+    }
+    return item;
+  });
+
+  return { ...record, data };
+}
+
 function isKonnectPlanMutation(pathname: string, method: string): boolean {
   const normalizedPath = rewriteKonnectPathname(pathname, method);
   const verb = method.toUpperCase();

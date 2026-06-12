@@ -6,6 +6,7 @@ import {
   normalizeKonnectMeteringUrl,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";
+import { isOpenMeterUlid } from "./konnect-routes";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
 type KonnectPage<T> = {
@@ -107,6 +108,27 @@ async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T
 }
 
 let konnectCatalogEnsured = false;
+let konnectMeterIdByKeyCache: Map<string, string> | null = null;
+
+/** Konnect meter query paths require ULIDs; the SDK passes slugs like network_fee_usd_micros. */
+export async function resolveKonnectMeterId(meterIdOrSlug: string): Promise<string> {
+  if (isOpenMeterUlid(meterIdOrSlug)) {
+    return meterIdOrSlug;
+  }
+
+  if (!konnectMeterIdByKeyCache) {
+    const listed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
+    konnectMeterIdByKeyCache = new Map(
+      (listed.data ?? []).map((meter) => [meter.key, meter.id]),
+    );
+  }
+
+  const meterId = konnectMeterIdByKeyCache.get(meterIdOrSlug);
+  if (!meterId) {
+    throw new Error(`Konnect meter not found for key: ${meterIdOrSlug}`);
+  }
+  return meterId;
+}
 
 /**
  * Idempotent Konnect tenant catalog bootstrap (meters + network_spend feature).
@@ -162,6 +184,7 @@ export async function ensureKonnectTenantCatalog(
 
 export function resetKonnectCatalogEnsuredForTests(): void {
   konnectCatalogEnsured = false;
+  konnectMeterIdByKeyCache = null;
 }
 
 export async function findKonnectFeatureIdByKey(featureKey: string): Promise<string | null> {

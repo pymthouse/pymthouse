@@ -7,6 +7,10 @@ import {
   rewriteKonnectPlanRequestBody,
 } from "./konnect-plan-body";
 import {
+  buildKonnectMeterQueryBody,
+  isKonnectMeterQueryGet,
+  mapKonnectMeterGranularity,
+  normalizeKonnectMeterQueryResponse,
   normalizeKonnectListResponse,
   normalizeKonnectSubscriptionRecord,
   rewriteKonnectPathname,
@@ -157,4 +161,80 @@ test("buildKonnectUsageRateCard applies included usage discounts", () => {
     includedMicros: 5_000_000,
   });
   assert.deepEqual(card.discounts, { usage: "5000000" });
+});
+
+test("isKonnectMeterQueryGet detects SDK meter query GETs", () => {
+  assert.equal(
+    isKonnectMeterQueryGet(
+      "/v3/openmeter/api/v1/meters/network_fee_usd_micros/query",
+      "GET",
+    ),
+    true,
+  );
+  assert.equal(
+    isKonnectMeterQueryGet(
+      "/v3/openmeter/meters/network_fee_usd_micros/query",
+      "POST",
+    ),
+    false,
+  );
+});
+
+test("buildKonnectMeterQueryBody maps query string to Konnect POST body", () => {
+  const params = new URLSearchParams();
+  params.append("groupBy", "client_id");
+  params.append("groupBy", "external_user_id");
+  params.set("windowSize", "MONTH");
+  params.set("subject", "app_1:user_1");
+  params.set("from", "2026-06-01T00:00:00.000Z");
+  params.set("to", "2026-06-12T00:00:00.000Z");
+  params.set("clientId", "app_1");
+
+  assert.deepEqual(buildKonnectMeterQueryBody(params), {
+    group_by_dimensions: ["client_id", "external_user_id"],
+    granularity: "P1M",
+    from: "2026-06-01T00:00:00.000Z",
+    to: "2026-06-12T00:00:00.000Z",
+    filters: {
+      dimensions: {
+        subject: { eq: "app_1:user_1" },
+        client_id: { eq: "app_1" },
+      },
+    },
+  });
+});
+
+test("mapKonnectMeterGranularity maps SDK window sizes", () => {
+  assert.equal(mapKonnectMeterGranularity("MONTH"), "P1M");
+  assert.equal(mapKonnectMeterGranularity("DAY"), "P1D");
+  assert.equal(mapKonnectMeterGranularity("HOUR"), "PT1H");
+});
+
+test("normalizeKonnectMeterQueryResponse maps dimensions to groupBy", () => {
+  const normalized = normalizeKonnectMeterQueryResponse({
+    data: [
+      {
+        dimensions: { client_id: "app_1", external_user_id: "user_1" },
+        from: "2026-06-01T00:00:00.000Z",
+        to: "2026-06-02T00:00:00.000Z",
+        value: "1500",
+      },
+    ],
+    from: "2026-06-01T00:00:00.000Z",
+    to: "2026-06-02T00:00:00.000Z",
+  }) as {
+    data: Array<{
+      groupBy: Record<string, string>;
+      windowStart: string;
+      windowEnd: string;
+      value: number;
+    }>;
+  };
+
+  assert.deepEqual(normalized.data[0]?.groupBy, {
+    client_id: "app_1",
+    external_user_id: "user_1",
+  });
+  assert.equal(normalized.data[0]?.windowStart, "2026-06-01T00:00:00.000Z");
+  assert.equal(normalized.data[0]?.value, 1500);
 });

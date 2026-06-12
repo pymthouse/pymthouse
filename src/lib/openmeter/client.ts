@@ -1,6 +1,11 @@
 import { OpenMeter } from "@openmeter/sdk";
 import { getHostedOpenMeterUrl, isOpenMeterEnabled } from "./constants";
+import { resolveKonnectMeterId } from "./konnect-catalog";
 import {
+  buildKonnectMeterQueryBody,
+  isKonnectMeterQueryGet,
+  isKonnectMeterQueryPath,
+  normalizeKonnectMeterQueryResponse,
   normalizeKonnectResponseBody,
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
@@ -10,7 +15,39 @@ import { resolveHostedOpenMeterBaseUrl, shouldUseKonnectRoutes } from "./route-m
 let hostedClient: OpenMeter | null = null;
 
 async function buildKonnectRequest(request: Request): Promise<Request> {
-  const rewritten = rewriteKonnectRequestUrl(new URL(request.url), request.method);
+  const sourceUrl = new URL(request.url);
+  const rewritten = rewriteKonnectRequestUrl(sourceUrl, request.method);
+
+  if (isKonnectMeterQueryGet(sourceUrl.pathname, request.method)) {
+    const body = buildKonnectMeterQueryBody(sourceUrl.searchParams);
+    const headers = new Headers(request.headers);
+    headers.set("content-type", "application/json");
+    rewritten.search = "";
+
+    const meterMatch = rewritten.pathname.match(/\/meters\/([^/]+)\/query$/);
+    if (meterMatch) {
+      const meterId = await resolveKonnectMeterId(meterMatch[1]);
+      rewritten.pathname = rewritten.pathname.replace(
+        `/meters/${meterMatch[1]}/query`,
+        `/meters/${meterId}/query`,
+      );
+    }
+
+    return new Request(rewritten.toString(), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      redirect: request.redirect,
+      signal: request.signal,
+      credentials: request.credentials,
+      integrity: request.integrity,
+      keepalive: request.keepalive,
+      mode: request.mode,
+      referrer: request.referrer,
+      referrerPolicy: request.referrerPolicy,
+    });
+  }
+
   const contentType = request.headers.get("content-type") ?? "";
   if (
     request.method !== "GET" &&
@@ -51,7 +88,10 @@ function createKonnectFetch(): typeof fetch {
       return response;
     }
     const body = await response.json();
-    const normalized = normalizeKonnectResponseBody(body);
+    let normalized = normalizeKonnectResponseBody(body);
+    if (isKonnectMeterQueryPath(new URL(konnectRequest.url).pathname)) {
+      normalized = normalizeKonnectMeterQueryResponse(normalized);
+    }
     if (normalized === body) {
       return new Response(JSON.stringify(body), {
         status: response.status,

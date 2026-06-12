@@ -59,7 +59,17 @@ pipeline:
             message: "signed_ticket mapping failed: ${! error() }"
         - mapping: root = deleted()
 
+# Konnect ingest is POST {OPENMETER_URL}/events (not /api/v1/events). For self-hosted
+# OpenMeter, set OPENMETER_INGEST_URL to ${OPENMETER_URL}/api/v1/events in compose.
+
 output:
-  openmeter:
-    url: ${OPENMETER_URL}
-    token: ${OPENMETER_API_KEY}
+  http_client:
+    url: ${OPENMETER_INGEST_URL}
+    verb: POST
+    headers:
+      Authorization: "Bearer ${OPENMETER_API_KEY}"
+      Content-Type: application/cloudevents+json
+    successful_on:
+      - 200
+      - 202
+      - 204
