@@ -21,11 +21,18 @@ concurrency:
   group: deploy-production-vercel
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  deployments: write
+
 jobs:
   deploy:
     if: vars.VERCEL_PRODUCTION_AUTO_DEPLOY == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    environment:
+      name: vercel / production
+      url: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}
     env:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
@@ -55,4 +62,9 @@ jobs:
         run: vercel build --prod --token="$VERCEL_TOKEN"
 
       - name: Deploy to pymthouse production
-        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+        id: vercel_deploy
+        run: |
+          deployment_url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "Vercel alias: $deployment_url"
+          echo "Canonical URL: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}"

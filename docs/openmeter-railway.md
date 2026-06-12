@@ -189,7 +189,9 @@ The **PymtHouse** Railway project uses two environments with the **same eight se
 
 ### CI deploy (non-main → preview)
 
-Enable repository variable **`RAILWAY_PREVIEW_AUTO_DEPLOY=true`**.
+Enable repository variable **`RAILWAY_PREVIEW_AUTO_DEPLOY=true`** (`bash scripts/set-github-preview-deploy-vars.sh`).
+
+Successful deploys register the GitHub environment **`railway / preview`** (URL from `RAILWAY_PREVIEW_SIGNER_URL`).
 
 Workflow: [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) on push to any branch except `main` (including `feat/*`):
 
@@ -210,7 +212,9 @@ Full preview stack (OpenMeter + signer): `bash scripts/railway-deploy-stack.sh p
 
 ### CI deploy (main → production)
 
-Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`**.
+Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`** (`bash scripts/set-github-production-railway-vars.sh`).
+
+Successful deploys register the GitHub environment **`railway / production`** (URL from `RAILWAY_PRODUCTION_SIGNER_URL`).
 
 Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) on push to `main`:
 

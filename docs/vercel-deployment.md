@@ -164,16 +164,23 @@ Point each Vercel project’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the m
 
 **Enable deploy workflows** (after `VERCEL_TOKEN` is configured):
 
-| Variable | Workflow |
-|----------|----------|
-| `VERCEL_PRODUCTION_AUTO_DEPLOY=true` | [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) on push to `main` |
-| `VERCEL_STAGING_AUTO_DEPLOY=true` | [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) on non-`main` pushes |
+| Variable | Workflow | GitHub Environment |
+|----------|----------|-------------------|
+| `VERCEL_PRODUCTION_AUTO_DEPLOY=true` | [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) on `main` | `vercel / production` |
+| `VERCEL_STAGING_AUTO_DEPLOY=true` | [deploy-staging-vercel.yml](../.github/workflows/deploy-staging-vercel.yml) on non-`main` | `vercel / staging` |
+| `RAILWAY_PREVIEW_AUTO_DEPLOY=true` | [deploy-railway-preview.yml](../.github/workflows/deploy-railway-preview.yml) | `railway / preview` |
+| `RAILWAY_PRODUCTION_AUTO_DEPLOY=true` | [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) on `main` | `railway / production` |
 
 ```bash
 bash scripts/set-github-production-vercel-vars.sh
+bash scripts/set-github-production-railway-vars.sh
+bash scripts/set-github-preview-deploy-vars.sh
+bash scripts/set-github-deploy-url-vars.sh
 ```
 
-**Avoid double deploys on production:** In the **pymthouse** Vercel project → Settings → Git → **Ignored Build Step**, set `exit 1` so native Git integration does not also build on push (CI owns production deploys).
+Canonical URLs for the Deployments sidebar (`VERCEL_PRODUCTION_URL`, `VERCEL_STAGING_URL`, `RAILWAY_*_SIGNER_URL`) are set by [set-github-deploy-url-vars.sh](../scripts/set-github-deploy-url-vars.sh).
+
+**Avoid double deploys on production:** In the **pymthouse** Vercel project → Settings → Git → **Ignored Build Step**, set `exit 1` so native Git integration does not also build on push (CI owns production deploys). Optionally disable **Pull Request Comments** on both Vercel projects so GitHub does not show duplicate `PymtHouse / preview` entries alongside CI environments.
 
 **Manual staging deploy:**
 

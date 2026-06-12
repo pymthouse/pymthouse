@@ -15,11 +15,18 @@ concurrency:
   group: deploy-staging-vercel-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  deployments: write
+
 jobs:
   deploy:
     if: vars.VERCEL_STAGING_AUTO_DEPLOY == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: vercel / staging
+      url: ${{ vars.VERCEL_STAGING_URL || 'https://pymthouse-staging.vercel.app' }}
     env:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_wzb1ad2UlUxia7bHdwFCopBScP9Z
@@ -49,4 +56,9 @@ jobs:
         run: vercel build --prod --token="$VERCEL_TOKEN"
 
       - name: Deploy to pymthouse-staging production
-        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+        id: vercel_deploy
+        run: |
+          deployment_url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "Vercel alias: $deployment_url"
+          echo "Canonical URL: ${{ vars.VERCEL_STAGING_URL || 'https://pymthouse-staging.vercel.app' }}"

@@ -37,11 +37,18 @@ concurrency:
   group: deploy-railway-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  deployments: write
+
 jobs:
   deploy:
     if: vars.RAILWAY_PRODUCTION_AUTO_DEPLOY == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment:
+      name: railway / production
+      url: ${{ vars.RAILWAY_PRODUCTION_SIGNER_URL || 'https://railway.app/project/dab233aa-dd5f-429d-8cc4-9042e8735e2b' }}
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_ENVIRONMENT: production

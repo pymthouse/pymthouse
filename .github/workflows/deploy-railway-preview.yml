@@ -33,11 +33,18 @@ concurrency:
   group: deploy-railway-preview-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  deployments: write
+
 jobs:
   deploy:
     if: vars.RAILWAY_PREVIEW_AUTO_DEPLOY == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment:
+      name: railway / preview
+      url: ${{ vars.RAILWAY_PREVIEW_SIGNER_URL || 'https://pymthouse-preview.up.railway.app' }}
     env:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_ENVIRONMENT: preview
