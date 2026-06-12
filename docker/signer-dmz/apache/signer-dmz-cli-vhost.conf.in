@@ -1,5 +1,6 @@
-# Optional second listener (CLI_PORT). Included only when SIGNER_DMZ_ENABLE_CLI_LISTENER=1.
-# Prefer /__signer_cli on the main PORT listener for single-port hosts (Railway).
+# Dedicated CLI listener (CLI_PORT, default 8082). Proxies livepeer -cliAddr routes at /
+# (/contractAddresses, /ethAddr, /status, …) — same paths livepeer-cli uses on a bare node.
+# Single-port Railway hosts use /__signer_cli on PORT instead; publish CLI_PORT locally.
 
 <VirtualHost *:${CLI_PORT}>
 	ServerName localhost

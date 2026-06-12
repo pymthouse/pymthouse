@@ -79,7 +79,9 @@ RUN ldconfig && \
 COPY docker/signer-dmz/scripts/jwks_to_pem.py /opt/pymthouse/scripts/jwks_to_pem.py
 COPY docker/signer-dmz/apache/ports.conf.in /etc/apache2/templates/ports.conf.in
 COPY docker/signer-dmz/apache/signer-dmz.conf.in /etc/apache2/templates/signer-dmz.conf.in
+COPY docker/signer-dmz/apache/signer-dmz-noauth.conf.in /etc/apache2/templates/signer-dmz-noauth.conf.in
 COPY docker/signer-dmz/apache/signer-dmz-cli-vhost.conf.in /etc/apache2/templates/signer-dmz-cli-vhost.conf.in
+COPY docker/signer-dmz/apache/signer-dmz-cli-vhost-noauth.conf.in /etc/apache2/templates/signer-dmz-cli-vhost-noauth.conf.in
 COPY docker/signer-dmz/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh /opt/pymthouse/scripts/jwks_to_pem.py
@@ -177,10 +179,10 @@ ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
 ENV SIGNER_REMOTE_DISCOVERY=0
 
-# Apache listens on $PORT (Railway sets this, default 8080). CLI is path-mounted at /__signer_cli.
-# go-livepeer binds loopback :8081 / :4935 only — they must not be the public edge port.
-ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=0
-EXPOSE 8080
+# Apache: $PORT = signing API; $CLI_PORT (8082) = livepeer-cli routes at / (no /__signer_cli prefix).
+# /__signer_cli on $PORT remains for single-port hosts (Railway). Loopback :8081 / :4935 are not public.
+ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
+EXPOSE 8080 8082
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
   CMD sh -c 'curl -sf "http://127.0.0.1:${PORT:-8080}/healthz" || exit 1'
