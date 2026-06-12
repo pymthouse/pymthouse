@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
@@ -201,12 +201,12 @@ function parseCapabilities(input: unknown): {
 }
 
 async function resolveAppForPlansRead(clientId: string, request: Request) {
-  const clientAuth = await authenticateAppClient(request as never);
+  const clientAuth = await authenticateAppClient(request as NextRequest);
   if (clientAuth?.appId === clientId) {
     const app = await getProviderApp(clientId);
     return app;
   }
-  const auth = await getAuthorizedProviderApp(clientId, request as never);
+  const auth = await getAuthorizedProviderApp(clientId, request);
   return auth?.app ?? null;
 }
 

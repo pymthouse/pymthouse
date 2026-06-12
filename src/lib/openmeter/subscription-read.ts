@@ -20,6 +20,18 @@ export type OpenMeterSubscriptionView = {
   activeTo: string | null;
 };
 
+type OpenMeterSubscriptionSourceItem = {
+  id: string;
+  status: string;
+  plan?: { key?: string; id?: string } | null;
+  planId?: string;
+  plan_id?: string;
+  activeFrom?: Date | string | null;
+  activeTo?: Date | string | null;
+  active_from?: Date | string | null;
+  active_to?: Date | string | null;
+};
+
 function readPlanFields(item: Record<string, unknown>): {
   planKey: string | null;
   planId: string | null;
@@ -42,17 +54,7 @@ function readPlanFields(item: Record<string, unknown>): {
   };
 }
 
-function mapSubscriptionItem(item: {
-  id: string;
-  status: string;
-  plan?: { key?: string; id?: string } | null;
-  planId?: string;
-  plan_id?: string;
-  activeFrom?: Date | string | null;
-  activeTo?: Date | string | null;
-  active_from?: Date | string | null;
-  active_to?: Date | string | null;
-}): OpenMeterSubscriptionView {
+function mapSubscriptionItem(item: OpenMeterSubscriptionSourceItem): OpenMeterSubscriptionView {
   const { planKey, planId } = readPlanFields(item as Record<string, unknown>);
   const activeFrom = item.activeFrom ?? item.active_from ?? null;
   const activeTo = item.activeTo ?? item.active_to ?? null;
@@ -170,4 +172,4 @@ export function isOpenMeterSubscriptionActive(status: string): boolean {
   return OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES.has(status);
 }
 
-export { buildOpenMeterCustomerKey };
+export { buildOpenMeterCustomerKey } from "./customer-key";

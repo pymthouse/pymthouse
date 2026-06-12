@@ -1,5 +1,5 @@
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
+import { isHostedAdminClientAvailable } from "./admin-client";
 import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,

@@ -54,6 +54,55 @@ export async function GET(
   });
 }
 
+async function resolveOpenMeterSubscriptionIdForNewKey(input: {
+  appId: string;
+  subscriptionId: string | null;
+  openmeterSubscriptionId: string | null;
+}): Promise<
+  | { ok: true; openmeterSubscriptionId: string | null }
+  | { ok: false; error: "openmeter_unavailable" | "subscription_not_found" }
+> {
+  let openmeterSubscriptionId = input.openmeterSubscriptionId;
+
+  if (!openmeterSubscriptionId && input.subscriptionId && isOpenMeterUlid(input.subscriptionId)) {
+    openmeterSubscriptionId = input.subscriptionId;
+  }
+
+  if (openmeterSubscriptionId) {
+    if (!isHostedAdminClientAvailable()) {
+      return { ok: false, error: "openmeter_unavailable" };
+    }
+    const omSub = await verifyOpenMeterSubscriptionId(
+      getHostedAdminClient(),
+      openmeterSubscriptionId,
+    );
+    if (!omSub || !isOpenMeterSubscriptionActive(omSub.status)) {
+      return { ok: false, error: "subscription_not_found" };
+    }
+    return { ok: true, openmeterSubscriptionId };
+  }
+
+  if (!input.subscriptionId) {
+    return { ok: true, openmeterSubscriptionId: null };
+  }
+
+  const subRows = await db
+    .select()
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.id, input.subscriptionId),
+        eq(subscriptions.clientId, input.appId),
+      ),
+    )
+    .limit(1);
+  const subscription = subRows[0];
+  if (!subscription) {
+    return { ok: false, error: "subscription_not_found" };
+  }
+  return { ok: true, openmeterSubscriptionId: subscription.openmeterSubscriptionId ?? null };
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -74,45 +123,25 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
 
   const subscriptionId = typeof body.subscriptionId === "string" ? body.subscriptionId : null;
-  let openmeterSubscriptionId =
+  const requestedOpenMeterSubscriptionId =
     typeof body.openmeterSubscriptionId === "string"
       ? body.openmeterSubscriptionId.trim()
       : null;
 
-  if (!openmeterSubscriptionId && subscriptionId && isOpenMeterUlid(subscriptionId)) {
-    openmeterSubscriptionId = subscriptionId;
-  }
+  const resolved = await resolveOpenMeterSubscriptionIdForNewKey({
+    appId,
+    subscriptionId,
+    openmeterSubscriptionId: requestedOpenMeterSubscriptionId,
+  });
 
-  if (openmeterSubscriptionId) {
-    if (!isHostedAdminClientAvailable()) {
+  if (!resolved.ok) {
+    if (resolved.error === "openmeter_unavailable") {
       return NextResponse.json({ error: "OpenMeter not configured" }, { status: 503 });
     }
-    const omSub = await verifyOpenMeterSubscriptionId(
-      getHostedAdminClient(),
-      openmeterSubscriptionId,
-    );
-    if (!omSub || !isOpenMeterSubscriptionActive(omSub.status)) {
-      return NextResponse.json({ error: "OpenMeter subscription not found" }, { status: 404 });
-    }
-  } else if (subscriptionId) {
-    const subRows = await db
-      .select()
-      .from(subscriptions)
-      .where(
-        and(
-          eq(subscriptions.id, subscriptionId),
-          eq(subscriptions.clientId, appId),
-        ),
-      )
-      .limit(1);
-    const subscription = subRows[0];
-    if (!subscription) {
-      return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
-    }
-    if (subscription.openmeterSubscriptionId) {
-      openmeterSubscriptionId = subscription.openmeterSubscriptionId;
-    }
+    return NextResponse.json({ error: "OpenMeter subscription not found" }, { status: 404 });
   }
+
+  const openmeterSubscriptionId = resolved.openmeterSubscriptionId;
 
   const apiKeyValue = generateApiKeyValue();
   const apiKey = {

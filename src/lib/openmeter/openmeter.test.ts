@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { OpenMeter } from "@openmeter/sdk";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomer } from "./customers";
@@ -20,6 +21,17 @@ import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
+
+function openMeterTestClient(mock: object): OpenMeter {
+  return mock as OpenMeter;
+}
+
+function rateCardsFromPlanPhase(phase: {
+  rateCards?: Array<Record<string, unknown>>;
+  rate_cards?: Array<Record<string, unknown>>;
+}): Array<Record<string, unknown>> {
+  return phase.rateCards ?? phase.rate_cards ?? [];
+}
 
 test("buildOpenMeterCustomerKey encodes client and user", () => {
   const key = buildOpenMeterCustomerKey("app_abc", "user-123");
@@ -324,9 +336,10 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
   const phase = omPlan.phases[0];
   assert.ok(phase);
   assert.equal(omPlan.key, buildOpenMeterPlanKey("app_1", "plan-1"));
-  assert.equal(phase.rateCards.length, 2);
-  const flatFee = phase.rateCards[0];
-  const usage = phase.rateCards[1];
+  const phaseCards = rateCardsFromPlanPhase(phase);
+  assert.equal(phaseCards.length, 2);
+  const flatFee = phaseCards[0];
+  const usage = phaseCards[1];
   assert.ok(flatFee && usage);
   assert.equal(flatFee.type, "flat_fee");
   assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
@@ -388,9 +401,10 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
   assert.ok(omPlan);
   const phase = omPlan.phases[0];
   assert.ok(phase);
-  assert.equal(phase.rateCards.length, 1);
+  const capabilityCards = rateCardsFromPlanPhase(phase);
+  assert.equal(capabilityCards.length, 1);
   assert.equal(createdFeatures.length, 1);
-  const usage = phase.rateCards[0];
+  const usage = capabilityCards[0];
   assert.ok(usage);
   assert.equal((usage as { price: { amount: string } }).price.amount, "0.000002");
 });
@@ -485,8 +499,9 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   assert.ok(omPlan);
   const phase = omPlan.phases[0];
   assert.ok(phase);
-  assert.equal(phase.rateCards.length, 1);
-  const usage = phase.rateCards[0];
+  const starterCards = rateCardsFromPlanPhase(phase);
+  assert.equal(starterCards.length, 1);
+  const usage = starterCards[0];
   assert.ok(usage);
   assert.equal(usage.key, "network_spend");
   assert.equal(usage.featureKey, "network_spend");
@@ -510,7 +525,7 @@ test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {
     },
   };
 
-  const view = await verifyOpenMeterSubscriptionId(client as never, "sub-1");
+  const view = await verifyOpenMeterSubscriptionId(openMeterTestClient(client), "sub-1");
   assert.deepEqual(view, {
     id: "sub-1",
     status: "active",
@@ -530,7 +545,7 @@ test("verifyOpenMeterSubscriptionId returns null when remote subscription missin
     },
   };
 
-  const view = await verifyOpenMeterSubscriptionId(client as never, "missing");
+  const view = await verifyOpenMeterSubscriptionId(openMeterTestClient(client), "missing");
   assert.equal(view, null);
 });
 
@@ -553,7 +568,7 @@ test("verifyOpenMeterPlanId returns null for archived plans", async () => {
     },
   };
 
-  const view = await verifyOpenMeterPlanId(client as never, "plan-archived");
+  const view = await verifyOpenMeterPlanId(openMeterTestClient(client), "plan-archived");
   assert.equal(view, null);
 });
 
@@ -569,7 +584,7 @@ test("verifyOpenMeterPlanId returns mapped plan", async () => {
     },
   };
 
-  const view = await verifyOpenMeterPlanId(client as never, "plan-1");
+  const view = await verifyOpenMeterPlanId(openMeterTestClient(client), "plan-1");
   assert.deepEqual(view, {
     id: "plan-1",
     key: "app_1_plan_abc",
@@ -587,6 +602,6 @@ test("verifyOpenMeterPlanId returns null when remote plan missing", async () => 
     },
   };
 
-  const view = await verifyOpenMeterPlanId(client as never, "missing");
+  const view = await verifyOpenMeterPlanId(openMeterTestClient(client), "missing");
   assert.equal(view, null);
 });

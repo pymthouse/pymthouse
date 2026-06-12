@@ -13,6 +13,32 @@ import {
   queryOpenMeterUsage,
 } from "@/lib/usage/query-openmeter";
 
+function buildBillingSubscriptionPayload(input: {
+  openMeterOwnerSubscription: Awaited<ReturnType<typeof verifyOpenMeterSubscriptionId>>;
+  ownerSubscription: (typeof subscriptions.$inferSelect) | null;
+}) {
+  if (input.openMeterOwnerSubscription) {
+    return {
+      id: input.ownerSubscription?.id ?? input.openMeterOwnerSubscription.id,
+      status: input.openMeterOwnerSubscription.status,
+      currentPeriodStart: input.openMeterOwnerSubscription.activeFrom,
+      currentPeriodEnd: input.openMeterOwnerSubscription.activeTo,
+      openmeterSubscriptionId: input.openMeterOwnerSubscription.id,
+      source: "openmeter" as const,
+    };
+  }
+  if (input.ownerSubscription) {
+    return {
+      id: input.ownerSubscription.id,
+      status: input.ownerSubscription.status,
+      currentPeriodStart: input.ownerSubscription.currentPeriodStart,
+      currentPeriodEnd: input.ownerSubscription.currentPeriodEnd,
+      source: "legacy_cache" as const,
+    };
+  }
+  return null;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -211,24 +237,10 @@ export async function GET(
           status: planRow.status,
         }
       : null,
-    subscription: openMeterOwnerSubscription
-      ? {
-          id: ownerSubscription?.id ?? openMeterOwnerSubscription.id,
-          status: openMeterOwnerSubscription.status,
-          currentPeriodStart: openMeterOwnerSubscription.activeFrom,
-          currentPeriodEnd: openMeterOwnerSubscription.activeTo,
-          openmeterSubscriptionId: openMeterOwnerSubscription.id,
-          source: "openmeter",
-        }
-      : ownerSubscription
-        ? {
-            id: ownerSubscription.id,
-            status: ownerSubscription.status,
-            currentPeriodStart: ownerSubscription.currentPeriodStart,
-            currentPeriodEnd: ownerSubscription.currentPeriodEnd,
-            source: "legacy_cache",
-          }
-        : null,
+    subscription: buildBillingSubscriptionPayload({
+      openMeterOwnerSubscription,
+      ownerSubscription,
+    }),
     cycle: {
       periodStart,
       periodEnd,

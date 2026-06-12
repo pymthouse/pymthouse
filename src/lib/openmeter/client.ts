@@ -10,9 +10,11 @@ import {
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
 } from "./konnect-routes";
-import { resolveHostedOpenMeterBaseUrl, shouldUseKonnectRoutes } from "./route-mode";
+import { resolveHostedOpenMeterBaseUrl, shouldUseKonnectRoutes, assertKonnectFetchOrigin } from "./route-mode";
 
 let hostedClient: OpenMeter | null = null;
+
+const KONNECT_METER_QUERY_PATH_RE = /\/meters\/([^/]+)\/query$/;
 
 async function buildKonnectRequest(request: Request): Promise<Request> {
   const sourceUrl = new URL(request.url);
@@ -24,7 +26,7 @@ async function buildKonnectRequest(request: Request): Promise<Request> {
     headers.set("content-type", "application/json");
     rewritten.search = "";
 
-    const meterMatch = rewritten.pathname.match(/\/meters\/([^/]+)\/query$/);
+    const meterMatch = KONNECT_METER_QUERY_PATH_RE.exec(rewritten.pathname);
     if (meterMatch) {
       const meterId = await resolveKonnectMeterId(meterMatch[1]);
       rewritten.pathname = rewritten.pathname.replace(
@@ -79,10 +81,11 @@ async function buildKonnectRequest(request: Request): Promise<Request> {
   return new Request(rewritten.toString(), request);
 }
 
-function createKonnectFetch(): typeof fetch {
+function createKonnectFetch(allowedBaseUrl: string): typeof fetch {
   return async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const konnectRequest = await buildKonnectRequest(request);
+    assertKonnectFetchOrigin(konnectRequest.url, allowedBaseUrl);
     const response = await fetch(konnectRequest);
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) {
@@ -116,7 +119,7 @@ export function createOpenMeterClient(input: {
   const rawBaseUrl = input.baseUrl.replace(/\/$/, "");
   const useKonnectRoutes = shouldUseKonnectRoutes(rawBaseUrl, apiKey);
   const baseUrl = useKonnectRoutes ? resolveHostedOpenMeterBaseUrl(apiKey) : rawBaseUrl;
-  const clientFetch = useKonnectRoutes ? createKonnectFetch() : undefined;
+  const clientFetch = useKonnectRoutes ? createKonnectFetch(baseUrl) : undefined;
 
   if (apiKey) {
     return new OpenMeter({ baseUrl, apiKey, fetch: clientFetch });

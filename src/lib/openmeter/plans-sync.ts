@@ -2,7 +2,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
-import { getHostedOpenMeterUrl } from "./constants";
+import { getHostedOpenMeterUrl, DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER } from "./constants";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
@@ -20,7 +20,6 @@ import {
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureCapabilityOpenMeterFeature } from "./capability-features";
-import { DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER } from "./constants";
 import {
   isOpenMeterPlanImmutableError,
   isOpenMeterPlanNotFoundError,
@@ -128,6 +127,101 @@ function buildUsageRateCard(input: {
   };
 }
 
+async function appendDefaultTrialUsageRateCard(input: {
+  omClient: OpenMeter;
+  plan: typeof plans.$inferSelect;
+  planRetail: string;
+  includedMicros?: number;
+  rateCards: Array<Record<string, unknown>>;
+  useKonnectBody: boolean;
+}): Promise<void> {
+  if (input.useKonnectBody) {
+    const featureId = await resolveOpenMeterFeatureId(input.omClient, DEFAULT_TRIAL_FEATURE_KEY);
+    input.rateCards.push(
+      buildKonnectUsageRateCard({
+        key: DEFAULT_TRIAL_FEATURE_KEY,
+        name: "Network usage",
+        featureId,
+        unitAmount: input.planRetail,
+        includedMicros: input.includedMicros,
+      }),
+    );
+    return;
+  }
+
+  input.rateCards.push(
+    buildUsageRateCard({
+      key: DEFAULT_TRIAL_FEATURE_KEY,
+      name: "Network usage",
+      featureKey: DEFAULT_TRIAL_FEATURE_KEY,
+      unitAmount: input.planRetail,
+      includedMicros: input.includedMicros,
+      includeEntitlement: true,
+    }),
+  );
+}
+
+async function appendCapabilityRateCards(input: {
+  clientId: string;
+  plan: typeof plans.$inferSelect;
+  omClient: OpenMeter;
+  capabilityRows: Array<typeof planCapabilityBundles.$inferSelect>;
+  includedMicros?: number;
+  planRetail: string;
+  rateCards: Array<Record<string, unknown>>;
+  useKonnectBody: boolean;
+}): Promise<void> {
+  let entitlementAssigned = false;
+  for (const cap of input.capabilityRows) {
+    const retail = resolveCapabilityRetailRateUsd({
+      plan: input.plan,
+      retailRateUsd: cap.retailRateUsd,
+    });
+    const featureKey = await ensureCapabilityOpenMeterFeature({
+      client: input.omClient,
+      clientId: input.clientId,
+      planId: input.plan.id,
+      pipeline: cap.pipeline,
+      modelId: cap.modelId,
+      displayName: openMeterCapabilityLabel({
+        pipeline: cap.pipeline,
+        modelId: cap.modelId,
+      }),
+      preferredKey: cap.openmeterFeatureKey,
+    });
+    if (input.useKonnectBody) {
+      const featureId = await resolveOpenMeterFeatureId(input.omClient, featureKey);
+      input.rateCards.push(
+        buildKonnectUsageRateCard({
+          key: featureKey,
+          name: openMeterCapabilityLabel({
+            pipeline: cap.pipeline,
+            modelId: cap.modelId,
+          }),
+          featureId,
+          unitAmount: retail,
+          includedMicros: entitlementAssigned ? undefined : input.includedMicros,
+        }),
+      );
+    } else {
+      input.rateCards.push(
+        buildUsageRateCard({
+          key: featureKey,
+          name: openMeterCapabilityLabel({
+            pipeline: cap.pipeline,
+            modelId: cap.modelId,
+          }),
+          featureKey,
+          unitAmount: retail,
+          includedMicros: entitlementAssigned ? undefined : input.includedMicros,
+          includeEntitlement: !entitlementAssigned,
+        }),
+      );
+    }
+    entitlementAssigned = entitlementAssigned || Boolean(input.includedMicros);
+  }
+}
+
 export async function mapPymthousePlanToOpenMeterCreate(input: {
   clientId: string;
   plan: typeof plans.$inferSelect;
@@ -176,79 +270,25 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
   const capabilityRows = input.capabilities.filter((c) => c.planId === plan.id);
 
   if (capabilityRows.length === 0) {
-    if (useKonnectBody) {
-      const featureId = await resolveOpenMeterFeatureId(omClient, DEFAULT_TRIAL_FEATURE_KEY);
-      rateCards.push(
-        buildKonnectUsageRateCard({
-          key: DEFAULT_TRIAL_FEATURE_KEY,
-          name: "Network usage",
-          featureId,
-          unitAmount: planRetail,
-          includedMicros,
-        }),
-      );
-    } else {
-      rateCards.push(
-        buildUsageRateCard({
-          key: DEFAULT_TRIAL_FEATURE_KEY,
-          name: "Network usage",
-          featureKey: DEFAULT_TRIAL_FEATURE_KEY,
-          unitAmount: planRetail,
-          includedMicros,
-          includeEntitlement: true,
-        }),
-      );
-    }
+    await appendDefaultTrialUsageRateCard({
+      omClient,
+      plan,
+      planRetail,
+      includedMicros,
+      rateCards,
+      useKonnectBody,
+    });
   } else {
-    let entitlementAssigned = false;
-    for (const cap of capabilityRows) {
-      const retail = resolveCapabilityRetailRateUsd({
-        plan,
-        retailRateUsd: cap.retailRateUsd,
-      });
-      const featureKey = await ensureCapabilityOpenMeterFeature({
-        client: omClient,
-        clientId: input.clientId,
-        planId: plan.id,
-        pipeline: cap.pipeline,
-        modelId: cap.modelId,
-        displayName: openMeterCapabilityLabel({
-          pipeline: cap.pipeline,
-          modelId: cap.modelId,
-        }),
-        preferredKey: cap.openmeterFeatureKey,
-      });
-      if (useKonnectBody) {
-        const featureId = await resolveOpenMeterFeatureId(omClient, featureKey);
-        rateCards.push(
-          buildKonnectUsageRateCard({
-            key: featureKey,
-            name: openMeterCapabilityLabel({
-              pipeline: cap.pipeline,
-              modelId: cap.modelId,
-            }),
-            featureId,
-            unitAmount: retail,
-            includedMicros: entitlementAssigned ? undefined : includedMicros,
-          }),
-        );
-      } else {
-        rateCards.push(
-          buildUsageRateCard({
-            key: featureKey,
-            name: openMeterCapabilityLabel({
-              pipeline: cap.pipeline,
-              modelId: cap.modelId,
-            }),
-            featureKey,
-            unitAmount: retail,
-            includedMicros: entitlementAssigned ? undefined : includedMicros,
-            includeEntitlement: !entitlementAssigned,
-          }),
-        );
-      }
-      entitlementAssigned = entitlementAssigned || Boolean(includedMicros);
-    }
+    await appendCapabilityRateCards({
+      clientId: input.clientId,
+      plan,
+      omClient,
+      capabilityRows,
+      includedMicros,
+      planRetail,
+      rateCards,
+      useKonnectBody,
+    });
   }
 
   const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);

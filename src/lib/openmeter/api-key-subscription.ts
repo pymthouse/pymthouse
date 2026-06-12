@@ -8,7 +8,7 @@ import {
   verifyOpenMeterSubscriptionId,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
-import { buildOpenMeterPlanKey } from "./plans-sync";
+import { buildOpenMeterPlanKey } from "./plan-naming";
 
 type ApiKeyRow = typeof apiKeys.$inferSelect;
 
@@ -88,4 +88,4 @@ export async function resolveApiKeyOpenMeterSubscription(input: {
   };
 }
 
-export { buildOpenMeterPlanKey };
+export { buildOpenMeterPlanKey } from "./plan-naming";

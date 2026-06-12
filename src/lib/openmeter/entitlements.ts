@@ -1,6 +1,8 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
+  DEFAULT_TRIAL_FEATURE_KEY,
+  getHostedOpenMeterUrl,
   NETWORK_FEE_USD_MICROS_METER,
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
@@ -14,7 +16,6 @@ import {
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
 import { shouldUseKonnectRoutes } from "./route-mode";
-import { getHostedOpenMeterUrl } from "./constants";
 import {
   getOpenMeterSubscriptionForAppUser,
   isOpenMeterSubscriptionActive,
@@ -48,6 +49,43 @@ export async function grantTrialCredits(input: {
   );
 }
 
+async function getKonnectTrialCreditBalance(input: {
+  clientId: string;
+  externalUserId: string;
+  customerId: string;
+  featureKey: string;
+  apiKey?: string;
+}): Promise<TrialCreditBalance | null> {
+  let hasAccess = await getKonnectEntitlementHasAccess({
+    customerId: input.customerId,
+    featureKey: input.featureKey,
+    apiKey: input.apiKey,
+  });
+  if (hasAccess === null) {
+    return null;
+  }
+
+  const defaultGrant = defaultStarterIncludedUsdMicros();
+  if (!hasAccess) {
+    const starterSubscription = await getOpenMeterSubscriptionForAppUser({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+    if (starterSubscription && isOpenMeterSubscriptionActive(starterSubscription.status)) {
+      // Konnect plan rate_cards.discounts.usage does not always surface in
+      // entitlement-access; an active starter subscription implies included trial usage.
+      hasAccess = true;
+    }
+  }
+
+  return {
+    hasAccess,
+    balanceUsdMicros: hasAccess ? defaultGrant : "0",
+    consumedUsdMicros: "0",
+    lifetimeGrantedUsdMicros: hasAccess ? defaultGrant : "0",
+  };
+}
+
 export async function getTrialCreditBalance(input: {
   clientId: string;
   externalUserId: string;
@@ -65,37 +103,13 @@ export async function getTrialCreditBalance(input: {
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
 
   if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
-    let hasAccess = await getKonnectEntitlementHasAccess({
+    return getKonnectTrialCreditBalance({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
       customerId: customer.id,
       featureKey,
       apiKey,
     });
-    if (hasAccess === null) {
-      return null;
-    }
-
-    const defaultGrant = defaultStarterIncludedUsdMicros();
-    if (!hasAccess) {
-      const starterSubscription = await getOpenMeterSubscriptionForAppUser({
-        clientId: input.clientId,
-        externalUserId: input.externalUserId,
-      });
-      if (
-        starterSubscription &&
-        isOpenMeterSubscriptionActive(starterSubscription.status)
-      ) {
-        // Konnect plan rate_cards.discounts.usage does not always surface in
-        // entitlement-access; an active starter subscription implies included trial usage.
-        hasAccess = true;
-      }
-    }
-
-    return {
-      hasAccess,
-      balanceUsdMicros: hasAccess ? defaultGrant : "0",
-      consumedUsdMicros: "0",
-      lifetimeGrantedUsdMicros: hasAccess ? defaultGrant : "0",
-    };
   }
 
   const value = await client.customers.entitlements.value(customerKey, featureKey);

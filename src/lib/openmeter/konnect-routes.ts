@@ -6,6 +6,44 @@ import { rewriteKonnectPlanRequestBody } from "./konnect-plan-body";
  */
 
 const ULID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i;
+const CUSTOMER_SUBSCRIPTIONS_PATH_RE = /\/customers\/([^/]+)\/subscriptions$/;
+
+function subjectValuesFromParams(searchParams: URLSearchParams): string[] {
+  const subjects = searchParams.getAll("subject");
+  if (subjects.length > 0) {
+    return subjects;
+  }
+  const single = searchParams.get("subject")?.trim();
+  return single ? [single] : [];
+}
+
+function applyKonnectPlanFields(
+  item: Record<string, unknown>,
+  planIdRaw: unknown,
+  planKeyRaw: unknown,
+): void {
+  if (typeof planIdRaw === "string" && planIdRaw.trim()) {
+    const existingPlan =
+      item.plan && typeof item.plan === "object"
+        ? { ...(item.plan as Record<string, unknown>) }
+        : {};
+    if (!existingPlan.id && !existingPlan.key) {
+      existingPlan.id = planIdRaw.trim();
+    }
+    item.plan = existingPlan;
+  }
+
+  if (typeof planKeyRaw === "string" && planKeyRaw.trim()) {
+    const existingPlan =
+      item.plan && typeof item.plan === "object"
+        ? { ...(item.plan as Record<string, unknown>) }
+        : {};
+    if (!existingPlan.key) {
+      existingPlan.key = planKeyRaw.trim();
+    }
+    item.plan = existingPlan;
+  }
+}
 
 export function isOpenMeterUlid(value: string): boolean {
   return ULID_RE.test(value);
@@ -19,7 +57,7 @@ export function rewriteKonnectPathname(pathname: string, method: string): string
 
   path = path.replace(/\/billing\/customers\/([^/]+)(?=\/|$)/, "/customers/$1/billing");
 
-  const customerSubscriptions = path.match(/\/customers\/([^/]+)\/subscriptions$/);
+  const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(path);
   if (customerSubscriptions && method.toUpperCase() === "GET") {
     return path.replace(/\/customers\/[^/]+\/subscriptions$/, "/subscriptions");
   }
@@ -36,7 +74,7 @@ export function rewriteKonnectSearchParams(
   const params = new URLSearchParams(searchParams);
 
   const normalizedPath = pathname.replace(/\/api\/v[12](?=\/|$)/, "");
-  const customerSubscriptions = normalizedPath.match(/\/customers\/([^/]+)\/subscriptions$/);
+  const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(normalizedPath);
   if (customerSubscriptions && method.toUpperCase() === "GET") {
     params.set("filter[customer_id][eq]", decodeURIComponent(customerSubscriptions[1]));
   }
@@ -148,13 +186,7 @@ export function buildKonnectMeterQueryBody(searchParams: URLSearchParams): Recor
   }
 
   const dimensionFilters: Record<string, { eq: string } | { in: string[] }> = {};
-  const subjects = searchParams.getAll("subject");
-  const subjectValues =
-    subjects.length > 0
-      ? subjects
-      : searchParams.get("subject")?.trim()
-        ? [searchParams.get("subject")!.trim()]
-        : [];
+  const subjectValues = subjectValuesFromParams(searchParams);
   const subjectFilter = konnectDimensionFilter(subjectValues);
   if (subjectFilter) {
     dimensionFilters.subject = subjectFilter;
@@ -279,27 +311,7 @@ export function normalizeKonnectSubscriptionRecord(record: unknown): unknown {
   const planIdRaw = item.plan_id ?? item.planId;
   const planKeyRaw = item.plan_key ?? item.planKey;
 
-  if (typeof planIdRaw === "string" && planIdRaw.trim()) {
-    const existingPlan =
-      item.plan && typeof item.plan === "object"
-        ? { ...(item.plan as Record<string, unknown>) }
-        : {};
-    if (!existingPlan.id && !existingPlan.key) {
-      existingPlan.id = planIdRaw.trim();
-    }
-    item.plan = existingPlan;
-  }
-
-  if (typeof planKeyRaw === "string" && planKeyRaw.trim()) {
-    const existingPlan =
-      item.plan && typeof item.plan === "object"
-        ? { ...(item.plan as Record<string, unknown>) }
-        : {};
-    if (!existingPlan.key) {
-      existingPlan.key = planKeyRaw.trim();
-    }
-    item.plan = existingPlan;
-  }
+  applyKonnectPlanFields(item, planIdRaw, planKeyRaw);
 
   delete item.plan_id;
   delete item.plan_key;
@@ -312,10 +324,12 @@ export function normalizeKonnectListResponse(body: unknown): unknown {
     typeof body === "object" &&
     body !== null &&
     "data" in body &&
-    Array.isArray((body as { data: unknown }).data) &&
+    Array.isArray((body as Record<string, unknown>).data) &&
     !("items" in body)
   ) {
-    const data = (body as { data: unknown[] }).data.map(normalizeKonnectSubscriptionRecord);
+    const data = ((body as Record<string, unknown>).data as unknown[]).map(
+      normalizeKonnectSubscriptionRecord,
+    );
     return { ...(body as Record<string, unknown>), items: data, data };
   }
   return body;

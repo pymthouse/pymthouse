@@ -18,6 +18,17 @@ import {
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
 } from "./konnect-routes";
+import { assertKonnectFetchOrigin } from "./route-mode";
+
+test("assertKonnectFetchOrigin allows configured metering origin only", () => {
+  const base = "https://metering.konghq.com/v3/openmeter";
+  assert.doesNotThrow(() =>
+    assertKonnectFetchOrigin("https://metering.konghq.com/v3/openmeter/meters/m1/query", base),
+  );
+  assert.throws(() =>
+    assertKonnectFetchOrigin("https://evil.example.com/steal", base),
+  );
+});
 
 test("rewriteKonnectPathname strips api version prefix", () => {
   assert.equal(
