@@ -4,11 +4,8 @@ import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { docsDeviceFlowUrl } from "@/lib/docs-base-url";
 import {
-  AUTHORIZATION_CODE_GRANT,
   DEFAULT_PUBLIC_GRANT_TYPES,
   DEVICE_CODE_GRANT,
-  ensureAuthorizationCodeGrant,
-  REFRESH_TOKEN_GRANT,
 } from "@/lib/oidc/grants";
 import { DEFAULT_OIDC_SCOPES, ensureOpenIdScope, OIDC_SCOPES } from "@/lib/oidc/scopes";
 
@@ -158,22 +155,11 @@ export default function AppWizard({ initialData }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const grantTypesWithoutRedirectlessAuthCode = formData.grantTypes.filter(
-        (grantType) =>
-          formData.redirectUris.length > 0 || grantType !== AUTHORIZATION_CODE_GRANT,
-      );
-      const hasRefreshTokenIssuingGrant = grantTypesWithoutRedirectlessAuthCode.some(
-        (grantType) =>
-          grantType === AUTHORIZATION_CODE_GRANT || grantType === DEVICE_FLOW_GRANT,
-      );
-      const grantTypes = hasRefreshTokenIssuingGrant
-        ? grantTypesWithoutRedirectlessAuthCode
-        : grantTypesWithoutRedirectlessAuthCode.filter(
-            (grantType) => grantType !== REFRESH_TOKEN_GRANT,
-          );
+      // Let the server enforce the authorization_code ↔ redirect_uris coupling.
+      // We submit the grant list as-is; syncPublicClientGrantTypes on the server
+      // will add/remove authorization_code based on whether redirectUris is non-empty.
       const payload: AppFormData = {
         ...formData,
-        grantTypes: ensureAuthorizationCodeGrant(grantTypes),
         allowedScopes: ensureOpenIdScope(formData.allowedScopes),
       };
       const res = await fetch("/api/v1/apps", {

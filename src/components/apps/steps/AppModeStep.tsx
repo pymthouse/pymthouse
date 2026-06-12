@@ -2,11 +2,7 @@
 
 import { useEffect } from "react";
 import type { AppFormData } from "../AppWizard";
-import {
-  AUTHORIZATION_CODE_GRANT,
-  DEVICE_CODE_GRANT,
-  ensureAuthorizationCodeGrant,
-} from "@/lib/oidc/grants";
+import { DEVICE_CODE_GRANT } from "@/lib/oidc/grants";
 import { ensureOpenIdScope, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { validateInitiateLoginUri } from "@/lib/oidc/third-party-initiate-login";
 
@@ -53,13 +49,8 @@ export default function AppModeStep({
     setAllowedScopes(data.allowedScopes);
   }, [data.allowedScopes, scopes, onChange]);
 
-  useEffect(() => {
-    if (data.grantTypes.includes(AUTHORIZATION_CODE_GRANT)) return;
-    onChange({ grantTypes: ensureAuthorizationCodeGrant(data.grantTypes) });
-  }, [data.grantTypes, onChange]);
-
   const setGrantTypes = (next: string[]) => {
-    onChange({ grantTypes: ensureAuthorizationCodeGrant(next) });
+    onChange({ grantTypes: next });
   };
 
   const toggleScope = (scope: string) => {
@@ -90,9 +81,7 @@ export default function AppModeStep({
     if (readOnly || !data.backendDeviceHelper) return;
     if (hasDeviceCode) {
       onChange({
-        grantTypes: ensureAuthorizationCodeGrant(
-          data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
-        ),
+        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
         initiateLoginUri: "",
         deviceThirdPartyInitiateLogin: false,
       });
@@ -112,9 +101,7 @@ export default function AppModeStep({
     } else {
       onChange({
         backendDeviceHelper: false,
-        grantTypes: ensureAuthorizationCodeGrant(
-          data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
-        ),
+        grantTypes: data.grantTypes.filter((v) => v !== DEVICE_CODE_GRANT),
         initiateLoginUri: "",
         deviceThirdPartyInitiateLogin: false,
         allowedScopes: ensureOpenIdScope(

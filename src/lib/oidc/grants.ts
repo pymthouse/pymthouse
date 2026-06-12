@@ -1,4 +1,3 @@
-/** Interactive public apps always use authorization code + PKCE (hidden in app config UI). */
 export const AUTHORIZATION_CODE_GRANT = "authorization_code";
 
 export const REFRESH_TOKEN_GRANT = "refresh_token";
@@ -7,8 +6,12 @@ export const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 export const CLIENT_CREDENTIALS_GRANT = "client_credentials";
 
+/**
+ * Default grant types for a newly created public app with no redirect URIs.
+ * `authorization_code` is intentionally absent — it is added automatically
+ * by {@link syncAuthorizationCodeGrant} once a redirect URI is registered.
+ */
 export const DEFAULT_PUBLIC_GRANT_TYPES = [
-  AUTHORIZATION_CODE_GRANT,
   REFRESH_TOKEN_GRANT,
 ] as const;
 
@@ -23,29 +26,31 @@ export function parseGrantTypes(grantTypes: string): string[] {
     .filter(Boolean);
 }
 
-/** Public OIDC clients always allow authorization code; omit from app config UI. */
-export function ensureAuthorizationCodeGrant(grantTypes: string[]): string[] {
-  if (grantTypes.includes(AUTHORIZATION_CODE_GRANT)) {
-    return grantTypes;
-  }
-  return [AUTHORIZATION_CODE_GRANT, ...grantTypes];
+/**
+ * Enforce the RFC 6749 invariant: `authorization_code` belongs in grants if
+ * and only if the client has at least one registered redirect URI.
+ *
+ * - `hasRedirectUris` true  → ensures `authorization_code` is present (prepended)
+ * - `hasRedirectUris` false → removes `authorization_code` from the list
+ *
+ * All other grants are preserved as-is. Safe to call on M2M clients — pass
+ * `false` for `hasRedirectUris` and they are left untouched.
+ */
+export function syncAuthorizationCodeGrant(
+  grants: string[],
+  hasRedirectUris: boolean,
+): string[] {
+  const without = grants.filter((g) => g !== AUTHORIZATION_CODE_GRANT);
+  if (!hasRedirectUris) return without;
+  return [AUTHORIZATION_CODE_GRANT, ...without];
 }
 
-export function normalizePublicGrantTypesList(
-  grantTypes: string[],
+/** Pass-through for M2M clients; apply {@link syncAuthorizationCodeGrant} for public ones. */
+export function syncPublicClientGrantTypes(
+  grants: string[],
+  redirectUris: string[],
   clientId: string,
 ): string[] {
-  if (isM2mClientId(clientId)) {
-    return grantTypes;
-  }
-  return ensureAuthorizationCodeGrant(grantTypes);
-}
-
-export function normalizePublicGrantTypes(
-  grantTypes: string,
-  clientId: string,
-): string {
-  return normalizePublicGrantTypesList(parseGrantTypes(grantTypes), clientId).join(
-    ",",
-  );
+  if (isM2mClientId(clientId)) return grants;
+  return syncAuthorizationCodeGrant(grants, redirectUris.length > 0);
 }

@@ -4,6 +4,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
+import AuthorizationCodeRedirectBlock from "./steps/AuthorizationCodeRedirectBlock";
 import TestingStep from "./steps/TestingStep";
 import PlansTab from "./PlansTab";
 import PaymentsTab from "./PaymentsTab";
@@ -521,13 +522,32 @@ export default function AppSettingsScreen({
           id="panel-auth"
           role="tabpanel"
           aria-labelledby="tab-auth"
-          className="pb-6"
+          className="space-y-10 pb-6"
         >
           <AppModeStep
             data={formData}
             onChange={updateFormData}
             readOnly={!canEdit}
           />
+
+          <div className="border-t border-zinc-800 pt-8 space-y-3">
+            <div>
+              <h2 className="text-base font-semibold text-zinc-100">Browser sign-in</h2>
+              <p className="text-sm text-zinc-500 mt-1">
+                Authorization Code + PKCE (browser-based login) is enabled automatically
+                when at least one redirect URI is registered. Device flow (CLI/SDK) works
+                without one.
+              </p>
+            </div>
+            <AuthorizationCodeRedirectBlock
+              appId={appState.id}
+              redirectUris={formData.redirectUris}
+              onRedirectUrisChange={(uris) => updateFormData({ redirectUris: uris })}
+              domains={domains}
+              onDomainsChange={setDomains}
+              readOnly={!canEdit}
+            />
+          </div>
         </section>
       )}
 
@@ -567,6 +587,7 @@ export default function AppSettingsScreen({
                 }));
               }}
               readOnly={!canEdit}
+              hideRedirectUriEditor
             />
           </section>
 

@@ -26,6 +26,7 @@ import {
   getProviderApp,
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
+import { syncPublicClientGrantTypes } from "@/lib/oidc/grants";
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { authenticateAppClient } from "@/lib/auth";
@@ -290,9 +291,20 @@ export async function PUT(
       }
       if (body.grantTypes) clientUpdates.grantTypes = body.grantTypes;
 
-      const nextGrantTypes = (
-        clientUpdates.grantTypes ?? client.grantTypes.split(",").filter(Boolean)
+      // Resolve the final redirect URIs (updated or unchanged) and enforce the
+      // authorization_code ↔ redirect_uris invariant on every write.
+      const finalRedirectUris =
+        clientUpdates.redirectUris ??
+        (JSON.parse(client.redirectUris) as string[]);
+      const baseGrants =
+        clientUpdates.grantTypes ?? client.grantTypes.split(",").filter(Boolean);
+      clientUpdates.grantTypes = syncPublicClientGrantTypes(
+        baseGrants,
+        finalRedirectUris,
+        client.clientId,
       );
+
+      const nextGrantTypes = clientUpdates.grantTypes;
       const nextInitiateLoginUri = client.initiateLoginUri?.trim();
       const nextDeviceThirdPartyInitiateLogin = client.deviceThirdPartyInitiateLogin === 1;
       if (

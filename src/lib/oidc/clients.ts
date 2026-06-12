@@ -6,10 +6,7 @@ import { randomBytes } from "crypto";
 import {
   computeBackendM2mAllowedScopes,
 } from "@/lib/oidc/backend-m2m-scopes";
-import {
-  DEFAULT_PUBLIC_GRANT_TYPES,
-  normalizePublicGrantTypes,
-} from "@/lib/oidc/grants";
+import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
 import {
   DEFAULT_OIDC_SCOPES,
   ensureOpenIdScope,
@@ -66,10 +63,7 @@ export async function registerClient(config: OidcClientConfig): Promise<void> {
           config.allowedScopes || DEFAULT_OIDC_SCOPES,
           config.clientId,
         ),
-        grantTypes: normalizePublicGrantTypes(
-          (config.grantTypes || [...DEFAULT_PUBLIC_GRANT_TYPES]).join(","),
-          config.clientId,
-        ),
+        grantTypes: (config.grantTypes || [...DEFAULT_PUBLIC_GRANT_TYPES]).join(","),
         tokenEndpointAuthMethod: config.tokenEndpointAuthMethod || "none",
         clientSecretHash: config.clientSecret
           ? hashClientSecret(config.clientSecret)
@@ -91,10 +85,7 @@ export async function registerClient(config: OidcClientConfig): Promise<void> {
       config.allowedScopes || DEFAULT_OIDC_SCOPES,
       config.clientId,
     ),
-    grantTypes: normalizePublicGrantTypes(
-      (config.grantTypes || [...DEFAULT_PUBLIC_GRANT_TYPES]).join(","),
-      config.clientId,
-    ),
+    grantTypes: (config.grantTypes || [...DEFAULT_PUBLIC_GRANT_TYPES]).join(","),
     tokenEndpointAuthMethod: config.tokenEndpointAuthMethod || "none",
   });
 }
@@ -282,6 +273,8 @@ export async function createAppClient(displayName: string): Promise<{
   const id = uuidv4();
   const clientId = generateClientId();
 
+  // New apps start with no redirect URIs, so authorization_code is absent.
+  // It will be added by syncAuthorizationCodeGrant when the first redirect URI is registered.
   await db.insert(oidcClients).values({
     id,
     clientId,
@@ -289,7 +282,7 @@ export async function createAppClient(displayName: string): Promise<{
     displayName,
     redirectUris: JSON.stringify([]),
     allowedScopes: DEFAULT_OIDC_SCOPES,
-    grantTypes: "authorization_code,refresh_token",
+    grantTypes: "refresh_token",
     tokenEndpointAuthMethod: "none",
   });
 
@@ -606,10 +599,7 @@ export async function updateClientConfig(
     );
   }
   if (config.grantTypes !== undefined) {
-    updates.grantTypes = normalizePublicGrantTypes(
-      config.grantTypes.join(","),
-      clientId,
-    );
+    updates.grantTypes = config.grantTypes.join(",");
   }
   if (config.tokenEndpointAuthMethod !== undefined) {
     updates.tokenEndpointAuthMethod = config.tokenEndpointAuthMethod;

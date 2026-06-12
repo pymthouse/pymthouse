@@ -10,7 +10,7 @@ import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
 import { getIssuer } from "./issuer-urls";
 import { hashClientSecret, normalizePublicAllowedScopes } from "./clients";
-import { normalizePublicGrantTypes, parseGrantTypes } from "./grants";
+import { parseGrantTypes } from "./grants";
 import { getTrustedLoginHosts, normalizeDomain } from "./custom-domains";
 import { ensureSigningKey } from "./jwks";
 import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-login";
@@ -83,22 +83,12 @@ async function loadClients(): Promise<ClientMetadata[]> {
         return expanded;
       });
 
-    const grantTypes = parseGrantTypes(
-      normalizePublicGrantTypes(row.grantTypes, row.clientId),
-    );
-
-    // node-oidc-provider requires at least one redirect_uri for all clients.
-    // For device-flow-only clients that may have none configured, use a
-    // placeholder so the client can still be registered with the provider.
-    const effectiveRedirectUris =
-      redirectUris.length > 0
-        ? redirectUris
-        : [`${getIssuer()}/cb`];
+    const grantTypes = parseGrantTypes(row.grantTypes);
 
     const meta: ClientMetadata = {
       client_id: row.clientId,
       client_name: row.displayName,
-      redirect_uris: effectiveRedirectUris,
+      redirect_uris: redirectUris,
       grant_types: grantTypes,
       token_endpoint_auth_method: row.tokenEndpointAuthMethod as "none" | "client_secret_post" | "client_secret_basic",
       scope: normalizePublicAllowedScopes(row.allowedScopes, row.clientId),

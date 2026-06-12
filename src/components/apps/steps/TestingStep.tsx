@@ -30,6 +30,8 @@ interface Props {
   onSecretGenerated: () => void;
   onBackendSecretGenerated?: () => void;
   readOnly?: boolean;
+  /** When true, the redirect URI / domain editor is omitted (managed from Auth & Scopes tab). */
+  hideRedirectUriEditor?: boolean;
 }
 
 function getDefaultRedirectUri(redirectUris: string[]) {
@@ -65,6 +67,7 @@ export default function TestingStep({
   onSecretGenerated,
   onBackendSecretGenerated,
   readOnly = false,
+  hideRedirectUriEditor = false,
 }: Props) {
   const [secret, setSecret] = useState<string | null>(null);
   const [backendSecret, setBackendSecret] = useState<string | null>(null);
@@ -286,7 +289,7 @@ export default function TestingStep({
 
       {hasAuthCodeFlow && (
         <div className="space-y-5 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
-          {redirectUris.length === 0 && (
+          {!hideRedirectUriEditor && redirectUris.length === 0 && (
             <div
               className="flex gap-3 rounded-lg border border-blue-500/25 bg-blue-500/5 px-3 py-3"
               role="status"
@@ -315,21 +318,25 @@ export default function TestingStep({
             </div>
           )}
 
-          <div>
-            <h3 className="text-sm font-semibold text-zinc-200">Redirect &amp; login URLs</h3>
-            <p className="text-xs text-zinc-500 mt-1">
-              Callback URLs for authorization and sign-out. Domains are auto-suggested from redirect
-              origins.
-            </p>
-          </div>
-          <AuthorizationCodeRedirectBlock
-            appId={appId}
-            redirectUris={redirectUris}
-            onRedirectUrisChange={(uris) => onChange({ redirectUris: uris })}
-            domains={domains}
-            onDomainsChange={onDomainsChange}
-            readOnly={readOnly}
-          />
+          {!hideRedirectUriEditor && (
+            <>
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-200">Redirect &amp; login URLs</h3>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Callback URLs for authorization and sign-out. Domains are auto-suggested from
+                  redirect origins.
+                </p>
+              </div>
+              <AuthorizationCodeRedirectBlock
+                appId={appId}
+                redirectUris={redirectUris}
+                onRedirectUrisChange={(uris) => onChange({ redirectUris: uris })}
+                domains={domains}
+                onDomainsChange={onDomainsChange}
+                readOnly={readOnly}
+              />
+            </>
+          )}
 
           {testUrl && (
             <div className="space-y-3 border-t border-zinc-800 pt-5">

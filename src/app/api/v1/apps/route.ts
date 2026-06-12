@@ -9,6 +9,7 @@ import {
   ensureM2mBackendClient,
   updateClientConfig,
 } from "@/lib/oidc/clients";
+import { syncPublicClientGrantTypes } from "@/lib/oidc/grants";
 import { resetProvider } from "@/lib/oidc/provider";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
 import { ensureProviderAdminMembership } from "@/lib/provider-apps";
@@ -131,19 +132,32 @@ export async function POST(request: NextRequest) {
       .join(" ");
     clientUpdates.allowedScopes = filtered || DEFAULT_OIDC_SCOPES;
   }
+  // Resolve final redirect URIs early so we can sync authorization_code grant.
+  const finalRedirectUris = clientUpdates.redirectUris ?? [];
+
   if (Array.isArray(body.grantTypes) && body.grantTypes.length > 0) {
     const grantTypes = body.grantTypes.filter(
       (v: unknown): v is string => typeof v === "string" && v.trim().length > 0,
     );
     if (grantTypes.length > 0) {
-      clientUpdates.grantTypes = grantTypes;
+      clientUpdates.grantTypes = syncPublicClientGrantTypes(grantTypes, finalRedirectUris, clientId);
     }
   }
+
+  // Always ensure the grant list is consistent with redirect URIs.
+  if (clientUpdates.grantTypes) {
+    clientUpdates.grantTypes = syncPublicClientGrantTypes(
+      clientUpdates.grantTypes,
+      finalRedirectUris,
+      clientId,
+    );
+  }
+
   if (
     body.deviceThirdPartyInitiateLogin === true &&
     typeof body.initiateLoginUri === "string" &&
     body.initiateLoginUri.trim() &&
-    (clientUpdates.grantTypes ?? ["authorization_code", "refresh_token"]).includes(DEVICE_CODE_GRANT)
+    (clientUpdates.grantTypes ?? ["refresh_token"]).includes(DEVICE_CODE_GRANT)
   ) {
     const allowedScopes = (clientUpdates.allowedScopes ?? DEFAULT_OIDC_SCOPES)
       .split(/[,\s]+/)
