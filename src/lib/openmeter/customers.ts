@@ -1,23 +1,39 @@
 import type { OpenMeter } from "@openmeter/sdk";
+import { getHostedOpenMeterUrl } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
+import { isOpenMeterUlid } from "./konnect-routes";
+import { shouldUseKonnectRoutes } from "./route-mode";
 
 export type OpenMeterCustomerIdentity = {
   id: string;
   key: string;
 };
 
+async function findOpenMeterCustomerByKey(
+  client: OpenMeter,
+  customerKey: string,
+) {
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey) && !isOpenMeterUlid(customerKey)) {
+    const listed = await client.customers.list({ key: customerKey, page: 1, pageSize: 1 });
+    return listed?.items?.[0] ?? null;
+  }
+
+  try {
+    return await client.customers.get(customerKey);
+  } catch {
+    return null;
+  }
+}
+
 export async function ensureOpenMeterCustomer(
   client: OpenMeter,
   customerKey: string,
   displayName?: string,
 ): Promise<OpenMeterCustomerIdentity> {
-  try {
-    const existing = await client.customers.get(customerKey);
-    if (existing?.id) {
-      return { id: existing.id, key: customerKey };
-    }
-  } catch {
-    /* create below */
+  const existing = await findOpenMeterCustomerByKey(client, customerKey);
+  if (existing?.id) {
+    return { id: existing.id, key: customerKey };
   }
 
   const created = await client.customers.create({

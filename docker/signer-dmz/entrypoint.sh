@@ -134,6 +134,21 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   if [ -n "${SIGNER_ETH_ADDR:-}" ]; then
     ARGS="$ARGS -ethAcctAddr=${SIGNER_ETH_ADDR}"
   fi
+  if [ -n "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]; then
+    if [ -z "${WEBHOOK_SECRET:-}" ]; then
+      echo "entrypoint: WEBHOOK_SECRET is required when REMOTE_SIGNER_WEBHOOK_URL is set" >&2
+      exit 1
+    fi
+    ARGS="$ARGS -remoteSignerWebhookUrl=${REMOTE_SIGNER_WEBHOOK_URL}"
+    # X-Api-Key has no spaces — Authorization:Bearer ${WEBHOOK_SECRET} breaks when
+    # /usr/local/bin/livepeer $ARGS word-splits the secret into a stray argv token.
+    ARGS="$ARGS -remoteSignerWebhookHeaders=X-Api-Key:${WEBHOOK_SECRET}"
+  fi
+  if [ -n "${KAFKA_BROKERS:-}" ]; then
+    ARGS="$ARGS -monitor"
+    ARGS="$ARGS -kafkaBootstrapServers=${KAFKA_BROKERS}"
+    ARGS="$ARGS -kafkaGatewayTopic=${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
+  fi
   if [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "1" ] || [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "true" ]; then
     ARGS="$ARGS -remoteDiscovery=true"
     [ -n "${ORCH_WEBHOOK_URL:-}" ] && ARGS="$ARGS -orchWebhookUrl=${ORCH_WEBHOOK_URL}"

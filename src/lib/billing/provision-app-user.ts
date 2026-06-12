@@ -1,6 +1,7 @@
 import { findOrCreateAppEndUser } from "@/lib/billing";
 import { getTrialCreditBalance, type TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
+import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
 export type ProvisionAppUserBillingResult = {
@@ -27,6 +28,10 @@ export async function provisionAppUserBilling(input: {
   const { id: endUserId } = await findOrCreateAppEndUser(input.clientId, externalUserId);
 
   const sub = await ensureStarterSubscriptionForAppUser({
+    clientId: input.clientId,
+    externalUserId,
+  });
+  await ensureTrialAllowanceForAppUser({
     clientId: input.clientId,
     externalUserId,
   });

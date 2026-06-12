@@ -195,7 +195,7 @@ test("computeUsdMicrosFromWei: negative price returns 0", () => {
 });
 
 test("computeUsdMicrosFromWei: non-finite price returns 0", () => {
-  assert.equal(computeUsdMicrosFromWei(10n ** 18n, NaN), 0n);
+  assert.equal(computeUsdMicrosFromWei(10n ** 18n, Number.NaN), 0n);
   assert.equal(computeUsdMicrosFromWei(10n ** 18n, Infinity), 0n);
 });
 
@@ -241,6 +241,7 @@ const basePlan = {
   billingCycle: "monthly",
   discoveryProfileId: null,
   isNetworkDefault: false,
+  isStarterDefault: false,
   discoveryExcludedCapabilities: null,
   openmeterPlanId: null,
   openmeterPlanVersion: null,
@@ -259,6 +260,7 @@ const baseBundle = {
   slaTargetP95Ms: null,
   maxPricePerUnit: null,
   retailRateUsd: "0.0000015",
+  openmeterFeatureKey: null,
   createdAt: "",
 } as const;
 

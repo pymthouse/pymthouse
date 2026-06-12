@@ -1,17 +1,86 @@
 import { OpenMeter } from "@openmeter/sdk";
 import { getHostedOpenMeterUrl, isOpenMeterEnabled } from "./constants";
+import {
+  normalizeKonnectResponseBody,
+  rewriteKonnectRequestBody,
+  rewriteKonnectRequestUrl,
+} from "./konnect-routes";
+import { resolveHostedOpenMeterBaseUrl, shouldUseKonnectRoutes } from "./route-mode";
 
 let hostedClient: OpenMeter | null = null;
+
+async function buildKonnectRequest(request: Request): Promise<Request> {
+  const rewritten = rewriteKonnectRequestUrl(new URL(request.url), request.method);
+  const contentType = request.headers.get("content-type") ?? "";
+  if (
+    request.method !== "GET" &&
+    request.method !== "HEAD" &&
+    contentType.includes("application/json")
+  ) {
+    try {
+      const json = await request.json();
+      const body = rewriteKonnectRequestBody(rewritten.pathname, request.method, json);
+      return new Request(rewritten.toString(), {
+        method: request.method,
+        headers: request.headers,
+        body: JSON.stringify(body),
+        redirect: request.redirect,
+        signal: request.signal,
+        credentials: request.credentials,
+        integrity: request.integrity,
+        keepalive: request.keepalive,
+        mode: request.mode,
+        referrer: request.referrer,
+        referrerPolicy: request.referrerPolicy,
+      });
+    } catch {
+      // Fall through with original body when JSON parsing fails.
+    }
+  }
+
+  return new Request(rewritten.toString(), request);
+}
+
+function createKonnectFetch(): typeof fetch {
+  return async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const konnectRequest = await buildKonnectRequest(request);
+    const response = await fetch(konnectRequest);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      return response;
+    }
+    const body = await response.json();
+    const normalized = normalizeKonnectResponseBody(body);
+    if (normalized === body) {
+      return new Response(JSON.stringify(body), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+    return new Response(JSON.stringify(normalized), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
+}
 
 export function createOpenMeterClient(input: {
   baseUrl: string;
   apiKey?: string;
 }): OpenMeter {
-  const baseUrl = input.baseUrl.replace(/\/$/, "");
-  if (input.apiKey?.trim()) {
-    return new OpenMeter({ baseUrl, apiKey: input.apiKey.trim() });
+  const apiKey = input.apiKey?.trim() || undefined;
+  const rawBaseUrl = input.baseUrl.replace(/\/$/, "");
+  const useKonnectRoutes = shouldUseKonnectRoutes(rawBaseUrl, apiKey);
+  const baseUrl = useKonnectRoutes ? resolveHostedOpenMeterBaseUrl(apiKey) : rawBaseUrl;
+  const clientFetch = useKonnectRoutes ? createKonnectFetch() : undefined;
+
+  if (apiKey) {
+    return new OpenMeter({ baseUrl, apiKey, fetch: clientFetch });
   }
-  return new OpenMeter({ baseUrl });
+  return new OpenMeter({ baseUrl, fetch: clientFetch });
 }
 
 export function getHostedOpenMeterClient(): OpenMeter | null {

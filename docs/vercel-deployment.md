@@ -313,7 +313,7 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 1. Visit your deployed URL: `https://your-domain.vercel.app`
 2. Test admin login via Google/GitHub OAuth
 3. Navigate to signer configuration and verify connection to your deployed go-livepeer service
-4. Check `/api/signer/discover-orchestrators` endpoint
+4. Check remote signer DMZ health (see `GET /api/v1/health` signer probe)
 
 ## Troubleshooting
 

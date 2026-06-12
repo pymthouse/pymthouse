@@ -5,7 +5,9 @@ import { plans, signerConfig, subscriptions } from "@/db/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import { verifyOpenMeterSubscriptionId } from "@/lib/openmeter/subscription-read";
 import {
   queryOpenMeterAppDashboardUsage,
   queryOpenMeterUsage,
@@ -87,9 +89,25 @@ export async function GET(
     planRow = fallbackPlans[0] ?? null;
   }
 
+  let openMeterOwnerSubscription: Awaited<
+    ReturnType<typeof verifyOpenMeterSubscriptionId>
+  > = null;
+  if (
+    ownerSubscription?.openmeterSubscriptionId &&
+    isHostedAdminClientAvailable()
+  ) {
+    openMeterOwnerSubscription = await verifyOpenMeterSubscriptionId(
+      getHostedAdminClient(),
+      ownerSubscription.openmeterSubscriptionId,
+    );
+  }
+
   let periodStart: string;
   let periodEnd: string;
-  if (
+  if (openMeterOwnerSubscription?.activeFrom && openMeterOwnerSubscription?.activeTo) {
+    periodStart = openMeterOwnerSubscription.activeFrom;
+    periodEnd = openMeterOwnerSubscription.activeTo;
+  } else if (
     ownerSubscription?.currentPeriodStart &&
     ownerSubscription?.currentPeriodEnd
   ) {
@@ -193,14 +211,24 @@ export async function GET(
           status: planRow.status,
         }
       : null,
-    subscription: ownerSubscription
+    subscription: openMeterOwnerSubscription
       ? {
-          id: ownerSubscription.id,
-          status: ownerSubscription.status,
-          currentPeriodStart: ownerSubscription.currentPeriodStart,
-          currentPeriodEnd: ownerSubscription.currentPeriodEnd,
+          id: ownerSubscription?.id ?? openMeterOwnerSubscription.id,
+          status: openMeterOwnerSubscription.status,
+          currentPeriodStart: openMeterOwnerSubscription.activeFrom,
+          currentPeriodEnd: openMeterOwnerSubscription.activeTo,
+          openmeterSubscriptionId: openMeterOwnerSubscription.id,
+          source: "openmeter",
         }
-      : null,
+      : ownerSubscription
+        ? {
+            id: ownerSubscription.id,
+            status: ownerSubscription.status,
+            currentPeriodStart: ownerSubscription.currentPeriodStart,
+            currentPeriodEnd: ownerSubscription.currentPeriodEnd,
+            source: "legacy_cache",
+          }
+        : null,
     cycle: {
       periodStart,
       periodEnd,

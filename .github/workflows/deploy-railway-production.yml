@@ -1,18 +1,19 @@
-name: Deploy Railway production stack
+name: Deploy Railway production clearinghouse stack
 
-# Mirrors the preview stack (OpenMeter + signer DMZ) in the Railway "production" environment.
+# Deploys Kafka + OpenMeter collector + signer DMZ in the Railway "production" environment.
 # Enable with repository variable:
 #   RAILWAY_PRODUCTION_AUTO_DEPLOY=true
 #
 # Required secrets:
 #   RAILWAY_API_TOKEN  (Account → Tokens — workspace scope; required for CI deploy)
-#   OPENMETER_POSTGRES_PASSWORD  (production — distinct from preview)
+#   OPENMETER_URL
+#   OPENMETER_API_KEY
+#   WEBHOOK_SECRET
 #
 # Optional: RAILWAY_TOKEN (Project → Settings → Tokens, production env only) if you
 # do not use an account token; scripts pass --project so link/whoami are not needed.
 #
 # Optional secrets:
-#   OPENMETER_API_KEY, OPENMETER_CLICKHOUSE_SECRET, OPENMETER_URL (bootstrap)
 #   RAILWAY_PRODUCTION_DATABASE_URL, RAILWAY_PRODUCTION_AUTH_TOKEN_PEPPER,
 #   RAILWAY_PRODUCTION_NEXTAUTH_SECRET, ETH_RPC_URL
 #   Turnkey signer bootstrap (all four required together on pymthouse service):
@@ -21,7 +22,6 @@ name: Deploy Railway production stack
 #
 # Optional repository variables (defaults applied when unset):
 #   RAILWAY_PRODUCTION_NEXTAUTH_URL → https://pymthouse.com
-#   RAILWAY_PRODUCTION_OPENMETER_REDIS_ADDRESS → openmeter-redis-prod.railway.internal:6379
 #   RAILWAY_PRODUCTION_BOOTSTRAP_OPENMETER=true — post-deploy meter bootstrap
 #   SIGNER_NETWORK → arbitrum-one-mainnet
 #
@@ -53,10 +53,9 @@ jobs:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_ENVIRONMENT: production
       RAILWAY_PROJECT_ID: dab233aa-dd5f-429d-8cc4-9042e8735e2b
-      OPENMETER_POSTGRES_PASSWORD: ${{ secrets.OPENMETER_POSTGRES_PASSWORD }}
+      OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
       OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
-      OPENMETER_CLICKHOUSE_SECRET: ${{ secrets.OPENMETER_CLICKHOUSE_SECRET }}
-      OPENMETER_REDIS_ADDRESS: ${{ vars.RAILWAY_PRODUCTION_OPENMETER_REDIS_ADDRESS || 'openmeter-redis-prod.railway.internal:6379' }}
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
       NEXTAUTH_URL: ${{ vars.RAILWAY_PRODUCTION_NEXTAUTH_URL || 'https://pymthouse.com' }}
       ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
       SIGNER_NETWORK: ${{ vars.SIGNER_NETWORK || 'arbitrum-one-mainnet' }}

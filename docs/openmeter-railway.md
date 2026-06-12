@@ -1,8 +1,34 @@
-# OpenMeter on Railway (PymtHouse + Vercel)
+# OpenMeter + Collector on Railway (PymtHouse + Vercel)
 
-Self-hosted OpenMeter runs in a **dedicated Railway project**, separate from the [remote signer](vercel-deployment.md#option-a-railway-with-nixpacks-recommended---easiest). PymtHouse on **Vercel** calls it over HTTPS via `OPENMETER_URL`.
+Production now uses **hosted KongHQ OpenMeter** plus a Railway clearinghouse runtime:
+
+- `pymthouse` signer-dmz (go-livepeer remote signer)
+- `kafka` (Redpanda event bus)
+- `openmeter-collector` (Kafka -> OpenMeter CloudEvents)
+
+Set `OPENMETER_URL` to the hosted Konnect endpoint (`https://{region}.api.konghq.com/v3/openmeter`) and keep self-hosted OpenMeter compose files only for local/on-prem fallback.
 
 ## Architecture
+
+```
+┌─────────────────┐     HTTPS      ┌──────────────────────────────┐
+│  PymtHouse      │ ──────────────►│  Konnect/OpenMeter hosted     │
+│  (Vercel)       │  OPENMETER_URL │  metering + billing API       │
+└─────────────────┘                └──────────────────────────────┘
+        │
+        │ SIGNER_INTERNAL_URL
+        ▼
+┌─────────────────────────────┐
+│ Railway clearinghouse stack │
+│ signer-dmz + kafka +        │
+│ openmeter-collector         │
+└─────────────────────────────┘
+```
+
+## Legacy self-hosted OpenMeter
+
+The rest of this document describes the older self-hosted OpenMeter topology (`docker-compose.openmeter.railway.yml`) and is kept for future on-prem deployments.
+For production, prefer the hosted Konnect + collector path above.
 
 ```
 ┌─────────────────┐     HTTPS      ┌──────────────────────────────┐

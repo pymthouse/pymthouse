@@ -109,7 +109,7 @@ export async function createJobTokenForApp(opts: {
 /**
  * Create a provider-managed `app_users` row alongside a matching platform
  * `users` row that shares the same primary key. This mirrors how the Usage API
- * groups `usage_records.user_id` by joining to `app_users.id`, while still
+ * groups usage by joining to `app_users.id`, while still
  * satisfying the FK from `sessions.user_id` so we can mint bearer tokens for
  * this user without touching the legacy `end_users` table.
  */
@@ -292,8 +292,6 @@ export async function cleanupTestApp(
   await db.execute(sql`DELETE FROM discovery_profile_bundles WHERE client_id = ${appId}`);
   await db.execute(sql`DELETE FROM discovery_profiles WHERE client_id = ${appId}`);
 
-  await db.execute(sql`DELETE FROM usage_billing_events WHERE client_id = ${appId}`);
-  await db.execute(sql`DELETE FROM usage_records WHERE client_id = ${appId}`);
   await db.execute(sql`DELETE FROM auth_audit_log WHERE client_id = ${appId}`);
   await db.execute(sql`DELETE FROM app_allowed_domains WHERE app_id = ${appId}`);
 

@@ -55,7 +55,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 | --- | --- |
 | Ingest relay (go-livepeer) | `src/app/api/v1/internal/ingest/signed-ticket/route.ts` (alias `/api/v1/ingest/events`) — trusts signer `computed_fee_usd_micros` |
 | OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |
-| Signer-authoritative metering | go-livepeer `GenerateLivePayment` → HTTP ingest only; **no** OpenMeter write from `signer-proxy.ts` |
+| Signer-authoritative metering | go-livepeer `create_signed_ticket` → Kafka → OpenMeter collector; `/api/signer/*` proxy removed |
 | Usage API OpenMeter reads | `src/lib/openmeter/usage-read.ts` (requires `OPENMETER_URL`) |
 | Bootstrap meters/features | `npm run openmeter:bootstrap`, `docker-compose.openmeter.yml` |
 

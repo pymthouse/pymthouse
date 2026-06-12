@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
-import { plans, subscriptions } from "@/db/schema";
+import { plans } from "@/db/schema";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
+import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { buildOpenMeterPlanKey } from "@/lib/openmeter/plans-sync";
+import { getOpenMeterSubscriptionForAppUser } from "@/lib/openmeter/subscription-read";
 
 export async function GET(
   request: NextRequest,
@@ -15,47 +18,44 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const rows = await db
-    .select()
-    .from(subscriptions)
-    .where(
-      and(
-        eq(subscriptions.clientId, access.app.id),
-        eq(subscriptions.externalUserId, externalUserId),
-      ),
-    )
-    .orderBy(desc(subscriptions.createdAt))
-    .limit(1);
+  const starter = await getOrCreateStarterPlan(access.app.id);
+  const planKey = buildOpenMeterPlanKey(access.app.id, starter.id);
+  const omSubscription = await getOpenMeterSubscriptionForAppUser({
+    clientId: access.app.id,
+    externalUserId,
+    planKey,
+  });
 
-  const sub = rows[0];
-  if (!sub) {
+  if (!omSubscription) {
     return NextResponse.json({
       externalUserId,
       subscription: null,
+      source: "openmeter",
     });
   }
 
   const planRows = await db
     .select()
     .from(plans)
-    .where(eq(plans.id, sub.planId))
+    .where(eq(plans.id, starter.id))
     .limit(1);
   const plan = planRows[0] ?? null;
 
   return NextResponse.json({
     externalUserId,
+    source: "openmeter",
     subscription: {
-      id: sub.id,
-      status: sub.status,
-      planId: sub.planId,
+      id: omSubscription.id,
+      status: omSubscription.status,
+      planId: starter.id,
       planName: plan?.name ?? null,
       planType: plan?.type ?? null,
-      currentPeriodStart: sub.currentPeriodStart ?? null,
-      currentPeriodEnd: sub.currentPeriodEnd ?? null,
-      openmeterSubscriptionId: sub.openmeterSubscriptionId ?? null,
-      stripeCheckoutSessionId: sub.stripeCheckoutSessionId ?? null,
-      createdAt: sub.createdAt,
-      cancelledAt: sub.cancelledAt ?? null,
+      currentPeriodStart: omSubscription.activeFrom,
+      currentPeriodEnd: omSubscription.activeTo,
+      openmeterSubscriptionId: omSubscription.id,
+      stripeCheckoutSessionId: null,
+      createdAt: null,
+      cancelledAt: null,
     },
   });
 }

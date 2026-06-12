@@ -452,6 +452,7 @@ export const planCapabilityBundles = pgTable(
   ],
 );
 
+/** Cache of OpenMeter subscription pointers — authoritative state lives in OpenMeter/Konnect. */
 export const subscriptions = pgTable("subscriptions", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id),
@@ -490,6 +491,8 @@ export const apiKeys = pgTable("api_keys", {
     .notNull()
     .references(() => developerApps.id),
   subscriptionId: text("subscription_id").references(() => subscriptions.id),
+  /** OpenMeter/Konnect subscription ULID — authoritative when set. */
+  openmeterSubscriptionId: text("openmeter_subscription_id"),
   label: text("label"),
   status: text("status").notNull().default("active"),
   createdAt: text("created_at")
@@ -587,27 +590,6 @@ export const usageIngestReceipts = pgTable(
   ],
 );
 
-export const usageRecords = pgTable(
-  "usage_records",
-  {
-    id: text("id").primaryKey(),
-    requestId: text("request_id").notNull(),
-    userId: text("user_id"),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => developerApps.id),
-    modelId: text("model_id"),
-    units: text("units").notNull().default("0"),
-    fee: text("fee").notNull().default("0"),
-    createdAt: text("created_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    uniqueIndex("idx_usage_records_client_request").on(t.clientId, t.requestId),
-  ],
-);
-
 export const authAuditLog = pgTable("auth_audit_log", {
   id: text("id").primaryKey(),
   clientId: text("client_id").references(() => developerApps.id),
@@ -700,82 +682,6 @@ export const priceOracleSnapshots = pgTable(
   ],
 );
 
-/**
- * Retail billing events keyed to a signed ticket with pipeline/model constraint.
- * Created when the signing request resolves to an explicit pipeline/model and
- * price evidence is taken from the negotiated ticket (orchestrator info).
- */
-export const usageBillingEvents = pgTable(
-  "usage_billing_events",
-  {
-    id: text("id").primaryKey(),
-    /** FK-like reference to usage_records.id; unique to enforce one billing event per dedupe key. */
-    usageRecordId: text("usage_record_id"),
-    /** FK-like reference to transactions.id. */
-    transactionId: text("transaction_id"),
-    streamSessionId: text("stream_session_id"),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => developerApps.id),
-    userId: text("user_id"),
-    planId: text("plan_id"),
-    subscriptionId: text("subscription_id"),
-    // --- Pipeline/model constraint from request (body or capabilities) ---
-    pipeline: text("pipeline").notNull(),
-    modelId: text("model_id").notNull(),
-    /** pymthouse_gateway | python_gateway | direct_api */
-    attributionSource: text("attribution_source").notNull(),
-    gatewayRequestId: text("gateway_request_id"),
-    paymentMetadataVersion: text("payment_metadata_version"),
-    /** SHA-256 of { pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }. */
-    pipelineModelConstraintHash: text("pipeline_model_constraint_hash").notNull(),
-    orchAddress: text("orch_address"),
-    // --- Negotiated ticket price (same as signed when recorded from generate-live-payment) ---
-    advertisedPriceWeiPerUnit: text("advertised_price_wei_per_unit").notNull(),
-    advertisedPixelsPerUnit: text("advertised_pixels_per_unit").notNull(),
-    signedPriceWeiPerUnit: text("signed_price_wei_per_unit").notNull(),
-    signedPixelsPerUnit: text("signed_pixels_per_unit").notNull(),
-    // --- Network fee in wei and transaction-time USD ---
-    networkFeeWei: text("network_fee_wei").notNull(),
-    networkFeeUsdMicros: text("network_fee_usd_micros").notNull(),
-    // --- Platform fee ---
-    platformFeeWei: text("platform_fee_wei").notNull(),
-    platformFeeUsdMicros: text("platform_fee_usd_micros").notNull(),
-    // --- Owner charge (network fee + platform fee) ---
-    ownerChargeWei: text("owner_charge_wei").notNull(),
-    ownerChargeUsdMicros: text("owner_charge_usd_micros").notNull(),
-    /** Upcharge applied, in basis points. */
-    upchargePercentBps: integer("upcharge_percent_bps").notNull().default(0),
-    /** pipeline_model | subscription_included | unpriced */
-    pricingRuleSource: text("pricing_rule_source").notNull().default("unpriced"),
-    endUserBillableUsdMicros: text("end_user_billable_usd_micros").notNull().default("0"),
-    // --- ETH/USD oracle snapshot used at signing time ---
-    ethUsdPrice: text("eth_usd_price").notNull(),
-    ethUsdSource: text("eth_usd_source").notNull(),
-    ethUsdObservedAt: text("eth_usd_observed_at").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    uniqueIndex("idx_usage_billing_events_usage_record_id")
-      .on(t.usageRecordId)
-      .where(sql`${t.usageRecordId} IS NOT NULL`),
-    index("idx_usage_billing_events_client_created_at").on(t.clientId, t.createdAt),
-    index("idx_usage_billing_events_client_user_created_at").on(t.clientId, t.userId, t.createdAt),
-    index("idx_usage_billing_events_client_pipeline_model_created_at").on(
-      t.clientId,
-      t.pipeline,
-      t.modelId,
-      t.createdAt,
-    ),
-    index("idx_usage_billing_events_stream_session_created_at").on(
-      t.streamSessionId,
-      t.createdAt,
-    ),
-  ],
-);
-
 /** node-oidc-provider adapter storage (JSON payloads). */
 export const oidcPayloads = pgTable(
   "oidc_payloads",
@@ -824,11 +730,8 @@ export type NewPlan = typeof plans.$inferInsert;
 export type PlanCapabilityBundle = typeof planCapabilityBundles.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
-export type UsageRecord = typeof usageRecords.$inferSelect;
 export type AuthAuditLog = typeof authAuditLog.$inferSelect;
 export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
-export type UsageBillingEvent = typeof usageBillingEvents.$inferSelect;
-export type NewUsageBillingEvent = typeof usageBillingEvents.$inferInsert;
 export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;
 export type UsageIngestReceipt = typeof usageIngestReceipts.$inferSelect;

@@ -16,6 +16,10 @@ import {
   aggregatePipelineModelRows,
   dateKeyFromMeterWindow,
 } from "@/lib/openmeter/usage-read";
+import {
+  isOpenMeterSubscriptionActive,
+  verifyOpenMeterSubscriptionId,
+} from "@/lib/openmeter/subscription-read";
 
 test("buildOpenMeterCustomerKey encodes client and user", () => {
   const key = buildOpenMeterCustomerKey("app_abc", "user-123");
@@ -213,7 +217,7 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
   };
 
   const identity = await ensureOpenMeterCustomer(
-    client,
+    client as never,
     "app_1:user-1",
     "User One",
   );
@@ -233,7 +237,7 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
     },
   };
 
-  const identity = await ensureOpenMeterCustomer(client, "app_1:user-2");
+  const identity = await ensureOpenMeterCustomer(client as never, "app_1:user-2");
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
 });
 
@@ -325,8 +329,8 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
   const usage = phase.rateCards[1];
   assert.ok(flatFee && usage);
   assert.equal(flatFee.type, "flat_fee");
-  assert.equal(flatFee.price.amount, "29.00");
-  assert.equal(usage.price.amount, "0.0000015");
+  assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
+  assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
 });
 
 test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", async () => {
@@ -366,6 +370,7 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
         slaTargetP95Ms: null,
         maxPricePerUnit: null,
         retailRateUsd: "0.000002",
+        openmeterFeatureKey: null,
         createdAt: "",
       },
     ],
@@ -387,7 +392,7 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
   assert.equal(createdFeatures.length, 1);
   const usage = phase.rateCards[0];
   assert.ok(usage);
-  assert.equal(usage.price.amount, "0.000002");
+  assert.equal((usage as { price: { amount: string } }).price.amount, "0.000002");
 });
 
 test("isOpenMeterPlanNotFoundError detects stale plan id failures", async () => {
@@ -485,5 +490,103 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   assert.ok(usage);
   assert.equal(usage.key, "network_spend");
   assert.equal(usage.featureKey, "network_spend");
-  assert.equal(usage.entitlementTemplate?.issueAfterReset, 5_000_000);
+  assert.equal(
+    (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
+      ?.issueAfterReset,
+    5_000_000,
+  );
+});
+
+test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {
+  const client = {
+    subscriptions: {
+      get: async (id: string) => ({
+        id,
+        status: "active",
+        plan: { key: "app_1:plan_starter" },
+        activeFrom: new Date("2026-01-01T00:00:00.000Z"),
+        activeTo: new Date("2026-02-01T00:00:00.000Z"),
+      }),
+    },
+  };
+
+  const view = await verifyOpenMeterSubscriptionId(client as never, "sub-1");
+  assert.deepEqual(view, {
+    id: "sub-1",
+    status: "active",
+    planKey: "app_1:plan_starter",
+    planId: null,
+    activeFrom: "2026-01-01T00:00:00.000Z",
+    activeTo: "2026-02-01T00:00:00.000Z",
+  });
+});
+
+test("verifyOpenMeterSubscriptionId returns null when remote subscription missing", async () => {
+  const client = {
+    subscriptions: {
+      get: async () => {
+        throw new Error("not found");
+      },
+    },
+  };
+
+  const view = await verifyOpenMeterSubscriptionId(client as never, "missing");
+  assert.equal(view, null);
+});
+
+test("isOpenMeterSubscriptionActive treats scheduled and pending as active", () => {
+  assert.equal(isOpenMeterSubscriptionActive("active"), true);
+  assert.equal(isOpenMeterSubscriptionActive("scheduled"), true);
+  assert.equal(isOpenMeterSubscriptionActive("pending"), true);
+  assert.equal(isOpenMeterSubscriptionActive("cancelled"), false);
+});
+
+test("verifyOpenMeterPlanId returns null for archived plans", async () => {
+  const { verifyOpenMeterPlanId } = await import("./plans-sync");
+  const client = {
+    plans: {
+      get: async () => ({
+        id: "plan-archived",
+        key: "app_1:starter",
+        status: "archived",
+      }),
+    },
+  };
+
+  const view = await verifyOpenMeterPlanId(client as never, "plan-archived");
+  assert.equal(view, null);
+});
+
+test("verifyOpenMeterPlanId returns mapped plan", async () => {
+  const { verifyOpenMeterPlanId } = await import("./plans-sync");
+  const client = {
+    plans: {
+      get: async (id: string) => ({
+        id,
+        key: "app_1_plan_abc",
+        status: "active",
+      }),
+    },
+  };
+
+  const view = await verifyOpenMeterPlanId(client as never, "plan-1");
+  assert.deepEqual(view, {
+    id: "plan-1",
+    key: "app_1_plan_abc",
+    status: "active",
+  });
+});
+
+test("verifyOpenMeterPlanId returns null when remote plan missing", async () => {
+  const { verifyOpenMeterPlanId } = await import("./plans-sync");
+  const client = {
+    plans: {
+      get: async () => {
+        throw new Error("plan not found [404]");
+      },
+    },
+  };
+
+  const view = await verifyOpenMeterPlanId(client as never, "missing");
+  assert.equal(view, null);
 });

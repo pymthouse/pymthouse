@@ -11,6 +11,14 @@ import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "./client-factory";
+import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
+import { shouldUseKonnectRoutes } from "./route-mode";
+import { getHostedOpenMeterUrl } from "./constants";
+import {
+  getOpenMeterSubscriptionForAppUser,
+  isOpenMeterSubscriptionActive,
+} from "./subscription-read";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
 export { ensureOpenMeterCustomer } from "./customers";
@@ -53,7 +61,42 @@ export async function getTrialCreditBalance(input: {
   const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
   const featureKey = input.featureKey || (await getTrialFeatureKeyForApp(input.clientId));
 
-  await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await ensureOpenMeterCustomer(client, customerKey);
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+
+  if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
+    let hasAccess = await getKonnectEntitlementHasAccess({
+      customerId: customer.id,
+      featureKey,
+      apiKey,
+    });
+    if (hasAccess === null) {
+      return null;
+    }
+
+    const defaultGrant = defaultStarterIncludedUsdMicros();
+    if (!hasAccess) {
+      const starterSubscription = await getOpenMeterSubscriptionForAppUser({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+      });
+      if (
+        starterSubscription &&
+        isOpenMeterSubscriptionActive(starterSubscription.status)
+      ) {
+        // Konnect plan rate_cards.discounts.usage does not always surface in
+        // entitlement-access; an active starter subscription implies included trial usage.
+        hasAccess = true;
+      }
+    }
+
+    return {
+      hasAccess,
+      balanceUsdMicros: hasAccess ? defaultGrant : "0",
+      consumedUsdMicros: "0",
+      lifetimeGrantedUsdMicros: hasAccess ? defaultGrant : "0",
+    };
+  }
 
   const value = await client.customers.entitlements.value(customerKey, featureKey);
   if (!value) {

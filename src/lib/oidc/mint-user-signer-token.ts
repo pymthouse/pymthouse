@@ -9,7 +9,6 @@ import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 
 export const SIGN_MINT_USER_TOKEN_SCOPE = "sign:mint_user_token";
-export const LIVEPEER_REMOTE_SIGNER_AUDIENCE = "livepeer-remote-signer";
 const SIGNER_JWT_TTL_SECONDS = 300;
 
 export class MintUserSignerTokenError extends Error {
@@ -38,12 +37,23 @@ export function isMintUserSignerTokenRequest(params: URLSearchParams): boolean {
   return scopes.includes(SIGN_MINT_USER_TOKEN_SCOPE);
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+/** Signer JWT `aud` matches the OIDC issuer (same as Apache DMZ AuthJWTAud). */
+export function signerJwtAudience(): string {
+  return trimTrailingSlashes(getIssuer());
+}
+
 export async function mintSignerJwtForExternalUser(input: {
   publicClientId: string;
   developerAppId: string;
   externalUserId: string;
-  /** JWT `aud` for Apache signer DMZ; defaults to bare go-livepeer remote signer. */
-  audience?: string;
 }) {
   const externalUserId = input.externalUserId.trim();
   if (!externalUserId) {
@@ -67,7 +77,7 @@ export async function mintSignerJwtForExternalUser(input: {
   }
 
   const issuer = getIssuer();
-  const audience = input.audience?.trim() || LIVEPEER_REMOTE_SIGNER_AUDIENCE;
+  const audience = signerJwtAudience();
   const keyPair = await ensureSigningKey();
   const nowSeconds = Math.floor(Date.now() / 1000);
 
@@ -102,7 +112,6 @@ export async function handleMintUserSignerToken(input: {
   clientId: string;
   clientSecret: string;
   externalUserId: string;
-  audience?: string | null;
   scope?: string | null;
 }) {
   const externalUserId = input.externalUserId?.trim();
@@ -110,14 +119,6 @@ export async function handleMintUserSignerToken(input: {
     throw new MintUserSignerTokenError(
       "invalid_request",
       "external_user_id is required",
-    );
-  }
-
-  const audience = (input.audience || LIVEPEER_REMOTE_SIGNER_AUDIENCE).trim();
-  if (audience !== LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
-    throw new MintUserSignerTokenError(
-      "invalid_request",
-      `audience must be ${LIVEPEER_REMOTE_SIGNER_AUDIENCE}`,
     );
   }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
 import type { SignerRoutingConfig } from "@/lib/billing/types";
-import { getIssuer } from "@/lib/oidc/issuer-urls";
+import { getIssuer, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export async function GET(
@@ -15,16 +15,16 @@ export async function GET(
   }
 
   const issuer = getIssuer();
+  const origin = getPublicOrigin();
   const signerApiUrl = getClientSignerApiUrl();
-  const remoteDmzUrl = process.env.SIGNER_INTERNAL_URL?.trim() || null;
-  const identityMode = "trusted_headers";
-
+  const remoteDmzUrl = signerApiUrl;
+  const identityMode = "webhook";
   const meteringMode: SignerRoutingConfig["meteringMode"] = "platform_ingest";
 
   const config: SignerRoutingConfig = {
     signerApiUrl,
     remoteDmzUrl,
-    jwksUri: `${issuer}/api/v1/oidc/jwks`,
+    jwksUri: `${issuer}/jwks`,
     identityMode,
     meteringMode,
   };
@@ -33,16 +33,16 @@ export async function GET(
     clientId,
     routing: config,
     patterns: {
-      hostedFacade: {
+      directDmz: {
         description:
-          "Forward end-user Authorization to PymtHouse /api/signer/*; metering runs on successful sign.",
+          "Mint a user JWT via Builder API OIDC, sign against the remote signer DMZ directly with @pymthouse/builder-sdk/signer/server. Identity is verified via the remote-signer webhook; metering flows through Kafka and the OpenMeter collector.",
         signerApiUrl,
+        webhookUrl: `${origin}/webhooks/remote-signer`,
       },
-      platformDirectDmz: {
+      deprecatedHostedFacade: {
         description:
-          "Mint user JWT via Builder API, sign against DMZ directly, POST usage to /api/v1/apps/{clientId}/usage/signed-tickets.",
-        remoteDmzUrl,
-        ingestUrl: `${issuer}/api/v1/apps/${clientId}/usage/signed-tickets`,
+          "Removed: PymtHouse /api/signer/* HTTP proxy. Use direct DMZ signing instead.",
+        signerApiUrl: null,
       },
     },
   });

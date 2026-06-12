@@ -19,7 +19,7 @@ run("usage API requires a matching client or authorized session", async (t) => {
   t.after(() => cleanupTestApp(app));
 
   const anonymous = await GET(
-    new Request(`http://localhost/api/v1/apps/${app.clientId}/usage`) as never,
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/usage`),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(anonymous.status, 404);
@@ -27,7 +27,7 @@ run("usage API requires a matching client or authorized session", async (t) => {
   const wrong = await GET(
     new Request(`http://localhost/api/v1/apps/${app.clientId}/usage`, {
       headers: { Authorization: basicAuthHeader(app.clientId, "pmth_cs_nope") },
-    }) as never,
+    }),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(wrong.status, 404);
@@ -37,7 +37,7 @@ run("usage API requires a matching client or authorized session", async (t) => {
   const crossTenant = await GET(
     new Request(`http://localhost/api/v1/apps/${other.clientId}/usage`, {
       headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
-    }) as never,
+    }),
     { params: Promise.resolve({ id: other.clientId }) },
   );
   assert.equal(crossTenant.status, 404);
@@ -54,7 +54,7 @@ run("usage API requires a matching client or authorized session", async (t) => {
   const ok = await GET(
     new Request(`http://localhost/api/v1/apps/${app.clientId}/usage`, {
       headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
-    }) as never,
+    }),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(ok.status, 200);
@@ -89,7 +89,7 @@ run("usage API aggregates OpenMeter meter rows and validates input", async (t) =
     const res = await GET(
       new Request(`http://localhost/api/v1/apps/${app.clientId}/usage${query}`, {
         headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
-      }) as never,
+      }),
       { params: Promise.resolve({ id: app.clientId }) },
     );
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -171,7 +171,7 @@ run("usage API groupBy=pipeline_model reads OpenMeter dashboard meters", async (
       {
         headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
       },
-    ) as never,
+    ),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(res.status, 200);

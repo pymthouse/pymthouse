@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply OpenMeter + signer env vars to a Railway environment from the current shell.
+# Apply clearinghouse stack env vars to a Railway environment from the current shell.
 # Used by CI (secrets → env) and locally: source a filled .env then run this script.
 #
 #   export RAILWAY_API_TOKEN=...   # Account → Tokens (best for GitHub Actions)
@@ -27,8 +27,16 @@ fi
 
 railway_export_auth || exit 1
 
-if [[ -z "${OPENMETER_POSTGRES_PASSWORD:-}" ]]; then
-  echo "OPENMETER_POSTGRES_PASSWORD is required for the OpenMeter stack" >&2
+if [[ -z "${OPENMETER_URL:-}" ]]; then
+  echo "OPENMETER_URL is required (hosted OpenMeter/Konnect API base)" >&2
+  exit 1
+fi
+if [[ -z "${OPENMETER_API_KEY:-}" ]]; then
+  echo "OPENMETER_API_KEY is required for collector ingest" >&2
+  exit 1
+fi
+if [[ -z "${WEBHOOK_SECRET:-}" ]]; then
+  echo "WEBHOOK_SECRET is required for remote signer webhook auth" >&2
   exit 1
 fi
 
@@ -47,60 +55,29 @@ echo "Applying stack env to Railway environment: $ENV (project $PROJECT_ID)"
 railway_retry railway variables --service pymthouse $PE_FLAGS >/dev/null
 echo "Railway API reachable."
 
-# Postgres
-set_kv openmeter-postgres \
-  "POSTGRES_USER=postgres" \
-  "POSTGRES_DB=postgres" \
-  "POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}" \
-  "OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}" \
-  "PGDATA=/var/lib/postgresql/data/pgdata"
+# Kafka bus for signer monitor events.
+set_kv kafka \
+  "CLUSTER_ID=ca497efe-9f82-4b84-890b-d9969a9a2e1c"
 
-# ClickHouse
-CLICKHOUSE_PASSWORD="${OPENMETER_CLICKHOUSE_SECRET:-default}"
-set_kv openmeter-clickhouse \
-  "CLICKHOUSE_USER=default" \
-  "CLICKHOUSE_DB=openmeter" \
-  "CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}"
+KAFKA_BROKERS="${KAFKA_BROKERS:-kafka.railway.internal:9092}"
+KAFKA_GATEWAY_TOPIC="${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
+ETH_USD_PRICE="${ETH_USD_PRICE:-3500}"
 
-# Kafka (must match docker-compose.openmeter.railway.yml)
-set_kv openmeter-kafka \
-  "CLUSTER_ID=ca497efe-9f82-4b84-890b-d9969a9a2e1c" \
-  "KAFKA_BROKER_ID=0" \
-  "KAFKA_PROCESS_ROLES=broker,controller" \
-  "KAFKA_CONTROLLER_QUORUM_VOTERS=0@openmeter-kafka:9093" \
-  "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER" \
-  "KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL" \
-  "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT" \
-  "KAFKA_ADVERTISED_LISTENERS=INTERNAL://openmeter-kafka:9092" \
-  "KAFKA_LISTENERS=INTERNAL://openmeter-kafka:9092,CONTROLLER://openmeter-kafka:9093" \
-  "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1" \
-  "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0" \
-  "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1" \
-  "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1" \
-  "KAFKA_AUTO_CREATE_TOPICS_ENABLE=false"
+REMOTE_SIGNER_WEBHOOK_URL="${REMOTE_SIGNER_WEBHOOK_URL:-${NEXTAUTH_URL:-https://pymthouse.com}/webhooks/remote-signer}"
 
-# OpenMeter app services
-REDIS_ADDR="${OPENMETER_REDIS_ADDRESS:-}"
-if [[ -z "$REDIS_ADDR" ]]; then
-  if [[ "$ENV" == "production" ]]; then
-    REDIS_ADDR="openmeter-redis-prod.railway.internal:6379"
-  else
-    REDIS_ADDR="openmeter-redis.railway.internal:6379"
-  fi
-fi
-for svc in openmeter openmeter-sink-worker openmeter-balance-worker; do
-  args=("OPENMETER_POSTGRES_PASSWORD=${OPENMETER_POSTGRES_PASSWORD}")
-  if [[ -n "${OPENMETER_API_KEY:-}" ]]; then
-    args+=("OPENMETER_API_KEY=${OPENMETER_API_KEY}")
-  fi
-  if [[ -n "$REDIS_ADDR" ]]; then
-    args+=("OPENMETER_REDIS_ADDRESS=${REDIS_ADDR}")
-  fi
-  set_kv "$svc" "${args[@]}"
-done
+set_kv openmeter-collector \
+  "KAFKA_BROKERS=${KAFKA_BROKERS}" \
+  "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC}" \
+  "OPENMETER_URL=${OPENMETER_URL}" \
+  "OPENMETER_API_KEY=${OPENMETER_API_KEY}" \
+  "ETH_USD_PRICE=${ETH_USD_PRICE}"
 
 # Signer DMZ (pymthouse service). For signer-only updates use scripts/railway-apply-signer-env.sh.
 export NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
+export KAFKA_BROKERS
+export KAFKA_GATEWAY_TOPIC
+export REMOTE_SIGNER_WEBHOOK_URL
+export WEBHOOK_SECRET
 railway_apply_signer_env pymthouse "$PE_FLAGS"
 
 echo "Done. Run scripts/railway-deploy-stack.sh $ENV to deploy."

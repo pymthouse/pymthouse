@@ -8,11 +8,10 @@ import {
   resolveDeveloperAppAndPublicClientForOidcRow,
   type DrizzleDb,
 } from "@/lib/oidc/client-sibling";
-import { getIssuer } from "@/lib/oidc/issuer-urls";
 import {
-  LIVEPEER_REMOTE_SIGNER_AUDIENCE,
   SIGN_MINT_USER_TOKEN_SCOPE,
   mintSignerJwtForExternalUser,
+  signerJwtAudience,
 } from "@/lib/oidc/mint-user-signer-token";
 import {
   resolveSubjectAccessToken,
@@ -55,16 +54,17 @@ function normalizeResourceOrAudience(value: string): string {
   return trimTrailingSlashes(value.trim());
 }
 
-function targetsLivepeerRemoteSigner(input: {
+function targetsSignerJwtAudience(input: {
   resource: string | null | undefined;
   audience?: string[];
 }): boolean {
+  const expected = signerJwtAudience();
   const resource = input.resource?.trim() ?? "";
-  if (resource === LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
+  if (resource && normalizeResourceOrAudience(resource) === expected) {
     return true;
   }
   for (const raw of input.audience ?? []) {
-    if (normalizeResourceOrAudience(raw) === LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
+    if (normalizeResourceOrAudience(raw) === expected) {
       return true;
     }
   }
@@ -84,7 +84,7 @@ export function isSignerJwtTokenExchangeRequest(params: {
   return (
     params.grantType === TOKEN_EXCHANGE_GRANT &&
     params.subjectTokenType.trim() === SUBJECT_ACCESS_TOKEN_TYPE &&
-    targetsLivepeerRemoteSigner(params)
+    targetsSignerJwtAudience(params)
   );
 }
 
@@ -145,7 +145,7 @@ export async function handleSignerJwtTokenExchange(
   ) {
     throw new TokenExchangeError(
       "invalid_target",
-      `resource or audience must be ${LIVEPEER_REMOTE_SIGNER_AUDIENCE}`,
+      `resource or audience must be ${signerJwtAudience()}`,
     );
   }
 
@@ -231,7 +231,6 @@ export async function handleSignerJwtTokenExchange(
     publicClientId: sibling.publicClientId,
     developerAppId: sibling.developerAppId,
     externalUserId: resolved.externalUserId,
-    audience: getIssuer(),
   });
 
   return {

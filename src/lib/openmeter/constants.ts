@@ -27,6 +27,26 @@ export function getHostedOpenMeterUrl(): string {
   return (process.env.OPENMETER_URL?.trim() || "http://127.0.0.1:48888").replace(/\/$/, "");
 }
 
+export function isKonnectMeteringUrl(url: string, apiKey?: string): boolean {
+  if (/konghq\.com/i.test(url)) {
+    return true;
+  }
+  const key = apiKey?.trim() ?? "";
+  return key.startsWith("kpat_") || key.startsWith("spat_");
+}
+
+/** Normalize OPENMETER_URL to the Konnect metering base (…/v3/openmeter). */
+export function normalizeKonnectMeteringUrl(url: string): string {
+  let base = url.trim().replace(/\/$/, "");
+  if (base.endsWith("/events")) {
+    base = base.slice(0, -"/events".length);
+  }
+  if (!base.endsWith("/openmeter") && /\/v\d+$/i.test(base)) {
+    base = `${base}/openmeter`;
+  }
+  return base;
+}
+
 /** Usage and balance APIs require a configured OpenMeter instance. */
 export function requireOpenMeterForUsageReads(): boolean {
   return isOpenMeterEnabled();
