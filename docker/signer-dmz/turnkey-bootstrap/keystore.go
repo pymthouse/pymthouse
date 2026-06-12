@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts/keystore"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
@@ -125,14 +124,8 @@ func writeKeystoreAndPassword(cfg bootstrapConfig, expectedAddress ethcommon.Add
 		return fmt.Errorf("decode secp256k1 private key: %w", err)
 	}
 
-	store := keystore.NewKeyStore(keystoreDir, keystore.StandardScryptN, keystore.StandardScryptP)
-	account, err := store.ImportECDSA(privateKey, cfg.SignerKeystorePassword)
-	if err != nil {
-		return fmt.Errorf("write UTC keystore: %w", err)
-	}
-
-	if account.Address != expectedAddress {
-		return fmt.Errorf("exported private key resolves to %s but expected %s", account.Address.Hex(), expectedAddress.Hex())
+	if err := writeUTCKeystore(keystoreDir, privateKey, expectedAddress, cfg.SignerKeystorePassword); err != nil {
+		return err
 	}
 
 	passwordPath := filepath.Join(cfg.SignerDataDir, ".eth-password")
