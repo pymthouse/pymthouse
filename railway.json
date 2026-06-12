@@ -2,7 +2,13 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "docker/signer-dmz/Dockerfile"
+    "dockerfilePath": "docker/signer-dmz/Dockerfile",
+    "watchPatterns": [
+      "docker/signer-dmz/**",
+      "deploy/pymthouse/**",
+      "scripts/jwks_to_pem.py",
+      "scripts/cleanup-ephemeral-keystore.sh"
+    ]
   },
   "deploy": {
     "numReplicas": 1,

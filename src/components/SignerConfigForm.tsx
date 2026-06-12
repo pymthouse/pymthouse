@@ -24,17 +24,33 @@ interface SignerConfigFormProps {
     /** The signer HTTP base URL that PymtHouse will call after DB/env/default resolution. */
     effectiveSignerUrl: string;
     signerUrlSource: "saved" | "env" | "default";
+    /** Signer DMZ is deployed off this host (Railway, etc.). */
+    managedRemote: boolean;
   };
 }
 
+function fieldInputClass(locked: boolean, mono = false): string {
+  const base = locked
+    ? "bg-zinc-900/50 border-zinc-800 text-zinc-400 cursor-not-allowed"
+    : "bg-zinc-800/50 border-zinc-700 text-zinc-200 focus:outline-none focus:border-emerald-500/50";
+  return `w-full px-3 py-2 border rounded-lg text-sm ${mono ? "font-mono text-xs" : ""} ${base}`;
+}
+
+const LOCAL_ONLY_FIELD_HELP =
+  "Only used when starting the local Docker signer from this app. Configure on Railway for remote deployments.";
+
 export default function SignerConfigForm({ config }: SignerConfigFormProps) {
   const router = useRouter();
+  const signerUrlEnvLocked = config.signerUrlSource === "env";
+  const localComposeLocked = config.managedRemote;
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: config.name,
-    signerUrl: config.signerUrl || config.effectiveSignerUrl,
+    signerUrl: signerUrlEnvLocked
+      ? config.effectiveSignerUrl
+      : config.signerUrl || config.effectiveSignerUrl,
     signerApiKey: config.signerApiKey || "",
     network: config.network,
     ethRpcUrl: config.ethRpcUrl,
@@ -54,27 +70,35 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
     setError(null);
 
     try {
-      const signerUrl =
-        !config.signerUrl && formData.signerUrl === config.effectiveSignerUrl
-          ? undefined
-          : formData.signerUrl;
-      const { signerUrl: _effectiveSignerUrl, ...payloadFormData } = formData;
+      const skipSignerUrlPersist =
+        signerUrlEnvLocked ||
+        (!config.signerUrl &&
+          formData.signerUrl === config.effectiveSignerUrl);
+      const signerUrl = skipSignerUrlPersist ? undefined : formData.signerUrl;
       const res = await fetch("/api/v1/signer", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...payloadFormData,
-          ...(signerUrl !== undefined ? { signerUrl } : {}),
+          name: formData.name,
+          defaultCutPercent: formData.defaultCutPercent,
+          billingMode: formData.billingMode,
+          signerApiKey: formData.signerApiKey || null,
           network: "arbitrum-one-mainnet",
-          ethAcctAddr: formData.ethAcctAddr || null,
-          signerPort: formData.signerPort,
-          remoteDiscovery: formData.remoteDiscovery,
-          orchWebhookUrl: formData.remoteDiscovery
-            ? formData.orchWebhookUrl || null
-            : null,
-          liveAICapReportInterval: formData.remoteDiscovery
-            ? formData.liveAICapReportInterval || null
-            : null,
+          ...(signerUrl !== undefined ? { signerUrl } : {}),
+          ...(localComposeLocked
+            ? {}
+            : {
+                ethRpcUrl: formData.ethRpcUrl,
+                ethAcctAddr: formData.ethAcctAddr || null,
+                signerPort: formData.signerPort,
+                remoteDiscovery: formData.remoteDiscovery,
+                orchWebhookUrl: formData.remoteDiscovery
+                  ? formData.orchWebhookUrl || null
+                  : null,
+                liveAICapReportInterval: formData.remoteDiscovery
+                  ? formData.liveAICapReportInterval || null
+                  : null,
+              }),
         }),
       });
 
@@ -138,6 +162,12 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <h3 className="font-semibold text-zinc-200">Saved settings</h3>
+        {localComposeLocked && (
+          <p className="text-xs text-zinc-500">
+            Platform billing fields are saved here. Signer process settings (RPC,
+            port, discovery) are managed on the remote host.
+          </p>
+        )}
 
         <fieldset className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-0 p-0 m-0 min-w-0">
         <div>
@@ -164,20 +194,43 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
             onChange={(e) =>
               setFormData({ ...formData, signerUrl: e.target.value })
             }
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-emerald-500/50"
+            disabled={signerUrlEnvLocked}
+            readOnly={signerUrlEnvLocked}
+            className={fieldInputClass(signerUrlEnvLocked)}
             placeholder={config.effectiveSignerUrl}
           />
           <p className="text-xs text-zinc-600 mt-0.5">
-            Effective signer HTTP base URL ({config.signerUrlSource === "saved"
-              ? "saved override"
-              : config.signerUrlSource === "env"
-                ? "from SIGNER_INTERNAL_URL"
-                : "default fallback"}
-            ). This must point to Apache/DMZ on the host, usually{" "}
-            <code className="text-zinc-500">http://127.0.0.1:8080</code>.
-            Do not use livepeer&apos;s in-container{" "}
-            <code className="text-zinc-500">127.0.0.1:8081</code> here.
+            {signerUrlEnvLocked ? (
+              <>
+                Locked by{" "}
+                <code className="text-zinc-500">SIGNER_INTERNAL_URL</code> in
+                the server environment (Vercel / Railway). Change it in the
+                deployment dashboard, not here.
+              </>
+            ) : (
+              <>
+                Effective signer HTTP base URL (
+                {config.signerUrlSource === "saved"
+                  ? "saved in database"
+                  : "default fallback"}
+                ). This must point to Apache/DMZ on the host, usually{" "}
+                <code className="text-zinc-500">http://127.0.0.1:8080</code>.
+                Do not use livepeer&apos;s in-container{" "}
+                <code className="text-zinc-500">127.0.0.1:8081</code> here.
+              </>
+            )}
           </p>
+          {signerUrlEnvLocked &&
+            config.signerUrl &&
+            config.signerUrl.trim() !== config.effectiveSignerUrl && (
+              <p className="text-xs text-amber-600/80 mt-1">
+                Database has{" "}
+                <code className="text-amber-500/90">{config.signerUrl}</code> but
+                it is ignored while{" "}
+                <code className="text-amber-500/90">SIGNER_INTERNAL_URL</code> is
+                set.
+              </p>
+            )}
         </div>
         <div>
           <label className="block text-xs text-zinc-500 mb-1.5">
@@ -194,13 +247,14 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
                 signerPort: parseInt(e.target.value, 10) || 8080,
               })
             }
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-emerald-500/50"
+            disabled={localComposeLocked}
+            readOnly={localComposeLocked}
+            className={fieldInputClass(localComposeLocked)}
           />
           <p className="text-xs text-zinc-600 mt-0.5">
-            Host port mapped to Apache in signer-dmz (default 8080). Do not use 8081
-            here: that is livepeer’s in-container HTTP port, not published on the host.
-            Set <code className="text-zinc-500">SIGNER_INTERNAL_URL</code> in .env if
-            this row is wrong. Restart signer after changing.
+            {localComposeLocked
+              ? LOCAL_ONLY_FIELD_HELP
+              : "Host port mapped to Apache in signer-dmz (default 8080). Do not use 8081 here: that is livepeer’s in-container HTTP port, not published on the host. Set SIGNER_INTERNAL_URL in .env if this row is wrong. Restart signer after changing."}
           </p>
         </div>
         <div>
@@ -217,14 +271,19 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
           </label>
           <input
             type="url"
-            required
+            required={!localComposeLocked}
             value={formData.ethRpcUrl}
             onChange={(e) =>
               setFormData({ ...formData, ethRpcUrl: e.target.value })
             }
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:border-emerald-500/50 font-mono text-xs"
+            disabled={localComposeLocked}
+            readOnly={localComposeLocked}
+            className={fieldInputClass(localComposeLocked, true)}
             placeholder="https://arb1.arbitrum.io/rpc"
           />
+          {localComposeLocked && (
+            <p className="text-xs text-zinc-600 mt-0.5">{LOCAL_ONLY_FIELD_HELP}</p>
+          )}
         </div>
         <div className="sm:col-span-2">
           <label className="block text-xs text-zinc-500 mb-1.5">
@@ -250,9 +309,14 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
             onChange={(e) =>
               setFormData({ ...formData, ethAcctAddr: e.target.value })
             }
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:border-emerald-500/50 font-mono text-xs"
+            disabled={localComposeLocked}
+            readOnly={localComposeLocked}
+            className={fieldInputClass(localComposeLocked, true)}
             placeholder="0x..."
           />
+          {localComposeLocked && (
+            <p className="text-xs text-zinc-600 mt-0.5">{LOCAL_ONLY_FIELD_HELP}</p>
+          )}
         </div>
         <div>
           <label className="block text-xs text-zinc-500 mb-1.5">
@@ -293,6 +357,7 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
             <input
               type="checkbox"
               checked={formData.remoteDiscovery}
+              disabled={localComposeLocked}
               onChange={(e) =>
                 setFormData({
                   ...formData,
@@ -303,12 +368,15 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
                     : "",
                 })
               }
-              className="rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/50"
+              className="rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/50 disabled:opacity-50"
             />
             Remote Discovery (orchWebhookUrl + liveAICapReportInterval)
           </label>
+          {localComposeLocked && (
+            <p className="text-xs text-zinc-600 mt-1">{LOCAL_ONLY_FIELD_HELP}</p>
+          )}
         </div>
-        {formData.remoteDiscovery && (
+        {formData.remoteDiscovery && !localComposeLocked && (
           <>
             <div className="sm:col-span-2">
               <label className="block text-xs text-zinc-500 mb-1.5">

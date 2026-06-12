@@ -17,8 +17,7 @@ export async function GET(
   const issuer = getIssuer();
   const signerApiUrl = getClientSignerApiUrl();
   const remoteDmzUrl = process.env.SIGNER_INTERNAL_URL?.trim() || null;
-  const identityMode =
-    process.env.REMOTE_SIGNER_USAGE_IDENTITY_MODE?.trim() || "trusted_headers";
+  const identityMode = "trusted_headers";
 
   const meteringMode: SignerRoutingConfig["meteringMode"] = "platform_ingest";
 

@@ -5,7 +5,7 @@ import { db } from "@/db/index";
 import { signerConfig, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authenticateRequest, hasScope } from "@/lib/auth";
-import { syncSignerStatus } from "@/lib/signer-proxy";
+import { isManagedRemoteSigner, syncSignerStatus } from "@/lib/signer-proxy";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "@/lib/signer-local-compose";
 import {
   getIssuer,
@@ -116,13 +116,26 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Docker Compose control actions
     const signerRows = await db
       .select()
       .from(signerConfig)
       .where(eq(signerConfig.id, "default"))
       .limit(1);
-    const signer = signerRows[0];
+    const signerForMode = signerRows[0];
+    if (isManagedRemoteSigner(signerForMode)) {
+      return NextResponse.json(
+        {
+          action,
+          success: false,
+          error:
+            "Start/stop/restart require a local Docker signer. This deployment uses a remote signer DMZ — use Railway or redeploy there.",
+        },
+        { status: 400 },
+      );
+    }
+
+    // Docker Compose control actions
+    const signer = signerForMode;
     const composeCmd = getComposeCommand(action);
     const composeEnv = buildSignerComposeEnv(signer);
     const timeoutMs =
