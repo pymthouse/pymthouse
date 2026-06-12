@@ -123,6 +123,23 @@ func resolveSignerAccount(client *sdk.Client, cfg bootstrapConfig) (walletAccoun
 	}, nil
 }
 
+func findWalletIDByName(wallets []*models.Wallet, walletName string) (string, error) {
+	var walletID string
+	for _, wallet := range wallets {
+		if wallet == nil || wallet.WalletName == nil || wallet.WalletID == nil {
+			continue
+		}
+		if *wallet.WalletName != walletName {
+			continue
+		}
+		if walletID != "" {
+			return "", fmt.Errorf("multiple wallets matched TURNKEY_WALLET_NAME=%q", walletName)
+		}
+		walletID = *wallet.WalletID
+	}
+	return walletID, nil
+}
+
 func resolveWalletID(client *sdk.Client, cfg bootstrapConfig) (string, error) {
 	orgID := cfg.TurnkeyOrgID
 	params := wallets.NewGetWalletsParams().WithBody(&models.GetWalletsRequest{
@@ -133,18 +150,11 @@ func resolveWalletID(client *sdk.Client, cfg bootstrapConfig) (string, error) {
 		return "", fmt.Errorf("list wallets: %w", err)
 	}
 
-	var walletID string
+	walletID := ""
 	if resp.Payload != nil {
-		for _, wallet := range resp.Payload.Wallets {
-			if wallet == nil || wallet.WalletName == nil || wallet.WalletID == nil {
-				continue
-			}
-			if *wallet.WalletName == cfg.TurnkeyWalletName {
-				if walletID != "" {
-					return "", fmt.Errorf("multiple wallets matched TURNKEY_WALLET_NAME=%q", cfg.TurnkeyWalletName)
-				}
-				walletID = *wallet.WalletID
-			}
+		walletID, err = findWalletIDByName(resp.Payload.Wallets, cfg.TurnkeyWalletName)
+		if err != nil {
+			return "", err
 		}
 	}
 

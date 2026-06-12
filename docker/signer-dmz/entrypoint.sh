@@ -167,11 +167,9 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
     fi
     exit 1
   fi
-  if [ "$TURNKEY_MODE" = "1" ]; then
-    if ! /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh; then
-      echo "entrypoint: failed to cleanup ephemeral keystore artifacts" >&2
-      exit 1
-    fi
+  if [ "$TURNKEY_MODE" = "1" ] && ! /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh; then
+    echo "entrypoint: failed to cleanup ephemeral keystore artifacts" >&2
+    exit 1
   fi
 fi
 

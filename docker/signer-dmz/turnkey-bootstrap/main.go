@@ -144,7 +144,7 @@ func requireEnv(name string) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-func envOrDefault(name string, fallback string) string {
+func envOrDefault(name, fallback string) string {
 	value, ok := os.LookupEnv(name)
 	if !ok {
 		return fallback

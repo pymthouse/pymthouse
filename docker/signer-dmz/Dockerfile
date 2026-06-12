@@ -98,9 +98,8 @@ COPY docker/signer-dmz/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh \
     /usr/local/bin/signer-turnkey-bootstrap \
     /opt/pymthouse/scripts/jwks_to_pem.py \
-    /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh
-
-RUN mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz
+    /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh && \
+    mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz
 
 # Create an unprivileged user, pre-create all runtime-writable paths, and hand them off.
 # Apache on Debian reads /etc/apache2/envvars for APACHE_RUN_USER/GROUP; override to the app user
