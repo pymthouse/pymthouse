@@ -47,6 +47,12 @@ export interface ProxyResult {
   body: unknown;
 }
 
+/** Minimal signer row fields used for URL resolution (env overrides DB). */
+export type SignerUrlInput = Pick<
+  typeof signerConfig.$inferSelect,
+  "signerUrl" | "signerPort"
+>;
+
 /**
  * Single shared clearinghouse signer (`id === "default"`).
  * Scale horizontally with multiple replicas behind one URL / load balancer — routing stays here.
@@ -219,21 +225,21 @@ export function isRemoteSignerHttpUrl(url: string): boolean {
  * and compose-only DB fields do not apply.
  */
 export function isManagedRemoteSigner(
-  signer?: { signerUrl?: string | null } | null,
+  signer?: SignerUrlInput | null,
 ): boolean {
   return isRemoteSignerHttpUrl(getSignerUrl(signer));
 }
 
 /** Matches resolveSignerBaseUrl precedence (env → DB → localhost default). */
 export function getSignerUrlSource(
-  signer?: { signerUrl?: string | null } | null,
+  signer?: SignerUrlInput | null,
 ): SignerUrlSource {
   if (process.env.SIGNER_INTERNAL_URL?.trim()) return "env";
   if (signer?.signerUrl?.trim()) return "saved";
   return "default";
 }
 
-export function getSignerUrl(signer?: typeof signerConfig.$inferSelect | null): string {
+export function getSignerUrl(signer?: SignerUrlInput | null): string {
   const testSignerUrl =
     process.env.NODE_ENV === "test"
       ? process.env.PYMTHOUSE_TEST_SIGNER_URL
