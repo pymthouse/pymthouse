@@ -67,15 +67,14 @@ railway_apply_signer_env() {
     echo "  $service: set NEXTAUTH_SECRET"
   fi
 
-  if [[ -n "${TURNKEY_ORG_ID:-}" ]]; then
-    if [[ "$turnkey_secret_count" -lt 3 ]]; then
-      echo "  $service: WARNING Turnkey needs org id + 3 secrets; got ${turnkey_secret_count}/3" >&2
-    else
-      echo "  $service: Turnkey bootstrap enabled"
-    fi
+  if [[ -n "${TURNKEY_ORG_ID:-}" ]] && [[ "$turnkey_secret_count" -lt 3 ]]; then
+    echo "  $service: WARNING Turnkey needs org id + 3 secrets; got ${turnkey_secret_count}/3" >&2
+  elif [[ -n "${TURNKEY_ORG_ID:-}" ]]; then
+    echo "  $service: Turnkey bootstrap enabled"
   elif [[ "$turnkey_secret_count" -gt 0 ]]; then
     echo "  $service: WARNING Turnkey secrets set but TURNKEY_ORG_ID missing" >&2
   fi
 
   echo "  $service: NEXTAUTH_URL=${nextauth_url}"
+  return 0
 }

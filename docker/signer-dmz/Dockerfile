@@ -95,16 +95,15 @@ COPY docker/signer-dmz/apache/signer-dmz-cli-vhost.conf.in /etc/apache2/template
 COPY docker/signer-dmz/apache/signer-dmz-cli-vhost-noauth.conf.in /etc/apache2/templates/signer-dmz-cli-vhost-noauth.conf.in
 COPY docker/signer-dmz/entrypoint.sh /entrypoint.sh
 
+# Create an unprivileged user, pre-create all runtime-writable paths, and hand them off.
+# Apache on Debian reads /etc/apache2/envvars for APACHE_RUN_USER/GROUP; override to the app user
+# so the (non-root) master does not try to setuid.
 RUN chmod +x /entrypoint.sh \
     /usr/local/bin/signer-turnkey-bootstrap \
     /opt/pymthouse/scripts/jwks_to_pem.py \
     /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh && \
-    mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz
-
-# Create an unprivileged user, pre-create all runtime-writable paths, and hand them off.
-# Apache on Debian reads /etc/apache2/envvars for APACHE_RUN_USER/GROUP; override to the app user
-# so the (non-root) master does not try to setuid.
-RUN groupadd --system --gid "${APP_GID}" "${APP_USER}" && \
+    mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz && \
+    groupadd --system --gid "${APP_GID}" "${APP_USER}" && \
     useradd --system --uid "${APP_UID}" --gid "${APP_GID}" \
       --home-dir /home/${APP_USER} --create-home --shell /usr/sbin/nologin "${APP_USER}" && \
     mkdir -p /run/jwt /run/signer-bootstrap /run/apache2 /var/lock/apache2 /var/log/apache2 /data && \

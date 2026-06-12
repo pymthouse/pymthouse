@@ -110,15 +110,15 @@ fi
 
 if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   if [ "$TURNKEY_MODE" = "1" ]; then
-    if ! /usr/local/bin/signer-turnkey-bootstrap; then
+    /usr/local/bin/signer-turnkey-bootstrap || {
       echo "entrypoint: turnkey keystore bootstrap failed" >&2
       exit 1
-    fi
+    }
     _resolved_addr_file="${SIGNER_ADDRESS_OUT:-/run/signer-bootstrap/signer-eth-addr}"
-    if [ ! -s "$_resolved_addr_file" ]; then
+    [ -s "$_resolved_addr_file" ] || {
       echo "entrypoint: turnkey bootstrap did not write signer address to ${_resolved_addr_file}" >&2
       exit 1
-    fi
+    }
     SIGNER_ETH_ADDR="$(tr -d '[:space:]' <"$_resolved_addr_file")"
     export SIGNER_ETH_ADDR
   elif [ ! -f /data/.eth-password ]; then

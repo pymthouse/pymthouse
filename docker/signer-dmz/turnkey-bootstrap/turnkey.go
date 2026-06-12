@@ -88,6 +88,15 @@ func parseTurnkeyHost(host string) (turnkeyclient.TransportConfig, error) {
 	return *cfg, nil
 }
 
+func findAccountByAddress(accounts []walletAccount, addr ethcommon.Address) (walletAccount, bool) {
+	for _, account := range accounts {
+		if account.Address == addr {
+			return account, true
+		}
+	}
+	return walletAccount{}, false
+}
+
 func resolveSignerAccount(client *sdk.Client, cfg bootstrapConfig) (walletAccount, error) {
 	walletID, err := resolveWalletID(client, cfg)
 	if err != nil {
@@ -100,10 +109,8 @@ func resolveSignerAccount(client *sdk.Client, cfg bootstrapConfig) (walletAccoun
 	}
 
 	if cfg.HasSignerAddr {
-		for _, account := range accounts {
-			if account.Address == cfg.SignerETHAddr {
-				return account, nil
-			}
+		if account, ok := findAccountByAddress(accounts, cfg.SignerETHAddr); ok {
+			return account, nil
 		}
 		return walletAccount{}, fmt.Errorf("SIGNER_ETH_ADDR %s was not found in wallet %s", cfg.SignerETHAddr.Hex(), cfg.TurnkeyWalletName)
 	}
@@ -124,20 +131,22 @@ func resolveSignerAccount(client *sdk.Client, cfg bootstrapConfig) (walletAccoun
 }
 
 func findWalletIDByName(wallets []*models.Wallet, walletName string) (string, error) {
-	var walletID string
+	matches := make([]string, 0, 1)
 	for _, wallet := range wallets {
 		if wallet == nil || wallet.WalletName == nil || wallet.WalletID == nil {
 			continue
 		}
-		if *wallet.WalletName != walletName {
-			continue
+		if *wallet.WalletName == walletName {
+			matches = append(matches, *wallet.WalletID)
 		}
-		if walletID != "" {
-			return "", fmt.Errorf("multiple wallets matched TURNKEY_WALLET_NAME=%q", walletName)
-		}
-		walletID = *wallet.WalletID
 	}
-	return walletID, nil
+	if len(matches) > 1 {
+		return "", fmt.Errorf("multiple wallets matched TURNKEY_WALLET_NAME=%q", walletName)
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	return "", nil
 }
 
 func resolveWalletID(client *sdk.Client, cfg bootstrapConfig) (string, error) {

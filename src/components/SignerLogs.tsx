@@ -19,7 +19,7 @@ interface SignerLogsProps {
 export default function SignerLogs({
   managedRemote = false,
   signerBaseUrl = "",
-}: SignerLogsProps) {
+}: Readonly<SignerLogsProps>) {
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(!managedRemote);
   const [autoRefresh, setAutoRefresh] = useState(true);
