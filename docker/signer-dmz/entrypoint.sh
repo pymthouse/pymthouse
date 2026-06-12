@@ -40,6 +40,17 @@ print(urlunparse(u))
 fi
 export JWT_PEM_PATH="${JWT_PEM_PATH:-/run/jwt/jwks.pem}"
 
+_disable_auth_raw="${SIGNER_DMZ_DISABLE_AUTH:-0}"
+SIGNER_DMZ_DISABLE_AUTH=0
+case "$_disable_auth_raw" in
+  1 | true | TRUE | yes | YES) SIGNER_DMZ_DISABLE_AUTH=1 ;;
+  *) SIGNER_DMZ_DISABLE_AUTH=0 ;;
+esac
+export SIGNER_DMZ_DISABLE_AUTH
+if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
+  echo "entrypoint: WARNING SIGNER_DMZ_DISABLE_AUTH=1 — Apache JWT verification disabled; local dev only" >&2
+fi
+
 if [ -n "${SIGNER_UPSTREAM:-}" ]; then
   export SIGNER_HTTP_ADDR="${SIGNER_UPSTREAM}"
   # Derive the CLI address from SIGNER_UPSTREAM when not explicitly set, preserving scheme+host.
@@ -70,25 +81,27 @@ else
   export SIGNER_CLI_HTTP_ADDR="${SIGNER_CLI_HTTP_ADDR:-http://127.0.0.1:4935}"
 fi
 
-mkdir -p /run/jwt
-if ! python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "$JWT_PEM_PATH"; then
-  echo "entrypoint: JWKS sync failed" >&2
-  exit 1
-fi
+if [ "$SIGNER_DMZ_DISABLE_AUTH" != "1" ]; then
+  mkdir -p /run/jwt
+  if ! python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "$JWT_PEM_PATH"; then
+    echo "entrypoint: JWKS sync failed" >&2
+    exit 1
+  fi
 
-(
-  while true; do
-    sleep "${JWKS_REFRESH_SECONDS:-900}"
-    if python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "${JWT_PEM_PATH}.next" 2>/dev/null; then
-      if ! cmp -s "$JWT_PEM_PATH" "${JWT_PEM_PATH}.next"; then
-        mv "${JWT_PEM_PATH}.next" "$JWT_PEM_PATH"
-        apache2ctl graceful 2>/dev/null || true
-      else
-        rm -f "${JWT_PEM_PATH}.next"
+  (
+    while true; do
+      sleep "${JWKS_REFRESH_SECONDS:-900}"
+      if python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "${JWT_PEM_PATH}.next" 2>/dev/null; then
+        if ! cmp -s "$JWT_PEM_PATH" "${JWT_PEM_PATH}.next"; then
+          mv "${JWT_PEM_PATH}.next" "$JWT_PEM_PATH"
+          apache2ctl graceful 2>/dev/null || true
+        else
+          rm -f "${JWT_PEM_PATH}.next"
+        fi
       fi
-    fi
-  done
-) &
+    done
+  ) &
+fi
 
 if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   if [ ! -f /data/.eth-password ]; then
@@ -145,39 +158,56 @@ mkdir -p "$APACHE_LOG_DIR"
 # the DMZ integration stabilises; set APACHE_AUTH_JWT_LOG_LEVEL=warn in prod.
 export APACHE_AUTH_JWT_LOG_LEVEL="${APACHE_AUTH_JWT_LOG_LEVEL:-info}"
 
-# Dump the resolved DMZ auth context so 401s can be diagnosed by comparing this
-# to the claims on a minted token. Emitted on stderr (visible via `docker logs`).
-{
-  _pem_kids="(missing)"
-  if [ -r "$JWT_PEM_PATH" ]; then
-    _pem_kids="$(grep -c 'BEGIN PUBLIC KEY' "$JWT_PEM_PATH" 2>/dev/null || echo 0)"
-  fi
-  printf 'signer-dmz: auth config:\n'
-  printf '  OIDC_ISSUER=%s\n' "$OIDC_ISSUER"
-  printf '  OIDC_AUDIENCE=%s\n' "$OIDC_AUDIENCE"
-  printf '  JWKS_URI=%s\n' "$JWKS_URI"
-  printf '  JWT_PEM_PATH=%s (public keys: %s)\n' "$JWT_PEM_PATH" "$_pem_kids"
-  printf '  SIGNER_HTTP_ADDR=%s\n' "$SIGNER_HTTP_ADDR"
-  printf '  SIGNER_CLI_HTTP_ADDR=%s\n' "$SIGNER_CLI_HTTP_ADDR"
-  printf '  APACHE_PUBLIC_BIND=0.0.0.0:%s\n' "$PORT"
-  printf '  APACHE_AUTH_JWT_LOG_LEVEL=%s\n' "$APACHE_AUTH_JWT_LOG_LEVEL"
-} >&2
-
-_envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}'
-
-envsubst "$_envsubst_apache" < /etc/apache2/templates/ports.conf.in >/etc/apache2/ports.conf
 _enable_cli_listener="${SIGNER_DMZ_ENABLE_CLI_LISTENER:-1}"
 case "$_enable_cli_listener" in
   0 | false | FALSE | no | NO) _enable_cli_listener=0 ;;
   *) _enable_cli_listener=1 ;;
 esac
+
+# Dump the resolved DMZ auth context so 401s can be diagnosed by comparing this
+# to the claims on a minted token. Emitted on stderr (visible via `docker logs`).
+{
+  printf 'signer-dmz: auth config:\n'
+  printf '  SIGNER_DMZ_DISABLE_AUTH=%s\n' "$SIGNER_DMZ_DISABLE_AUTH"
+  if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
+    printf '  JWT_VERIFICATION=disabled\n'
+  else
+    _pem_kids="(missing)"
+    if [ -r "$JWT_PEM_PATH" ]; then
+      _pem_kids="$(grep -c 'BEGIN PUBLIC KEY' "$JWT_PEM_PATH" 2>/dev/null || echo 0)"
+    fi
+    printf '  OIDC_ISSUER=%s\n' "$OIDC_ISSUER"
+    printf '  OIDC_AUDIENCE=%s\n' "$OIDC_AUDIENCE"
+    printf '  JWKS_URI=%s\n' "$JWKS_URI"
+    printf '  JWT_PEM_PATH=%s (public keys: %s)\n' "$JWT_PEM_PATH" "$_pem_kids"
+    printf '  APACHE_AUTH_JWT_LOG_LEVEL=%s\n' "$APACHE_AUTH_JWT_LOG_LEVEL"
+  fi
+  printf '  SIGNER_HTTP_ADDR=%s\n' "$SIGNER_HTTP_ADDR"
+  printf '  SIGNER_CLI_HTTP_ADDR=%s\n' "$SIGNER_CLI_HTTP_ADDR"
+  printf '  APACHE_PUBLIC_BIND=0.0.0.0:%s\n' "$PORT"
+  if [ "$_enable_cli_listener" = "1" ]; then
+    printf '  APACHE_CLI_BIND=0.0.0.0:%s (livepeer-cli: -http %s)\n' "$CLI_PORT" "$CLI_PORT"
+  fi
+} >&2
+
+if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
+  _envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR}'
+  _apache_main_tmpl=/etc/apache2/templates/signer-dmz-noauth.conf.in
+  _apache_cli_tmpl=/etc/apache2/templates/signer-dmz-cli-vhost-noauth.conf.in
+else
+  _envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}'
+  _apache_main_tmpl=/etc/apache2/templates/signer-dmz.conf.in
+  _apache_cli_tmpl=/etc/apache2/templates/signer-dmz-cli-vhost.conf.in
+fi
+
+envsubst "$_envsubst_apache" < /etc/apache2/templates/ports.conf.in >/etc/apache2/ports.conf
 if [ "$_enable_cli_listener" = "1" ]; then
   printf 'Listen 0.0.0.0:%s\n' "$CLI_PORT" >>/etc/apache2/ports.conf
 fi
 
-envsubst "$_envsubst_apache" < /etc/apache2/templates/signer-dmz.conf.in >/etc/apache2/sites-available/signer-dmz.conf
+envsubst "$_envsubst_apache" < "$_apache_main_tmpl" >/etc/apache2/sites-available/signer-dmz.conf
 if [ "$_enable_cli_listener" = "1" ]; then
-  envsubst "$_envsubst_apache" < /etc/apache2/templates/signer-dmz-cli-vhost.conf.in >>/etc/apache2/sites-available/signer-dmz.conf
+  envsubst "$_envsubst_apache" < "$_apache_cli_tmpl" >>/etc/apache2/sites-available/signer-dmz.conf
 fi
 
 # Do not use a2ensite/a2dissite as non-root: they touch /var/lib/apache2/site/enabled_by_admin/

@@ -72,6 +72,35 @@ docker exec signer-dmz-smoke /usr/local/bin/livepeer -version
 
 On Railway, the image is built from the same Dockerfile; no local tag is required.
 
+## Dedicated CLI port (8082)
+
+Local compose publishes **`CLI_PORT`** (default **8082**) so `livepeer_cli -http 8082` uses the same paths as a bare node (`/ethAddr`, `/contractAddresses`, …) without the `/__signer_cli` prefix.
+
+Set **`SIGNER_CLI_URL=http://127.0.0.1:8082`** in PymtHouse, or keep **`http://127.0.0.1:8080/__signer_cli`** on the main port.
+
+On Railway, set **`SIGNER_DMZ_ENABLE_CLI_LISTENER=0`** for single-port hosts; CLI stays at **`/__signer_cli`** on **`$PORT`**.
+
+## Local dev without JWT (`SIGNER_DMZ_DISABLE_AUTH=1`)
+
+Skip JWKS sync and Apache JWT verification on signing and CLI routes. **Local development only — never enable on Railway or any public host.**
+
+```bash
+docker run -d --name signer-dmz-noauth \
+  -e SIGNER_DMZ_DISABLE_AUTH=1 \
+  -p 127.0.0.1:8080:8080 \
+  -p 127.0.0.1:8082:8082 \
+  -v "$(pwd)/data/signer-dmz:/data" \
+  pymthouse/signer-dmz:latest
+
+curl -sf http://127.0.0.1:8080/healthz
+curl -sf -X POST http://127.0.0.1:8080/sign-orchestrator-info \
+  -H 'Content-Type: application/json' -d '{}'
+curl -sf http://127.0.0.1:8082/contractAddresses
+livepeer_cli -http 8082
+```
+
+`NEXTAUTH_URL` / `JWKS_URI` are not required when auth is disabled. Startup logs include `SIGNER_DMZ_DISABLE_AUTH=1` and `JWT_VERIFICATION=disabled`.
+
 ### Legacy: two-container stack (gateway + signer)
 
 Apache DMZ and go-livepeer run as separate containers (`gateway` target + `Dockerfile.signer`):
@@ -111,7 +140,8 @@ The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, pro
    Point the primary Railway hostname at **Apache’s port**, i.e. whatever **`PORT`** is at runtime (Railway usually sets **`PORT=8080`**). Do **not** set the edge to **8081** or **4935**; that produces **502**s because nothing listens on all interfaces there.
 
 2. **CLI from the internet**  
-   You can use **one** public URL on **`PORT`** only: Apache already proxies **`/__signer_cli/`** on that same listener (see `apache/signer-dmz.conf.in`). Alternatively, expose **`CLI_PORT` (8082)** with a second hostname if you want the dedicated CLI vhost.
+   **Local / livepeer-cli:** publish **`CLI_PORT` (8082)** — Apache proxies livepeer-cli routes at **`/`** (`/contractAddresses`, `/ethAddr`, …) with no `/__signer_cli` prefix. Run `livepeer_cli -http 8082`.  
+   **Single-port (Railway):** use **`/__signer_cli/`** on **`PORT`** (see `apache/signer-dmz.conf.in`), or expose **`CLI_PORT`** on a second hostname.
 
 3. **`/__signer_cli` and PymtHouse — not automatic**  
    Apache serves **`https://<your-dmz-host>/__signer_cli`** on the **same** port as **`SIGNER_INTERNAL_URL`** (no extra path needed in `SIGNER_INTERNAL_URL`). The Next app **does not** infer that URL: **`getSignerCliUrl()`** uses **`SIGNER_CLI_URL`** if set, otherwise defaults to **`http://127.0.0.1:8080/__signer_cli`** (local compose’s single published port). For Railway single-port DMZ, set explicitly, for example:  
@@ -125,7 +155,7 @@ The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, pro
 5. **Health check**  
    Use **`GET /healthz`** (200, body `OK`) from the public URL.
 
-The production image **`EXPOSE`s only `8080`** (Apache). Local **`signer-dmz-local`** may also expose **`8082`** when `SIGNER_DMZ_ENABLE_CLI_LISTENER=1`. Railway health checks use **`GET /healthz`** on **`$PORT`** (see root `railway.json`).
+The image **`EXPOSE`s `8080`** (signing) and **`8082`** (CLI). Set **`SIGNER_DMZ_ENABLE_CLI_LISTENER=0`** to disable the CLI listener (Railway single-port only). Railway health checks use **`GET /healthz`** on **`$PORT`** (see root `railway.json`).
 
 ## Troubleshooting DMZ `401` (HTML body from PymtHouse `/api/signer/*`)
 
