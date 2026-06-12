@@ -23,6 +23,7 @@
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
     "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",
     "railway:stack:deploy": "bash scripts/railway-deploy-stack.sh",
+    "railway:preview:deploy": "bash scripts/railway-deploy-signer.sh pymthouse preview",
     "railway:signer:env": "bash scripts/railway-apply-signer-env.sh",
     "railway:signer:deploy": "bash scripts/railway-apply-signer-env.sh production --deploy",
     "validate:env": "node scripts/validate-env.js",

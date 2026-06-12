@@ -187,6 +187,27 @@ The **PymtHouse** Railway project uses two environments with the **same eight se
 3. Generate public domains on **`openmeter`** and **`pymthouse`** in production.
 4. Set production secrets (use **distinct** passwords from preview). Template: [`config/railway/production.env.example`](../config/railway/production.env.example).
 
+### CI deploy (non-main → preview)
+
+Enable repository variable **`RAILWAY_PREVIEW_AUTO_DEPLOY=true`**.
+
+Workflow: [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) on push to any branch except `main` (including `feat/*`):
+
+1. `scripts/railway-deploy-signer.sh pymthouse preview` — uploads the signer DMZ image from the pushed commit
+
+Preview env vars are **not** overwritten by CI (configure in the Railway dashboard or run `railway-apply-stack-env.sh` locally with `RAILWAY_ENVIRONMENT=preview`). Disable native GitHub autodeploy on preview `pymthouse` if you rely on this workflow, so pushes do not double-deploy.
+
+**Required GitHub secret:** `RAILWAY_API_TOKEN` (same account token as production).
+
+Manual preview deploy from your current branch:
+
+```bash
+pnpm railway:preview:deploy
+# or: bash scripts/railway-deploy-signer.sh pymthouse preview
+```
+
+Full preview stack (OpenMeter + signer): `bash scripts/railway-deploy-stack.sh preview`.
+
 ### CI deploy (main → production)
 
 Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`**.

@@ -147,7 +147,7 @@ Railway (signer, OpenMeter) uses the **PymtHouse** project with two environments
 
 | Railway environment | Vercel target | Stack |
 |---------------------|---------------|--------|
-| `preview` | **pymthouse-staging** (and local dev) | Full 8-service stack (OpenMeter + signer `pymthouse`) |
+| `preview` | **pymthouse-staging** (and local dev) | Full 8-service stack (OpenMeter + signer `pymthouse`) — signer auto-deploy via [deploy-railway-preview.yml](../.github/workflows/deploy-railway-preview.yml) when `RAILWAY_PREVIEW_AUTO_DEPLOY=true` |
 | `production` | **pymthouse** (main / pymthouse.com) | Same stack — deploy via [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) when `RAILWAY_PRODUCTION_AUTO_DEPLOY=true` |
 
 Point each Vercel project’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the matching Railway environment’s public domains.
