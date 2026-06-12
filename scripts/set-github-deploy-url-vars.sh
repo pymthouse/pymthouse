@@ -24,7 +24,7 @@ set_var() {
 }
 
 set_var VERCEL_PRODUCTION_URL "https://pymthouse.com"
-set_var VERCEL_STAGING_URL "https://pymthouse-staging.vercel.app"
+set_var VERCEL_PREVIEW_URL "https://staging.pymthouse.com"
 set_var RAILWAY_PREVIEW_SIGNER_URL "https://pymthouse-preview.up.railway.app"
 
 if [[ -n "${RAILWAY_PRODUCTION_SIGNER_URL:-}" ]]; then

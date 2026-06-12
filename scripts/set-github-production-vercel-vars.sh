@@ -25,7 +25,7 @@ set_var() {
 
 set_var VERCEL_PRODUCTION_AUTO_DEPLOY "true"
 
-echo "Done. Requires GitHub secret VERCEL_TOKEN (same as staging deploy)."
+echo "Done. Requires GitHub secret VERCEL_TOKEN (same token used for preview deploys)."
 echo ""
 echo "Next: bash scripts/set-github-deploy-url-vars.sh"
 echo ""

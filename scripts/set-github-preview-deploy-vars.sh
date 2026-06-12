@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enable non-main preview/staging CI deploy workflows.
+# Enable non-main preview CI deploy workflows.
 # Requires: gh auth login, RAILWAY_API_TOKEN + VERCEL_TOKEN secrets
 #
 #   bash scripts/set-github-preview-deploy-vars.sh
@@ -24,7 +24,7 @@ set_var() {
 }
 
 set_var RAILWAY_PREVIEW_AUTO_DEPLOY "true"
-set_var VERCEL_STAGING_AUTO_DEPLOY "true"
+set_var VERCEL_PREVIEW_AUTO_DEPLOY "true"
 
 echo "Done."
 echo "Also run: bash scripts/set-github-deploy-url-vars.sh"
