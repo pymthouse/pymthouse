@@ -1,7 +1,8 @@
 name: Deploy production (Vercel)
 
 # Deploys the pymthouse Vercel project (pymthouse.com) on every push to main.
-# Env vars live in the Vercel dashboard — not in this workflow.
+# Non-sensitive Production vars come from `vercel pull`. Sensitive vars are injected
+# from GitHub environment `vercel / production` secrets for CI `vercel build`.
 #
 # Enable with repository variable:
 #   VERCEL_PRODUCTION_AUTO_DEPLOY=true
@@ -37,6 +38,8 @@ jobs:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
 
     steps:
       - name: Checkout

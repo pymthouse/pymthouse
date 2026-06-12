@@ -2,8 +2,10 @@ name: Deploy preview (Vercel)
 
 # Non-main branches deploy Preview builds to the pymthouse Vercel project.
 # The same project deploys Production from main via deploy-production-vercel.yml.
-# Env vars are configured in the Vercel dashboard — not in this workflow.
-# Requires repo secret VERCEL_TOKEN and variable VERCEL_PREVIEW_AUTO_DEPLOY=true.
+# Non-sensitive Preview vars come from `vercel pull`. Sensitive vars (NEXTAUTH_SECRET,
+# AUTH_TOKEN_PEPPER) are not exported by Vercel for local/CI builds — inject them from
+# the GitHub environment `vercel / preview` secrets (runtime still uses Vercel Preview).
+# Requires VERCEL_TOKEN and VERCEL_PREVIEW_AUTO_DEPLOY=true.
 
 on:
   push:
@@ -31,6 +33,8 @@ jobs:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
 
     steps:
       - name: Checkout
