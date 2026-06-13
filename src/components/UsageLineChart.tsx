@@ -107,11 +107,15 @@ export default function UsageLineChart({
   }, [data, n, xAt, yAt]);
 
   const xLabelTicks = useMemo(
-    () => [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((n * 3) / 4), n - 1].filter(
-      (i, idx, arr) => i >= 0 && (idx === 0 || i !== arr[idx - 1]),
-    ),
+    () =>
+      [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((n * 3) / 4), n - 1].filter(
+        (i, idx, arr) => i >= 0 && (idx === 0 || i !== arr[idx - 1]),
+      ),
     [n],
   );
+
+  const lastPoint = data[n - 1];
+  const showTodayMarker = lastPoint?.date === todayKey && n > 1;
 
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement>(null);
@@ -218,6 +222,18 @@ export default function UsageLineChart({
             strokeWidth={1}
             strokeDasharray="4 3"
             opacity={0.85}
+          />
+        )}
+        {showTodayMarker && (
+          <line
+            x1={xAt(n - 1)}
+            x2={xAt(n - 1)}
+            y1={padTop}
+            y2={height - padBottom}
+            stroke="rgb(52 211 153)"
+            strokeWidth={1}
+            strokeDasharray="3 4"
+            opacity={0.35}
           />
         )}
       </svg>

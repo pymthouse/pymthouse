@@ -5,11 +5,39 @@ import { plans, signerConfig, subscriptions } from "@/db/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import { verifyOpenMeterSubscriptionId } from "@/lib/openmeter/subscription-read";
 import {
   queryOpenMeterAppDashboardUsage,
   queryOpenMeterUsage,
 } from "@/lib/usage/query-openmeter";
+
+function buildBillingSubscriptionPayload(input: {
+  openMeterOwnerSubscription: Awaited<ReturnType<typeof verifyOpenMeterSubscriptionId>>;
+  ownerSubscription: (typeof subscriptions.$inferSelect) | null;
+}) {
+  if (input.openMeterOwnerSubscription) {
+    return {
+      id: input.ownerSubscription?.id ?? input.openMeterOwnerSubscription.id,
+      status: input.openMeterOwnerSubscription.status,
+      currentPeriodStart: input.openMeterOwnerSubscription.activeFrom,
+      currentPeriodEnd: input.openMeterOwnerSubscription.activeTo,
+      openmeterSubscriptionId: input.openMeterOwnerSubscription.id,
+      source: "openmeter" as const,
+    };
+  }
+  if (input.ownerSubscription) {
+    return {
+      id: input.ownerSubscription.id,
+      status: input.ownerSubscription.status,
+      currentPeriodStart: input.ownerSubscription.currentPeriodStart,
+      currentPeriodEnd: input.ownerSubscription.currentPeriodEnd,
+      source: "legacy_cache" as const,
+    };
+  }
+  return null;
+}
 
 export async function GET(
   request: NextRequest,
@@ -87,9 +115,25 @@ export async function GET(
     planRow = fallbackPlans[0] ?? null;
   }
 
+  let openMeterOwnerSubscription: Awaited<
+    ReturnType<typeof verifyOpenMeterSubscriptionId>
+  > = null;
+  if (
+    ownerSubscription?.openmeterSubscriptionId &&
+    isHostedAdminClientAvailable()
+  ) {
+    openMeterOwnerSubscription = await verifyOpenMeterSubscriptionId(
+      getHostedAdminClient(),
+      ownerSubscription.openmeterSubscriptionId,
+    );
+  }
+
   let periodStart: string;
   let periodEnd: string;
-  if (
+  if (openMeterOwnerSubscription?.activeFrom && openMeterOwnerSubscription?.activeTo) {
+    periodStart = openMeterOwnerSubscription.activeFrom;
+    periodEnd = openMeterOwnerSubscription.activeTo;
+  } else if (
     ownerSubscription?.currentPeriodStart &&
     ownerSubscription?.currentPeriodEnd
   ) {
@@ -193,14 +237,10 @@ export async function GET(
           status: planRow.status,
         }
       : null,
-    subscription: ownerSubscription
-      ? {
-          id: ownerSubscription.id,
-          status: ownerSubscription.status,
-          currentPeriodStart: ownerSubscription.currentPeriodStart,
-          currentPeriodEnd: ownerSubscription.currentPeriodEnd,
-        }
-      : null,
+    subscription: buildBillingSubscriptionPayload({
+      openMeterOwnerSubscription,
+      ownerSubscription,
+    }),
     cycle: {
       periodStart,
       periodEnd,

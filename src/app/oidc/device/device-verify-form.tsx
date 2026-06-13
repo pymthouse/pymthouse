@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { normalizeUserCode } from "@/lib/oidc/device";
+import {
+  DEVICE_USER_CODE_LENGTH,
+  isCompleteUserCode,
+  normalizeUserCode,
+} from "@/lib/oidc/device";
 
 interface DeviceInfo {
   clientName: string;
@@ -181,9 +185,12 @@ export default function DeviceVerifyForm() {
           <input
             type="text"
             value={userCode}
-            onChange={(e) => setUserCode(normalizeUserCode(e.target.value))}
-            placeholder="ABCD-1234"
-            maxLength={8}
+            onChange={(e) =>
+              setUserCode(
+                normalizeUserCode(e.target.value).slice(0, DEVICE_USER_CODE_LENGTH),
+              )
+            }
+            placeholder="ABCD-EFGH"
             className="w-full text-center text-2xl font-mono tracking-[0.3em] px-4 py-4 rounded-xl bg-zinc-950/60 border border-zinc-700 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:border-opacity-50"
             style={{ 
               "--tw-ring-color": `${primaryColor}66`,
@@ -201,7 +208,7 @@ export default function DeviceVerifyForm() {
 
         <button
           type="submit"
-          disabled={userCode.length < 8 || status === "loading"}
+          disabled={!isCompleteUserCode(userCode) || status === "loading"}
           className="w-full px-6 py-3 text-sm font-medium rounded-xl text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           style={{ backgroundColor: primaryColor }}
         >

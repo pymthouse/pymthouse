@@ -59,7 +59,7 @@ const optionalVars = {
 
 /** Vercel build skips db:prepare; DATABASE_URL is only required at runtime. */
 const isVercelBuild = process.env.VERCEL === "1";
-const buildOptionalOnVercel = new Set(["DATABASE_URL"]);
+const buildOptionalOnVercel = new Set(["DATABASE_URL", "NEXTAUTH_URL"]);
 
 function formatSet(value) {
   return `set (${value.length} chars)`;

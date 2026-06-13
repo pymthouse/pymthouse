@@ -1,6 +1,7 @@
 export {
   aggregateDailyRequestCounts,
   aggregatePipelineModelRows,
+  aggregateUserPipelineModelRows,
   buildOpenMeterUsageResponse,
   dateKeyFromMeterWindow,
   queryOpenMeterAppDashboardUsage,
@@ -9,6 +10,7 @@ export {
   type OpenMeterAppDashboardUsage,
   type OpenMeterDailyPipelineRow,
   type OpenMeterPipelineModelRow,
+  type OpenMeterUserPipelineModelRow,
   type OpenMeterUsageRow,
   queryOpenMeterUserDailyByPipeline,
   queryOpenMeterUserPipelineByModel,

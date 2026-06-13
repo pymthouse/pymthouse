@@ -1,6 +1,7 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import { billingStableFeatureKeysEnabled } from "@/lib/billing/feature-flags";
 import { NETWORK_FEE_USD_MICROS_METER } from "./constants";
+import { unwrapOpenMeterListResult } from "./konnect-catalog";
 import {
   compactClientSlug,
   isValidOpenMeterSlugKey,
@@ -120,8 +121,10 @@ export async function ensureCapabilityOpenMeterFeature(input: {
   }
 
   try {
-    const existing = await input.client.features.list();
-    if ((existing ?? []).some((f) => f.key === key)) {
+    const existing = unwrapOpenMeterListResult<{ key: string }>(
+      await input.client.features.list(),
+    );
+    if (existing.some((f) => f.key === key)) {
       return key;
     }
   } catch {

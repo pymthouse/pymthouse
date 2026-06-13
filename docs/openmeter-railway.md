@@ -1,8 +1,34 @@
-# OpenMeter on Railway (PymtHouse + Vercel)
+# OpenMeter + Collector on Railway (PymtHouse + Vercel)
 
-Self-hosted OpenMeter runs in a **dedicated Railway project**, separate from the [remote signer](vercel-deployment.md#option-a-railway-with-nixpacks-recommended---easiest). PymtHouse on **Vercel** calls it over HTTPS via `OPENMETER_URL`.
+Production now uses **hosted KongHQ OpenMeter** plus a Railway clearinghouse runtime:
+
+- `pymthouse` signer-dmz (go-livepeer remote signer)
+- `kafka` (Redpanda event bus)
+- `openmeter-collector` (Kafka -> OpenMeter CloudEvents)
+
+Set `OPENMETER_URL` to the hosted Konnect endpoint (`https://{region}.api.konghq.com/v3/openmeter`) and keep self-hosted OpenMeter compose files only for local/on-prem fallback.
 
 ## Architecture
+
+```
+┌─────────────────┐     HTTPS      ┌──────────────────────────────┐
+│  PymtHouse      │ ──────────────►│  Konnect/OpenMeter hosted     │
+│  (Vercel)       │  OPENMETER_URL │  metering + billing API       │
+└─────────────────┘                └──────────────────────────────┘
+        │
+        │ SIGNER_INTERNAL_URL
+        ▼
+┌─────────────────────────────┐
+│ Railway clearinghouse stack │
+│ signer-dmz + kafka +        │
+│ openmeter-collector         │
+└─────────────────────────────┘
+```
+
+## Legacy self-hosted OpenMeter
+
+The rest of this document describes the older self-hosted OpenMeter topology (`docker-compose.openmeter.railway.yml`) and is kept for future on-prem deployments.
+For production, prefer the hosted Konnect + collector path above.
 
 ```
 ┌─────────────────┐     HTTPS      ┌──────────────────────────────┐
@@ -165,20 +191,32 @@ For the three OpenMeter app images (`openmeter`, `openmeter-sink-worker`, `openm
 
 See [`deploy/openmeter/railway.toml`](../deploy/openmeter/railway.toml) for API-only deploy hints.
 
-## Preview vs production (same stack)
+## Preview clearinghouse stack (hosted Konnect)
 
-The **PymtHouse** Railway project uses two environments with the **same eight services**:
+Preview uses the **3-service clearinghouse** model (`docker-compose.clearinghouse.railway.yml`), not self-hosted OpenMeter:
 
 | Service | Role |
 |---------|------|
-| `openmeter-postgres`, `openmeter-redis`, `openmeter-kafka`, `openmeter-clickhouse` | Stateful infra (private) |
-| `openmeter` | Public OpenMeter API |
-| `openmeter-sink-worker`, `openmeter-balance-worker` | Workers |
-| `pymthouse` | Remote signer DMZ (`docker/signer-dmz/Dockerfile`) |
+| `kafka` | Redpanda bus (`kafka.railway.internal:9092`) |
+| `openmeter-collector` | Benthos: Kafka → Konnect CloudEvents ingest |
+| `pymthouse` | Signer DMZ (`docker/signer-dmz/Dockerfile`) |
 
-**Preview** is the reference stack (`openmeter-preview.up.railway.app`, `pymthouse-preview.up.railway.app`).
+**One-time migration** from the legacy 8-service preview stack:
 
-**Production** must have the same services deployed in the `production` environment (not only `pymthouse`). Service definitions are shared at the project level; each environment needs its own deploy, volumes, domains, and secrets.
+```bash
+set -a && source .env.local && set +a
+export NEXTAUTH_URL=https://staging.pymthouse.com
+export WEBHOOK_SECRET=...   # must match Vercel staging
+bash scripts/railway-migrate-preview-clearinghouse.sh
+```
+
+This deletes legacy OpenMeter services from the **preview environment only** (production is untouched), creates `kafka` + `openmeter-collector` if missing, applies env, and deploys.
+
+**CI:** [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) deploys the full clearinghouse stack on non-`main` pushes when `RAILWAY_PREVIEW_AUTO_DEPLOY=true`.
+
+Set Vercel **Preview** `OPENMETER_URL` to Konnect (`https://us.api.konghq.com/v3/openmeter`), not `openmeter-preview.up.railway.app`.
+
+## Legacy self-hosted OpenMeter (preview/production reference stacks)
 
 ### One-time production setup
 

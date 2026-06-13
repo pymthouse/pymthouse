@@ -35,7 +35,7 @@ function pickString(data: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
-/** Diagnostic-only ingest from go-livepeer monitor events. OpenMeter writes happen in signer-proxy. */
+/** Diagnostic-only ingest from go-livepeer monitor events. OpenMeter writes use Kafka → collector. */
 export async function POST(request: NextRequest) {
   if (!verifyIngestSecret(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -15,6 +15,10 @@ railway_apply_signer_env() {
   local -a signer_args=(
     "SIGNER_NETWORK=${SIGNER_NETWORK:-arbitrum-one-mainnet}"
     "ETH_RPC_URL=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}"
+    "KAFKA_BROKERS=${KAFKA_BROKERS:-kafka:9092}"
+    "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
+    "REMOTE_SIGNER_WEBHOOK_URL=${REMOTE_SIGNER_WEBHOOK_URL:-${nextauth_url}/webhooks/remote-signer}"
+    "WEBHOOK_SECRET=${WEBHOOK_SECRET:-}"
     "NEXTAUTH_URL=${nextauth_url}"
     "OIDC_ISSUER=${issuer}"
     "OIDC_AUDIENCE=${audience}"

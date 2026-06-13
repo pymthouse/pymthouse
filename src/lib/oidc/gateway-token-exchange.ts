@@ -13,7 +13,7 @@ import {
 } from "@/lib/oidc/client-sibling";
 import { verifyAccessToken } from "./access-token-verify";
 import { getIssuer } from "./issuer-urls";
-import { LIVEPEER_REMOTE_SIGNER_AUDIENCE } from "./mint-user-signer-token";
+import { signerJwtAudience } from "./mint-user-signer-token";
 import { TokenExchangeError } from "./token-exchange";
 
 export type GatewayTokenExchangeDeps = {
@@ -353,11 +353,12 @@ export function isGatewayTokenExchangeRequest(params: {
   if (resource.startsWith("urn:pmth:device_code:")) {
     return false;
   }
-  if (resource === LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
+  const signerAudience = signerJwtAudience();
+  if (resource && normalizeResourceOrAudienceUri(resource) === signerAudience) {
     return false;
   }
   for (const raw of params.audience ?? []) {
-    if (raw.trim() === LIVEPEER_REMOTE_SIGNER_AUDIENCE) {
+    if (normalizeResourceOrAudienceUri(raw) === signerAudience) {
       return false;
     }
   }

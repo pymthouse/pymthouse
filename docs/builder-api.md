@@ -248,14 +248,17 @@ audience=livepeer-remote-signer
 
 Response includes `access_token` (user-scoped JWT, `aud=livepeer-remote-signer`), `balanceUsdMicros`, and `lifetimeGrantedUsdMicros`.
 
-Direct signing uses `@pymthouse/builder-sdk/signer/server` — cached JWT forwarded to signer-dmz; Apache maps JWT claims → `X-Livepeer-*` headers for go-livepeer `trusted_headers` identity mode.
+Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` HTTP proxy is **removed** (returns `410 Gone`); use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
-**Usage metering (signer-authoritative, proxy writes OpenMeter):**
+**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT and receive `auth_id` for metering attribution.
 
-1. **Synchronous path:** go-livepeer remote signer returns a `usage` block on `RemotePaymentResponse` (`computed_fee_wei`, `computed_fee_usd_micros`, Chainlink ETH/USD snapshot, `pipeline`, `model_id`, `request_id`). The pymthouse **signer-proxy** is the **sole OpenMeter writer**: it parses the block, records `network_fee_usd_micros` keyed by `requestId`, then **strips** `usage` before returning to the gateway.
-2. **Async diagnostics:** go-livepeer still POSTs `create_signed_ticket` monitor events to `POST /api/v1/ingest/events` (alias of internal signed-ticket route) with `Bearer INGEST_SHARED_SECRET`. That endpoint stores diagnostic receipts only — it does **not** write to OpenMeter.
+**Usage metering (signer-authoritative, async collector):**
 
-Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost in the proxy.
+1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id`.
+2. **Collector ingest:** OpenMeter collector consumes Kafka, converts Wei to `network_fee_usd_micros`, and writes CloudEvents to OpenMeter/Konnect.
+3. **Async diagnostics:** go-livepeer can still POST monitor events to `POST /api/v1/ingest/events` (alias of internal signed-ticket route) with `Bearer INGEST_SHARED_SECRET`. That endpoint remains diagnostic-only and does not write billing usage.
+
+Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
 ---
 
@@ -408,7 +411,7 @@ Returns `{ ethUsd: { priceUsd, source, observedAt, isFallback } }`.
 
 ### App network capability manifest
 
-`GET`/`PUT /api/v1/apps/{clientId}/manifest` expose the app **network capability manifest** for integrators and discovery. **`GET`** returns a fixed allow-all body (`capabilities: []`, `excludedCapabilities: []`, `manifestVersion: "empty"`) without NaaP or plan resolution. **`PUT`** still updates Network-Price exclusions and returns the fully resolved manifest. The manifest is **not** enforced on the signing hot path: `POST /api/signer/generate-live-payment` and `POST /api/signer/sign-byoc-job` forward to go-livepeer without consulting it.
+`GET`/`PUT /api/v1/apps/{clientId}/manifest` expose the app **network capability manifest** for integrators and discovery. **`GET`** returns a fixed allow-all body (`capabilities: []`, `excludedCapabilities: []`, `manifestVersion: "empty"`) without NaaP or plan resolution. **`PUT`** still updates Network-Price exclusions and returns the fully resolved manifest. The manifest is **not** enforced on the signing hot path: direct DMZ signing does not consult it.
 
 The previous process-local in-memory enforcement cache (`manifest_cache_unavailable` / `capability_not_allowed` fail-closed gate) was removed: it failed closed on any process that had not warmed the cache (extra replicas, restarts, or before the off-hot-path warm completed), rejecting otherwise-valid signing requests. Capability scoping is still expressed through the manifest exclusions surfaced on `…/manifest`; billing attribution below is independent of it.
 
@@ -417,7 +420,7 @@ The previous process-local in-memory enforcement cache (`manifest_cache_unavaila
 Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
 1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Billing requires both fields for **`usage_billing_events`**.
-2. **No NaaP fetch on signing:** `POST /api/signer/generate-live-payment` does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** still proxies NaaP for UIs; it uses **`fetchDashboardPricing()`** without an in-process pricing cache.
+2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** still proxies NaaP for UIs; it uses **`fetchDashboardPricing()`** without an in-process pricing cache.
 3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
 4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing still succeeds regardless.
 
@@ -517,7 +520,7 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 
 **Retail validation:** `GET .../usage?include=retail&groupBy=pipeline_model` estimates `endUserBillableUsdMicros` from active plan retail rates (network meter × configured retail $/micro). Authoritative invoicing remains OpenMeter after plan sync.
 
-**Signer metering:** The signing hot path writes only to OpenMeter (`ingestSignedTicketUsage`) and updates `stream_sessions` for internal ops; it does not insert `usage_records` or `transactions`.
+**Signer metering:** Production metering is async via Kafka collector (`create_signed_ticket` -> OpenMeter). The signing hot path no longer depends on synchronous OpenMeter writes after cutover.
 
 **Implementation:** [`src/lib/openmeter/plans-sync.ts`](../src/lib/openmeter/plans-sync.ts), [`src/lib/openmeter/customers.ts`](../src/lib/openmeter/customers.ts), [`src/lib/openmeter/invoices.ts`](../src/lib/openmeter/invoices.ts), [`src/lib/openmeter/usage-read.ts`](../src/lib/openmeter/usage-read.ts), [`src/lib/provider-apps.ts`](../src/lib/provider-apps.ts) (`canManageMerchantBilling`).
 
@@ -746,7 +749,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 **Billing oracle and catalog**
 
 - [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, USD micros; legacy `resolveUpcharge` deprecated)
-- [`src/lib/signer-proxy.ts`](../src/lib/signer-proxy.ts) (authoritative signer `usage` block → OpenMeter write)
+- [`deploy/collector.yaml`](../deploy/collector.yaml) (Kafka → OpenMeter collector for `create_signed_ticket` events)
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)

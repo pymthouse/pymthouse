@@ -200,8 +200,8 @@ function parseCapabilities(input: unknown): {
   return { capabilities };
 }
 
-async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
-  const clientAuth = await authenticateAppClient(request);
+async function resolveAppForPlansRead(clientId: string, request: Request) {
+  const clientAuth = await authenticateAppClient(request as NextRequest);
   if (clientAuth?.appId === clientId) {
     const app = await getProviderApp(clientId);
     return app;
@@ -211,7 +211,7 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
 }
 
 export async function GET(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -254,7 +254,7 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -454,7 +454,7 @@ export async function POST(
 }
 
 export async function PUT(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -727,7 +727,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;

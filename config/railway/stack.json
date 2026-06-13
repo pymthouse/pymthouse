@@ -6,35 +6,13 @@
     "production": "eb6ec297-3a7c-4437-b211-8dfff2999db1"
   },
   "deployOrder": [
-    "openmeter-postgres",
-    "openmeter-redis",
-    "openmeter-kafka",
-    "openmeter-clickhouse",
-    "openmeter",
-    "openmeter-sink-worker",
-    "openmeter-balance-worker",
+    "kafka",
+    "openmeter-collector",
     "pymthouse"
   ],
   "services": {
-    "openmeter-postgres": { "kind": "image" },
-    "openmeter-redis": { "kind": "image" },
-    "openmeter-kafka": { "kind": "image" },
-    "openmeter-clickhouse": { "kind": "image" },
-    "openmeter": {
-      "kind": "repo",
-      "manifest": "deploy/openmeter/railway.json",
-      "startCommand": "/entrypoint.sh openmeter"
-    },
-    "openmeter-sink-worker": {
-      "kind": "repo",
-      "manifest": "deploy/openmeter/railway.json",
-      "startCommand": "/entrypoint.sh openmeter-sink-worker"
-    },
-    "openmeter-balance-worker": {
-      "kind": "repo",
-      "manifest": "deploy/openmeter/railway.json",
-      "startCommand": "/entrypoint.sh openmeter-balance-worker"
-    },
+    "kafka": { "kind": "image" },
+    "openmeter-collector": { "kind": "image" },
     "pymthouse": {
       "kind": "repo",
       "manifest": "deploy/pymthouse/railway.json",
