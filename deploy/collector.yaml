@@ -45,7 +45,7 @@ pipeline:
             "external_user_id": $external_user_id,
             "network_fee_usd_micros": $fee_usd_micros,
             "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
-            "model_id": "unknown",
+            "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
             "pixels": $data.pixels.string().or("0"),
             "fee_wei": $data.computed_fee.or("0"),
             "gateway_request_id": $data.request_id,

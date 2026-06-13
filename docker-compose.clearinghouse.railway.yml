@@ -4,6 +4,11 @@
 # - OpenMeter collector (Kafka -> CloudEvents ingest)
 #
 # This replaces the self-hosted OpenMeter stack in production.
+#
+# Local dev (pull published go-livepeer + layer Apache DMZ):
+#   docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local \
+#     up -d --build pymthouse
+# Override go-livepeer source: LIVEPEER_IMAGE=livepeer/go-livepeer:<tag>
 
 name: pymthouse-clearinghouse
 
@@ -45,10 +50,13 @@ services:
       ETH_USD_PRICE: ${ETH_USD_PRICE:-3500}
 
   pymthouse:
-    image: ${SIGNER_DMZ_IMAGE:-pymthouse/signer-dmz:latest}
+    image: ${SIGNER_DMZ_IMAGE:-pymthouse/signer-dmz:local}
     build:
       context: .
       dockerfile: docker/signer-dmz/Dockerfile
+      target: signer-dmz-local
+      args:
+        LIVEPEER_IMAGE: ${LIVEPEER_IMAGE:-livepeer/go-livepeer:feat-add-model-id-signer-kafka}
     restart: unless-stopped
     ports:
       - target: 8080

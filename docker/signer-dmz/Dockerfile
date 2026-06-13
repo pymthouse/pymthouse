@@ -1,7 +1,11 @@
+# syntax=docker/dockerfile:1
 # Apache + mod_authnz_jwt in front of go-livepeer (DMZ). Targets:
 #   gateway         — Apache only; set SIGNER_UPSTREAM (e.g. http://signer:8081) for docker compose.
-#   signer-dmz-local — local dev; livepeer copied from go-livepeer-remote-signer:local (see scripts/build-local-signer.sh).
+#   signer-dmz-local — local dev; livepeer copied from LIVEPEER_IMAGE (see scripts/build-local-signer.sh).
 #   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
+
+# Base image for signer-dmz-local (override: docker build --build-arg LIVEPEER_IMAGE=...).
+ARG LIVEPEER_IMAGE=livepeer/go-livepeer:feat-add-model-id-signer-kafka
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -131,8 +135,8 @@ USER ${APP_USER}
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Local dev: livepeer from go-livepeer/docker/Dockerfile (scripts/build-local-signer.sh).
-FROM go-livepeer-remote-signer:local AS livepeer-src
+# Local dev: livepeer from LIVEPEER_IMAGE (see ARG at top of file).
+FROM ${LIVEPEER_IMAGE} AS livepeer-src
 
 FROM gateway AS signer-dmz-local
 

@@ -26,6 +26,7 @@ export type BillingUserUsageRow = {
   totalFeeWei: string;
   totalUnits: string;
   networkFeeUsdMicros?: string;
+  byPipelineModel: BillingPipelineModelSummary[];
 };
 
 export type BillingPipelineModelSummary = {
@@ -247,6 +248,19 @@ async function buildOpenMeterBillingDashboard(input: {
         requestCount += row.requestCount;
       }
 
+      const byUserPipelineModel = new Map<string, BillingPipelineModelSummary[]>();
+      for (const row of om.byUserPipelineModel ?? []) {
+        const list = byUserPipelineModel.get(row.externalUserId) ?? [];
+        list.push({
+          pipeline: row.pipeline,
+          modelId: row.modelId,
+          requestCount: row.requestCount,
+          networkFeeUsdMicros: row.networkFeeUsdMicros,
+          endUserBillableUsdMicros: row.networkFeeUsdMicros,
+        });
+        byUserPipelineModel.set(row.externalUserId, list);
+      }
+
       const byUser: BillingUserUsageRow[] = [...om.byUser]
         .sort((a, b) => {
           if (b.requestCount !== a.requestCount) {
@@ -267,6 +281,17 @@ async function buildOpenMeterBillingDashboard(input: {
           totalFeeWei: "0",
           totalUnits: "0",
           networkFeeUsdMicros: row.networkFeeUsdMicros,
+          byPipelineModel: [...(byUserPipelineModel.get(row.externalUserId) ?? [])].sort(
+            (a, b) => {
+              if (b.requestCount !== a.requestCount) {
+                return b.requestCount - a.requestCount;
+              }
+              const feeA = BigInt(a.networkFeeUsdMicros);
+              const feeB = BigInt(b.networkFeeUsdMicros);
+              if (feeA === feeB) return 0;
+              return feeB > feeA ? 1 : -1;
+            },
+          ),
         }));
 
       return {
@@ -294,13 +319,16 @@ async function buildOpenMeterBillingDashboard(input: {
     0n,
   );
   const appsWithUsage = appUsage.filter((app) => app.requestCount > 0).length;
+  const todayKeyUtc = new Date().toISOString().slice(0, 10);
   const chartData: { date: string; value: number }[] = dateKeysInclusiveUtc(
     input.cycleBounds.start,
     input.cycleBounds.end,
-  ).map((date) => ({
-    date,
-    value: requestsByDay.get(date) ?? 0,
-  }));
+  )
+    .filter((date) => date <= todayKeyUtc)
+    .map((date) => ({
+      date,
+      value: requestsByDay.get(date) ?? 0,
+    }));
 
   return {
     ok: true,

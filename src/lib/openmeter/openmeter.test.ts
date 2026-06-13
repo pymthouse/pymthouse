@@ -15,6 +15,7 @@ import {
   aggregateDailyRequestCounts,
   aggregateDailyPipelineModelRows,
   aggregatePipelineModelRows,
+  aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
 } from "@/lib/openmeter/usage-read";
 import {
@@ -101,6 +102,66 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model", () => {
+  const rows = aggregateUserPipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "user-a",
+          pipeline: "live-video-to-video",
+          model_id: "streamdiffusion-sdxl",
+        },
+      },
+      {
+        value: 500,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "user-a",
+          pipeline: "live-video-to-video",
+          model_id: "unknown",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 300,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "user-a",
+          pipeline: "live-video-to-video",
+          model_id: "streamdiffusion-sdxl",
+        },
+      },
+      {
+        value: 33,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "user-a",
+          pipeline: "live-video-to-video",
+          model_id: "unknown",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 2);
+  const sdxl = rows.find((row) => row.modelId === "streamdiffusion-sdxl");
+  const unknown = rows.find((row) => row.modelId === "unknown");
+  assert.ok(sdxl);
+  assert.ok(unknown);
+  assert.equal(sdxl.externalUserId, "user-a");
+  assert.equal(sdxl.requestCount, 300);
+  assert.equal(sdxl.networkFeeUsdMicros, "1000");
+  assert.equal(unknown.requestCount, 33);
+  assert.equal(unknown.networkFeeUsdMicros, "500");
 });
 
 test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day", () => {

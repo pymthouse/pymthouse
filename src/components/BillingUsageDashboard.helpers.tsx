@@ -205,6 +205,12 @@ export function AppUsageSection({
   );
 }
 
+function formatPipelineModelLabel(pipeline: string, modelId: string): string {
+  const model =
+    modelId.length > 24 ? `${modelId.slice(0, 22)}…` : modelId;
+  return `${pipeline} / ${model}`;
+}
+
 function AppUsageUserTable({
   entry,
   isOpenMeter,
@@ -232,46 +238,81 @@ function AppUsageUserTable({
           </tr>
         </thead>
         <tbody>
-          {entry.byUser.map((userUsage) => (
-            <tr
-              key={`${entry.app.id}:${userUsage.endUserId}`}
-              className="border-b border-zinc-800/50 hover:bg-zinc-800/20"
-            >
-              <td className="px-4 sm:px-5 py-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <code className="text-xs text-zinc-300">{userUsage.userLabel}</code>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
-                  >
-                    {userTypeLabel(userUsage.userType)}
-                  </span>
-                </div>
-              </td>
-              <td className="px-4 sm:px-5 py-3">
-                <code className="text-xs text-zinc-500" title={userUsage.identifier}>
-                  {formatIdentifierDisplay(userUsage.identifier)}
-                </code>
-              </td>
-              <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 tabular-nums">
-                {userUsage.requestCount}
-              </td>
-              {!isOpenMeter && (
-                <>
-                  <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
-                    {userUsage.totalUnits}
-                  </td>
-                  <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
-                    {formatBillingWei(userUsage.totalFeeWei)}
-                  </td>
-                </>
-              )}
-              {isOpenMeter && (
-                <td className="px-4 sm:px-5 py-3 text-right text-emerald-400 font-mono text-xs break-all">
-                  {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 4) ?? "—"}
+          {entry.byUser.flatMap((userUsage) => {
+            const userRow = (
+              <tr
+                key={`${entry.app.id}:${userUsage.endUserId}`}
+                className="border-b border-zinc-800/50 hover:bg-zinc-800/20"
+              >
+                <td className="px-4 sm:px-5 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="text-xs text-zinc-300">{userUsage.userLabel}</code>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
+                    >
+                      {userTypeLabel(userUsage.userType)}
+                    </span>
+                  </div>
                 </td>
-              )}
-            </tr>
-          ))}
+                <td className="px-4 sm:px-5 py-3">
+                  <code className="text-xs text-zinc-500" title={userUsage.identifier}>
+                    {formatIdentifierDisplay(userUsage.identifier)}
+                  </code>
+                </td>
+                <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 tabular-nums">
+                  {userUsage.requestCount}
+                </td>
+                {!isOpenMeter && (
+                  <>
+                    <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
+                      {userUsage.totalUnits}
+                    </td>
+                    <td className="px-4 sm:px-5 py-3 text-right text-zinc-300 font-mono text-xs break-all">
+                      {formatBillingWei(userUsage.totalFeeWei)}
+                    </td>
+                  </>
+                )}
+                {isOpenMeter && (
+                  <td className="px-4 sm:px-5 py-3 text-right text-emerald-400 font-mono text-xs font-semibold break-all">
+                    {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 4) ?? "—"}
+                  </td>
+                )}
+              </tr>
+            );
+
+            const breakdownRows = userUsage.byPipelineModel.map((pm) => (
+              <tr
+                key={`${entry.app.id}:${userUsage.endUserId}:${pm.pipeline}|${pm.modelId}`}
+                className="border-b border-zinc-800/30 bg-zinc-950/30 hover:bg-zinc-800/10"
+              >
+                <td className="px-4 sm:px-5 py-2 pl-8 sm:pl-10" colSpan={2}>
+                  <span className="text-xs text-zinc-500">
+                    {formatPipelineModelLabel(pm.pipeline, pm.modelId)}
+                  </span>
+                </td>
+                <td className="px-4 sm:px-5 py-2 text-right text-zinc-400 tabular-nums text-xs">
+                  {pm.requestCount}
+                </td>
+                {!isOpenMeter && (
+                  <>
+                    <td className="px-4 sm:px-5 py-2 text-right text-zinc-500 font-mono text-xs">
+                      —
+                    </td>
+                    <td className="px-4 sm:px-5 py-2 text-right text-zinc-500 font-mono text-xs">
+                      —
+                    </td>
+                  </>
+                )}
+                {isOpenMeter && (
+                  <td className="px-4 sm:px-5 py-2 text-right text-zinc-400 tabular-nums text-xs break-all">
+                    {formatUsdMicrosString(pm.networkFeeUsdMicros, 4) ?? "—"}
+                  </td>
+                )}
+              </tr>
+            ));
+
+            return breakdownRows.length > 0 ? [userRow, ...breakdownRows] : [userRow];
+          })}
         </tbody>
       </table>
     </div>
