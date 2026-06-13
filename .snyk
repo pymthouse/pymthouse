@@ -5,6 +5,8 @@ exclude:
   global:
     # Third-party trees are not first-party code under test.
     - node_modules/**
+    # Local signer keystore bind-mount (not scannable; may be root-owned).
+    - data/**
 
   code:
     # Reviewed Snyk Code exclusion (SAST only).
