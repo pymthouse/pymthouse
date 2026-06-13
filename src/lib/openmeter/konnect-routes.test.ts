@@ -18,16 +18,37 @@ import {
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
 } from "./konnect-routes";
-import { assertKonnectFetchOrigin } from "./route-mode";
+import { createKonnectFetch } from "./konnect-fetch";
 
-test("assertKonnectFetchOrigin allows configured metering origin only", () => {
-  const base = "https://metering.konghq.com/v3/openmeter";
-  assert.doesNotThrow(() =>
-    assertKonnectFetchOrigin("https://metering.konghq.com/v3/openmeter/meters/m1/query", base),
+const KONNECT_BASE = "https://metering.konghq.com/v3/openmeter";
+
+function fetchTargetUrl(input: Parameters<typeof fetch>[0]): string {
+  if (input instanceof Request) {
+    return input.url;
+  }
+  return input.toString();
+}
+
+test("createKonnectFetch blocks requests to non-metering origins (SSRF guard)", async () => {
+  const konnectFetch = createKonnectFetch(KONNECT_BASE);
+  await assert.rejects(
+    () => konnectFetch("https://evil.example.com/v3/openmeter/meters/m1", { method: "GET" }),
+    /unexpected origin/,
   );
-  assert.throws(() =>
-    assertKonnectFetchOrigin("https://evil.example.com/steal", base),
-  );
+});
+
+test("createKonnectFetch only ever calls fetch on the configured metering origin", async (t) => {
+  const calls: URL[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    calls.push(new URL(fetchTargetUrl(input)));
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  const konnectFetch = createKonnectFetch(KONNECT_BASE);
+  await konnectFetch(`${KONNECT_BASE}/api/v1/customers`, { method: "GET" });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].origin, "https://metering.konghq.com");
 });
 
 test("rewriteKonnectPathname strips api version prefix", () => {

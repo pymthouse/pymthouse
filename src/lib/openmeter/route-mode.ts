@@ -32,12 +32,3 @@ export function resolveHostedOpenMeterBaseUrl(apiKey?: string): string {
   }
   return rawBaseUrl;
 }
-
-/** Block SSRF: Konnect fetch wrapper may only call the configured metering origin. */
-export function assertKonnectFetchOrigin(targetUrl: string, allowedBaseUrl: string): void {
-  const target = new URL(targetUrl);
-  const allowed = new URL(allowedBaseUrl);
-  if (target.origin !== allowed.origin) {
-    throw new Error("OpenMeter Konnect fetch blocked: unexpected origin");
-  }
-}
