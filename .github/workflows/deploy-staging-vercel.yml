@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: vercel / preview
-      url: ${{ vars.VERCEL_PREVIEW_URL || 'https://vercel.com/ecs-vercel/pymthouse/deployments' }}
+      url: ${{ vars.VERCEL_PREVIEW_URL || 'https://staging.pymthouse.com' }}
     env:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
@@ -61,8 +61,11 @@ jobs:
 
       - name: Deploy pymthouse preview
         id: vercel_deploy
+        env:
+          STAGING_DOMAIN: ${{ vars.VERCEL_PREVIEW_ALIAS_DOMAIN || 'staging.pymthouse.com' }}
         run: |
           deployment_url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
-          echo "Vercel alias: $deployment_url"
-          echo "Deployments page: ${{ vars.VERCEL_PREVIEW_URL || 'https://vercel.com/ecs-vercel/pymthouse/deployments' }}"
+          echo "Deployment URL: $deployment_url"
+          vercel alias set "$deployment_url" "$STAGING_DOMAIN" --token="$VERCEL_TOKEN"
+          echo "Staging domain: https://$STAGING_DOMAIN"

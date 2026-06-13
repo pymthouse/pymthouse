@@ -28,12 +28,9 @@ railway_export_auth || exit 1
 
 echo "=== Railway stack deploy: $ENV ==="
 
-# Image services: deploy from configured source.
-for svc in kafka openmeter-collector; do
-  echo "Deploying $svc from source ..."
-  # shellcheck disable=SC2086
-  railway_retry railway redeploy --service "$svc" $PE_FLAGS --from-source --yes
-done
+# Image services: kafka from Dockerfile; collector bundles Benthos config.
+bash "$ROOT/scripts/railway-deploy-from-manifest.sh" kafka "$ENV" deploy/kafka
+bash "$ROOT/scripts/railway-deploy-from-manifest.sh" openmeter-collector "$ENV" deploy/openmeter-collector
 
 # Signer DMZ (service name: pymthouse)
 bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse "$ENV"

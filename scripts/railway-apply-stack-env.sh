@@ -55,6 +55,17 @@ echo "Applying stack env to Railway environment: $ENV (project $PROJECT_ID)"
 railway_retry railway variables --service pymthouse $PE_FLAGS >/dev/null
 echo "Railway API reachable."
 
+# Railway private DNS — ignore docker-compose localhost defaults from sourced .env files.
+if [[ -n "${RAILWAY_ENVIRONMENT:-}" ]]; then
+  KAFKA_BROKERS="kafka.railway.internal:9092"
+  unset OIDC_ISSUER OIDC_AUDIENCE JWKS_URI
+  if [[ "${REMOTE_SIGNER_WEBHOOK_URL:-}" == *localhost* \
+    || "${REMOTE_SIGNER_WEBHOOK_URL:-}" == *host.docker.internal* \
+    || -z "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]]; then
+    REMOTE_SIGNER_WEBHOOK_URL="${NEXTAUTH_URL:-https://pymthouse.com}/webhooks/remote-signer"
+  fi
+fi
+
 # Kafka bus for signer monitor events.
 set_kv kafka \
   "CLUSTER_ID=ca497efe-9f82-4b84-890b-d9969a9a2e1c"
