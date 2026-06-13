@@ -28,6 +28,8 @@ type OpenMeterSubscriptionSourceItem = {
   plan?: { key?: string; id?: string } | null;
   planId?: string;
   plan_id?: string;
+  planKey?: string | null;
+  plan_key?: string | null;
   activeFrom?: Date | string | null;
   activeTo?: Date | string | null;
   active_from?: Date | string | null;
@@ -170,6 +172,37 @@ export async function getOpenMeterSubscriptionForAppUser(input: {
   });
 }
 
+function readActiveFromTimestamp(
+  subscription: Pick<OpenMeterSubscriptionView, "activeFrom">,
+): number {
+  const value = subscription.activeFrom;
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
+
+function compareSubscriptionsByActiveFromDesc(
+  a: OpenMeterSubscriptionView,
+  b: OpenMeterSubscriptionView,
+): number {
+  const byActiveFrom = readActiveFromTimestamp(b) - readActiveFromTimestamp(a);
+  if (byActiveFrom !== 0) {
+    return byActiveFrom;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function pickPrimarySubscription(
+  subscriptions: OpenMeterSubscriptionView[],
+): OpenMeterSubscriptionView | null {
+  if (subscriptions.length === 0) {
+    return null;
+  }
+  return [...subscriptions].sort(compareSubscriptionsByActiveFromDesc)[0];
+}
+
 function isStarterOpenMeterSubscription(
   subscription: OpenMeterSubscriptionView,
   starterPlanKey: string,
@@ -247,15 +280,15 @@ export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
   const paid = active.filter(
     (item) => !isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
   );
-  if (paid.length > 0) {
-    return paid[0];
+  const primaryPaid = pickPrimarySubscription(paid);
+  if (primaryPaid) {
+    return primaryPaid;
   }
 
-  return (
-    active.find((item) =>
-      isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
-    ) ?? active[0]
+  const starters = active.filter((item) =>
+    isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
   );
+  return pickPrimarySubscription(starters) ?? pickPrimarySubscription(active);
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {
