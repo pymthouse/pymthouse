@@ -229,7 +229,7 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
   };
 
   const identity = await ensureOpenMeterCustomer(
-    client as never,
+    client,
     "app_1:user-1",
     "User One",
   );
@@ -249,7 +249,7 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
     },
   };
 
-  const identity = await ensureOpenMeterCustomer(client as never, "app_1:user-2");
+  const identity = await ensureOpenMeterCustomer(client, "app_1:user-2");
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
 });
 

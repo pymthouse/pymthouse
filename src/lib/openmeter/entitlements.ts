@@ -1,7 +1,6 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
-  DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
   NETWORK_FEE_USD_MICROS_METER,
   SIGNED_TICKET_COUNT_METER,

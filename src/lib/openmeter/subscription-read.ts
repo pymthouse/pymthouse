@@ -1,9 +1,11 @@
 import type { OpenMeter } from "@openmeter/sdk";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import { buildOpenMeterCustomerKey } from "./customer-key";
-import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db/index";
+import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import { buildOpenMeterPlanKey } from "./plans-sync";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
+import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { buildOpenMeterPlanKey } from "./plan-naming";
 
 const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
   "active",
@@ -32,13 +34,13 @@ type OpenMeterSubscriptionSourceItem = {
   active_to?: Date | string | null;
 };
 
-function readPlanFields(item: Record<string, unknown>): {
+function readPlanFields(item: OpenMeterSubscriptionSourceItem): {
   planKey: string | null;
   planId: string | null;
 } {
   const plan =
     item.plan && typeof item.plan === "object"
-      ? (item.plan as Record<string, unknown>)
+      ? item.plan
       : null;
   const planId =
     (typeof plan?.id === "string" ? plan.id : null) ??
@@ -55,7 +57,7 @@ function readPlanFields(item: Record<string, unknown>): {
 }
 
 function mapSubscriptionItem(item: OpenMeterSubscriptionSourceItem): OpenMeterSubscriptionView {
-  const { planKey, planId } = readPlanFields(item as Record<string, unknown>);
+  const { planKey, planId } = readPlanFields(item);
   const activeFrom = item.activeFrom ?? item.active_from ?? null;
   const activeTo = item.activeTo ?? item.active_to ?? null;
 
@@ -166,6 +168,94 @@ export async function getOpenMeterSubscriptionForAppUser(input: {
   return findOpenMeterSubscriptionByPlanKey(client, customer.id, planKey, {
     openmeterPlanId: starter.openmeterPlanId,
   });
+}
+
+function isStarterOpenMeterSubscription(
+  subscription: OpenMeterSubscriptionView,
+  starterPlanKey: string,
+  starterOpenMeterPlanId: string | null,
+): boolean {
+  if (subscription.planKey === starterPlanKey) {
+    return true;
+  }
+  if (starterOpenMeterPlanId && subscription.planId === starterOpenMeterPlanId) {
+    return true;
+  }
+  return false;
+}
+
+export async function resolveLocalPlanIdFromOpenMeterSubscription(
+  clientId: string,
+  subscription: Pick<OpenMeterSubscriptionView, "planKey" | "planId">,
+): Promise<string | null> {
+  if (subscription.planId) {
+    const byOpenMeterPlanId = await db
+      .select({ id: plans.id })
+      .from(plans)
+      .where(
+        and(eq(plans.clientId, clientId), eq(plans.openmeterPlanId, subscription.planId)),
+      )
+      .limit(1);
+    if (byOpenMeterPlanId[0]?.id) {
+      return byOpenMeterPlanId[0].id;
+    }
+  }
+
+  if (!subscription.planKey) {
+    return null;
+  }
+
+  const clientPlans = await db
+    .select({ id: plans.id })
+    .from(plans)
+    .where(eq(plans.clientId, clientId));
+
+  for (const plan of clientPlans) {
+    if (buildOpenMeterPlanKey(clientId, plan.id) === subscription.planKey) {
+      return plan.id;
+    }
+  }
+
+  return null;
+}
+
+/** Prefer an active paid plan subscription over the app starter plan when both exist. */
+export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<OpenMeterSubscriptionView | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+
+  const client = getHostedAdminClient();
+  const customer = await ensureOpenMeterCustomerForAppUser({
+    client,
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const starter = await getOrCreateStarterPlan(input.clientId);
+  const starterPlanKey = buildOpenMeterPlanKey(input.clientId, starter.id);
+
+  const active = (await listOpenMeterSubscriptionsForCustomer(client, customer.id)).filter(
+    (item) => isOpenMeterSubscriptionActive(item.status),
+  );
+  if (active.length === 0) {
+    return null;
+  }
+
+  const paid = active.filter(
+    (item) => !isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
+  );
+  if (paid.length > 0) {
+    return paid[0];
+  }
+
+  return (
+    active.find((item) =>
+      isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
+    ) ?? active[0]
+  );
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {

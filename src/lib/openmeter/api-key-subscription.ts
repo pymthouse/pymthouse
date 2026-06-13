@@ -1,14 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
 import { db } from "@/db/index";
-import { apiKeys, plans, subscriptions } from "@/db/schema";
+import { apiKeys, subscriptions } from "@/db/schema";
 import { isOpenMeterUlid } from "./konnect-routes";
 import {
   isOpenMeterSubscriptionActive,
+  resolveLocalPlanIdFromOpenMeterSubscription,
   verifyOpenMeterSubscriptionId,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
-import { buildOpenMeterPlanKey } from "./plan-naming";
 
 type ApiKeyRow = typeof apiKeys.$inferSelect;
 
@@ -17,26 +17,6 @@ export type ResolvedApiKeySubscription = {
   openmeterSubscription: OpenMeterSubscriptionView;
   planId: string | null;
 };
-
-async function resolvePlanIdFromOpenMeterPlanKey(
-  clientId: string,
-  planKey: string | null,
-): Promise<string | null> {
-  if (!planKey) {
-    return null;
-  }
-  const prefix = `${clientId}:`;
-  if (!planKey.startsWith(prefix)) {
-    return null;
-  }
-  const planId = planKey.slice(prefix.length);
-  const rows = await db
-    .select({ id: plans.id })
-    .from(plans)
-    .where(and(eq(plans.id, planId), eq(plans.clientId, clientId)))
-    .limit(1);
-  return rows[0]?.id ?? null;
-}
 
 export async function resolveApiKeyOpenMeterSubscription(input: {
   apiKey: ApiKeyRow;
@@ -79,7 +59,7 @@ export async function resolveApiKeyOpenMeterSubscription(input: {
 
   const planId =
     legacyPlanId ??
-    (await resolvePlanIdFromOpenMeterPlanKey(input.apiKey.clientId, omSub.planKey));
+    (await resolveLocalPlanIdFromOpenMeterSubscription(input.apiKey.clientId, omSub));
 
   return {
     openmeterSubscriptionId,
