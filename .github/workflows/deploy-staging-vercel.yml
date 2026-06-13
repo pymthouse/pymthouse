@@ -72,9 +72,8 @@ jobs:
           deployment_url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
           echo "Deployment URL: $deployment_url"
-          if [[ "${GITHUB_REF_NAME}" != "${STAGING_ALIAS_BRANCH}" ]]; then
-            echo "Skipping staging alias: branch ${GITHUB_REF_NAME} != ${STAGING_ALIAS_BRANCH}"
-            exit 0
+          if [[ "${GITHUB_REF_NAME}" == "${STAGING_ALIAS_BRANCH}" ]]; then
+            echo "Staging domain (auto-assigned when gitBranch matches): https://${STAGING_DOMAIN}"
+          else
+            echo "Skipping staging domain note: branch ${GITHUB_REF_NAME} != ${STAGING_ALIAS_BRANCH}"
           fi
-          vercel alias set "$deployment_url" "$STAGING_DOMAIN" --token="$VERCEL_TOKEN" --scope ecs-vercel
-          echo "Staging domain: https://${STAGING_DOMAIN}"

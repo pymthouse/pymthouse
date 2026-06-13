@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Deploy the current branch to pymthouse Preview; alias staging.pymthouse.com on the
-# configured staging branch (default: feat/openmeter-hosted).
+# Deploy the current branch to pymthouse Preview.
+#
+# When Vercel project Domains maps staging.pymthouse.com → Preview → git branch
+# feat/openmeter-hosted, matching preview deploys receive the domain automatically
+# (no manual vercel alias needed).
 #
 # Environment variables are read from the pymthouse Vercel project dashboard.
 # Run scripts/apply-pymthouse-preview-vercel-env.sh once to sync Preview secrets/URLs.
@@ -20,11 +23,6 @@ vercel link --project pymthouse --yes >/dev/null
 deployment_url="$(vercel deploy --yes)"
 echo "Deployed branch $BRANCH"
 echo "  deployment: $deployment_url"
-
-if [[ "$BRANCH" != "$STAGING_ALIAS_BRANCH" ]]; then
-  echo "Skipping staging alias: branch $BRANCH != $STAGING_ALIAS_BRANCH"
-  exit 0
+if [[ "$BRANCH" == "$STAGING_ALIAS_BRANCH" ]]; then
+  echo "  staging:    https://$STAGING_DOMAIN (auto-assigned when gitBranch matches in Vercel Domains)"
 fi
-
-vercel alias set "$deployment_url" "$STAGING_DOMAIN" --scope ecs-vercel
-echo "  staging:    https://$STAGING_DOMAIN"
