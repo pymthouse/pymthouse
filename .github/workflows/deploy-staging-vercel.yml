@@ -35,6 +35,11 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
       AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
+      # Branch-scoped Preview vars are not always present in `vercel pull` during CI
+      # prebuild — inject the canonical staging URL so validate:env passes.
+      NEXTAUTH_URL: ${{ vars.VERCEL_PREVIEW_URL || 'https://staging.pymthouse.com' }}
+      STAGING_DOMAIN: ${{ vars.VERCEL_PREVIEW_ALIAS_DOMAIN || 'staging.pymthouse.com' }}
+      STAGING_ALIAS_BRANCH: ${{ vars.VERCEL_PREVIEW_ALIAS_BRANCH || 'feat/openmeter-hosted' }}
 
     steps:
       - name: Checkout
@@ -61,11 +66,15 @@ jobs:
 
       - name: Deploy pymthouse preview
         id: vercel_deploy
-        env:
-          STAGING_DOMAIN: ${{ vars.VERCEL_PREVIEW_ALIAS_DOMAIN || 'staging.pymthouse.com' }}
         run: |
+          set -euo pipefail
+          vercel link --project pymthouse --yes --token="$VERCEL_TOKEN"
           deployment_url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
           echo "Deployment URL: $deployment_url"
-          vercel alias set "$deployment_url" "$STAGING_DOMAIN" --token="$VERCEL_TOKEN"
-          echo "Staging domain: https://$STAGING_DOMAIN"
+          if [[ "${GITHUB_REF_NAME}" != "${STAGING_ALIAS_BRANCH}" ]]; then
+            echo "Skipping staging alias: branch ${GITHUB_REF_NAME} != ${STAGING_ALIAS_BRANCH}"
+            exit 0
+          fi
+          vercel alias set "$deployment_url" "$STAGING_DOMAIN" --token="$VERCEL_TOKEN" --scope ecs-vercel
+          echo "Staging domain: https://${STAGING_DOMAIN}"
