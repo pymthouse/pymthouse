@@ -13,7 +13,7 @@ This guide walks you through deploying Pymthouse to Vercel. Since Vercel doesn't
 1. Vercel account ([vercel.com](https://vercel.com))
 2. PostgreSQL database (Neon recommended for free tier)
 3. Docker hosting service account (Railway, Render, or Fly.io)
-4. GitHub/Google OAuth app credentials (for admin login)
+4. GitHub OAuth app credentials (for developer login; Google optional)
 5. Turnkey account (optional, for embedded wallets via Wallet Kit)
 
 ## Step 1: Deploy go-livepeer Signer (Docker Container)
@@ -250,7 +250,7 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 | `SIGNER_NETWORK` | Ethereum network | `arbitrum-one-mainnet` |
 | `ETH_RPC_URL` | Ethereum RPC endpoint | `https://arb1.arbitrum.io/rpc` |
 
-### OAuth Providers (for admin login)
+### OAuth Providers (for developer login)
 
 | Variable Name | Value |
 |--------------|-------|
@@ -311,7 +311,7 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 ## Step 7: Verify Deployment
 
 1. Visit your deployed URL: `https://your-domain.vercel.app`
-2. Test admin login via Google/GitHub OAuth
+2. Test developer login via GitHub OAuth
 3. Navigate to signer configuration and verify connection to your deployed go-livepeer service
 4. Check remote signer DMZ health (see `GET /api/v1/health` signer probe)
 

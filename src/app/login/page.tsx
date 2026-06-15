@@ -10,7 +10,9 @@ export default function LoginPage() {
         </div>
       }
     >
-      <LoginForm />
+      <LoginForm
+        githubOAuthEnabled={!!process.env.GITHUB_CLIENT_ID?.trim()}
+      />
     </Suspense>
   );
 }

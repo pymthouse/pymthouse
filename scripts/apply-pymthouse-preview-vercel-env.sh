@@ -33,7 +33,7 @@ add_preview_env() {
   local key="$1" val="$2"
   local -a extra=()
   case "$key" in
-    DATABASE_URL|NEXTAUTH_SECRET|AUTH_TOKEN_PEPPER|OPENMETER_API_KEY|WEBHOOK_SECRET)
+    DATABASE_URL|NEXTAUTH_SECRET|AUTH_TOKEN_PEPPER|OPENMETER_API_KEY|WEBHOOK_SECRET|GITHUB_CLIENT_SECRET)
       extra+=(--sensitive)
       ;;
   esac
@@ -59,6 +59,10 @@ if [[ -n "${OPENMETER_API_KEY:-}" ]]; then
 fi
 if [[ -n "${WEBHOOK_SECRET:-}" ]]; then
   add_preview_env WEBHOOK_SECRET "$WEBHOOK_SECRET"
+fi
+if [[ -n "${GITHUB_CLIENT_ID:-}" ]]; then
+  add_preview_env GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID"
+  add_preview_env GITHUB_CLIENT_SECRET "${GITHUB_CLIENT_SECRET:-}"
 fi
 
 echo "Done. Redeploy preview so runtime picks up vars."

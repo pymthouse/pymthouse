@@ -194,7 +194,11 @@ function firstEvmAddressFromWallets(
   return undefined;
 }
 
-export function LoginForm() {
+export function LoginForm({
+  githubOAuthEnabled = false,
+}: {
+  githubOAuthEnabled?: boolean;
+}) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -329,31 +333,20 @@ export function LoginForm() {
             Sign in with passkey, email OTP, wallet, or social (via Turnkey).
           </p>
           <TurnkeyLoginButton primaryColor={primaryColor} />
-          {!isAdmin && (
+          {!isAdmin && githubOAuthEnabled && (
             <div className="mt-5 pt-5 border-t border-zinc-800 space-y-3">
               <p className="text-xs text-zinc-500 leading-relaxed">
                 For developer accounts only.
               </p>
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    signIn("google", { callbackUrl: safeCallbackUrl })
-                  }
-                  className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
-                >
-                  Google
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    signIn("github", { callbackUrl: safeCallbackUrl })
-                  }
-                  className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
-                >
-                  GitHub
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  signIn("github", { callbackUrl: safeCallbackUrl })
+                }
+                className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
+              >
+                GitHub
+              </button>
             </div>
           )}
           {oauthCallbackMessage && (
