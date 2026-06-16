@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
 import {
   estimateEndUserBillableMicros,
@@ -20,7 +20,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const clientAuth = await authenticateAppClient(request as NextRequest);
+  const clientAuth = await authenticateAppClient(request);
 
   let app: Awaited<ReturnType<typeof getProviderApp>> | null = null;
   if (clientAuth?.appId === clientId) {

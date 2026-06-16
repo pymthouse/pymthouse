@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { OpenMeter } from "@openmeter/sdk";
+import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
@@ -54,7 +54,7 @@ export async function ensureStarterPlanSynced(clientId: string): Promise<typeof 
 function buildStarterSubscriptionPlanRef(
   starter: typeof plans.$inferSelect,
   planKey: string,
-): { id: string } | { key: string } {
+): PlanReferenceInput | { id: string } {
   if (starter.openmeterPlanId) {
     return { id: starter.openmeterPlanId };
   }
@@ -69,10 +69,9 @@ async function createStarterOpenMeterSubscription(input: {
 }) {
   return input.client.subscriptions.create({
     customerId: input.customerId,
-    plan: buildStarterSubscriptionPlanRef(input.starter, input.planKey) as {
-      key: string;
-      version?: number;
-    },
+    // OpenMeter accepts a plan reference by { id } or { key }, but the SDK input
+    // type only models { key }; narrow to the SDK shape for the create call.
+    plan: buildStarterSubscriptionPlanRef(input.starter, input.planKey) as PlanReferenceInput,
   });
 }
 

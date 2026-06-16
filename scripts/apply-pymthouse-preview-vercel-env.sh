@@ -13,16 +13,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if [[ -f .env.local ]]; then
+  # shellcheck disable=SC1091
+  set -a && source .env.local && set +a
+fi
+
 STAGING_URL="${STAGING_URL:-https://staging.pymthouse.com}"
 STAGING_URL="${STAGING_URL%/}"
 SIGNER_BASE="${SIGNER_BASE:-https://pymthouse-preview.up.railway.app}"
 PREVIEW_GIT_BRANCH="${PREVIEW_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo feat/openmeter-hosted)}"
 OIDC_ISSUER_VAL="${STAGING_URL}/api/v1/oidc"
-
-if [[ -f .env.local ]]; then
-  # shellcheck disable=SC1091
-  set -a && source .env.local && set +a
-fi
 
 if [[ -z "${OPENMETER_URL:-}" ]]; then
   echo "OPENMETER_URL is required (source .env.local or export Konnect URL)" >&2
@@ -35,6 +35,8 @@ add_preview_env() {
   case "$key" in
     DATABASE_URL|NEXTAUTH_SECRET|AUTH_TOKEN_PEPPER|OPENMETER_API_KEY|WEBHOOK_SECRET)
       extra+=(--sensitive)
+      ;;
+    *)
       ;;
   esac
   vercel env add "$key" preview "$PREVIEW_GIT_BRANCH" \

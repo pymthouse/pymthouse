@@ -41,5 +41,5 @@ docker build \
   -t "${SIGNER_DMZ_IMAGE}" \
   "${ROOT}"
 
-echo "Done. Start the clearinghouse stack:"
-echo "  cd ${ROOT} && docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local up -d --build pymthouse"
+echo "Done. Start the full clearinghouse stack (signer + kafka + collector):"
+echo "  cd ${ROOT} && docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local up -d --build"

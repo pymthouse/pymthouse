@@ -73,6 +73,13 @@ async function getKonnectTrialCreditBalance(input: {
     if (starterSubscription && isOpenMeterSubscriptionActive(starterSubscription.status)) {
       // Konnect plan rate_cards.discounts.usage does not always surface in
       // entitlement-access; an active starter subscription implies included trial usage.
+      //
+      // Known limitation: this assumes subscription existence implies provisioned
+      // trial credits. If a subscription exists but credits were never granted
+      // (e.g. plan sync or discount misconfiguration), the reported balance below
+      // (defaultStarterIncludedUsdMicros) will be non-zero despite no real
+      // entitlement. Monitor for incorrect balances until Konnect surfaces the
+      // discount in entitlement-access.
       hasAccess = true;
     }
   }

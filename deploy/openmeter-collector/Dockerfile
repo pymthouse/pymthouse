@@ -1,6 +1,9 @@
 # OpenMeter Benthos collector: Kafka signed-ticket events -> Konnect ingest.
-FROM ghcr.io/openmeterio/benthos-collector:latest
+FROM ghcr.io/openmeterio/benthos-collector:v1.0.0-beta.50@sha256:121082321b1a9e5ddb3e76fae7016db846f22c1330342ae544e1a430dcf4a64a
 
 COPY deploy/collector.yaml /config.yaml
+
+# Run as the unprivileged nobody user; /config.yaml is world-readable.
+USER 65534:65534
 
 CMD ["-c", "/config.yaml"]

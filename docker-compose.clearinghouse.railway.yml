@@ -6,8 +6,9 @@
 # This replaces the self-hosted OpenMeter stack in production.
 #
 # Local dev (pull published go-livepeer + layer Apache DMZ):
+# Start the full stack (signer + kafka + collector) so events reach OpenMeter:
 #   docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local \
-#     up -d --build pymthouse
+#     up -d --build
 # Override go-livepeer source: LIVEPEER_IMAGE=livepeer/go-livepeer:<tag>
 
 name: pymthouse-clearinghouse

@@ -18,7 +18,7 @@ railway_apply_signer_env() {
     "KAFKA_BROKERS=${KAFKA_BROKERS:-kafka:9092}"
     "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
     "REMOTE_SIGNER_WEBHOOK_URL=${REMOTE_SIGNER_WEBHOOK_URL:-${nextauth_url}/webhooks/remote-signer}"
-    "WEBHOOK_SECRET=${WEBHOOK_SECRET:-}"
+    "WEBHOOK_SECRET=${WEBHOOK_SECRET:?WEBHOOK_SECRET is required for signer DMZ webhook auth}"
     "NEXTAUTH_URL=${nextauth_url}"
     "OIDC_ISSUER=${issuer}"
     "OIDC_AUDIENCE=${audience}"

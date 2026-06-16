@@ -15,8 +15,10 @@ async function findOpenMeterCustomerByKey(
 ) {
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
   if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey) && !isOpenMeterUlid(customerKey)) {
-    const listed = await client.customers.list({ key: customerKey, page: 1, pageSize: 1 });
-    return listed?.items?.[0] ?? null;
+    // customers.list({ key }) is a case-insensitive partial match, so the first
+    // item is not guaranteed to be ours — require an exact key match.
+    const listed = await client.customers.list({ key: customerKey, page: 1, pageSize: 100 });
+    return listed?.items?.find((item) => item.key === customerKey) ?? null;
   }
 
   try {

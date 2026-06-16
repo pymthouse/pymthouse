@@ -81,5 +81,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // Hard cutover: subscription-backed API keys require OpenMeter to validate.
+  // When OPENMETER_URL / the hosted admin client is unavailable (the branch above
+  // is skipped), there is intentionally no Postgres-only fallback — reject the
+  // key rather than honoring a legacy local subscription row.
   return NextResponse.json({ valid: false }, { status: 401 });
 }
