@@ -18,15 +18,14 @@ on:
           - major
         default: patch
 
-permissions:
-  contents: write
-
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
   release:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
@@ -64,13 +63,11 @@ jobs:
   deploy-railway:
     needs: release
     uses: ./.github/workflows/deploy-railway-production.yml
-    secrets: inherit
     with:
       ref: ${{ needs.release.outputs.tag }}
 
   deploy-vercel:
     needs: release
     uses: ./.github/workflows/deploy-production-vercel.yml
-    secrets: inherit
     with:
       ref: ${{ needs.release.outputs.tag }}
