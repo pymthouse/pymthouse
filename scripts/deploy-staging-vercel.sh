@@ -13,6 +13,11 @@ cd "$ROOT"
 STAGING_DOMAIN="${VERCEL_PREVIEW_ALIAS_DOMAIN:-staging.pymthouse.com}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
+if [[ "$BRANCH" != "main" ]]; then
+  echo "Error: deploy-staging-vercel.sh must be run from main (current branch: $BRANCH)" >&2
+  exit 1
+fi
+
 export NEXTAUTH_URL="${VERCEL_PREVIEW_URL:-https://staging.pymthouse.com}"
 
 vercel link --project pymthouse --yes >/dev/null

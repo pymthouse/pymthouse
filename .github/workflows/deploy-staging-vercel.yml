@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   deploy:
-    if: vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true'
+    if: vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
