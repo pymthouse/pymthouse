@@ -294,7 +294,7 @@ export async function requireAuth(
 /**
  * Authenticate a request using client credentials (Basic auth or JSON body).
  */
-export async function authenticateAppClient(request: NextRequest): Promise<{
+export async function authenticateAppClient(request: Request): Promise<{
   clientId: string;
   appId: string;
   scopes: string;

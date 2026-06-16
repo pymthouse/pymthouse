@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
@@ -200,7 +200,7 @@ function parseCapabilities(input: unknown): {
   return { capabilities };
 }
 
-async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
+async function resolveAppForPlansRead(clientId: string, request: Request) {
   const clientAuth = await authenticateAppClient(request);
   if (clientAuth?.appId === clientId) {
     const app = await getProviderApp(clientId);
@@ -211,7 +211,7 @@ async function resolveAppForPlansRead(clientId: string, request: NextRequest) {
 }
 
 export async function GET(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -254,7 +254,7 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -454,7 +454,7 @@ export async function POST(
 }
 
 export async function PUT(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -727,7 +727,7 @@ export async function PUT(
 }
 
 export async function DELETE(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;

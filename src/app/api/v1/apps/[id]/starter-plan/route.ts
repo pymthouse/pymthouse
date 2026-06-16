@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
@@ -17,7 +17,7 @@ function isNonNegativeIntegerString(s: string): boolean {
 }
 
 export async function GET(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -51,7 +51,7 @@ export async function GET(
 }
 
 export async function PUT(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;

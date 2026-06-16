@@ -6,6 +6,12 @@ import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { apiKeys, subscriptions } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { isOpenMeterUlid } from "@/lib/openmeter/konnect-routes";
+import {
+  isOpenMeterSubscriptionActive,
+  verifyOpenMeterSubscriptionId,
+} from "@/lib/openmeter/subscription-read";
 import { generateApiKeyValue } from "@/lib/oidc/programmatic-tokens";
 import {
   canEditProviderApp,
@@ -32,6 +38,7 @@ export async function GET(
       clientId: apiKeys.clientId,
       userId: apiKeys.userId,
       subscriptionId: apiKeys.subscriptionId,
+      openmeterSubscriptionId: apiKeys.openmeterSubscriptionId,
       label: apiKeys.label,
       status: apiKeys.status,
       createdAt: apiKeys.createdAt,
@@ -45,6 +52,55 @@ export async function GET(
       clientId,
     })),
   });
+}
+
+async function resolveOpenMeterSubscriptionIdForNewKey(input: {
+  appId: string;
+  subscriptionId: string | null;
+  openmeterSubscriptionId: string | null;
+}): Promise<
+  | { ok: true; openmeterSubscriptionId: string | null }
+  | { ok: false; error: "openmeter_unavailable" | "subscription_not_found" }
+> {
+  let openmeterSubscriptionId = input.openmeterSubscriptionId;
+
+  if (!openmeterSubscriptionId && input.subscriptionId && isOpenMeterUlid(input.subscriptionId)) {
+    openmeterSubscriptionId = input.subscriptionId;
+  }
+
+  if (openmeterSubscriptionId) {
+    if (!isHostedAdminClientAvailable()) {
+      return { ok: false, error: "openmeter_unavailable" };
+    }
+    const omSub = await verifyOpenMeterSubscriptionId(
+      getHostedAdminClient(),
+      openmeterSubscriptionId,
+    );
+    if (!omSub || !isOpenMeterSubscriptionActive(omSub.status)) {
+      return { ok: false, error: "subscription_not_found" };
+    }
+    return { ok: true, openmeterSubscriptionId };
+  }
+
+  if (!input.subscriptionId) {
+    return { ok: true, openmeterSubscriptionId: null };
+  }
+
+  const subRows = await db
+    .select()
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.id, input.subscriptionId),
+        eq(subscriptions.clientId, input.appId),
+      ),
+    )
+    .limit(1);
+  const subscription = subRows[0];
+  if (!subscription) {
+    return { ok: false, error: "subscription_not_found" };
+  }
+  return { ok: true, openmeterSubscriptionId: subscription.openmeterSubscriptionId ?? null };
 }
 
 export async function POST(
@@ -67,22 +123,25 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
 
   const subscriptionId = typeof body.subscriptionId === "string" ? body.subscriptionId : null;
-  if (subscriptionId) {
-    const subRows = await db
-      .select()
-      .from(subscriptions)
-      .where(
-        and(
-          eq(subscriptions.id, subscriptionId),
-          eq(subscriptions.clientId, appId),
-        ),
-      )
-      .limit(1);
-    const subscription = subRows[0];
-    if (!subscription) {
-      return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+  const requestedOpenMeterSubscriptionId =
+    typeof body.openmeterSubscriptionId === "string"
+      ? body.openmeterSubscriptionId.trim()
+      : null;
+
+  const resolved = await resolveOpenMeterSubscriptionIdForNewKey({
+    appId,
+    subscriptionId,
+    openmeterSubscriptionId: requestedOpenMeterSubscriptionId,
+  });
+
+  if (!resolved.ok) {
+    if (resolved.error === "openmeter_unavailable") {
+      return NextResponse.json({ error: "OpenMeter not configured" }, { status: 503 });
     }
+    return NextResponse.json({ error: "OpenMeter subscription not found" }, { status: 404 });
   }
+
+  const openmeterSubscriptionId = resolved.openmeterSubscriptionId;
 
   const apiKeyValue = generateApiKeyValue();
   const apiKey = {
@@ -90,7 +149,8 @@ export async function POST(
     keyHash: hashToken(apiKeyValue),
     userId: userId || null,
     clientId: appId,
-    subscriptionId,
+    subscriptionId: openmeterSubscriptionId ? null : subscriptionId,
+    openmeterSubscriptionId,
     label: typeof body.label === "string" ? body.label : null,
     status: "active",
     createdAt: new Date().toISOString(),
@@ -108,7 +168,8 @@ export async function POST(
     correlationId,
     metadata: {
       keyId: apiKey.id,
-      subscriptionId,
+      subscriptionId: apiKey.subscriptionId,
+      openmeterSubscriptionId: apiKey.openmeterSubscriptionId,
       label: apiKey.label,
     },
   });

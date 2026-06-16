@@ -1,5 +1,6 @@
 import type { GrantSource } from "@/lib/billing/types";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
+import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
 import {
   getTrialCreditBalance,
   grantTrialCredits,
@@ -34,6 +35,10 @@ export async function grantAllowanceUsdMicros(input: {
   const externalUserId = input.externalUserId.trim();
   await resolveOrCreateAppUser({ clientId: input.clientId, externalUserId });
   await ensureStarterSubscriptionForAppUser({
+    clientId: input.clientId,
+    externalUserId,
+  });
+  await ensureTrialAllowanceForAppUser({
     clientId: input.clientId,
     externalUserId,
   });

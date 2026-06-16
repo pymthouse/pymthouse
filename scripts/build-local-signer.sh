@@ -1,38 +1,45 @@
 #!/usr/bin/env bash
-# Build local signer-dmz (Apache JWT DMZ + go-livepeer from ../go-livepeer).
+# Build pymthouse/signer-dmz:local (Apache JWT DMZ + go-livepeer livepeer binary).
 #
-# 1. go-livepeer via lpclearinghouse/scripts/build-remote-signer.sh (official
-#    docker/Dockerfile with CGO + FFmpeg — do not inline a golang-bookworm build).
-# 2. pymthouse/signer-dmz:local by copying the livepeer binary from that image.
-#
-# Usage:
+# Default (fast): pull a published go-livepeer image and copy livepeer into the DMZ.
 #   ./scripts/build-local-signer.sh
-#   GO_LIVEPEER_DIR=/path/to/go-livepeer ./scripts/build-local-signer.sh
+#   LIVEPEER_IMAGE=livepeer/go-livepeer:feat-add-model-id-signer-kafka ./scripts/build-local-signer.sh
+#
+# From local checkout (slow — full CGO/FFmpeg build via lpclearinghouse):
+#   LIVEPEER_IMAGE= ./scripts/build-local-signer.sh
+#   GO_LIVEPEER_DIR=/path/to/go-livepeer LIVEPEER_IMAGE= ./scripts/build-local-signer.sh
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GO_LIVEPEER_DIR="${GO_LIVEPEER_DIR:-${ROOT}/../go-livepeer}"
 LPCLEARINGHOUSE_DIR="${LPCLEARINGHOUSE_DIR:-${ROOT}/../lpclearinghouse}"
-REMOTE_SIGNER_IMAGE="${REMOTE_SIGNER_IMAGE:-go-livepeer-remote-signer:local}"
+LIVEPEER_IMAGE="${LIVEPEER_IMAGE:-livepeer/go-livepeer:feat-add-model-id-signer-kafka}"
 SIGNER_DMZ_IMAGE="${SIGNER_DMZ_IMAGE:-pymthouse/signer-dmz:local}"
 
-BUILD_REMOTE_SIGNER="${LPCLEARINGHOUSE_DIR}/scripts/build-remote-signer.sh"
-if [[ ! -f "${BUILD_REMOTE_SIGNER}" ]]; then
-  echo "lpclearinghouse build script not found at ${BUILD_REMOTE_SIGNER}" >&2
-  echo "Set LPCLEARINGHOUSE_DIR to your lpclearinghouse checkout." >&2
-  exit 1
+if [[ -n "${LIVEPEER_IMAGE}" ]]; then
+  echo "Pulling ${LIVEPEER_IMAGE}..."
+  docker pull "${LIVEPEER_IMAGE}"
+else
+  REMOTE_SIGNER_IMAGE="${REMOTE_SIGNER_IMAGE:-go-livepeer-remote-signer:local}"
+  BUILD_REMOTE_SIGNER="${LPCLEARINGHOUSE_DIR}/scripts/build-remote-signer.sh"
+  if [[ ! -f "${BUILD_REMOTE_SIGNER}" ]]; then
+    echo "lpclearinghouse build script not found at ${BUILD_REMOTE_SIGNER}" >&2
+    echo "Set LPCLEARINGHOUSE_DIR or use LIVEPEER_IMAGE=livepeer/go-livepeer:<tag>." >&2
+    exit 1
+  fi
+  export GO_LIVEPEER_DIR REMOTE_SIGNER_IMAGE
+  bash "${BUILD_REMOTE_SIGNER}"
+  LIVEPEER_IMAGE="${REMOTE_SIGNER_IMAGE}"
 fi
 
-export GO_LIVEPEER_DIR REMOTE_SIGNER_IMAGE
-bash "${BUILD_REMOTE_SIGNER}"
-
-echo "Building ${SIGNER_DMZ_IMAGE} (signer-dmz-local, livepeer from ${REMOTE_SIGNER_IMAGE})..."
+echo "Building ${SIGNER_DMZ_IMAGE} (signer-dmz-local, livepeer from ${LIVEPEER_IMAGE})..."
 docker build \
   -f "${ROOT}/docker/signer-dmz/Dockerfile" \
   --target signer-dmz-local \
+  --build-arg "LIVEPEER_IMAGE=${LIVEPEER_IMAGE}" \
   -t "${SIGNER_DMZ_IMAGE}" \
   "${ROOT}"
 
-echo "Done. Start the stack:"
-echo "  cd ${ROOT} && docker compose up -d signer-dmz"
+echo "Done. Start the full clearinghouse stack (signer + kafka + collector):"
+echo "  cd ${ROOT} && docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local up -d --build"

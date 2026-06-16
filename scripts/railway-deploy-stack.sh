@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Deploy the full PymtHouse Railway stack (OpenMeter + signer DMZ) to preview or production.
+# Deploy the PymtHouse clearinghouse Railway stack (kafka + collector + signer DMZ).
 #
 # Prerequisites:
 #   - RAILWAY_API_TOKEN (account) or RAILWAY_TOKEN (project production token)
 #   - Env applied: scripts/railway-apply-stack-env.sh (or dashboard)
-#   - Volumes on stateful services (first-time): see docs/openmeter-railway.md
+#   - Kafka and collector services already created in Railway project
 #
 # Usage:
 #   RAILWAY_API_TOKEN=... bash scripts/railway-deploy-stack.sh production
@@ -28,20 +28,12 @@ railway_export_auth || exit 1
 
 echo "=== Railway stack deploy: $ENV ==="
 
-# Stateful images: deploy from configured source (works for first deploy in a new environment).
-for svc in openmeter-postgres openmeter-redis openmeter-kafka openmeter-clickhouse; do
-  echo "Deploying $svc from source ..."
-  # shellcheck disable=SC2086
-  railway_retry railway redeploy --service "$svc" $PE_FLAGS --from-source --yes
-done
-
-# OpenMeter images from repo
-bash "$ROOT/scripts/railway-deploy-openmeter.sh" openmeter openmeter "$ENV"
-bash "$ROOT/scripts/railway-deploy-openmeter.sh" openmeter-sink-worker openmeter-sink-worker "$ENV"
-bash "$ROOT/scripts/railway-deploy-openmeter.sh" openmeter-balance-worker openmeter-balance-worker "$ENV"
+# Image services: kafka from Dockerfile; collector bundles Benthos config.
+bash "$ROOT/scripts/railway-deploy-from-manifest.sh" kafka "$ENV" deploy/kafka
+bash "$ROOT/scripts/railway-deploy-from-manifest.sh" openmeter-collector "$ENV" deploy/openmeter-collector
 
 # Signer DMZ (service name: pymthouse)
 bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse "$ENV"
 
 echo "=== Stack deploy triggered for $ENV ==="
-echo "After openmeter is healthy, bootstrap: OPENMETER_URL=https://<openmeter-domain> npm run openmeter:railway:bootstrap"
+echo "After deploy, run a signed-ticket request and confirm collector events in OpenMeter."

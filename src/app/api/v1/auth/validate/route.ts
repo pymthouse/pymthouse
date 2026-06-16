@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
-import { apiKeys, planCapabilityBundles, plans, subscriptions } from "@/db/schema";
+import { apiKeys, planCapabilityBundles, plans } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { resolveApiKeyOpenMeterSubscription } from "@/lib/openmeter/api-key-subscription";
+import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization") || "";
@@ -22,7 +25,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ valid: false }, { status: 401 });
   }
 
-  if (!apiKey.subscriptionId) {
+  if (!apiKey.subscriptionId && !apiKey.openmeterSubscriptionId) {
     return NextResponse.json({
       valid: true,
       client_id: apiKey.clientId,
@@ -31,45 +34,56 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const subRows = await db
-    .select()
-    .from(subscriptions)
-    .where(
-      and(
-        eq(subscriptions.id, apiKey.subscriptionId),
-        eq(subscriptions.clientId, apiKey.clientId),
-      ),
-    )
-    .limit(1);
-  const subscription = subRows[0];
+  if (requireOpenMeterForUsageReads() && isHostedAdminClientAvailable()) {
+    const resolved = await resolveApiKeyOpenMeterSubscription({
+      apiKey,
+      client: getHostedAdminClient(),
+    });
+    if (!resolved) {
+      return NextResponse.json({ valid: false }, { status: 401 });
+    }
 
-  if (!subscription || subscription.status !== "active") {
-    return NextResponse.json({ valid: false }, { status: 401 });
+    if (!resolved.planId) {
+      return NextResponse.json({
+        valid: true,
+        client_id: apiKey.clientId,
+        plan: null,
+        allowedModels: [],
+        openmeter_subscription_id: resolved.openmeterSubscriptionId,
+      });
+    }
+
+    const planRows = await db
+      .select()
+      .from(plans)
+      .where(eq(plans.id, resolved.planId))
+      .limit(1);
+    const plan = planRows[0];
+    if (!plan) {
+      return NextResponse.json({ valid: false }, { status: 401 });
+    }
+
+    const capabilities = await db
+      .select()
+      .from(planCapabilityBundles)
+      .where(eq(planCapabilityBundles.planId, plan.id));
+
+    return NextResponse.json({
+      valid: true,
+      client_id: apiKey.clientId,
+      openmeter_subscription_id: resolved.openmeterSubscriptionId,
+      plan: {
+        ...plan,
+        includedUnits: plan.includedUnits != null ? plan.includedUnits.toString() : null,
+        overageRateUsd: plan.overageRateUsd ?? null,
+      },
+      allowedModels: capabilities.map((bundle) => bundle.modelId).filter(Boolean),
+    });
   }
 
-  const planRows = await db
-    .select()
-    .from(plans)
-    .where(eq(plans.id, subscription.planId))
-    .limit(1);
-  const plan = planRows[0];
-  if (!plan) {
-    return NextResponse.json({ valid: false }, { status: 401 });
-  }
-
-  const capabilities = await db
-    .select()
-    .from(planCapabilityBundles)
-    .where(eq(planCapabilityBundles.planId, plan.id));
-
-  return NextResponse.json({
-    valid: true,
-    client_id: apiKey.clientId,
-    plan: {
-      ...plan,
-      includedUnits: plan.includedUnits != null ? plan.includedUnits.toString() : null,
-      overageRateUsd: plan.overageRateUsd ?? null,
-    },
-    allowedModels: capabilities.map((bundle) => bundle.modelId).filter(Boolean),
-  });
+  // Hard cutover: subscription-backed API keys require OpenMeter to validate.
+  // When OPENMETER_URL / the hosted admin client is unavailable (the branch above
+  // is skipped), there is intentionally no Postgres-only fallback — reject the
+  // key rather than honoring a legacy local subscription row.
+  return NextResponse.json({ valid: false }, { status: 401 });
 }

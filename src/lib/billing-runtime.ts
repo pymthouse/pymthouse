@@ -2,14 +2,11 @@
  * Runtime billing engine for PymtHouse.
  *
  * Provides small, independently testable functions that are called from
- * proxyGenerateLivePayment() after the go-livepeer remote signer succeeds.
+ * the OpenMeter Kafka collector after go-livepeer emits create_signed_ticket events.
  *
  * Core invariant:
- *   A billable usage_billing_events row is created when the signing request
- *   resolves to an explicit pipeline/model constraint (body fields or
- *   capabilities). Price evidence comes from the negotiated ticket on the
- *   request (orchestrator info decoded by PymtHouse), not from a separate NaaP
- *   pricing fetch on the hot path.
+ *   Metered usage is authoritative in OpenMeter/Konnect (Kafka collector path).
+ *   This module retains pricing helpers for pipeline/model constraint parsing.
  */
 
 import crypto from "crypto";

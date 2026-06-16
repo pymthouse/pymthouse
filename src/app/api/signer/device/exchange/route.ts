@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { PmtHouseError } from "@pymthouse/builder-sdk";
 import { createDeviceExchangeHandler } from "@pymthouse/builder-sdk/signer/server";
 import { hasScope } from "@/lib/auth";
-import { getIssuer } from "@/lib/oidc/issuer-urls";
 import {
   MintUserSignerTokenError,
   mintSignerJwtForExternalUser,
@@ -50,7 +49,6 @@ async function mintFromDeviceToken(
       publicClientId: resolved.publicClientId,
       developerAppId: resolved.developerAppId,
       externalUserId: resolved.externalUserId,
-      audience: getIssuer(),
     });
   } catch (error) {
     if (error instanceof MintUserSignerTokenError) {

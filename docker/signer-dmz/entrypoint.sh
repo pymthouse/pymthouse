@@ -20,6 +20,9 @@ if [ -z "${OIDC_ISSUER:-}" ]; then
   export OIDC_ISSUER="${_na_base}/api/v1/oidc"
 fi
 export OIDC_AUDIENCE="${OIDC_AUDIENCE:-$OIDC_ISSUER}"
+if [ -z "${JWKS_URI:-}" ] && [ -n "${SIGNER_DMZ_JWKS_URL:-}" ]; then
+  export JWKS_URI="$SIGNER_DMZ_JWKS_URL"
+fi
 # JWKS must reach the app from inside the container (loopback → host.docker.internal).
 if [ -z "${JWKS_URI:-}" ]; then
   export JWKS_URI="$(
@@ -87,6 +90,10 @@ else
 fi
 
 if [ "$SIGNER_DMZ_DISABLE_AUTH" != "1" ]; then
+  if [ -z "${JWKS_URI:-}" ]; then
+    echo "entrypoint: JWKS_URI is required when auth is enabled. Set JWKS_URI or SIGNER_DMZ_JWKS_URL (NEXTAUTH_URL is currently ${NEXTAUTH_URL})." >&2
+    exit 1
+  fi
   mkdir -p /run/jwt
   if ! python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "$JWT_PEM_PATH"; then
     echo "entrypoint: JWKS sync failed" >&2
@@ -133,6 +140,21 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   fi
   if [ -n "${SIGNER_ETH_ADDR:-}" ]; then
     ARGS="$ARGS -ethAcctAddr=${SIGNER_ETH_ADDR}"
+  fi
+  if [ -n "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]; then
+    if [ -z "${WEBHOOK_SECRET:-}" ]; then
+      echo "entrypoint: WEBHOOK_SECRET is required when REMOTE_SIGNER_WEBHOOK_URL is set" >&2
+      exit 1
+    fi
+    ARGS="$ARGS -remoteSignerWebhookUrl=${REMOTE_SIGNER_WEBHOOK_URL}"
+    # X-Api-Key has no spaces — Authorization:Bearer ${WEBHOOK_SECRET} breaks when
+    # /usr/local/bin/livepeer $ARGS word-splits the secret into a stray argv token.
+    ARGS="$ARGS -remoteSignerWebhookHeaders=X-Api-Key:${WEBHOOK_SECRET}"
+  fi
+  if [ -n "${KAFKA_BROKERS:-}" ]; then
+    ARGS="$ARGS -monitor"
+    ARGS="$ARGS -kafkaBootstrapServers=${KAFKA_BROKERS}"
+    ARGS="$ARGS -kafkaGatewayTopic=${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
   fi
   if [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "1" ] || [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "true" ]; then
     ARGS="$ARGS -remoteDiscovery=true"

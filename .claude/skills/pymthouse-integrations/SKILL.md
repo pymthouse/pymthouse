@@ -53,8 +53,8 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 
 | Area | File |
 | --- | --- |
-| **Sole OpenMeter writer (signer-proxy)** | `src/lib/signer-proxy.ts` → `recordSignedTicketToOpenMeter` using synchronous signer `usage` block |
-| Signer usage parse/strip | `src/lib/signer-usage-response.ts` |
+| **OpenMeter writer (metering)** | Kafka `create_signed_ticket` → `deploy/collector.yaml` → Konnect OpenMeter |
+| Signer ops (no HTTP proxy) | `src/lib/signer-proxy.ts` — DMZ URL, health/sync only; `/api/signer/*` returns `410` |
 | Ingest relay (diagnostics only) | `src/app/api/v1/internal/ingest/signed-ticket/route.ts` — receipt logging; **no** OpenMeter write |
 | OpenMeter facade | `src/lib/openmeter/` — `customers.ts` (`ensureOpenMeterCustomer` → `{ id, key }`), `invoices.ts`, `plans-sync.ts`, `usage-read.ts`, `stripe-connect.ts` |
 | OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |

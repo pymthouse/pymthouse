@@ -1,23 +1,41 @@
 import type { OpenMeter } from "@openmeter/sdk";
+import { getHostedOpenMeterUrl } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
+import { isOpenMeterUlid } from "./konnect-routes";
+import { shouldUseKonnectRoutes } from "./route-mode";
 
 export type OpenMeterCustomerIdentity = {
   id: string;
   key: string;
 };
 
+async function findOpenMeterCustomerByKey(
+  client: OpenMeter,
+  customerKey: string,
+) {
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey) && !isOpenMeterUlid(customerKey)) {
+    // customers.list({ key }) is a case-insensitive partial match, so the first
+    // item is not guaranteed to be ours — require an exact key match.
+    const listed = await client.customers.list({ key: customerKey, page: 1, pageSize: 100 });
+    return listed?.items?.find((item) => item.key === customerKey) ?? null;
+  }
+
+  try {
+    return await client.customers.get(customerKey);
+  } catch {
+    return null;
+  }
+}
+
 export async function ensureOpenMeterCustomer(
   client: OpenMeter,
   customerKey: string,
   displayName?: string,
 ): Promise<OpenMeterCustomerIdentity> {
-  try {
-    const existing = await client.customers.get(customerKey);
-    if (existing?.id) {
-      return { id: existing.id, key: customerKey };
-    }
-  } catch {
-    /* create below */
+  const existing = await findOpenMeterCustomerByKey(client, customerKey);
+  if (existing?.id) {
+    return { id: existing.id, key: customerKey };
   }
 
   const created = await client.customers.create({

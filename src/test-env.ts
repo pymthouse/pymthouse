@@ -15,7 +15,10 @@ mutableEnv.NODE_ENV ??= "test";
 loadDotenvFiles();
 
 /** Usage API reads OpenMeter; tests stub meter rows via __testSetOpenMeterUsageRows. */
-if (mutableEnv.NODE_ENV === "test" && !process.env.OPENMETER_URL?.trim()) {
+if (mutableEnv.NODE_ENV === "test" && process.env.OPENMETER_TEST_LIVE !== "1") {
+  process.env.OPENMETER_ROUTE_MODE = "self_hosted";
+  process.env.OPENMETER_URL = "http://127.0.0.1:48888";
+} else if (mutableEnv.NODE_ENV === "test" && !process.env.OPENMETER_URL?.trim()) {
   process.env.OPENMETER_URL = "http://127.0.0.1:48888";
 }
 

@@ -1,13 +1,25 @@
+import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
+import { getHostedOpenMeterUrl, DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER } from "./constants";
+import {
+  ensureKonnectTenantCatalog,
+  findKonnectFeatureIdByKey,
+  unwrapOpenMeterListResult,
+} from "./konnect-catalog";
+import {
+  buildKonnectFlatFeeRateCard,
+  buildKonnectUsageRateCard,
+} from "./konnect-plan-body";
+import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   defaultRetailRateUsd,
   parseRetailRateUsd,
 } from "@/lib/plan-pricing";
+import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureCapabilityOpenMeterFeature } from "./capability-features";
-import { DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER } from "./constants";
 import {
   isOpenMeterPlanImmutableError,
   isOpenMeterPlanNotFoundError,
@@ -31,6 +43,13 @@ function parseIncludedMicros(raw: string | null | undefined): number | undefined
   }
 }
 
+function resolvePlanIncludedMicros(plan: typeof plans.$inferSelect): number | undefined {
+  return (
+    parseIncludedMicros(plan.includedUsdMicros) ??
+    (plan.isStarterDefault ? parseIncludedMicros(defaultStarterIncludedUsdMicros()) : undefined)
+  );
+}
+
 function parsePriceAmount(raw: string): string {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
@@ -48,6 +67,34 @@ function resolveCapabilityRetailRateUsd(input: {
   retailRateUsd: string | null;
 }): string {
   return parseRetailRateUsd(input.retailRateUsd) ?? resolvePlanRetailRateUsd(input.plan);
+}
+
+async function resolveOpenMeterFeatureId(
+  client: OpenMeter,
+  featureKey: string,
+): Promise<string> {
+  const useKonnectBody = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+
+  if (useKonnectBody) {
+    await ensureKonnectTenantCatalog();
+    const featureId = await findKonnectFeatureIdByKey(featureKey);
+    if (!featureId) {
+      throw new Error(`OpenMeter feature not found: ${featureKey}`);
+    }
+    return featureId;
+  }
+
+  const features = unwrapOpenMeterListResult<{ id: string; key: string }>(
+    await client.features.list(),
+  );
+  const match = features.find((feature) => feature.key === featureKey);
+  if (!match?.id) {
+    throw new Error(`OpenMeter feature not found: ${featureKey}`);
+  }
+  return match.id;
 }
 
 function buildUsageRateCard(input: {
@@ -80,6 +127,101 @@ function buildUsageRateCard(input: {
   };
 }
 
+async function appendDefaultTrialUsageRateCard(input: {
+  omClient: OpenMeter;
+  plan: typeof plans.$inferSelect;
+  planRetail: string;
+  includedMicros?: number;
+  rateCards: Array<Record<string, unknown>>;
+  useKonnectBody: boolean;
+}): Promise<void> {
+  if (input.useKonnectBody) {
+    const featureId = await resolveOpenMeterFeatureId(input.omClient, DEFAULT_TRIAL_FEATURE_KEY);
+    input.rateCards.push(
+      buildKonnectUsageRateCard({
+        key: DEFAULT_TRIAL_FEATURE_KEY,
+        name: "Network usage",
+        featureId,
+        unitAmount: input.planRetail,
+        includedMicros: input.includedMicros,
+      }),
+    );
+    return;
+  }
+
+  input.rateCards.push(
+    buildUsageRateCard({
+      key: DEFAULT_TRIAL_FEATURE_KEY,
+      name: "Network usage",
+      featureKey: DEFAULT_TRIAL_FEATURE_KEY,
+      unitAmount: input.planRetail,
+      includedMicros: input.includedMicros,
+      includeEntitlement: true,
+    }),
+  );
+}
+
+async function appendCapabilityRateCards(input: {
+  clientId: string;
+  plan: typeof plans.$inferSelect;
+  omClient: OpenMeter;
+  capabilityRows: Array<typeof planCapabilityBundles.$inferSelect>;
+  includedMicros?: number;
+  planRetail: string;
+  rateCards: Array<Record<string, unknown>>;
+  useKonnectBody: boolean;
+}): Promise<void> {
+  let entitlementAssigned = false;
+  for (const cap of input.capabilityRows) {
+    const retail = resolveCapabilityRetailRateUsd({
+      plan: input.plan,
+      retailRateUsd: cap.retailRateUsd,
+    });
+    const featureKey = await ensureCapabilityOpenMeterFeature({
+      client: input.omClient,
+      clientId: input.clientId,
+      planId: input.plan.id,
+      pipeline: cap.pipeline,
+      modelId: cap.modelId,
+      displayName: openMeterCapabilityLabel({
+        pipeline: cap.pipeline,
+        modelId: cap.modelId,
+      }),
+      preferredKey: cap.openmeterFeatureKey,
+    });
+    if (input.useKonnectBody) {
+      const featureId = await resolveOpenMeterFeatureId(input.omClient, featureKey);
+      input.rateCards.push(
+        buildKonnectUsageRateCard({
+          key: featureKey,
+          name: openMeterCapabilityLabel({
+            pipeline: cap.pipeline,
+            modelId: cap.modelId,
+          }),
+          featureId,
+          unitAmount: retail,
+          includedMicros: entitlementAssigned ? undefined : input.includedMicros,
+        }),
+      );
+    } else {
+      input.rateCards.push(
+        buildUsageRateCard({
+          key: featureKey,
+          name: openMeterCapabilityLabel({
+            pipeline: cap.pipeline,
+            modelId: cap.modelId,
+          }),
+          featureKey,
+          unitAmount: retail,
+          includedMicros: entitlementAssigned ? undefined : input.includedMicros,
+          includeEntitlement: !entitlementAssigned,
+        }),
+      );
+    }
+    entitlementAssigned = entitlementAssigned || Boolean(input.includedMicros);
+  }
+}
+
 export async function mapPymthousePlanToOpenMeterCreate(input: {
   clientId: string;
   plan: typeof plans.$inferSelect;
@@ -93,79 +235,91 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
 
   const omClient = input.client ?? getHostedAdminClient();
   const rateCards: Array<Record<string, unknown>> = [];
-  const includedMicros = parseIncludedMicros(plan.includedUsdMicros);
+  const includedMicros = resolvePlanIncludedMicros(plan);
   const planRetail = resolvePlanRetailRateUsd(plan);
+  const useKonnectBody = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
 
   if (plan.type === "subscription") {
     const flatAmount = parsePriceAmount(plan.priceAmount);
     if (flatAmount !== "0") {
-      rateCards.push({
-        type: "flat_fee",
-        key: "subscription_fee",
-        name: `${toOpenMeterDisplayName(plan.name)} subscription`,
-        billingCadence: "P1M",
-        price: {
-          type: "flat",
-          amount: flatAmount,
-          paymentTerm: "in_advance",
-        },
-      });
+      rateCards.push(
+        useKonnectBody
+          ? buildKonnectFlatFeeRateCard({
+              key: "subscription_fee",
+              name: `${toOpenMeterDisplayName(plan.name)} subscription`,
+              amount: flatAmount,
+            })
+          : {
+              type: "flat_fee",
+              key: "subscription_fee",
+              name: `${toOpenMeterDisplayName(plan.name)} subscription`,
+              billingCadence: "P1M",
+              price: {
+                type: "flat",
+                amount: flatAmount,
+                paymentTerm: "in_advance",
+              },
+            },
+      );
     }
   }
 
   const capabilityRows = input.capabilities.filter((c) => c.planId === plan.id);
 
   if (capabilityRows.length === 0) {
-    rateCards.push(
-      buildUsageRateCard({
-        key: DEFAULT_TRIAL_FEATURE_KEY,
-        name: "Network usage",
-        featureKey: DEFAULT_TRIAL_FEATURE_KEY,
-        unitAmount: planRetail,
-        includedMicros,
-        includeEntitlement: true,
-      }),
-    );
+    await appendDefaultTrialUsageRateCard({
+      omClient,
+      plan,
+      planRetail,
+      includedMicros,
+      rateCards,
+      useKonnectBody,
+    });
   } else {
-    let entitlementAssigned = false;
-    for (const cap of capabilityRows) {
-      const retail = resolveCapabilityRetailRateUsd({
-        plan,
-        retailRateUsd: cap.retailRateUsd,
-      });
-      const featureKey = await ensureCapabilityOpenMeterFeature({
-        client: omClient,
-        clientId: input.clientId,
-        planId: plan.id,
-        pipeline: cap.pipeline,
-        modelId: cap.modelId,
-        displayName: openMeterCapabilityLabel({
-          pipeline: cap.pipeline,
-          modelId: cap.modelId,
-        }),
-        preferredKey: cap.openmeterFeatureKey,
-      });
-      rateCards.push(
-        buildUsageRateCard({
-          key: featureKey,
-          name: openMeterCapabilityLabel({
-            pipeline: cap.pipeline,
-            modelId: cap.modelId,
-          }),
-          featureKey,
-          unitAmount: retail,
-          includedMicros: entitlementAssigned ? undefined : includedMicros,
-          includeEntitlement: !entitlementAssigned,
-        }),
-      );
-      entitlementAssigned = entitlementAssigned || Boolean(includedMicros);
-    }
+    await appendCapabilityRateCards({
+      clientId: input.clientId,
+      plan,
+      omClient,
+      capabilityRows,
+      includedMicros,
+      planRetail,
+      rateCards,
+      useKonnectBody,
+    });
+  }
+
+  const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
+  const planName = toOpenMeterDisplayName(plan.name);
+  const currency = (plan.priceCurrency || "USD").toUpperCase() as "USD";
+
+  if (useKonnectBody) {
+    return {
+      key: planKey,
+      name: planName,
+      currency,
+      billing_cadence: "P1M",
+      phases: [
+        {
+          key: "default",
+          name: "Default",
+          rate_cards: rateCards,
+        },
+      ],
+      metadata: {
+        pymthouse_client_id: input.clientId,
+        pymthouse_plan_id: plan.id,
+        meter_slug: NETWORK_FEE_USD_MICROS_METER,
+      },
+    };
   }
 
   return {
-    key: buildOpenMeterPlanKey(input.clientId, plan.id),
-    name: toOpenMeterDisplayName(plan.name),
-    currency: (plan.priceCurrency || "USD").toUpperCase() as "USD",
+    key: planKey,
+    name: planName,
+    currency,
     billingCadence: "P1M",
     phases: [
       {
@@ -181,6 +335,39 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
       meter_slug: NETWORK_FEE_USD_MICROS_METER,
     },
   };
+}
+
+export type OpenMeterPlanView = {
+  id: string;
+  key: string;
+  status: string;
+};
+
+const OPENMETER_PLAN_USABLE_STATUSES = new Set(["active", "scheduled"]);
+
+export async function verifyOpenMeterPlanId(
+  client: OpenMeter,
+  planId: string,
+): Promise<OpenMeterPlanView | null> {
+  try {
+    const plan = await client.plans.get(planId);
+    if (!plan?.id) {
+      return null;
+    }
+    if (!OPENMETER_PLAN_USABLE_STATUSES.has(plan.status)) {
+      return null;
+    }
+    return {
+      id: plan.id,
+      key: plan.key,
+      status: plan.status,
+    };
+  } catch (err) {
+    if (isOpenMeterPlanNotFoundError(err)) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function syncPlanToOpenMeter(planId: string): Promise<{

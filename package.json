@@ -23,7 +23,9 @@
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
     "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",
     "railway:stack:deploy": "bash scripts/railway-deploy-stack.sh",
-    "railway:preview:deploy": "bash scripts/railway-deploy-signer.sh pymthouse preview",
+    "railway:preview:deploy": "bash scripts/railway-deploy-stack.sh preview",
+    "railway:preview:migrate": "bash scripts/railway-migrate-preview-clearinghouse.sh",
+    "vercel:preview:env": "bash scripts/apply-pymthouse-preview-vercel-env.sh",
     "railway:signer:env": "bash scripts/railway-apply-signer-env.sh",
     "railway:signer:deploy": "bash scripts/railway-apply-signer-env.sh production --deploy",
     "validate:env": "node scripts/validate-env.js",
@@ -32,7 +34,7 @@
   "dependencies": {
     "@braintree/sanitize-url": "^7.1.2",
     "@openmeter/sdk": "^1.0.0-beta.228",
-    "@pymthouse/builder-sdk": "^0.3.1",
+    "@pymthouse/builder-sdk": "0.4.3",
     "@tailwindcss/postcss": "^4.1.18",
     "@turnkey/crypto": "^2.8.14",
     "@turnkey/react-wallet-kit": "^1.11.1",
@@ -49,17 +51,19 @@
     "uuid": "^14.0.0"
   },
   "overrides": {
-    "esbuild": "^0.25.12",
+    "esbuild": "^0.28.1",
     "ethers": {
-      "ws": "^8.20.1"
+      "ws": "^8.21.0"
     },
     "next-auth": {
       "uuid": "^11.1.1"
     },
     "postcss": "^8.5.10",
     "viem": {
-      "ws": "^8.20.1"
-    }
+      "ws": "^8.21.0"
+    },
+    "ws@7": "^7.5.11",
+    "ws@8": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

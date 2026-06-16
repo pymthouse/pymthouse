@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
 import {
   estimateEndUserBillableMicros,
@@ -16,7 +16,7 @@ import {
 } from "@/lib/usage/query-openmeter";
 
 export async function GET(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -62,10 +62,10 @@ export async function GET(
     );
   }
 
-  if (startDate && isNaN(Date.parse(startDate))) {
+  if (startDate && Number.isNaN(Date.parse(startDate))) {
     return NextResponse.json({ error: "Invalid startDate format" }, { status: 400 });
   }
-  if (endDate && isNaN(Date.parse(endDate))) {
+  if (endDate && Number.isNaN(Date.parse(endDate))) {
     return NextResponse.json({ error: "Invalid endDate format" }, { status: 400 });
   }
 

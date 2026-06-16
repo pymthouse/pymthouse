@@ -27,6 +27,10 @@ export type OpenMeterPipelineModelRow = {
   networkFeeUsdMicros: string;
 };
 
+export type OpenMeterUserPipelineModelRow = OpenMeterPipelineModelRow & {
+  externalUserId: string;
+};
+
 export type OpenMeterDailyPipelineRow = {
   pipeline: string;
   modelId: string;
@@ -38,6 +42,7 @@ export type OpenMeterDailyPipelineRow = {
 export type OpenMeterAppDashboardUsage = {
   byUser: OpenMeterUsageRow[];
   byPipelineModel: OpenMeterPipelineModelRow[];
+  byUserPipelineModel: OpenMeterUserPipelineModelRow[];
   requestsByDay: Map<string, number>;
 };
 
@@ -203,6 +208,92 @@ export function aggregatePipelineModelRows(input: {
     }
     return [
       {
+        pipeline: meta.pipeline,
+        modelId: meta.modelId,
+        requestCount: countByKey.get(key) ?? 0,
+        networkFeeUsdMicros: (feeByKey.get(key) ?? 0n).toString(),
+      },
+    ];
+  });
+}
+
+type UserPipelineModelMeta = {
+  externalUserId: string;
+  pipeline: string;
+  modelId: string;
+  key: string;
+};
+
+function resolveUserPipelineModelMeta(
+  row: MeterQueryRow,
+  clientId: string,
+  filterExternalUserId?: string | null,
+): UserPipelineModelMeta | null {
+  const group = (row.groupBy || {}) as Record<string, unknown>;
+  if (clientIdFromGroup(group, clientId) !== clientId) return null;
+  const externalUserId = groupByString(group, "external_user_id", "");
+  if (!externalUserId) return null;
+  if (filterExternalUserId && externalUserId !== filterExternalUserId) return null;
+  const pipeline = groupByString(group, "pipeline", "unknown");
+  const modelId = groupByString(group, "model_id", "unknown");
+  return {
+    externalUserId,
+    pipeline,
+    modelId,
+    key: `${externalUserId}|${pipeline}|${modelId}`,
+  };
+}
+
+export function aggregateUserPipelineModelRows(input: {
+  clientId: string;
+  feeRows: MeterQueryRow[];
+  countRows: MeterQueryRow[];
+  filterExternalUserId?: string | null;
+}): OpenMeterUserPipelineModelRow[] {
+  const countByKey = new Map<string, number>();
+  const metaByKey = new Map<
+    string,
+    { externalUserId: string; pipeline: string; modelId: string }
+  >();
+
+  for (const row of input.countRows) {
+    const meta = resolveUserPipelineModelMeta(row, input.clientId, input.filterExternalUserId);
+    if (!meta) continue;
+    metaByKey.set(meta.key, {
+      externalUserId: meta.externalUserId,
+      pipeline: meta.pipeline,
+      modelId: meta.modelId,
+    });
+    countByKey.set(
+      meta.key,
+      (countByKey.get(meta.key) ?? 0) + Math.floor(Number(row.value ?? 0)),
+    );
+  }
+
+  const feeByKey = new Map<string, bigint>();
+  for (const row of input.feeRows) {
+    const meta = resolveUserPipelineModelMeta(row, input.clientId, input.filterExternalUserId);
+    if (!meta) continue;
+    metaByKey.set(meta.key, {
+      externalUserId: meta.externalUserId,
+      pipeline: meta.pipeline,
+      modelId: meta.modelId,
+    });
+    feeByKey.set(
+      meta.key,
+      (feeByKey.get(meta.key) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+    );
+  }
+
+  const keys = new Set([...countByKey.keys(), ...feeByKey.keys()]);
+  return [...keys].flatMap((key) => {
+    const meta = metaByKey.get(key);
+    if (!meta) {
+      return [];
+    }
+    return [
+      {
+        externalUserId: meta.externalUserId,
         pipeline: meta.pipeline,
         modelId: meta.modelId,
         requestCount: countByKey.get(key) ?? 0,
@@ -724,6 +815,11 @@ export async function queryOpenMeterAppDashboardUsage(input: {
       countRows,
     }),
     byPipelineModel: aggregatePipelineModelRows({
+      clientId: input.clientId,
+      feeRows,
+      countRows,
+    }),
+    byUserPipelineModel: aggregateUserPipelineModelRows({
       clientId: input.clientId,
       feeRows,
       countRows,

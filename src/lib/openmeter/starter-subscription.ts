@@ -1,84 +1,188 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
-import type { OpenMeter } from "@openmeter/sdk";
+import { eq } from "drizzle-orm";
+import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
-import { plans, subscriptions } from "@/db/schema";
+import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { applyTenantBillingProfileToCustomer } from "./billing-profiles";
-import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
-import { isOpenMeterConflictError } from "./plan-errors";
-import { buildOpenMeterPlanKey, syncPlanToOpenMeter } from "./plans-sync";
+import {
+  isOpenMeterConflictError,
+  isOpenMeterPlanNotFoundError,
+} from "./plan-errors";
+import {
+  buildOpenMeterPlanKey,
+  syncPlanToOpenMeter,
+  verifyOpenMeterPlanId,
+} from "./plans-sync";
+import {
+  findOpenMeterSubscriptionByPlanKey,
+  type OpenMeterSubscriptionView,
+  verifyOpenMeterSubscriptionId,
+} from "./subscription-read";
 
-const ACTIVE_SUBSCRIPTION_STATUSES = ["active", "pending"] as const;
-
-const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set(["active", "scheduled"]);
+async function refreshStarterPlan(planId: string): Promise<typeof plans.$inferSelect> {
+  const refreshed = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+  if (!refreshed[0]) {
+    throw new Error("Starter plan row missing after OpenMeter sync");
+  }
+  return refreshed[0];
+}
 
 export async function ensureStarterPlanSynced(clientId: string): Promise<typeof plans.$inferSelect> {
   const starter = await getOrCreateStarterPlan(clientId);
-  if (!starter.openmeterPlanId && isHostedAdminClientAvailable()) {
+  if (!isHostedAdminClientAvailable()) {
+    return starter;
+  }
+
+  const client = getHostedAdminClient();
+  const verified = starter.openmeterPlanId
+    ? await verifyOpenMeterPlanId(client, starter.openmeterPlanId)
+    : null;
+
+  if (!verified) {
     const sync = await syncPlanToOpenMeter(starter.id);
     if (!sync.ok) {
       throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
     }
-    const refreshed = await db
-      .select()
-      .from(plans)
-      .where(eq(plans.id, starter.id))
-      .limit(1);
-    return refreshed[0] ?? starter;
+    return refreshStarterPlan(starter.id);
   }
+
   return starter;
 }
 
-async function findOpenMeterStarterSubscription(
-  client: OpenMeter,
-  customerId: string,
+function buildStarterSubscriptionPlanRef(
+  starter: typeof plans.$inferSelect,
   planKey: string,
-): Promise<{ id: string } | null> {
-  const listed = await client.customers.listSubscriptions(customerId, { pageSize: 100 });
-  for (const item of listed?.items ?? []) {
-    if (item.plan?.key !== planKey) {
-      continue;
-    }
-    if (!OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES.has(item.status)) {
-      continue;
-    }
-    return { id: item.id };
+): PlanReferenceInput | { id: string } {
+  if (starter.openmeterPlanId) {
+    return { id: starter.openmeterPlanId };
   }
-  return null;
+  return { key: planKey };
 }
 
-async function persistStarterSubscriptionRow(input: {
-  clientId: string;
-  externalUserId: string;
-  planId: string;
-  openmeterSubscriptionId: string | null;
-}): Promise<string> {
-  const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
-  const now = new Date().toISOString();
-  const subId = uuidv4();
-  await db.insert(subscriptions).values({
-    id: subId,
-    userId: null,
-    clientId: input.clientId,
-    planId: input.planId,
-    status: "active",
-    openmeterSubscriptionId: input.openmeterSubscriptionId,
-    openmeterCustomerKey: customerKey,
-    externalUserId: input.externalUserId,
-    stripeCheckoutSessionId: null,
-    createdAt: now,
+async function createStarterOpenMeterSubscription(input: {
+  client: OpenMeter;
+  customerId: string;
+  starter: typeof plans.$inferSelect;
+  planKey: string;
+}) {
+  return input.client.subscriptions.create({
+    customerId: input.customerId,
+    // OpenMeter accepts a plan reference by { id } or { key }, but the SDK input
+    // type only models { key }; narrow to the SDK shape for the create call.
+    plan: buildStarterSubscriptionPlanRef(input.starter, input.planKey) as PlanReferenceInput,
   });
-  return subId;
+}
+
+async function resolveOpenMeterStarterSubscription(input: {
+  client: OpenMeter;
+  customerId: string;
+  planKey: string;
+  openmeterPlanId: string | null;
+  hintOpenMeterSubscriptionId?: string | null;
+}) {
+  if (input.hintOpenMeterSubscriptionId) {
+    const verified = await verifyOpenMeterSubscriptionId(
+      input.client,
+      input.hintOpenMeterSubscriptionId,
+    );
+    if (verified?.id) {
+      return verified;
+    }
+  }
+
+  return findOpenMeterSubscriptionByPlanKey(input.client, input.customerId, input.planKey, {
+    openmeterPlanId: input.openmeterPlanId,
+  });
+}
+
+function subscriptionViewFromCreateResult(
+  createdSub: NonNullable<Awaited<ReturnType<OpenMeter["subscriptions"]["create"]>>>,
+  planKey: string,
+  openmeterPlanId: string | null,
+): OpenMeterSubscriptionView {
+  return {
+    id: createdSub.id,
+    status: createdSub.status,
+    planKey,
+    planId: openmeterPlanId,
+    activeFrom: createdSub.activeFrom?.toISOString?.() ?? null,
+    activeTo: createdSub.activeTo?.toISOString?.() ?? null,
+  };
+}
+
+async function createStarterSubscriptionWithRecovery(input: {
+  client: OpenMeter;
+  customerId: string;
+  starter: typeof plans.$inferSelect;
+  planKey: string;
+}): Promise<{ subscription: OpenMeterSubscriptionView; starter: typeof plans.$inferSelect }> {
+  let activeStarter = input.starter;
+  try {
+    const createdSub = await createStarterOpenMeterSubscription({
+      client: input.client,
+      customerId: input.customerId,
+      starter: activeStarter,
+      planKey: input.planKey,
+    });
+    if (!createdSub?.id) {
+      throw new Error("Failed to create OpenMeter Starter subscription");
+    }
+    return {
+      subscription: subscriptionViewFromCreateResult(
+        createdSub,
+        input.planKey,
+        activeStarter.openmeterPlanId,
+      ),
+      starter: activeStarter,
+    };
+  } catch (err) {
+    if (isOpenMeterPlanNotFoundError(err)) {
+      const sync = await syncPlanToOpenMeter(activeStarter.id);
+      if (!sync.ok) {
+        throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
+      }
+      activeStarter = await refreshStarterPlan(activeStarter.id);
+      const createdSub = await createStarterOpenMeterSubscription({
+        client: input.client,
+        customerId: input.customerId,
+        starter: activeStarter,
+        planKey: input.planKey,
+      });
+      if (!createdSub?.id) {
+        throw new Error("Failed to create OpenMeter Starter subscription after plan sync");
+      }
+      return {
+        subscription: subscriptionViewFromCreateResult(
+          createdSub,
+          input.planKey,
+          activeStarter.openmeterPlanId,
+        ),
+        starter: activeStarter,
+      };
+    }
+    if (isOpenMeterConflictError(err)) {
+      const existing = await findOpenMeterSubscriptionByPlanKey(
+        input.client,
+        input.customerId,
+        input.planKey,
+        { openmeterPlanId: activeStarter.openmeterPlanId },
+      );
+      if (!existing) {
+        throw err;
+      }
+      return { subscription: existing, starter: activeStarter };
+    }
+    throw err;
+  }
 }
 
 export async function ensureStarterSubscriptionForAppUser(input: {
   clientId: string;
   externalUserId: string;
+  hintOpenMeterSubscriptionId?: string | null;
 }): Promise<{
-  subscriptionId: string | null;
   openmeterSubscriptionId: string | null;
   planId: string;
   created: boolean;
@@ -86,37 +190,15 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   if (!isHostedAdminClientAvailable()) {
     const starter = await getOrCreateStarterPlan(input.clientId);
     return {
-      subscriptionId: null,
       openmeterSubscriptionId: null,
       planId: starter.id,
       created: false,
     };
   }
 
-  const existingRows = await db
-    .select()
-    .from(subscriptions)
-    .where(
-      and(
-        eq(subscriptions.clientId, input.clientId),
-        eq(subscriptions.externalUserId, input.externalUserId),
-        inArray(subscriptions.status, [...ACTIVE_SUBSCRIPTION_STATUSES]),
-      ),
-    )
-    .limit(1);
-
   const starter = await ensureStarterPlanSynced(input.clientId);
   if (!starter.openmeterPlanId) {
     throw new Error("Starter plan is not synced to OpenMeter");
-  }
-
-  if (existingRows[0]) {
-    return {
-      subscriptionId: existingRows[0].id,
-      openmeterSubscriptionId: existingRows[0].openmeterSubscriptionId ?? null,
-      planId: existingRows[0].planId,
-      created: false,
-    };
   }
 
   const client = getHostedAdminClient();
@@ -132,56 +214,36 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   });
 
   const planKey = buildOpenMeterPlanKey(input.clientId, starter.id);
-  const existingOm = await findOpenMeterStarterSubscription(client, customer.id, planKey);
-  if (existingOm) {
-    const subscriptionId = await persistStarterSubscriptionRow({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
-      planId: starter.id,
-      openmeterSubscriptionId: existingOm.id,
-    });
-    return {
-      subscriptionId,
-      openmeterSubscriptionId: existingOm.id,
-      planId: starter.id,
-      created: true,
-    };
-  }
 
-  let openmeterSubscriptionId: string | null = null;
-  try {
-    const omSubscription = await client.subscriptions.create({
-      customerId: customer.id,
-      plan: { key: planKey },
-    });
-    if (!omSubscription?.id) {
-      throw new Error("Failed to create OpenMeter Starter subscription");
-    }
-    openmeterSubscriptionId = omSubscription.id;
-  } catch (err) {
-    if (!isOpenMeterConflictError(err)) {
-      throw err;
-    }
-
-    const reconciled = await findOpenMeterStarterSubscription(client, customer.id, planKey);
-    if (reconciled) {
-      openmeterSubscriptionId = reconciled.id;
-    }
-    // Legacy trial provisioning may have created a metered entitlement without a
-    // subscription row. Treat 409 as already provisioned and record Starter locally.
-  }
-
-  const subscriptionId = await persistStarterSubscriptionRow({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-    planId: starter.id,
-    openmeterSubscriptionId,
+  let omSubscription = await resolveOpenMeterStarterSubscription({
+    client,
+    customerId: customer.id,
+    planKey,
+    openmeterPlanId: starter.openmeterPlanId,
+    hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
   });
 
+  let created = false;
+  let activeStarter = starter;
+  if (!omSubscription) {
+    const provisioned = await createStarterSubscriptionWithRecovery({
+      client,
+      customerId: customer.id,
+      starter: activeStarter,
+      planKey,
+    });
+    omSubscription = provisioned.subscription;
+    activeStarter = provisioned.starter;
+    created = true;
+  }
+
+  if (!omSubscription) {
+    throw new Error("Failed to provision OpenMeter Starter subscription");
+  }
+
   return {
-    subscriptionId,
-    openmeterSubscriptionId,
-    planId: starter.id,
-    created: true,
+    openmeterSubscriptionId: omSubscription.id,
+    planId: activeStarter.id,
+    created,
   };
 }

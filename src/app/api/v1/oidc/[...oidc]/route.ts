@@ -142,7 +142,6 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           clientId,
           clientSecret,
           externalUserId: exchangeParams.get("external_user_id") || "",
-          audience: exchangeParams.get("audience"),
           scope: exchangeParams.get("scope"),
         });
         return NextResponse.json(result, {

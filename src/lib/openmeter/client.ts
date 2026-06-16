@@ -1,5 +1,7 @@
 import { OpenMeter } from "@openmeter/sdk";
 import { getHostedOpenMeterUrl, isOpenMeterEnabled } from "./constants";
+import { createKonnectFetch } from "./konnect-fetch";
+import { resolveHostedOpenMeterBaseUrl, shouldUseKonnectRoutes } from "./route-mode";
 
 let hostedClient: OpenMeter | null = null;
 
@@ -7,11 +9,16 @@ export function createOpenMeterClient(input: {
   baseUrl: string;
   apiKey?: string;
 }): OpenMeter {
-  const baseUrl = input.baseUrl.replace(/\/$/, "");
-  if (input.apiKey?.trim()) {
-    return new OpenMeter({ baseUrl, apiKey: input.apiKey.trim() });
+  const apiKey = input.apiKey?.trim() || undefined;
+  const rawBaseUrl = input.baseUrl.replace(/\/$/, "");
+  const useKonnectRoutes = shouldUseKonnectRoutes(rawBaseUrl, apiKey);
+  const baseUrl = useKonnectRoutes ? resolveHostedOpenMeterBaseUrl(apiKey) : rawBaseUrl;
+  const clientFetch = useKonnectRoutes ? createKonnectFetch(baseUrl) : undefined;
+
+  if (apiKey) {
+    return new OpenMeter({ baseUrl, apiKey, fetch: clientFetch });
   }
-  return new OpenMeter({ baseUrl });
+  return new OpenMeter({ baseUrl, fetch: clientFetch });
 }
 
 export function getHostedOpenMeterClient(): OpenMeter | null {

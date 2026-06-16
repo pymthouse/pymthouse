@@ -1,0 +1,102 @@
+# Clearinghouse runtime for hosted OpenMeter/Konnect:
+# - Remote signer DMZ
+# - Kafka bus for go-livepeer monitor events
+# - OpenMeter collector (Kafka -> CloudEvents ingest)
+#
+# This replaces the self-hosted OpenMeter stack in production.
+#
+# Local dev (pull published go-livepeer + layer Apache DMZ):
+# Start the full stack (signer + kafka + collector) so events reach OpenMeter:
+#   docker compose -f docker-compose.clearinghouse.railway.yml --env-file .env.local \
+#     up -d --build
+# Override go-livepeer source: LIVEPEER_IMAGE=livepeer/go-livepeer:<tag>
+
+name: pymthouse-clearinghouse
+
+services:
+  kafka:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092
+      - --advertise-kafka-addr internal://kafka:9092
+      - --mode dev-container
+      - --smp 1
+      - --memory 512M
+      - --overprovisioned
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  openmeter-collector:
+    image: ghcr.io/openmeterio/benthos-collector:latest
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./deploy/collector.yaml:/config.yaml:ro
+    command: ["-c", "/config.yaml"]
+    environment:
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_GATEWAY_TOPIC: ${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}
+      OPENMETER_URL: ${OPENMETER_URL}
+      OPENMETER_INGEST_URL: ${OPENMETER_INGEST_URL:-${OPENMETER_URL}/events}
+      OPENMETER_API_KEY: ${OPENMETER_API_KEY}
+      ETH_USD_PRICE: ${ETH_USD_PRICE:-3500}
+
+  pymthouse:
+    image: ${SIGNER_DMZ_IMAGE:-pymthouse/signer-dmz:local}
+    build:
+      context: .
+      dockerfile: docker/signer-dmz/Dockerfile
+      target: signer-dmz-local
+      args:
+        LIVEPEER_IMAGE: ${LIVEPEER_IMAGE:-livepeer/go-livepeer:feat-add-model-id-signer-kafka}
+    restart: unless-stopped
+    ports:
+      - target: 8080
+        published: ${SIGNER_DMZ_HOST_PORT:-8080}
+        host_ip: ${SIGNER_DMZ_BIND_HOST:-127.0.0.1}
+      - target: 8082
+        published: ${SIGNER_CLI_HOST_PORT:-8082}
+        host_ip: ${SIGNER_DMZ_BIND_HOST:-127.0.0.1}
+    volumes:
+      - ${SIGNER_DATA_DIR:-./data}:/data
+    environment:
+      PORT: "8080"
+      CLI_PORT: "8082"
+      SIGNER_PORT: "8081"
+      SIGNER_NETWORK: ${SIGNER_NETWORK:-arbitrum-one-mainnet}
+      ETH_RPC_URL: ${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      # Explicit JWKS URL for in-container fetch (loopback in NEXTAUTH_URL is not reachable).
+      JWKS_URI: ${JWKS_URI:-${SIGNER_DMZ_JWKS_URL:-}}
+      JWKS_TLS_INSECURE: ${JWKS_TLS_INSECURE:-}
+      REMOTE_SIGNER_WEBHOOK_URL: ${REMOTE_SIGNER_WEBHOOK_URL:-http://host.docker.internal:3001/webhooks/remote-signer}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_GATEWAY_TOPIC: ${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}
+      TURNKEY_ORG_ID: ${TURNKEY_ORG_ID:-}
+      TURNKEY_API_PUBLIC_KEY: ${TURNKEY_API_PUBLIC_KEY:-}
+      TURNKEY_API_PRIVATE_KEY: ${TURNKEY_API_PRIVATE_KEY:-}
+      SIGNER_ETH_KEYSTORE_PASSWORD: ${SIGNER_ETH_KEYSTORE_PASSWORD:-}
+      SIGNER_ETH_ADDR: ${SIGNER_ETH_ADDR:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
