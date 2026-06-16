@@ -4,6 +4,9 @@ FROM ghcr.io/openmeterio/benthos-collector@sha256:121082321b1a9e5ddb3e76fae7016d
 
 COPY deploy/collector.yaml /config.yaml
 
+# Run as the unprivileged nobody user; /config.yaml is world-readable.
+USER 65534:65534
+
 # beta.50 ships no ENTRYPOINT (default CMD is `/bin/bash -c benthos`), so the
 # bare `-c /config.yaml` CMD below would exec a program literally named `-c`.
 # Pin benthos as the entrypoint and pass the config path as its arguments.
