@@ -1,7 +1,7 @@
 name: Deploy Railway preview clearinghouse stack
 
-# Non-main branches deploy the full clearinghouse stack (kafka + collector + signer DMZ)
-# to Railway preview. main → production via deploy-railway-production.yml.
+# main deploys the full clearinghouse stack (kafka + collector + signer DMZ) to Railway
+# preview (staging). Production deploys on v* tag via deploy-railway-production.yml.
 #
 # Enable with repository variable:
 #   RAILWAY_PREVIEW_AUTO_DEPLOY=true
@@ -15,7 +15,7 @@ name: Deploy Railway preview clearinghouse stack
 
 on:
   push:
-    branches-ignore:
+    branches:
       - main
     paths:
       - "deploy/**"
@@ -33,8 +33,8 @@ on:
         default: false
 
 concurrency:
-  group: deploy-railway-preview-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-railway-preview
+  cancel-in-progress: false
 
 permissions:
   contents: read

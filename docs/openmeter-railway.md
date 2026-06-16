@@ -212,7 +212,7 @@ bash scripts/railway-migrate-preview-clearinghouse.sh
 
 This deletes legacy OpenMeter services from the **preview environment only** (production is untouched), creates `kafka` + `openmeter-collector` if missing, applies env, and deploys.
 
-**CI:** [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) deploys the full clearinghouse stack on non-`main` pushes when `RAILWAY_PREVIEW_AUTO_DEPLOY=true`.
+**CI:** [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) deploys the full clearinghouse stack on push to `main` (path-filtered to `deploy/**`, signer, and railway scripts) when `RAILWAY_PREVIEW_AUTO_DEPLOY=true`. Manual dispatch is also available.
 
 Set Vercel **Preview** `OPENMETER_URL` to Konnect (`https://us.api.konghq.com/v3/openmeter`), not `openmeter-preview.up.railway.app`.
 
@@ -225,36 +225,34 @@ Set Vercel **Preview** `OPENMETER_URL` to Konnect (`https://us.api.konghq.com/v3
 3. Generate public domains on **`openmeter`** and **`pymthouse`** in production.
 4. Set production secrets (use **distinct** passwords from preview). Template: [`config/railway/production.env.example`](../config/railway/production.env.example).
 
-### CI deploy (non-main → preview)
+### CI deploy (main → staging / Railway preview)
 
 Enable repository variable **`RAILWAY_PREVIEW_AUTO_DEPLOY=true`** (`bash scripts/set-github-preview-deploy-vars.sh`).
 
 Successful deploys register the GitHub environment **`railway / preview`** (URL from `RAILWAY_PREVIEW_SIGNER_URL`).
 
-Workflow: [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) on push to any branch except `main` (including `feat/*`):
+Workflow: [`.github/workflows/deploy-railway-preview.yml`](../.github/workflows/deploy-railway-preview.yml) on push to `main` (path-filtered) or manual dispatch:
 
-1. `scripts/railway-deploy-signer.sh pymthouse preview` — uploads the signer DMZ image from the pushed commit
+1. `scripts/railway-deploy-stack.sh preview` — redeploys kafka + collector + signer from the pushed commit
 
-Preview env vars are **not** overwritten by CI (configure in the Railway dashboard or run `railway-apply-stack-env.sh` locally with `RAILWAY_ENVIRONMENT=preview`). Disable native GitHub autodeploy on preview `pymthouse` if you rely on this workflow, so pushes do not double-deploy.
+Preview env vars are **not** overwritten by CI unless `RAILWAY_PREVIEW_APPLY_ENV=true` or the manual `apply_env` dispatch input is set. Disable native GitHub autodeploy on preview `pymthouse` if you rely on this workflow, so pushes do not double-deploy.
 
 **Required GitHub secret:** `RAILWAY_API_TOKEN` (same account token as production).
 
-Manual preview deploy from your current branch:
+Manual staging deploy:
 
 ```bash
 pnpm railway:preview:deploy
-# or: bash scripts/railway-deploy-signer.sh pymthouse preview
+# or: bash scripts/railway-deploy-stack.sh preview
 ```
 
-Full preview stack (OpenMeter + signer): `bash scripts/railway-deploy-stack.sh preview`.
-
-### CI deploy (main → production)
+### CI deploy (v* tag → production)
 
 Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`** (`bash scripts/set-github-production-railway-vars.sh`).
 
 Successful deploys register the GitHub environment **`railway / production`** (URL from `RAILWAY_PRODUCTION_SIGNER_URL`).
 
-Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) on push to `main`:
+Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) on push to `v*` tag, manual dispatch, or via [release.yml](../.github/workflows/release.yml):
 
 1. `scripts/railway-apply-stack-env.sh` — applies env from GitHub secrets
 2. `scripts/railway-deploy-stack.sh production` — redeploys infra + uploads OpenMeter + signer images

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enable deploy-production-vercel.yml on push to main.
+# Enable deploy-production-vercel.yml on v* tag push (or via release.yml).
 # Requires: gh auth login, VERCEL_TOKEN secret, write access to pymthouse/pymthouse
 #
 #   bash scripts/set-github-production-vercel-vars.sh

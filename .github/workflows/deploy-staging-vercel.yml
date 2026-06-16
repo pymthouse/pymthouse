@@ -1,7 +1,7 @@
-name: Deploy preview (Vercel)
+name: Deploy staging (Vercel)
 
-# Non-main branches deploy Preview builds to the pymthouse Vercel project.
-# The same project deploys Production from main via deploy-production-vercel.yml.
+# main deploys a Preview build to staging.pymthouse.com on the pymthouse Vercel project.
+# Production deploys on v* tag via deploy-production-vercel.yml.
 # Non-sensitive Preview vars come from `vercel pull`. Sensitive vars (NEXTAUTH_SECRET,
 # AUTH_TOKEN_PEPPER) are not exported by Vercel for local/CI builds — inject them from
 # the GitHub environment `vercel / preview` secrets (runtime still uses Vercel Preview).
@@ -9,13 +9,13 @@ name: Deploy preview (Vercel)
 
 on:
   push:
-    branches-ignore:
+    branches:
       - main
   workflow_dispatch:
 
 concurrency:
-  group: deploy-preview-vercel-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-staging-vercel
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -38,8 +38,6 @@ jobs:
       # Branch-scoped Preview vars are not always present in `vercel pull` during CI
       # prebuild — inject the canonical staging URL so validate:env passes.
       NEXTAUTH_URL: ${{ vars.VERCEL_PREVIEW_URL || 'https://staging.pymthouse.com' }}
-      STAGING_DOMAIN: ${{ vars.VERCEL_PREVIEW_ALIAS_DOMAIN || 'staging.pymthouse.com' }}
-      STAGING_ALIAS_BRANCH: ${{ vars.VERCEL_PREVIEW_ALIAS_BRANCH || 'feat/openmeter-hosted' }}
 
     steps:
       - name: Checkout
@@ -64,16 +62,13 @@ jobs:
       - name: Build
         run: vercel build --token="$VERCEL_TOKEN"
 
-      - name: Deploy pymthouse preview
+      - name: Deploy and alias staging
         id: vercel_deploy
         run: |
           set -euo pipefail
           vercel link --project pymthouse --yes --token="$VERCEL_TOKEN"
           deployment_url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          vercel alias set "$deployment_url" staging.pymthouse.com --token="$VERCEL_TOKEN"
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
           echo "Deployment URL: $deployment_url"
-          if [[ "${GITHUB_REF_NAME}" == "${STAGING_ALIAS_BRANCH}" ]]; then
-            echo "Staging domain (auto-assigned when gitBranch matches): https://${STAGING_DOMAIN}"
-          else
-            echo "Skipping staging domain note: branch ${GITHUB_REF_NAME} != ${STAGING_ALIAS_BRANCH}"
-          fi
+          echo "Staging alias: https://staging.pymthouse.com"

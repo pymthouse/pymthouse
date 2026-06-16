@@ -1,0 +1,76 @@
+name: Release (bump + tag + deploy prod)
+
+# Bumps package.json version, commits to main, creates a v* tag and GitHub Release,
+# then deploys production (Railway + Vercel) via reusable workflow_call jobs.
+#
+# Tags pushed by GITHUB_TOKEN do not re-trigger tag-listening workflows, so prod
+# deploys are invoked directly — no PAT needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semver bump type
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version and tag
+        id: bump
+        run: |
+          new=$(npm version ${{ inputs.bump }} -m "chore(release): v%s")
+          echo "tag=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Push version commit and tag
+        run: git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        run: gh release create "${{ steps.bump.outputs.tag }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-railway:
+    needs: release
+    uses: ./.github/workflows/deploy-railway-production.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.release.outputs.tag }}
+
+  deploy-vercel:
+    needs: release
+    uses: ./.github/workflows/deploy-production-vercel.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.release.outputs.tag }}

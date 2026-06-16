@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enable non-main preview CI deploy workflows.
+# Enable staging CI deploy workflows (main → Railway preview + Vercel staging).
 # Requires: gh auth login, RAILWAY_API_TOKEN + VERCEL_TOKEN secrets
 #
 #   bash scripts/set-github-preview-deploy-vars.sh

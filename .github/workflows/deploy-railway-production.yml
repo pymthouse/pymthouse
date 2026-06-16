@@ -27,11 +27,19 @@ name: Deploy Railway production clearinghouse stack
 #
 # OIDC_ISSUER / OIDC_AUDIENCE / JWKS_URI on the pymthouse service are derived from
 # NEXTAUTH_URL in scripts/railway-apply-stack-env.sh (see config/railway/production.env.example).
+#
+# Triggered by v* tag push, manual dispatch, or the release workflow (workflow_call).
 
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
 
 concurrency:
   group: deploy-railway-production
@@ -72,6 +80,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@latest
