@@ -1,74 +1,41 @@
 name: Deploy staging (Vercel)
 
-# main deploys a Preview build to staging.pymthouse.com on the pymthouse Vercel project.
-# Production deploys on v* tag via deploy-production-vercel.yml.
-# Non-sensitive Preview vars come from `vercel pull`. Sensitive vars (NEXTAUTH_SECRET,
-# AUTH_TOKEN_PEPPER) are not exported by Vercel for local/CI builds — inject them from
-# the GitHub environment `vercel / preview` secrets (runtime still uses Vercel Preview).
-# Requires VERCEL_TOKEN and VERCEL_PREVIEW_AUTO_DEPLOY=true.
+# Manually deploys any branch to staging.pymthouse.com by force-pushing it onto the
+# literal `staging` branch. Vercel's native Git integration then builds and
+# auto-aliases staging.pymthouse.com from that push — the domain is bound to the
+# `staging` branch under Preview in Project Settings -> Domains, and the Ignored
+# Build Step only allows builds when VERCEL_GIT_COMMIT_REF is `staging` (everything
+# else, including main, stays CI-controlled).
+#
+# Enable with repository variable:
+#   VERCEL_PREVIEW_AUTO_DEPLOY=true
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to deploy to staging"
+        required: true
+        type: string
 
 concurrency:
   group: deploy-staging-vercel
   cancel-in-progress: false
 
 permissions:
-  contents: read
-  deployments: write
+  contents: write
 
 jobs:
   deploy:
-    if: vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true' && github.ref == 'refs/heads/main'
+    if: vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment:
-      name: vercel / preview
-      url: ${{ vars.VERCEL_PREVIEW_URL || 'https://staging.pymthouse.com' }}
-    env:
-      VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
-      VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-      AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
-      # Branch-scoped Preview vars are not always present in `vercel pull` during CI
-      # prebuild — inject the canonical staging URL so validate:env passes.
-      NEXTAUTH_URL: ${{ vars.VERCEL_PREVIEW_URL || 'https://staging.pymthouse.com' }}
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout
+      - name: Checkout requested branch
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: package-lock.json
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
-
-      - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-
-      - name: Build
-        run: vercel build --token="$VERCEL_TOKEN"
-
-      - name: Deploy and alias staging
-        id: vercel_deploy
-        run: |
-          set -euo pipefail
-          vercel link --project pymthouse --yes --token="$VERCEL_TOKEN"
-          deployment_url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
-          vercel alias set "$deployment_url" staging.pymthouse.com --token="$VERCEL_TOKEN"
-          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
-          echo "Deployment URL: $deployment_url"
-          echo "Staging alias: https://staging.pymthouse.com"
+      - name: Push to staging branch
+        run: git push origin "HEAD:refs/heads/staging" --force
