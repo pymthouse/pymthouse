@@ -166,7 +166,9 @@ Point each Vercel tier’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the matc
 
 **CI `vercel build` and sensitive vars:** Vercel marks Preview/Production secrets as *sensitive* and does not export them via `vercel pull` for local or GitHub Actions builds ([Vercel docs](https://vercel.com/docs/environment-variables/sensitive-environment-variables)). Non-sensitive vars (`NEXTAUTH_URL`, signer URLs, etc.) appear in the pull; `NEXTAUTH_SECRET` and `AUTH_TOKEN_PEPPER` must also exist as GitHub environment secrets on `vercel / preview` and `vercel / production` so `validate:env` passes during CI. Runtime on deployed previews/production still resolves secrets from Vercel.
 
-**GitHub secret required for CI deploy:** `VERCEL_TOKEN` (same token used for CLI deploys).
+**GitHub secrets required for CI deploy:**
+- `VERCEL_TOKEN` (same token used for CLI deploys).
+- `RELEASE_PAT` (for [release.yml](../.github/workflows/release.yml)) — a fine-grained PAT with `contents: write` + `workflows: write` on this repo, allowed to push to `main`. `release.yml` pushes the version tag with this PAT so the production deploy workflows' `on: push: tags` triggers fire (tags pushed by the default `GITHUB_TOKEN` do **not** re-trigger workflows).
 
 **Enable deploy workflows** (after `VERCEL_TOKEN` is configured):
 
@@ -198,7 +200,9 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "main" ]; then exit 0; else exit 1; fi
 # GitHub Actions → Release (bump + tag + deploy prod) → choose patch/minor/major
 ```
 
-Or push a tag manually: `git tag v0.1.1 && git push origin v0.1.1`
+`release.yml` bumps `package.json`, tags `v*`, and pushes the tag with `RELEASE_PAT`; the tag push then fires [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) and [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) via their `on: push: tags` triggers (each runs in its own environment so env-scoped secrets resolve).
+
+Or push a tag manually (any user push, not GITHUB_TOKEN, fires the deploys): `git tag v0.2.2 && git push origin v0.2.2`
 
 **Manual staging deploy** (paired Railway + Vercel):
 
