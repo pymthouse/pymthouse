@@ -85,7 +85,7 @@ function assertConformsToC0(body: Record<string, unknown>): void {
 
   if ("signerSession" in body) {
     const s = body.signerSession as Record<string, unknown>;
-    assert.deepEqual(Object.keys(s).sort(), ["headers", "url"]);
+    assert.deepEqual(Object.keys(s).sort((a, b) => a.localeCompare(b)), ["headers", "url"]);
     assert.equal(typeof s.url, "string");
     assert.equal(typeof s.headers, "object");
   }
