@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time / rare sync of staging env vars from local .env.local → Vercel dashboard.
 #
-# Normal deploys (scripts/deploy-staging-vercel.sh or deploy-staging-vercel.yml) do NOT
+# Normal deploys (scripts/deploy-staging-vercel.sh or deploy-staging.yml) do NOT
 # run this script. Secrets should live in the Vercel dashboard; never commit
 # .env.vercel.production or .env.vercel.preview.
 set -euo pipefail
