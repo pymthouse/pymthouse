@@ -6,6 +6,7 @@ import { hashToken } from "@/lib/auth";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { resolveApiKeyOpenMeterSubscription } from "@/lib/openmeter/api-key-subscription";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import { buildValidateResponseBody } from "@/lib/bpp/validate-response";
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization") || "";
@@ -26,12 +27,13 @@ export async function GET(request: NextRequest) {
   }
 
   if (!apiKey.subscriptionId && !apiKey.openmeterSubscriptionId) {
-    return NextResponse.json({
-      valid: true,
-      client_id: apiKey.clientId,
-      plan: null,
-      allowedModels: [],
-    });
+    return NextResponse.json(
+      buildValidateResponseBody({
+        clientId: apiKey.clientId,
+        plan: null,
+        allowedModels: [],
+      }),
+    );
   }
 
   if (requireOpenMeterForUsageReads() && isHostedAdminClientAvailable()) {
@@ -44,13 +46,14 @@ export async function GET(request: NextRequest) {
     }
 
     if (!resolved.planId) {
-      return NextResponse.json({
-        valid: true,
-        client_id: apiKey.clientId,
-        plan: null,
-        allowedModels: [],
-        openmeter_subscription_id: resolved.openmeterSubscriptionId,
-      });
+      return NextResponse.json(
+        buildValidateResponseBody({
+          clientId: apiKey.clientId,
+          plan: null,
+          allowedModels: [],
+          openmeterSubscriptionId: resolved.openmeterSubscriptionId,
+        }),
+      );
     }
 
     const planRows = await db
@@ -68,17 +71,18 @@ export async function GET(request: NextRequest) {
       .from(planCapabilityBundles)
       .where(eq(planCapabilityBundles.planId, plan.id));
 
-    return NextResponse.json({
-      valid: true,
-      client_id: apiKey.clientId,
-      openmeter_subscription_id: resolved.openmeterSubscriptionId,
-      plan: {
-        ...plan,
-        includedUnits: plan.includedUnits != null ? plan.includedUnits.toString() : null,
-        overageRateUsd: plan.overageRateUsd ?? null,
-      },
-      allowedModels: capabilities.map((bundle) => bundle.modelId).filter(Boolean),
-    });
+    return NextResponse.json(
+      buildValidateResponseBody({
+        clientId: apiKey.clientId,
+        openmeterSubscriptionId: resolved.openmeterSubscriptionId,
+        plan: {
+          ...plan,
+          includedUnits: plan.includedUnits != null ? plan.includedUnits.toString() : null,
+          overageRateUsd: plan.overageRateUsd ?? null,
+        },
+        allowedModels: capabilities.map((bundle) => bundle.modelId).filter(Boolean),
+      }),
+    );
   }
 
   // Hard cutover: subscription-backed API keys require OpenMeter to validate.

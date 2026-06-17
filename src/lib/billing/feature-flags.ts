@@ -17,3 +17,12 @@ export function billingPlansApiV2Enabled(): boolean {
 export function billingStableFeatureKeysEnabled(): boolean {
   return envFlag("BILLING_STABLE_FEATURE_KEYS", true);
 }
+
+/**
+ * Gate the neutral BPP ⑥ usage push (pymthouse → NaaP `/metrics/ingest`).
+ * Default OFF: flag-off is a strict no-op (zero regression). Flip
+ * `USAGE_INGEST_PUSH=1` once NaaP's ingest endpoint + token are provisioned.
+ */
+export function usageIngestPushEnabled(): boolean {
+  return envFlag("USAGE_INGEST_PUSH", false);
+}
