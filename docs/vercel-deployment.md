@@ -140,7 +140,7 @@ PymtHouse deploys production and staging to the **same** Vercel project (`pymtho
 
 | Tier | URL | Deploy trigger |
 |------|-----|----------------|
-| **Production** | `https://pymthouse.com` | `v*` tag push, manual [release.yml](../.github/workflows/release.yml) (bump + tag + deploy), or [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) when `VERCEL_PRODUCTION_AUTO_DEPLOY=true` |
+| **Production** | `https://pymthouse.com` | `v*` tag push (manual), or [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) when `VERCEL_PRODUCTION_AUTO_DEPLOY=true` |
 | **Staging** | `https://staging.pymthouse.com` | manual dispatch on [deploy-staging.yml](../.github/workflows/deploy-staging.yml) (choose any branch) when `VERCEL_PREVIEW_AUTO_DEPLOY=true` |
 
 Staging is a **paired unit**: the [deploy-staging.yml](../.github/workflows/deploy-staging.yml) orchestrator deploys the Railway preview clearinghouse stack and the Vercel staging app together from the chosen branch (Railway first, then Vercel). The Vercel half creates an ordinary Preview deployment and re-aliases `staging.pymthouse.com` onto it with `vercel alias set`. That alias only works because `pymthouse.com` is a **verified team domain** under `ecs-vercel` (TXT verification, no nameserver migration) — registering it makes every subdomain freely aliasable by the CLI. Ordinary per-branch Preview builds stay enabled; the project's Ignored Build Step skips only `main` so production never auto-deploys on push.
@@ -168,16 +168,15 @@ Point each Vercel tier’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the matc
 
 **GitHub secrets required for CI deploy:**
 - `VERCEL_TOKEN` (same token used for CLI deploys).
-- `RELEASE_PAT` (for [release.yml](../.github/workflows/release.yml)) — a fine-grained PAT with `contents: write` + `workflows: write` on this repo, allowed to push to `main`. `release.yml` pushes the version tag with this PAT so the production deploy workflows' `on: push: tags` triggers fire (tags pushed by the default `GITHUB_TOKEN` do **not** re-trigger workflows).
 
 **Enable deploy workflows** (after `VERCEL_TOKEN` is configured):
 
 | Variable | Workflow | GitHub Environment |
 |----------|----------|-------------------|
-| `VERCEL_PRODUCTION_AUTO_DEPLOY=true` | [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) on `v*` tag (or via [release.yml](../.github/workflows/release.yml)) | `vercel / production` |
+| `VERCEL_PRODUCTION_AUTO_DEPLOY=true` | [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) on `v*` tag | `vercel / production` |
 | `VERCEL_PREVIEW_AUTO_DEPLOY=true` | [deploy-staging.yml](../.github/workflows/deploy-staging.yml) (Vercel half), manual dispatch with a `branch` input | `vercel / preview` |
 | `RAILWAY_PREVIEW_AUTO_DEPLOY=true` | [deploy-staging.yml](../.github/workflows/deploy-staging.yml) (Railway half) + [deploy-railway-preview.yml](../.github/workflows/deploy-railway-preview.yml) on `main` | `railway / preview` |
-| `RAILWAY_PRODUCTION_AUTO_DEPLOY=true` | [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) on `v*` tag (or via [release.yml](../.github/workflows/release.yml)) | `railway / production` |
+| `RAILWAY_PRODUCTION_AUTO_DEPLOY=true` | [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) on `v*` tag | `railway / production` |
 
 ```bash
 bash scripts/set-github-production-vercel-vars.sh
@@ -196,13 +195,17 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "main" ]; then exit 0; else exit 1; fi
 
 **Production release** (bump version, tag, deploy):
 
+1. Bump `package.json` / `package-lock.json` and merge to `main` (PR).
+2. Tag and push from your machine (a user push fires deploy workflows; tags pushed by `GITHUB_TOKEN` in CI do **not** re-trigger workflows):
+
 ```bash
-# GitHub Actions → Release (bump + tag + deploy prod) → choose patch/minor/major
+git tag v0.2.3
+git push origin v0.2.3
 ```
 
-`release.yml` bumps `package.json`, tags `v*`, and pushes the tag with `RELEASE_PAT`; the tag push then fires [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) and [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) via their `on: push: tags` triggers (each runs in its own environment so env-scoped secrets resolve).
+The tag push fires [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) and [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) via their `on: push: tags` triggers (each runs in its own environment so env-scoped secrets resolve).
 
-Or push a tag manually (any user push, not GITHUB_TOKEN, fires the deploys): `git tag v0.2.2 && git push origin v0.2.2`
+Optionally create a GitHub Release for the tag: `gh release create v0.2.3 --generate-notes`
 
 **Manual staging deploy** (paired Railway + Vercel):
 

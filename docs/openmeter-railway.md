@@ -252,7 +252,7 @@ Enable repository variable **`RAILWAY_PRODUCTION_AUTO_DEPLOY=true`** (`bash scri
 
 Successful deploys register the GitHub environment **`railway / production`** (URL from `RAILWAY_PRODUCTION_SIGNER_URL`).
 
-Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) on push to `v*` tag, manual dispatch, or via [release.yml](../.github/workflows/release.yml):
+Workflow: [`.github/workflows/deploy-railway-production.yml`](../.github/workflows/deploy-railway-production.yml) on push to `v*` tag or manual dispatch:
 
 1. `scripts/railway-apply-stack-env.sh` — applies env from GitHub secrets
 2. `scripts/railway-deploy-stack.sh production` — redeploys infra + uploads OpenMeter + signer images
