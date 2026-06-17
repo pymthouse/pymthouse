@@ -29,10 +29,12 @@ concurrency:
 
 permissions:
   contents: read
-  deployments: write
 
 jobs:
   deploy-railway:
+    permissions:
+      contents: read
+      deployments: write
     uses: ./.github/workflows/deploy-railway-preview.yml
     with:
       ref: ${{ inputs.branch }}
@@ -45,6 +47,9 @@ jobs:
   deploy-vercel:
     needs: deploy-railway
     if: vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true'
+    permissions:
+      contents: read
+      deployments: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
