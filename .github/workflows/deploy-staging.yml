@@ -32,7 +32,11 @@ jobs:
     uses: ./.github/workflows/deploy-railway-preview.yml
     with:
       ref: ${{ inputs.branch }}
-    secrets: inherit
+    secrets:
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
+      OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
 
   deploy-vercel:
     needs: deploy-railway

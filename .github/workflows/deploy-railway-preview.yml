@@ -42,6 +42,15 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      RAILWAY_API_TOKEN:
+        required: false
+      OPENMETER_URL:
+        required: false
+      OPENMETER_API_KEY:
+        required: false
+      WEBHOOK_SECRET:
+        required: false
 
 concurrency:
   group: deploy-railway-preview
