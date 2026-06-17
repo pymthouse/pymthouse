@@ -26,3 +26,19 @@ export function billingStableFeatureKeysEnabled(): boolean {
 export function usageIngestPushEnabled(): boolean {
   return envFlag("USAGE_INGEST_PUSH", false);
 }
+
+/**
+ * Gate the C0-conformant BPP ② `validate` shape (PYMT-3).
+ *
+ * The legacy `GET /api/v1/auth/validate` (client_id / plan / allowedModels) is
+ * UNCHANGED and always available for current consumers. This flag only controls
+ * the NEW, additive `POST /api/v1/auth/validate` which returns the fully reshaped
+ * C0 body (`user.sub` / `billing_account` / `capabilities` as `pipeline:model`).
+ *
+ * Default OFF: flag-off makes the new POST behave as if absent (404), so there is
+ * zero regression for the legacy GET path. Flip `BPP_VALIDATE_V2=1` only once the
+ * NaaP front door (NAAP-C) is ready to consume the C0 shape (gated by D0).
+ */
+export function bppValidateV2Enabled(): boolean {
+  return envFlag("BPP_VALIDATE_V2", false);
+}
