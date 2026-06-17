@@ -23,7 +23,11 @@ test("the forbidden list mirrors the C0 provider-internal-openmeter contract", (
     "gateway_request_id",
     "specversion",
   ];
-  assert.deepEqual([...FORBIDDEN_INTERNAL_FIELD_NAMES].sort(), [...expected].sort());
+  const byName = (a: string, b: string) => a.localeCompare(b);
+  assert.deepEqual(
+    [...FORBIDDEN_INTERNAL_FIELD_NAMES].sort(byName),
+    [...expected].sort(byName),
+  );
 });
 
 test("findLeakedInternalFieldNames detects nested provider-internal keys", () => {

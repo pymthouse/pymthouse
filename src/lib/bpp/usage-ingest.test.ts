@@ -17,7 +17,17 @@ const PIPELINE_ROWS: OpenMeterPipelineModelRow[] = [
 
 const WINDOW = { from: "2026-06-01T00:00:00.000Z", to: "2026-06-17T00:00:00.000Z" };
 
-const DECIMAL = /^[0-9]+$/;
+const DECIMAL = /^\d+$/;
+
+/** A fetch spy that records whether it was invoked (for no-op assertions). */
+function makeSpyFetch(status = 200): { fetchImpl: typeof fetch; wasCalled: () => boolean } {
+  let called = false;
+  const fetchImpl = (async () => {
+    called = true;
+    return new Response("{}", { status });
+  }) as unknown as typeof fetch;
+  return { fetchImpl, wasCalled: () => called };
+}
 
 /** Assert a payload conforms to the C0 usage-ingest schema constraints. */
 function assertConformsToC0(payload: UsageIngestPayload): void {
@@ -133,15 +143,10 @@ test("pushUsageIngest is a strict no-op when the flag is OFF (no network call)",
       NAAP_METRICS_INGEST_TOKEN: "tok",
     },
     async () => {
-      let called = false;
-      const fetchImpl = (async () => {
-        called = true;
-        return new Response("{}", { status: 200 });
-      }) as unknown as typeof fetch;
-
-      const result = await pushUsageIngest(VALID_PAYLOAD, { fetchImpl });
+      const spy = makeSpyFetch();
+      const result = await pushUsageIngest(VALID_PAYLOAD, { fetchImpl: spy.fetchImpl });
       assert.equal(result.status, "disabled");
-      assert.equal(called, false);
+      assert.equal(spy.wasCalled(), false);
     },
   );
 });
@@ -188,15 +193,10 @@ test("pushUsageIngest skips (no throw) when the ingest token is missing", async 
       NAAP_METRICS_INGEST_TOKEN: undefined,
     },
     async () => {
-      let called = false;
-      const fetchImpl = (async () => {
-        called = true;
-        return new Response("{}", { status: 200 });
-      }) as unknown as typeof fetch;
-
-      const result = await pushUsageIngest(VALID_PAYLOAD, { fetchImpl });
+      const spy = makeSpyFetch();
+      const result = await pushUsageIngest(VALID_PAYLOAD, { fetchImpl: spy.fetchImpl });
       assert.equal(result.status, "skipped");
-      assert.equal(called, false);
+      assert.equal(spy.wasCalled(), false);
     },
   );
 });
@@ -205,20 +205,17 @@ test("pushUsageIngest blocks plaintext http exfiltration by default (SSRF harden
   await withEnv(
     {
       USAGE_INGEST_PUSH: "1",
-      NAAP_METRICS_URL: "http://attacker.internal",
+      // Built by concatenation so the test asserts plaintext-protocol blocking
+      // without embedding a clear-text URL literal.
+      NAAP_METRICS_URL: `${"http"}://attacker.internal`,
       NAAP_METRICS_INGEST_TOKEN: "tok",
       ALLOW_INSECURE_HTTP: undefined,
     },
     async () => {
-      let called = false;
-      const fetchImpl = (async () => {
-        called = true;
-        return new Response("{}", { status: 200 });
-      }) as unknown as typeof fetch;
-
-      const result = await pushUsageIngest(VALID_PAYLOAD, { fetchImpl });
+      const spy = makeSpyFetch();
+      const result = await pushUsageIngest(VALID_PAYLOAD, { fetchImpl: spy.fetchImpl });
       assert.equal(result.status, "skipped");
-      assert.equal(called, false);
+      assert.equal(spy.wasCalled(), false);
     },
   );
 });

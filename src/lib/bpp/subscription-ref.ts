@@ -47,7 +47,7 @@ export function toSubscriptionRef(internalSubscriptionId: string | null | undefi
  */
 export function fromSubscriptionRef(subscriptionRef: string | null | undefined): string | null {
   const trimmed = subscriptionRef?.trim();
-  if (!trimmed || !trimmed.startsWith(SUBSCRIPTION_REF_PREFIX)) {
+  if (!trimmed?.startsWith(SUBSCRIPTION_REF_PREFIX)) {
     return null;
   }
   const encoded = trimmed.slice(SUBSCRIPTION_REF_PREFIX.length);

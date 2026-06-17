@@ -12,11 +12,11 @@ const OPENMETER_ULID = "01J8ZQ9X7K6M3N2P4R5S6T7U8V";
  * neutral public fields preserved for zero-regression (the full ② reshape to
  * user.sub/billing_account/`pipeline:model` is tracked separately as PYMT-3).
  */
-const OPENMETER_INTERNAL_IDS = ["openmeter_subscription_id", "openmeter_customer_id"];
+const OPENMETER_INTERNAL_IDS = new Set(["openmeter_subscription_id", "openmeter_customer_id"]);
 
 function assertNoOpenMeterIdentifierLeak(body: Record<string, unknown>): void {
   for (const key of Object.keys(body)) {
-    assert.ok(!OPENMETER_INTERNAL_IDS.includes(key), `unexpected OM id key: ${key}`);
+    assert.ok(!OPENMETER_INTERNAL_IDS.has(key), `unexpected OM id key: ${key}`);
     assert.ok(!key.toLowerCase().startsWith("openmeter"), `unexpected openmeter* key: ${key}`);
   }
   for (const value of Object.values(body)) {
