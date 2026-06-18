@@ -3,9 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { apiKeys, planCapabilityBundles, plans } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { resolveApiKeyOpenMeterSubscription } from "@/lib/openmeter/api-key-subscription";
-import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import { resolveValidateAdminClient } from "@/lib/openmeter/validate-admin-client";
 import { buildValidateResponseBody } from "@/lib/bpp/validate-response";
 
 export async function GET(request: NextRequest) {
@@ -36,10 +35,11 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (requireOpenMeterForUsageReads() && isHostedAdminClientAvailable()) {
+  const adminClient = resolveValidateAdminClient();
+  if (adminClient) {
     const resolved = await resolveApiKeyOpenMeterSubscription({
       apiKey,
-      client: getHostedAdminClient(),
+      client: adminClient,
     });
     if (!resolved) {
       return NextResponse.json({ valid: false }, { status: 401 });
