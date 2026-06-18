@@ -54,6 +54,8 @@ services:
       - JWKS_URI=${JWKS_URI:-}
       # Set to 1 when JWKS is HTTPS with a self-signed / corporate CA (local dev).
       - JWKS_TLS_INSECURE=${JWKS_TLS_INSECURE:-}
+      - REMOTE_SIGNER_WEBHOOK_URL=${REMOTE_SIGNER_WEBHOOK_URL:-http://host.docker.internal:3001/webhooks/remote-signer}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

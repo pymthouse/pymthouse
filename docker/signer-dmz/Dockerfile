@@ -94,9 +94,7 @@ COPY docker/signer-dmz/scripts/jwks_to_pem.py /opt/pymthouse/scripts/jwks_to_pem
 COPY docker/signer-dmz/scripts/cleanup-ephemeral-keystore.sh /opt/pymthouse/scripts/cleanup-ephemeral-keystore.sh
 COPY docker/signer-dmz/apache/ports.conf.in /etc/apache2/templates/ports.conf.in
 COPY docker/signer-dmz/apache/signer-dmz.conf.in /etc/apache2/templates/signer-dmz.conf.in
-COPY docker/signer-dmz/apache/signer-dmz-noauth.conf.in /etc/apache2/templates/signer-dmz-noauth.conf.in
 COPY docker/signer-dmz/apache/signer-dmz-cli-vhost.conf.in /etc/apache2/templates/signer-dmz-cli-vhost.conf.in
-COPY docker/signer-dmz/apache/signer-dmz-cli-vhost-noauth.conf.in /etc/apache2/templates/signer-dmz-cli-vhost-noauth.conf.in
 COPY docker/signer-dmz/entrypoint.sh /entrypoint.sh
 
 # Create an unprivileged user, pre-create all runtime-writable paths, and hand them off.

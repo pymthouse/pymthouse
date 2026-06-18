@@ -43,17 +43,6 @@ print(urlunparse(u))
 fi
 export JWT_PEM_PATH="${JWT_PEM_PATH:-/run/jwt/jwks.pem}"
 
-_disable_auth_raw="${SIGNER_DMZ_DISABLE_AUTH:-0}"
-SIGNER_DMZ_DISABLE_AUTH=0
-case "$_disable_auth_raw" in
-  1 | true | TRUE | yes | YES) SIGNER_DMZ_DISABLE_AUTH=1 ;;
-  *) SIGNER_DMZ_DISABLE_AUTH=0 ;;
-esac
-export SIGNER_DMZ_DISABLE_AUTH
-if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
-  echo "entrypoint: WARNING SIGNER_DMZ_DISABLE_AUTH=1 — Apache JWT verification disabled; local dev only" >&2
-fi
-
 TURNKEY_MODE=0
 if [ -n "${TURNKEY_ORG_ID:-}" ] && [ -n "${TURNKEY_API_PUBLIC_KEY:-}" ] && [ -n "${TURNKEY_API_PRIVATE_KEY:-}" ]; then
   TURNKEY_MODE=1
@@ -89,44 +78,40 @@ else
   export SIGNER_CLI_HTTP_ADDR="${SIGNER_CLI_HTTP_ADDR:-http://127.0.0.1:4935}"
 fi
 
-if [ "$SIGNER_DMZ_DISABLE_AUTH" != "1" ]; then
-  if [ -z "${JWKS_URI:-}" ]; then
-    echo "entrypoint: JWKS_URI is required when auth is enabled. Set JWKS_URI or SIGNER_DMZ_JWKS_URL (NEXTAUTH_URL is currently ${NEXTAUTH_URL})." >&2
-    exit 1
-  fi
-  mkdir -p /run/jwt
-  if ! python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "$JWT_PEM_PATH"; then
-    echo "entrypoint: JWKS sync failed" >&2
-    exit 1
-  fi
-
-  (
-    while true; do
-      sleep "${JWKS_REFRESH_SECONDS:-900}"
-      if python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "${JWT_PEM_PATH}.next" 2>/dev/null; then
-        if ! cmp -s "$JWT_PEM_PATH" "${JWT_PEM_PATH}.next"; then
-          mv "${JWT_PEM_PATH}.next" "$JWT_PEM_PATH"
-          apache2ctl graceful 2>/dev/null || true
-        else
-          rm -f "${JWT_PEM_PATH}.next"
-        fi
-      fi
-    done
-  ) &
+if [ -z "${JWKS_URI:-}" ]; then
+  echo "entrypoint: JWKS_URI is required. Set JWKS_URI or SIGNER_DMZ_JWKS_URL (NEXTAUTH_URL is currently ${NEXTAUTH_URL})." >&2
+  exit 1
 fi
+mkdir -p /run/jwt
+if ! python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "$JWT_PEM_PATH"; then
+  echo "entrypoint: JWKS sync failed" >&2
+  exit 1
+fi
+
+(
+  while true; do
+    sleep "${JWKS_REFRESH_SECONDS:-900}"
+    if python3 /opt/pymthouse/scripts/jwks_to_pem.py --url "$JWKS_URI" --out "${JWT_PEM_PATH}.next" 2>/dev/null; then
+      if ! cmp -s "$JWT_PEM_PATH" "${JWT_PEM_PATH}.next"; then
+        mv "${JWT_PEM_PATH}.next" "$JWT_PEM_PATH"
+        apache2ctl graceful 2>/dev/null || true
+      else
+        rm -f "${JWT_PEM_PATH}.next"
+      fi
+    fi
+  done
+) &
 
 if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   # Signing HTTP paths have no Apache JWT gate; go-livepeer must verify Bearer JWTs
-  # via -remoteSignerWebhookUrl unless local no-auth dev mode is explicitly enabled.
-  if [ "$SIGNER_DMZ_DISABLE_AUTH" != "1" ]; then
-    if [ -z "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]; then
-      echo "entrypoint: REMOTE_SIGNER_WEBHOOK_URL is required when auth is enabled (signing paths have no Apache JWT gate; set SIGNER_DMZ_DISABLE_AUTH=1 for local no-auth dev only)" >&2
-      exit 1
-    fi
-    if [ -z "${WEBHOOK_SECRET:-}" ]; then
-      echo "entrypoint: WEBHOOK_SECRET is required when auth is enabled" >&2
-      exit 1
-    fi
+  # via -remoteSignerWebhookUrl.
+  if [ -z "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]; then
+    echo "entrypoint: REMOTE_SIGNER_WEBHOOK_URL is required (signing paths have no Apache JWT gate)" >&2
+    exit 1
+  fi
+  if [ -z "${WEBHOOK_SECRET:-}" ]; then
+    echo "entrypoint: WEBHOOK_SECRET is required" >&2
+    exit 1
   fi
   if [ "$TURNKEY_MODE" = "1" ]; then
     /usr/local/bin/signer-turnkey-bootstrap || {
@@ -153,16 +138,10 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   if [ -n "${SIGNER_ETH_ADDR:-}" ]; then
     ARGS="$ARGS -ethAcctAddr=${SIGNER_ETH_ADDR}"
   fi
-  if [ -n "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]; then
-    if [ -z "${WEBHOOK_SECRET:-}" ]; then
-      echo "entrypoint: WEBHOOK_SECRET is required when REMOTE_SIGNER_WEBHOOK_URL is set" >&2
-      exit 1
-    fi
-    ARGS="$ARGS -remoteSignerWebhookUrl=${REMOTE_SIGNER_WEBHOOK_URL}"
-    # X-Api-Key has no spaces — Authorization:Bearer ${WEBHOOK_SECRET} breaks when
-    # /usr/local/bin/livepeer $ARGS word-splits the secret into a stray argv token.
-    ARGS="$ARGS -remoteSignerWebhookHeaders=X-Api-Key:${WEBHOOK_SECRET}"
-  fi
+  ARGS="$ARGS -remoteSignerWebhookUrl=${REMOTE_SIGNER_WEBHOOK_URL}"
+  # X-Api-Key has no spaces — Authorization:Bearer ${WEBHOOK_SECRET} breaks when
+  # /usr/local/bin/livepeer $ARGS word-splits the secret into a stray argv token.
+  ARGS="$ARGS -remoteSignerWebhookHeaders=X-Api-Key:${WEBHOOK_SECRET}"
   if [ -n "${KAFKA_BROKERS:-}" ]; then
     ARGS="$ARGS -monitor"
     ARGS="$ARGS -kafkaBootstrapServers=${KAFKA_BROKERS}"
@@ -223,20 +202,16 @@ esac
 # to the claims on a minted token. Emitted on stderr (visible via `docker logs`).
 {
   printf 'signer-dmz: auth config:\n'
-  printf '  SIGNER_DMZ_DISABLE_AUTH=%s\n' "$SIGNER_DMZ_DISABLE_AUTH"
-  if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
-    printf '  JWT_VERIFICATION=disabled\n'
-  else
-    _pem_kids="(missing)"
-    if [ -r "$JWT_PEM_PATH" ]; then
-      _pem_kids="$(grep -c 'BEGIN PUBLIC KEY' "$JWT_PEM_PATH" 2>/dev/null || echo 0)"
-    fi
-    printf '  OIDC_ISSUER=%s\n' "$OIDC_ISSUER"
-    printf '  OIDC_AUDIENCE=%s\n' "$OIDC_AUDIENCE"
-    printf '  JWKS_URI=%s\n' "$JWKS_URI"
-    printf '  JWT_PEM_PATH=%s (public keys: %s)\n' "$JWT_PEM_PATH" "$_pem_kids"
-    printf '  APACHE_AUTH_JWT_LOG_LEVEL=%s\n' "$APACHE_AUTH_JWT_LOG_LEVEL"
+  _pem_kids="(missing)"
+  if [ -r "$JWT_PEM_PATH" ]; then
+    _pem_kids="$(grep -c 'BEGIN PUBLIC KEY' "$JWT_PEM_PATH" 2>/dev/null || echo 0)"
   fi
+  printf '  OIDC_ISSUER=%s\n' "$OIDC_ISSUER"
+  printf '  OIDC_AUDIENCE=%s\n' "$OIDC_AUDIENCE"
+  printf '  JWKS_URI=%s\n' "$JWKS_URI"
+  printf '  JWT_PEM_PATH=%s (public keys: %s)\n' "$JWT_PEM_PATH" "$_pem_kids"
+  printf '  APACHE_AUTH_JWT_LOG_LEVEL=%s\n' "$APACHE_AUTH_JWT_LOG_LEVEL"
+  printf '  REMOTE_SIGNER_WEBHOOK_URL=%s\n' "$REMOTE_SIGNER_WEBHOOK_URL"
   printf '  SIGNER_HTTP_ADDR=%s\n' "$SIGNER_HTTP_ADDR"
   printf '  SIGNER_CLI_HTTP_ADDR=%s\n' "$SIGNER_CLI_HTTP_ADDR"
   printf '  APACHE_PUBLIC_BIND=0.0.0.0:%s\n' "$PORT"
@@ -245,15 +220,9 @@ esac
   fi
 } >&2
 
-if [ "$SIGNER_DMZ_DISABLE_AUTH" = "1" ]; then
-  _envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR}'
-  _apache_main_tmpl=/etc/apache2/templates/signer-dmz-noauth.conf.in
-  _apache_cli_tmpl=/etc/apache2/templates/signer-dmz-cli-vhost-noauth.conf.in
-else
-  _envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}'
-  _apache_main_tmpl=/etc/apache2/templates/signer-dmz.conf.in
-  _apache_cli_tmpl=/etc/apache2/templates/signer-dmz-cli-vhost.conf.in
-fi
+_envsubst_apache='${PORT} ${CLI_PORT} ${SIGNER_HTTP_ADDR} ${SIGNER_CLI_HTTP_ADDR} ${OIDC_ISSUER} ${OIDC_AUDIENCE} ${JWT_PEM_PATH} ${APACHE_AUTH_JWT_LOG_LEVEL}'
+_apache_main_tmpl=/etc/apache2/templates/signer-dmz.conf.in
+_apache_cli_tmpl=/etc/apache2/templates/signer-dmz-cli-vhost.conf.in
 
 envsubst "$_envsubst_apache" < /etc/apache2/templates/ports.conf.in >/etc/apache2/ports.conf
 if [ "$_enable_cli_listener" = "1" ]; then

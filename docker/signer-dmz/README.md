@@ -80,27 +80,6 @@ Set **`SIGNER_CLI_URL=http://127.0.0.1:8082`** in PymtHouse, or keep **`http://1
 
 On Railway, set **`SIGNER_DMZ_ENABLE_CLI_LISTENER=0`** for single-port hosts; CLI stays at **`/__signer_cli`** on **`$PORT`**.
 
-## Local dev without JWT (`SIGNER_DMZ_DISABLE_AUTH=1`)
-
-Skip JWKS sync and Apache JWT verification on signing and CLI routes. **Local development only — never enable on Railway or any public host.**
-
-```bash
-docker run -d --name signer-dmz-noauth \
-  -e SIGNER_DMZ_DISABLE_AUTH=1 \
-  -p 127.0.0.1:8080:8080 \
-  -p 127.0.0.1:8082:8082 \
-  -v "$(pwd)/data/signer-dmz:/data" \
-  pymthouse/signer-dmz:latest
-
-curl -sf http://127.0.0.1:8080/healthz
-curl -sf -X POST http://127.0.0.1:8080/sign-orchestrator-info \
-  -H 'Content-Type: application/json' -d '{}'
-curl -sf http://127.0.0.1:8082/contractAddresses
-livepeer_cli -http 8082
-```
-
-`NEXTAUTH_URL` / `JWKS_URI` are not required when auth is disabled. Startup logs include `SIGNER_DMZ_DISABLE_AUTH=1` and `JWT_VERIFICATION=disabled`.
-
 ## Turnkey Ephemeral Keystore Mode
 
 The `signer-dmz` image can bootstrap an ephemeral `/data/keystore` from Turnkey at boot using `/usr/local/bin/signer-turnkey-bootstrap`.
