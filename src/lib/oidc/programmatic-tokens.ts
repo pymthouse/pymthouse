@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { SignJWT } from "jose";
-import { ensureSigningKey } from "@/lib/oidc/jwks";
+import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import {
   consumeSessionByIdAndToken,
@@ -91,7 +91,7 @@ export async function issueProgrammaticTokens(input: {
     client_id: binding.oauthClientId,
     user_type: "app_user",
   })
-    .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: "JWT" })
+    .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)
     .setAudience(issuer)
     .setSubject(binding.appUserId)

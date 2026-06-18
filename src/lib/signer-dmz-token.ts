@@ -1,5 +1,5 @@
 import { SignJWT } from "jose";
-import { ensureSigningKey } from "@/lib/oidc/jwks";
+import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 
 const DMZ_TOKEN_TTL_SECONDS = 4 * 60;
@@ -28,7 +28,7 @@ export async function issueSignerDmzToken(input: {
     signer_proxy: true,
     gate: input.gate,
   })
-    .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: "JWT" })
+    .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)
     .setAudience(issuer)
     .setSubject(input.subject)

@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { validateClientSecret } from "@/lib/oidc/clients";
-import { ensureSigningKey } from "@/lib/oidc/jwks";
+import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 
@@ -88,7 +88,7 @@ export async function mintSignerJwtForExternalUser(input: {
     external_user_id: externalUserId,
     user_type: "external_user",
   })
-    .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: "JWT" })
+    .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)
     .setAudience(audience)
     .setSubject(externalUserId)

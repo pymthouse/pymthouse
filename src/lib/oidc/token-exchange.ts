@@ -3,7 +3,7 @@ import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { validateClientSecret } from "./clients";
-import { ensureSigningKey } from "./jwks";
+import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "./jwks";
 import { getIssuer, getPlatformJwksUrlForDatabase } from "./issuer-urls";
 import { fetchPlatformJWKS } from "./jwks-fetch";
 import { findOrCreateAppEndUser } from "@/lib/billing";
@@ -151,7 +151,7 @@ export async function handleTokenExchange(params: {
     scope: scopeString,
     token_exchange: true,
   })
-    .setProtectedHeader({ alg: "RS256", kid: signingKey.kid })
+    .setProtectedHeader({ alg: "RS256", kid: signingKey.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setSubject(endUserId)
     .setIssuer(issuer)
     .setAudience(issuer)

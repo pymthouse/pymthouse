@@ -7,6 +7,9 @@ import * as jose from "jose";
 const KEY_ALGORITHM = "RS256";
 const KEY_SIZE = 2048;
 
+/** RFC 9068 OAuth 2.0 access token JWT `typ` (oauth4webapi / builder-sdk verifyJwt). */
+export const ACCESS_TOKEN_JWT_TYP = "at+jwt";
+
 export interface SigningKeyPair {
   kid: string;
   publicKey: jose.CryptoKey;
