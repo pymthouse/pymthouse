@@ -7,39 +7,10 @@ import {
   __testClearOpenMeterUsageStubs,
   __testSetOpenMeterDashboardUsage,
 } from "@/lib/openmeter/usage-read";
+import { withEnv } from "@/test-utils/env";
 
 const FIXED_NOW = new Date("2026-06-18T12:00:00.000Z");
 const DECIMAL = /^\d+$/;
-
-function withEnv(
-  overrides: Record<string, string | undefined>,
-  fn: () => Promise<void> | void,
-): Promise<void> | void {
-  const keys = Object.keys(overrides);
-  const previous = new Map(keys.map((k) => [k, process.env[k]]));
-  for (const [k, v] of Object.entries(overrides)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
-  const restore = () => {
-    for (const k of keys) {
-      const prev = previous.get(k);
-      if (prev === undefined) delete process.env[k];
-      else process.env[k] = prev;
-    }
-  };
-  try {
-    const result = fn();
-    if (result instanceof Promise) {
-      return result.finally(restore);
-    }
-    restore();
-    return result;
-  } catch (error) {
-    restore();
-    throw error;
-  }
-}
 
 test("runUsageIngestPushJob fires a C0-conformant push per account when the flag is ON", async () => {
   await withEnv(

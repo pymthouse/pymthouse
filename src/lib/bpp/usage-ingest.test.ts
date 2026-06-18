@@ -8,6 +8,7 @@ import {
 } from "./usage-ingest";
 import { findLeakedInternalFieldNames } from "./forbidden-fields";
 import type { OpenMeterPipelineModelRow } from "@/lib/openmeter/usage-read";
+import { withEnv } from "@/test-utils/env";
 
 const PIPELINE_ROWS: OpenMeterPipelineModelRow[] = [
   { pipeline: "text-to-image", modelId: "sdxl", requestCount: 3, networkFeeUsdMicros: "1500" },
@@ -104,36 +105,6 @@ const VALID_PAYLOAD: UsageIngestPayload = {
   tickets: 1,
   networkFeeUsdMicros: "100",
 };
-
-function withEnv(
-  overrides: Record<string, string | undefined>,
-  fn: () => Promise<void> | void,
-): Promise<void> | void {
-  const keys = Object.keys(overrides);
-  const previous = new Map(keys.map((k) => [k, process.env[k]]));
-  for (const [k, v] of Object.entries(overrides)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
-  const restore = () => {
-    for (const k of keys) {
-      const prev = previous.get(k);
-      if (prev === undefined) delete process.env[k];
-      else process.env[k] = prev;
-    }
-  };
-  try {
-    const result = fn();
-    if (result instanceof Promise) {
-      return result.finally(restore);
-    }
-    restore();
-    return result;
-  } catch (error) {
-    restore();
-    throw error;
-  }
-}
 
 test("pushUsageIngest is a strict no-op when the flag is OFF (no network call)", async () => {
   await withEnv(
