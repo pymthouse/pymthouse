@@ -116,6 +116,18 @@ if [ "$SIGNER_DMZ_DISABLE_AUTH" != "1" ]; then
 fi
 
 if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
+  # Signing HTTP paths have no Apache JWT gate; go-livepeer must verify Bearer JWTs
+  # via -remoteSignerWebhookUrl unless local no-auth dev mode is explicitly enabled.
+  if [ "$SIGNER_DMZ_DISABLE_AUTH" != "1" ]; then
+    if [ -z "${REMOTE_SIGNER_WEBHOOK_URL:-}" ]; then
+      echo "entrypoint: REMOTE_SIGNER_WEBHOOK_URL is required when auth is enabled (signing paths have no Apache JWT gate; set SIGNER_DMZ_DISABLE_AUTH=1 for local no-auth dev only)" >&2
+      exit 1
+    fi
+    if [ -z "${WEBHOOK_SECRET:-}" ]; then
+      echo "entrypoint: WEBHOOK_SECRET is required when auth is enabled" >&2
+      exit 1
+    fi
+  fi
   if [ "$TURNKEY_MODE" = "1" ]; then
     /usr/local/bin/signer-turnkey-bootstrap || {
       echo "entrypoint: turnkey keystore bootstrap failed" >&2
