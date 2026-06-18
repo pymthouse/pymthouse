@@ -10,7 +10,7 @@ import { db } from "@/db/index";
 import { apiKeys, planCapabilityBundles, plans, subscriptions } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
 import { __setValidateAdminClientForTests } from "@/lib/openmeter/validate-admin-client";
-import { fromSubscriptionRef } from "@/lib/bpp/subscription-ref";
+import { subscriptionRefMatches } from "@/lib/bpp/subscription-ref";
 
 /** Raw provider-internal OpenMeter subscription id that must NOT cross the ② seam. */
 const OPENMETER_SUBSCRIPTION_ULID = "01J8ZQ9X7K6M3N2P4R5S6T7U8V";
@@ -91,8 +91,13 @@ run(
     assert.equal(typeof body.subscriptionRef, "string");
     const ref = body.subscriptionRef as string;
     assert.match(ref, /^subref_/);
-    // ...and it is provider-decodable back to the internal id.
-    assert.equal(fromSubscriptionRef(ref), OPENMETER_SUBSCRIPTION_ULID);
+    // ...it is NOT reversible to the raw OpenMeter id (true opacity)...
+    assert.notEqual(
+      Buffer.from(ref.slice("subref_".length), "base64url").toString("utf8"),
+      OPENMETER_SUBSCRIPTION_ULID,
+    );
+    // ...but pymthouse can still verify it against the known internal id.
+    assert.equal(subscriptionRefMatches(ref, OPENMETER_SUBSCRIPTION_ULID), true);
 
     // The provider-internal identifier never leaks — neither as a key...
     assert.ok(!("openmeter_subscription_id" in body));

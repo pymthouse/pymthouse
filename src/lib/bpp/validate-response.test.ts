@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildValidateResponseBody } from "./validate-response";
-import { fromSubscriptionRef } from "./subscription-ref";
+import { subscriptionRefMatches } from "./subscription-ref";
 
 const OPENMETER_ULID = "01J8ZQ9X7K6M3N2P4R5S6T7U8V";
 
@@ -47,9 +47,11 @@ test("validate response surfaces a neutral subscriptionRef when a subscription r
   assert.equal(typeof body.subscriptionRef, "string");
   const ref = body.subscriptionRef as string;
   assert.match(ref, /^subref_/);
+  // Opaque: the raw OpenMeter id is not present and not base64url-decodable from it.
   assert.ok(!ref.includes(OPENMETER_ULID));
-  // Provider can still decode its own opaque ref.
-  assert.equal(fromSubscriptionRef(ref), OPENMETER_ULID);
+  assert.notEqual(Buffer.from(ref.slice("subref_".length), "base64url").toString("utf8"), OPENMETER_ULID);
+  // Provider can still verify its own opaque ref against the known internal id.
+  assert.equal(subscriptionRefMatches(ref, OPENMETER_ULID), true);
 });
 
 test("validate response omits subscriptionRef for free/no-subscription keys", () => {
