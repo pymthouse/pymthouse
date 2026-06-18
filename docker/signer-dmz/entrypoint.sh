@@ -211,7 +211,7 @@ esac
   printf '  JWKS_URI=%s\n' "$JWKS_URI"
   printf '  JWT_PEM_PATH=%s (public keys: %s)\n' "$JWT_PEM_PATH" "$_pem_kids"
   printf '  APACHE_AUTH_JWT_LOG_LEVEL=%s\n' "$APACHE_AUTH_JWT_LOG_LEVEL"
-  printf '  REMOTE_SIGNER_WEBHOOK_URL=%s\n' "$REMOTE_SIGNER_WEBHOOK_URL"
+  printf '  REMOTE_SIGNER_WEBHOOK_URL=%s\n' "${REMOTE_SIGNER_WEBHOOK_URL:-}"
   printf '  SIGNER_HTTP_ADDR=%s\n' "$SIGNER_HTTP_ADDR"
   printf '  SIGNER_CLI_HTTP_ADDR=%s\n' "$SIGNER_CLI_HTTP_ADDR"
   printf '  APACHE_PUBLIC_BIND=0.0.0.0:%s\n' "$PORT"
