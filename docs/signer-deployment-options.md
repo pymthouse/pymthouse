@@ -67,7 +67,7 @@ If you prefer Docker on Railway:
 
 ### Option 2b: Railway (Docker) — Apache JWT DMZ (recommended for public signers)
 
-Expose only Apache on the internet: **mod_authnz_jwt** validates PymtHouse OIDC access tokens (RS256) using a PEM derived from the public [JWKS](https://pymthouse.com/api/v1/oidc/jwks). **go-livepeer** listens on loopback inside the same container; only requests with a valid `Authorization: Bearer` header reach the signer. The Authorization header is stripped before proxying so the signer never sees bearer tokens.
+Expose only Apache on the internet: **mod_authnz_jwt** validates PymtHouse OIDC access tokens (RS256) on **CLI paths only** (`/__signer_cli` and optional dedicated `CLI_PORT`) using a PEM derived from the public [JWKS](https://pymthouse.com/api/v1/oidc/jwks). **go-livepeer** listens on loopback inside the same container. Signing HTTP paths are proxied without an Apache JWT gate; end-user authorization is enforced by the remote-signer webhook via forwarded `Authorization: Bearer` user JWTs.
 
 1. **Dockerfile path:** `docker/signer-dmz/Dockerfile`. Default build target is the combined image (`signer-dmz`).
 2. **Environment variables** (in addition to signer settings such as `SIGNER_NETWORK`, `ETH_RPC_URL`, volume at `/data`):
@@ -83,7 +83,7 @@ Expose only Apache on the internet: **mod_authnz_jwt** validates PymtHouse OIDC 
    | `SIGNER_UPSTREAM` | Optional. If set (e.g. `http://signer:8081` in compose-only gateway builds), the container does **not** run livepeer and only proxies to this URL. |
    | `SIGNER_CLI_HTTP_ADDR` | Upstream for the CLI port (default `http://127.0.0.1:4935`). In compose, set to `http://signer:4935`. Apache exposes the CLI under **`/__signer_cli/`** on the same public port as the HTTP API. |
 
-3. **JWT gates (Apache):** Paths under `/__signer_cli/` require a JWT whose **`scope`** claim is exactly **`admin`**. All other signer HTTP paths (except `/healthz` and `/status`) require **`scope=sign:job`**. PymtHouse mints short-lived RS256 tokens for outbound calls after it has already validated the user or admin session (see `issueSignerDmzToken` in the app).
+3. **JWT gates (Apache):** Paths under `/__signer_cli/` (and the dedicated `CLI_PORT` listener when enabled) require a JWT whose **`scope`** claim is exactly **`admin`**. Signing HTTP paths (`/generate-live-payment`, `/sign-orchestrator-info`, etc.) are open at Apache; clients send end-user Bearer JWTs and go-livepeer verifies identity via `REMOTE_SIGNER_WEBHOOK_URL`. PymtHouse mints short-lived RS256 admin JWTs for CLI calls after it has already validated the admin session (see `issueSignerDmzToken` with `gate: "cli"`).
 
 4. **Vercel / Next.js:** Point **`SIGNER_INTERNAL_URL`** at the DMZ public origin (e.g. `https://your-signer.railway.app`). For CLI reads (deposit, balances), set **`SIGNER_CLI_URL`** to the same host with the CLI prefix, e.g. `https://your-signer.railway.app/__signer_cli` (no trailing slash). Optional **`SIGNER_DMZ_FORWARD_JWT=false`** disables attaching service JWTs (only for debugging without Apache).
 

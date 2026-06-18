@@ -69,25 +69,15 @@ CustomLog /dev/stdout signer_combined
 		Require jwt-claim scope=admin
 	</LocationMatch>
 
+	# Signing API (go-livepeer HTTP) — no Apache JWT gate; identity via remote-signer webhook Bearer JWT.
 	<LocationMatch "^/(?!(?:healthz|status|__signer_cli)(?:/|$))">
-		AuthType jwt-bearer
-		AuthName "pymthouse-signer-http"
-		AuthJWTSignatureAlgorithm RS256
-		AuthJWTSignaturePublicKeyFile ${JWT_PEM_PATH}
-		AuthJWTIss "${OIDC_ISSUER}"
-		AuthJWTAud "${OIDC_AUDIENCE}"
-		AuthJWTAttributeUsername sub
-		AuthJWTLeeway 10
+		AuthType None
+		Require all granted
 
-		# Strip the bearer before proxying upstream, but not before mod_authnz_jwt verifies it.
-		RequestHeader unset Authorization
-
-		# Map verified JWT claims to go-livepeer usage identity headers.
-		RequestHeader set X-Livepeer-Usage-Issuer "${OIDC_ISSUER}" env=AUTHJWT_AUTHENTICATED
-		RequestHeader set X-Livepeer-Usage-Subject-Type "external_user_id" env=AUTHJWT_AUTHENTICATED
-		RequestHeader set X-Livepeer-Client-ID "expr=%{reqenv:AUTHJWT_CLAIM_client_id}" env=AUTHJWT_CLAIM_client_id
-		RequestHeader set X-Livepeer-Usage-Subject "expr=%{reqenv:AUTHJWT_CLAIM_external_user_id}" env=AUTHJWT_CLAIM_external_user_id
-
-		Require jwt-claim scope=sign:job
+		# Prevent trusted-header spoofing; webhook must verify Bearer JWT instead.
+		RequestHeader unset X-Livepeer-Usage-Issuer
+		RequestHeader unset X-Livepeer-Client-ID
+		RequestHeader unset X-Livepeer-Usage-Subject
+		RequestHeader unset X-Livepeer-Usage-Subject-Type
 	</LocationMatch>
 </VirtualHost>
