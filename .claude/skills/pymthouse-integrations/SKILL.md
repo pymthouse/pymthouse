@@ -66,7 +66,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 
 **Retail pricing:** OpenMeter-native plans/rate cards synced on plan publish — not bps markup on network cost in the proxy.
 
-**Identity:** Apache signer-DMZ validates JWT and sets `X-Livepeer-Usage-Issuer`, `X-Livepeer-Client-ID`, `X-Livepeer-Usage-Subject`, `X-Livepeer-Usage-Subject-Type` for go-livepeer usage identity.
+**Identity:** Signing HTTP paths pass the client's Bearer user JWT to go-livepeer; the remote-signer webhook verifies OIDC JWT claims for metering attribution. Apache `mod_authnz_jwt` gates only CLI paths (`/__signer_cli`, dedicated `CLI_PORT`) with `scope=admin`.
 
 ## Device flow (RFC 8628) + third-party initiate
 

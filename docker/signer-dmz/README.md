@@ -183,7 +183,7 @@ To accept connections from other hosts on the server (LAN, public IP, reverse pr
 SIGNER_DMZ_BIND_HOST=0.0.0.0
 ```
 
-PymtHouse on the same machine can keep **`SIGNER_INTERNAL_URL=http://127.0.0.1:8080`**. Open the port in the host firewall and terminate TLS at the edge; signing still requires valid DMZ JWTs (`scope=sign:job` / `admin`).
+PymtHouse on the same machine can keep **`SIGNER_INTERNAL_URL=http://127.0.0.1:8080`**. Open the port in the host firewall and terminate TLS at the edge; signing authorization is enforced by the remote-signer webhook (Bearer user JWT), while CLI paths still require Apache DMZ JWTs (`scope=admin`).
 
 ## Railway networking (Docker DMZ)
 
@@ -210,11 +210,14 @@ The image listens on **`$PORT`** (Apache HTTP + `/__signer_cli`, `/healthz`, pro
 
 The image **`EXPOSE`s `8080`** (signing) and **`8082`** (CLI). Set **`SIGNER_DMZ_ENABLE_CLI_LISTENER=0`** to disable the CLI listener (Railway single-port only). Railway health checks use **`GET /healthz`** on **`$PORT`** (see root `railway.json`).
 
-## Troubleshooting DMZ `401` (HTML body from PymtHouse `/api/signer/*`)
+## Troubleshooting DMZ auth
 
-PymtHouse validates your **OIDC** `Authorization: Bearer` token, then calls Apache with a **separate** short-lived RS256 JWT (`issueSignerDmzToken`, same `iss`/`aud` as `GET {issuer}/.well-known/openid-configuration`).
+**CLI paths (`/__signer_cli`, dedicated `CLI_PORT`):** Apache returns HTML `401` when the admin DMZ JWT is missing or invalid. PymtHouse mints a short-lived RS256 JWT (`issueSignerDmzToken` with `gate: "cli"`, same `iss`/`aud` as `GET {issuer}/.well-known/openid-configuration`).
 
-1. **Issuer string must match exactly** between Next (`getIssuer()` → `OIDC_ISSUER` or `NEXTAUTH_URL` + `/api/v1/oidc`) and the DMZ container (`OIDC_ISSUER` / `OIDC_AUDIENCE` in `entrypoint.sh`). A common break is `http://localhost:3001/...` in Docker vs `http://127.0.0.1:3001/...` in `.env.local` — pick one host form and use it everywhere.
-2. **JWKS**: the DMZ container must fetch the same keys the app signs with (`JWKS_URI`; default rewrites `localhost` → `host.docker.internal` on Linux via `extra_hosts` in repo `docker-compose.yml`). Remote-only DMZ needs a **reachable** JWKS URL (tunnel, public URL, or VPN), not loopback on the PymtHouse laptop. If JWKS is **HTTPS** with a **self-signed** or corporate-intercepted certificate, set **`JWKS_TLS_INSECURE=1`** in the container environment (see `scripts/jwks_to_pem.py`). For `https://host.docker.internal/...`, TLS verification is skipped automatically without the flag.
+**Signing paths:** Apache does not gate signing HTTP; go-livepeer calls the remote-signer webhook with the client's `Authorization: Bearer` user JWT. Rejections surface as non-Apache JSON errors from go-livepeer or the webhook, not HTML `401` from mod_authnz_jwt.
+
+1. **Issuer string must match exactly** between Next (`getIssuer()` → `OIDC_ISSUER` or `NEXTAUTH_URL` + `/api/v1/oidc`) and the DMZ container (`OIDC_ISSUER` / `OIDC_AUDIENCE` in `entrypoint.sh`) for **CLI** JWT verification. A common break is `http://localhost:3001/...` in Docker vs `http://127.0.0.1:3001/...` in `.env.local` — pick one host form and use it everywhere.
+2. **JWKS** (CLI auth): the DMZ container must fetch the same keys the app signs with (`JWKS_URI`; default rewrites `localhost` → `host.docker.internal` on Linux via `extra_hosts` in repo `docker-compose.yml`). Remote-only DMZ needs a **reachable** JWKS URL (tunnel, public URL, or VPN), not loopback on the PymtHouse laptop. If JWKS is **HTTPS** with a **self-signed** or corporate-intercepted certificate, set **`JWKS_TLS_INSECURE=1`** in the container environment (see `scripts/jwks_to_pem.py`). For `https://host.docker.internal/...`, TLS verification is skipped automatically without the flag.
 3. **Where PymtHouse sends traffic**: `SIGNER_INTERNAL_URL` (or DB signer URL / port) must be the **Apache** listener (e.g. `http://127.0.0.1:8080`), not go-livepeer `:8081` inside the container.
-4. From **python-gateway**, run `examples/debug_signer_chain.py --billing-url …` with your access token to print discovery `issuer` vs token claims and to POST `sign-orchestrator-info` in one step.
+4. **Signing webhook**: ensure `REMOTE_SIGNER_WEBHOOK_URL` and `WEBHOOK_SECRET` are set on the signer container so go-livepeer can verify end-user Bearer JWTs.
+5. From **python-gateway**, run `examples/debug_signer_chain.py --billing-url …` with your access token to print discovery `issuer` vs token claims and to POST `sign-orchestrator-info` in one step.

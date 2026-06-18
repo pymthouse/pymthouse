@@ -7,10 +7,11 @@ const DMZ_TOKEN_TTL_SECONDS = 4 * 60;
 export type SignerDmzGate = "http" | "cli";
 
 /**
- * Short-lived RS256 JWT for the remote signer Apache DMZ. Minted only on the
- * PymtHouse server after user/API auth; Apache validates signature + iss/aud + scope.
+ * Short-lived RS256 JWT for the remote signer Apache DMZ CLI gate. Minted only on the
+ * PymtHouse server after admin auth; Apache validates signature + iss/aud + scope.
  *
- * - gate "http" → scope "sign:job" (go-livepeer HTTP API, port 8081)
+ * - gate "http" → scope "sign:job" (optional reachability probes only; signing paths
+ *   are not Apache-gated — identity is verified via remote-signer webhook Bearer JWT)
  * - gate "cli"   → scope "admin" (CLI API, port 4935, proxied under /__signer_cli)
  */
 export async function issueSignerDmzToken(input: {
