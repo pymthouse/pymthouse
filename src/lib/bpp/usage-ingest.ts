@@ -192,6 +192,14 @@ export async function pushUsageIngest(
     if (options?.correlationId) {
       headers["x-request-id"] = options.correlationId;
     }
+    // Integration preview only: when the NaaP target is a Vercel preview behind
+    // Deployment Protection, attach the Protection-Bypass-for-Automation token so
+    // this server-to-server ⑥ push is not intercepted by the SSO challenge. No-op
+    // unless explicitly configured (prod ingest is a custom domain, unprotected).
+    const naapBypass = process.env.NAAP_METRICS_BYPASS_TOKEN?.trim();
+    if (naapBypass) {
+      headers["x-vercel-protection-bypass"] = naapBypass;
+    }
 
     const response = await fetchImpl(resolved.url.toString(), {
       method: "POST",
