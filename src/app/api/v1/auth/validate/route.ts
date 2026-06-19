@@ -3,8 +3,6 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { apiKeys, planCapabilityBundles, plans, signerConfig } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { resolveApiKeyOpenMeterSubscription } from "@/lib/openmeter/api-key-subscription";
 import { resolveValidateAdminClient } from "@/lib/openmeter/validate-admin-client";
 import { buildValidateResponseBody } from "@/lib/bpp/validate-response";
@@ -19,14 +17,45 @@ import { bppValidateV2Enabled } from "@/lib/billing/feature-flags";
 /** Stable provider slug for the pymthouse reference billing provider. */
 const PROVIDER_SLUG = "pymthouse";
 
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization") || "";
-  if (!authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ valid: false }, { status: 401 });
-  }
+type ApiKeyRow = typeof apiKeys.$inferSelect;
+type PlanRow = typeof plans.$inferSelect;
+type BundleRow = typeof planCapabilityBundles.$inferSelect;
 
-  const token = authHeader.slice(7);
-  const keyHash = hashToken(token);
+/**
+ * Outcome of resolving an API key for the `validate` endpoints, shared by the
+ * legacy `GET` and the C0 `POST` so the DB/OpenMeter resolution flow lives in
+ * exactly one place. Each handler maps these variants onto its own response
+ * shape (legacy vs C0) — see the `GET`/`POST` switch statements below.
+ *
+ *  - `invalid`         → key unknown/inactive, or a subscription-backed key that
+ *                        cannot be resolved against OpenMeter (hard cutover: no
+ *                        Postgres-only fallback). Handlers return 401.
+ *  - `no_subscription` → active key with no subscription (delegated MVP).
+ *  - `no_plan`         → subscription resolved but no local plan row.
+ *  - `with_plan`       → subscription resolved to a concrete plan + capabilities.
+ */
+type ResolvedKey =
+  | { kind: "invalid" }
+  | { kind: "no_subscription"; apiKey: ApiKeyRow }
+  | { kind: "no_plan"; apiKey: ApiKeyRow; openmeterSubscriptionId: string | null }
+  | {
+      kind: "with_plan";
+      apiKey: ApiKeyRow;
+      plan: PlanRow;
+      bundles: BundleRow[];
+      openmeterSubscriptionId: string | null;
+    };
+
+/**
+ * Resolve an API key (by token hash) through the shared validate flow: look up
+ * the key, then — for subscription-backed keys — resolve the OpenMeter
+ * subscription and its plan/capability bundles.
+ *
+ * The OpenMeter admin client is obtained via `resolveValidateAdminClient()` so
+ * both `GET` and `POST` honor the same test-injection seam and the same hard
+ * cutover (subscription-backed keys require OpenMeter; otherwise `invalid`).
+ */
+async function resolveKeyValidation(keyHash: string): Promise<ResolvedKey> {
   const apiKeyRows = await db
     .select()
     .from(apiKeys)
@@ -34,74 +63,108 @@ export async function GET(request: NextRequest) {
     .limit(1);
   const apiKey = apiKeyRows[0];
   if (!apiKey || apiKey.status !== "active") {
-    return NextResponse.json({ valid: false }, { status: 401 });
+    return { kind: "invalid" };
   }
 
   if (!apiKey.subscriptionId && !apiKey.openmeterSubscriptionId) {
-    return NextResponse.json(
-      buildValidateResponseBody({
-        clientId: apiKey.clientId,
-        plan: null,
-        allowedModels: [],
-      }),
-    );
+    return { kind: "no_subscription", apiKey };
   }
 
+  // Subscription-backed keys require OpenMeter. When the hosted admin client is
+  // unavailable (the test seam returns null / OpenMeter reads disabled), there is
+  // intentionally no Postgres-only fallback — reject rather than honor a legacy
+  // local subscription row.
   const adminClient = resolveValidateAdminClient();
-  if (adminClient) {
-    const resolved = await resolveApiKeyOpenMeterSubscription({
-      apiKey,
-      client: adminClient,
-    });
-    if (!resolved) {
-      return NextResponse.json({ valid: false }, { status: 401 });
-    }
+  if (!adminClient) {
+    return { kind: "invalid" };
+  }
 
-    if (!resolved.planId) {
+  const resolved = await resolveApiKeyOpenMeterSubscription({
+    apiKey,
+    client: adminClient,
+  });
+  if (!resolved) {
+    return { kind: "invalid" };
+  }
+
+  if (!resolved.planId) {
+    return {
+      kind: "no_plan",
+      apiKey,
+      openmeterSubscriptionId: resolved.openmeterSubscriptionId,
+    };
+  }
+
+  const planRows = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.id, resolved.planId))
+    .limit(1);
+  const plan = planRows[0];
+  if (!plan) {
+    return { kind: "invalid" };
+  }
+
+  const bundles = await db
+    .select()
+    .from(planCapabilityBundles)
+    .where(eq(planCapabilityBundles.planId, plan.id));
+
+  return {
+    kind: "with_plan",
+    apiKey,
+    plan,
+    bundles,
+    openmeterSubscriptionId: resolved.openmeterSubscriptionId,
+  };
+}
+
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get("authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return NextResponse.json({ valid: false }, { status: 401 });
+  }
+
+  const token = authHeader.slice(7);
+  const resolved = await resolveKeyValidation(hashToken(token));
+
+  switch (resolved.kind) {
+    case "invalid":
+      return NextResponse.json({ valid: false }, { status: 401 });
+    case "no_subscription":
       return NextResponse.json(
         buildValidateResponseBody({
-          clientId: apiKey.clientId,
+          clientId: resolved.apiKey.clientId,
+          plan: null,
+          allowedModels: [],
+        }),
+      );
+    case "no_plan":
+      return NextResponse.json(
+        buildValidateResponseBody({
+          clientId: resolved.apiKey.clientId,
           plan: null,
           allowedModels: [],
           openmeterSubscriptionId: resolved.openmeterSubscriptionId,
         }),
       );
-    }
-
-    const planRows = await db
-      .select()
-      .from(plans)
-      .where(eq(plans.id, resolved.planId))
-      .limit(1);
-    const plan = planRows[0];
-    if (!plan) {
-      return NextResponse.json({ valid: false }, { status: 401 });
-    }
-
-    const capabilities = await db
-      .select()
-      .from(planCapabilityBundles)
-      .where(eq(planCapabilityBundles.planId, plan.id));
-
-    return NextResponse.json(
-      buildValidateResponseBody({
-        clientId: apiKey.clientId,
-        openmeterSubscriptionId: resolved.openmeterSubscriptionId,
-        plan: {
-          ...plan,
-          includedUnits: plan.includedUnits != null ? plan.includedUnits.toString() : null,
-          overageRateUsd: plan.overageRateUsd ?? null,
-        },
-        allowedModels: capabilities.map((bundle) => bundle.modelId).filter(Boolean),
-      }),
-    );
+    case "with_plan":
+      return NextResponse.json(
+        buildValidateResponseBody({
+          clientId: resolved.apiKey.clientId,
+          openmeterSubscriptionId: resolved.openmeterSubscriptionId,
+          plan: {
+            ...resolved.plan,
+            includedUnits:
+              resolved.plan.includedUnits != null
+                ? resolved.plan.includedUnits.toString()
+                : null,
+            overageRateUsd: resolved.plan.overageRateUsd ?? null,
+          },
+          allowedModels: resolved.bundles.map((bundle) => bundle.modelId).filter(Boolean),
+        }),
+      );
   }
-
-  // Hard cutover: subscription-backed API keys require OpenMeter to validate.
-  // When OPENMETER_URL / the hosted admin client is unavailable (the branch above
-  // is skipped), there is intentionally no Postgres-only fallback — reject the
-  // key rather than honoring a legacy local subscription row.
-  return NextResponse.json({ valid: false }, { status: 401 });
 }
 
 // ---------------------------------------------------------------------------
@@ -116,9 +179,10 @@ export async function GET(request: NextRequest) {
 // It is gated behind `BPP_VALIDATE_V2` (default OFF). Flag-off → 404, so the
 // endpoint behaves as if absent and the legacy GET path is the only behavior
 // in production until the NaaP front door (NAAP-C) is ready (gated by D0).
+//
+// Both handlers share `resolveKeyValidation()` for DB/OpenMeter resolution and
+// differ only in how they map the result onto their response shape.
 // ---------------------------------------------------------------------------
-
-type ApiKeyRow = typeof apiKeys.$inferSelect;
 
 /** Neutral, stable subject id for a resolved API key (never a metering id). */
 function resolveSubject(apiKey: ApiKeyRow): string {
@@ -158,14 +222,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ valid: false }, { status: 400 });
   }
 
-  const keyHash = hashToken(key);
-  const apiKeyRows = await db
-    .select()
-    .from(apiKeys)
-    .where(eq(apiKeys.keyHash, keyHash))
-    .limit(1);
-  const apiKey = apiKeyRows[0];
-  if (!apiKey || apiKey.status !== "active") {
+  const resolved = await resolveKeyValidation(hashToken(key));
+  if (resolved.kind === "invalid") {
     return NextResponse.json({ valid: false }, { status: 401 });
   }
 
@@ -173,71 +231,42 @@ export async function POST(request: NextRequest) {
   const billingAccount = {
     // Account of record = the developer app (per PR #149 coordination header:
     // D2/PYMT-1 dropped — no separate billing-account entity). Neutral, app-facing.
-    id: apiKey.clientId,
+    id: resolved.apiKey.clientId,
     providerSlug: PROVIDER_SLUG,
     billingMode,
   };
 
-  // No subscription on the key → delegated MVP: capabilities = all, quota = null.
-  if (!apiKey.subscriptionId && !apiKey.openmeterSubscriptionId) {
-    return NextResponse.json(
-      buildC0ValidateResponseBody({
-        sub: resolveSubject(apiKey),
-        billingAccount,
-        capabilities: [CAPABILITY_WILDCARD],
-        quota: null,
-      }),
-    );
-  }
-
-  if (requireOpenMeterForUsageReads() && isHostedAdminClientAvailable()) {
-    const resolved = await resolveApiKeyOpenMeterSubscription({
-      apiKey,
-      client: getHostedAdminClient(),
-    });
-    if (!resolved) {
-      return NextResponse.json({ valid: false }, { status: 401 });
-    }
-
-    // Subscription resolved but no local plan → delegated MVP: all capabilities.
-    if (!resolved.planId) {
+  switch (resolved.kind) {
+    // No subscription, or a subscription without a local plan → delegated MVP:
+    // capabilities = all, quota = null.
+    case "no_subscription":
       return NextResponse.json(
         buildC0ValidateResponseBody({
-          sub: resolveSubject(apiKey),
+          sub: resolveSubject(resolved.apiKey),
+          billingAccount,
+          capabilities: [CAPABILITY_WILDCARD],
+          quota: null,
+        }),
+      );
+    case "no_plan":
+      return NextResponse.json(
+        buildC0ValidateResponseBody({
+          sub: resolveSubject(resolved.apiKey),
           billingAccount,
           capabilities: [CAPABILITY_WILDCARD],
           quota: null,
           openmeterSubscriptionId: resolved.openmeterSubscriptionId,
         }),
       );
-    }
-
-    const planRows = await db
-      .select()
-      .from(plans)
-      .where(eq(plans.id, resolved.planId))
-      .limit(1);
-    const plan = planRows[0];
-    if (!plan) {
-      return NextResponse.json({ valid: false }, { status: 401 });
-    }
-
-    const bundles = await db
-      .select()
-      .from(planCapabilityBundles)
-      .where(eq(planCapabilityBundles.planId, plan.id));
-
-    return NextResponse.json(
-      buildC0ValidateResponseBody({
-        sub: resolveSubject(apiKey),
-        billingAccount,
-        capabilities: toCapabilityIds(bundles),
-        quota: null,
-        openmeterSubscriptionId: resolved.openmeterSubscriptionId,
-      }),
-    );
+    case "with_plan":
+      return NextResponse.json(
+        buildC0ValidateResponseBody({
+          sub: resolveSubject(resolved.apiKey),
+          billingAccount,
+          capabilities: toCapabilityIds(resolved.bundles),
+          quota: null,
+          openmeterSubscriptionId: resolved.openmeterSubscriptionId,
+        }),
+      );
   }
-
-  // Hard cutover parity with GET: subscription-backed keys require OpenMeter.
-  return NextResponse.json({ valid: false }, { status: 401 });
 }

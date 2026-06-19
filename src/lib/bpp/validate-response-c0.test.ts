@@ -12,11 +12,17 @@ import { findLeakedInternalFieldNames } from "./forbidden-fields";
 const OPENMETER_ULID = "01J8ZQ9X7K6M3N2P4R5S6T7U8V";
 
 /**
- * Structural validator mirroring
- * `contracts/billing-provider-protocol/validate.schema.json` (C0 ② response).
+ * Structural validator mirroring the C0 ② response contract
+ * (`contracts/billing-provider-protocol/validate.schema.json`).
+ *
  * Kept in-repo (like `forbidden-fields`) so pymthouse can assert conformance at
  * the producing edge without depending on the cross-repo contract file or an
  * external JSON-schema dependency.
+ *
+ * ⚠️ KEEP IN SYNC: these constants + per-field helpers intentionally duplicate
+ * the JSON Schema. If `validate.schema.json` changes (top-level keys,
+ * billing_account shape, billing modes, capability/quota/signerSession shape),
+ * update the matching constant/helper below so the test does not drift silently.
  */
 const C0_TOP_LEVEL_KEYS = new Set([
   "valid",
@@ -29,7 +35,65 @@ const C0_TOP_LEVEL_KEYS = new Set([
 ]);
 const C0_BILLING_ACCOUNT_KEYS = new Set(["id", "providerSlug", "billingMode"]);
 const C0_BILLING_MODES = new Set(["delegated", "prepay"]);
+const C0_QUOTA_KEYS = new Set(["remaining", "resetAt"]);
 const CAPABILITY_RE = /^(\*|[^:]+:[^:]+|tool:[^:]+)$/;
+
+function assertValidUser(body: Record<string, unknown>): void {
+  if (!("user" in body)) return;
+  const user = body.user as Record<string, unknown>;
+  assert.deepEqual(Object.keys(user), ["sub"], "user must contain only `sub`");
+  assert.equal(typeof user.sub, "string");
+  assert.ok((user.sub as string).length >= 1, "user.sub must be non-empty");
+}
+
+function assertValidBillingAccount(body: Record<string, unknown>): void {
+  if (!("billing_account" in body)) return;
+  const acct = body.billing_account as Record<string, unknown>;
+  for (const key of Object.keys(acct)) {
+    assert.ok(C0_BILLING_ACCOUNT_KEYS.has(key), `unexpected billing_account key: ${key}`);
+  }
+  assert.equal(typeof acct.id, "string");
+  assert.ok((acct.id as string).length >= 1);
+  assert.equal(typeof acct.providerSlug, "string");
+  assert.ok((acct.providerSlug as string).length >= 1);
+  assert.ok(C0_BILLING_MODES.has(acct.billingMode as string), "billingMode enum");
+}
+
+function assertValidCapabilities(body: Record<string, unknown>): void {
+  if (!("capabilities" in body)) return;
+  const caps = body.capabilities;
+  assert.ok(Array.isArray(caps), "capabilities must be an array");
+  for (const cap of caps as unknown[]) {
+    assert.equal(typeof cap, "string");
+    assert.ok((cap as string).length >= 1);
+    assert.match(cap as string, CAPABILITY_RE, `capability shape: ${String(cap)}`);
+  }
+}
+
+function assertValidQuota(body: Record<string, unknown>): void {
+  if (!("quota" in body)) return;
+  const quota = body.quota;
+  if (quota === null) return;
+  const q = quota as Record<string, unknown>;
+  for (const key of Object.keys(q)) {
+    assert.ok(C0_QUOTA_KEYS.has(key), `unexpected quota key: ${key}`);
+  }
+  assert.equal(typeof q.remaining, "number");
+}
+
+function assertValidSubscriptionRef(body: Record<string, unknown>): void {
+  if (!("subscriptionRef" in body)) return;
+  assert.equal(typeof body.subscriptionRef, "string");
+  assert.ok((body.subscriptionRef as string).length >= 1);
+}
+
+function assertValidSignerSession(body: Record<string, unknown>): void {
+  if (!("signerSession" in body)) return;
+  const s = body.signerSession as Record<string, unknown>;
+  assert.deepEqual(Object.keys(s).sort((a, b) => a.localeCompare(b)), ["headers", "url"]);
+  assert.equal(typeof s.url, "string");
+  assert.equal(typeof s.headers, "object");
+}
 
 function assertConformsToC0(body: Record<string, unknown>): void {
   // required + additionalProperties:false
@@ -38,57 +102,12 @@ function assertConformsToC0(body: Record<string, unknown>): void {
     assert.ok(C0_TOP_LEVEL_KEYS.has(key), `unexpected top-level key: ${key}`);
   }
 
-  if ("user" in body) {
-    const user = body.user as Record<string, unknown>;
-    assert.deepEqual(Object.keys(user), ["sub"], "user must contain only `sub`");
-    assert.equal(typeof user.sub, "string");
-    assert.ok((user.sub as string).length >= 1, "user.sub must be non-empty");
-  }
-
-  if ("billing_account" in body) {
-    const acct = body.billing_account as Record<string, unknown>;
-    for (const key of Object.keys(acct)) {
-      assert.ok(C0_BILLING_ACCOUNT_KEYS.has(key), `unexpected billing_account key: ${key}`);
-    }
-    assert.equal(typeof acct.id, "string");
-    assert.ok((acct.id as string).length >= 1);
-    assert.equal(typeof acct.providerSlug, "string");
-    assert.ok((acct.providerSlug as string).length >= 1);
-    assert.ok(C0_BILLING_MODES.has(acct.billingMode as string), "billingMode enum");
-  }
-
-  if ("capabilities" in body) {
-    const caps = body.capabilities;
-    assert.ok(Array.isArray(caps), "capabilities must be an array");
-    for (const cap of caps as unknown[]) {
-      assert.equal(typeof cap, "string");
-      assert.ok((cap as string).length >= 1);
-      assert.match(cap as string, CAPABILITY_RE, `capability shape: ${String(cap)}`);
-    }
-  }
-
-  if ("quota" in body) {
-    const quota = body.quota;
-    if (quota !== null) {
-      const q = quota as Record<string, unknown>;
-      for (const key of Object.keys(q)) {
-        assert.ok(["remaining", "resetAt"].includes(key), `unexpected quota key: ${key}`);
-      }
-      assert.equal(typeof q.remaining, "number");
-    }
-  }
-
-  if ("subscriptionRef" in body) {
-    assert.equal(typeof body.subscriptionRef, "string");
-    assert.ok((body.subscriptionRef as string).length >= 1);
-  }
-
-  if ("signerSession" in body) {
-    const s = body.signerSession as Record<string, unknown>;
-    assert.deepEqual(Object.keys(s).sort((a, b) => a.localeCompare(b)), ["headers", "url"]);
-    assert.equal(typeof s.url, "string");
-    assert.equal(typeof s.headers, "object");
-  }
+  assertValidUser(body);
+  assertValidBillingAccount(body);
+  assertValidCapabilities(body);
+  assertValidQuota(body);
+  assertValidSubscriptionRef(body);
+  assertValidSignerSession(body);
 
   // Seam isolation: no provider-internal field NAME anywhere in the response.
   assert.deepEqual(findLeakedInternalFieldNames(body), []);

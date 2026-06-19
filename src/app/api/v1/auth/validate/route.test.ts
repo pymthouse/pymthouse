@@ -248,3 +248,98 @@ run(
     assert.ok(!JSON.stringify(body).includes(OPENMETER_SUBSCRIPTION_ULID));
   },
 );
+
+run(
+  "subscription-backed POST /auth/validate emits neutral subscriptionRef (no openmeter id leak)",
+  async (t) => {
+    const { POST } = await import("./route");
+
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    t.after(() => cleanupTestApp(app));
+
+    // Plan + capability the subscription-backed key resolves to.
+    const planId = `plan-${randomUUID()}`;
+    await db.insert(plans).values({
+      id: planId,
+      clientId: app.clientId,
+      name: `Validate Test Plan ${randomUUID().slice(0, 8)}`,
+      type: "paid",
+      status: "active",
+    });
+    await db.insert(planCapabilityBundles).values({
+      id: `pcb-${randomUUID()}`,
+      planId,
+      clientId: app.clientId,
+      pipeline: "text-to-image",
+      modelId: "sdxl",
+    });
+
+    // Legacy local subscription row carrying the OpenMeter pointer + plan.
+    const subscriptionId = `sub-${randomUUID()}`;
+    await db.insert(subscriptions).values({
+      id: subscriptionId,
+      clientId: app.clientId,
+      planId,
+      status: "active",
+      openmeterSubscriptionId: OPENMETER_SUBSCRIPTION_ULID,
+    });
+
+    // Subscription-backed API key (resolves through the OpenMeter branch).
+    const rawToken = `pmth_test_${randomUUID()}`;
+    await db.insert(apiKeys).values({
+      id: `key-${randomUUID()}`,
+      keyHash: hashToken(rawToken),
+      clientId: app.clientId,
+      subscriptionId,
+      status: "active",
+    });
+
+    // Drive the subscription branch through the shared injection seam — proving
+    // the POST handler now honors `resolveValidateAdminClient()` (review #1).
+    __setValidateAdminClientForTests(() => ({
+      available: true,
+      client: fakeActiveSubscriptionClient(),
+    }));
+    t.after(() => __setValidateAdminClientForTests(null));
+
+    await withFlag("1", async () => {
+      const res = await POST(
+        new NextRequest("http://localhost/api/v1/auth/validate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key: rawToken }),
+        }),
+      );
+
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Record<string, unknown>;
+
+      assert.equal(body.valid, true);
+      // C0 capabilities are reshaped from the plan's bundles (pipeline:model).
+      assert.deepEqual(body.capabilities, ["text-to-image:sdxl"]);
+
+      // The neutral, opaque subscriptionRef is surfaced...
+      assert.equal(typeof body.subscriptionRef, "string");
+      const ref = body.subscriptionRef as string;
+      assert.match(ref, /^subref_/);
+      // ...it is NOT reversible to the raw OpenMeter id (true opacity)...
+      assert.notEqual(
+        Buffer.from(ref.slice("subref_".length), "base64url").toString("utf8"),
+        OPENMETER_SUBSCRIPTION_ULID,
+      );
+      // ...but pymthouse can still verify it against the known internal id.
+      assert.equal(subscriptionRefMatches(ref, OPENMETER_SUBSCRIPTION_ULID), true);
+
+      // The provider-internal identifier never leaks — neither as a key...
+      assert.ok(!("openmeter_subscription_id" in body));
+      for (const key of Object.keys(body)) {
+        assert.ok(
+          !key.toLowerCase().startsWith("openmeter"),
+          `unexpected openmeter* key leaked: ${key}`,
+        );
+      }
+      // ...nor as a raw value anywhere in the response.
+      assert.ok(!JSON.stringify(body).includes(OPENMETER_SUBSCRIPTION_ULID));
+    });
+  },
+);
