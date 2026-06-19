@@ -2,7 +2,7 @@
 # Copies livepeer + required CUDA NPP libs from the official image — do not wget
 # a bare binary into debian:slim; the binary links libnppig.so and other NPP libs.
 
-FROM livepeer/go-livepeer:0.8.10-d909a4c3 AS livepeer-src
+FROM eliteencoder/go-livepeer:0.8.10-5c9ec54 AS livepeer-src
 
 FROM debian:bookworm-slim
 
