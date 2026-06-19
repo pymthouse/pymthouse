@@ -6,7 +6,7 @@ import {
   toCapabilityIds,
   CAPABILITY_WILDCARD,
 } from "./validate-response-c0";
-import { fromSubscriptionRef } from "./subscription-ref";
+import { subscriptionRefMatches } from "./subscription-ref";
 import { findLeakedInternalFieldNames } from "./forbidden-fields";
 
 const OPENMETER_ULID = "01J8ZQ9X7K6M3N2P4R5S6T7U8V";
@@ -117,11 +117,11 @@ test("C0 validate body conforms with pipeline:model capabilities + subscriptionR
     openmeterSubscriptionId: OPENMETER_ULID,
   });
   assertConformsToC0(body);
-  // subscriptionRef is opaque + provider-decodable, never the raw OM id.
+  // subscriptionRef is opaque + provider-VERIFIABLE (one-way), never the raw OM id.
   const ref = body.subscriptionRef as string;
   assert.match(ref, /^subref_/);
   assert.ok(!ref.includes(OPENMETER_ULID));
-  assert.equal(fromSubscriptionRef(ref), OPENMETER_ULID);
+  assert.ok(subscriptionRefMatches(ref, OPENMETER_ULID));
 });
 
 test("C0 validate body NEVER leaks the forbidden public client_id / allowedModels / plan keys", () => {

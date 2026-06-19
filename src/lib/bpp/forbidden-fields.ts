@@ -2,9 +2,9 @@
  * BPP seam isolation — provider-internal field-name guard.
  *
  * pymthouse meters internally with OpenMeter / Kong Konnect (BPP ⑨). Those
- * provider-internal field names MUST NEVER cross a NaaP-facing BPP seam — neither
- * the ② `validate` response nor the ⑥ usage-ingest push. NaaP must stay agnostic
- * of the metering backend.
+ * provider-internal field names MUST NEVER cross a NaaP-facing BPP seam — e.g.
+ * the ② `validate` response or any OpenMeter-backed usage that NaaP reads (pulls)
+ * from pymthouse. NaaP must stay agnostic of the metering backend.
  *
  * This list mirrors `x-bpp-forbidden-field-names` in
  * `contracts/billing-provider-protocol/provider-internal-openmeter.schema.json`

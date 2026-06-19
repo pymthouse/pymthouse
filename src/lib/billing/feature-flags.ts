@@ -19,15 +19,6 @@ export function billingStableFeatureKeysEnabled(): boolean {
 }
 
 /**
- * Gate the neutral BPP ⑥ usage push (pymthouse → NaaP `/metrics/ingest`).
- * Default OFF: flag-off is a strict no-op (zero regression). Flip
- * `USAGE_INGEST_PUSH=1` once NaaP's ingest endpoint + token are provisioned.
- */
-export function usageIngestPushEnabled(): boolean {
-  return envFlag("USAGE_INGEST_PUSH", false);
-}
-
-/**
  * Gate the C0-conformant BPP ② `validate` shape (PYMT-3).
  *
  * The legacy `GET /api/v1/auth/validate` (client_id / plan / allowedModels) is
