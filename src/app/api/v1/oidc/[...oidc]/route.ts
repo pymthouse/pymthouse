@@ -38,6 +38,7 @@ import {
   isSignerJwtTokenExchangeRequest,
 } from "@/lib/oidc/signer-jwt-token-exchange";
 import { rotateProgrammaticRefreshToken } from "@/lib/oidc/programmatic-tokens";
+import { rotateSignerRefreshToken } from "@/lib/oidc/signer-refresh";
 import { decodeBasicAuthComponent } from "@/lib/auth";
 
 const RESOURCE_REQUIRED_GRANTS = new Set([
@@ -120,6 +121,19 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         request,
         exchangeParams,
       );
+      // Dispatch by session label: signer-refresh rotation re-mints a signer JWT;
+      // app-user rotation re-issues programmatic tokens. Each returns null when
+      // the refresh token is not its kind, so we fall through to the next.
+      const signerRefreshed = await rotateSignerRefreshToken({
+        refreshToken,
+        clientId,
+        clientSecret,
+      });
+      if (signerRefreshed) {
+        return NextResponse.json(signerRefreshed, {
+          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+        });
+      }
       const refreshed = await rotateProgrammaticRefreshToken({
         refreshToken,
         clientId,

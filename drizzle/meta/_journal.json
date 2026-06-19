@@ -169,6 +169,13 @@
       "when": 1777800000000,
       "tag": "0022_api_keys_openmeter_subscription",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777900000000,
+      "tag": "0023_developer_apps_signer_jwt_policy",
+      "breakpoints": true
     }
   ]
 }

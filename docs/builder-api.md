@@ -260,6 +260,29 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
+### Signer JWT TTL and refresh (per-app policy)
+
+Minted signer JWTs use a per-app TTL and an optional OAuth refresh token, configured via `PUT /api/v1/apps/{clientId}/settings`:
+
+| Field | Type | Range | Effect |
+| --- | --- | --- | --- |
+| `signerJwtTtlSeconds` | integer \| null | 60..86400 | Signer JWT lifetime. `null` falls back to the global `SIGNER_JWT_TTL_SECONDS` env (default 300). |
+| `signerRefreshEnabled` | boolean | — | When true, the mint also returns a `refresh_token` alongside `access_token`. |
+| `signerRefreshTtlDays` | integer \| null | 1..90 | Refresh-token lifetime; `null` defaults to 30 days when refresh is enabled. |
+
+When refresh is enabled, callers re-mint without re-authenticating the end user via the standard OAuth grant on `POST /api/v1/oidc/token`:
+
+```http
+grant_type=refresh_token&
+refresh_token=<pmth_...>&
+client_id=<m2m_client_id>&
+client_secret=<m2m_client_secret>
+```
+
+The refresh token is bound to the app's public client and is rotated (single-use) on each call; the developer app's confidential M2M client must authenticate the request. Re-minting re-checks the end user's billing allowance, so an exhausted balance returns `402`.
+
+**Webhook bearer validation** (`POST /webhooks/remote-signer`) distinguishes two end-user auth paths via `SIGNER_AUTH_MODE` (`oidc` | `api_key` | `both`, default `both`): the **OIDC** path verifies a signed JWT against the issuer JWKS (iss/aud/`sign:job`, honoring the per-app TTL via `exp`), while the **API-key** path resolves an opaque `pmth_*` bearer against the database.
+
 ---
 
 ## Usage API

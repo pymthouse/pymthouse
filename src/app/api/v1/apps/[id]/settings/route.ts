@@ -66,6 +66,60 @@ export async function PUT(
 
   const body = await request.json();
 
+  // Per-app signer JWT policy (overrides the global env defaults).
+  const appUpdates: Partial<{
+    signerJwtTtlSeconds: number | null;
+    signerRefreshEnabled: number;
+    signerRefreshTtlDays: number | null;
+  }> = {};
+
+  if (body.signerJwtTtlSeconds !== undefined) {
+    if (body.signerJwtTtlSeconds === null) {
+      appUpdates.signerJwtTtlSeconds = null;
+    } else {
+      const ttl = Number(body.signerJwtTtlSeconds);
+      if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86400) {
+        return NextResponse.json(
+          {
+            error: "invalid_request",
+            error_description: "signerJwtTtlSeconds must be an integer 60..86400 (or null)",
+          },
+          { status: 400 },
+        );
+      }
+      appUpdates.signerJwtTtlSeconds = ttl;
+    }
+  }
+
+  if (body.signerRefreshEnabled !== undefined) {
+    appUpdates.signerRefreshEnabled = body.signerRefreshEnabled ? 1 : 0;
+  }
+
+  if (body.signerRefreshTtlDays !== undefined) {
+    if (body.signerRefreshTtlDays === null) {
+      appUpdates.signerRefreshTtlDays = null;
+    } else {
+      const days = Number(body.signerRefreshTtlDays);
+      if (!Number.isInteger(days) || days < 1 || days > 90) {
+        return NextResponse.json(
+          {
+            error: "invalid_request",
+            error_description: "signerRefreshTtlDays must be an integer 1..90 (or null)",
+          },
+          { status: 400 },
+        );
+      }
+      appUpdates.signerRefreshTtlDays = days;
+    }
+  }
+
+  if (Object.keys(appUpdates).length > 0) {
+    await db
+      .update(developerApps)
+      .set({ ...appUpdates, updatedAt: new Date().toISOString() })
+      .where(eq(developerApps.id, app.id));
+  }
+
   // Build update payload from allowed fields
   const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
 

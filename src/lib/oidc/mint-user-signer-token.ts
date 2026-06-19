@@ -7,9 +7,49 @@ import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
+import { createSession } from "@/lib/auth";
 
 export const SIGN_MINT_USER_TOKEN_SCOPE = "sign:mint_user_token";
-const SIGNER_JWT_TTL_SECONDS = 300;
+
+const DEFAULT_SIGNER_JWT_TTL_SECONDS = 300;
+const MIN_SIGNER_JWT_TTL_SECONDS = 60;
+const MAX_SIGNER_JWT_TTL_SECONDS = 86400;
+const DEFAULT_SIGNER_REFRESH_TTL_DAYS = 30;
+const MIN_SIGNER_REFRESH_TTL_DAYS = 1;
+const MAX_SIGNER_REFRESH_TTL_DAYS = 90;
+
+/** Session label prefix for signer-JWT refresh tokens: `signer_refresh:{developerAppId}:{externalUserId}`. */
+export const SIGNER_REFRESH_LABEL_PREFIX = "signer_refresh:";
+
+function clampSignerJwtTtlSeconds(seconds: number): number {
+  return Math.min(
+    MAX_SIGNER_JWT_TTL_SECONDS,
+    Math.max(MIN_SIGNER_JWT_TTL_SECONDS, Math.floor(seconds)),
+  );
+}
+
+function envDefaultSignerJwtTtlSeconds(): number {
+  const raw = process.env.SIGNER_JWT_TTL_SECONDS;
+  const parsed = raw ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0
+    ? clampSignerJwtTtlSeconds(parsed)
+    : DEFAULT_SIGNER_JWT_TTL_SECONDS;
+}
+
+/** Effective signer JWT TTL: per-app override (clamped) or the env/global default. */
+export function resolveSignerJwtTtlSeconds(appTtlSeconds: number | null | undefined): number {
+  return appTtlSeconds != null
+    ? clampSignerJwtTtlSeconds(appTtlSeconds)
+    : envDefaultSignerJwtTtlSeconds();
+}
+
+export function clampSignerRefreshTtlDays(days: number | null | undefined): number {
+  const value = days ?? DEFAULT_SIGNER_REFRESH_TTL_DAYS;
+  return Math.min(
+    MAX_SIGNER_REFRESH_TTL_DAYS,
+    Math.max(MIN_SIGNER_REFRESH_TTL_DAYS, Math.floor(value)),
+  );
+}
 
 export class MintUserSignerTokenError extends Error {
   code: string;
@@ -76,6 +116,18 @@ export async function mintSignerJwtForExternalUser(input: {
     );
   }
 
+  const policyRows = await db
+    .select({
+      signerJwtTtlSeconds: developerApps.signerJwtTtlSeconds,
+      signerRefreshEnabled: developerApps.signerRefreshEnabled,
+      signerRefreshTtlDays: developerApps.signerRefreshTtlDays,
+    })
+    .from(developerApps)
+    .where(eq(developerApps.id, input.developerAppId))
+    .limit(1);
+  const policy = policyRows[0];
+  const ttlSeconds = resolveSignerJwtTtlSeconds(policy?.signerJwtTtlSeconds);
+
   const issuer = getIssuer();
   const audience = signerJwtAudience();
   const keyPair = await ensureSigningKey();
@@ -95,16 +147,28 @@ export async function mintSignerJwtForExternalUser(input: {
     .setJti(uuidv4())
     .setIssuedAt(nowSeconds)
     .setNotBefore(nowSeconds)
-    .setExpirationTime(nowSeconds + SIGNER_JWT_TTL_SECONDS)
+    .setExpirationTime(nowSeconds + ttlSeconds)
     .sign(keyPair.privateKey);
+
+  let refreshToken: string | undefined;
+  if (policy?.signerRefreshEnabled) {
+    const refresh = await createSession({
+      appId: input.publicClientId,
+      label: `${SIGNER_REFRESH_LABEL_PREFIX}${input.developerAppId}:${externalUserId}`,
+      scopes: "sign:job",
+      expiresInDays: clampSignerRefreshTtlDays(policy.signerRefreshTtlDays),
+    });
+    refreshToken = refresh.token;
+  }
 
   return {
     access_token: accessToken,
     token_type: "Bearer" as const,
-    expires_in: SIGNER_JWT_TTL_SECONDS,
+    expires_in: ttlSeconds,
     scope: "sign:job",
     balanceUsdMicros: allowance?.balanceUsdMicros ?? "0",
     lifetimeGrantedUsdMicros: allowance?.lifetimeGrantedUsdMicros ?? "0",
+    ...(refreshToken ? { refresh_token: refreshToken } : {}),
   };
 }
 

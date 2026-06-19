@@ -269,6 +269,12 @@ export const developerApps = pgTable("developer_apps", {
   brandingSupportEmail: text("branding_support_email"), // custom support email for branded login
   /** Public JWKS URL for RFC 8693 (Pattern B); use production host, not loopback. */
   jwksUri: text("jwks_uri"),
+  /** Per-app signer JWT TTL in seconds; null falls back to SIGNER_JWT_TTL_SECONDS env default. */
+  signerJwtTtlSeconds: integer("signer_jwt_ttl_seconds"),
+  /** 1 = issue an OAuth refresh_token alongside minted signer JWTs; 0 = disabled. */
+  signerRefreshEnabled: integer("signer_refresh_enabled").notNull().default(0),
+  /** Lifetime (days) of issued signer refresh tokens; null falls back to default when enabled. */
+  signerRefreshTtlDays: integer("signer_refresh_ttl_days"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
