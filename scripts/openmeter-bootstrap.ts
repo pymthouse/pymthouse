@@ -12,6 +12,7 @@ import {
   ensureKonnectTenantCatalog,
   unwrapOpenMeterListResult,
 } from "../src/lib/openmeter/konnect-catalog";
+import { resolveKonnectStripeAppId } from "../src/lib/openmeter/konnect-billing-profiles";
 import { defaultStarterIncludedUsdMicros } from "../src/lib/starter-default-plan-display";
 
 async function waitForHealthy(baseUrl: string, attempts = 30): Promise<void> {
@@ -81,6 +82,15 @@ async function main() {
     console.log(
       "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
     );
+    try {
+      await resolveKonnectStripeAppId();
+      console.log("[openmeter-bootstrap] Konnect Stripe app is ready");
+    } catch (err) {
+      console.warn(
+        "[openmeter-bootstrap] Konnect Stripe app not ready — install Stripe in Konnect → Metering & Billing → Settings → Stripe:",
+        err instanceof Error ? err.message : err,
+      );
+    }
     return;
   }
 

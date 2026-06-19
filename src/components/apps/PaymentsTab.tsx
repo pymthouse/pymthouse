@@ -89,6 +89,11 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         setBusy(false);
         return;
       }
+      if (body.method === "konnect" && body.connected) {
+        await load();
+        setBusy(false);
+        return;
+      }
       if (!body.url) {
         throw new Error(body.error || "Connect failed");
       }
@@ -163,7 +168,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           <div>
             <h3 className="text-base font-semibold">Stripe Connect</h3>
             <p className="text-sm text-muted-foreground">
-              Connect your Stripe account to bill end users via OpenMeter.
+              Connect Stripe to bill end users via OpenMeter. On Konnect, this uses the
+              platform Stripe account configured in Metering &amp; Billing settings.
             </p>
           </div>
           <span

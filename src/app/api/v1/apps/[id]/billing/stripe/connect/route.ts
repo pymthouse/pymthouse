@@ -4,11 +4,14 @@ import {
   getAuthorizedProviderApp,
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
+import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import {
+  connectStripeOnKonnect,
   connectStripeWithApiKey,
   createStripeOAuthState,
   StripeOAuthUnavailableError,
 } from "@/lib/openmeter/stripe-connect";
+import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 
 export async function POST(
@@ -55,6 +58,13 @@ export async function POST(
   }
 
   try {
+    if (
+      shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+    ) {
+      await connectStripeOnKonnect({ clientId: auth.app.id });
+      return NextResponse.json({ method: "konnect", connected: true });
+    }
+
     const { url } = await createStripeOAuthState({
       clientId: auth.app.id,
       userId: auth.userId,

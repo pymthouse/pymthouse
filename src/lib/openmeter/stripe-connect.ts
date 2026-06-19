@@ -9,7 +9,10 @@ import {
   getAppBillingConfig,
   upsertAppBillingConfig,
 } from "./billing-profiles";
+import { getHostedOpenMeterUrl } from "./constants";
+import { resolveKonnectStripeAppId } from "./konnect-billing-profiles";
 import { isOpenMeterConflictError } from "./plan-errors";
+import { shouldUseKonnectRoutes } from "./route-mode";
 import type { OpenMeter } from "@openmeter/sdk";
 
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
@@ -83,14 +86,29 @@ function formatStripeInstallError(err: unknown): string {
   return message;
 }
 
+/** Konnect: link developer app to org-level Stripe app via billing profile. */
+export async function connectStripeOnKonnect(input: {
+  clientId: string;
+  name?: string;
+}): Promise<void> {
+  const stripeAppId = await resolveKonnectStripeAppId();
+  await finalizeStripeAppConnection({
+    clientId: input.clientId,
+    openmeterStripeAppId: stripeAppId,
+    profileName: input.name,
+  });
+}
+
 async function finalizeStripeAppConnection(input: {
   clientId: string;
   openmeterStripeAppId: string;
+  profileName?: string;
 }): Promise<void> {
   const now = new Date().toISOString();
   const profileId = await ensureTenantBillingProfile({
     clientId: input.clientId,
     openmeterStripeAppId: input.openmeterStripeAppId,
+    name: input.profileName,
   });
   await upsertAppBillingConfig(input.clientId, {
     stripeConnectStatus: "connected",
@@ -206,6 +224,12 @@ export async function createStripeOAuthState(input: {
   clientId: string;
   userId: string;
 }): Promise<{ state: string; url: string }> {
+  if (
+    shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+  ) {
+    throw new StripeOAuthUnavailableError();
+  }
+
   const client = getHostedAdminClient();
   const state = uuidv4();
   const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS).toISOString();
@@ -304,7 +328,11 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     .where(eq(appBillingConfig.clientId, clientId))
     .limit(1);
   const row = config[0];
-  if (row?.openmeterStripeAppId) {
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  if (row?.openmeterStripeAppId && !useKonnect) {
     try {
       const client = getHostedAdminClient();
       await client.apps.uninstall(row.openmeterStripeAppId);

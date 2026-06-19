@@ -132,7 +132,17 @@ Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMete
 
 ### Stripe Connect (per developer app)
 
-PymtHouse **Payments** tab → **Connect Stripe** calls Builder API `POST /api/v1/apps/{clientId}/billing/stripe/connect`, which starts OpenMeter marketplace OAuth and stores a per-app billing profile (`app_billing_config`).
+PymtHouse **Payments** tab → **Connect Stripe** calls Builder API `POST /api/v1/apps/{clientId}/billing/stripe/connect`, which stores a per-app billing profile in `app_billing_config`.
+
+**Konnect (production):**
+
+1. Install Stripe once in [Konnect → Metering & Billing → Settings → Stripe](https://developer.konghq.com/metering-and-billing/stripe-integration/) (API key + billing profile wizard).
+2. Set `OPENMETER_URL` (e.g. `https://{region}.api.konghq.com/v3/openmeter`) and `OPENMETER_API_KEY` on Vercel.
+3. Bootstrap should log `Konnect Stripe app is ready` (not a missing-app warning).
+4. In PymtHouse, app owner opens **Settings → Payments → Connect Stripe** — no OAuth redirect; PymtHouse links the app to the org Stripe app and creates a billing profile.
+5. Optional: `OPENMETER_STRIPE_APP_ID` when multiple Stripe apps exist in the org.
+
+**Self-hosted (Railway/OSS):**
 
 1. Ensure `OPENMETER_APPS_BASE_URL` is set on Railway OpenMeter (see §3) and redeploy **openmeter**.
 2. Bootstrap should log `Stripe marketplace OAuth is available` (not a 501 warning).
