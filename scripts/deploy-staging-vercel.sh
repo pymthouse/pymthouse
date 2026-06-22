@@ -24,6 +24,9 @@ export NEXTAUTH_URL="https://${STAGING_DOMAIN}"
 vercel link --project pymthouse --yes >/dev/null
 deployment_url="$(vercel deploy --yes)"
 vercel alias set "$deployment_url" "$STAGING_DOMAIN"
+if [[ "${ASSIGN_STAGING_DOMAIN_BRANCH:-}" == "1" ]]; then
+  STAGING_GIT_BRANCH="$BRANCH" bash scripts/assign-staging-domain-branch.sh
+fi
 echo "Deployed branch $BRANCH"
 echo "  deployment: $deployment_url"
 echo "  staging:    https://$STAGING_DOMAIN"

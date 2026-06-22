@@ -143,7 +143,7 @@ PymtHouse deploys production and staging to the **same** Vercel project (`pymtho
 | **Production** | `https://pymthouse.com` | `v*` tag push (manual), or [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) when `VERCEL_PRODUCTION_AUTO_DEPLOY=true` |
 | **Staging** | `https://staging.pymthouse.com` | push to `staging` branch (auto), or manual dispatch on [deploy-staging.yml](../.github/workflows/deploy-staging.yml) (choose any branch) when `VERCEL_PREVIEW_AUTO_DEPLOY=true` |
 
-Staging is a **paired unit**: the [deploy-staging.yml](../.github/workflows/deploy-staging.yml) orchestrator deploys the Railway preview clearinghouse stack and the Vercel staging app together from the `staging` branch (Railway first, then Vercel). The Vercel half creates an ordinary Preview deployment and re-aliases `staging.pymthouse.com` onto it with `vercel alias set`. That alias only works because `pymthouse.com` is a **verified team domain** under `ecs-vercel` (TXT verification, no nameserver migration) — registering it makes every subdomain freely aliasable by the CLI. Ordinary per-branch Preview builds stay enabled for feature branches; **`main` never auto-deploys** — `vercel.json` sets `git.deploymentEnabled.main=false` so production is owned exclusively by tag-based CI.
+Staging is a **paired unit**: the [deploy-staging.yml](../.github/workflows/deploy-staging.yml) orchestrator deploys the Railway preview clearinghouse stack and the Vercel staging app together from the `staging` branch (Railway first, then Vercel). The Vercel half creates an ordinary Preview deployment and re-aliases `staging.pymthouse.com` onto it with `vercel alias set`. For git-triggered Preview builds (push to `staging` without waiting on CI), assign `staging.pymthouse.com` to the `staging` Git branch once — Vercel then moves the domain automatically on each push ([branch-specific domains](https://vercel.com/kb/guide/set-up-a-staging-environment-on-vercel)). Script: `STAGING_GIT_BRANCH=staging bash scripts/assign-staging-domain-branch.sh`. That assignment only works because `pymthouse.com` is a **verified team domain** under `ecs-vercel` (TXT verification, no nameserver migration). Ordinary per-branch Preview builds stay enabled for feature branches; **`main` never auto-deploys** — `vercel.json` sets `git.deploymentEnabled.main=false` so production is owned exclusively by tag-based CI.
 
 Railway (signer, OpenMeter collector) uses the **PymtHouse** project with two environments:
 
@@ -158,7 +158,7 @@ Point each Vercel tier’s `OPENMETER_URL` and `SIGNER_INTERNAL_URL` at the matc
 
 1. Connect the same GitHub repo so feature branches get ordinary Preview deployments.
 2. Verify `pymthouse.com` as a team domain under `ecs-vercel` (`vercel domains add pymthouse.com`, then add the printed TXT record at your DNS host — **no nameserver migration**). This is what makes `vercel alias set staging.pymthouse.com` succeed; without it the CLI returns "you don't have access to the domain".
-3. Leave `staging.pymthouse.com` **unbound** from any environment in Project Settings -> Domains — it is moved by `vercel alias set`, not by environment binding.
+3. Assign `staging.pymthouse.com` to the `staging` Git branch (Preview): `STAGING_GIT_BRANCH=staging bash scripts/assign-staging-domain-branch.sh`, or use Domains → Edit → Preview → Git Branch in the dashboard. Git pushes to `staging` then auto-update the domain; CI still runs `vercel alias set` after prebuilt deploys.
 4. Confirm `vercel.json` includes `git.deploymentEnabled.main=false` (committed) so `main` never auto-deploys on push; production stays tag/CI-only.
 5. Configure env vars under **Production** and **Preview** scopes — see [.env.vercel.template](../.env.vercel.template). Apply branch-scoped Preview vars for the `staging` branch with `PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh`.
 
@@ -193,10 +193,11 @@ Canonical URLs for the Deployments sidebar (`VERCEL_PRODUCTION_URL`, `VERCEL_PRE
 
 1. Create the persistent branch: `git branch staging main && git push -u origin staging`.
 2. Vercel project `pymthouse` → Settings → Git: confirm Production Branch is `main` (production deploys remain CLI/tag-driven; `git.deploymentEnabled.main=false` blocks native main builds).
-3. Apply branch-scoped Preview env for `staging`: `PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh` (sets `NEXTAUTH_URL`, `OIDC_ISSUER`, `PLATFORM_JWKS_URL` to `staging.pymthouse.com`).
-4. Ensure Production-scoped `OIDC_ISSUER` / `NEXTAUTH_URL` stay on `https://pymthouse.com` and do not leak into Preview.
-5. Enable staging auto-deploy: `RAILWAY_PREVIEW_AUTO_DEPLOY=true`, `VERCEL_PREVIEW_AUTO_DEPLOY=true` (via [set-github-preview-deploy-vars.sh](../scripts/set-github-preview-deploy-vars.sh)).
-6. Verify OIDC discovery after redeploy: `curl -sS https://staging.pymthouse.com/api/v1/oidc/.well-known/openid-configuration | jq '{issuer, token_endpoint}'` — both hosts must be `staging.pymthouse.com`.
+3. Assign domain to branch: `STAGING_GIT_BRANCH=staging bash scripts/assign-staging-domain-branch.sh`.
+4. Apply branch-scoped Preview env for `staging`: `PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh` (sets `NEXTAUTH_URL`, `OIDC_ISSUER`, `PLATFORM_JWKS_URL` to `staging.pymthouse.com`).
+5. Ensure Production-scoped `OIDC_ISSUER` / `NEXTAUTH_URL` stay on `https://pymthouse.com` and do not leak into Preview.
+6. Enable staging auto-deploy: `RAILWAY_PREVIEW_AUTO_DEPLOY=true`, `VERCEL_PREVIEW_AUTO_DEPLOY=true` (via [set-github-preview-deploy-vars.sh](../scripts/set-github-preview-deploy-vars.sh)).
+7. Verify OIDC discovery after redeploy: `curl -sS https://staging.pymthouse.com/api/v1/oidc/.well-known/openid-configuration | jq '{issuer, token_endpoint}'` — both hosts must be `staging.pymthouse.com`.
 
 **Production release** (bump version, tag, deploy):
 
