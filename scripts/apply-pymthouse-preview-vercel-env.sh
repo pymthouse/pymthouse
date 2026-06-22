@@ -21,7 +21,14 @@ fi
 STAGING_URL="${STAGING_URL:-https://staging.pymthouse.com}"
 STAGING_URL="${STAGING_URL%/}"
 SIGNER_BASE="${SIGNER_BASE:-https://pymthouse-preview.up.railway.app}"
-PREVIEW_GIT_BRANCH="${PREVIEW_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo feat/openmeter-hosted)}"
+_git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -z "${PREVIEW_GIT_BRANCH:-}" ]]; then
+  if [[ -z "$_git_branch" || "$_git_branch" == "HEAD" ]]; then
+    PREVIEW_GIT_BRANCH="feat/openmeter-hosted"
+  else
+    PREVIEW_GIT_BRANCH="$_git_branch"
+  fi
+fi
 OIDC_ISSUER_VAL="${STAGING_URL}/api/v1/oidc"
 
 if [[ -z "${OPENMETER_URL:-}" ]]; then
