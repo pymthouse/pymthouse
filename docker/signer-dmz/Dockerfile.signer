@@ -2,7 +2,7 @@
 # Copies livepeer + required CUDA NPP libs from the official image — do not wget
 # a bare binary into debian:slim; the binary links libnppig.so and other NPP libs.
 
-FROM eliteencoder/go-livepeer:0.8.10-5c9ec54 AS livepeer-src
+FROM livepeer/go-livepeer:feat-add-model-id-signer-kafka AS livepeer-src
 
 FROM debian:bookworm-slim
 

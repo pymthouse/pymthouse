@@ -167,7 +167,7 @@ ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
 EXPOSE 8080 8082
 
 # Production / Railway: livepeer from official Docker image (default final stage).
-FROM eliteencoder/go-livepeer:0.8.10-5c9ec54 AS livepeer-prod
+FROM livepeer/go-livepeer:feat-add-model-id-signer-kafka AS livepeer-prod
 
 FROM gateway AS signer-dmz
 
