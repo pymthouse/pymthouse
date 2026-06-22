@@ -7,7 +7,7 @@
 # Usage:
 #   set -a && source .env.local && set +a
 #   bash scripts/apply-pymthouse-preview-vercel-env.sh
-#   PREVIEW_GIT_BRANCH=feat/openmeter-hosted bash scripts/apply-pymthouse-preview-vercel-env.sh
+#   PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +21,7 @@ fi
 STAGING_URL="${STAGING_URL:-https://staging.pymthouse.com}"
 STAGING_URL="${STAGING_URL%/}"
 SIGNER_BASE="${SIGNER_BASE:-https://pymthouse-preview.up.railway.app}"
-PREVIEW_GIT_BRANCH="${PREVIEW_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo feat/openmeter-hosted)}"
+PREVIEW_GIT_BRANCH="${PREVIEW_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo staging)}"
 OIDC_ISSUER_VAL="${STAGING_URL}/api/v1/oidc"
 
 if [[ -z "${OPENMETER_URL:-}" ]]; then

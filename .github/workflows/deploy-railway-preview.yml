@@ -1,7 +1,7 @@
 name: Deploy Railway preview clearinghouse stack
 
-# main deploys the full clearinghouse stack (kafka + collector + signer DMZ) to Railway
-# preview (staging). Production deploys on v* tag via deploy-railway-production.yml.
+# staging branch deploys the full clearinghouse stack (kafka + collector + signer DMZ)
+# to Railway preview (staging). Production deploys on v* tag via deploy-railway-production.yml.
 #
 # Enable with repository variable:
 #   RAILWAY_PREVIEW_AUTO_DEPLOY=true
@@ -16,7 +16,7 @@ name: Deploy Railway preview clearinghouse stack
 on:
   push:
     branches:
-      - main
+      - staging
     paths:
       - "deploy/**"
       - "docker/signer-dmz/**"
