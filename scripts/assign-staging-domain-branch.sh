@@ -30,13 +30,21 @@ api_url="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}/domains/${STAGI
 
 echo "Assigning ${STAGING_DOMAIN} → git branch ${STAGING_GIT_BRANCH} (project ${VERCEL_PROJECT_ID})"
 
-response="$(curl -sS -X PATCH "$api_url" \
+response_file="$(mktemp)"
+http_status="$(curl -sS -o "$response_file" -w '%{http_code}' -X PATCH "$api_url" \
   -H "Authorization: Bearer ${VERCEL_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "$body")"
+response="$(<"$response_file")"
+rm -f "$response_file"
 
-if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
-  echo "$response" | jq . >&2
+if (( http_status < 200 || http_status >= 300 )); then
+  echo "Vercel API request failed (HTTP $http_status)" >&2
+  if echo "$response" | jq . >/dev/null 2>&1; then
+    echo "$response" | jq . >&2
+  else
+    echo "$response" >&2
+  fi
   exit 1
 fi
 
