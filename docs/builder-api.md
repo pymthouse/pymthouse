@@ -276,6 +276,18 @@ Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters 
 
 **Endpoint:** `GET /api/v1/apps/{clientId}/usage`
 
+**Self-scoped endpoints (end user):** For clients that hold an end-user JWT or API key and need only the authenticated user’s data — identity comes from the token only; `externalUserId` and `userId` query params are forbidden (`400`).
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/apps/{clientId}/usage/me/balance` | Current user’s allowance balance (`balanceUsdMicros`, `hasAccess`, etc.) |
+| `GET` | `/api/v1/apps/{clientId}/usage/me` | Current user’s usage summary; optional `startDate`, `endDate`, `include=retail` |
+
+**`@pymthouse/builder-sdk` client methods:**
+
+- `getMyUsageBalance(userAccessToken)` — `GET .../usage/me/balance` with `Authorization: Bearer <token>` only (no `externalUserId` param).
+- `getMyUsage(userAccessToken, { startDate?, endDate?, includeRetail? })` — `GET .../usage/me`; maps `includeRetail: true` to `include=retail`.
+
 ### Identity model
 
 - **`clientId`** in the path is the OAuth `client_id` of the developer app.
@@ -287,6 +299,7 @@ Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters 
 | --- | --- |
 | **Confidential client (recommended)** | `Authorization: Basic base64(client_id:client_secret)` — same credentials as other server-to-server calls |
 | **Provider session** | Logged-in app owner, platform admin, or team member with `providerAdmins` access — powers the in-app dashboard |
+| **End-user Bearer (self-scoped)** | `Authorization: Bearer <user JWT>` with `sign:job` or `usage:read`, or an end-user API key — identity from the token only; `externalUserId` / `userId` query params forbidden on `…/usage/me` routes |
 
 Requests that fail auth or tenant match receive **`404 Not Found`** (not `401`/`403`) to avoid leaking whether a `client_id` exists.
 
@@ -367,7 +380,34 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
   "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?userId=${USER_ID}"
 ```
 
-**Security:** Do not call the Usage API from a browser with Basic auth; keep secrets server-side.
+Self-scoped balance (end-user JWT — no `externalUserId` param):
+
+```bash
+export USER_JWT="eyJ..."   # sign:job or usage:read
+
+curl -sS -H "Authorization: Bearer ${USER_JWT}" \
+  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage/me/balance"
+```
+
+Self-scoped usage with optional date window and retail estimates:
+
+```bash
+curl -sS -H "Authorization: Bearer ${USER_JWT}" \
+  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage/me?startDate=2026-01-01T00:00:00.000Z&endDate=2026-12-31T23:59:59.999Z&include=retail"
+```
+
+From a backend using `@pymthouse/builder-sdk`:
+
+```typescript
+const balance = await client.getMyUsageBalance(userJwt);
+const usage = await client.getMyUsage(userJwt, {
+  startDate: "2026-01-01T00:00:00.000Z",
+  endDate: "2026-12-31T23:59:59.999Z",
+  includeRetail: true,
+});
+```
+
+**Security:** Do not call the Usage API from a browser with Basic auth; keep secrets server-side. End-user JWTs may be used from trusted client apps for self-scoped `…/usage/me` routes only — never pass another user’s id in query params.
 
 ### Usage data model (`usage_records`)
 
@@ -741,6 +781,9 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 
 - [`src/lib/auth.ts`](../src/lib/auth.ts) (`authenticateAppClient`, JWT parsing)
 - [`src/app/api/v1/apps/[id]/usage/route.ts`](../src/app/api/v1/apps/[id]/usage/route.ts)
+- [`src/app/api/v1/apps/[id]/usage/me/route.ts`](../src/app/api/v1/apps/[id]/usage/me/route.ts)
+- [`src/app/api/v1/apps/[id]/usage/me/balance/route.ts`](../src/app/api/v1/apps/[id]/usage/me/balance/route.ts)
+- [`src/lib/signer/end-user-usage-handlers.ts`](../src/lib/signer/end-user-usage-handlers.ts)
 - [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts)
 - [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts)
 - [`src/lib/provider-apps.ts`](../src/lib/provider-apps.ts) (`getAuthorizedProviderApp`, `getProviderApp`)

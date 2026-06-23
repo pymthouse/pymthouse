@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     "@pymthouse/builder-sdk",
     "@pymthouse/builder-sdk/signer/server",
     "@pymthouse/builder-sdk/signer/webhook",
+    "@pymthouse/builder-sdk/usage",
   ],
   webpack: (config, { isServer }) => {
     if (isServer) {
