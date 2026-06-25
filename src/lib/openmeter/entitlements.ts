@@ -13,6 +13,7 @@ import {
   getTrialFeatureKeyForApp,
 } from "./client-factory";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import { isStripeBillingEnabledForApp } from "./billing-profiles";
 import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
@@ -114,6 +115,11 @@ async function getKonnectTrialCreditBalance(input: {
   }
 
   const defaultGrant = defaultStarterIncludedUsdMicros();
+  if (!hasAccess && !(await isStripeBillingEnabledForApp(input.clientId))) {
+    // Free Starter allowance without Stripe Connect — subscription optional.
+    hasAccess = true;
+  }
+
   if (!hasAccess) {
     return {
       hasAccess: false,

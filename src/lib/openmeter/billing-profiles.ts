@@ -15,6 +15,16 @@ export async function getAppBillingConfig(clientId: string) {
   return rows[0] ?? null;
 }
 
+/** Stripe Connect completed and wired into OpenMeter billing profiles. */
+export async function isStripeBillingEnabledForApp(clientId: string): Promise<boolean> {
+  const config = await getAppBillingConfig(clientId);
+  return (
+    config?.stripeConnectStatus === "connected" &&
+    Boolean(config.openmeterStripeAppId?.trim()) &&
+    Boolean(config.openmeterBillingProfileId?.trim())
+  );
+}
+
 export async function ensureTenantBillingProfile(input: {
   clientId: string;
   openmeterStripeAppId: string;
@@ -66,6 +76,9 @@ export async function applyTenantBillingProfileToCustomer(input: {
   clientId: string;
   customerId: string;
 }): Promise<void> {
+  if (!(await isStripeBillingEnabledForApp(input.clientId))) {
+    return;
+  }
   const config = await getAppBillingConfig(input.clientId);
   if (!config?.openmeterBillingProfileId) {
     return;
