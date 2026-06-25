@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Enable staging CI deploy workflows (staging branch → Railway preview + Vercel staging).
+# Enable staging CI deploy workflows:
+#   - Vercel Preview on every non-main branch push (pymthouse project)
+#   - Railway preview stack on staging branch only
 # Requires: gh auth login, RAILWAY_API_TOKEN + VERCEL_TOKEN secrets
 #
 #   bash scripts/set-github-preview-deploy-vars.sh

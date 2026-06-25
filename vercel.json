@@ -6,8 +6,6 @@
   "framework": "nextjs",
   "regions": ["iad1"],
   "git": {
-    "deploymentEnabled": {
-      "main": false
-    }
+    "deploymentEnabled": false
   }
 }
