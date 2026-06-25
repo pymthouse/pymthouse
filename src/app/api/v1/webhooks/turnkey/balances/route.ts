@@ -3,10 +3,12 @@ import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { signerDepositEvents } from "@/db/schema";
-import { computeUsdMicrosFromWei } from "@/lib/billing-runtime";
-import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
-import { getEthUsdOracle } from "@/lib/prices/eth-usd-oracle";
 import {
+  clearAttributedDeposit,
+  retryDepositCredit,
+} from "@/lib/signer/deposit-clearing";
+import {
+  classifyIngressAsset,
   isArbitrumMainnetCaip2,
   isBalanceFinalizedEvent,
   isDepositOperation,
@@ -61,6 +63,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "unsupported_operation" });
   }
 
+  const ingressAsset = classifyIngressAsset(message.assetCaip19);
+  if (!ingressAsset) {
+    return NextResponse.json({ ok: true, skipped: "unsupported_asset" });
+  }
+
   const signerAddress = await getSharedSignerEthAddress();
   const monitored = normalizeWalletAddress(message.walletAddress);
   if (!signerAddress || !monitored || monitored !== signerAddress) {
@@ -70,16 +77,49 @@ export async function POST(request: NextRequest) {
   const idempotencyKey = verified.eventId || message.idempotencyKey;
 
   const existing = await db
-    .select({ id: signerDepositEvents.id, status: signerDepositEvents.status })
+    .select()
     .from(signerDepositEvents)
     .where(eq(signerDepositEvents.idempotencyKey, idempotencyKey))
     .limit(1);
 
   if (existing[0]) {
+    const row = existing[0];
+    if (row.status === "credited") {
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        status: row.status,
+        fundTxHash: row.fundTxHash,
+        usdMicrosCredited: row.usdMicrosCredited,
+      });
+    }
+    if (row.status === "funded") {
+      try {
+        const retried = await retryDepositCredit(row.id);
+        return NextResponse.json({
+          ok: true,
+          retried: true,
+          status: retried.status,
+          fundTxHash: retried.fundTxHash,
+          usdMicrosCredited: retried.usdMicrosCredited,
+        });
+      } catch (err) {
+        console.error("retryDepositCredit failed:", err);
+        return NextResponse.json({ error: "Failed to credit allowance" }, { status: 500 });
+      }
+    }
+    if (row.status === "pending") {
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        status: row.status,
+        note: "funding_in_progress",
+      });
+    }
     return NextResponse.json({
       ok: true,
       duplicate: true,
-      status: existing[0].status,
+      status: row.status,
     });
   }
 
@@ -100,6 +140,7 @@ export async function POST(request: NextRequest) {
     txHash: message.transactionHash,
     fromAddress,
     amountWei: message.amountWei,
+    ingressAsset,
     status: "unmatched" as const,
   };
 
@@ -117,19 +158,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, status: "unmatched" });
   }
 
-  let amountWei: bigint;
+  let amountRaw: bigint;
   try {
-    amountWei = BigInt(message.amountWei);
+    amountRaw = BigInt(message.amountWei);
   } catch {
     await db.insert(signerDepositEvents).values({
       ...baseEvent,
       status: "error",
-      errorMessage: "invalid_amount_wei",
+      errorMessage: "invalid_amount",
     });
-    return NextResponse.json({ ok: true, status: "error", error: "invalid_amount_wei" });
+    return NextResponse.json({ ok: true, status: "error", error: "invalid_amount" });
   }
 
-  if (amountWei <= 0n) {
+  if (amountRaw <= 0n) {
     await db.insert(signerDepositEvents).values({
       ...baseEvent,
       status: "error",
@@ -138,44 +179,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, status: "error", error: "non_positive_amount" });
   }
 
-  const oracle = await getEthUsdOracle();
-  const usdMicros = computeUsdMicrosFromWei(amountWei, oracle.priceUsd);
-  if (usdMicros <= 0n) {
-    await db.insert(signerDepositEvents).values({
-      ...baseEvent,
-      ethUsdPrice: String(oracle.priceUsd),
-      status: "error",
-      errorMessage: "zero_usd_micros",
-    });
-    return NextResponse.json({ ok: true, status: "error", error: "zero_usd_micros" });
-  }
-
   try {
-    await grantAllowanceUsdMicros({
-      clientId: payer.appId,
+    const cleared = await clearAttributedDeposit({
+      eventId,
+      idempotencyKey,
+      txHash: message.transactionHash,
+      fromAddress,
+      payer,
+      ingressAsset,
+      amountRaw: message.amountWei,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      status: cleared.status,
+      appId: payer.appId,
       externalUserId: payer.externalUserId,
-      amountUsdMicros: usdMicros,
-      source: "onchain_deposit",
+      fundTxHash: cleared.fundTxHash,
+      usdMicrosCredited: cleared.usdMicrosCredited,
+      ingressAsset,
+      ethWeiRealized: cleared.ethWeiRealized,
+      swapTxHash: cleared.swapTxHash ?? null,
     });
   } catch (err) {
-    console.error("grantAllowanceUsdMicros failed for onchain deposit:", err);
-    return NextResponse.json({ error: "Failed to credit allowance" }, { status: 500 });
+    console.error("clearAttributedDeposit failed:", err);
+    return NextResponse.json({ error: "Failed to fund deposit or credit allowance" }, { status: 500 });
   }
-
-  await db.insert(signerDepositEvents).values({
-    ...baseEvent,
-    ethUsdPrice: String(oracle.priceUsd),
-    usdMicrosCredited: usdMicros.toString(),
-    appId: payer.appId,
-    externalUserId: payer.externalUserId,
-    status: "credited",
-  });
-
-  return NextResponse.json({
-    ok: true,
-    status: "credited",
-    appId: payer.appId,
-    externalUserId: payer.externalUserId,
-    usdMicrosCredited: usdMicros.toString(),
-  });
 }

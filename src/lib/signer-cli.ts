@@ -58,23 +58,28 @@ export interface SignerCliStatus {
 async function cliFetch(
   path: string,
   parse: "json" | "text",
+  init?: RequestInit,
 ): Promise<string> {
   const url = `${getSignerCliUrl()}${path}`;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> | undefined),
+  };
   const bearer = await getCliDmzBearer();
   if (bearer) {
     headers.Authorization = `Bearer ${bearer}`;
   }
   const res = await fetch(url, {
+    ...init,
     headers,
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(30_000),
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`CLI GET ${path} failed: ${res.status}`);
+    const body = await res.text().catch(() => "");
+    throw new Error(`CLI ${init?.method ?? "GET"} ${path} failed: ${res.status}${body ? ` ${body}` : ""}`);
   }
   const text = await res.text();
-  if (!text) throw new Error(`CLI GET ${path} returned empty body`);
+  if (!text) throw new Error(`CLI ${init?.method ?? "GET"} ${path} returned empty body`);
   if (parse === "text") {
     return text;
   }
@@ -88,6 +93,88 @@ async function cliGet<T>(path: string): Promise<T> {
 
 async function cliGetText(path: string): Promise<string> {
   return cliFetch(path, "text");
+}
+
+export type FundDepositResult = {
+  txHash: string;
+  mode: "deposit" | "deposit_and_reserve";
+};
+
+/** Test-only stub for fund operations. */
+let testFundDepositStub:
+  | ((input: {
+      mode: "deposit" | "deposit_and_reserve";
+      depositWei: bigint;
+      reserveWei: bigint;
+    }) => Promise<FundDepositResult>)
+  | null = null;
+
+export function __testSetFundDepositStub(
+  stub: typeof testFundDepositStub,
+): void {
+  testFundDepositStub = stub;
+}
+
+export function __testClearFundDepositStub(): void {
+  testFundDepositStub = null;
+}
+
+function parseFundTxHash(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { txHash?: string };
+    if (parsed.txHash && /^0x[a-fA-F0-9]{64}$/.test(parsed.txHash)) {
+      return parsed.txHash;
+    }
+  } catch {
+    // legacy plain-text success responses
+  }
+  throw new Error("fundDeposit response missing txHash");
+}
+
+async function cliPostForm(path: string, fields: Record<string, string>): Promise<string> {
+  const body = new URLSearchParams(fields);
+  return cliFetch(path, "json", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+}
+
+/**
+ * POST /fundDeposit — funds the shared signer TicketBroker deposit.
+ * Blocks until the tx is mined (go-livepeer CheckTx).
+ */
+export async function fundDeposit(amountWei: bigint): Promise<FundDepositResult> {
+  if (testFundDepositStub) {
+    return testFundDepositStub({
+      mode: "deposit",
+      depositWei: amountWei,
+      reserveWei: 0n,
+    });
+  }
+  const raw = await cliPostForm("/fundDeposit", { amount: amountWei.toString() });
+  return { txHash: parseFundTxHash(raw), mode: "deposit" };
+}
+
+/**
+ * POST /fundDepositAndReserve — funds deposit + reserve in one tx.
+ */
+export async function fundDepositAndReserve(
+  depositWei: bigint,
+  reserveWei: bigint,
+): Promise<FundDepositResult> {
+  if (testFundDepositStub) {
+    return testFundDepositStub({
+      mode: "deposit_and_reserve",
+      depositWei,
+      reserveWei,
+    });
+  }
+  const raw = await cliPostForm("/fundDepositAndReserve", {
+    depositAmount: depositWei.toString(),
+    reserveAmount: reserveWei.toString(),
+  });
+  return { txHash: parseFundTxHash(raw), mode: "deposit_and_reserve" };
 }
 
 /**

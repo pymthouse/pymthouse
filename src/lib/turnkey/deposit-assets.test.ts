@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { computeUsdMicrosFromWei } from "@/lib/billing-runtime";
 import {
+  ARBITRUM_ETH_CAIP19,
   ARBITRUM_MAINNET_CAIP2,
+  ARBITRUM_USDC_CAIP19,
+  classifyIngressAsset,
   isArbitrumMainnetCaip2,
   isBalanceFinalizedEvent,
   isDepositOperation,
@@ -45,6 +48,13 @@ test("ETH to USD micros conversion for deposit amount", () => {
   const oneEth = 1_000_000_000_000_000_000n;
   const usdMicros = computeUsdMicrosFromWei(oneEth, 3500);
   assert.equal(usdMicros, 3_500_000_000n);
+});
+
+test("classifyIngressAsset detects ETH and USDC", () => {
+  assert.equal(classifyIngressAsset(ARBITRUM_ETH_CAIP19), "eth");
+  assert.equal(classifyIngressAsset(ARBITRUM_USDC_CAIP19), "usdc");
+  assert.equal(classifyIngressAsset("eip155:42161/erc20:0xdead"), null);
+  assert.equal(classifyIngressAsset(null), "eth");
 });
 
 test("idempotency: duplicate idempotency keys should dedupe at DB layer", () => {

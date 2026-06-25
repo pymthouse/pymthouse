@@ -1,6 +1,15 @@
 /** Arbitrum mainnet CAIP-2 identifier for Turnkey balance webhooks. */
 export const ARBITRUM_MAINNET_CAIP2 = "eip155:42161";
 
+/** Native ETH on Arbitrum (slip44:60). */
+export const ARBITRUM_ETH_CAIP19 = "eip155:42161/slip44:60";
+
+/** Native USDC on Arbitrum. */
+export const ARBITRUM_USDC_CAIP19 =
+  "eip155:42161/erc20:0xaf88d065e77c8cc2239327c5edb3a432268e5831";
+
+export type IngressAsset = "eth" | "usdc";
+
 export const BALANCE_FINALIZED_EVENT_TYPES = new Set([
   "BALANCE_FINALIZED_UPDATES",
   "balances:finalized",
@@ -102,4 +111,35 @@ export function isBalanceFinalizedEvent(payload: unknown): boolean {
   const eventType = readString((payload as Record<string, unknown>).eventType);
   if (!eventType) return true;
   return BALANCE_FINALIZED_EVENT_TYPES.has(eventType);
+}
+
+function normalizeCaip19(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Classify a balance-finalized deposit as ETH or USDC ingress.
+ * Returns null for unsupported assets.
+ */
+export function classifyIngressAsset(
+  assetCaip19: string | null | undefined,
+): IngressAsset | null {
+  const normalized = normalizeCaip19(assetCaip19);
+  if (!normalized) {
+    return "eth";
+  }
+  if (
+    normalized === ARBITRUM_ETH_CAIP19.toLowerCase() ||
+    normalized.endsWith("/slip44:60")
+  ) {
+    return "eth";
+  }
+  if (
+    normalized === ARBITRUM_USDC_CAIP19.toLowerCase() ||
+    normalized.includes("0xaf88d065e77c8cc2239327c5edb3a432268e5831")
+  ) {
+    return "usdc";
+  }
+  return null;
 }

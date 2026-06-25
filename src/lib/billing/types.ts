@@ -14,8 +14,8 @@ export type {
 
 import type { GrantSource as SdkGrantSource } from "@pymthouse/builder-sdk";
 
-/** SDK grant sources plus on-chain ETH deposit credits. */
-export type GrantSource = SdkGrantSource | "onchain_deposit";
+/** SDK grant sources plus on-chain deposit credits and x402 settlements. */
+export type GrantSource = SdkGrantSource | "onchain_deposit" | "x402_settlement";
 
 import type { BillingProduct as SdkBillingProduct } from "@pymthouse/builder-sdk";
 

@@ -121,7 +121,15 @@ export const signerDepositEvents = pgTable(
     usdMicrosCredited: text("usd_micros_credited"),
     appId: text("app_id"),
     externalUserId: text("external_user_id"),
-    status: text("status").notNull(), // credited | unmatched | error
+    /** pending | funded | credited | unmatched | error */
+    status: text("status").notNull(),
+    fundTxHash: text("fund_tx_hash"),
+    depositWeiFunded: text("deposit_wei_funded"),
+    reserveWeiFunded: text("reserve_wei_funded"),
+    /** eth | usdc */
+    ingressAsset: text("ingress_asset").notNull().default("eth"),
+    swapTxHash: text("swap_tx_hash"),
+    ethWeiRealized: text("eth_wei_realized"),
     errorMessage: text("error_message"),
     createdAt: text("created_at")
       .notNull()
@@ -131,6 +139,35 @@ export const signerDepositEvents = pgTable(
     index("idx_signer_deposit_events_tx_hash").on(t.txHash),
     index("idx_signer_deposit_events_from_address").on(t.fromAddress),
     index("idx_signer_deposit_events_status").on(t.status),
+  ],
+);
+
+/** Idempotent log of x402 EIP-3009 settlements on Base. */
+export const x402Settlements = pgTable(
+  "x402_settlements",
+  {
+    id: text("id").primaryKey(),
+    authorizationNonce: text("authorization_nonce").notNull().unique(),
+    payer: text("payer").notNull(),
+    payTo: text("pay_to").notNull(),
+    asset: text("asset").notNull(),
+    amountRaw: text("amount_raw").notNull(),
+    caip2: text("caip2").notNull(),
+    txHash: text("tx_hash"),
+    builderCode: text("builder_code"),
+    appId: text("app_id"),
+    externalUserId: text("external_user_id"),
+    usdMicrosCredited: text("usd_micros_credited"),
+    /** verified | settled | failed */
+    status: text("status").notNull(),
+    errorMessage: text("error_message"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_x402_settlements_payer").on(t.payer),
+    index("idx_x402_settlements_status").on(t.status),
   ],
 );
 
@@ -316,6 +353,8 @@ export const developerApps = pgTable("developer_apps", {
   publishedAt: text("published_at"),
   /** 1 = show on homepage featured strip (admin-curated); 0 = not featured */
   marketplaceFeatured: integer("marketplace_featured").notNull().default(0),
+  /** Base ERC-8021 builder code for x402 settlement attribution (<=32 chars). */
+  x402BuilderCode: text("x402_builder_code"),
 });
 
 // Provider-managed application users for the MVP runtime path.
