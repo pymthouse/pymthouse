@@ -6,8 +6,8 @@ name: Deploy staging
 # Railway preview stack: only on push to `staging` (or manual dispatch with branch=staging).
 #
 # Git-triggered Vercel builds are disabled repo-wide (`vercel.json` deploymentEnabled=false)
-# so only this workflow deploys to the pymthouse project. Disconnect the legacy
-# pymthouse-preview Vercel project from Git (scripts/disable-pymthouse-preview-vercel-deploys.sh).
+# so only this workflow deploys to the pymthouse project. The legacy pymthouse-preview
+# Vercel project should stay disconnected from Git.
 #
 # pymthouse.com must be a verified team domain under ecs-vercel (TXT verification,
 # no nameserver migration) — otherwise `vercel alias set` returns "no access".
