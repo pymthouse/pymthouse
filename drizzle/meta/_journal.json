@@ -169,6 +169,27 @@
       "when": 1777800000000,
       "tag": "0022_api_keys_openmeter_subscription",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777900000000,
+      "tag": "0023_signer_deposit_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1778000000000,
+      "tag": "0024_end_users_turnkey_sub_org_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778100000000,
+      "tag": "0025_users_turnkey_sub_org_id",
+      "breakpoints": true
     }
   ]
 }

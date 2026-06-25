@@ -2,11 +2,20 @@ import { db } from "@/db/index";
 import { endUsers, transactions } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { normalizeWalletAddress } from "@/lib/turnkey";
+
+export type AppEndUserOptions = {
+  walletAddress?: string;
+  turnkeySubOrgId?: string;
+  turnkeyUserId?: string;
+};
 
 export async function findOrCreateAppEndUser(
   appId: string,
   externalUserId: string,
+  options?: AppEndUserOptions,
 ): Promise<{ id: string; isNew: boolean }> {
+  const normalizedWallet = normalizeWalletAddress(options?.walletAddress);
   const existingRows = await db
     .select()
     .from(endUsers)
@@ -20,6 +29,25 @@ export async function findOrCreateAppEndUser(
   const existing = existingRows[0];
 
   if (existing) {
+    const patch: Partial<typeof endUsers.$inferInsert> = {};
+    if (normalizedWallet && normalizedWallet !== existing.walletAddress) {
+      patch.walletAddress = normalizedWallet;
+    }
+    if (
+      options?.turnkeySubOrgId &&
+      options.turnkeySubOrgId !== existing.turnkeySubOrgId
+    ) {
+      patch.turnkeySubOrgId = options.turnkeySubOrgId;
+    }
+    if (
+      options?.turnkeyUserId &&
+      options.turnkeyUserId !== existing.turnkeyUserId
+    ) {
+      patch.turnkeyUserId = options.turnkeyUserId;
+    }
+    if (Object.keys(patch).length > 0) {
+      await db.update(endUsers).set(patch).where(eq(endUsers.id, existing.id));
+    }
     return { id: existing.id, isNew: false };
   }
 
@@ -29,6 +57,9 @@ export async function findOrCreateAppEndUser(
       id,
       appId,
       externalUserId,
+      walletAddress: normalizedWallet,
+      turnkeySubOrgId: options?.turnkeySubOrgId || null,
+      turnkeyUserId: options?.turnkeyUserId || null,
     });
     return { id, isNew: true };
   } catch (err) {

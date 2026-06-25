@@ -12,6 +12,19 @@ export type TurnkeySessionClaims = {
   sessionType: string;
 };
 
+const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+/** Lowercase EVM address for consistent reverse lookup; null if invalid/absent. */
+export function normalizeWalletAddress(
+  address: string | null | undefined,
+): string | null {
+  const trimmed = address?.trim();
+  if (!trimmed || !EVM_ADDRESS_RE.test(trimmed)) {
+    return null;
+  }
+  return trimmed.toLowerCase();
+}
+
 /**
  * Extract the middle segment of a compact JWS as a JSON object.
  * Call only after {@link verifySessionJwtSignature} succeeds — Turnkey session JWTs
@@ -44,12 +57,18 @@ export function isTurnkeyWalletConfigured(): boolean {
   );
 }
 
+export type VerifyTurnkeySessionJwtOptions = {
+  /** Skip TURNKEY_ALLOWED_ORGANIZATION_IDS check (M2M attestation relies on getWalletAccounts). */
+  skipOrgAllowlist?: boolean;
+};
+
 /**
  * Verify Turnkey session JWT signature and decode claims.
  * Returns null if invalid, expired, or organization not allowed.
  */
 export async function verifyTurnkeySessionJwt(
   sessionJwt: string,
+  options?: VerifyTurnkeySessionJwtOptions,
 ): Promise<TurnkeySessionClaims | null> {
   const trimmed = sessionJwt.trim();
   if (!trimmed) return null;
@@ -80,13 +99,15 @@ export async function verifyTurnkeySessionJwt(
       return null;
     }
 
-    const allowed = process.env.TURNKEY_ALLOWED_ORGANIZATION_IDS?.trim();
-    if (allowed) {
-      const ids = new Set(
-        allowed.split(",").map((s) => s.trim()).filter(Boolean),
-      );
-      if (!ids.has(organizationId)) {
-        return null;
+    if (!options?.skipOrgAllowlist) {
+      const allowed = process.env.TURNKEY_ALLOWED_ORGANIZATION_IDS?.trim();
+      if (allowed) {
+        const ids = new Set(
+          allowed.split(",").map((s) => s.trim()).filter(Boolean),
+        );
+        if (!ids.has(organizationId)) {
+          return null;
+        }
       }
     }
 
@@ -107,7 +128,9 @@ export async function verifyTurnkeySessionJwt(
 export async function findOrCreateEndUser(
   turnkeyUserId: string,
   walletAddress?: string,
+  turnkeySubOrgId?: string,
 ): Promise<{ id: string; isNew: boolean }> {
+  const normalizedWallet = normalizeWalletAddress(walletAddress);
   const existingRows = await db
     .select()
     .from(endUsers)
@@ -116,11 +139,15 @@ export async function findOrCreateEndUser(
   const existing = existingRows[0];
 
   if (existing) {
-    if (walletAddress && walletAddress !== existing.walletAddress) {
-      await db
-        .update(endUsers)
-        .set({ walletAddress })
-        .where(eq(endUsers.id, existing.id));
+    const patch: Partial<typeof endUsers.$inferInsert> = {};
+    if (normalizedWallet && normalizedWallet !== existing.walletAddress) {
+      patch.walletAddress = normalizedWallet;
+    }
+    if (turnkeySubOrgId && turnkeySubOrgId !== existing.turnkeySubOrgId) {
+      patch.turnkeySubOrgId = turnkeySubOrgId;
+    }
+    if (Object.keys(patch).length > 0) {
+      await db.update(endUsers).set(patch).where(eq(endUsers.id, existing.id));
     }
     return { id: existing.id, isNew: false };
   }
@@ -129,7 +156,8 @@ export async function findOrCreateEndUser(
   await db.insert(endUsers).values({
     id,
     turnkeyUserId,
-    walletAddress: walletAddress || null,
+    walletAddress: normalizedWallet,
+    turnkeySubOrgId: turnkeySubOrgId || null,
   });
 
   return { id, isNew: true };
@@ -152,7 +180,9 @@ export async function findOrCreateDeveloperUser(
   walletAddress?: string,
   name?: string,
   email?: string,
+  turnkeySubOrgId?: string,
 ): Promise<{ id: string; isNew: boolean }> {
+  const normalizedWallet = normalizeWalletAddress(walletAddress);
   const existingRows = await db
     .select()
     .from(users)
@@ -161,11 +191,15 @@ export async function findOrCreateDeveloperUser(
   const existing = existingRows[0];
 
   if (existing) {
-    if (walletAddress && walletAddress !== existing.walletAddress) {
-      await db
-        .update(users)
-        .set({ walletAddress })
-        .where(eq(users.id, existing.id));
+    const patch: Partial<typeof users.$inferInsert> = {};
+    if (normalizedWallet && normalizedWallet !== existing.walletAddress) {
+      patch.walletAddress = normalizedWallet;
+    }
+    if (turnkeySubOrgId && turnkeySubOrgId !== existing.turnkeySubOrgId) {
+      patch.turnkeySubOrgId = turnkeySubOrgId;
+    }
+    if (Object.keys(patch).length > 0) {
+      await db.update(users).set(patch).where(eq(users.id, existing.id));
     }
     return { id: existing.id, isNew: false };
   }
@@ -177,14 +211,15 @@ export async function findOrCreateDeveloperUser(
     email: safeEmail,
     name:
       name ||
-      (walletAddress
-        ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
+      (normalizedWallet
+        ? `${normalizedWallet.slice(0, 6)}...${normalizedWallet.slice(-4)}`
         : null),
     oauthProvider: "turnkey-wallet",
     oauthSubject: turnkeyUserId,
     role: "developer",
-    walletAddress: walletAddress || null,
+    walletAddress: normalizedWallet,
     turnkeyUserId,
+    turnkeySubOrgId: turnkeySubOrgId || null,
   });
 
   return { id, isNew: true };

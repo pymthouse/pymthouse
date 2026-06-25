@@ -9,6 +9,7 @@ const GRANT_SOURCES = new Set<GrantSource>([
   "manual",
   "promo",
   "plan_adjustment",
+  "onchain_deposit",
 ]);
 
 export async function GET(

@@ -349,6 +349,7 @@ export async function getProvider(): Promise<Provider> {
       "users:token",
       "device:approve",
       "admin",
+      "wallet",
     ],
 
     claims: {
@@ -359,6 +360,7 @@ export async function getProvider(): Promise<Provider> {
       "users:token": ["sub"],
       "device:approve": ["sub"],
       admin: ["sub"],
+      wallet: ["wallet_address", "turnkey_org_id"],
     },
 
     // Only support code flow
@@ -430,7 +432,7 @@ export async function getProvider(): Promise<Provider> {
             throw new Error(`Unknown resource indicator: ${resourceIndicator}`);
           }
           return {
-            scope: "openid sign:job users:read users:write users:token device:approve admin",
+            scope: "openid sign:job users:read users:write users:token device:approve admin wallet",
             audience: issuer,
             accessTokenFormat: "jwt" as const,
             accessTokenTTL: 3600,

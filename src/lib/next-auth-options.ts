@@ -74,6 +74,7 @@ export const authOptions: NextAuthOptions = {
           walletRaw || undefined,
           nameRaw || undefined,
           emailRaw || undefined,
+          claims.organizationId,
         );
 
         const userRows = await db

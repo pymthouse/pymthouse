@@ -65,6 +65,29 @@ Authorization: Basic base64(client_id:client_secret)
 | `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required) |
 | `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user attributes |
 | `DELETE` | `/api/v1/apps/{clientId}/users?externalUserId=...` | `users:write` | Deactivate user (`status: inactive`) |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/wallet` | `users:read` | Read attested wallet binding |
+| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/wallet` | `users:write` | Attest Turnkey wallet for deposit attribution (requires end-user `turnkeySessionJwt`) |
+
+### Wallet attestation (platform apps)
+
+After an end user signs in with **Turnkey Wallet Kit** in your app, your **backend** (M2M) registers the wallet binding with PymtHouse so on-chain ETH deposits to the shared signer can be attributed:
+
+```http
+POST /api/v1/apps/{clientId}/users/{externalUserId}/wallet
+Authorization: Basic base64(m2m_client_id:secret)
+Content-Type: application/json
+
+{
+  "turnkeySessionJwt": "<from Turnkey Wallet Kit session.token>",
+  "walletAddress": "0x..." 
+}
+```
+
+`walletAddress` is optional when the sub-org has a single EVM account; required when Turnkey reports multiple accounts.
+
+PymtHouse verifies the session JWT, reads authoritative addresses via Turnkey `getWalletAccounts(organization_id)`, and upserts `end_users` with `walletAddress`, `turnkeySubOrgId`, and `turnkeyUserId`. Re-posting the same binding is idempotent (200).
+
+**Builder SDK:** `client.attestUserWallet({ externalUserId, turnkeySessionJwt })` and `client.getUserWallet(externalUserId)`.
 
 ---
 

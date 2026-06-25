@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { LoginForm } from "./login-form";
 
 export default function LoginPage() {
+  const googleLoginEnabled = Boolean(process.env.GOOGLE_CLIENT_ID?.trim());
+
   return (
     <Suspense
       fallback={
@@ -10,7 +12,7 @@ export default function LoginPage() {
         </div>
       }
     >
-      <LoginForm />
+      <LoginForm googleLoginEnabled={googleLoginEnabled} />
     </Suspense>
   );
 }

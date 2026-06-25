@@ -19,13 +19,20 @@ export type ProvisionAppUserBillingResult = {
 export async function provisionAppUserBilling(input: {
   clientId: string;
   externalUserId: string;
+  walletAddress?: string;
+  turnkeySubOrgId?: string;
+  turnkeyUserId?: string;
 }): Promise<ProvisionAppUserBillingResult> {
   const externalUserId = input.externalUserId.trim();
   const appUser = await resolveOrCreateAppUser({
     clientId: input.clientId,
     externalUserId,
   });
-  const { id: endUserId } = await findOrCreateAppEndUser(input.clientId, externalUserId);
+  const { id: endUserId } = await findOrCreateAppEndUser(input.clientId, externalUserId, {
+    walletAddress: input.walletAddress,
+    turnkeySubOrgId: input.turnkeySubOrgId,
+    turnkeyUserId: input.turnkeyUserId,
+  });
 
   const sub = await ensureStarterSubscriptionForAppUser({
     clientId: input.clientId,

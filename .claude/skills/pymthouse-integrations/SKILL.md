@@ -45,6 +45,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 - Base: `/api/v1/apps/{clientId}/users` — `{clientId}` is always the **public** `app_…` id in paths.
 - Auth: Basic (`m2m_…` + secret) or Bearer (machine token).
 - **Upsert user**: `POST .../users` with `externalUserId` (idempotent; use DB upsert to avoid duplicate-key races under concurrency).
+- **Attest wallet (on-chain deposits)**: `POST .../users/{externalUserId}/wallet` with end-user `turnkeySessionJwt` (`users:write`). `GET` same path with `users:read`. Implementation: `src/lib/turnkey/attest-wallet.ts`, route `src/app/api/v1/apps/[id]/users/[externalUserId]/wallet/route.ts`.
 - **Mint user access token**: `POST .../users/{externalUserId}/token` with optional `{ "scope": "sign:job" }`. Issued JWT `sub` is **`app_users.id`** (app user row), not necessarily a `users` / `end_users` row by itself.
 - **Clearinghouse direct signer mint**: M2M `POST {issuer}/token` with `scope=sign:mint_user_token`, `external_user_id`, `audience=livepeer-remote-signer` — see `src/lib/oidc/mint-user-signer-token.ts`. Requires M2M `sign:mint_user_token` (inherited when public client has `sign:job`).
 - **Allowances**: `POST .../users/{externalUserId}/allowances`, balance `GET .../usage/balance?externalUserId=...` — OpenMeter entitlements on hosted instance.
@@ -86,6 +87,8 @@ Public client must have **device third-party initiate** enabled where required (
 | Programmatic user JWT + refresh | `src/lib/oidc/programmatic-tokens.ts` |
 | User-token route (scope checks, `oauthClientId` = public) | `src/app/api/v1/apps/[id]/users/[externalUserId]/token/route.ts` |
 | App users upsert | `src/app/api/v1/apps/[id]/users/route.ts` |
+| Wallet attestation (M2M) | `src/app/api/v1/apps/[id]/users/[externalUserId]/wallet/route.ts` |
+| Deposit resolve (internal) | `src/app/api/v1/internal/deposits/resolve/route.ts` |
 | OIDC token route (ordering: device exchange before gateway exchange) | `src/app/api/v1/oidc/[...oidc]/route.ts` |
 | Device UI verify | `src/app/api/v1/oidc/device/verify/route.ts` |
 

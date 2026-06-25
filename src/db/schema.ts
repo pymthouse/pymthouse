@@ -25,10 +25,15 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("developer"), // admin | operator | developer
   walletAddress: text("wallet_address"),
   turnkeyUserId: text("turnkey_user_id").unique(),
+  turnkeySubOrgId: text("turnkey_sub_org_id"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
-});
+}, (t) => [
+  uniqueIndex("idx_users_wallet_address")
+    .on(t.walletAddress)
+    .where(sql`${t.walletAddress} IS NOT NULL`),
+]);
 
 // Bearer tokens -- can be scoped to an admin user or an end user
 export const sessions = pgTable("sessions", {
@@ -83,6 +88,7 @@ export const endUsers = pgTable(
     name: text("name"),
     email: text("email"),
     turnkeyUserId: text("turnkey_user_id").unique(),
+    turnkeySubOrgId: text("turnkey_sub_org_id"),
     walletAddress: text("wallet_address"),
     isActive: integer("is_active").notNull().default(1),
     createdAt: text("created_at")
@@ -93,6 +99,38 @@ export const endUsers = pgTable(
     uniqueIndex("idx_end_users_app_external")
       .on(t.appId, t.externalUserId)
       .where(sql`${t.appId} IS NOT NULL AND ${t.externalUserId} IS NOT NULL`),
+    uniqueIndex("idx_end_users_wallet_address")
+      .on(t.walletAddress)
+      .where(sql`${t.walletAddress} IS NOT NULL`),
+    uniqueIndex("idx_end_users_turnkey_sub_org_id")
+      .on(t.turnkeySubOrgId)
+      .where(sql`${t.turnkeySubOrgId} IS NOT NULL`),
+  ],
+);
+
+/** Idempotent log of inbound ETH deposits to the shared company signer. */
+export const signerDepositEvents = pgTable(
+  "signer_deposit_events",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    txHash: text("tx_hash"),
+    fromAddress: text("from_address"),
+    amountWei: text("amount_wei").notNull(),
+    ethUsdPrice: text("eth_usd_price"),
+    usdMicrosCredited: text("usd_micros_credited"),
+    appId: text("app_id"),
+    externalUserId: text("external_user_id"),
+    status: text("status").notNull(), // credited | unmatched | error
+    errorMessage: text("error_message"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_signer_deposit_events_tx_hash").on(t.txHash),
+    index("idx_signer_deposit_events_from_address").on(t.fromAddress),
+    index("idx_signer_deposit_events_status").on(t.status),
   ],
 );
 

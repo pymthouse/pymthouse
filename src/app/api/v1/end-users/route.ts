@@ -8,8 +8,10 @@ import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest, hasScope } from "@/lib/auth";
 import {
   findOrCreateEndUser,
+  normalizeWalletAddress,
   verifyTurnkeySessionJwt,
 } from "@/lib/turnkey";
+import { resolveAttestedWalletAddress } from "@/lib/turnkey/attest-wallet";
 
 /**
  * GET /api/v1/end-users -- List end users (admin auth) or get current end user (Turnkey session JWT)
@@ -63,7 +65,8 @@ export async function POST(request: NextRequest) {
     await db.insert(endUsers).values({
       id,
       turnkeyUserId: body.turnkeyUserId || null,
-      walletAddress: body.walletAddress || null,
+      walletAddress: normalizeWalletAddress(body.walletAddress),
+      turnkeySubOrgId: body.turnkeySubOrgId || null,
     });
 
     const createdRows = await db
@@ -86,9 +89,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Prefer the address Turnkey attests for this sub-org over client input.
+    const { walletAddress: walletForBind } = await resolveAttestedWalletAddress({
+      organizationId: claims.organizationId,
+      clientHint: body.walletAddress,
+    });
+
     const { id, isNew } = await findOrCreateEndUser(
       claims.userId,
-      body.walletAddress,
+      walletForBind ?? undefined,
+      claims.organizationId,
     );
 
     const endUserRowsPost = await db

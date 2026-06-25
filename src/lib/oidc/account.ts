@@ -31,6 +31,11 @@ export const findAccount: FindAccount = async (_ctx, sub) => {
           claims.name = user.name;
         }
 
+        if (scopes.includes("wallet")) {
+          claims.wallet_address = user.walletAddress;
+          claims.turnkey_org_id = user.turnkeySubOrgId;
+        }
+
         return claims;
       },
     };
@@ -59,6 +64,11 @@ export const findAccount: FindAccount = async (_ctx, sub) => {
 
         if (scopes.includes("profile")) {
           claims.name = endUser.name;
+        }
+
+        if (scopes.includes("wallet")) {
+          claims.wallet_address = endUser.walletAddress;
+          claims.turnkey_org_id = endUser.turnkeySubOrgId;
         }
 
         return claims;

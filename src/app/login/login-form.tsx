@@ -194,7 +194,11 @@ function firstEvmAddressFromWallets(
   return undefined;
 }
 
-export function LoginForm() {
+export function LoginForm({
+  googleLoginEnabled = false,
+}: {
+  googleLoginEnabled?: boolean;
+}) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -326,7 +330,7 @@ export function LoginForm() {
             {isWhiteLabel ? "Sign In" : "Developer Sign In"}
           </h2>
           <p className="text-sm text-zinc-500 mb-5">
-            Sign in with passkey, email OTP, wallet, or social (via Turnkey).
+            Sign in with email OTP or crypto wallet (via Turnkey).
           </p>
           <TurnkeyLoginButton primaryColor={primaryColor} />
           {!isAdmin && (
@@ -338,21 +342,27 @@ export function LoginForm() {
                 <button
                   type="button"
                   onClick={() =>
-                    signIn("google", { callbackUrl: safeCallbackUrl })
-                  }
-                  className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
-                >
-                  Google
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    signIn("github", { callbackUrl: safeCallbackUrl })
+                    signIn("github", {
+                      callbackUrl: `/setup/wallet?to=${encodeURIComponent(safeCallbackUrl)}`,
+                    })
                   }
                   className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
                 >
                   GitHub
                 </button>
+                {googleLoginEnabled && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      signIn("google", {
+                        callbackUrl: `/setup/wallet?to=${encodeURIComponent(safeCallbackUrl)}`,
+                      })
+                    }
+                    className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
+                  >
+                    Google
+                  </button>
+                )}
               </div>
             </div>
           )}
