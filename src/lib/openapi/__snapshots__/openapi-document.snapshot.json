@@ -1,0 +1,6567 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PymtHouse Builder API",
+    "version": "1.0.0",
+    "description": "Machine-facing Builder API for integrator backends. OIDC issuer metadata (device flow, RFC 8693 token exchange at `/api/v1/oidc/token`) is published separately via OpenID Provider Configuration."
+  },
+  "components": {
+    "schemas": {
+      "ProgrammaticTokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expires_in": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Space-delimited OAuth scopes.",
+            "examples": [
+              "sign:job"
+            ]
+          },
+          "subject_type": {
+            "type": "string",
+            "enum": [
+              "app_user"
+            ]
+          },
+          "externalUserId": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Request correlation id for support and audit."
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "scope"
+        ]
+      },
+      "OAuthError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "OAuth 2.0 error code (RFC 6749 §5.2).",
+            "examples": [
+              "invalid_request",
+              "invalid_client",
+              "invalid_scope"
+            ]
+          },
+          "error_description": {
+            "type": "string",
+            "description": "Human-readable error description."
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Request correlation id for support and audit."
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "ApiKeyTokenRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Requested scopes for the user JWT. Defaults to sign:job.",
+            "examples": [
+              "sign:job"
+            ]
+          }
+        }
+      },
+      "SignerSession": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "Short-lived signer JWT (RFC 8693)."
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expires_in": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Space-delimited OAuth scopes.",
+            "examples": [
+              "sign:job"
+            ]
+          },
+          "balanceUsdMicros": {
+            "type": "string",
+            "description": "Remaining balance in USD micros."
+          },
+          "lifetimeGrantedUsdMicros": {
+            "type": "string",
+            "description": "Lifetime granted balance in USD micros."
+          },
+          "signer_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Public remote-signer base URL (snake_case canonical)."
+          },
+          "signerUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Deprecated alias of signer_url for legacy SDK consumers.",
+            "deprecated": true
+          },
+          "issued_token_type": {
+            "type": "string",
+            "enum": [
+              "urn:ietf:params:oauth:token-type:access_token"
+            ],
+            "description": "RFC 8693 issued_token_type when sourced from /token."
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Request correlation id for support and audit."
+          },
+          "token": {
+            "type": "object",
+            "properties": {
+              "accessToken": {
+                "type": "string"
+              },
+              "access_token": {
+                "type": "string"
+              },
+              "expiresIn": {
+                "type": "number"
+              },
+              "expires_in": {
+                "type": "number"
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Space-delimited OAuth scopes.",
+                "examples": [
+                  "sign:job"
+                ]
+              },
+              "balanceUsdMicros": {
+                "type": "string"
+              },
+              "lifetimeGrantedUsdMicros": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "access_token",
+              "expires_in",
+              "scope",
+              "balanceUsdMicros",
+              "lifetimeGrantedUsdMicros"
+            ],
+            "description": "Deprecated nested mirror; prefer top-level OAuth fields.",
+            "deprecated": true
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "scope",
+          "balanceUsdMicros",
+          "lifetimeGrantedUsdMicros"
+        ]
+      },
+      "ApiKeySignerSessionRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Space-delimited OAuth scopes.",
+            "examples": [
+              "sign:job"
+            ]
+          }
+        }
+      },
+      "ProgrammaticUserTokenRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Space-delimited OAuth scopes.",
+            "examples": [
+              "sign:job"
+            ]
+          }
+        }
+      },
+      "FacadeApiKeyExchangeRequest": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Long-lived per-app-user API key (`pmth_<hex>`). Rejects `pmth_cs_*` client secrets.",
+            "examples": [
+              "pmth_abc123…"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Space-delimited OAuth scopes.",
+            "examples": [
+              "sign:job"
+            ]
+          },
+          "clientId": {
+            "type": "string",
+            "pattern": "^app_[a-f0-9]+$",
+            "description": "Public Builder app client id (`app_…`).",
+            "examples": [
+              "app_3b386c81a1db1169fd2c3986"
+            ]
+          }
+        },
+        "required": [
+          "apiKey"
+        ]
+      },
+      "GenericJsonObject": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {
+          "nullable": true
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Request correlation id for support and audit."
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "LegacyValidateResponse": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "plan": {
+            "nullable": true
+          },
+          "allowedModels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subscriptionRef": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "valid"
+        ]
+      },
+      "C0ValidateResponse": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "sub": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sub"
+            ]
+          },
+          "billing_account": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "providerSlug": {
+                "type": "string"
+              },
+              "billingMode": {
+                "type": "string",
+                "enum": [
+                  "delegated",
+                  "prepay"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "providerSlug",
+              "billingMode"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "quota": {
+            "nullable": true
+          },
+          "subscriptionRef": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "valid"
+        ]
+      },
+      "C0ValidateRequest": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "AdminTokenIssueResponse": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "string"
+          },
+          "endUserId": {
+            "type": "string",
+            "nullable": true
+          },
+          "expiresInDays": {
+            "type": "number"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "token",
+          "scopes",
+          "endUserId",
+          "expiresInDays",
+          "message"
+        ]
+      },
+      "AdminTokenIssueRequest": {
+        "type": "object",
+        "properties": {
+          "scopes": {
+            "type": "string"
+          },
+          "expiresInDays": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "endUserId": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminTokenListResponse": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "endUserId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "scopes": {
+                  "type": "string"
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "endUserId",
+                "scopes",
+                "expiresAt",
+                "createdAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tokens"
+        ]
+      },
+      "AdminTokenRevokeRequest": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "sessionId"
+        ]
+      }
+    },
+    "parameters": {},
+    "securitySchemes": {
+      "m2mBasic": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "Confidential M2M client (`m2m_…` + `pmth_cs_…` secret). RFC 6749 client authentication."
+      },
+      "bearerApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Per-app-user API key (`pmth_<hex>`). Not an M2M client secret."
+      },
+      "bearerUserJwt": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Short-lived user access token minted by Builder API or OIDC."
+      },
+      "adminSession": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Dashboard admin session or admin-scoped platform token."
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/apps/{clientId}/auth/api-key/token": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Exchange API key for user access token",
+        "description": "RFC 6750 bearer exchange: long-lived `pmth_*` per-app-user API key → short-lived user JWT (subject token for RFC 8693 signer exchange). Rejects `pmth_cs_*` M2M client secrets.",
+        "security": [
+          {
+            "bearerApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User access token (subject token for signer exchange).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgrammaticTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (including client secret presented as API key).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/auth/api-key/signer-session": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Exchange API key for signer session (canonical)",
+        "description": "Single-call path: `pmth_*` API key → signer JWT via internal user-token mint and RFC 8693-equivalent exchange. Preferred over dashboard BFF `/api/pymthouse/keys/exchange`.",
+        "security": [
+          {
+            "bearerApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeySignerSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical SignerSession envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignerSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users/{externalUserId}/token": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Mint programmatic user JWT (M2M)",
+        "description": "Confidential client (`m2m_*` + secret) mints a user-scoped access token. Subject-token acquisition strategy for RFC 8693 signer exchange.",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgrammaticUserTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Programmatic user token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgrammaticTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scope or request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "M2M authentication failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (scope or cross-app).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App or user not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pymthouse/keys/exchange": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Facade API-key → signer session (dashboard BFF)",
+        "description": "Integrator-hosted facade route (not served by pymthouse core). Documented for SDK compatibility. Response MUST match SignerSession. Prefer pymthouse `/api/v1/apps/{clientId}/auth/api-key/signer-session` for direct issuer access.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FacadeApiKeyExchangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SignerSession envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignerSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Exchange failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/oidc/token": {
+      "post": {
+        "tags": [
+          "OIDC"
+        ],
+        "summary": "OIDC token endpoint (RFC 8693 signer exchange)",
+        "description": "Served by oidc-provider. Use OpenID Configuration for full parameter matrix. Signer JWT exchange: `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token` from user JWT mint routes above.",
+        "skipCompletenessCheck": true,
+        "responses": {
+          "200": {
+            "description": "Token response per OAuth/OIDC."
+          },
+          "400": {
+            "description": "OAuth error."
+          }
+        }
+      }
+    },
+    "/api/v1/apps": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "List developer apps",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "App list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Create developer app",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Get developer app",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Update developer app",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Delete developer app",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List provisioned users",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Upsert provisioned user",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update provisioned user",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Deactivate provisioned user",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users/{externalUserId}/keys": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List user API keys",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Create user API key",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Revoke user API key",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users/{externalUserId}/allowances": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List user allowances",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Grant user allowance",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users/{externalUserId}/subscription": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get user subscription",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users/{externalUserId}/credits": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Grant user credits",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/users/{externalUserId}/wallet": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get user wallet",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Integrator-defined stable user id."
+            },
+            "required": true,
+            "description": "Integrator-defined stable user id.",
+            "name": "externalUserId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/keys": {
+      "get": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "List app-level API keys (deprecated)",
+        "description": "Deprecated: prefer per-user keys at `/users/{externalUserId}/keys`. Sunset after SDK migration.",
+        "deprecated": true,
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Create app-level API key (deprecated)",
+        "deprecated": true,
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Revoke app-level API key (deprecated)",
+        "deprecated": true,
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/credentials": {
+      "get": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "List app credentials (deprecated)",
+        "description": "Deprecated overlap with `/keys` and M2M client rotation. Use OpenAPI Credentials tag.",
+        "deprecated": true,
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Rotate app credentials (deprecated)",
+        "deprecated": true,
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/usage": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Usage summary",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/usage/balance": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Usage balance (M2M)",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/usage/me": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Usage summary (end-user)",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/usage/me/balance": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Usage balance (end-user session)",
+        "description": "Deprecated overlap with `/usage/balance` for M2M callers. Prefer `/usage/balance?externalUserId=…`.",
+        "deprecated": true,
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/usage/signed-tickets": {
+      "post": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Record signed ticket usage",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/billing": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Billing profile",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/billing/checkout": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Create billing checkout",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/billing/invoices": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "List invoices",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/billing/stripe": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Stripe billing status",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Disconnect Stripe billing",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/billing/stripe/connect": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Stripe Connect",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/billing/stripe/callback": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Stripe OAuth callback",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/plans": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "List plans",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Create plan",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Update plan",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Delete plan",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/plans/{planId}/sync": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Sync plan to OpenMeter",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/starter-plan": {
+      "put": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Update starter plan config",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Starter plan config",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/discovery-profiles": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "List discovery profiles",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Create discovery profile",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/discovery-profiles/{profileId}": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Get discovery profile",
+        "security": [
+          {
+            "m2mBasic": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "profileId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Update discovery profile",
+        "security": [
+          {
+            "m2mBasic": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "profileId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Delete discovery profile",
+        "security": [
+          {
+            "m2mBasic": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "profileId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/manifest": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "App manifest",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Update app manifest",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/publish": {
+      "post": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Publish app",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/submit": {
+      "post": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Submit app for review",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/revert-draft": {
+      "post": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Revert draft manifest",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/settings": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "App settings",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Update app settings",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/admins": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "List app admins",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Add app admin",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Remove app admin",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/domains": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Custom domains",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Add custom domain",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Remove custom domain",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/openmeter": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "OpenMeter config",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Update OpenMeter config",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/{clientId}/signer/routing": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Signer routing config",
+        "security": [
+          {
+            "m2mBasic": []
+          },
+          {
+            "bearerUserJwt": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^app_[a-f0-9]+$",
+              "description": "Public Builder app client id (`app_…`).",
+              "examples": [
+                "app_3b386c81a1db1169fd2c3986"
+              ]
+            },
+            "required": true,
+            "description": "Public Builder app client id (`app_…`).",
+            "name": "clientId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/apps/branding": {
+      "get": {
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Resolve app branding by host",
+        "responses": {
+          "200": {
+            "description": "Branding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericJsonObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "Service healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/validate": {
+      "get": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Validate API key (legacy GET)",
+        "deprecated": true,
+        "description": "Deprecated: Bearer validation for legacy BPP consumers. Prefer POST validate (C0) when enabled.",
+        "security": [
+          {
+            "bearerApiKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyValidateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid key"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Validate API key (C0 POST)",
+        "description": "Provider-neutral validate when `BPP_VALIDATE_V2=1`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/C0ValidateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "C0 validate body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/C0ValidateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing key"
+          },
+          "401": {
+            "description": "Invalid key"
+          },
+          "404": {
+            "description": "Feature disabled"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens": {
+      "post": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Issue admin/platform bearer token",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminTokenIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Issued token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTokenIssueResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "List admin/platform tokens",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTokenListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Revoke admin/platform token",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminTokenRevokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked"
+          }
+        }
+      }
+    },
+    "/api/v1/ingest/events": {
+      "post": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Ingest signed ticket events",
+        "description": "Public alias of `/api/v1/internal/ingest/signed-ticket`.",
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketplace": {
+      "get": {
+        "tags": [
+          "Marketplace"
+        ],
+        "summary": "List marketplace apps",
+        "responses": {
+          "200": {
+            "description": "Marketplace catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketplace/{id}": {
+      "get": {
+        "tags": [
+          "Marketplace"
+        ],
+        "summary": "Get marketplace app",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Marketplace entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/pipeline-catalog": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Pipeline capability catalog",
+        "responses": {
+          "200": {
+            "description": "Catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipeline-pricing": {
+      "get": {
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Pipeline pricing table",
+        "responses": {
+          "200": {
+            "description": "Pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 JSON"
+          }
+        }
+      }
+    },
+    "/api/v1/docs": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Interactive API reference (Scalar)",
+        "responses": {
+          "200": {
+            "description": "HTML API reference"
+          }
+        }
+      }
+    },
+    "/api/v1/signer": {
+      "get": {
+        "tags": [
+          "Signer"
+        ],
+        "summary": "Signer configuration",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signer config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Signer"
+        ],
+        "summary": "Update signer configuration",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/signer/cli-status": {
+      "get": {
+        "tags": [
+          "Signer"
+        ],
+        "summary": "Signer CLI status",
+        "responses": {
+          "200": {
+            "description": "CLI status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/signer/logs": {
+      "get": {
+        "tags": [
+          "Signer"
+        ],
+        "summary": "Signer logs",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log tail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/signer/control": {
+      "post": {
+        "tags": [
+          "Signer"
+        ],
+        "summary": "Signer control actions",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Control result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/billing": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Platform billing overview",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Billing overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/end-users": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List end users",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "End users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Create end user",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "List subscriptions",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Create subscription",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Cancel subscription",
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled"
+          }
+        }
+      }
+    },
+    "/api/v1/prices/eth-usd": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "ETH/USD spot price",
+        "responses": {
+          "200": {
+            "description": "Price snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "PymtHouse API origin"
+    }
+  ],
+  "externalDocs": {
+    "description": "OIDC issuer discovery (device flow, RFC 8693 token endpoint)",
+    "url": "http://localhost:3001/api/v1/oidc/.well-known/openid-configuration"
+  }
+}

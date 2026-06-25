@@ -1,21 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
-import { resolveActiveAppApiKey } from "@/lib/app-api-keys";
 import {
   ApiKeyCredentialError,
   parseAppApiKeyBearer,
   parseScopeList,
 } from "@/lib/openapi/api-key";
-import { ApiKeyTokenRequestBodySchema } from "@/lib/openapi/schemas/credentials";
-import { getProviderApp } from "@/lib/provider-apps";
+import { ApiKeySignerSessionRequestBodySchema } from "@/lib/openapi/schemas/credentials";
 import {
-  issueProgrammaticTokens,
-  ProgrammaticTokenError,
-} from "@/lib/oidc/programmatic-tokens";
+  ApiKeySignerSessionError,
+  mintSignerSessionFromAppApiKey,
+} from "@/lib/oidc/api-key-signer-session";
+import { getProviderApp } from "@/lib/provider-apps";
 
 /**
- * Exchange a long-lived dashboard API key (Bearer pmth_*) for short-lived user JWTs.
- * Intended for SDK / CLI use before RFC 8693 signer session exchange.
+ * Canonical single-call exchange: pmth_* API key → SignerSession (signer JWT).
  */
 export async function POST(
   request: NextRequest,
@@ -65,26 +63,8 @@ export async function POST(
     );
   }
 
-  const resolved = await resolveActiveAppApiKey(apiKey, clientId);
-  if (!resolved || resolved.developerAppId !== app.id) {
-    await writeAuditLog({
-      clientId: app.id,
-      action: "api_key_token_exchange",
-      status: "unauthorized",
-      correlationId,
-    });
-    return NextResponse.json(
-      {
-        error: "invalid_client",
-        error_description: "invalid or revoked API key",
-        correlation_id: correlationId,
-      },
-      { status: 401 },
-    );
-  }
-
   const rawBody = await request.json().catch(() => ({}));
-  const parsedBody = ApiKeyTokenRequestBodySchema.safeParse(rawBody);
+  const parsedBody = ApiKeySignerSessionRequestBodySchema.safeParse(rawBody);
   if (!parsedBody.success) {
     return NextResponse.json(
       {
@@ -96,27 +76,31 @@ export async function POST(
     );
   }
 
-  const scopes = parseScopeList(parsedBody.data.scope);
-
-  let tokens;
   try {
-    tokens = await issueProgrammaticTokens({
-      developerAppId: resolved.developerAppId,
-      oauthClientId: resolved.publicClientId,
-      appUserId: resolved.appUserId,
-      scopes,
+    const session = await mintSignerSessionFromAppApiKey({
+      apiKey,
+      publicClientId: clientId,
+      scope: parsedBody.data.scope,
+    });
+
+    await writeAuditLog({
+      clientId: app.id,
+      action: "api_key_signer_session_exchange",
+      status: "success",
+      correlationId,
+    });
+
+    return NextResponse.json({
+      ...session,
+      correlation_id: correlationId,
     });
   } catch (err) {
-    if (err instanceof ProgrammaticTokenError) {
+    if (err instanceof ApiKeySignerSessionError) {
       await writeAuditLog({
         clientId: app.id,
-        action: "api_key_token_exchange",
+        action: "api_key_signer_session_exchange",
         status: err.code,
         correlationId,
-        metadata: {
-          externalUserId: resolved.externalUserId,
-          message: err.message,
-        },
       });
       return NextResponse.json(
         {
@@ -124,27 +108,9 @@ export async function POST(
           error_description: err.message,
           correlation_id: correlationId,
         },
-        { status: 400 },
+        { status: err.status },
       );
     }
     throw err;
   }
-
-  await writeAuditLog({
-    clientId: app.id,
-    action: "api_key_token_exchange",
-    status: "success",
-    correlationId,
-    metadata: {
-      keyId: resolved.apiKeyId,
-      externalUserId: resolved.externalUserId,
-      scopes,
-    },
-  });
-
-  return NextResponse.json({
-    ...tokens,
-    externalUserId: resolved.externalUserId,
-    correlation_id: correlationId,
-  });
 }

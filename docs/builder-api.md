@@ -19,6 +19,25 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 - Builder API paths use `/api/v1/apps/{clientId}/...`.
 - Internal database IDs are implementation details and are not part of the public API contract.
 
+## OpenAPI
+
+Machine-readable contract and interactive reference:
+
+- `GET /api/v1/openapi.json` — OpenAPI 3.1 document (generated from route schemas).
+- `GET /api/v1/docs` — Scalar API reference UI.
+
+OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration` (not duplicated in OpenAPI).
+
+## Credential types (do not mix)
+
+| Prefix | Role | RFC usage |
+| --- | --- | --- |
+| `pmth_<hex>` | Per-app-user **API key** | Bearer credential (`Authorization: Bearer pmth_…`) on API-key exchange routes |
+| `pmth_cs_<hex>` | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
+| `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
+
+Presenting `pmth_cs_*` to `POST …/auth/api-key/token` or `…/auth/api-key/signer-session` returns **`400 invalid_request`** (not `401 invalid_client`).
+
 ## Authentication
 
 ### 1) Obtain machine token (client credentials grant)
@@ -82,6 +101,28 @@ Authorization: Basic base64(client_id:client_secret)
 - Requested scope must be a subset of the **public app client’s** allowed scopes (see product-specific validation in code).
 - `admin` is explicitly rejected.
 - Default scope when omitted: `sign:job`.
+
+---
+
+## API key → user JWT (subject token)
+
+`POST /api/v1/apps/{clientId}/auth/api-key/token`
+
+- `Authorization: Bearer pmth_<hex>` (per-app-user API key only).
+- Optional JSON body: `{ "scope": "sign:job" }`.
+- Returns a short-lived user access JWT suitable as `subject_token` for RFC 8693 signer exchange.
+
+---
+
+## API key → signer session (canonical single call)
+
+`POST /api/v1/apps/{clientId}/auth/api-key/signer-session`
+
+- Same Bearer `pmth_*` authentication as above.
+- Returns the canonical **`SignerSession`** envelope: `access_token`, `expires_in`, `scope`, `balanceUsdMicros`, `lifetimeGrantedUsdMicros`, optional `signer_url` / legacy `signerUrl`.
+- Preferred over integrator facade routes (`POST …/api/pymthouse/keys/exchange`) when calling the issuer directly.
+
+Integrator facades should pass through this response shape unchanged.
 
 ---
 

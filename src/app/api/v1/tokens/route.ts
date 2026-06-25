@@ -5,6 +5,10 @@ import { db } from "@/db/index";
 import { sessions, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { createSession, revokeSession, authenticateRequest, hasScope } from "@/lib/auth";
+import {
+  AdminTokenIssueRequestSchema,
+  AdminTokenRevokeRequestSchema,
+} from "@/lib/openapi/schemas/misc";
 
 /**
  * POST /api/v1/tokens -- Issue a new bearer token (scoped to an end user or admin)
@@ -15,7 +19,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  const rawBody = await request.json();
+  const parsed = AdminTokenIssueRequestSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid request body" },
+      { status: 400 },
+    );
+  }
+  const body = parsed.data;
   const scopes = body.scopes || "sign:job";
   const expiresInDays = body.expiresInDays || 90;
   const endUserId = body.endUserId || undefined;
@@ -89,15 +101,16 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
-  if (!body.sessionId) {
+  const rawBody = await request.json();
+  const parsed = AdminTokenRevokeRequestSchema.safeParse(rawBody);
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "sessionId is required" },
-      { status: 400 }
+      { error: parsed.error.issues[0]?.message ?? "sessionId is required" },
+      { status: 400 },
     );
   }
 
-  await revokeSession(body.sessionId);
+  await revokeSession(parsed.data.sessionId);
   return NextResponse.json({ message: "Token revoked" });
 }
 

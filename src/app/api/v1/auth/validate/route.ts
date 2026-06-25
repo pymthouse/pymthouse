@@ -13,6 +13,7 @@ import {
   type BillingMode,
 } from "@/lib/bpp/validate-response-c0";
 import { bppValidateV2Enabled } from "@/lib/billing/feature-flags";
+import { C0ValidateRequestBodySchema } from "@/lib/openapi/schemas/misc";
 
 /** Stable provider slug for the pymthouse reference billing provider. */
 const PROVIDER_SLUG = "pymthouse";
@@ -198,12 +199,10 @@ async function resolveBillingMode(): Promise<BillingMode> {
 /** Read `{ key }` from a JSON body without throwing on malformed input. */
 async function readKeyFromBody(request: NextRequest): Promise<string | null> {
   try {
-    const body = (await request.json()) as unknown;
-    if (body && typeof body === "object" && "key" in body) {
-      const key = (body as { key?: unknown }).key;
-      if (typeof key === "string" && key.length > 0) {
-        return key;
-      }
+    const body = await request.json();
+    const parsed = C0ValidateRequestBodySchema.safeParse(body);
+    if (parsed.success) {
+      return parsed.data.key;
     }
   } catch {
     // Malformed/empty body → treated as a missing key below.
