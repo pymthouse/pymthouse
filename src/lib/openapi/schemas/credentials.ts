@@ -1,7 +1,6 @@
 import { z } from "@/lib/openapi/zod";
 import {
   CorrelationIdSchema,
-  OAuthErrorSchema,
   PublicClientIdSchema,
   ScopeStringSchema,
 } from "./common";
@@ -113,4 +112,4 @@ export const FacadeApiKeyExchangeRequestBodySchema = z
   })
   .openapi("FacadeApiKeyExchangeRequest");
 
-export const OAuthErrorResponseSchema = OAuthErrorSchema;
+export { OAuthErrorSchema as OAuthErrorResponseSchema } from "./common";

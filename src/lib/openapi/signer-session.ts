@@ -1,4 +1,5 @@
 import type { SignerSession } from "@/lib/openapi/schemas/credentials-types";
+import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 export function resolvePublicSignerUrl(): string | undefined {
   const fromEnv =
@@ -7,7 +8,7 @@ export function resolvePublicSignerUrl(): string | undefined {
   if (!fromEnv) {
     return undefined;
   }
-  return fromEnv.replace(/\/+$/, "");
+  return trimTrailingSlashes(fromEnv);
 }
 
 export function buildSignerSessionEnvelope(input: {

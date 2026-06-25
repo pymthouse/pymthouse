@@ -1,9 +1,13 @@
 import { defineRoute } from "@/lib/openapi/registry";
 import {
-  OAuthErrorSchema,
   PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
 } from "@/lib/openapi/schemas/common";
+import {
+  builderErrorResponses,
+  genericJsonObject,
+  jsonSuccess,
+} from "@/lib/openapi/routes/shared";
 import { z } from "@/lib/openapi/zod";
 
 const clientId = PublicClientIdPathParamSchema;
@@ -17,59 +21,49 @@ function userPath(suffix: string) {
   return `/api/v1/apps/{clientId}/users/{externalUserId}${suffix}`;
 }
 
-const jsonObject = z.object({}).passthrough().openapi("GenericJsonObject");
+type HttpMethod = "get" | "post" | "put" | "delete" | "patch";
 
-function registerAppCrud(
-  method: "get" | "post" | "put" | "delete" | "patch",
+function registerScopedCrud(
+  scope: "app" | "user",
+  method: HttpMethod,
   suffix: string,
   summary: string,
   options?: { deprecated?: boolean; description?: string; tags?: string[] },
 ) {
   defineRoute({
     method,
-    path: appPath(suffix),
-    tags: options?.tags ?? ["Apps"],
-    summary,
-    description: options?.description,
-    deprecated: options?.deprecated,
-    security: [{ m2mBasic: [] }, { bearerUserJwt: [] }],
-    request: { params: z.object({ clientId }) },
-    responses: {
-      200: { description: "Success", content: { "application/json": { schema: jsonObject } } },
-      400: { description: "Bad request", content: { "application/json": { schema: OAuthErrorSchema } } },
-      401: { description: "Unauthorized", content: { "application/json": { schema: OAuthErrorSchema } } },
-      403: { description: "Forbidden", content: { "application/json": { schema: OAuthErrorSchema } } },
-      404: { description: "Not found", content: { "application/json": { schema: OAuthErrorSchema } } },
-    },
-  });
-}
-
-function registerUserCrud(
-  method: "get" | "post" | "put" | "delete" | "patch",
-  suffix: string,
-  summary: string,
-  options?: { deprecated?: boolean; description?: string; tags?: string[] },
-) {
-  defineRoute({
-    method,
-    path: userPath(suffix),
-    tags: options?.tags ?? ["Users"],
+    path: scope === "app" ? appPath(suffix) : userPath(suffix),
+    tags: options?.tags ?? (scope === "app" ? ["Apps"] : ["Users"]),
     summary,
     description: options?.description,
     deprecated: options?.deprecated,
     security: [{ m2mBasic: [] }, { bearerUserJwt: [] }],
     request: {
-      params: z.object({ clientId, externalUserId }),
+      params:
+        scope === "app"
+          ? z.object({ clientId })
+          : z.object({ clientId, externalUserId }),
     },
     responses: {
-      200: { description: "Success", content: { "application/json": { schema: jsonObject } } },
-      400: { description: "Bad request", content: { "application/json": { schema: OAuthErrorSchema } } },
-      401: { description: "Unauthorized", content: { "application/json": { schema: OAuthErrorSchema } } },
-      403: { description: "Forbidden", content: { "application/json": { schema: OAuthErrorSchema } } },
-      404: { description: "Not found", content: { "application/json": { schema: OAuthErrorSchema } } },
+      200: jsonSuccess,
+      ...builderErrorResponses,
     },
   });
 }
+
+const registerAppCrud = (
+  method: HttpMethod,
+  suffix: string,
+  summary: string,
+  options?: { deprecated?: boolean; description?: string; tags?: string[] },
+) => registerScopedCrud("app", method, suffix, summary, options);
+
+const registerUserCrud = (
+  method: HttpMethod,
+  suffix: string,
+  summary: string,
+  options?: { deprecated?: boolean; description?: string; tags?: string[] },
+) => registerScopedCrud("user", method, suffix, summary, options);
 
 // Apps catalog
 defineRoute({
@@ -79,7 +73,7 @@ defineRoute({
   summary: "List developer apps",
   security: [{ adminSession: [] }],
   responses: {
-    200: { description: "App list", content: { "application/json": { schema: jsonObject } } },
+    200: { description: "App list", content: { "application/json": { schema: genericJsonObject } } },
   },
 });
 
@@ -90,7 +84,7 @@ defineRoute({
   summary: "Create developer app",
   security: [{ adminSession: [] }],
   responses: {
-    201: { description: "Created", content: { "application/json": { schema: jsonObject } } },
+    201: { description: "Created", content: { "application/json": { schema: genericJsonObject } } },
   },
 });
 
@@ -184,7 +178,7 @@ defineRoute({
     }),
   },
   responses: {
-    200: { description: "Profile", content: { "application/json": { schema: jsonObject } } },
+    200: jsonSuccess,
     404: { description: "Not found" },
   },
 });
@@ -201,7 +195,7 @@ defineRoute({
     }),
   },
   responses: {
-    200: { description: "Updated", content: { "application/json": { schema: jsonObject } } },
+    200: jsonSuccess,
   },
 });
 defineRoute({
@@ -244,6 +238,6 @@ defineRoute({
   tags: ["Apps"],
   summary: "Resolve app branding by host",
   responses: {
-    200: { description: "Branding", content: { "application/json": { schema: jsonObject } } },
+    200: { description: "Branding", content: { "application/json": { schema: genericJsonObject } } },
   },
 });

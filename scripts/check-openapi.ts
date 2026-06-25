@@ -3,7 +3,7 @@
  * Fail CI when a public Builder API route handler is not registered in OpenAPI.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 
 import { registeredRouteKeysForCompleteness, routeKey } from "../src/lib/openapi/registry";
 import "../src/lib/openapi/routes/index";
@@ -23,6 +23,8 @@ const EXCLUDED_FILES = new Set([
   "docs/route.ts",
 ]);
 
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+
 function shouldExclude(relPath: string): boolean {
   if (EXCLUDED_FILES.has(relPath)) {
     return true;
@@ -31,7 +33,9 @@ function shouldExclude(relPath: string): boolean {
 }
 
 function toOpenApiPath(fileRel: string): string {
-  const withoutRoute = fileRel.replace(/\/route\.ts$/, "");
+  const withoutRoute = fileRel.endsWith("/route.ts")
+    ? fileRel.slice(0, -"/route.ts".length)
+    : fileRel;
   const segments = withoutRoute.split("/").map((segment, index, all) => {
     if (segment.startsWith("[") && segment.endsWith("]")) {
       const inner = segment.slice(1, -1);
@@ -74,8 +78,8 @@ function collectRouteFiles(dir: string, base = ""): string[] {
 
 function exportedMethods(source: string): string[] {
   const methods: string[] = [];
-  for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
-    if (new RegExp(`export\\s+async\\s+function\\s+${method}\\b`).test(source)) {
+  for (const method of HTTP_METHODS) {
+    if (source.includes(`export async function ${method}`)) {
       methods.push(method);
     }
   }
@@ -102,7 +106,8 @@ function main() {
 
   if (missing.length > 0) {
     console.error("OpenAPI registry missing routes:\n");
-    for (const key of missing.sort()) {
+    const sortedMissing = missing.toSorted((left, right) => left.localeCompare(right));
+    for (const key of sortedMissing) {
       console.error(`  - ${key}`);
     }
     console.error(

@@ -3,7 +3,6 @@ import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import {
   ApiKeyCredentialError,
   parseAppApiKeyBearer,
-  parseScopeList,
 } from "@/lib/openapi/api-key";
 import { ApiKeySignerSessionRequestBodySchema } from "@/lib/openapi/schemas/credentials";
 import {

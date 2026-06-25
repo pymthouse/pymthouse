@@ -1,5 +1,9 @@
 import { resolveActiveAppApiKey } from "@/lib/app-api-keys";
-import { ApiKeyCredentialError, parseScopeList } from "@/lib/openapi/api-key";
+import {
+  ApiKeyCredentialError,
+  parseAppApiKeyBearer,
+  parseScopeList,
+} from "@/lib/openapi/api-key";
 import { buildSignerSessionEnvelope, resolvePublicSignerUrl } from "@/lib/openapi/signer-session";
 import {
   issueProgrammaticTokens,
