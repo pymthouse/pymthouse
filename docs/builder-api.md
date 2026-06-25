@@ -120,7 +120,7 @@ Authorization: Basic base64(client_id:client_secret)
 
 - Same Bearer `pmth_*` authentication as above.
 - Returns the canonical **`SignerSession`** envelope: `access_token`, `expires_in`, `scope`, `balanceUsdMicros`, `lifetimeGrantedUsdMicros`, optional `signer_url` / legacy `signerUrl`.
-- Preferred over integrator facade routes (`POST …/api/pymthouse/keys/exchange`) when calling the issuer directly.
+- Integrator/dashboard facades may expose `POST …/api/pymthouse/keys/exchange`, but that route is external to PymtHouse and not part of this OpenAPI contract.
 
 Integrator facades should pass through this response shape unchanged.
 

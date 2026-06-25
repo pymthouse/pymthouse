@@ -1,7 +1,6 @@
 import { z } from "@/lib/openapi/zod";
 import {
   CorrelationIdSchema,
-  PublicClientIdSchema,
   ScopeStringSchema,
 } from "./common";
 
@@ -103,13 +102,5 @@ export const ApiKeySignerSessionRequestBodySchema = z
     scope: ScopeStringSchema.optional(),
   })
   .openapi("ApiKeySignerSessionRequest");
-
-export const FacadeApiKeyExchangeRequestBodySchema = z
-  .object({
-    apiKey: AppApiKeyBearerSchema,
-    scope: ScopeStringSchema.optional(),
-    clientId: PublicClientIdSchema.optional(),
-  })
-  .openapi("FacadeApiKeyExchangeRequest");
 
 export { OAuthErrorSchema as OAuthErrorResponseSchema } from "./common";

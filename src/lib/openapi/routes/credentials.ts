@@ -1,13 +1,11 @@
 import { defineRoute } from "@/lib/openapi/registry";
 import {
-  OAuthErrorSchema,
   PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
 } from "@/lib/openapi/schemas/common";
 import {
   ApiKeySignerSessionRequestBodySchema,
   ApiKeyTokenRequestBodySchema,
-  FacadeApiKeyExchangeRequestBodySchema,
   OAuthErrorResponseSchema,
   ProgrammaticTokenResponseSchema,
   ProgrammaticUserTokenRequestBodySchema,
@@ -136,38 +134,6 @@ defineRoute({
     404: {
       description: "App or user not found.",
       content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-  },
-});
-
-defineRoute({
-  method: "post",
-  path: "/api/pymthouse/keys/exchange",
-  tags: ["Credentials"],
-  summary: "Facade API-key → signer session (dashboard BFF)",
-  description:
-    "Integrator-hosted facade route (not served by pymthouse core). Documented for SDK " +
-    "compatibility. Response MUST match SignerSession. Prefer pymthouse " +
-    "`/api/v1/apps/{clientId}/auth/api-key/signer-session` for direct issuer access.",
-  request: {
-    body: {
-      content: {
-        "application/json": { schema: FacadeApiKeyExchangeRequestBodySchema },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "SignerSession envelope.",
-      content: { "application/json": { schema: SignerSessionSchema } },
-    },
-    400: {
-      description: "Invalid request.",
-      content: { "application/json": { schema: OAuthErrorSchema } },
-    },
-    401: {
-      description: "Exchange failed.",
-      content: { "application/json": { schema: OAuthErrorSchema } },
     },
   },
 });
