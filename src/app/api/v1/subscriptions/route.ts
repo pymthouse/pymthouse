@@ -1,13 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { subscriptions } from "@/db/schema";
-import {
-  deprecatedLocalSubscriptionMutationResponse,
-  LOCAL_SUBSCRIPTION_DEPRECATION_HEADERS,
-} from "@/lib/deprecated-local-subscription-api";
+import { LOCAL_SUBSCRIPTION_DEPRECATION_HEADERS } from "@/lib/deprecated-local-subscription-api";
 
 async function getSessionUserId() {
   const session = await getServerSession(authOptions);
@@ -15,6 +12,7 @@ async function getSessionUserId() {
   return userId ?? null;
 }
 
+/** Read-only cache of local subscription rows. OpenMeter is authoritative. */
 export async function GET() {
   const userId = await getSessionUserId();
   if (!userId) {
@@ -34,12 +32,4 @@ export async function GET() {
     },
     { headers: LOCAL_SUBSCRIPTION_DEPRECATION_HEADERS },
   );
-}
-
-export async function POST(_request: NextRequest) {
-  return deprecatedLocalSubscriptionMutationResponse();
-}
-
-export async function DELETE(_request: NextRequest) {
-  return deprecatedLocalSubscriptionMutationResponse();
 }

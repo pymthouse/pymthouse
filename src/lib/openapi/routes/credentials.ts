@@ -1,4 +1,4 @@
-import { defineRoute } from "@/lib/openapi/registry";
+import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
   PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
@@ -16,9 +16,7 @@ import { z } from "@/lib/openapi/zod";
 const clientIdParam = PublicClientIdPathParamSchema;
 const externalUserIdParam = ExternalUserIdParamSchema;
 
-defineRoute({
-  method: "post",
-  path: "/api/v1/apps/{clientId}/auth/api-key/token",
+defineRouteMetadata("post", "/api/v1/apps/{clientId}/auth/api-key/token", {
   tags: ["Credentials"],
   summary: "Exchange API key for user access token",
   description:
@@ -55,14 +53,12 @@ defineRoute({
   },
 });
 
-defineRoute({
-  method: "post",
-  path: "/api/v1/apps/{clientId}/auth/api-key/signer-session",
+defineRouteMetadata("post", "/api/v1/apps/{clientId}/auth/api-key/signer-session", {
   tags: ["Credentials"],
   summary: "Exchange API key for signer session (canonical)",
   description:
     "Single-call path: `pmth_*` API key → signer JWT via internal user-token mint and " +
-    "RFC 8693-equivalent exchange. Preferred over dashboard BFF `/api/pymthouse/keys/exchange`.",
+    "RFC 8693-equivalent exchange.",
   security: [{ bearerApiKey: [] }],
   request: {
     params: z.object({ clientId: clientIdParam }),
@@ -92,9 +88,7 @@ defineRoute({
   },
 });
 
-defineRoute({
-  method: "post",
-  path: "/api/v1/apps/{clientId}/users/{externalUserId}/token",
+defineRouteMetadata("post", "/api/v1/apps/{clientId}/users/{externalUserId}/token", {
   tags: ["Credentials"],
   summary: "Mint programmatic user JWT (M2M)",
   description:
@@ -138,16 +132,14 @@ defineRoute({
   },
 });
 
-defineRoute({
-  method: "post",
-  path: "/api/v1/oidc/token",
+defineRouteMetadata("post", "/api/v1/oidc/token", {
+  virtual: true,
   tags: ["OIDC"],
   summary: "OIDC token endpoint (RFC 8693 signer exchange)",
   description:
     "Served by oidc-provider. Use OpenID Configuration for full parameter matrix. " +
     "Signer JWT exchange: `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with " +
     "`subject_token` from user JWT mint routes above.",
-  skipCompletenessCheck: true,
   responses: {
     200: { description: "Token response per OAuth/OIDC." },
     400: { description: "OAuth error." },

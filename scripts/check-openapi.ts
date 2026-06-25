@@ -1,123 +1,64 @@
 #!/usr/bin/env npx tsx
 /**
- * Fail CI when a public Builder API route handler is not registered in OpenAPI.
+ * Drift guard: public route handlers must have OpenAPI metadata;
+ * metadata must not reference removed handlers (except virtual routes).
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import {
+  OPENAPI_PUBLIC_ROUTE_KEYS,
+} from "../src/lib/openapi/generated-route-inventory";
+import {
+  registeredMetadataKeys,
+  virtualMetadataEntries,
+} from "../src/lib/openapi/route-metadata";
+import { routeKey } from "../src/lib/openapi/route-scan";
 
-import { registeredRouteKeysForCompleteness, routeKey } from "../src/lib/openapi/registry";
 import "../src/lib/openapi/routes/index";
 
-const API_ROOT = join(process.cwd(), "src/app/api/v1");
-
-const EXCLUDED_PREFIXES = [
-  "oidc/",
-  "internal/",
-  "admin/",
-  "webhooks/",
-  "oidc/interaction/",
-];
-
-const EXCLUDED_FILES = new Set([
-  "openapi.json/route.ts",
-  "docs/route.ts",
-]);
-
-const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
-
-function shouldExclude(relPath: string): boolean {
-  if (EXCLUDED_FILES.has(relPath)) {
-    return true;
-  }
-  return EXCLUDED_PREFIXES.some((prefix) => relPath.startsWith(prefix));
-}
-
-function toOpenApiPath(fileRel: string): string {
-  const withoutRoute = fileRel.endsWith("/route.ts")
-    ? fileRel.slice(0, -"/route.ts".length)
-    : fileRel;
-  const segments = withoutRoute.split("/").map((segment, index, all) => {
-    if (segment.startsWith("[") && segment.endsWith("]")) {
-      const inner = segment.slice(1, -1);
-      const underApps = all[0] === "apps" && all[1]?.startsWith("[");
-      if (inner === "id" && underApps) {
-        return "{clientId}";
-      }
-      if (inner === "externalUserId") {
-        return "{externalUserId}";
-      }
-      if (inner === "planId") {
-        return "{planId}";
-      }
-      if (inner === "profileId") {
-        return "{profileId}";
-      }
-      return `{${inner}}`;
-    }
-    return segment;
-  });
-  return `/api/v1/${segments.join("/")}`;
-}
-
-function collectRouteFiles(dir: string, base = ""): string[] {
-  const entries = readdirSync(dir);
-  const files: string[] = [];
-  for (const entry of entries) {
-    const full = join(dir, entry);
-    const rel = base ? `${base}/${entry}` : entry;
-    if (statSync(full).isDirectory()) {
-      files.push(...collectRouteFiles(full, rel));
-      continue;
-    }
-    if (entry === "route.ts") {
-      files.push(rel);
-    }
-  }
-  return files;
-}
-
-function exportedMethods(source: string): string[] {
-  const methods: string[] = [];
-  for (const method of HTTP_METHODS) {
-    if (source.includes(`export async function ${method}`)) {
-      methods.push(method);
-    }
-  }
-  return methods;
-}
-
 function main() {
-  const registered = registeredRouteKeysForCompleteness();
-  const missing: string[] = [];
+  const metadataKeys = registeredMetadataKeys();
+  const virtualKeys = new Set(
+    virtualMetadataEntries().map((entry) => routeKey(entry.method, entry.path)),
+  );
 
-  for (const fileRel of collectRouteFiles(API_ROOT)) {
-    if (shouldExclude(fileRel)) {
-      continue;
-    }
-    const source = readFileSync(join(API_ROOT, fileRel), "utf8");
-    const path = toOpenApiPath(fileRel);
-    for (const method of exportedMethods(source)) {
-      const key = routeKey(method, path);
-      if (!registered.has(key)) {
-        missing.push(key);
-      }
+  const missing: string[] = [];
+  for (const key of OPENAPI_PUBLIC_ROUTE_KEYS) {
+    if (!metadataKeys.has(key)) {
+      missing.push(key);
     }
   }
 
-  if (missing.length > 0) {
-    console.error("OpenAPI registry missing routes:\n");
-    const sortedMissing = missing.toSorted((left, right) => left.localeCompare(right));
-    for (const key of sortedMissing) {
-      console.error(`  - ${key}`);
+  const publicKeySet = new Set(OPENAPI_PUBLIC_ROUTE_KEYS);
+  const stale: string[] = [];
+  for (const key of metadataKeys) {
+    if (virtualKeys.has(key)) {
+      continue;
+    }
+    if (!publicKeySet.has(key)) {
+      stale.push(key);
+    }
+  }
+
+  if (missing.length > 0 || stale.length > 0) {
+    if (missing.length > 0) {
+      console.error("OpenAPI metadata missing for public routes:\n");
+      for (const key of missing.toSorted((a, b) => a.localeCompare(b))) {
+        console.error(`  - ${key}`);
+      }
+    }
+    if (stale.length > 0) {
+      console.error("\nStale OpenAPI metadata (no backing route handler):\n");
+      for (const key of stale.toSorted((a, b) => a.localeCompare(b))) {
+        console.error(`  - ${key}`);
+      }
     }
     console.error(
-      `\nRegister them under src/lib/openapi/routes/ (found ${missing.length} missing).`,
+      `\nUpdate src/lib/openapi/routes/* metadata and run npm run openapi:generate.`,
     );
     process.exit(1);
   }
 
   console.log(
-    `OpenAPI completeness check passed (${registered.size} registered operations).`,
+    `OpenAPI drift check passed (${OPENAPI_PUBLIC_ROUTE_KEYS.length} public routes, ${metadataKeys.size} metadata entries).`,
   );
 }
 

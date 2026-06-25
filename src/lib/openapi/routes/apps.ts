@@ -1,4 +1,4 @@
-import { defineRoute } from "@/lib/openapi/registry";
+import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
   PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
@@ -23,26 +23,44 @@ function userPath(suffix: string) {
 
 type HttpMethod = "get" | "post" | "put" | "delete" | "patch";
 
-function registerScopedCrud(
-  scope: "app" | "user",
+const m2mSecurity = [{ m2mBasic: [] }, { bearerUserJwt: [] }];
+const adminSecurity = [{ adminSession: [] }];
+
+function registerAppMetadata(
   method: HttpMethod,
   suffix: string,
   summary: string,
-  options?: { deprecated?: boolean; description?: string; tags?: string[] },
+  options?: { description?: string; tags?: string[]; security?: Array<Record<string, string[]>>; status?: 200 | 201 | 204 },
 ) {
-  defineRoute({
-    method,
-    path: scope === "app" ? appPath(suffix) : userPath(suffix),
-    tags: options?.tags ?? (scope === "app" ? ["Apps"] : ["Users"]),
+  const status = options?.status ?? 200;
+  defineRouteMetadata(method, appPath(suffix), {
+    tags: options?.tags ?? ["Apps"],
     summary,
     description: options?.description,
-    deprecated: options?.deprecated,
-    security: [{ m2mBasic: [] }, { bearerUserJwt: [] }],
+    security: options?.security ?? m2mSecurity,
     request: {
-      params:
-        scope === "app"
-          ? z.object({ clientId })
-          : z.object({ clientId, externalUserId }),
+      params: z.object({ clientId }),
+    },
+    responses: {
+      [status]: status === 204 ? { description: "Success" } : jsonSuccess,
+      ...builderErrorResponses,
+    },
+  });
+}
+
+function registerUserMetadata(
+  method: HttpMethod,
+  suffix: string,
+  summary: string,
+  options?: { description?: string; tags?: string[] },
+) {
+  defineRouteMetadata(method, userPath(suffix), {
+    tags: options?.tags ?? ["Users"],
+    summary,
+    description: options?.description,
+    security: m2mSecurity,
+    request: {
+      params: z.object({ clientId, externalUserId }),
     },
     responses: {
       200: jsonSuccess,
@@ -51,126 +69,84 @@ function registerScopedCrud(
   });
 }
 
-const registerAppCrud = (
-  method: HttpMethod,
-  suffix: string,
-  summary: string,
-  options?: { deprecated?: boolean; description?: string; tags?: string[] },
-) => registerScopedCrud("app", method, suffix, summary, options);
-
-const registerUserCrud = (
-  method: HttpMethod,
-  suffix: string,
-  summary: string,
-  options?: { deprecated?: boolean; description?: string; tags?: string[] },
-) => registerScopedCrud("user", method, suffix, summary, options);
-
 // Apps catalog
-defineRoute({
-  method: "get",
-  path: "/api/v1/apps",
+defineRouteMetadata("get", "/api/v1/apps", {
   tags: ["Apps"],
   summary: "List developer apps",
-  security: [{ adminSession: [] }],
+  security: adminSecurity,
   responses: {
     200: { description: "App list", content: { "application/json": { schema: genericJsonObject } } },
   },
 });
 
-defineRoute({
-  method: "post",
-  path: "/api/v1/apps",
+defineRouteMetadata("post", "/api/v1/apps", {
   tags: ["Apps"],
   summary: "Create developer app",
-  security: [{ adminSession: [] }],
+  security: adminSecurity,
   responses: {
     201: { description: "Created", content: { "application/json": { schema: genericJsonObject } } },
   },
 });
 
-registerAppCrud("get", "", "Get developer app");
-registerAppCrud("put", "", "Update developer app");
-registerAppCrud("delete", "", "Delete developer app");
+registerAppMetadata("get", "", "Get developer app");
+registerAppMetadata("put", "", "Update developer app");
+registerAppMetadata("delete", "", "Delete developer app");
 
 // Users
-registerAppCrud("get", "/users", "List provisioned users", { tags: ["Users"] });
-registerAppCrud("post", "/users", "Upsert provisioned user", { tags: ["Users"] });
-registerAppCrud("put", "/users", "Update provisioned user", { tags: ["Users"] });
-registerAppCrud("delete", "/users", "Deactivate provisioned user", { tags: ["Users"] });
+registerAppMetadata("get", "/users", "List provisioned users", { tags: ["Users"] });
+registerAppMetadata("post", "/users", "Upsert provisioned user", { tags: ["Users"] });
+registerAppMetadata("put", "/users", "Update provisioned user", { tags: ["Users"] });
+registerAppMetadata("delete", "/users", "Deactivate provisioned user", { tags: ["Users"] });
 
-registerUserCrud("get", "/keys", "List user API keys");
-registerUserCrud("post", "/keys", "Create user API key");
-registerUserCrud("delete", "/keys", "Revoke user API key");
+registerUserMetadata("get", "/keys", "List user API keys");
+registerUserMetadata("post", "/keys", "Create user API key");
+registerUserMetadata("delete", "/keys", "Revoke user API key");
 
-registerUserCrud("get", "/allowances", "List user allowances");
-registerUserCrud("post", "/allowances", "Grant user allowance");
-registerUserCrud("get", "/subscription", "Get user subscription");
-registerUserCrud("post", "/credits", "Grant user credits");
-registerUserCrud("get", "/wallet", "Get user wallet");
+registerUserMetadata("get", "/allowances", "List user allowances");
+registerUserMetadata("post", "/allowances", "Grant user allowance");
+registerUserMetadata("get", "/subscription", "Get user subscription");
 
-// Credentials overlap — document canonical vs deprecated
-registerAppCrud("get", "/keys", "List app-level API keys (deprecated)", {
+defineRouteMetadata("post", appPath("/credentials"), {
   tags: ["Credentials"],
-  deprecated: true,
-  description:
-    "Deprecated: prefer per-user keys at `/users/{externalUserId}/keys`. Sunset after SDK migration.",
-});
-registerAppCrud("post", "/keys", "Create app-level API key (deprecated)", {
-  tags: ["Credentials"],
-  deprecated: true,
-});
-registerAppCrud("delete", "/keys", "Revoke app-level API key (deprecated)", {
-  tags: ["Credentials"],
-  deprecated: true,
-});
-
-registerAppCrud("get", "/credentials", "List app credentials (deprecated)", {
-  tags: ["Credentials"],
-  deprecated: true,
-  description: "Deprecated overlap with `/keys` and M2M client rotation. Use OpenAPI Credentials tag.",
-});
-registerAppCrud("post", "/credentials", "Rotate app credentials (deprecated)", {
-  tags: ["Credentials"],
-  deprecated: true,
+  summary: "Rotate M2M client secret",
+  description: "Provider session rotates the confidential `m2m_*` client secret.",
+  security: adminSecurity,
+  request: { params: z.object({ clientId }) },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+  },
 });
 
 // Usage
-registerAppCrud("get", "/usage", "Usage summary", { tags: ["Usage"] });
-registerAppCrud("get", "/usage/balance", "Usage balance (M2M)", { tags: ["Usage"] });
-registerAppCrud("get", "/usage/me", "Usage summary (end-user)", { tags: ["Usage"] });
-registerAppCrud("get", "/usage/me/balance", "Usage balance (end-user session)", {
-  tags: ["Usage"],
-  deprecated: true,
-  description:
-    "Deprecated overlap with `/usage/balance` for M2M callers. Prefer `/usage/balance?externalUserId=…`.",
-});
-registerAppCrud("post", "/usage/signed-tickets", "Record signed ticket usage", { tags: ["Usage"] });
+registerAppMetadata("get", "/usage", "Usage summary", { tags: ["Usage"] });
+registerAppMetadata("get", "/usage/balance", "Usage balance (M2M)", { tags: ["Usage"] });
+registerAppMetadata("post", "/usage/signed-tickets", "Record signed ticket usage", { tags: ["Usage"] });
 
 // Billing & plans
-registerAppCrud("get", "/billing", "Billing profile", { tags: ["Billing"] });
-registerAppCrud("post", "/billing/checkout", "Create billing checkout", { tags: ["Billing"] });
-registerAppCrud("get", "/billing/invoices", "List invoices", { tags: ["Billing"] });
-registerAppCrud("get", "/billing/stripe", "Stripe billing status", { tags: ["Billing"] });
-registerAppCrud("delete", "/billing/stripe", "Disconnect Stripe billing", { tags: ["Billing"] });
-registerAppCrud("post", "/billing/stripe/connect", "Stripe Connect", { tags: ["Billing"] });
-registerAppCrud("get", "/billing/stripe/callback", "Stripe OAuth callback", { tags: ["Billing"] });
-registerAppCrud("get", "/plans", "List plans", { tags: ["Billing"] });
-registerAppCrud("post", "/plans", "Create plan", { tags: ["Billing"] });
-registerAppCrud("put", "/plans", "Update plan", { tags: ["Billing"] });
-registerAppCrud("delete", "/plans", "Delete plan", { tags: ["Billing"] });
-registerAppCrud("post", "/plans/{planId}/sync", "Sync plan to OpenMeter", { tags: ["Billing"] });
-registerAppCrud("put", "/starter-plan", "Update starter plan config", { tags: ["Billing"] });
-registerAppCrud("get", "/starter-plan", "Starter plan config", { tags: ["Billing"] });
+registerAppMetadata("get", "/billing", "Billing profile", { tags: ["Billing"] });
+registerAppMetadata("post", "/billing/checkout", "Create billing checkout", { tags: ["Billing"] });
+registerAppMetadata("get", "/billing/invoices", "List invoices", { tags: ["Billing"] });
+registerAppMetadata("get", "/billing/stripe", "Stripe billing status", { tags: ["Billing"] });
+registerAppMetadata("delete", "/billing/stripe", "Disconnect Stripe billing", { tags: ["Billing"] });
+registerAppMetadata("post", "/billing/stripe/connect", "Stripe Connect", { tags: ["Billing"] });
+registerAppMetadata("get", "/billing/stripe/callback", "Stripe OAuth callback", { tags: ["Billing"] });
+registerAppMetadata("get", "/plans", "List plans", { tags: ["Billing"] });
+registerAppMetadata("post", "/plans", "Create plan", { tags: ["Billing"] });
+registerAppMetadata("put", "/plans", "Update plan", { tags: ["Billing"] });
+registerAppMetadata("delete", "/plans", "Delete plan", { tags: ["Billing"] });
+registerAppMetadata("post", "/plans/{planId}/sync", "Sync plan to OpenMeter", { tags: ["Billing"] });
+registerAppMetadata("put", "/starter-plan", "Update starter plan config", { tags: ["Billing"] });
+registerAppMetadata("get", "/starter-plan", "Starter plan config", { tags: ["Billing"] });
 
 // Discovery & publish
-registerAppCrud("get", "/discovery-profiles", "List discovery profiles", { tags: ["Discovery"] });
-registerAppCrud("post", "/discovery-profiles", "Create discovery profile", { tags: ["Discovery"] });
-defineRoute({
-  method: "get",
-  path: "/api/v1/apps/{clientId}/discovery-profiles/{profileId}",
+registerAppMetadata("get", "/discovery-profiles", "List discovery profiles", { tags: ["Discovery"] });
+registerAppMetadata("post", "/discovery-profiles", "Create discovery profile", { tags: ["Discovery"] });
+
+defineRouteMetadata("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {
   tags: ["Discovery"],
   summary: "Get discovery profile",
-  security: [{ m2mBasic: [] }],
+  security: m2mSecurity,
   request: {
     params: z.object({
       clientId,
@@ -182,28 +158,24 @@ defineRoute({
     404: { description: "Not found" },
   },
 });
-defineRoute({
-  method: "put",
-  path: "/api/v1/apps/{clientId}/discovery-profiles/{profileId}",
+
+defineRouteMetadata("put", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {
   tags: ["Discovery"],
   summary: "Update discovery profile",
-  security: [{ m2mBasic: [] }],
+  security: m2mSecurity,
   request: {
     params: z.object({
       clientId,
       profileId: z.string().openapi({ param: { name: "profileId", in: "path" } }),
     }),
   },
-  responses: {
-    200: jsonSuccess,
-  },
+  responses: { 200: jsonSuccess },
 });
-defineRoute({
-  method: "delete",
-  path: "/api/v1/apps/{clientId}/discovery-profiles/{profileId}",
+
+defineRouteMetadata("delete", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {
   tags: ["Discovery"],
   summary: "Delete discovery profile",
-  security: [{ m2mBasic: [] }],
+  security: m2mSecurity,
   request: {
     params: z.object({
       clientId,
@@ -213,28 +185,25 @@ defineRoute({
   responses: { 204: { description: "Deleted" } },
 });
 
-registerAppCrud("get", "/manifest", "App manifest", { tags: ["Discovery"] });
-registerAppCrud("put", "/manifest", "Update app manifest", { tags: ["Discovery"] });
-registerAppCrud("post", "/publish", "Publish app", { tags: ["Discovery"] });
-registerAppCrud("post", "/submit", "Submit app for review", { tags: ["Discovery"] });
-registerAppCrud("post", "/revert-draft", "Revert draft manifest", { tags: ["Discovery"] });
+registerAppMetadata("get", "/manifest", "App manifest", { tags: ["Discovery"] });
+registerAppMetadata("put", "/manifest", "Update app manifest", { tags: ["Discovery"] });
+registerAppMetadata("post", "/publish", "Publish app", { tags: ["Discovery"] });
+registerAppMetadata("post", "/submit", "Submit app for review", { tags: ["Discovery"] });
+registerAppMetadata("post", "/revert-draft", "Revert draft manifest", { tags: ["Discovery"] });
 
 // Settings & admin
-registerAppCrud("get", "/settings", "App settings");
-registerAppCrud("put", "/settings", "Update app settings");
-registerAppCrud("get", "/admins", "List app admins");
-registerAppCrud("post", "/admins", "Add app admin");
-registerAppCrud("delete", "/admins", "Remove app admin");
-registerAppCrud("get", "/domains", "Custom domains");
-registerAppCrud("post", "/domains", "Add custom domain");
-registerAppCrud("delete", "/domains", "Remove custom domain");
-registerAppCrud("get", "/openmeter", "OpenMeter config");
-registerAppCrud("put", "/openmeter", "Update OpenMeter config");
-registerAppCrud("get", "/signer/routing", "Signer routing config");
+registerAppMetadata("put", "/settings", "Update app settings");
+registerAppMetadata("get", "/admins", "List app admins");
+registerAppMetadata("post", "/admins", "Add app admin");
+registerAppMetadata("delete", "/admins", "Remove app admin");
+registerAppMetadata("get", "/domains", "Custom domains");
+registerAppMetadata("post", "/domains", "Add custom domain");
+registerAppMetadata("delete", "/domains", "Remove custom domain");
+registerAppMetadata("get", "/openmeter", "OpenMeter config");
+registerAppMetadata("put", "/openmeter", "Update OpenMeter config");
+registerAppMetadata("get", "/signer/routing", "Signer routing config");
 
-defineRoute({
-  method: "get",
-  path: "/api/v1/apps/branding",
+defineRouteMetadata("get", "/api/v1/apps/branding", {
   tags: ["Apps"],
   summary: "Resolve app branding by host",
   responses: {

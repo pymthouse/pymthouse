@@ -23,10 +23,26 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 
 Machine-readable contract and interactive reference:
 
-- `GET /api/v1/openapi.json` — OpenAPI 3.1 document (generated from route schemas).
+- `GET /api/v1/openapi.json` — OpenAPI 3.1 document (generated from scanned route handlers + per-route metadata).
 - `GET /api/v1/docs` — Scalar API reference UI.
 
-OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration` (not duplicated in OpenAPI).
+Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
+
+OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration` (not duplicated in OpenAPI except for a virtual `POST /api/v1/oidc/token` pointer).
+
+### Breaking changes (API cleanup)
+
+The following deprecated routes were **removed**. Use the canonical replacement:
+
+| Removed | Replacement |
+| --- | --- |
+| `GET /api/v1/auth/validate` | `POST /api/v1/auth/validate` with `{ "key": "pmth_…" }` (`BPP_VALIDATE_V2=1`) |
+| `POST` / `DELETE /api/v1/subscriptions` | `POST /api/v1/apps/{clientId}/users`, `GET …/users/{externalUserId}/subscription`, `POST …/allowances` |
+| `GET` / `POST` / `DELETE /api/v1/apps/{clientId}/keys` | Per-user keys: `…/users/{externalUserId}/keys` |
+| `…/users/{externalUserId}/credits` | `…/users/{externalUserId}/allowances` |
+| Dashboard BFF `POST /api/pymthouse/keys/exchange` (not served by pymthouse) | `POST /api/v1/apps/{clientId}/auth/api-key/signer-session` on the issuer |
+
+M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provider session).
 
 ## Credential types (do not mix)
 

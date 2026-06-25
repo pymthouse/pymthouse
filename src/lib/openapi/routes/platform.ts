@@ -1,8 +1,8 @@
-import { registerJsonRoute } from "@/lib/openapi/routes/shared";
+import { registerJsonRouteMetadata } from "@/lib/openapi/routes/shared";
 
 const adminSession = [{ adminSession: [] }];
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/signer",
   tags: ["Signer"],
@@ -10,7 +10,7 @@ registerJsonRoute({
   security: adminSession,
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "patch",
   path: "/api/v1/signer",
   tags: ["Signer"],
@@ -19,7 +19,7 @@ registerJsonRoute({
   statusDescription: "Updated",
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/signer/cli-status",
   tags: ["Signer"],
@@ -27,7 +27,7 @@ registerJsonRoute({
   statusDescription: "CLI status",
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/signer/logs",
   tags: ["Signer"],
@@ -36,7 +36,7 @@ registerJsonRoute({
   statusDescription: "Log tail",
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "post",
   path: "/api/v1/signer/control",
   tags: ["Signer"],
@@ -46,7 +46,7 @@ registerJsonRoute({
   withErrors: true,
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/billing",
   tags: ["Billing"],
@@ -55,7 +55,7 @@ registerJsonRoute({
   statusDescription: "Billing overview",
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/end-users",
   tags: ["Users"],
@@ -64,7 +64,7 @@ registerJsonRoute({
   statusDescription: "End users",
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "post",
   path: "/api/v1/end-users",
   tags: ["Users"],
@@ -73,7 +73,7 @@ registerJsonRoute({
   status: 201,
 });
 
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/subscriptions",
   tags: ["Billing"],
@@ -82,26 +82,7 @@ registerJsonRoute({
   statusDescription: "Subscriptions",
 });
 
-registerJsonRoute({
-  method: "post",
-  path: "/api/v1/subscriptions",
-  tags: ["Billing"],
-  summary: "Create subscription",
-  security: adminSession,
-  status: 201,
-});
-
-registerJsonRoute({
-  method: "delete",
-  path: "/api/v1/subscriptions",
-  tags: ["Billing"],
-  summary: "Cancel subscription",
-  security: adminSession,
-  status: 204,
-  statusDescription: "Cancelled",
-});
-
-registerJsonRoute({
+registerJsonRouteMetadata({
   method: "get",
   path: "/api/v1/prices/eth-usd",
   tags: ["Platform"],

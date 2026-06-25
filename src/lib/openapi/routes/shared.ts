@@ -1,4 +1,6 @@
-import { defineRoute } from "@/lib/openapi/registry";
+import type { RouteConfig } from "@asteasolutions/zod-to-openapi";
+
+import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import { OAuthErrorSchema } from "@/lib/openapi/schemas/common";
 import { z } from "@/lib/openapi/zod";
 
@@ -16,15 +18,14 @@ export const builderErrorResponses = {
   404: { description: "Not found", content: { "application/json": { schema: OAuthErrorSchema } } },
 } as const;
 
-type HttpMethod = "get" | "post" | "put" | "delete" | "patch";
+type HttpMethod = RouteConfig["method"];
 
-export function registerJsonRoute(input: {
+export function registerJsonRouteMetadata(input: {
   method: HttpMethod;
   path: string;
   tags: string[];
   summary: string;
   description?: string;
-  deprecated?: boolean;
   security?: Array<Record<string, string[]>>;
   status?: 200 | 201 | 204;
   statusDescription?: string;
@@ -41,13 +42,10 @@ export function registerJsonRoute(input: {
     Object.assign(responses, builderErrorResponses);
   }
 
-  defineRoute({
-    method: input.method,
-    path: input.path,
+  defineRouteMetadata(input.method, input.path, {
     tags: input.tags,
     summary: input.summary,
     description: input.description,
-    deprecated: input.deprecated,
     security: input.security,
     responses,
   });
