@@ -29,3 +29,16 @@ export function isOpenMeterConflictError(err: unknown): boolean {
     (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode;
   return status === 409;
 }
+
+/** True when OpenMeter refuses subscription/billing because Stripe app data is missing on the customer. */
+export function isOpenMeterStripeBillingError(err: unknown): boolean {
+  if (!isOpenMeterConflictError(err)) {
+    return false;
+  }
+  const message = errorMessage(err);
+  return (
+    /invalid billing setup/i.test(message) ||
+    /failed to get stripe customer data/i.test(message) ||
+    /customer has no data for stripe app/i.test(message)
+  );
+}

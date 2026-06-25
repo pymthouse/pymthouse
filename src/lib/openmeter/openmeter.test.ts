@@ -491,6 +491,21 @@ test("isOpenMeterConflictError detects duplicate entitlement failures", async ()
   assert.equal(isOpenMeterConflictError(new Error("validation failed")), false);
 });
 
+test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {
+  const { isOpenMeterStripeBillingError, isOpenMeterConflictError } = await import("./plan-errors");
+  const stripeErr = new Error(
+    "conflict error: invalid billing setup: failed to get stripe customer data: " +
+      "customer has no data for stripe app",
+  );
+  (stripeErr as { status: number }).status = 409;
+  assert.equal(isOpenMeterStripeBillingError(stripeErr), true);
+  assert.equal(isOpenMeterConflictError(stripeErr), true);
+
+  const stripeMessageOnly = new Error(stripeErr.message);
+  (stripeMessageOnly as { status: number }).status = 500;
+  assert.equal(isOpenMeterStripeBillingError(stripeMessageOnly), false);
+});
+
 test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () => {
   const omPlan = await mapPymthousePlanToOpenMeterCreate({
     clientId: "app_1",
