@@ -19,6 +19,7 @@ fi
 
 vercel pull --yes --environment=production ${VERCEL_TOKEN:+--token="$VERCEL_TOKEN"}
 vercel build --prod ${VERCEL_TOKEN:+--token="$VERCEL_TOKEN"}
-vercel deploy --prebuilt --prod ${VERCEL_TOKEN:+--token="$VERCEL_TOKEN"}
+deployment_url=$(vercel deploy --prebuilt --prod ${VERCEL_TOKEN:+--token="$VERCEL_TOKEN"})
+vercel promote "$deployment_url" --yes ${VERCEL_TOKEN:+--token="$VERCEL_TOKEN"}
 
-echo "Deployed to pymthouse production (https://pymthouse.com)."
+echo "Deployed and promoted to pymthouse production (https://pymthouse.com)."

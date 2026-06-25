@@ -80,3 +80,6 @@ jobs:
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
           echo "Vercel alias: $deployment_url"
           echo "Canonical URL: ${{ vars.VERCEL_PRODUCTION_URL || 'https://pymthouse.com' }}"
+
+      - name: Promote deployment (assign custom domains)
+        run: vercel promote "${{ steps.vercel_deploy.outputs.deployment_url }}" --yes --token="$VERCEL_TOKEN"
