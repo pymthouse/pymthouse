@@ -76,11 +76,12 @@ export async function applyTenantBillingProfileToCustomer(input: {
   clientId: string;
   customerId: string;
 }): Promise<void> {
-  if (!(await isStripeBillingEnabledForApp(input.clientId))) {
-    return;
-  }
   const config = await getAppBillingConfig(input.clientId);
-  if (!config?.openmeterBillingProfileId) {
+  if (
+    config?.stripeConnectStatus !== "connected" ||
+    !config.openmeterStripeAppId?.trim() ||
+    !config.openmeterBillingProfileId?.trim()
+  ) {
     return;
   }
   await assignCustomerBillingProfileOverride({

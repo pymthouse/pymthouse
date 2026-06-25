@@ -120,6 +120,7 @@ async function createStarterSubscriptionWithRecovery(input: {
 }): Promise<{
   subscription: OpenMeterSubscriptionView | null;
   starter: typeof plans.$inferSelect;
+  created: boolean;
 }> {
   let activeStarter = input.starter;
   try {
@@ -139,6 +140,7 @@ async function createStarterSubscriptionWithRecovery(input: {
         activeStarter.openmeterPlanId,
       ),
       starter: activeStarter,
+      created: true,
     };
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
@@ -163,6 +165,7 @@ async function createStarterSubscriptionWithRecovery(input: {
           activeStarter.openmeterPlanId,
         ),
         starter: activeStarter,
+        created: true,
       };
     }
     if (isOpenMeterStripeBillingError(err)) {
@@ -170,7 +173,7 @@ async function createStarterSubscriptionWithRecovery(input: {
         "[openmeter] Starter subscription skipped: Stripe billing is not ready for this customer",
         err,
       );
-      return { subscription: null, starter: activeStarter };
+      return { subscription: null, starter: activeStarter, created: false };
     }
     if (isOpenMeterConflictError(err)) {
       const existing = await findOpenMeterSubscriptionByPlanKey(
@@ -182,7 +185,7 @@ async function createStarterSubscriptionWithRecovery(input: {
       if (!existing) {
         throw err;
       }
-      return { subscription: existing, starter: activeStarter };
+      return { subscription: existing, starter: activeStarter, created: false };
     }
     throw err;
   }
@@ -241,7 +244,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     });
     omSubscription = provisioned.subscription;
     activeStarter = provisioned.starter;
-    created = provisioned.subscription !== null;
+    created = provisioned.created;
   }
 
   if (!omSubscription) {

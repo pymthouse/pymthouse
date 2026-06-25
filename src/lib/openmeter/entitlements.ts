@@ -115,7 +115,13 @@ async function getKonnectTrialCreditBalance(input: {
   }
 
   const defaultGrant = defaultStarterIncludedUsdMicros();
-  if (!hasAccess && !(await isStripeBillingEnabledForApp(input.clientId))) {
+  let stripeBillingEnabled = true;
+  try {
+    stripeBillingEnabled = await isStripeBillingEnabledForApp(input.clientId);
+  } catch {
+    stripeBillingEnabled = false;
+  }
+  if (!hasAccess && !stripeBillingEnabled) {
     // Free Starter allowance without Stripe Connect — subscription optional.
     hasAccess = true;
   }
