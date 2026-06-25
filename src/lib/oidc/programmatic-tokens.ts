@@ -57,6 +57,7 @@ export async function issueProgrammaticTokens(input: {
     .select({
       oauthClientId: oidcClients.clientId,
       appUserId: appUsers.id,
+      externalUserId: appUsers.externalUserId,
     })
     .from(developerApps)
     .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -80,6 +81,14 @@ export async function issueProgrammaticTokens(input: {
     );
   }
 
+  const externalUserId = binding.externalUserId?.trim();
+  if (!externalUserId) {
+    throw new ProgrammaticTokenError(
+      "invalid_request",
+      "App user is missing external_user_id",
+    );
+  }
+
   const issuer = getIssuer();
   const keyPair = await ensureSigningKey();
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -89,6 +98,7 @@ export async function issueProgrammaticTokens(input: {
     scope,
     scp: input.scopes,
     client_id: binding.oauthClientId,
+    external_user_id: externalUserId,
     user_type: "app_user",
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
