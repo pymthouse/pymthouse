@@ -78,6 +78,69 @@ test("durable ingest rejects an unknown client without writing", async () => {
   assert.equal(writes.length, 0);
 });
 
+test("concurrent duplicate (clientId, requestId) POSTs meter exactly once", async () => {
+  // Model production semantics: OpenMeter dedupes on the CloudEvent id
+  // (= requestId) and the receipts unique index makes the upsert idempotent.
+  const metered = new Set<string>();
+  const receipts = new Map<string, string>();
+  const key = (appId: string, requestId: string) => `${appId}|${requestId}`;
+  const deps: Partial<SignedTicketIngestDeps> = {
+    resolveAppId: async (clientId) => (clientId === "app_known" ? "app_known" : null),
+    findReceipt: async (appId, requestId) => {
+      const openmeterEventId = receipts.get(key(appId, requestId));
+      return openmeterEventId ? { openmeterEventId } : null;
+    },
+    // Last-writer-wins, never throws — mirrors onConflictDoUpdate on the unique index.
+    upsertReceipt: async ({ appId, requestId, openmeterEventId }) => {
+      receipts.set(key(appId, requestId), openmeterEventId);
+    },
+    // OpenMeter dedupes redundant writes by CloudEvent id (= requestId).
+    writeOpenMeterEvent: async (event) => {
+      metered.add(event.requestId);
+    },
+  };
+
+  const results = await Promise.all(
+    Array.from({ length: 8 }, () => ingestSignedTicketDurable(BASE_EVENT, deps)),
+  );
+
+  // Despite 8 concurrent duplicate calls, the meter records exactly one event.
+  assert.equal(metered.size, 1);
+  // Every concurrent call resolves cleanly (no crash on the unique-violation path).
+  assert.ok(
+    results.every((r) => r.status === "ingested" || r.status === "duplicate"),
+  );
+  // The receipt ends up keyed by (clientId, requestId) with the real event id.
+  assert.equal(receipts.get("app_known|req-1"), "req-1");
+});
+
+test("a transient OpenMeter write failure surfaces and records no receipt", async () => {
+  const receipts = new Map<string, string>();
+  const key = (appId: string, requestId: string) => `${appId}|${requestId}`;
+  const deps: Partial<SignedTicketIngestDeps> = {
+    resolveAppId: async () => "app_known",
+    findReceipt: async (appId, requestId) => {
+      const openmeterEventId = receipts.get(key(appId, requestId));
+      return openmeterEventId ? { openmeterEventId } : null;
+    },
+    upsertReceipt: async ({ appId, requestId, openmeterEventId }) => {
+      receipts.set(key(appId, requestId), openmeterEventId);
+    },
+    writeOpenMeterEvent: async () => {
+      throw new Error("openmeter 503");
+    },
+  };
+
+  // The failure propagates so the route can map it to a non-2xx (retryable).
+  await assert.rejects(
+    () => ingestSignedTicketDurable(BASE_EVENT, deps),
+    /openmeter 503/,
+  );
+  // The receipt is written only after a successful write, so nothing persisted:
+  // a later retry is treated as a first write, not as a duplicate.
+  assert.equal(receipts.size, 0);
+});
+
 test("durable ingest upgrades a prior diagnostic receipt to a real write", async () => {
   const { deps, writes, receipts } = makeDeps();
   // Simulate a receipt left by the legacy diagnostic path (no OpenMeter write).

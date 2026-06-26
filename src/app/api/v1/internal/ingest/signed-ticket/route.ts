@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { usageIngestReceipts } from "@/db/schema";
@@ -15,6 +16,18 @@ type GatewayEventPayload = {
   data?: Record<string, unknown>;
 };
 
+/**
+ * Constant-time secret comparison. Both inputs are SHA-256 hashed to a fixed
+ * 32-byte digest before `timingSafeEqual`, so the comparison leaks neither the
+ * secret's value nor its length via timing (and never throws on length
+ * mismatch). Avoids the timing side-channel of a plain `===` on the raw secret.
+ */
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = createHash("sha256").update(provided, "utf8").digest();
+  const b = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(a, b);
+}
+
 function verifyIngestSecret(request: NextRequest): boolean {
   const expected = process.env.INGEST_SHARED_SECRET?.trim();
   if (!expected) {
@@ -24,7 +37,7 @@ function verifyIngestSecret(request: NextRequest): boolean {
   if (!auth.startsWith("Bearer ")) {
     return false;
   }
-  return auth.slice(7).trim() === expected;
+  return secretsMatch(auth.slice(7).trim(), expected);
 }
 
 function pickString(data: Record<string, unknown>, ...keys: string[]): string {
@@ -110,20 +123,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await ingestSignedTicketDurable({
-      clientId,
-      externalUserId,
-      requestId,
-      networkFeeUsdMicros,
-      feeWei: optionalString(computedFeeWei),
-      pixels: optionalString(pickString(data, "pixels")),
-      pipeline: optionalString(pickString(data, "pipeline")),
-      modelId: optionalString(pickString(data, "model_id")),
-      ethUsdPrice: optionalString(pickString(data, "eth_usd_price")),
-      ethUsdObservedAt: optionalString(
-        pickString(data, "eth_usd_updated_at", "eth_usd_observed_at"),
-      ),
-    });
+    let result;
+    try {
+      result = await ingestSignedTicketDurable({
+        clientId,
+        externalUserId,
+        requestId,
+        networkFeeUsdMicros,
+        feeWei: optionalString(computedFeeWei),
+        pixels: optionalString(pickString(data, "pixels")),
+        pipeline: optionalString(pickString(data, "pipeline")),
+        modelId: optionalString(pickString(data, "model_id")),
+        ethUsdPrice: optionalString(pickString(data, "eth_usd_price")),
+        ethUsdObservedAt: optionalString(
+          pickString(data, "eth_usd_updated_at", "eth_usd_observed_at"),
+        ),
+      });
+    } catch {
+      // Transient durable-write failure (e.g. OpenMeter unavailable). The
+      // receipt is written only AFTER a successful OpenMeter write, so nothing
+      // was persisted and the caller (the Benthos collector) can safely retry.
+      // Surface a 502 so the failure is never silently swallowed and is clearly
+      // distinct from an accepted/duplicate (2xx). Internal error details are
+      // intentionally not leaked to the caller.
+      return NextResponse.json(
+        { ok: false, ingested: false, error: "Ingest temporarily unavailable" },
+        { status: 502 },
+      );
+    }
 
     if (result.status === "unknown_client") {
       return NextResponse.json({ error: "Unknown client_id" }, { status: 404 });

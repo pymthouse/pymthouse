@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { NextRequest } from "next/server";
+import { and, eq } from "drizzle-orm";
 
 import { run } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
@@ -10,6 +11,8 @@ import {
   queryOpenMeterUsage,
 } from "@/lib/openmeter/usage-read";
 import { withEnv } from "@/test-utils/env";
+import { db } from "@/db/index";
+import { usageIngestReceipts } from "@/db/schema";
 
 const URL_PATH = "http://localhost/api/v1/internal/ingest/signed-ticket";
 
@@ -219,6 +222,59 @@ run("flag ON: a duplicate (clientId, requestId) meters exactly once", async (t) 
     },
   );
 });
+
+run(
+  "flag ON: a transient OpenMeter failure returns 502 and writes no receipt (retryable)",
+  async (t) => {
+    // OPENMETER_TEST_LIVE bypasses the in-memory meter stub; with no
+    // OPENMETER_URL the durable writer cannot get a client and throws,
+    // standing in for a transient OpenMeter outage.
+    await withEnv(
+      {
+        INGEST_SHARED_SECRET: undefined,
+        SIGNED_TICKET_DURABLE_INGEST: "1",
+        OPENMETER_TEST_LIVE: "1",
+        OPENMETER_URL: undefined,
+      },
+      async () => {
+        const { POST } = await import("./route");
+        const app = await seedDeveloperAppWithClient({ status: "approved" });
+        t.after(() => cleanupTestApp(app));
+        t.after(() => __testClearOpenMeterUsageStubs());
+
+        const requestId = "req-5xx-1";
+        const res = await POST(
+          ingestRequest({
+            body: signedTicketBody({
+              clientId: app.clientId,
+              externalUserId: "naap-storyboard-preview",
+              requestId,
+            }),
+          }),
+        );
+
+        // Non-2xx so the collector retries; clearly distinct from 2xx ack.
+        assert.equal(res.status, 502);
+        const body = await readJson(res);
+        assert.equal(body.ingested, false);
+
+        // No receipt persisted on failure → a retry is a first write, not a dupe.
+        // The receipt's client_id column stores the developer-app id, which the
+        // fixture seeds equal to the public clientId.
+        const rows = await db
+          .select()
+          .from(usageIngestReceipts)
+          .where(
+            and(
+              eq(usageIngestReceipts.clientId, app.clientId),
+              eq(usageIngestReceipts.requestId, requestId),
+            ),
+          );
+        assert.equal(rows.length, 0);
+      },
+    );
+  },
+);
 
 run("flag ON: unknown client_id returns 404", async (t) => {
   await withEnv(
