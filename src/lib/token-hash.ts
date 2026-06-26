@@ -21,7 +21,7 @@
  * manually (hard cutover, no SHA-256 fallback).
  */
 
-import { pbkdf2Sync } from "crypto";
+import { createHash, pbkdf2Sync } from "crypto";
 
 const TOKEN_HASH_ITERATIONS = 600_000;
 const TOKEN_HASH_KEYLEN = 32;
@@ -58,4 +58,16 @@ export function hashToken(token: string): string {
     TOKEN_HASH_KEYLEN,
     TOKEN_HASH_DIGEST,
   ).toString("hex");
+}
+
+/** Pre-AUTH_TOKEN_PEPPER digest; retained for rows created before the PBKDF2 cutover. */
+export function hashTokenLegacySha256(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/** Candidate digests for indexed `key_hash` / `token_hash` equality lookups. */
+export function apiKeyLookupHashes(token: string): string[] {
+  const current = hashToken(token);
+  const legacy = hashTokenLegacySha256(token);
+  return current === legacy ? [current] : [current, legacy];
 }

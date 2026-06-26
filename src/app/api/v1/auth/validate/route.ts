@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { db } from "@/db/index";
 import { apiKeys, planCapabilityBundles, plans, signerConfig } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
+import { apiKeyLookupHashes } from "@/lib/token-hash";
 import { resolveApiKeyOpenMeterSubscription } from "@/lib/openmeter/api-key-subscription";
 import { resolveValidateAdminClient } from "@/lib/openmeter/validate-admin-client";
 import {
@@ -52,11 +53,15 @@ type ResolvedKey =
  * both `GET` and `POST` honor the same test-injection seam and the same hard
  * cutover (subscription-backed keys require OpenMeter; otherwise `invalid`).
  */
-async function resolveKeyValidation(keyHash: string): Promise<ResolvedKey> {
+async function resolveKeyValidation(keyHash: string, legacyKeyHash?: string): Promise<ResolvedKey> {
+  const hashClause =
+    legacyKeyHash && legacyKeyHash !== keyHash
+      ? or(eq(apiKeys.keyHash, keyHash), eq(apiKeys.keyHash, legacyKeyHash))
+      : eq(apiKeys.keyHash, keyHash);
   const apiKeyRows = await db
     .select()
     .from(apiKeys)
-    .where(eq(apiKeys.keyHash, keyHash))
+    .where(hashClause)
     .limit(1);
   const apiKey = apiKeyRows[0];
   if (!apiKey || apiKey.status !== "active") {
@@ -155,7 +160,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ valid: false }, { status: 400 });
   }
 
-  const resolved = await resolveKeyValidation(hashToken(key));
+  const resolved = await resolveKeyValidation(...apiKeyLookupHashes(key));
   if (resolved.kind === "invalid") {
     return NextResponse.json({ valid: false }, { status: 401 });
   }
