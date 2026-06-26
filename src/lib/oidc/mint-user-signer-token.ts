@@ -7,6 +7,8 @@ import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
+import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
+import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export const SIGN_MINT_USER_TOKEN_SCOPE = "sign:mint_user_token";
 const SIGNER_JWT_TTL_SECONDS = 300;
@@ -172,9 +174,18 @@ export async function handleMintUserSignerToken(input: {
     );
   }
 
-  return mintSignerJwtForExternalUser({
+  const minted = await mintSignerJwtForExternalUser({
     publicClientId: publicClient.clientId,
     developerAppId: row.appId,
     externalUserId,
+  });
+  return buildSignerSessionEnvelope({
+    access_token: minted.access_token,
+    expires_in: minted.expires_in,
+    scope: minted.scope,
+    balanceUsdMicros: minted.balanceUsdMicros,
+    lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
+    signer_url: getClientSignerApiUrl(),
+    issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
   });
 }

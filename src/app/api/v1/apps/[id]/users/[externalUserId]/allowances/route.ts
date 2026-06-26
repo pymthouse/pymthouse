@@ -90,6 +90,7 @@ export async function POST(
     if (message.includes("OpenMeter not configured")) {
       return NextResponse.json({ error: message }, { status: 503 });
     }
-    throw err;
+    console.error("[allowances] grant failed:", err);
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }

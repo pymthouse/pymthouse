@@ -422,7 +422,7 @@ export default async function HomePage() {
           <div className="grid sm:grid-cols-3 gap-8">
             {[
               { step: "01", title: "Register your app", desc: "Create a developer app in the dashboard. You get a web OIDC client and an M2M confidential client in seconds.", color: "emerald" },
-              { step: "02", title: "Integrate the SDK", desc: "Use the Builder API to provision users, mint short-lived tokens, and forward signer requests through our proxy.", color: "sky" },
+              { step: "02", title: "Integrate the SDK", desc: "Use the Builder API to provision users, mint short-lived tokens, and sign directly against the remote signer DMZ.", color: "sky" },
               { step: "03", title: "Monetise & monitor", desc: "Set usage plans, watch live streams in your dashboard, and collect usage data — all without touching billing code.", color: "amber" },
             ].map(({ step, title, desc, color }) => {
               const ring: Record<string, string> = {

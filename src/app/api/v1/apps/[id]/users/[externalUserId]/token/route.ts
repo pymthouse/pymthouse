@@ -6,6 +6,8 @@ import { appUsers, oidcClients } from "@/db/schema";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { issueProgrammaticTokens, ProgrammaticTokenError } from "@/lib/oidc/programmatic-tokens";
 import { getProviderApp } from "@/lib/provider-apps";
+import { parseScopeList } from "@/lib/openapi/api-key";
+import { ProgrammaticUserTokenRequestBodySchema } from "@/lib/openapi/schemas/credentials";
 
 export async function POST(
   request: NextRequest,
@@ -68,15 +70,20 @@ export async function POST(
     );
   }
 
-  const body = await request.json().catch(() => ({}));
-  const requestedScopes = String(body.scope || "")
-    .split(/\s+/)
-    .map((scope) => scope.trim())
-    .filter(Boolean);
+  const rawBody = await request.json().catch(() => ({}));
+  const parsedBody = ProgrammaticUserTokenRequestBodySchema.safeParse(rawBody);
+  if (!parsedBody.success) {
+    return NextResponse.json(
+      {
+        error: "invalid_request",
+        error_description: parsedBody.error.issues[0]?.message ?? "Invalid request body",
+        correlation_id: correlationId,
+      },
+      { status: 400 },
+    );
+  }
 
-  const scopes = requestedScopes.length > 0
-    ? requestedScopes
-    : ["sign:job"];
+  const scopes = parseScopeList(parsedBody.data.scope, "sign:job");
 
   const publicClientRows = await db
     .select({ allowedScopes: oidcClients.allowedScopes })

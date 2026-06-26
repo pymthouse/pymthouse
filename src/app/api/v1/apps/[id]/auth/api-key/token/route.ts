@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createCorrelationId, writeAuditLog } from "@/lib/audit";
+import { writeAuditLog } from "@/lib/audit";
 import { resolveActiveAppApiKey } from "@/lib/app-api-keys";
-import { getProviderApp } from "@/lib/provider-apps";
+import {
+  apiKeyOAuthError,
+  authenticateApiKeyBearerRoute,
+  isApiKeyRouteContext,
+  parseApiKeyRouteJsonBody,
+} from "@/lib/openapi/api-key-route-auth";
+import { parseScopeList } from "@/lib/openapi/api-key";
+import { ApiKeyTokenRequestBodySchema } from "@/lib/openapi/schemas/credentials";
 import {
   issueProgrammaticTokens,
   ProgrammaticTokenError,
@@ -16,32 +23,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const correlationId = createCorrelationId();
-
-  const authHeader = request.headers.get("authorization") ?? "";
-  if (!authHeader.startsWith("Bearer ")) {
-    return NextResponse.json(
-      {
-        error: "invalid_request",
-        error_description: "Authorization Bearer API key is required",
-        correlation_id: correlationId,
-      },
-      { status: 401 },
-    );
+  const auth = await authenticateApiKeyBearerRoute(request, clientId);
+  if (!isApiKeyRouteContext(auth)) {
+    return auth;
   }
-
-  const apiKey = authHeader.slice(7).trim();
-  const app = await getProviderApp(clientId);
-  if (!app) {
-    return NextResponse.json(
-      {
-        error: "not_found",
-        error_description: "developer app was not found for this client_id",
-        correlation_id: correlationId,
-      },
-      { status: 404 },
-    );
-  }
+  const { apiKey, app, correlationId } = auth;
 
   const resolved = await resolveActiveAppApiKey(apiKey, clientId);
   if (!resolved || resolved.developerAppId !== app.id) {
@@ -51,22 +37,24 @@ export async function POST(
       status: "unauthorized",
       correlationId,
     });
-    return NextResponse.json(
-      {
-        error: "invalid_client",
-        error_description: "invalid or revoked API key",
-        correlation_id: correlationId,
-      },
-      { status: 401 },
+    return apiKeyOAuthError(
+      correlationId,
+      "invalid_client",
+      "invalid or revoked API key",
+      401,
     );
   }
 
-  const body = await request.json().catch(() => ({}));
-  const requestedScopes = String(body.scope || "sign:job")
-    .split(/\s+/)
-    .map((scope) => scope.trim())
-    .filter(Boolean);
-  const scopes = requestedScopes.length > 0 ? requestedScopes : ["sign:job"];
+  const body = await parseApiKeyRouteJsonBody(
+    request,
+    ApiKeyTokenRequestBodySchema,
+    correlationId,
+  );
+  if (body instanceof NextResponse) {
+    return body;
+  }
+
+  const scopes = parseScopeList(body.scope);
 
   let tokens;
   try {
@@ -88,14 +76,7 @@ export async function POST(
           message: err.message,
         },
       });
-      return NextResponse.json(
-        {
-          error: err.code,
-          error_description: err.message,
-          correlation_id: correlationId,
-        },
-        { status: 400 },
-      );
+      return apiKeyOAuthError(correlationId, err.code, err.message, 400);
     }
     throw err;
   }

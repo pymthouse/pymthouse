@@ -1,21 +1,10 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, users, oidcClients } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
+import { withSessionAdminGuard } from "@/lib/api-guards";
 
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const role = (session.user as Record<string, unknown>).role as string;
-  if (role !== "admin") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+export const GET = withSessionAdminGuard(async () => {
   try {
     const apps = await db
       .select({
@@ -48,4 +37,4 @@ export async function GET() {
       { status: 500 },
     );
   }
-}
+});

@@ -5,7 +5,6 @@ import { apiKeys, planCapabilityBundles, plans, signerConfig } from "@/db/schema
 import { hashToken } from "@/lib/auth";
 import { resolveApiKeyOpenMeterSubscription } from "@/lib/openmeter/api-key-subscription";
 import { resolveValidateAdminClient } from "@/lib/openmeter/validate-admin-client";
-import { buildValidateResponseBody } from "@/lib/bpp/validate-response";
 import {
   buildC0ValidateResponseBody,
   toCapabilityIds,
@@ -13,6 +12,7 @@ import {
   type BillingMode,
 } from "@/lib/bpp/validate-response-c0";
 import { bppValidateV2Enabled } from "@/lib/billing/feature-flags";
+import { C0ValidateRequestBodySchema } from "@/lib/openapi/schemas/misc";
 
 /** Stable provider slug for the pymthouse reference billing provider. */
 const PROVIDER_SLUG = "pymthouse";
@@ -22,10 +22,7 @@ type PlanRow = typeof plans.$inferSelect;
 type BundleRow = typeof planCapabilityBundles.$inferSelect;
 
 /**
- * Outcome of resolving an API key for the `validate` endpoints, shared by the
- * legacy `GET` and the C0 `POST` so the DB/OpenMeter resolution flow lives in
- * exactly one place. Each handler maps these variants onto its own response
- * shape (legacy vs C0) — see the `GET`/`POST` switch statements below.
+ * Outcome of resolving an API key for `POST /api/v1/auth/validate`.
  *
  *  - `invalid`         → key unknown/inactive, or a subscription-backed key that
  *                        cannot be resolved against OpenMeter (hard cutover: no
@@ -119,70 +116,8 @@ async function resolveKeyValidation(keyHash: string): Promise<ResolvedKey> {
   };
 }
 
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization") || "";
-  if (!authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ valid: false }, { status: 401 });
-  }
-
-  const token = authHeader.slice(7);
-  const resolved = await resolveKeyValidation(hashToken(token));
-
-  switch (resolved.kind) {
-    case "invalid":
-      return NextResponse.json({ valid: false }, { status: 401 });
-    case "no_subscription":
-      return NextResponse.json(
-        buildValidateResponseBody({
-          clientId: resolved.apiKey.clientId,
-          plan: null,
-          allowedModels: [],
-        }),
-      );
-    case "no_plan":
-      return NextResponse.json(
-        buildValidateResponseBody({
-          clientId: resolved.apiKey.clientId,
-          plan: null,
-          allowedModels: [],
-          openmeterSubscriptionId: resolved.openmeterSubscriptionId,
-        }),
-      );
-    case "with_plan":
-      return NextResponse.json(
-        buildValidateResponseBody({
-          clientId: resolved.apiKey.clientId,
-          openmeterSubscriptionId: resolved.openmeterSubscriptionId,
-          plan: {
-            ...resolved.plan,
-            includedUnits:
-              resolved.plan.includedUnits != null
-                ? resolved.plan.includedUnits.toString()
-                : null,
-            overageRateUsd: resolved.plan.overageRateUsd ?? null,
-          },
-          allowedModels: resolved.bundles.map((bundle) => bundle.modelId).filter(Boolean),
-        }),
-      );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// PYMT-3 — additive, C0-conformant `validate` (POST {key})
-//
-// The legacy `GET` above is intentionally left untouched (deprecated, not
-// removed) for current consumers. `POST /api/v1/auth/validate` is the NEW
-// provider-neutral front door that conforms to the C0 `validate.schema.json`:
-//   { valid, user.sub, billing_account, capabilities[pipeline:model], quota,
-//     subscriptionRef?, signerSession? }
-//
-// It is gated behind `BPP_VALIDATE_V2` (default OFF). Flag-off → 404, so the
-// endpoint behaves as if absent and the legacy GET path is the only behavior
-// in production until the NaaP front door (NAAP-C) is ready (gated by D0).
-//
-// Both handlers share `resolveKeyValidation()` for DB/OpenMeter resolution and
-// differ only in how they map the result onto their response shape.
-// ---------------------------------------------------------------------------
+// C0-conformant `POST /api/v1/auth/validate` — provider-neutral validate body.
+// Gated behind `BPP_VALIDATE_V2` (default OFF). Flag-off → 404.
 
 /** Neutral, stable subject id for a resolved API key (never a metering id). */
 function resolveSubject(apiKey: ApiKeyRow): string {
@@ -198,12 +133,10 @@ async function resolveBillingMode(): Promise<BillingMode> {
 /** Read `{ key }` from a JSON body without throwing on malformed input. */
 async function readKeyFromBody(request: NextRequest): Promise<string | null> {
   try {
-    const body = (await request.json()) as unknown;
-    if (body && typeof body === "object" && "key" in body) {
-      const key = (body as { key?: unknown }).key;
-      if (typeof key === "string" && key.length > 0) {
-        return key;
-      }
+    const body = await request.json();
+    const parsed = C0ValidateRequestBodySchema.safeParse(body);
+    if (parsed.success) {
+      return parsed.data.key;
     }
   } catch {
     // Malformed/empty body → treated as a missing key below.
