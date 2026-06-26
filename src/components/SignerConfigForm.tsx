@@ -35,16 +35,21 @@ function FormField({
   warning,
   children,
   colSpan2 = false,
+  fieldId,
 }: Readonly<{
   label: string;
   help?: React.ReactNode;
   warning?: React.ReactNode;
   children: React.ReactNode;
   colSpan2?: boolean;
+  fieldId?: string;
 }>) {
   return (
     <div className={colSpan2 ? "sm:col-span-2" : ""}>
-      <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+      <label
+        htmlFor={fieldId}
+        className="block text-sm font-medium text-zinc-300 mb-1.5"
+      >
         {label}
       </label>
       {children}
@@ -64,12 +69,13 @@ function ReadonlyField({
   mono?: boolean;
 }>) {
   return (
-    <div
+    <input
       id={id}
-      className={`w-full px-3 py-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-sm text-zinc-300 break-all select-all ${mono ? "font-mono text-xs" : ""}`}
-    >
-      {value}
-    </div>
+      type="text"
+      readOnly
+      value={value}
+      className={`w-full px-3 py-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-sm text-zinc-300 break-all select-all cursor-default ${mono ? "font-mono text-xs" : ""}`}
+    />
   );
 }
 
@@ -239,7 +245,7 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
               />
             </FormField>
 
-            <FormField label="Network">
+            <FormField label="Network" fieldId="signer-network">
               <ReadonlyField id="signer-network" value="arbitrum-one-mainnet" />
             </FormField>
 
