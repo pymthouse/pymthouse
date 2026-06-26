@@ -5,7 +5,7 @@
 #   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
 
 # Base image for signer-dmz-local (override: docker build --build-arg LIVEPEER_IMAGE=...).
-ARG LIVEPEER_IMAGE=livepeer/go-livepeer:feat-add-model-id-signer-kafka
+ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-7938edbdaf8e9f82882859b8001cc09c28f339c0
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -167,7 +167,7 @@ ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
 EXPOSE 8080 8082
 
 # Production / Railway: livepeer from official Docker image (default final stage).
-FROM livepeer/go-livepeer:feat-add-model-id-signer-kafka AS livepeer-prod
+FROM livepeer/go-livepeer:sha-7938edbdaf8e9f82882859b8001cc09c28f339c0 AS livepeer-prod
 
 FROM gateway AS signer-dmz
 
