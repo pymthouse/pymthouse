@@ -899,7 +899,7 @@ function M2mTokenTestPanel({
           value={clientSecretInput}
           onChange={(e) => setClientSecretInput(e.target.value)}
           placeholder="pmth_cs_…"
-          autoComplete="off"
+          autoComplete="new-password"
           disabled={readOnly}
           className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 font-mono placeholder:text-zinc-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
         />
