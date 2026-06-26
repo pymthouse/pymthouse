@@ -1,11 +1,9 @@
-import { and, eq, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
-import { apiKeys, appUsers, developerApps, oidcClients, users } from "@/db/schema";
+import { apiKeys, appUsers, developerApps, oidcClients } from "@/db/schema";
 import { hashToken } from "@/lib/auth";
 import { generateApiKeyValue } from "@/lib/oidc/programmatic-tokens";
-import { apiKeyLookupHashes } from "@/lib/token-hash";
-import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
 export type ResolvedAppApiKey = {
   apiKeyId: string;
@@ -14,15 +12,6 @@ export type ResolvedAppApiKey = {
   appUserId: string;
   externalUserId: string;
   label: string | null;
-};
-
-type ActiveApiKeyRow = {
-  id: string;
-  clientId: string;
-  appUserId: string | null;
-  userId: string | null;
-  label: string | null;
-  status: string;
 };
 
 export function maskApiKeyPrefix(keyPrefix: string | null | undefined): string {
@@ -41,39 +30,29 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
   return raw.slice(-4);
 }
 
-async function findActiveApiKeyRow(token: string): Promise<ActiveApiKeyRow | null> {
-  const lookupHashes = apiKeyLookupHashes(token);
+export async function resolveActiveAppApiKey(
+  bearerToken: string,
+  publicClientId: string,
+): Promise<ResolvedAppApiKey | null> {
+  const token = bearerToken.trim();
+  if (!token.startsWith("pmth_")) {
+    return null;
+  }
+
+  const keyHash = hashToken(token);
   const keyRows = await db
     .select({
       id: apiKeys.id,
       clientId: apiKeys.clientId,
       appUserId: apiKeys.appUserId,
-      userId: apiKeys.userId,
       label: apiKeys.label,
       status: apiKeys.status,
     })
     .from(apiKeys)
-    .where(
-      lookupHashes.length === 1
-        ? eq(apiKeys.keyHash, lookupHashes[0]!)
-        : or(
-            eq(apiKeys.keyHash, lookupHashes[0]!),
-            eq(apiKeys.keyHash, lookupHashes[1]!),
-          ),
-    )
+    .where(eq(apiKeys.keyHash, keyHash))
     .limit(1);
   const row = keyRows[0];
-  if (!row || row.status !== "active") {
-    return null;
-  }
-  return row;
-}
-
-async function resolveAppUserBoundApiKey(
-  row: ActiveApiKeyRow,
-  publicClientId: string,
-): Promise<ResolvedAppApiKey | null> {
-  if (!row.appUserId) {
+  if (row?.status !== "active" || !row?.appUserId) {
     return null;
   }
 
@@ -109,87 +88,6 @@ async function resolveAppUserBoundApiKey(
     externalUserId: binding.externalUserId,
     label: row.label,
   };
-}
-
-/**
- * Legacy app-level keys (pre per-app-user keys) stored `users.id` on the row
- * without `app_user_id`. Map them to an app user for signer-session exchange.
- */
-async function resolveLegacyProviderApiKey(
-  row: ActiveApiKeyRow,
-  publicClientId: string,
-): Promise<ResolvedAppApiKey | null> {
-  if (!row.userId) {
-    return null;
-  }
-
-  const bindingRows = await db
-    .select({
-      developerAppId: developerApps.id,
-      publicClientId: oidcClients.clientId,
-    })
-    .from(developerApps)
-    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(
-      and(
-        eq(developerApps.id, row.clientId),
-        eq(oidcClients.clientId, publicClientId),
-      ),
-    )
-    .limit(1);
-  const binding = bindingRows[0];
-  if (!binding) {
-    return null;
-  }
-
-  const ownerRows = await db
-    .select({
-      id: users.id,
-      email: users.email,
-    })
-    .from(users)
-    .where(eq(users.id, row.userId))
-    .limit(1);
-  const owner = ownerRows[0];
-  if (!owner) {
-    return null;
-  }
-
-  const externalUserId = (owner.email?.trim() || owner.id).trim();
-  const appUser = await resolveOrCreateAppUser({
-    clientId: row.clientId,
-    externalUserId,
-  });
-
-  return {
-    apiKeyId: row.id,
-    developerAppId: binding.developerAppId,
-    publicClientId: binding.publicClientId,
-    appUserId: appUser.id,
-    externalUserId: appUser.externalUserId,
-    label: row.label,
-  };
-}
-
-export async function resolveActiveAppApiKey(
-  bearerToken: string,
-  publicClientId: string,
-): Promise<ResolvedAppApiKey | null> {
-  const token = bearerToken.trim();
-  if (!token.startsWith("pmth_")) {
-    return null;
-  }
-
-  const row = await findActiveApiKeyRow(token);
-  if (!row) {
-    return null;
-  }
-
-  if (row.appUserId) {
-    return resolveAppUserBoundApiKey(row, publicClientId);
-  }
-
-  return resolveLegacyProviderApiKey(row, publicClientId);
 }
 
 export async function listAppUserApiKeys(input: {

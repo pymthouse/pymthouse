@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 
 import { run } from "@/test-utils/db-guard";
@@ -7,7 +8,7 @@ import { cleanupTestApp, createAppUser, seedDeveloperAppWithClient } from "@/tes
 import { db } from "@/db/index";
 import { apiKeys } from "@/db/schema";
 import { resolveActiveAppApiKey } from "@/lib/app-api-keys";
-import { hashToken, hashTokenLegacySha256 } from "@/lib/token-hash";
+import { hashToken } from "@/lib/token-hash";
 
 run("resolveActiveAppApiKey accepts per-app-user keys", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -34,7 +35,7 @@ run("resolveActiveAppApiKey accepts per-app-user keys", async (t) => {
   assert.equal(resolved?.publicClientId, app.clientId);
 });
 
-run("resolveActiveAppApiKey accepts legacy provider keys without app_user_id", async (t) => {
+run("resolveActiveAppApiKey rejects keys without app_user_id", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
@@ -45,18 +46,15 @@ run("resolveActiveAppApiKey accepts legacy provider keys without app_user_id", a
     keyHash: hashToken(token),
     clientId: app.clientId,
     userId: app.userId,
-    label: "legacy provider key",
+    label: "old app-level key",
     status: "active",
   });
 
   const resolved = await resolveActiveAppApiKey(token, app.clientId);
-  assert.ok(resolved);
-  assert.equal(resolved?.developerAppId, app.clientId);
-  assert.ok(resolved?.appUserId);
-  assert.ok(resolved?.externalUserId);
+  assert.equal(resolved, null);
 });
 
-run("resolveActiveAppApiKey accepts legacy SHA-256 key hashes", async (t) => {
+run("resolveActiveAppApiKey rejects legacy SHA-256 key hashes", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
@@ -68,7 +66,7 @@ run("resolveActiveAppApiKey accepts legacy SHA-256 key hashes", async (t) => {
 
   await db.insert(apiKeys).values({
     id: `key-${randomUUID()}`,
-    keyHash: hashTokenLegacySha256(token),
+    keyHash: createHash("sha256").update(token).digest("hex"),
     clientId: app.clientId,
     appUserId: appUser.id,
     label: "legacy hash key",
@@ -76,8 +74,7 @@ run("resolveActiveAppApiKey accepts legacy SHA-256 key hashes", async (t) => {
   });
 
   const resolved = await resolveActiveAppApiKey(token, app.clientId);
-  assert.ok(resolved);
-  assert.equal(resolved?.appUserId, appUser.id);
+  assert.equal(resolved, null);
 });
 
 run("resolveActiveAppApiKey rejects keys for a different public client_id", async (t) => {
