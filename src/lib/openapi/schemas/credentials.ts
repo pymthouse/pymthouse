@@ -55,7 +55,7 @@ export const ProgrammaticUserTokenRequestBodySchema = z
 
 /**
  * Canonical signer session envelope (RFC 8693 token-exchange output + signer routing).
- * Flat OAuth-style fields are authoritative; nested `token` is deprecated for new clients.
+ * Flat OAuth-style fields are authoritative.
  */
 export const SignerSessionSchema = z
   .object({
@@ -68,32 +68,13 @@ export const SignerSessionSchema = z
       description: "Lifetime granted balance in USD micros.",
     }),
     signer_url: z.string().url().optional().openapi({
-      description: "Public remote-signer base URL (snake_case canonical).",
-    }),
-    signerUrl: z.string().url().optional().openapi({
-      description: "Deprecated alias of signer_url for legacy SDK consumers.",
-      deprecated: true,
+      description: "Public remote-signer base URL.",
     }),
     issued_token_type: z
       .literal("urn:ietf:params:oauth:token-type:access_token")
       .optional()
       .openapi({ description: "RFC 8693 issued_token_type when sourced from /token." }),
     correlation_id: CorrelationIdSchema.optional(),
-    token: z
-      .object({
-        accessToken: z.string().optional(),
-        access_token: z.string(),
-        expiresIn: z.number().optional(),
-        expires_in: z.number(),
-        scope: ScopeStringSchema,
-        balanceUsdMicros: z.string(),
-        lifetimeGrantedUsdMicros: z.string(),
-      })
-      .optional()
-      .openapi({
-        description: "Deprecated nested mirror; prefer top-level OAuth fields.",
-        deprecated: true,
-      }),
   })
   .openapi("SignerSession");
 

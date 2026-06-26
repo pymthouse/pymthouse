@@ -121,7 +121,6 @@ defineRouteMetadata("post", appPath("/credentials"), {
 // Usage
 registerAppMetadata("get", "/usage", "Usage summary", { tags: ["Usage"] });
 registerAppMetadata("get", "/usage/balance", "Usage balance (M2M)", { tags: ["Usage"] });
-registerAppMetadata("post", "/usage/signed-tickets", "Record signed ticket usage", { tags: ["Usage"] });
 
 // Billing & plans
 registerAppMetadata("get", "/billing", "Billing profile", { tags: ["Billing"] });

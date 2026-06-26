@@ -75,15 +75,6 @@ registerJsonRouteMetadata({
 
 registerJsonRouteMetadata({
   method: "get",
-  path: "/api/v1/subscriptions",
-  tags: ["Billing"],
-  summary: "List subscriptions",
-  security: adminSession,
-  statusDescription: "Subscriptions",
-});
-
-registerJsonRouteMetadata({
-  method: "get",
   path: "/api/v1/prices/eth-usd",
   tags: ["Platform"],
   summary: "ETH/USD spot price",

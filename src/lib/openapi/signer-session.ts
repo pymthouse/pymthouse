@@ -11,7 +11,6 @@ export function buildSignerSessionEnvelope(input: {
   correlation_id?: string;
 }): SignerSession {
   const scope = input.scope.trim() || "sign:job";
-  const signerUrl = input.signer_url?.trim();
   const body: SignerSession = {
     access_token: input.access_token,
     token_type: "Bearer",
@@ -19,19 +18,10 @@ export function buildSignerSessionEnvelope(input: {
     scope,
     balanceUsdMicros: input.balanceUsdMicros,
     lifetimeGrantedUsdMicros: input.lifetimeGrantedUsdMicros,
-    token: {
-      accessToken: input.access_token,
-      access_token: input.access_token,
-      expiresIn: input.expires_in,
-      expires_in: input.expires_in,
-      scope,
-      balanceUsdMicros: input.balanceUsdMicros,
-      lifetimeGrantedUsdMicros: input.lifetimeGrantedUsdMicros,
-    },
   };
+  const signerUrl = input.signer_url?.trim();
   if (signerUrl) {
     body.signer_url = signerUrl;
-    body.signerUrl = signerUrl;
   }
   if (input.issued_token_type) {
     body.issued_token_type = input.issued_token_type;

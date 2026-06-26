@@ -5,7 +5,7 @@
  * `contracts/billing-provider-protocol/validate.schema.json`. It is the target
  * shape for the NaaP front door (NAAP-C) and the C0 conformance suite.
  *
- * Differences vs the legacy `buildValidateResponseBody` (kept for back-compat):
+ * Differences vs the removed legacy validate builder:
  *  - identity is surfaced as neutral `user.sub` + a `billing_account` ref instead
  *    of the public, metering-coupled `client_id` (⑨ forbidden field name);
  *  - capabilities are generic `"<pipeline>:<model>"` ids (or the `["*"]` wildcard)

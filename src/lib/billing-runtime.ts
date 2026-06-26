@@ -143,19 +143,6 @@ export function buildSignedTicketConstraintHash(params: {
     pixelsPerUnit: params.signedPixelsPerUnit,
   });
 }
-
-/**
- * @deprecated Retail pricing is defined by OpenMeter plan rate cards synced from Plans tab.
- */
-export function resolveUpcharge(_params: {
-  plan: typeof plans.$inferSelect | null;
-  bundles: Array<typeof planCapabilityBundles.$inferSelect>;
-  pipeline: string;
-  modelId: string;
-}): { bps: number; source: BillingContext["pricingRuleSource"] } {
-  return { bps: 0, source: "unpriced" };
-}
-
 /**
  * Convert a wei value to USD micros (1 USD = 1,000,000 micros) using the
  * oracle ETH/USD price.

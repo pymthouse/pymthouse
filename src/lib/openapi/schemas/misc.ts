@@ -1,16 +1,6 @@
 import { z } from "@/lib/openapi/zod";
 import { CorrelationIdSchema } from "./common";
 
-export const LegacyValidateResponseSchema = z
-  .object({
-    valid: z.boolean(),
-    client_id: z.string().optional(),
-    plan: z.unknown().nullable().optional(),
-    allowedModels: z.array(z.string()).optional(),
-    subscriptionRef: z.string().optional(),
-  })
-  .openapi("LegacyValidateResponse");
-
 export const C0ValidateRequestBodySchema = z
   .object({
     key: z.string().trim().min(1),

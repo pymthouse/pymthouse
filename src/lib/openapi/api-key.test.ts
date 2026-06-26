@@ -24,7 +24,7 @@ test("parseAppApiKeyBearer accepts pmth_ API keys", () => {
   assert.equal(parseAppApiKeyBearer(key), key);
 });
 
-test("buildSignerSessionEnvelope sets canonical signer_url and legacy signerUrl", () => {
+test("buildSignerSessionEnvelope sets canonical signer_url only", () => {
   const session = buildSignerSessionEnvelope({
     access_token: "jwt",
     expires_in: 300,
@@ -34,9 +34,9 @@ test("buildSignerSessionEnvelope sets canonical signer_url and legacy signerUrl"
     signer_url: "https://signer.example",
   });
   assert.equal(session.signer_url, "https://signer.example");
-  assert.equal(session.signerUrl, "https://signer.example");
   assert.equal(session.access_token, "jwt");
-  assert.equal(session.token?.access_token, "jwt");
+  assert.equal("signerUrl" in session, false);
+  assert.equal("token" in session, false);
 });
 
 test("getClientSignerApiUrl honors legacy PYMTHOUSE_SIGNER_URL", () => {

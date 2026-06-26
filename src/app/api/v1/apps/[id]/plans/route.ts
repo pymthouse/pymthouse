@@ -13,7 +13,7 @@ import {
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import { billingPlansApiV2Enabled } from "@/lib/billing/feature-flags";
 import { listBillingProducts } from "@/lib/billing/backend";
-import { toLegacyPlanRow } from "@/lib/billing/product-dto";
+import { toPlanApiRow } from "@/lib/billing/product-dto";
 import { fetchPipelineCatalog } from "@/lib/naap-catalog";
 import {
   archivePlanInOpenMeter,
@@ -241,7 +241,7 @@ export async function GET(
   return NextResponse.json({
     apiVersion: 1,
     plans: resolved.map((r) =>
-      toLegacyPlanRow({
+      toPlanApiRow({
         clientId,
         resolved: {
           ...r,

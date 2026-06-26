@@ -39,11 +39,6 @@ export async function GET(
         signerApiUrl,
         webhookUrl: `${origin}/webhooks/remote-signer`,
       },
-      deprecatedHostedFacade: {
-        description:
-          "Removed: PymtHouse /api/signer/* HTTP proxy. Use direct DMZ signing instead.",
-        signerApiUrl: null,
-      },
     },
   });
 }
