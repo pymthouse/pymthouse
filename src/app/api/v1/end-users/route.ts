@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { endUsers, users } from "@/db/schema";
+import { endUsers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { authenticateRequest, hasScope } from "@/lib/auth";
+import { getAdminUser } from "@/lib/admin-auth";
 import {
   findOrCreateEndUser,
   verifyTurnkeySessionJwt,
@@ -105,33 +103,6 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-}
-
-async function getAdminUser(request: NextRequest) {
-  const oauthSession = await getServerSession(authOptions);
-  if (oauthSession?.user) {
-    const sessionUser = oauthSession.user as Record<string, unknown>;
-    if (sessionUser.id && typeof sessionUser.id === "string" && sessionUser.role === "admin") {
-      const rows = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, sessionUser.id))
-        .limit(1);
-      return rows[0];
-    }
-  }
-
-  const auth = await authenticateRequest(request);
-  if (auth && hasScope(auth.scopes, "admin") && auth.userId) {
-    const rows = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, auth.userId))
-      .limit(1);
-    return rows[0];
-  }
-
-  return null;
 }
 
 function getTurnkeySessionJwtFromRequest(request: NextRequest): string | null {

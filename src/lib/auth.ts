@@ -119,14 +119,6 @@ async function createSessionWithExpiryMs(opts: {
   return { sessionId, token };
 }
 
-export async function revokeSession(sessionId: string): Promise<boolean> {
-  const deleted = await db
-    .delete(sessions)
-    .where(eq(sessions.id, sessionId))
-    .returning({ id: sessions.id });
-  return deleted.length > 0;
-}
-
 /**
  * Delete a session only if id, bearer token hash, and expiry still match.
  * Used to consume refresh tokens exactly once (two callers: one delete wins).

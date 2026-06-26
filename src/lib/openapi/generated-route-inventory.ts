@@ -61,12 +61,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
     "excludedReason": "excluded prefix: oidc/"
   },
   {
-    "method": "delete",
-    "path": "/api/v1/tokens",
-    "sourceFile": "tokens/route.ts",
-    "excluded": false
-  },
-  {
     "method": "get",
     "path": "/api/v1/admin/apps",
     "sourceFile": "admin/apps/route.ts",
@@ -320,12 +314,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
     "excluded": false
   },
   {
-    "method": "get",
-    "path": "/api/v1/tokens",
-    "sourceFile": "tokens/route.ts",
-    "excluded": false
-  },
-  {
     "method": "patch",
     "path": "/api/v1/admin/apps/{id}/marketplace-featured",
     "sourceFile": "admin/apps/[id]/marketplace-featured/route.ts",
@@ -540,12 +528,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
     "excluded": false
   },
   {
-    "method": "post",
-    "path": "/api/v1/tokens",
-    "sourceFile": "tokens/route.ts",
-    "excluded": false
-  },
-  {
     "method": "put",
     "path": "/api/v1/apps/{clientId}",
     "sourceFile": "apps/[id]/route.ts",
@@ -611,7 +593,6 @@ export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = [
   "DELETE /api/v1/apps/{clientId}/plans",
   "DELETE /api/v1/apps/{clientId}/users",
   "DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys",
-  "DELETE /api/v1/tokens",
   "GET /api/v1/apps",
   "GET /api/v1/apps/{clientId}",
   "GET /api/v1/apps/{clientId}/admins",
@@ -646,7 +627,6 @@ export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = [
   "GET /api/v1/signer/cli-status",
   "GET /api/v1/signer/logs",
   "GET /api/v1/subscriptions",
-  "GET /api/v1/tokens",
   "PATCH /api/v1/signer",
   "POST /api/v1/apps",
   "POST /api/v1/apps/{clientId}/admins",
@@ -671,7 +651,6 @@ export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = [
   "POST /api/v1/end-users",
   "POST /api/v1/ingest/events",
   "POST /api/v1/signer/control",
-  "POST /api/v1/tokens",
   "PUT /api/v1/apps/{clientId}",
   "PUT /api/v1/apps/{clientId}/discovery-profiles/{profileId}",
   "PUT /api/v1/apps/{clientId}/manifest",
@@ -682,4 +661,4 @@ export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = [
   "PUT /api/v1/apps/{clientId}/users"
 ] as const;
 
-export const OPENAPI_PUBLIC_ROUTE_COUNT = 77;
+export const OPENAPI_PUBLIC_ROUTE_COUNT = 74;

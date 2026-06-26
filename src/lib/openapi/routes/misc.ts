@@ -1,10 +1,6 @@
 import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import { OAuthErrorSchema } from "@/lib/openapi/schemas/common";
 import {
-  AdminTokenIssueRequestSchema,
-  AdminTokenIssueResponseSchema,
-  AdminTokenListResponseSchema,
-  AdminTokenRevokeRequestSchema,
   C0ValidateRequestBodySchema,
   C0ValidateResponseSchema,
   HealthResponseSchema,
@@ -41,50 +37,6 @@ defineRouteMetadata("post", "/api/v1/auth/validate", {
     400: { description: "Missing key" },
     401: { description: "Invalid key" },
     404: { description: "Feature disabled" },
-  },
-});
-
-defineRouteMetadata("post", "/api/v1/tokens", {
-  tags: ["Platform"],
-  summary: "Issue admin/platform bearer token",
-  security: [{ adminSession: [] }],
-  request: {
-    body: {
-      content: { "application/json": { schema: AdminTokenIssueRequestSchema } },
-    },
-  },
-  responses: {
-    200: {
-      description: "Issued token",
-      content: { "application/json": { schema: AdminTokenIssueResponseSchema } },
-    },
-    401: { description: "Unauthorized" },
-  },
-});
-
-defineRouteMetadata("get", "/api/v1/tokens", {
-  tags: ["Platform"],
-  summary: "List admin/platform tokens",
-  security: [{ adminSession: [] }],
-  responses: {
-    200: {
-      description: "Token list",
-      content: { "application/json": { schema: AdminTokenListResponseSchema } },
-    },
-  },
-});
-
-defineRouteMetadata("delete", "/api/v1/tokens", {
-  tags: ["Platform"],
-  summary: "Revoke admin/platform token",
-  security: [{ adminSession: [] }],
-  request: {
-    body: {
-      content: { "application/json": { schema: AdminTokenRevokeRequestSchema } },
-    },
-  },
-  responses: {
-    200: { description: "Revoked" },
   },
 });
 

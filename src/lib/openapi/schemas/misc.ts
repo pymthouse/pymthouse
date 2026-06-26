@@ -34,47 +34,6 @@ export const C0ValidateResponseSchema = z
   })
   .openapi("C0ValidateResponse");
 
-export const AdminTokenIssueRequestSchema = z
-  .object({
-    scopes: z.string().optional(),
-    expiresInDays: z.number().int().positive().optional(),
-    endUserId: z.string().optional(),
-    label: z.string().optional(),
-  })
-  .openapi("AdminTokenIssueRequest");
-
-export const AdminTokenIssueResponseSchema = z
-  .object({
-    sessionId: z.string(),
-    token: z.string(),
-    scopes: z.string(),
-    endUserId: z.string().nullable(),
-    expiresInDays: z.number(),
-    message: z.string(),
-  })
-  .openapi("AdminTokenIssueResponse");
-
-export const AdminTokenListResponseSchema = z
-  .object({
-    tokens: z.array(
-      z.object({
-        id: z.string(),
-        label: z.string().nullable(),
-        endUserId: z.string().nullable(),
-        scopes: z.string(),
-        expiresAt: z.string().nullable(),
-        createdAt: z.string(),
-      }),
-    ),
-  })
-  .openapi("AdminTokenListResponse");
-
-export const AdminTokenRevokeRequestSchema = z
-  .object({
-    sessionId: z.string().min(1),
-  })
-  .openapi("AdminTokenRevokeRequest");
-
 export const HealthResponseSchema = z
   .object({
     status: z.string(),
