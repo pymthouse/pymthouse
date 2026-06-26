@@ -520,27 +520,29 @@ function M2mFlowSelection({
           </button>
         ) : null}
         {showRemoteSigning ? (
-          <div
-            role="radio"
-            aria-checked={activeKind === "owner"}
-            onClick={() => !readOnly && selectKind("owner")}
-            onKeyDown={(e) => {
-              if (!readOnly && (e.key === "Enter" || e.key === " ")) {
-                e.preventDefault();
-                selectKind("owner");
-              }
-            }}
-            tabIndex={readOnly ? -1 : 0}
-            className={`${m2mOptionButtonClass("owner", activeKind)} cursor-pointer`}
-          >
-            <span
-              className={`block text-xs font-semibold leading-4 min-h-8 ${m2mOptionTitleClass(activeKind === "owner")}`}
+          <div className="flex flex-col gap-2">
+            <div
+              role="radio"
+              aria-checked={activeKind === "owner"}
+              onClick={() => !readOnly && selectKind("owner")}
+              onKeyDown={(e) => {
+                if (!readOnly && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  selectKind("owner");
+                }
+              }}
+              tabIndex={readOnly ? -1 : 0}
+              className={`${m2mOptionButtonClass("owner", activeKind)} cursor-pointer`}
             >
-              Remote signing
-            </span>
-            <span className="mt-1 block text-[11px] text-zinc-500">
-              Payment signing tokens for your app owner identity
-            </span>
+              <span
+                className={`block text-xs font-semibold leading-4 min-h-8 ${m2mOptionTitleClass(activeKind === "owner")}`}
+              >
+                Remote signing
+              </span>
+              <span className="mt-1 block text-[11px] text-zinc-500">
+                Payment signing tokens for your app owner identity
+              </span>
+            </div>
             {activeKind === "owner" ? bearerFormatToggle : null}
           </div>
         ) : null}
