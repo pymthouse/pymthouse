@@ -130,22 +130,35 @@ curl -sS -X POST ${origin}/api/v1/oidc/token \
   -d "scope=sign:job"`;
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function buildGatewayApiKeyCurl(
   origin: string,
   m2mClientId: string,
   publicClientId: string,
   externalUserId: string,
 ): string {
+  const encodedClientId = encodeURIComponent(publicClientId);
+  const encodedUserId = encodeURIComponent(externalUserId);
+  const createUserBody = shellSingleQuote(
+    JSON.stringify({
+      externalUserId,
+      email: `${externalUserId}@example.test`,
+      status: "active",
+    }),
+  );
   return String.raw`# 1) Ensure app user exists
 curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
   -H "Content-Type: application/json" \
-  -X POST ${origin}/api/v1/apps/${publicClientId}/users \
-  -d '{"externalUserId":"${externalUserId}","email":"${externalUserId}@example.test","status":"active"}'
+  -X POST ${origin}/api/v1/apps/${encodedClientId}/users \
+  -d ${createUserBody}
 
 # 2) Mint per-user API key (pmth_*) for livepeer-gateway:
 curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
   -H "Content-Type: application/json" \
-  -X POST ${origin}/api/v1/apps/${publicClientId}/users/${externalUserId}/keys \
+  -X POST ${origin}/api/v1/apps/${encodedClientId}/users/${encodedUserId}/keys \
   -d '{"label":"livepeer-gateway"}'`;
 }
 
@@ -768,7 +781,7 @@ function M2mTokenTestPanel({
   const canSignJob = publicAppAllowsSignJob(allowedScopes || DEFAULT_OIDC_SCOPES);
   const showAdministrative = hasM2mBackend && Boolean(adminScopes);
   const showRemoteSigning = canSignJob;
-  const canUseBearerSigning = hasM2mBackend && canSignJob;
+  const canUseBearerSigning = hasM2mBackend && canSignJob && Boolean(publicClientId);
   const availableFlows = useMemo(
     (): M2mTokenTestKind[] => [
       ...(showAdministrative ? (["admin"] as const) : []),
@@ -1571,7 +1584,7 @@ export default function TestingStep({
           {backendHelper?.clientId ? (
             <M2mTokenTestPanel
               clientId={backendHelper.clientId}
-              publicClientId={clientId}
+              publicClientId={clientId?.startsWith("app_") ? clientId : null}
               ownerExternalUserId={ownerExternalUserId}
               generatedSecret={m2mSecretForTests}
               allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
@@ -1607,7 +1620,7 @@ export default function TestingStep({
           </div>
           <M2mTokenTestPanel
             clientId={clientId}
-            publicClientId={clientId}
+            publicClientId={clientId.startsWith("app_") ? clientId : null}
             ownerExternalUserId={ownerExternalUserId}
             generatedSecret={m2mSecretForTests}
             allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
