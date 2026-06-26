@@ -118,6 +118,7 @@ curl -sS -X POST ${origin}/api/v1/oidc/token \
   -d "scope=sign:job"
 
 # 2) Exchange it for a long-lived opaque pmth_* signer session (no resource parameter):
+#    NOTE: this token is NOT a per-user API key and cannot be used on /auth/api-key/* routes.
 curl -sS -X POST ${origin}/api/v1/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
@@ -241,7 +242,7 @@ function resolveCurlForM2mSelection(
 function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): string | null {
   if (showFlowPicker) return null;
   if (showRemoteSigning) {
-    return "Review the curl below, then exchange credentials for a remote-signing token.";
+    return "Review the curl below, then exchange credentials for a remote-signing session token (not an API key).";
   }
   return "Review the curl below, then exchange credentials for an administrative token.";
 }
@@ -490,6 +491,17 @@ function M2mTokenTestResult({
           <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-emerald-300/90 font-mono overflow-x-auto whitespace-pre-wrap">
             {result}
           </pre>
+          {rawAccessToken?.startsWith("pmth_") ? (
+            <p className="text-[11px] text-zinc-500">
+              Returned <span className="font-mono text-zinc-400">pmth_*</span> is an opaque
+              signer-session token from RFC 8693 exchange, not a per-user API key.
+              Mint API keys via{" "}
+              <span className="font-mono text-zinc-400">
+                POST /api/v1/apps/{`{clientId}`}/users/{`{externalUserId}`}/keys
+              </span>
+              .
+            </p>
+          ) : null}
         </div>
       ) : null}
     </>
