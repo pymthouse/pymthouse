@@ -574,7 +574,7 @@ function M2mTokenTestPanel({
   const [error, setError] = useState<string | null>(null);
   const [clientSecretInput, setClientSecretInput] = useState("");
   const [selectedKind, setSelectedKind] = useState<M2mTokenTestKind>("admin");
-  const [signingTokenFormat, setSigningTokenFormat] = useState<SigningTokenFormat>("jwt");
+  const [signingTokenFormat, setSigningTokenFormat] = useState<SigningTokenFormat>("bearer");
   const [curlDetailsOpen, setCurlDetailsOpen] = useState(true);
 
   const adminScopes = computeBackendM2mClientCredentialsScopes(
