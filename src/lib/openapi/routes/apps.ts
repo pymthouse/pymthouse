@@ -23,8 +23,8 @@ function userPath(suffix: string) {
 
 type HttpMethod = "get" | "post" | "put" | "delete" | "patch";
 
-const m2mSecurity = [{ m2mBasic: [] }, { bearerUserJwt: [] }];
-const adminSecurity = [{ adminSession: [] }];
+const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }, { bearerUserJwt: [] }];
+const adminSecurity: Array<Record<string, string[]>> = [{ adminSession: [] }];
 
 function registerAppMetadata(
   method: HttpMethod,

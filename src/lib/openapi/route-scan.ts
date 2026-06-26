@@ -30,6 +30,20 @@ export type ScannedRouteOperation = {
   excludedReason?: string;
 };
 
+/** Compact constructor for generated route inventory entries (Sonar duplication). */
+export function inventoryOp(
+  method: HttpMethodLower,
+  path: string,
+  sourceFile: string,
+  excluded = false,
+  excludedReason?: string,
+): ScannedRouteOperation {
+  if (excludedReason) {
+    return { method, path, sourceFile, excluded: true, excludedReason };
+  }
+  return { method, path, sourceFile, excluded };
+}
+
 export function routeKey(method: string, path: string): string {
   return `${method.toUpperCase()} ${path}`;
 }

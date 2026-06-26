@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { withAdminGuard } from "@/lib/api-guards";
 import { getTransactions } from "@/lib/billing";
 import { weiToEthString } from "@/lib/billing-runtime";
@@ -36,7 +37,7 @@ export const GET = withAdminGuard(async (request) => {
     ownerChargeUsdMicros: tx.ownerChargeUsdMicros ?? null,
   }));
 
-  return Response.json({
+  return NextResponse.json({
     transactions: enriched,
     pagination: { limit, offset, hasMore: recentTransactions.length === limit },
   });

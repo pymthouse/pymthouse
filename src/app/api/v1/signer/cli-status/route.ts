@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { withAdminGuard } from "@/lib/api-guards";
 import { fetchSignerCliStatus } from "@/lib/signer-cli";
 
@@ -10,5 +11,5 @@ import { fetchSignerCliStatus } from "@/lib/signer-cli";
  */
 export const GET = withAdminGuard(async () => {
   const status = await fetchSignerCliStatus();
-  return Response.json(status);
+  return NextResponse.json(status);
 });

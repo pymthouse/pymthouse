@@ -2,7 +2,6 @@ import type { z } from "zod";
 import type {
   ApiKeySignerSessionRequestBodySchema,
   ApiKeyTokenRequestBodySchema,
-  FacadeApiKeyExchangeRequestBodySchema,
   ProgrammaticTokenResponseSchema,
   ProgrammaticUserTokenRequestBodySchema,
   SignerSessionSchema,
@@ -16,7 +15,4 @@ export type ProgrammaticUserTokenRequestBody = z.infer<
 export type SignerSession = z.infer<typeof SignerSessionSchema>;
 export type ApiKeySignerSessionRequestBody = z.infer<
   typeof ApiKeySignerSessionRequestBodySchema
->;
-export type FacadeApiKeyExchangeRequestBody = z.infer<
-  typeof FacadeApiKeyExchangeRequestBodySchema
 >;
