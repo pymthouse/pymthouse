@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";

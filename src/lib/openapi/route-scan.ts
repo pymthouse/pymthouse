@@ -21,6 +21,8 @@ export const OPENAPI_EXCLUDED_FILES = new Set([
 export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 export type HttpMethodLower = Lowercase<HttpMethod>;
+const EXPORTED_CONST_METHOD_REGEX = String.raw`export\s+const\s+%METHOD%\s*=`;
+const RE_EXPORT_REGEX = /export\s*\{([^}]+)\}/;
 
 export type ScannedRouteOperation = {
   method: HttpMethodLower;
@@ -110,11 +112,11 @@ export function exportedHttpMethods(source: string): HttpMethod[] {
     if (source.includes(`export async function ${method}`)) {
       methods.add(method);
     }
-    if (new RegExp(`export\\s+const\\s+${method}\\s*=`).test(source)) {
+    if (new RegExp(EXPORTED_CONST_METHOD_REGEX.replace("%METHOD%", method)).test(source)) {
       methods.add(method);
     }
   }
-  const reExportMatch = source.match(/export\s*\{([^}]+)\}/);
+  const reExportMatch = RE_EXPORT_REGEX.exec(source);
   if (reExportMatch) {
     for (const method of HTTP_METHODS) {
       if (reExportMatch[1].includes(method)) {

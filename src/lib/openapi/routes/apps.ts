@@ -135,7 +135,21 @@ registerAppMetadata("get", "/plans", "List plans", { tags: ["Billing"] });
 registerAppMetadata("post", "/plans", "Create plan", { tags: ["Billing"] });
 registerAppMetadata("put", "/plans", "Update plan", { tags: ["Billing"] });
 registerAppMetadata("delete", "/plans", "Delete plan", { tags: ["Billing"] });
-registerAppMetadata("post", "/plans/{planId}/sync", "Sync plan to OpenMeter", { tags: ["Billing"] });
+defineRouteMetadata("post", appPath("/plans/{planId}/sync"), {
+  tags: ["Billing"],
+  summary: "Sync plan to OpenMeter",
+  security: m2mSecurity,
+  request: {
+    params: z.object({
+      clientId,
+      planId: z.string().openapi({ param: { name: "planId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+  },
+});
 registerAppMetadata("put", "/starter-plan", "Update starter plan config", { tags: ["Billing"] });
 registerAppMetadata("get", "/starter-plan", "Starter plan config", { tags: ["Billing"] });
 

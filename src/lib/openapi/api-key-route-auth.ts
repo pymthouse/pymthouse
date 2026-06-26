@@ -76,7 +76,20 @@ export async function parseApiKeyRouteJsonBody<T extends z.ZodTypeAny>(
   schema: T,
   correlationId: string,
 ): Promise<z.infer<T> | NextResponse> {
-  const rawBody = await request.json().catch(() => ({}));
+  const rawText = await request.text();
+  let rawBody: unknown = {};
+  if (rawText.trim().length > 0) {
+    try {
+      rawBody = JSON.parse(rawText) as unknown;
+    } catch {
+      return apiKeyOAuthError(
+        correlationId,
+        "invalid_request",
+        "Invalid JSON request body",
+        400,
+      );
+    }
+  }
   const parsed = schema.safeParse(rawBody);
   if (!parsed.success) {
     return apiKeyOAuthError(

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getAllClients, getClient, updateClientConfig } from "@/lib/oidc/clients";
 import { withSessionAdminGuard } from "@/lib/api-guards";
 

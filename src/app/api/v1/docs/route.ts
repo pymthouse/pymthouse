@@ -14,7 +14,9 @@ const scalarHtml = `<!doctype html>
     <script
       id="api-reference"
       data-url="/api/v1/openapi.json"
-      src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+      src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.61.0"
+      integrity="sha384-uoZh8fmeR7WslZnYZCGmhZPuYhNd27YRZG/XpABR1/IbkjbdQhmUmn6Xyceh5ikg"
+      crossorigin="anonymous"></script>
   </body>
 </html>`;
 
@@ -23,6 +25,8 @@ export async function GET() {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
+      "Content-Security-Policy":
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'",
     },
   });
 }

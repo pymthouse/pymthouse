@@ -21,14 +21,19 @@ export const PATCH = withSessionAdminGuardParams<{ id: string }>(
       );
     }
 
-    let body: { featured?: boolean };
+    let body: unknown;
     try {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    if (typeof body.featured !== "boolean") {
+    const featured =
+      typeof body === "object" && body !== null
+        ? (body as { featured?: unknown }).featured
+        : undefined;
+
+    if (typeof featured !== "boolean") {
       return NextResponse.json(
         { error: "Body must include featured: boolean" },
         { status: 400 },
@@ -36,7 +41,7 @@ export const PATCH = withSessionAdminGuardParams<{ id: string }>(
     }
 
     const now = new Date().toISOString();
-    const marketplaceFeatured = body.featured ? 1 : 0;
+    const marketplaceFeatured = featured ? 1 : 0;
 
     await db
       .update(developerApps)
@@ -48,7 +53,7 @@ export const PATCH = withSessionAdminGuardParams<{ id: string }>(
 
     return NextResponse.json({
       success: true,
-      featured: body.featured,
+      featured,
     });
   },
 );

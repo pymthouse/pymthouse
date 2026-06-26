@@ -14,52 +14,54 @@ import { routeKey } from "../src/lib/openapi/route-scan";
 
 import "../src/lib/openapi/routes/index";
 
-function main() {
-  const metadataKeys = registeredMetadataKeys();
-  const virtualKeys = new Set(
+function printKeyList(header: string, keys: string[]): void {
+  if (keys.length === 0) {
+    return;
+  }
+  console.error(header);
+  for (const key of keys.toSorted((a, b) => a.localeCompare(b))) {
+    console.error(`  - ${key}`);
+  }
+}
+
+function buildVirtualRouteKeySet(): Set<string> {
+  return new Set(
     virtualMetadataEntries().map((entry) => routeKey(entry.method, entry.path)),
   );
+}
 
-  const missing: string[] = [];
-  for (const key of OPENAPI_PUBLIC_ROUTE_KEYS) {
-    if (!metadataKeys.has(key)) {
-      missing.push(key);
-    }
-  }
+function getMissingMetadata(publicKeys: readonly string[], metadataKeys: ReadonlySet<string>): string[] {
+  return publicKeys.filter((key) => !metadataKeys.has(key));
+}
 
-  const publicKeySet = new Set(OPENAPI_PUBLIC_ROUTE_KEYS);
-  const stale: string[] = [];
-  for (const key of metadataKeys) {
-    if (virtualKeys.has(key)) {
-      continue;
-    }
-    if (!publicKeySet.has(key)) {
-      stale.push(key);
-    }
-  }
+function getStaleMetadata(
+  metadataKeys: ReadonlySet<string>,
+  publicKeys: readonly string[],
+  virtualKeys: ReadonlySet<string>,
+): string[] {
+  const publicKeySet = new Set(publicKeys);
+  return [...metadataKeys].filter((key) => !virtualKeys.has(key) && !publicKeySet.has(key));
+}
 
-  if (missing.length > 0 || stale.length > 0) {
-    if (missing.length > 0) {
-      console.error("OpenAPI metadata missing for public routes:\n");
-      for (const key of missing.toSorted((a, b) => a.localeCompare(b))) {
-        console.error(`  - ${key}`);
-      }
-    }
-    if (stale.length > 0) {
-      console.error("\nStale OpenAPI metadata (no backing route handler):\n");
-      for (const key of stale.toSorted((a, b) => a.localeCompare(b))) {
-        console.error(`  - ${key}`);
-      }
-    }
-    console.error(
-      `\nUpdate src/lib/openapi/routes/* metadata and run npm run openapi:generate.`,
+function main() {
+  const metadataKeys = registeredMetadataKeys();
+  const virtualKeys = buildVirtualRouteKeySet();
+  const missing = getMissingMetadata(OPENAPI_PUBLIC_ROUTE_KEYS, metadataKeys);
+  const stale = getStaleMetadata(metadataKeys, OPENAPI_PUBLIC_ROUTE_KEYS, virtualKeys);
+
+  if (missing.length === 0 && stale.length === 0) {
+    console.log(
+      `OpenAPI drift check passed (${OPENAPI_PUBLIC_ROUTE_KEYS.length} public routes, ${metadataKeys.size} metadata entries).`,
     );
-    process.exit(1);
+    return;
   }
 
-  console.log(
-    `OpenAPI drift check passed (${OPENAPI_PUBLIC_ROUTE_KEYS.length} public routes, ${metadataKeys.size} metadata entries).`,
+  printKeyList("OpenAPI metadata missing for public routes:\n", missing);
+  printKeyList("\nStale OpenAPI metadata (no backing route handler):\n", stale);
+  console.error(
+    `\nUpdate src/lib/openapi/routes/* metadata and run npm run openapi:generate.`,
   );
+  process.exit(1);
 }
 
 main();

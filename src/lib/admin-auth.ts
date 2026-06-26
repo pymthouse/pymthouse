@@ -27,8 +27,9 @@ export async function getAdminUser(request: NextRequest) {
         .where(eq(users.id, sessionUser.id))
         .limit(1);
       const user = rows[0];
-      if (user?.role !== "admin") return null;
-      return user;
+      if (user?.role === "admin") {
+        return user;
+      }
     }
   }
 

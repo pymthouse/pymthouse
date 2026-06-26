@@ -4,7 +4,7 @@ import {
   getRouteMetadata,
   virtualMetadataEntries,
 } from "@/lib/openapi/route-metadata";
-import { genericJsonObject, jsonSuccess } from "@/lib/openapi/routes/shared";
+import { genericJsonObject } from "@/lib/openapi/routes/shared";
 
 let registered = false;
 

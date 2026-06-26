@@ -13,7 +13,7 @@ export const LegacyValidateResponseSchema = z
 
 export const C0ValidateRequestBodySchema = z
   .object({
-    key: z.string().min(1),
+    key: z.string().trim().min(1),
   })
   .openapi("C0ValidateRequest");
 
