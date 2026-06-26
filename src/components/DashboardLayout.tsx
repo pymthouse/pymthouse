@@ -120,8 +120,21 @@ export default function DashboardLayout({
 
   if (status === "loading") {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-500">
-        <div className="animate-pulse">Loading...</div>
+      <div className="flex h-screen w-full bg-zinc-950">
+        <div className="w-64 shrink-0 border-r border-zinc-800 bg-zinc-900/50 p-4 space-y-2">
+          <div className="h-8 w-32 rounded-lg bg-zinc-800 animate-pulse mb-6" />
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-9 rounded-lg bg-zinc-800/60 animate-pulse" />
+          ))}
+        </div>
+        <div className="flex-1 p-8 space-y-6">
+          <div className="h-8 w-48 rounded-lg bg-zinc-800 animate-pulse" />
+          <div className="grid grid-cols-3 gap-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-28 rounded-xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -169,7 +182,7 @@ export default function DashboardLayout({
 
       {/* Sidebar (drawer on small screens; in-flow left column from lg+) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 shrink-0 flex-col border-zinc-800 bg-zinc-900/50 transition-transform duration-200 ease-out lg:relative lg:inset-auto lg:z-auto lg:translate-x-0 lg:flex-shrink-0 lg:border-r ${
+        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 shrink-0 flex-col border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md transition-transform duration-200 ease-out lg:relative lg:inset-auto lg:z-auto lg:translate-x-0 lg:shrink-0 lg:border-r ${
           mobileNavOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         } lg:order-1`}
       >
@@ -204,10 +217,10 @@ export default function DashboardLayout({
             const otherItems = navItems.filter((i) => !i.group);
 
             const renderNavLink = (item: NavItem, isActive: boolean) => {
-              const linkClass = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              const linkClass = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
                 isActive
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50"
+                  ? "bg-emerald-500/10 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.12)]"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
               }`;
               const icon = (
                 <svg
@@ -304,24 +317,40 @@ export default function DashboardLayout({
 
         {/* User info */}
         {session?.user && (
-          <div className="p-4 border-t border-zinc-800">
+          <div className="p-4 border-t border-zinc-800 space-y-3">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-sm font-bold">
+              <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-sm font-bold shrink-0">
                 {session.user.name?.[0]?.toUpperCase() || "?"}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">
                   {session.user.name}
                 </p>
-                <p className="text-xs text-zinc-500 truncate">
-                  {session.user.email}
-                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <p className="text-xs text-zinc-500 truncate">
+                    {session.user.email}
+                  </p>
+                  {userRole && (
+                    <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      userRole === "admin"
+                        ? "bg-amber-500/15 text-amber-400"
+                        : userRole === "operator"
+                          ? "bg-blue-500/15 text-blue-400"
+                          : "bg-zinc-700/60 text-zinc-400"
+                    }`}>
+                      {userRole}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <button
               onClick={() => signOut({ callbackUrl: "/" })}
-              className="mt-3 w-full text-xs text-zinc-500 hover:text-zinc-300 transition-colors text-left"
+              className="w-full flex items-center justify-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/40 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
             >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
               Sign out
             </button>
           </div>

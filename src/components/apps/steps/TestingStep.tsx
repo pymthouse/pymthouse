@@ -326,6 +326,8 @@ type SigningTokenFormatToggleProps = Readonly<{
   onChange: (next: SigningTokenFormat) => void;
   readOnly: boolean;
   clientId: string;
+  /** When true, omit top border/margin (used below the flow picker row). */
+  embedded?: boolean;
 }>;
 
 function SigningTokenFormatToggle({
@@ -333,9 +335,16 @@ function SigningTokenFormatToggle({
   onChange,
   readOnly,
   clientId,
+  embedded = false,
 }: SigningTokenFormatToggleProps) {
   return (
-    <div className="mt-2 pt-2 border-t border-zinc-700/50 flex justify-end">
+    <div
+      className={
+        embedded
+          ? "flex justify-end"
+          : "mt-2 pt-2 border-t border-zinc-700/50 flex justify-end"
+      }
+    >
       <fieldset
         aria-label="Signing token format"
         className="relative inline-grid grid-cols-2 w-[7.25rem] rounded-md bg-zinc-950 border border-zinc-600/90 p-px m-0 min-w-0"
@@ -395,7 +404,7 @@ type M2mTokenTestPanelProps = Readonly<{
 function m2mOptionButtonClass(kind: M2mTokenTestKind, activeKind: M2mTokenTestKind) {
   const selected = activeKind === kind;
   const base =
-    "rounded-lg border px-3 py-3 text-left transition-colors w-full h-full flex flex-col";
+    "rounded-lg border px-3 py-3 text-left transition-colors w-full h-full min-h-[4.5rem] flex flex-col justify-start";
   return [
     base,
     selected
@@ -419,12 +428,19 @@ function M2mSingleFlowHint({
 }>): ReactNode {
   if (showRemoteSigning) {
     return (
-      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-3">
-        <span className="block text-xs font-semibold text-emerald-100/90">Remote signing</span>
-        <span className="mt-1 block text-[11px] text-zinc-500">
-          Payment signing tokens for your app owner identity.
-        </span>
-        {bearerFormatToggle}
+      <div className="space-y-2">
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-3">
+          <span className="block text-xs font-semibold text-emerald-100/90">Remote signing</span>
+          <span className="mt-1 block text-[11px] text-zinc-500">
+            Payment signing tokens for your app owner identity.
+          </span>
+        </div>
+        {bearerFormatToggle ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+            <span className="text-[11px] text-zinc-500">Signing token format</span>
+            {bearerFormatToggle}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -499,51 +515,51 @@ function M2mFlowSelection({
 }>): ReactNode {
   if (showFlowPicker) {
     return (
-      <div className="grid gap-2 sm:grid-cols-2 items-stretch" role="radiogroup" aria-label="Token type">
-        {showAdministrative ? (
-          <button
-            type="button"
-            role="radio"
-            aria-checked={activeKind === "admin"}
-            onClick={() => selectKind("admin")}
-            disabled={readOnly}
-            className={m2mOptionButtonClass("admin", activeKind)}
-          >
-            <span
-              className={`block text-xs font-semibold leading-4 min-h-8 ${m2mOptionTitleClass(activeKind === "admin")}`}
-            >
-              Administrative access
-            </span>
-            <span className="mt-1 block text-[11px] text-zinc-500">
-              Builder APIs, user provisioning, and device approval
-            </span>
-          </button>
-        ) : null}
-        {showRemoteSigning ? (
-          <div className="flex flex-col gap-2">
-            <div
+      <div className="space-y-2">
+        <div className="grid gap-2 sm:grid-cols-2 items-stretch" role="radiogroup" aria-label="Token type">
+          {showAdministrative ? (
+            <button
+              type="button"
               role="radio"
-              aria-checked={activeKind === "owner"}
-              onClick={() => !readOnly && selectKind("owner")}
-              onKeyDown={(e) => {
-                if (!readOnly && (e.key === "Enter" || e.key === " ")) {
-                  e.preventDefault();
-                  selectKind("owner");
-                }
-              }}
-              tabIndex={readOnly ? -1 : 0}
-              className={`${m2mOptionButtonClass("owner", activeKind)} cursor-pointer`}
+              aria-checked={activeKind === "admin"}
+              onClick={() => selectKind("admin")}
+              disabled={readOnly}
+              className={m2mOptionButtonClass("admin", activeKind)}
             >
               <span
-                className={`block text-xs font-semibold leading-4 min-h-8 ${m2mOptionTitleClass(activeKind === "owner")}`}
+                className={`block text-xs font-semibold leading-snug ${m2mOptionTitleClass(activeKind === "admin")}`}
+              >
+                Administrative access
+              </span>
+              <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
+                Builder APIs, user provisioning, and device approval
+              </span>
+            </button>
+          ) : null}
+          {showRemoteSigning ? (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={activeKind === "owner"}
+              onClick={() => selectKind("owner")}
+              disabled={readOnly}
+              className={m2mOptionButtonClass("owner", activeKind)}
+            >
+              <span
+                className={`block text-xs font-semibold leading-snug ${m2mOptionTitleClass(activeKind === "owner")}`}
               >
                 Remote signing
               </span>
-              <span className="mt-1 block text-[11px] text-zinc-500">
+              <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
                 Payment signing tokens for your app owner identity
               </span>
-            </div>
-            {activeKind === "owner" ? bearerFormatToggle : null}
+            </button>
+          ) : null}
+        </div>
+        {activeKind === "owner" && bearerFormatToggle ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+            <span className="text-[11px] text-zinc-500">Signing token format</span>
+            {bearerFormatToggle}
           </div>
         ) : null}
       </div>
@@ -637,6 +653,7 @@ function M2mTokenTestPanel({
       value={signingTokenFormat}
       clientId={clientId}
       readOnly={readOnly}
+      embedded
       onChange={(next) => {
         selectKind("owner");
         setSigningTokenFormat(next);
