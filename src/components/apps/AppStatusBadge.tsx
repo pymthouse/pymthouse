@@ -15,7 +15,7 @@ export function appStatusAriaLabel(status: string): string {
   }
 }
 
-export default function AppStatusBadge({ status }: { status: string }) {
+export default function AppStatusBadge({ status }: Readonly<{ status: string }>) {
   const config: Record<string, { label: string; className: string }> = {
     approved: {
       label: "Live",

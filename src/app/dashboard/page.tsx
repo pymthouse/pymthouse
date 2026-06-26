@@ -134,6 +134,7 @@ async function AdminDashboard() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
+            {" "}
             Network live
           </div>
         )}
@@ -208,6 +209,7 @@ async function AdminDashboard() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
                   <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500" />
                 </span>
+                {" "}
                 Live
               </span>
             )}
@@ -271,7 +273,7 @@ function FreeUsageBanner() {
   );
 }
 
-async function DeveloperDashboard({ userId }: { userId: string }) {
+async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
   const apps = userId ? await listUserAccessibleApps(userId) : [];
 
   return (
@@ -292,16 +294,48 @@ async function DeveloperDashboard({ userId }: { userId: string }) {
   );
 }
 
-function MyAppsSection({ apps }: { apps: UserAppSummary[] }) {
+function myAppsSummaryText(appCount: number): string {
+  if (appCount === 0) {
+    return "Create an app to configure identity, plans, and payments.";
+  }
+  const noun = appCount === 1 ? "app" : "apps";
+  return `${appCount} ${noun} — open settings or usage from here.`;
+}
+
+function appListSecondaryLine(app: UserAppSummary): string | null {
+  if (app.subtitle) {
+    return app.subtitle;
+  }
+  if (app.clientId) {
+    return app.clientId;
+  }
+  return null;
+}
+
+function AppListSecondaryLine({ app }: Readonly<{ app: UserAppSummary }>) {
+  const secondaryLine = appListSecondaryLine(app);
+  if (!secondaryLine) {
+    return null;
+  }
+  return (
+    <p
+      className={`text-xs mt-0.5 truncate ${
+        app.subtitle ? "text-zinc-500" : "font-mono text-zinc-600"
+      }`}
+    >
+      {secondaryLine}
+    </p>
+  );
+}
+
+function MyAppsSection({ apps }: Readonly<{ apps: UserAppSummary[] }>) {
   return (
     <section className="rounded-xl border border-emerald-500/15 bg-white/[0.02] backdrop-blur-sm shadow-[inset_0_1px_0_rgba(52,211,153,0.06)]">
       <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="font-semibold text-zinc-100">My Apps</h3>
           <p className="text-sm text-zinc-500 mt-0.5">
-            {apps.length === 0
-              ? "Create an app to configure identity, plans, and payments."
-              : `${apps.length} app${apps.length === 1 ? "" : "s"} — open settings or usage from here.`}
+            {myAppsSummaryText(apps.length)}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -369,13 +403,7 @@ function MyAppsSection({ apps }: { apps: UserAppSummary[] }) {
                     </span>
                     <AppStatusBadge status={app.status} />
                   </div>
-                  {app.subtitle ? (
-                    <p className="text-xs text-zinc-500 mt-0.5 truncate">{app.subtitle}</p>
-                  ) : app.clientId ? (
-                    <p className="text-xs font-mono text-zinc-600 mt-0.5 truncate">
-                      {app.clientId}
-                    </p>
-                  ) : null}
+                  <AppListSecondaryLine app={app} />
                 </div>
               </Link>
               <div className="hidden sm:flex items-center gap-3 shrink-0 text-xs font-medium">

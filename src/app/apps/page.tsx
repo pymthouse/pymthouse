@@ -22,6 +22,7 @@ interface AppSummary {
 }
 
 const STATUS_REVIEW = new Set(["submitted", "in_review"]);
+const APP_SKELETON_KEYS = ["app-sk-a", "app-sk-b", "app-sk-c"] as const;
 
 function AppStatusIndicator({
   status,
@@ -243,9 +244,9 @@ export default function AppsPage() {
 
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading apps" aria-busy="true">
-          {Array.from({ length: 3 }).map((_, i) => (
+          {APP_SKELETON_KEYS.map((key) => (
             <div
-              key={i}
+              key={key}
               className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5 space-y-3 animate-pulse"
             >
               <div className="flex items-start gap-3">

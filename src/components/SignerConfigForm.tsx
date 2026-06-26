@@ -35,13 +35,13 @@ function FormField({
   warning,
   children,
   colSpan2 = false,
-}: {
+}: Readonly<{
   label: string;
   help?: React.ReactNode;
   warning?: React.ReactNode;
   children: React.ReactNode;
   colSpan2?: boolean;
-}) {
+}>) {
   return (
     <div className={colSpan2 ? "sm:col-span-2" : ""}>
       <label className="block text-sm font-medium text-zinc-300 mb-1.5">
@@ -55,14 +55,17 @@ function FormField({
 }
 
 function ReadonlyField({
+  id,
   value,
   mono = false,
-}: {
+}: Readonly<{
+  id: string;
   value: string;
   mono?: boolean;
-}) {
+}>) {
   return (
     <div
+      id={id}
       className={`w-full px-3 py-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-sm text-zinc-300 break-all select-all ${mono ? "font-mono text-xs" : ""}`}
     >
       {value}
@@ -82,7 +85,7 @@ function fieldClass(locked: boolean, mono = false) {
 const LOCAL_ONLY_HELP =
   "Only used when starting the local Docker signer from this app. Configure on Railway for remote deployments.";
 
-export default function SignerConfigForm({ config }: SignerConfigFormProps) {
+export default function SignerConfigForm({ config }: Readonly<SignerConfigFormProps>) {
   const router = useRouter();
   const signerUrlEnvLocked = config.signerUrlSource === "env";
   const localComposeLocked = config.managedRemote;
@@ -180,22 +183,22 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
-            <label className="block text-sm font-medium text-zinc-400 mb-1.5">
+            <label htmlFor="signer-oidc-issuer" className="block text-sm font-medium text-zinc-400 mb-1.5">
               OIDC_ISSUER
             </label>
-            <ReadonlyField value={config.oidcIssuer} mono />
+            <ReadonlyField id="signer-oidc-issuer" value={config.oidcIssuer} mono />
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-400 mb-1.5">
+            <label htmlFor="signer-oidc-audience" className="block text-sm font-medium text-zinc-400 mb-1.5">
               OIDC_AUDIENCE
             </label>
-            <ReadonlyField value={config.oidcAudience} mono />
+            <ReadonlyField id="signer-oidc-audience" value={config.oidcAudience} mono />
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-400 mb-1.5">
+            <label htmlFor="signer-oidc-jwks" className="block text-sm font-medium text-zinc-400 mb-1.5">
               JWKS_URI
             </label>
-            <ReadonlyField value={config.oidcJwksUrl} mono />
+            <ReadonlyField id="signer-oidc-jwks" value={config.oidcJwksUrl} mono />
           </div>
         </div>
       </section>
@@ -237,7 +240,7 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
             </FormField>
 
             <FormField label="Network">
-              <ReadonlyField value="arbitrum-one-mainnet" />
+              <ReadonlyField id="signer-network" value="arbitrum-one-mainnet" />
             </FormField>
 
             <FormField
@@ -371,7 +374,7 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
                 max="65535"
                 value={formData.signerPort}
                 onChange={(e) =>
-                  setFormData({ ...formData, signerPort: parseInt(e.target.value, 10) || 8080 })
+                  setFormData({ ...formData, signerPort: Number.parseInt(e.target.value, 10) || 8080 })
                 }
                 disabled={localComposeLocked}
                 readOnly={localComposeLocked}
@@ -395,7 +398,7 @@ export default function SignerConfigForm({ config }: SignerConfigFormProps) {
                 step="0.1"
                 value={formData.defaultCutPercent}
                 onChange={(e) =>
-                  setFormData({ ...formData, defaultCutPercent: parseFloat(e.target.value) })
+                  setFormData({ ...formData, defaultCutPercent: Number.parseFloat(e.target.value) })
                 }
                 className={inputEnabled}
               />

@@ -82,6 +82,19 @@ const allNavItems: NavItem[] = [
   },
 ];
 
+const SKELETON_NAV_KEYS = ["nav-a", "nav-b", "nav-c", "nav-d", "nav-e"] as const;
+const SKELETON_CARD_KEYS = ["card-a", "card-b", "card-c"] as const;
+
+function roleBadgeClassName(role: string): string {
+  if (role === "admin") {
+    return "bg-amber-500/15 text-amber-400";
+  }
+  if (role === "operator") {
+    return "bg-blue-500/15 text-blue-400";
+  }
+  return "bg-zinc-700/60 text-zinc-400";
+}
+
 export default function DashboardLayout({
   children,
 }: {
@@ -123,15 +136,15 @@ export default function DashboardLayout({
       <div className="flex h-screen w-full bg-zinc-950">
         <div className="w-64 shrink-0 border-r border-zinc-800 bg-zinc-900/50 p-4 space-y-2">
           <div className="h-8 w-32 rounded-lg bg-zinc-800 animate-pulse mb-6" />
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-9 rounded-lg bg-zinc-800/60 animate-pulse" />
+          {SKELETON_NAV_KEYS.map((key) => (
+            <div key={key} className="h-9 rounded-lg bg-zinc-800/60 animate-pulse" />
           ))}
         </div>
         <div className="flex-1 p-8 space-y-6">
           <div className="h-8 w-48 rounded-lg bg-zinc-800 animate-pulse" />
           <div className="grid grid-cols-3 gap-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-28 rounded-xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
+            {SKELETON_CARD_KEYS.map((key) => (
+              <div key={key} className="h-28 rounded-xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
             ))}
           </div>
         </div>
@@ -331,13 +344,9 @@ export default function DashboardLayout({
                     {session.user.email}
                   </p>
                   {userRole && (
-                    <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                      userRole === "admin"
-                        ? "bg-amber-500/15 text-amber-400"
-                        : userRole === "operator"
-                          ? "bg-blue-500/15 text-blue-400"
-                          : "bg-zinc-700/60 text-zinc-400"
-                    }`}>
+                    <span
+                      className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${roleBadgeClassName(userRole)}`}
+                    >
                       {userRole}
                     </span>
                   )}
