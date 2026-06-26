@@ -13,6 +13,7 @@ import { appUsers, developerApps, oidcClients } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { validateClientSecret } from "./clients";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
+import { assertSignJobNotMixedWithAdmin, SignJobScopeExclusivityError } from "@/lib/oidc/scopes";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -34,6 +35,15 @@ export async function issueProgrammaticTokens(input: {
   appUserId: string;
   scopes: string[];
 }) {
+  try {
+    assertSignJobNotMixedWithAdmin(input.scopes);
+  } catch (err) {
+    if (err instanceof SignJobScopeExclusivityError) {
+      throw new ProgrammaticTokenError(err.code, err.message);
+    }
+    throw err;
+  }
+
   const appRows = await db
     .select({ allowedScopes: oidcClients.allowedScopes })
     .from(developerApps)
