@@ -29,8 +29,7 @@ function parseReviewPayload(body: unknown): { action: ReviewAction; notes?: stri
 
 function hasPendingRevisionReview(app: Awaited<ReturnType<typeof getProviderApp>>): boolean {
   return Boolean(
-    app &&
-      app.status === "approved" &&
+    app?.status === "approved" &&
       app.pendingRevisionSubmittedAt &&
       app.pendingScopes &&
       app.pendingGrantTypes &&

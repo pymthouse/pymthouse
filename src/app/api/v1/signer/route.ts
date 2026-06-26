@@ -134,41 +134,42 @@ function applyLiveAICapIntervalUpdate(
   return null;
 }
 
-/**
- * GET /api/v1/signer -- Get singleton signer status + config
- */
-export const GET = withAdminGuard(async () => {
-  const liveStatus = await syncSignerStatus();
+type SignerPatchComputation = {
+  updates: Record<string, unknown>;
+  localComposeTouched: boolean;
+};
 
-  const signerRows = await db
-    .select()
-    .from(signerConfig)
-    .where(eq(signerConfig.id, "default"))
-    .limit(1);
-  const signer = signerRows[0];
+function isLocalComposeFieldTouched(body: Record<string, unknown>): boolean {
+  return (
+    body.ethRpcUrl !== undefined ||
+    body.signerPort !== undefined ||
+    body.ethAcctAddr !== undefined ||
+    body.remoteDiscovery !== undefined ||
+    body.orchWebhookUrl !== undefined ||
+    body.liveAICapReportInterval !== undefined
+  );
+}
 
-  return NextResponse.json({
-    signer,
-    live: {
-      reachable: liveStatus.reachable,
-      ethAddress: liveStatus.ethAddress,
-    },
-  });
-});
+function buildSignerUpdateMessage(
+  signer: Parameters<typeof isManagedRemoteSigner>[0],
+  localComposeTouched: boolean,
+): string {
+  const remote = isManagedRemoteSigner(signer);
+  if (remote) {
+    return localComposeTouched
+      ? "Platform settings saved. Signer process settings (RPC, port, discovery) must be changed on the remote host."
+      : "Platform settings saved.";
+  }
+  return localComposeTouched
+    ? "Config updated. Restart the signer for changes to take effect."
+    : "Config updated.";
+}
 
-/**
- * PATCH /api/v1/signer -- Update signer config
- * Changing config requires a restart to take effect.
- */
-export const PATCH = withAdminGuard(async (request) => {
-  const body = (await request.json()) as Record<string, unknown>;
+function computeSignerPatch(
+  body: Record<string, unknown>,
+  current: { remoteDiscovery: number } | undefined,
+): SignerPatchComputation | NextResponse {
   const updates: Record<string, unknown> = {};
-  const currentRows = await db
-    .select()
-    .from(signerConfig)
-    .where(eq(signerConfig.id, "default"))
-    .limit(1);
-  const current = currentRows[0];
 
   if (body.name !== undefined) {
     updates.name = body.name;
@@ -219,7 +220,53 @@ export const PATCH = withAdminGuard(async (request) => {
     return liveAICapIntervalError;
   }
 
-  if (Object.keys(updates).length === 0) {
+  return {
+    updates,
+    localComposeTouched: isLocalComposeFieldTouched(body),
+  };
+}
+
+/**
+ * GET /api/v1/signer -- Get singleton signer status + config
+ */
+export const GET = withAdminGuard(async () => {
+  const liveStatus = await syncSignerStatus();
+
+  const signerRows = await db
+    .select()
+    .from(signerConfig)
+    .where(eq(signerConfig.id, "default"))
+    .limit(1);
+  const signer = signerRows[0];
+
+  return NextResponse.json({
+    signer,
+    live: {
+      reachable: liveStatus.reachable,
+      ethAddress: liveStatus.ethAddress,
+    },
+  });
+});
+
+/**
+ * PATCH /api/v1/signer -- Update signer config
+ * Changing config requires a restart to take effect.
+ */
+export const PATCH = withAdminGuard(async (request) => {
+  const body = (await request.json()) as Record<string, unknown>;
+  const currentRows = await db
+    .select()
+    .from(signerConfig)
+    .where(eq(signerConfig.id, "default"))
+    .limit(1);
+  const current = currentRows[0];
+
+  const computed = computeSignerPatch(body, current);
+  if (computed instanceof NextResponse) {
+    return computed;
+  }
+
+  if (Object.keys(computed.updates).length === 0) {
     return NextResponse.json(
       { error: "No valid fields to update" },
       { status: 400 }
@@ -228,7 +275,7 @@ export const PATCH = withAdminGuard(async (request) => {
 
   await db
     .update(signerConfig)
-    .set(updates)
+    .set(computed.updates)
     .where(eq(signerConfig.id, "default"));
 
   const updatedRows = await db
@@ -238,27 +285,9 @@ export const PATCH = withAdminGuard(async (request) => {
     .limit(1);
   const updated = updatedRows[0];
 
-  const remote = isManagedRemoteSigner(updated);
-  const localComposeTouched =
-    body.ethRpcUrl !== undefined ||
-    body.signerPort !== undefined ||
-    body.ethAcctAddr !== undefined ||
-    body.remoteDiscovery !== undefined ||
-    body.orchWebhookUrl !== undefined ||
-    body.liveAICapReportInterval !== undefined;
-
-  let message = "Config updated.";
-  if (remote) {
-    message = localComposeTouched
-      ? "Platform settings saved. Signer process settings (RPC, port, discovery) must be changed on the remote host."
-      : "Platform settings saved.";
-  } else if (localComposeTouched) {
-    message = "Config updated. Restart the signer for changes to take effect.";
-  }
-
   return NextResponse.json({
     signer: updated,
-    message,
+    message: buildSignerUpdateMessage(updated, computed.localComposeTouched),
   });
 });
 
