@@ -134,6 +134,28 @@ function applyLiveAICapIntervalUpdate(
   return null;
 }
 
+function assignIfDefined(
+  source: Record<string, unknown>,
+  sourceKey: string,
+  updates: Record<string, unknown>,
+): void {
+  const value = source[sourceKey];
+  if (value !== undefined) {
+    updates[sourceKey] = value;
+  }
+}
+
+function applySignerApiKeyUpdate(
+  value: unknown,
+  updates: Record<string, unknown>,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  updates.signerApiKey = trimmed === "" ? null : trimmed;
+}
+
 type SignerPatchComputation = {
   updates: Record<string, unknown>;
   localComposeTouched: boolean;
@@ -171,18 +193,12 @@ function computeSignerPatch(
 ): SignerPatchComputation | NextResponse {
   const updates: Record<string, unknown> = {};
 
-  if (body.name !== undefined) {
-    updates.name = body.name;
-  }
+  assignIfDefined(body, "name", updates);
   const signerUrlError = applySignerUrlUpdate(body.signerUrl, updates);
   if (signerUrlError) {
     return signerUrlError;
   }
-  if (body.signerApiKey !== undefined) {
-    const trimmed =
-      typeof body.signerApiKey === "string" ? body.signerApiKey.trim() : "";
-    updates.signerApiKey = trimmed === "" ? null : trimmed;
-  }
+  applySignerApiKeyUpdate(body.signerApiKey, updates);
   const signerPortError = applySignerPortUpdate(body.signerPort, updates);
   if (signerPortError) {
     return signerPortError;
@@ -191,11 +207,10 @@ function computeSignerPatch(
   if (networkError) {
     return networkError;
   }
-  if (body.ethRpcUrl !== undefined) updates.ethRpcUrl = body.ethRpcUrl;
-  if (body.ethAcctAddr !== undefined) updates.ethAcctAddr = body.ethAcctAddr;
-  if (body.defaultCutPercent !== undefined)
-    updates.defaultCutPercent = body.defaultCutPercent;
-  if (body.billingMode !== undefined) updates.billingMode = body.billingMode;
+  assignIfDefined(body, "ethRpcUrl", updates);
+  assignIfDefined(body, "ethAcctAddr", updates);
+  assignIfDefined(body, "defaultCutPercent", updates);
+  assignIfDefined(body, "billingMode", updates);
 
   applyRemoteDiscoveryUpdate(body.remoteDiscovery, updates);
   const effectiveRemoteDiscovery =
