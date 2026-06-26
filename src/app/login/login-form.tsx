@@ -11,6 +11,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { MarketingFooter } from "@/components/MarketingFooter";
 
+/** Temporarily hide direct Google OAuth on the login page. Re-enable when ready. */
+const SHOW_GOOGLE_LOGIN = false;
+
 interface AppBranding {
   mode: "blackLabel" | "whiteLabel";
   displayName: string;
@@ -335,15 +338,17 @@ export function LoginForm() {
                 For developer accounts only.
               </p>
               <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    signIn("google", { callbackUrl: safeCallbackUrl })
-                  }
-                  className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
-                >
-                  Google
-                </button>
+                {SHOW_GOOGLE_LOGIN ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      signIn("google", { callbackUrl: safeCallbackUrl })
+                    }
+                    className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-zinc-700 rounded-lg hover:bg-zinc-800/50 transition-colors text-sm font-medium text-zinc-300"
+                  >
+                    Google
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() =>
