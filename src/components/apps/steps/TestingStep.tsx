@@ -129,6 +129,25 @@ curl -sS -X POST ${origin}/api/v1/oidc/token \
   -d "scope=sign:job"`;
 }
 
+function buildGatewayApiKeyCurl(
+  origin: string,
+  m2mClientId: string,
+  publicClientId: string,
+  externalUserId: string,
+): string {
+  return String.raw`# 1) Ensure app user exists
+curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
+  -H "Content-Type: application/json" \
+  -X POST ${origin}/api/v1/apps/${publicClientId}/users \
+  -d '{"externalUserId":"${externalUserId}","email":"${externalUserId}@example.test","status":"active"}'
+
+# 2) Mint per-user API key (pmth_*) for livepeer-gateway:
+curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
+  -H "Content-Type: application/json" \
+  -X POST ${origin}/api/v1/apps/${publicClientId}/users/${externalUserId}/keys \
+  -d '{"label":"livepeer-gateway"}'`;
+}
+
 type M2mTokenTestKind = "admin" | "owner";
 type SigningTokenFormat = "jwt" | "bearer";
 
@@ -186,6 +205,82 @@ async function postM2mTokenExchange(input: {
   return postOidcToken(body);
 }
 
+async function postBuilderJson(input: {
+  path: string;
+  method: "POST";
+  m2mClientId: string;
+  m2mClientSecret: string;
+  body: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const basic =
+    typeof globalThis.btoa === "function"
+      ? globalThis.btoa(`${input.m2mClientId}:${input.m2mClientSecret}`)
+      : "";
+  if (!basic) {
+    throw new Error("Browser base64 encoder unavailable for Basic auth.");
+  }
+
+  const response = await fetch(input.path, {
+    method: input.method,
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(input.body),
+  });
+
+  const text = await response.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    parsed = {};
+  }
+
+  if (!response.ok) {
+    const message =
+      (typeof parsed.error_description === "string" && parsed.error_description) ||
+      (typeof parsed.error === "string" && parsed.error) ||
+      text ||
+      `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return parsed;
+}
+
+async function ensureAppUserAndMintApiKey(input: {
+  publicClientId: string;
+  m2mClientId: string;
+  m2mClientSecret: string;
+  externalUserId: string;
+}): Promise<Record<string, unknown>> {
+  const externalUserId = input.externalUserId.trim();
+  if (!externalUserId) {
+    throw new Error("external user id is required to mint an API key.");
+  }
+
+  await postBuilderJson({
+    path: `/api/v1/apps/${encodeURIComponent(input.publicClientId)}/users`,
+    method: "POST",
+    m2mClientId: input.m2mClientId,
+    m2mClientSecret: input.m2mClientSecret,
+    body: {
+      externalUserId,
+      email: `${externalUserId}@example.test`,
+      status: "active",
+    },
+  });
+
+  return postBuilderJson({
+    path: `/api/v1/apps/${encodeURIComponent(input.publicClientId)}/users/${encodeURIComponent(externalUserId)}/keys`,
+    method: "POST",
+    m2mClientId: input.m2mClientId,
+    m2mClientSecret: input.m2mClientSecret,
+    body: { label: "livepeer-gateway" },
+  });
+}
+
 function extractAccessToken(data: Record<string, unknown>): string | null {
   if (typeof data.access_token === "string" && data.access_token.trim()) {
     return data.access_token.trim();
@@ -231,18 +326,23 @@ function resolveCurlForM2mSelection(
   activeKind: M2mTokenTestKind,
   useBearerSigning: boolean,
   origin: string,
-  clientId: string,
+  m2mClientId: string,
+  publicClientId: string | null,
+  externalUserId: string,
   adminScopes: string,
 ): string {
-  if (activeKind === "admin") return buildM2mAdminCurl(origin, clientId, adminScopes);
-  if (useBearerSigning) return buildOpaqueSignerSessionCurl(origin, clientId);
-  return buildOwnerSignJobCurl(origin, clientId);
+  if (activeKind === "admin") return buildM2mAdminCurl(origin, m2mClientId, adminScopes);
+  if (useBearerSigning && publicClientId) {
+    return buildGatewayApiKeyCurl(origin, m2mClientId, publicClientId, externalUserId);
+  }
+  if (useBearerSigning) return buildOpaqueSignerSessionCurl(origin, m2mClientId);
+  return buildOwnerSignJobCurl(origin, m2mClientId);
 }
 
 function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): string | null {
   if (showFlowPicker) return null;
   if (showRemoteSigning) {
-    return "Review the curl below, then exchange credentials for a remote-signing session token (not an API key).";
+    return "Review the curl below, then mint either a remote-signing JWT or a gateway-ready per-user API key.";
   }
   return "Review the curl below, then exchange credentials for an administrative token.";
 }
@@ -283,12 +383,40 @@ async function executeM2mTokenTest(input: {
   activeKind: M2mTokenTestKind;
   useBearerSigning: boolean;
   adminScopes: string;
-  clientId: string;
+  m2mClientId: string;
+  publicClientId: string | null;
+  externalUserId: string;
   effectiveSecret: string;
-}): Promise<{ result: string; rawAccessToken: string | null }> {
+}): Promise<{
+  result: string;
+  rawAccessToken: string | null;
+  tokenKind: "api_key" | "signer_session" | "jwt";
+}> {
   if (input.activeKind === "owner" && input.useBearerSigning) {
+    if (!input.publicClientId?.trim()) {
+      throw new Error("Public client_id is required to mint per-user API keys.");
+    }
+    const data = await ensureAppUserAndMintApiKey({
+      publicClientId: input.publicClientId,
+      m2mClientId: input.m2mClientId,
+      m2mClientSecret: input.effectiveSecret,
+      externalUserId: input.externalUserId,
+    });
+    const apiKey =
+      typeof data.apiKey === "string" && data.apiKey.trim() ? data.apiKey.trim() : null;
+    if (!apiKey) {
+      throw new Error("API key mint response missing apiKey.");
+    }
+    return {
+      result: formatTokenTestResult(data),
+      rawAccessToken: apiKey,
+      tokenKind: "api_key",
+    };
+  }
+
+  if (input.activeKind === "owner") {
     const mintData = await postM2mClientCredentials({
-      clientId: input.clientId,
+      clientId: input.m2mClientId,
       clientSecret: input.effectiveSecret,
       scope: "sign:job",
     });
@@ -297,13 +425,14 @@ async function executeM2mTokenTest(input: {
       throw new Error("Remote signing mint did not return an access_token.");
     }
     const data = await postM2mTokenExchange({
-      clientId: input.clientId,
+      clientId: input.m2mClientId,
       clientSecret: input.effectiveSecret,
       subjectToken: subjectJwt,
     });
     return {
       result: formatTokenTestResult(data),
       rawAccessToken: extractAccessToken(data),
+      tokenKind: "signer_session",
     };
   }
 
@@ -312,13 +441,14 @@ async function executeM2mTokenTest(input: {
       ? input.adminScopes || (() => { throw new Error("No administrative scopes are configured."); })()
       : "sign:job";
   const data = await postM2mClientCredentials({
-    clientId: input.clientId,
+    clientId: input.m2mClientId,
     clientSecret: input.effectiveSecret,
     scope,
   });
   return {
     result: formatTokenTestResult(data),
     rawAccessToken: extractAccessToken(data),
+    tokenKind: "jwt",
   };
 }
 
@@ -391,6 +521,7 @@ function SigningTokenFormatToggle({
 
 type M2mTokenTestPanelProps = Readonly<{
   clientId: string;
+  publicClientId: string | null;
   generatedSecret: string | null;
   allowedScopes: string;
   readOnly: boolean;
@@ -460,6 +591,7 @@ function M2mTokenTestResult({
   error,
   result,
   rawAccessToken,
+  tokenKind,
   onCopy,
   copiedLabel,
   tokenCopyLabel,
@@ -467,6 +599,7 @@ function M2mTokenTestResult({
   error: string | null;
   result: string | null;
   rawAccessToken: string | null;
+  tokenKind: "api_key" | "signer_session" | "jwt" | null;
   onCopy: (text: string, label: string) => void;
   copiedLabel: string | null;
   tokenCopyLabel: string;
@@ -491,7 +624,15 @@ function M2mTokenTestResult({
           <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-emerald-300/90 font-mono overflow-x-auto whitespace-pre-wrap">
             {result}
           </pre>
-          {rawAccessToken?.startsWith("pmth_") ? (
+          {tokenKind === "api_key" ? (
+            <p className="text-[11px] text-zinc-500">
+              Returned <span className="font-mono text-zinc-400">pmth_*</span> is a per-user API
+              key and can be used with{" "}
+              <span className="font-mono text-zinc-400">/auth/api-key/signer-session</span> (for
+              example from <span className="font-mono text-zinc-400">livepeer-gateway</span>).
+            </p>
+          ) : null}
+          {tokenKind === "signer_session" ? (
             <p className="text-[11px] text-zinc-500">
               Returned <span className="font-mono text-zinc-400">pmth_*</span> is an opaque
               signer-session token from RFC 8693 exchange, not a per-user API key.
@@ -589,6 +730,7 @@ function M2mFlowSelection({
 
 function M2mTokenTestPanel({
   clientId,
+  publicClientId,
   generatedSecret,
   allowedScopes,
   readOnly,
@@ -601,8 +743,10 @@ function M2mTokenTestPanel({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [rawAccessToken, setRawAccessToken] = useState<string | null>(null);
+  const [resultTokenKind, setResultTokenKind] = useState<"api_key" | "signer_session" | "jwt" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clientSecretInput, setClientSecretInput] = useState("");
+  const [externalUserId, setExternalUserId] = useState("gateway-test-user");
   const [selectedKind, setSelectedKind] = useState<M2mTokenTestKind>("admin");
   const [signingTokenFormat, setSigningTokenFormat] = useState<SigningTokenFormat>("bearer");
   const [curlDetailsOpen, setCurlDetailsOpen] = useState(true);
@@ -631,6 +775,8 @@ function M2mTokenTestPanel({
     useBearerSigning,
     origin,
     clientId,
+    publicClientId,
+    externalUserId,
     adminScopes,
   );
   const curlCopyLabel = `curlM2m-${clientId}-${activeKind}-${useBearerSigning ? "bearer" : "jwt"}`;
@@ -682,22 +828,35 @@ function M2mTokenTestPanel({
     setError(null);
     setResult(null);
     setRawAccessToken(null);
+    setResultTokenKind(null);
     try {
       const exchange = await executeM2mTokenTest({
         activeKind,
         useBearerSigning,
         adminScopes,
-        clientId,
+        m2mClientId: clientId,
+        publicClientId,
+        externalUserId,
         effectiveSecret,
       });
       setResult(exchange.result);
       setRawAccessToken(exchange.rawAccessToken);
+      setResultTokenKind(exchange.tokenKind);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Token request failed.");
     } finally {
       setLoading(false);
     }
-  }, [activeKind, adminScopes, clientId, effectiveSecret, readOnly, useBearerSigning]);
+  }, [
+    activeKind,
+    adminScopes,
+    clientId,
+    effectiveSecret,
+    externalUserId,
+    publicClientId,
+    readOnly,
+    useBearerSigning,
+  ]);
 
   return (
     <div className={`space-y-4 ${showTopBorder ? "pt-3 border-t border-zinc-800" : ""}`}>
@@ -748,6 +907,27 @@ function M2mTokenTestPanel({
         bearerFormatToggle={bearerFormatToggle}
       />
 
+      {activeKind === "owner" && useBearerSigning ? (
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-zinc-400" htmlFor={`external-user-id-${clientId}`}>
+            External user id (API key owner)
+          </label>
+          <input
+            id={`external-user-id-${clientId}`}
+            type="text"
+            value={externalUserId}
+            onChange={(event) => setExternalUserId(event.target.value)}
+            placeholder="gateway-test-user"
+            autoComplete="off"
+            disabled={readOnly}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 font-mono placeholder:text-zinc-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          />
+          <p className="text-xs text-zinc-500">
+            Used for <span className="font-mono text-zinc-400">/users/{`{externalUserId}`}/keys</span> minting.
+          </p>
+        </div>
+      ) : null}
+
       <details
         className="rounded-lg border border-zinc-800 bg-zinc-950/50"
         open={curlDetailsOpen}
@@ -787,6 +967,7 @@ function M2mTokenTestPanel({
         error={error}
         result={result}
         rawAccessToken={rawAccessToken}
+        tokenKind={resultTokenKind}
         onCopy={onCopy}
         copiedLabel={copiedLabel}
         tokenCopyLabel={tokenCopyLabel}
@@ -1389,6 +1570,7 @@ export default function TestingStep({
           {backendHelper?.clientId ? (
             <M2mTokenTestPanel
               clientId={backendHelper.clientId}
+              publicClientId={clientId}
               generatedSecret={m2mSecretForTests}
               allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
               readOnly={readOnly}
@@ -1423,6 +1605,7 @@ export default function TestingStep({
           </div>
           <M2mTokenTestPanel
             clientId={clientId}
+            publicClientId={clientId}
             generatedSecret={m2mSecretForTests}
             allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
             readOnly={readOnly}
