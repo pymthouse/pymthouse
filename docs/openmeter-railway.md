@@ -197,8 +197,8 @@ Preview uses the **3-service clearinghouse** model (`docker-compose.clearinghous
 
 | Service | Role |
 |---------|------|
-| `kafka` | Redpanda bus (`kafka.railway.internal:9092`) |
-| `openmeter-collector` | Benthos: Kafka → Konnect CloudEvents ingest |
+| `kafka` | Redpanda bus (`kafka.railway.internal:9092`). Service root directory: `deploy/kafka` |
+| `openmeter-collector` | Benthos: Kafka → Konnect CloudEvents ingest. Root directory: `deploy/openmeter-collector` |
 | `pymthouse` | Signer DMZ (`docker/signer-dmz/Dockerfile`) |
 
 **One-time migration** from the legacy 8-service preview stack:

@@ -2,8 +2,8 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "deploy/openmeter-collector/Dockerfile",
-    "watchPatterns": ["deploy/openmeter-collector/**", "deploy/collector.yaml"]
+    "dockerfilePath": "Dockerfile",
+    "watchPatterns": ["**"]
   },
   "deploy": {
     "numReplicas": 1,

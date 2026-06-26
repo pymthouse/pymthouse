@@ -40,7 +40,7 @@ services:
       kafka:
         condition: service_healthy
     volumes:
-      - ./deploy/collector.yaml:/config.yaml:ro
+      - ./deploy/openmeter-collector/collector.yaml:/config.yaml:ro
     command: ["-c", "/config.yaml"]
     environment:
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}

@@ -97,6 +97,10 @@ echo "=== Preview clearinghouse migration (project $PROJECT_ID) ==="
 
 ensure_service kafka
 ensure_service openmeter-collector
+
+echo "Configuring service root directories (monorepo railway.json isolation) ..."
+bash "$ROOT/scripts/railway-configure-service-roots.sh" preview
+
 configure_kafka_image
 
 if ! $SKIP_DELETE; then

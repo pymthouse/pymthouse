@@ -11,8 +11,16 @@
     "pymthouse"
   ],
   "services": {
-    "kafka": { "kind": "image" },
-    "openmeter-collector": { "kind": "image" },
+    "kafka": {
+      "kind": "image",
+      "rootDirectory": "deploy/kafka",
+      "railwayConfigFile": "/deploy/kafka/railway.json"
+    },
+    "openmeter-collector": {
+      "kind": "image",
+      "rootDirectory": "deploy/openmeter-collector",
+      "railwayConfigFile": "/deploy/openmeter-collector/railway.json"
+    },
     "pymthouse": {
       "kind": "repo",
       "manifest": "deploy/pymthouse/railway.json",

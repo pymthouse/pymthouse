@@ -2,8 +2,8 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "deploy/kafka/Dockerfile",
-    "watchPatterns": ["deploy/kafka/**"]
+    "dockerfilePath": "Dockerfile",
+    "watchPatterns": ["**"]
   },
   "deploy": {
     "numReplicas": 1,
