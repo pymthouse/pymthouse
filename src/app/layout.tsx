@@ -5,10 +5,25 @@ import "./globals.css";
 import Providers from "@/components/Providers";
 import { authOptions } from "@/lib/next-auth-options";
 
+const siteDescription =
+  "Identity and payment infrastructure for Livepeer AI apps. OIDC authentication, usage metering, and managed payment signing.";
+
 export const metadata: Metadata = {
-  title: "pymthouse - Identity & Payment Infrastructure",
-  description:
-    "Whitelabel identity and payment infrastructure for Livepeer orchestrators",
+  title: "pymthouse — Identity & Payment Infrastructure",
+  description: siteDescription,
+  metadataBase: new URL(process.env.NEXTAUTH_URL ?? "https://pymthouse.com"),
+  openGraph: {
+    title: "pymthouse — Identity & Payment Infrastructure",
+    description: siteDescription,
+    siteName: "pymthouse",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "pymthouse — Identity & Payment Infrastructure",
+    description: siteDescription,
+  },
 };
 
 export default async function RootLayout({
