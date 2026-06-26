@@ -46,8 +46,8 @@ function chartPointRadius(activeIndex: number | null, index: number, value: numb
 }
 
 function buildYTicks(maxValue: number, tickCount = 4): number[] {
-  if (maxValue <= 0) {
-    return [0];
+  if (!Number.isFinite(maxValue) || maxValue <= 0) {
+    return Array.from({ length: tickCount + 1 }, (_, i) => i);
   }
   const padded = Math.ceil(maxValue * 1.1);
   const step = Math.max(1, Math.ceil(padded / tickCount));
@@ -76,10 +76,13 @@ export default function UsageLineChart({
   const plotW = width - padLeft - padRight;
   const plotH = height - padTop - padBottom;
 
-  const values = useMemo(() => data.map((d) => d.value), [data]);
+  const values = useMemo(
+    () => data.map((d) => (Number.isFinite(d.value) ? d.value : 0)),
+    [data],
+  );
   const maxValue = Math.max(0, ...values);
   const yTicks = useMemo(() => buildYTicks(maxValue), [maxValue]);
-  const yMax = yTicks.at(-1) ?? 1;
+  const yMax = Math.max(1, yTicks.at(-1) ?? 1);
   const n = data.length;
   const todayKey = utcTodayKey();
 
