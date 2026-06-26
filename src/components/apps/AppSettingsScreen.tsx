@@ -33,6 +33,8 @@ interface Props {
   canSubmitForReview?: boolean;
   /** Only app owner may connect/disconnect Stripe (matches billing API). */
   canManageBilling?: boolean;
+  /** App owner identity used when minting owner-scoped API keys from Credentials tab. */
+  ownerExternalUserId?: string | null;
   /** Called after a successful submit so the parent can refresh status UI. */
   onReviewSubmitted?: () => void;
   /** Called after reverting from submitted to draft (header badge, etc.). */
@@ -96,6 +98,7 @@ export default function AppSettingsScreen({
   canEdit = true,
   canSubmitForReview = false,
   canManageBilling = false,
+  ownerExternalUserId = null,
   onReviewSubmitted,
   onRevertedToDraft,
   initialTab,
@@ -643,6 +646,7 @@ export default function AppSettingsScreen({
                     : s.backendHelper,
                 }));
               }}
+              ownerExternalUserId={ownerExternalUserId}
               readOnly={!canEdit}
               hideRedirectUriEditor
               hideAuthCodeFlowSection

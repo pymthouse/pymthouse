@@ -32,6 +32,7 @@ export default function AppDetailPage() {
     canEdit: boolean;
     canSubmitForReview: boolean;
     canManageBilling: boolean;
+    ownerExternalUserId: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -82,6 +83,10 @@ export default function AppDetailPage() {
           canEdit: data.canEdit === true,
           canSubmitForReview: data.canSubmitForReview === true,
           canManageBilling: data.canManageBilling === true,
+          ownerExternalUserId:
+            typeof data.ownerId === "string" && data.ownerId.trim()
+              ? data.ownerId.trim()
+              : null,
         });
       })
       .catch(() => setAppData(null))
@@ -164,6 +169,7 @@ export default function AppDetailPage() {
         canEdit={appData.canEdit}
         canSubmitForReview={appData.canSubmitForReview}
         canManageBilling={appData.canManageBilling}
+        ownerExternalUserId={appData.ownerExternalUserId}
         onReviewSubmitted={handleReviewSubmitted}
         onRevertedToDraft={handleRevertedToDraft}
         initialTab={initialTab}

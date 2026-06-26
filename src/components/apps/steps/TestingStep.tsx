@@ -48,6 +48,7 @@ interface Props {
   onDomainsChange: (domains: { id: string; domain: string }[]) => void;
   onSecretGenerated: () => void;
   onBackendSecretGenerated?: () => void;
+  ownerExternalUserId?: string | null;
   readOnly?: boolean;
   /** When true, the redirect URI / domain editor is omitted (managed from Credentials & URLs tab). */
   hideRedirectUriEditor?: boolean;
@@ -328,12 +329,17 @@ function resolveCurlForM2mSelection(
   origin: string,
   m2mClientId: string,
   publicClientId: string | null,
-  externalUserId: string,
+  ownerExternalUserId: string | null,
   adminScopes: string,
 ): string {
   if (activeKind === "admin") return buildM2mAdminCurl(origin, m2mClientId, adminScopes);
   if (useBearerSigning && publicClientId) {
-    return buildGatewayApiKeyCurl(origin, m2mClientId, publicClientId, externalUserId);
+    return buildGatewayApiKeyCurl(
+      origin,
+      m2mClientId,
+      publicClientId,
+      ownerExternalUserId?.trim() || "OWNER_EXTERNAL_USER_ID",
+    );
   }
   if (useBearerSigning) return buildOpaqueSignerSessionCurl(origin, m2mClientId);
   return buildOwnerSignJobCurl(origin, m2mClientId);
@@ -385,7 +391,7 @@ async function executeM2mTokenTest(input: {
   adminScopes: string;
   m2mClientId: string;
   publicClientId: string | null;
-  externalUserId: string;
+  ownerExternalUserId: string | null;
   effectiveSecret: string;
 }): Promise<{
   result: string;
@@ -396,11 +402,15 @@ async function executeM2mTokenTest(input: {
     if (!input.publicClientId?.trim()) {
       throw new Error("Public client_id is required to mint per-user API keys.");
     }
+    const ownerExternalUserId = input.ownerExternalUserId?.trim();
+    if (!ownerExternalUserId) {
+      throw new Error("App owner identity is unavailable. Refresh the page and retry.");
+    }
     const data = await ensureAppUserAndMintApiKey({
       publicClientId: input.publicClientId,
       m2mClientId: input.m2mClientId,
       m2mClientSecret: input.effectiveSecret,
-      externalUserId: input.externalUserId,
+      externalUserId: ownerExternalUserId,
     });
     const apiKey =
       typeof data.apiKey === "string" && data.apiKey.trim() ? data.apiKey.trim() : null;
@@ -522,6 +532,7 @@ function SigningTokenFormatToggle({
 type M2mTokenTestPanelProps = Readonly<{
   clientId: string;
   publicClientId: string | null;
+  ownerExternalUserId: string | null;
   generatedSecret: string | null;
   allowedScopes: string;
   readOnly: boolean;
@@ -731,6 +742,7 @@ function M2mFlowSelection({
 function M2mTokenTestPanel({
   clientId,
   publicClientId,
+  ownerExternalUserId,
   generatedSecret,
   allowedScopes,
   readOnly,
@@ -746,7 +758,6 @@ function M2mTokenTestPanel({
   const [resultTokenKind, setResultTokenKind] = useState<"api_key" | "signer_session" | "jwt" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clientSecretInput, setClientSecretInput] = useState("");
-  const [externalUserId, setExternalUserId] = useState("gateway-test-user");
   const [selectedKind, setSelectedKind] = useState<M2mTokenTestKind>("admin");
   const [signingTokenFormat, setSigningTokenFormat] = useState<SigningTokenFormat>("bearer");
   const [curlDetailsOpen, setCurlDetailsOpen] = useState(true);
@@ -776,7 +787,7 @@ function M2mTokenTestPanel({
     origin,
     clientId,
     publicClientId,
-    externalUserId,
+    ownerExternalUserId,
     adminScopes,
   );
   const curlCopyLabel = `curlM2m-${clientId}-${activeKind}-${useBearerSigning ? "bearer" : "jwt"}`;
@@ -836,7 +847,7 @@ function M2mTokenTestPanel({
         adminScopes,
         m2mClientId: clientId,
         publicClientId,
-        externalUserId,
+        ownerExternalUserId,
         effectiveSecret,
       });
       setResult(exchange.result);
@@ -852,7 +863,7 @@ function M2mTokenTestPanel({
     adminScopes,
     clientId,
     effectiveSecret,
-    externalUserId,
+    ownerExternalUserId,
     publicClientId,
     readOnly,
     useBearerSigning,
@@ -908,24 +919,13 @@ function M2mTokenTestPanel({
       />
 
       {activeKind === "owner" && useBearerSigning ? (
-        <div className="space-y-1.5">
-          <label className="block text-xs font-medium text-zinc-400" htmlFor={`external-user-id-${clientId}`}>
-            External user id (API key owner)
-          </label>
-          <input
-            id={`external-user-id-${clientId}`}
-            type="text"
-            value={externalUserId}
-            onChange={(event) => setExternalUserId(event.target.value)}
-            placeholder="gateway-test-user"
-            autoComplete="off"
-            disabled={readOnly}
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 font-mono placeholder:text-zinc-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-          />
-          <p className="text-xs text-zinc-500">
-            Used for <span className="font-mono text-zinc-400">/users/{`{externalUserId}`}/keys</span> minting.
-          </p>
-        </div>
+        <p className="text-xs text-zinc-500">
+          API key minting is bound to the app owner identity:{" "}
+          <span className="font-mono text-zinc-400">
+            {ownerExternalUserId?.trim() || "(unavailable)"}
+          </span>
+          .
+        </p>
       ) : null}
 
       <details
@@ -1229,6 +1229,7 @@ export default function TestingStep({
   onDomainsChange,
   onSecretGenerated,
   onBackendSecretGenerated,
+  ownerExternalUserId = null,
   readOnly = false,
   hideRedirectUriEditor = false,
   hideAuthCodeFlowSection = false,
@@ -1571,6 +1572,7 @@ export default function TestingStep({
             <M2mTokenTestPanel
               clientId={backendHelper.clientId}
               publicClientId={clientId}
+              ownerExternalUserId={ownerExternalUserId}
               generatedSecret={m2mSecretForTests}
               allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
               readOnly={readOnly}
@@ -1606,6 +1608,7 @@ export default function TestingStep({
           <M2mTokenTestPanel
             clientId={clientId}
             publicClientId={clientId}
+            ownerExternalUserId={ownerExternalUserId}
             generatedSecret={m2mSecretForTests}
             allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
             readOnly={readOnly}
