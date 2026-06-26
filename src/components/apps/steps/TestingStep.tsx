@@ -392,24 +392,20 @@ type M2mTokenTestPanelProps = Readonly<{
   hasM2mBackend: boolean;
 }>;
 
-function m2mOptionButtonClass(kind: M2mTokenTestKind, activeKind: M2mTokenTestKind, accent: "zinc" | "emerald") {
+function m2mOptionButtonClass(kind: M2mTokenTestKind, activeKind: M2mTokenTestKind) {
   const selected = activeKind === kind;
   const base =
     "rounded-lg border px-3 py-3 text-left transition-colors w-full h-full flex flex-col";
-  if (accent === "emerald") {
-    return [
-      base,
-      selected
-        ? "border-emerald-500/50 bg-emerald-500/10 ring-1 ring-emerald-500/40"
-        : "border-zinc-700 bg-zinc-800/50 hover:bg-zinc-800",
-    ].join(" ");
-  }
   return [
     base,
     selected
-      ? "border-zinc-500 bg-zinc-800 ring-1 ring-zinc-500/50"
-      : "border-zinc-700 bg-zinc-800/50 hover:bg-zinc-800",
+      ? "border-emerald-500/50 bg-emerald-500/10 ring-1 ring-emerald-500/40"
+      : "border-zinc-700 bg-zinc-800/50 hover:bg-zinc-800 hover:border-zinc-600",
   ].join(" ");
+}
+
+function m2mOptionTitleClass(selected: boolean) {
+  return selected ? "text-emerald-100" : "text-zinc-300";
 }
 
 function M2mSingleFlowHint({
@@ -511,9 +507,11 @@ function M2mFlowSelection({
             aria-checked={activeKind === "admin"}
             onClick={() => selectKind("admin")}
             disabled={readOnly}
-            className={m2mOptionButtonClass("admin", activeKind, "zinc")}
+            className={m2mOptionButtonClass("admin", activeKind)}
           >
-            <span className="block text-xs font-semibold leading-4 min-h-8 text-zinc-100">
+            <span
+              className={`block text-xs font-semibold leading-4 min-h-8 ${m2mOptionTitleClass(activeKind === "admin")}`}
+            >
               Administrative access
             </span>
             <span className="mt-1 block text-[11px] text-zinc-500">
@@ -533,15 +531,17 @@ function M2mFlowSelection({
               }
             }}
             tabIndex={readOnly ? -1 : 0}
-            className={`${m2mOptionButtonClass("owner", activeKind, "emerald")} cursor-pointer`}
+            className={`${m2mOptionButtonClass("owner", activeKind)} cursor-pointer`}
           >
-            <span className="block text-xs font-semibold leading-4 min-h-8 text-emerald-100">
+            <span
+              className={`block text-xs font-semibold leading-4 min-h-8 ${m2mOptionTitleClass(activeKind === "owner")}`}
+            >
               Remote signing
             </span>
             <span className="mt-1 block text-[11px] text-zinc-500">
               Payment signing tokens for your app owner identity
             </span>
-            {bearerFormatToggle}
+            {activeKind === "owner" ? bearerFormatToggle : null}
           </div>
         ) : null}
       </div>
