@@ -305,7 +305,7 @@ audience=livepeer-remote-signer
 
 Response includes `access_token` (user-scoped JWT, `aud=livepeer-remote-signer`), `balanceUsdMicros`, and `lifetimeGrantedUsdMicros`.
 
-Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` HTTP proxy is **removed** (returns `410 Gone`); use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
+Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
 **Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT and receive `auth_id` for metering attribution.
 

@@ -152,15 +152,14 @@ function assertNonProdDatabase(): void {
 }
 
 /**
- * Ensure the default signer row exists and is marked running so proxy routes
- * are allowed to forward requests. The mocked signer URL is process-local via
+ * Ensure the default signer row exists and is marked running for signer-dependent
+ * tests. The mocked signer URL is process-local via
  * `PYMTHOUSE_TEST_SIGNER_URL`; do not persist it in the shared DB row.
  *
  * Teardown is intentionally a no-op: `node --test` runs files in parallel
  * **processes** sharing one Postgres row. A refcount/snapshot restore in one
  * worker would set `status` back to `stopped` while another worker's test is
- * still mid-run (503: Signer is not running). See usage-integration vs
- * proxy-routes tests.
+ * still mid-run (503: Signer is not running).
  *
  * If an older run crashed before this fixture stopped writing signer URLs, use
  * {@link clearTestSignerSentinel} or re-seed the row.

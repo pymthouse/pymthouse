@@ -3,22 +3,6 @@ const DEPRECATION_HEADERS = {
   Deprecation: "true",
 } as const;
 
-export function deprecatedSignerProxyResponse(): Response {
-  return Response.json(
-    {
-      error: "signer_proxy_deprecated",
-      error_description:
-        "PymtHouse /api/signer/* signing proxy is removed. Mint a user JWT via the Builder API OIDC token endpoint, sign directly against the remote signer DMZ with @pymthouse/builder-sdk/signer/server, and use /webhooks/remote-signer for identity. Metering is asynchronous via Kafka and the OpenMeter collector.",
-      migration: {
-        routing: "GET /api/v1/apps/{clientId}/signer/routing",
-        webhook: "/webhooks/remote-signer",
-        sdk: "@pymthouse/builder-sdk/signer/server",
-      },
-    },
-    { status: 410, headers: DEPRECATION_HEADERS },
-  );
-}
-
 export function deprecatedSignedTicketHttpIngestResponse(): Response {
   return Response.json(
     {
