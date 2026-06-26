@@ -10,7 +10,6 @@
  */
 
 import crypto from "crypto";
-import type { planCapabilityBundles, plans } from "@/db/schema";
 import { extractPipelineModelFromCapabilitiesBase64 } from "./proto";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
