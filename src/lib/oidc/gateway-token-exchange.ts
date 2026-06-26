@@ -323,6 +323,22 @@ async function resolveGatewaySessionPrincipal(
     return { userId: undefined, endUserId };
   }
 
+  const appUserByExternalRows = await dbConn
+    .select({ externalUserId: appUsers.externalUserId })
+    .from(appUsers)
+    .where(
+      and(eq(appUsers.clientId, developerAppId), eq(appUsers.externalUserId, sub)),
+    )
+    .limit(1);
+  const externalFromSub = appUserByExternalRows[0]?.externalUserId;
+  if (externalFromSub) {
+    const { id: endUserId } = await deps.findOrCreateAppEndUser(
+      developerAppId,
+      externalFromSub,
+    );
+    return { userId: undefined, endUserId };
+  }
+
   const endUserDirect = await dbConn
     .select({ id: endUsers.id })
     .from(endUsers)

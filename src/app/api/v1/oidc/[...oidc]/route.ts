@@ -30,9 +30,15 @@ import {
 } from "@/lib/oidc/device-token-exchange";
 import {
   handleMintUserSignerToken,
+  handleM2mOwnerSignJob,
   isMintUserSignerTokenRequest,
+  isM2mOwnerSignJobRequest,
   MintUserSignerTokenError,
 } from "@/lib/oidc/mint-user-signer-token";
+import {
+  assertSignJobNotMixedWithAdmin,
+  SignJobScopeExclusivityError,
+} from "@/lib/oidc/scopes";
 import {
   handleSignerJwtTokenExchange,
   isSignerJwtTokenExchangeRequest,
@@ -47,6 +53,29 @@ const RESOURCE_REQUIRED_GRANTS = new Set([
 ]);
 
 const DEBUG_OIDC_LOGS = process.env.OIDC_DEBUG_LOGS === "1";
+
+function requestedScopesFromParams(params: URLSearchParams): string[] {
+  return (params.get("scope") || "")
+    .split(/[\s,]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
+function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
+  if (err instanceof MintUserSignerTokenError) {
+    return NextResponse.json(
+      { error: err.code, error_description: err.message },
+      { status: err.status },
+    );
+  }
+  if (err instanceof SignJobScopeExclusivityError) {
+    return NextResponse.json(
+      { error: err.code, error_description: err.message },
+      { status: 400 },
+    );
+  }
+  return null;
+}
 
 /** RFC 6749 §2.3.1 Appendix B decoding for `client_id` / `client_secret` in Basic auth — see `decodeBasicAuthComponent` in `@/lib/auth`. */
 function clientCredentialsFromTokenRequest(
@@ -138,6 +167,7 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         exchangeParams,
       );
       try {
+        assertSignJobNotMixedWithAdmin(requestedScopesFromParams(exchangeParams));
         const result = await handleMintUserSignerToken({
           clientId,
           clientSecret,
@@ -148,13 +178,38 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
         });
       } catch (err) {
-        if (err instanceof MintUserSignerTokenError) {
-          return NextResponse.json(
-            { error: err.code, error_description: err.message },
-            { status: err.status },
-          );
+        const response = mintSignerTokenErrorResponse(err);
+        if (response) {
+          return response;
         }
         console.error("[OIDC] mint user signer token error:", err);
+        return NextResponse.json(
+          { error: "server_error", error_description: "Internal error during token mint" },
+          { status: 500 },
+        );
+      }
+    }
+
+    if (isM2mOwnerSignJobRequest(exchangeParams)) {
+      const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
+        request,
+        exchangeParams,
+      );
+      try {
+        assertSignJobNotMixedWithAdmin(requestedScopesFromParams(exchangeParams));
+        const result = await handleM2mOwnerSignJob({
+          clientId,
+          clientSecret,
+        });
+        return NextResponse.json(result, {
+          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+        });
+      } catch (err) {
+        const response = mintSignerTokenErrorResponse(err);
+        if (response) {
+          return response;
+        }
+        console.error("[OIDC] M2M owner sign:job mint error:", err);
         return NextResponse.json(
           { error: "server_error", error_description: "Internal error during token mint" },
           { status: 500 },

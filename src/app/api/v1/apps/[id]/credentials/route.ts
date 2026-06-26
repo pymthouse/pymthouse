@@ -59,7 +59,7 @@ export async function POST(
         {
           error: "interactive_public_no_secret",
           error_description:
-            "Enable Backend device helper in Auth & Scopes, then generate a secret for the confidential client.",
+            "Enable Confidential M2M backend on App profile, then generate a secret for the confidential client.",
         },
         { status: 400 },
       );

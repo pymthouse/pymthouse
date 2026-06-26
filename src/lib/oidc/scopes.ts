@@ -15,6 +15,9 @@ export interface ScopeDefinition {
 
 export const OPENID_SCOPE = "openid";
 
+/** M2M-only scope that selects the clearinghouse signer-mint token path. */
+export const SIGN_MINT_USER_TOKEN_SCOPE = "sign:mint_user_token";
+
 export const DEFAULT_OIDC_SCOPES = "openid sign:job";
 
 /** Public app clients always include `openid`; callers must not rely on the UI to add it. */
@@ -83,4 +86,66 @@ export const OIDC_SCOPE_MAP: Record<string, ScopeDefinition> = Object.fromEntrie
 
 export function getScopeDefinition(scope: string): ScopeDefinition | undefined {
   return OIDC_SCOPE_MAP[scope];
+}
+
+/** Scopes that must not appear in the same token as sign:job. */
+export const ADMIN_SCOPES = new Set(
+  OIDC_SCOPES.map((definition) => definition.value).filter(
+    (value) => value !== OPENID_SCOPE && value !== "sign:job",
+  ),
+);
+
+export class SignJobScopeExclusivityError extends Error {
+  readonly code = "invalid_scope";
+
+  constructor(
+    message = "sign:job cannot be combined with administrative scopes in the same token",
+  ) {
+    super(message);
+  }
+}
+
+/** Reject tokens that mix daily signing (sign:job) with administrative scopes. */
+export function assertSignJobNotMixedWithAdmin(scopes: string[]): void {
+  const normalized = scopes.map((scope) => scope.trim()).filter(Boolean);
+  if (!normalized.includes("sign:job")) {
+    return;
+  }
+  const conflicting = normalized.filter((scope) => ADMIN_SCOPES.has(scope));
+  if (conflicting.length > 0) {
+    throw new SignJobScopeExclusivityError();
+  }
+}
+
+function isM2mClientId(clientId: string): boolean {
+  return clientId.startsWith("m2m_");
+}
+
+const PROVIDER_EXCLUDED_SCOPES = new Set([SIGN_MINT_USER_TOKEN_SCOPE]);
+
+const M2M_PROVIDER_EXCLUDED_SCOPES = new Set([
+  SIGN_MINT_USER_TOKEN_SCOPE,
+  "sign:job",
+]);
+
+/**
+ * Scopes registered with node-oidc-provider for a client. Custom mint-only scopes
+ * (sign:mint_user_token, M2M sign:job) stay in DB allowedScopes but are omitted here.
+ */
+export function toProviderScopeMetadata(
+  allowedScopes: string,
+  clientId: string,
+): string {
+  const normalized = isM2mClientId(clientId)
+    ? allowedScopes
+    : ensureOpenIdScope(allowedScopes);
+  const excluded = isM2mClientId(clientId)
+    ? M2M_PROVIDER_EXCLUDED_SCOPES
+    : PROVIDER_EXCLUDED_SCOPES;
+  return normalized
+    .split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean)
+    .filter((scope) => !excluded.has(scope))
+    .join(" ");
 }

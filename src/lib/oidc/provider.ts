@@ -9,7 +9,8 @@ import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-pro
 import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
 import { getIssuer } from "./issuer-urls";
-import { hashClientSecret, normalizePublicAllowedScopes } from "./clients";
+import { hashClientSecret } from "./clients";
+import { toProviderScopeMetadata } from "./scopes";
 import { parseGrantTypes } from "./grants";
 import { getTrustedLoginHosts, normalizeDomain } from "./custom-domains";
 import { ensureSigningKey } from "./jwks";
@@ -111,7 +112,7 @@ async function loadClients(): Promise<ClientMetadata[]> {
       redirect_uris: redirectUris,
       grant_types: providerGrantTypes,
       token_endpoint_auth_method: row.tokenEndpointAuthMethod as "none" | "client_secret_post" | "client_secret_basic",
-      scope: normalizePublicAllowedScopes(row.allowedScopes, row.clientId),
+      scope: toProviderScopeMetadata(row.allowedScopes, row.clientId),
     };
     meta.response_types = providerGrantTypes.includes("authorization_code") ? ["code"] : [];
 

@@ -13,9 +13,6 @@ export default function AppInfoStep({ data, onChange, readOnly = false }: Props)
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-zinc-100 mb-1">App Info</h2>
-        <p className="text-sm text-zinc-500">
-          Minimal provider metadata for the MVP.
-        </p>
       </div>
       <div>
         <label className="block text-sm font-medium text-zinc-300 mb-1.5">
