@@ -207,6 +207,14 @@ export default function AppSettingsScreen({
     [],
   );
 
+  const updatePostLogoutRedirectUris = useCallback(
+    (updater: React.SetStateAction<string[]>) => {
+      setPostLogoutRedirectUris(updater);
+      setIsDirty(true);
+    },
+    [],
+  );
+
   const handleRedirectUrisChange = useCallback(
     (uris: string[]) => {
       setFormData((prev) => {
@@ -398,7 +406,7 @@ export default function AppSettingsScreen({
   const addPostLogoutUri = () => {
     const trimmed = newPostLogoutUri.trim();
     if (!trimmed || postLogoutRedirectUris.includes(trimmed)) return;
-    setPostLogoutRedirectUris((u) => [...u, trimmed]);
+    updatePostLogoutRedirectUris((u) => [...u, trimmed]);
     setNewPostLogoutUri("");
   };
 
@@ -477,7 +485,8 @@ export default function AppSettingsScreen({
                   <button
                     type="button"
                     onClick={() => setConfirmRevert(false)}
-                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+                    disabled={reverting}
+                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Cancel
                   </button>
@@ -578,7 +587,8 @@ export default function AppSettingsScreen({
                   <button
                     type="button"
                     onClick={() => setConfirmDelete(false)}
-                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+                    disabled={deleting}
+                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Cancel
                   </button>
@@ -703,7 +713,7 @@ export default function AppSettingsScreen({
                         <button
                           type="button"
                           onClick={() =>
-                            setPostLogoutRedirectUris((items) =>
+                            updatePostLogoutRedirectUris((items) =>
                               items.filter((item) => item !== uri),
                             )
                           }

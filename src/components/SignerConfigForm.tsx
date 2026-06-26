@@ -42,7 +42,7 @@ function FormField({
   warning?: React.ReactNode;
   children: React.ReactNode;
   colSpan2?: boolean;
-  fieldId?: string;
+  fieldId: string;
 }>) {
   return (
     <div className={colSpan2 ? "sm:col-span-2" : ""}>
@@ -235,8 +235,9 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
             Identity &amp; Connection
           </h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Signer Name">
+            <FormField label="Signer Name" fieldId="signer-name">
               <input
+                id="signer-name"
                 type="text"
                 required
                 value={formData.name}
@@ -251,6 +252,7 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
 
             <FormField
               label="Signer Base URL"
+              fieldId="signer-base-url"
               colSpan2
               help={
                 signerUrlEnvLocked ? (
@@ -281,6 +283,7 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
               }
             >
               <input
+                id="signer-base-url"
                 type="url"
                 value={formData.signerUrl}
                 onChange={(e) => setFormData({ ...formData, signerUrl: e.target.value })}
@@ -293,11 +296,13 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
 
             <FormField
               label="Signer API Key"
+              fieldId="signer-api-key"
               colSpan2
               help="Optional shared secret sent to the remote signer for request authentication."
             >
               <div className="relative">
                 <input
+                  id="signer-api-key"
                   type={showApiKey ? "text" : "password"}
                   value={formData.signerApiKey}
                   onChange={(e) => setFormData({ ...formData, signerApiKey: e.target.value })}
@@ -335,10 +340,12 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               label="Ethereum RPC URL"
+              fieldId="signer-eth-rpc-url"
               colSpan2
               help={localComposeLocked ? LOCAL_ONLY_HELP : undefined}
             >
               <input
+                id="signer-eth-rpc-url"
                 type="url"
                 required={!localComposeLocked}
                 value={formData.ethRpcUrl}
@@ -352,10 +359,12 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
 
             <FormField
               label="Eth Account Address"
+              fieldId="signer-eth-acct-addr"
               colSpan2
               help={localComposeLocked ? LOCAL_ONLY_HELP : undefined}
             >
               <input
+                id="signer-eth-acct-addr"
                 type="text"
                 value={formData.ethAcctAddr}
                 onChange={(e) => setFormData({ ...formData, ethAcctAddr: e.target.value })}
@@ -368,6 +377,7 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
 
             <FormField
               label="Signer Port (httpAddr)"
+              fieldId="signer-port"
               help={
                 localComposeLocked
                   ? LOCAL_ONLY_HELP
@@ -375,6 +385,7 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
               }
             >
               <input
+                id="signer-port"
                 type="number"
                 min="1024"
                 max="65535"
@@ -396,22 +407,27 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
             Billing
           </h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Platform Cut (%)">
+            <FormField label="Platform Cut (%)" fieldId="signer-platform-cut">
               <input
+                id="signer-platform-cut"
                 type="number"
                 min="0"
                 max="100"
                 step="0.1"
                 value={formData.defaultCutPercent}
                 onChange={(e) =>
-                  setFormData({ ...formData, defaultCutPercent: Number.parseFloat(e.target.value) })
+                  setFormData({
+                    ...formData,
+                    defaultCutPercent: Number.parseFloat(e.target.value) || 0,
+                  })
                 }
                 className={inputEnabled}
               />
             </FormField>
 
-            <FormField label="Billing Mode">
+            <FormField label="Billing Mode" fieldId="signer-billing-mode">
               <select
+                id="signer-billing-mode"
                 value={formData.billingMode}
                 onChange={(e) => setFormData({ ...formData, billingMode: e.target.value })}
                 className={inputEnabled}
@@ -460,9 +476,11 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-zinc-800/60">
               <FormField
                 label="Orch Webhook URL"
+                fieldId="signer-orch-webhook-url"
                 colSpan2
               >
                 <input
+                  id="signer-orch-webhook-url"
                   type="url"
                   value={formData.orchWebhookUrl}
                   onChange={(e) => setFormData({ ...formData, orchWebhookUrl: e.target.value })}
@@ -473,9 +491,11 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
 
               <FormField
                 label="Live AI Cap Report Interval"
+                fieldId="signer-live-ai-cap-interval"
                 help="Duration string, e.g. 5m, 10s, 1h"
               >
                 <input
+                  id="signer-live-ai-cap-interval"
                   type="text"
                   value={formData.liveAICapReportInterval}
                   onChange={(e) =>

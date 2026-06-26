@@ -5,7 +5,7 @@ export function appStatusAriaLabel(status: string): string {
     case "draft":
       return "Draft";
     case "submitted":
-      return "Submitted — awaiting review";
+      return "Submitted";
     case "in_review":
       return "In review";
     case "rejected":
@@ -26,7 +26,7 @@ export default function AppStatusBadge({ status }: Readonly<{ status: string }>)
       className: "bg-zinc-700/40 text-zinc-400 border-zinc-700",
     },
     submitted: {
-      label: "In review",
+      label: "Submitted",
       className: "bg-amber-500/10 text-amber-400 border-amber-500/20",
     },
     in_review: {
