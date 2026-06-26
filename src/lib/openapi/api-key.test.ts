@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 import { parseAppApiKeyBearer } from "@/lib/openapi/api-key";
 import { ApiKeyCredentialError } from "@/lib/openapi/api-key";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
@@ -36,4 +37,18 @@ test("buildSignerSessionEnvelope sets canonical signer_url and legacy signerUrl"
   assert.equal(session.signerUrl, "https://signer.example");
   assert.equal(session.access_token, "jwt");
   assert.equal(session.token?.access_token, "jwt");
+});
+
+test("getClientSignerApiUrl honors legacy PYMTHOUSE_SIGNER_URL", () => {
+  const prior = process.env.PYMTHOUSE_SIGNER_URL;
+  process.env.PYMTHOUSE_SIGNER_URL = "https://signer.example/";
+  try {
+    assert.equal(getClientSignerApiUrl(), "https://signer.example");
+  } finally {
+    if (prior === undefined) {
+      delete process.env.PYMTHOUSE_SIGNER_URL;
+    } else {
+      process.env.PYMTHOUSE_SIGNER_URL = prior;
+    }
+  }
 });

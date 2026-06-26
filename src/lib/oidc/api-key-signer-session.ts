@@ -4,7 +4,8 @@ import {
   parseAppApiKeyBearer,
   parseScopeList,
 } from "@/lib/openapi/api-key";
-import { buildSignerSessionEnvelope, resolvePublicSignerUrl } from "@/lib/openapi/signer-session";
+import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
+import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 import {
   issueProgrammaticTokens,
   ProgrammaticTokenError,
@@ -104,7 +105,7 @@ export async function mintSignerSessionFromAppApiKey(input: {
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-    signer_url: resolvePublicSignerUrl(),
+    signer_url: getClientSignerApiUrl(),
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
   });
 }

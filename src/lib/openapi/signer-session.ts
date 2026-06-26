@@ -1,15 +1,4 @@
 import type { SignerSession } from "@/lib/openapi/schemas/credentials-types";
-import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
-
-export function resolvePublicSignerUrl(): string | undefined {
-  const fromEnv =
-    process.env.PYMTHOUSE_SIGNER_URL?.trim() ||
-    process.env.SIGNER_PUBLIC_URL?.trim();
-  if (!fromEnv) {
-    return undefined;
-  }
-  return trimTrailingSlashes(fromEnv);
-}
 
 export function buildSignerSessionEnvelope(input: {
   access_token: string;

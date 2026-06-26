@@ -64,7 +64,10 @@ export async function isSignerOperational(
  * Signing goes directly to the DMZ — not through PymtHouse /api/signer/*.
  */
 export function getClientSignerApiUrl(): string {
-  const explicit = process.env.PYMTHOUSE_CLIENT_SIGNER_API_URL?.trim();
+  const explicit =
+    process.env.PYMTHOUSE_CLIENT_SIGNER_API_URL?.trim() ||
+    process.env.PYMTHOUSE_SIGNER_URL?.trim() ||
+    process.env.SIGNER_PUBLIC_URL?.trim();
   if (explicit) {
     return normalizeSignerBaseUrl(explicit);
   }
