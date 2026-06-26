@@ -26,6 +26,8 @@ import {
 } from "@/lib/oidc/grants";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 
+const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+
 interface Props {
   appId: string | null;
   clientId: string | null;
@@ -668,9 +670,22 @@ function M2mTokenTestPanel({
 
   return (
     <div className={`space-y-4 ${showTopBorder ? "pt-3 border-t border-zinc-800" : ""}`}>
-      <div>
-        <h4 className="text-xs font-semibold text-zinc-200">Test token exchange</h4>
-        {introText ? <p className="text-xs text-zinc-500 mt-1">{introText}</p> : null}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-xs font-semibold text-zinc-200">Test token exchange</h4>
+          {introText ? <p className="text-xs text-zinc-500 mt-1">{introText}</p> : null}
+        </div>
+        <a
+          href={API_REFERENCE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-zinc-500 hover:text-emerald-400 transition-colors"
+        >
+          API Reference
+          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        </a>
       </div>
 
       <div className="space-y-1.5">
@@ -1151,13 +1166,29 @@ export default function TestingStep({
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
-        <p className="text-sm text-zinc-500">
-          {getCredentialsIntroText(isM2MOnly, hideAuthCodeFlowSection)}
-        </p>
-        {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
+          <p className="text-sm text-zinc-500">
+            {getCredentialsIntroText(isM2MOnly, hideAuthCodeFlowSection)}
+          </p>
+        </div>
+        <a
+          href={API_REFERENCE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+          API Reference
+          <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        </a>
       </div>
+      {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
 
       {primaryIsConfidential ? (
         <>

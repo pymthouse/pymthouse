@@ -11,7 +11,11 @@ interface NavItem {
   icon: string;
   roles?: string[];
   group?: string; // if set, item is shown under this group heading
+  external?: boolean; // if set, opens in a new tab
 }
+
+const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+const DOCS_URL = "https://docs.pymthouse.com";
 
 const allNavItems: NavItem[] = [
   {
@@ -23,11 +27,6 @@ const allNavItems: NavItem[] = [
     label: "My Apps",
     href: "/apps",
     icon: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4",
-  },
-  {
-    label: "Marketplace",
-    href: "/marketplace",
-    icon: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z",
   },
   {
     label: "Signer Admin",
@@ -66,6 +65,20 @@ const allNavItems: NavItem[] = [
     label: "Usage",
     href: "/billing",
     icon: "M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z",
+  },
+  {
+    label: "Docs",
+    href: DOCS_URL,
+    icon: "M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253",
+    external: true,
+    group: "Resources",
+  },
+  {
+    label: "API Reference",
+    href: API_REFERENCE_URL,
+    icon: "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4",
+    external: true,
+    group: "Resources",
   },
 ];
 
@@ -187,7 +200,70 @@ export default function DashboardLayout({
         <nav className="flex-1 space-y-1 overflow-y-auto p-3 pt-4 lg:pt-3">
           {(() => {
             const adminItems = navItems.filter((i) => i.group === "Admin");
+            const resourceItems = navItems.filter((i) => i.group === "Resources");
             const otherItems = navItems.filter((i) => !i.group);
+
+            const renderNavLink = (item: NavItem, isActive: boolean) => {
+              const linkClass = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                isActive
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50"
+              }`;
+              const icon = (
+                <svg
+                  className="w-5 h-5 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d={item.icon}
+                  />
+                </svg>
+              );
+              if (item.external) {
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={linkClass}
+                  >
+                    {icon}
+                    {item.label}
+                    <svg
+                      className="w-3 h-3 ml-auto shrink-0 opacity-40"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                      />
+                    </svg>
+                  </a>
+                );
+              }
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={linkClass}
+                >
+                  {icon}
+                  {item.label}
+                </Link>
+              );
+            };
 
             return (
               <>
@@ -196,33 +272,7 @@ export default function DashboardLayout({
                     item.href === "/dashboard"
                       ? pathname === "/dashboard"
                       : pathname.startsWith(item.href);
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onClick={() => setMobileNavOpen(false)}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        isActive
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50"
-                      }`}
-                    >
-                      <svg
-                        className="w-5 h-5 shrink-0"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={1.5}
-                          d={item.icon}
-                        />
-                      </svg>
-                      {item.label}
-                    </Link>
-                  );
+                  return renderNavLink(item, isActive);
                 })}
                 {adminItems.length > 0 && (
                   <>
@@ -233,34 +283,18 @@ export default function DashboardLayout({
                     </div>
                     {adminItems.map((item) => {
                       const isActive = pathname.startsWith(item.href);
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          onClick={() => setMobileNavOpen(false)}
-                          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                            isActive
-                              ? "bg-emerald-500/10 text-emerald-400"
-                              : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50"
-                          }`}
-                        >
-                          <svg
-                            className="w-5 h-5 shrink-0"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={1.5}
-                              d={item.icon}
-                            />
-                          </svg>
-                          {item.label}
-                        </Link>
-                      );
+                      return renderNavLink(item, isActive);
                     })}
+                  </>
+                )}
+                {resourceItems.length > 0 && (
+                  <>
+                    <div className="pt-4 mt-2 border-t border-zinc-800">
+                      <p className="px-3 py-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                        Resources
+                      </p>
+                    </div>
+                    {resourceItems.map((item) => renderNavLink(item, false))}
                   </>
                 )}
               </>
