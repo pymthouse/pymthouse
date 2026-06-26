@@ -22,39 +22,34 @@ pipeline:
     - mapping: |
         let data = this.data.or({})
         let auth_id = $data.auth_id.or("").string().trim()
-        if $auth_id == "" {
-          root = deleted()
-        } else {
-          let colon = $auth_id.index_of(":")
-          let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
-          let client_id = if $is_compound { $auth_id.slice(0, $colon) } else { $auth_id }
-          let external_user_id = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
+        root = if $auth_id == "" { deleted() }
 
-          let eth_usd_str = env("ETH_USD_PRICE").or("").string().trim()
-          let _ = if $eth_usd_str == "" { throw("ETH_USD_PRICE is required") }
-          let eth_usd = $eth_usd_str.number()
-          let _ = if $eth_usd <= 0 { throw("ETH_USD_PRICE must be a positive number") }
-          let fee_wei = $data.computed_fee.number().or(0)
-          let fee_usd_micros = ($fee_wei * $eth_usd / 1000000000000).round()
+        let colon = $auth_id.index_of(":")
+        let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
+        let client_id = if $is_compound { $auth_id.slice(0, $colon) } else { $auth_id }
+        let external_user_id = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
 
-          root = {
-            "specversion": "1.0",
-            "type": "create_signed_ticket",
-            "id": $data.request_id.or(uuid_v4()),
-            "source": "go-livepeer-remote-signer",
-            "subject": $auth_id,
-            "time": $data.current_time.or(now()),
-            "data": {
-              "client_id": $client_id,
-              "external_user_id": $external_user_id,
-              "network_fee_usd_micros": $fee_usd_micros,
-              "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
-              "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
-              "pixels": $data.pixels.string().or("0"),
-              "fee_wei": $data.computed_fee.or("0"),
-              "gateway_request_id": $data.request_id,
-              "auth_id": $auth_id,
-            }
+        let eth_usd = env("ETH_USD_PRICE").number().or(3500)
+        let fee_wei = $data.computed_fee.number().or(0)
+        let fee_usd_micros = ($fee_wei * $eth_usd / 1000000000000).round()
+
+        root = {
+          "specversion": "1.0",
+          "type": "create_signed_ticket",
+          "id": $data.request_id.or(uuid_v4()),
+          "source": "go-livepeer-remote-signer",
+          "subject": $auth_id,
+          "time": $data.current_time.or(now()),
+          "data": {
+            "client_id": $client_id,
+            "external_user_id": $external_user_id,
+            "network_fee_usd_micros": $fee_usd_micros,
+            "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
+            "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
+            "pixels": $data.pixels.string().or("0"),
+            "fee_wei": $data.computed_fee.or("0"),
+            "gateway_request_id": $data.request_id,
+            "auth_id": $auth_id,
           }
         }
 
