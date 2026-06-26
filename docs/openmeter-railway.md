@@ -25,6 +25,75 @@ Set `OPENMETER_URL` to the hosted Konnect endpoint (`https://{region}.api.konghq
 └─────────────────────────────┘
 ```
 
+## Collector durable-ingest repoint (fix-step (a), opt-in)
+
+Historically the `openmeter-collector` was the only path feeding OpenMeter, and it
+delivered events **fire-and-forget** straight to the OpenMeter ingest URL with no
+durability and several silent-drop branches (empty `auth_id`, mapping errors).
+`deploy/collector.yaml` can now repoint the collector to the **durable, idempotent,
+acked** ingest endpoint added by [PR #178](https://github.com/pymthouse/pymthouse/pull/178)
+(`POST /api/v1/internal/ingest/signed-ticket`) and route malformed events to an
+observable dead-letter instead of dropping them.
+
+This is **opt-in and zero-regression by default**. With `COLLECTOR_DURABLE_INGEST`
+unset/false the collector behaves byte-identically to before (direct-to-OpenMeter).
+
+| Env (on the `openmeter-collector` service) | Default | Purpose |
+|---|---|---|
+| `COLLECTOR_DURABLE_INGEST` | unset (OFF) | Master toggle. `true`/`1`/`yes`/`on` enables the durable repoint. |
+| `COLLECTOR_DURABLE_INGEST_MODE` | `double_write` | `double_write` = fan out to BOTH the legacy OpenMeter sink and the durable endpoint (recommended rollout). `cutover` = durable endpoint only. |
+| `PYMTHOUSE_INGEST_URL` | — | Base URL of the pymthouse app (e.g. `https://pymthouse.com`); the collector appends `/api/v1/internal/ingest/signed-ticket`. Required when ON. |
+| `INGEST_SHARED_SECRET` | — | Shared bearer secret the endpoint (PR #178) verifies; sent as `Authorization: Bearer …`. Required when ON. |
+
+`scripts/railway-apply-stack-env.sh` applies these to the collector **only when set**
+in the calling environment, so leaving them unset keeps the legacy behavior.
+
+Retry / idempotency semantics:
+
+- The durable `http_client` retries with bounded backoff on connection errors and
+  `429`/`5xx` (including the endpoint's transient `502`); `2xx` (including an
+  idempotent duplicate) is success.
+- Idempotency is enforced server-side on `(clientId, requestId)`, so retries and the
+  `double_write` overlap never double-count (OpenMeter also dedupes on the
+  CloudEvent `id = request_id`).
+- On exhausted retries or a permanent `4xx`, the event falls through to the
+  dead-letter (ERROR-logged) instead of vanishing silently. In `double_write` the
+  legacy OpenMeter sink has already delivered it, so there is no metering loss.
+
+> **Dependency / scope.** This repoint only fixes losses **from the collector onward**;
+> it relies on PR #178 being deployed (endpoint live, `SIGNED_TICKET_DURABLE_INGEST=1`
+> on the pymthouse app) to actually write to OpenMeter. Events dropped **before**
+> reaching Kafka (the go-livepeer in-process producer) are a separate producer-side
+> follow-up (b); go-livepeer webhook #3963 was parked to keep go-livepeer vendor-neutral.
+
+### Manual verification recipe
+
+Pre-req: PR #178 deployed with `SIGNED_TICKET_DURABLE_INGEST=1` and `INGEST_SHARED_SECRET`
+set on the pymthouse app; the collector configured with the four vars above.
+
+1. **Lint / start check (no cluster needed):**
+   ```bash
+   docker run --rm -e KAFKA_BROKERS=x -e KAFKA_GATEWAY_TOPIC=t \
+     -e OPENMETER_URL=http://om -e OPENMETER_INGEST_URL=http://om/events \
+     -e OPENMETER_API_KEY=k -e ETH_USD_PRICE=3500 \
+     -e PYMTHOUSE_INGEST_URL=https://pymthouse.com -e INGEST_SHARED_SECRET=s \
+     -v "$PWD/deploy:/deploy:ro" --entrypoint benthos \
+     ghcr.io/openmeterio/benthos-collector:latest lint /deploy/collector.yaml
+   ```
+2. **Baseline read:** `GET /api/v1/apps/{app}/usage?groupBy=user` → record `requestCount`.
+3. **Enable** `COLLECTOR_DURABLE_INGEST=true` on the collector (start with
+   `double_write`) and redeploy the stack.
+4. **Drive N** generations against the preview chain, recording each `request_id`.
+5. **Re-read** usage: `requestCount` delta should be **== N** (within idempotency),
+   and `networkFeeUsdMicros` delta ≈ N × per-job fee.
+6. **Duplicate test:** re-send a `request_id` already ingested → no extra count
+   (server dedupe on `(clientId, requestId)`).
+7. **Malformed test:** emit an event with empty `auth_id` → it appears in the
+   collector logs as `openmeter-collector dead-letter: reason=empty_auth_id …`
+   (dead-lettered, **not** silently dropped) and does not advance usage.
+8. **Resilience:** with `double_write` on, the legacy sink remains a safety net while
+   you compare counts; switch to `cutover` only after the durable path is trusted.
+
 ## Legacy self-hosted OpenMeter
 
 The rest of this document describes the older self-hosted OpenMeter topology (`docker-compose.openmeter.railway.yml`) and is kept for future on-prem deployments.

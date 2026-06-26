@@ -1,9 +1,28 @@
-# OpenMeter Collector: go-livepeer remote signer Kafka -> hosted OpenMeter/Konnect.
+# OpenMeter Collector: go-livepeer remote signer Kafka -> OpenMeter.
 #
 # Notes:
 # - Topic carries multiple event types; filter to create_signed_ticket only.
 # - auth_id is expected as "client_id:external_user_id" from signer webhook response.
 # - Uses first-colon split semantics to preserve compatibility with builder-sdk.
+#
+# Safe-rollout toggle (fix-step (a), depends on pymthouse PR #178):
+#   COLLECTOR_DURABLE_INGEST  (default unset/false)
+#     OFF (default): byte-identical legacy behavior — every create_signed_ticket
+#       CloudEvent is POSTed directly to OpenMeter (${OPENMETER_INGEST_URL}); empty
+#       auth_id and mapping errors are dropped exactly as before.
+#     ON ("true"/"1"/"yes"/"on"): served-job events are also delivered to the
+#       durable, idempotent ingest endpoint added by PR #178
+#       (POST ${PYMTHOUSE_INGEST_URL}/api/v1/internal/ingest/signed-ticket) and
+#       malformed events are routed to an observable dead-letter instead of being
+#       silently dropped. Idempotency is enforced server-side on (clientId,
+#       requestId), so retries and double-writes never double-count.
+#   COLLECTOR_DURABLE_INGEST_MODE  (default "double_write" when the toggle is ON)
+#     double_write: fan out to BOTH the legacy OpenMeter sink AND the durable
+#       endpoint (recommended for rollout; the legacy path stays a safety net while
+#       the durable path is validated, and idempotency dedupes the overlap).
+#     cutover: deliver ONLY to the durable endpoint.
+#   COLLECTOR_DLQ_TOPIC  (optional) — reserved for a future durable dead-letter
+#       topic; the current dead-letter is an ERROR-logged drop (observable).
 
 input:
   kafka:
@@ -20,10 +39,26 @@ pipeline:
         root = if this.type != "create_signed_ticket" { deleted() }
 
     - mapping: |
+        # --- Safe-rollout toggle (default OFF => byte-identical legacy behavior) ---
+        let toggle = env("COLLECTOR_DURABLE_INGEST").or("").string().trim().lowercase()
+        let durable_on = $toggle == "true" || $toggle == "1" || $toggle == "yes" || $toggle == "on"
+        let mode = env("COLLECTOR_DURABLE_INGEST_MODE").or("double_write").string().trim().lowercase()
+        let cutover = $mode == "cutover"
+
         let data = this.data.or({})
         let auth_id = $data.auth_id.or("").string().trim()
+
         if $auth_id == "" {
-          root = deleted()
+          # Empty auth_id: legacy silently drops it. With the toggle ON we instead
+          # keep the original event and route it to the dead-letter (observable).
+          meta collector_error = "empty_auth_id"
+          if $durable_on {
+            meta target = "dlq"
+            root = this
+          } else {
+            meta target = "legacy"
+            root = deleted()
+          }
         } else {
           let colon = $auth_id.index_of(":")
           let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
@@ -56,25 +91,127 @@ pipeline:
               "auth_id": $auth_id,
             }
           }
+
+          # Routing target consumed by the `switch` output below. With the toggle
+          # OFF every surviving event goes to the legacy OpenMeter sink (unchanged).
+          if $durable_on {
+            meta target = if $cutover { "durable" } else { "double" }
+          } else {
+            meta target = "legacy"
+          }
         }
 
     - catch:
         - log:
             level: ERROR
             message: "signed_ticket mapping failed: ${! error() }"
-        - mapping: root = deleted()
+        - mapping: |
+            # Legacy: drop on mapping error (unchanged). Durable: keep + dead-letter.
+            let toggle = env("COLLECTOR_DURABLE_INGEST").or("").string().trim().lowercase()
+            let durable_on = $toggle == "true" || $toggle == "1" || $toggle == "yes" || $toggle == "on"
+            root = if $durable_on { this } else { deleted() }
+            meta target = "dlq"
+            meta collector_error = "mapping_error"
 
 # Konnect ingest is POST {OPENMETER_URL}/events (not /api/v1/events). For self-hosted
 # OpenMeter, set OPENMETER_INGEST_URL to ${OPENMETER_URL}/api/v1/events in compose.
 
 output:
-  http_client:
-    url: ${OPENMETER_INGEST_URL}
-    verb: POST
-    headers:
-      Authorization: "Bearer ${OPENMETER_API_KEY}"
-      Content-Type: application/cloudevents+json
-    successful_on:
-      - 200
-      - 202
-      - 204
+  switch:
+    # Cases are evaluated in order; the first match wins. With the toggle OFF the
+    # `meta target` is always "legacy", so only the final (legacy) case is ever hit.
+    cases:
+      # 1) Dead-letter: malformed events (empty auth_id / mapping error). Reached
+      #    ONLY when COLLECTOR_DURABLE_INGEST is ON. OFF keeps the legacy drop.
+      - check: 'meta("target") == "dlq"'
+        output:
+          resource: dlq_sink
+
+      # 2) Cutover: deliver ONLY to PR #178's durable, idempotent endpoint.
+      - check: 'meta("target") == "durable"'
+        output:
+          resource: durable_sink
+
+      # 3) Double-write (recommended rollout): legacy OpenMeter sink AND durable
+      #    endpoint. Idempotency on (clientId, requestId) dedupes the overlap.
+      - check: 'meta("target") == "double"'
+        output:
+          broker:
+            pattern: fan_out
+            outputs:
+              - resource: openmeter_sink
+              - resource: durable_sink
+
+      # 4) DEFAULT (toggle OFF): legacy direct-to-OpenMeter sink, unchanged.
+      - output:
+          resource: openmeter_sink
+
+output_resources:
+  # Legacy direct-to-OpenMeter CloudEvents sink (byte-identical to pre-toggle).
+  - label: openmeter_sink
+    http_client:
+      url: ${OPENMETER_INGEST_URL}
+      verb: POST
+      headers:
+        Authorization: "Bearer ${OPENMETER_API_KEY}"
+        Content-Type: application/cloudevents+json
+      successful_on:
+        - 200
+        - 202
+        - 204
+
+  # Durable, idempotent ingest endpoint added by PR #178. Bounded retry with
+  # backoff on connection errors + 5xx (incl. the endpoint's transient 502); on
+  # exhaustion (or a permanent 4xx) the event falls through to the dead-letter so
+  # nothing is lost unobserved. The reshape processor maps the CloudEvent into the
+  # endpoint's request contract.
+  - label: durable_sink
+    fallback:
+      - http_client:
+          url: ${PYMTHOUSE_INGEST_URL}/api/v1/internal/ingest/signed-ticket
+          verb: POST
+          headers:
+            Authorization: "Bearer ${INGEST_SHARED_SECRET}"
+            Content-Type: application/json
+          successful_on:
+            - 200
+            - 201
+            - 202
+            - 204
+          backoff_on:
+            - 429
+            - 500
+            - 502
+            - 503
+            - 504
+          retries: 4
+          retry_period: 1s
+          max_retry_backoff: 30s
+        processors:
+          - mapping: |
+              root = {
+                "type": "create_signed_ticket",
+                "id": this.id,
+                "data": {
+                  "client_id": this.data.client_id,
+                  "external_user_id": this.data.external_user_id,
+                  "usage_subject": this.data.external_user_id,
+                  "request_id": this.data.gateway_request_id.or(this.id),
+                  "computed_fee_usd_micros": this.data.network_fee_usd_micros.string(),
+                  "computed_fee": this.data.fee_wei.string(),
+                  "pixels": this.data.pixels,
+                  "pipeline": this.data.pipeline,
+                  "model_id": this.data.model_id,
+                }
+              }
+      - resource: dlq_sink
+
+  # Observable dead-letter: log at ERROR with full context, then discard. Replaces
+  # the previous silent drops so malformed / undeliverable events are never lost
+  # unobserved. A durable topic can be wired here later via COLLECTOR_DLQ_TOPIC.
+  - label: dlq_sink
+    drop: {}
+    processors:
+      - log:
+          level: ERROR
+          message: 'openmeter-collector dead-letter: reason=${! meta("collector_error").or("durable_ingest_failed") } request_id=${! json("data.request_id").catch(json("data.gateway_request_id").catch("unknown")) } subject=${! json("subject").catch("") } event=${! content().string() }'

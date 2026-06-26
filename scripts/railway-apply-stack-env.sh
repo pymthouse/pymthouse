@@ -78,13 +78,37 @@ REMOTE_SIGNER_WEBHOOK_URL="${REMOTE_SIGNER_WEBHOOK_URL:-${NEXTAUTH_URL:-https://
 
 OPENMETER_INGEST_URL="${OPENMETER_INGEST_URL:-${OPENMETER_URL}/events}"
 
-set_kv openmeter-collector \
-  "KAFKA_BROKERS=${KAFKA_BROKERS}" \
-  "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC}" \
-  "OPENMETER_URL=${OPENMETER_URL}" \
-  "OPENMETER_INGEST_URL=${OPENMETER_INGEST_URL}" \
-  "OPENMETER_API_KEY=${OPENMETER_API_KEY}" \
+# Collector env. Base vars below are the long-standing legacy direct-to-OpenMeter
+# config and are always applied. The COLLECTOR_DURABLE_INGEST_* / PYMTHOUSE_INGEST_URL
+# / INGEST_SHARED_SECRET vars wire the durable-ingest repoint added in
+# deploy/collector.yaml (fix-step (a), depends on PR #178). They are OPT-IN: when
+# unset in the calling environment they are NOT applied, so the collector keeps its
+# byte-identical legacy behavior. Set COLLECTOR_DURABLE_INGEST=true (+ PYMTHOUSE_INGEST_URL
+# and INGEST_SHARED_SECRET) only when you intend to enable the durable path.
+COLLECTOR_ENV=(
+  "KAFKA_BROKERS=${KAFKA_BROKERS}"
+  "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC}"
+  "OPENMETER_URL=${OPENMETER_URL}"
+  "OPENMETER_INGEST_URL=${OPENMETER_INGEST_URL}"
+  "OPENMETER_API_KEY=${OPENMETER_API_KEY}"
   "ETH_USD_PRICE=${ETH_USD_PRICE}"
+)
+if [[ -n "${COLLECTOR_DURABLE_INGEST:-}" ]]; then
+  COLLECTOR_ENV+=("COLLECTOR_DURABLE_INGEST=${COLLECTOR_DURABLE_INGEST}")
+fi
+if [[ -n "${COLLECTOR_DURABLE_INGEST_MODE:-}" ]]; then
+  COLLECTOR_ENV+=("COLLECTOR_DURABLE_INGEST_MODE=${COLLECTOR_DURABLE_INGEST_MODE}")
+fi
+if [[ -n "${PYMTHOUSE_INGEST_URL:-}" ]]; then
+  COLLECTOR_ENV+=("PYMTHOUSE_INGEST_URL=${PYMTHOUSE_INGEST_URL}")
+fi
+if [[ -n "${INGEST_SHARED_SECRET:-}" ]]; then
+  # Same shared secret the ingest endpoint (PR #178) verifies; sent by the collector
+  # as `Authorization: Bearer ${INGEST_SHARED_SECRET}`.
+  COLLECTOR_ENV+=("INGEST_SHARED_SECRET=${INGEST_SHARED_SECRET}")
+fi
+
+set_kv openmeter-collector "${COLLECTOR_ENV[@]}"
 
 # Signer DMZ (pymthouse service). For signer-only updates use scripts/railway-apply-signer-env.sh.
 export NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"
