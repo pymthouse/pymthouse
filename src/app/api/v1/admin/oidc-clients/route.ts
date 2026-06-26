@@ -1,41 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
 import { getAllClients, getClient, updateClientConfig } from "@/lib/oidc/clients";
+import { withSessionAdminGuard } from "@/lib/api-guards";
 
 /**
  * GET /api/v1/admin/oidc-clients
  * List all registered OIDC clients.
  */
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  const role = (session?.user as Record<string, unknown> | undefined)?.role as
-    | string
-    | undefined;
-
-  if (!session?.user || role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
-
+export const GET = withSessionAdminGuard(async () => {
   const clients = await getAllClients();
-
   return NextResponse.json({ clients });
-}
+});
 
 /**
  * PATCH /api/v1/admin/oidc-clients
  * Update an OIDC client configuration.
  */
-export async function PATCH(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-  const role = (session?.user as Record<string, unknown> | undefined)?.role as
-    | string
-    | undefined;
-
-  if (!session?.user || role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
-
+export const PATCH = withSessionAdminGuard(async (request) => {
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -67,4 +47,4 @@ export async function PATCH(request: NextRequest) {
 
   const updated = await getClient(clientId);
   return NextResponse.json({ client: updated });
-}
+});

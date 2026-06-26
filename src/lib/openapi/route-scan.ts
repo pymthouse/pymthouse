@@ -96,6 +96,9 @@ export function exportedHttpMethods(source: string): HttpMethod[] {
     if (source.includes(`export async function ${method}`)) {
       methods.add(method);
     }
+    if (new RegExp(`export\\s+const\\s+${method}\\s*=`).test(source)) {
+      methods.add(method);
+    }
   }
   const reExportMatch = source.match(/export\s*\{([^}]+)\}/);
   if (reExportMatch) {

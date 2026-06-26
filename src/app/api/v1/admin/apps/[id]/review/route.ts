@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -11,25 +9,13 @@ import {
 import { resetProvider } from "@/lib/oidc/provider";
 import { getProviderApp } from "@/lib/provider-apps";
 import { getPlatformJwksUrlForDatabase } from "@/lib/oidc/issuer-urls";
+import { withSessionAdminGuardParams } from "@/lib/api-guards";
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id: clientId } = await params;
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const POST = withSessionAdminGuardParams<{ id: string }>(
+  async (request, { params }, { userId }) => {
+    const { id: clientId } = await params;
 
-  const userId = (session.user as Record<string, unknown>).id as string;
-  const role = (session.user as Record<string, unknown>).role as string;
-
-  if (role !== "admin") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const app = await getProviderApp(clientId);
+    const app = await getProviderApp(clientId);
 
   if (!app) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -119,4 +105,5 @@ export async function POST(
     .where(eq(developerApps.id, app.id));
 
   return NextResponse.json({ success: true, status: newStatus });
-}
+  },
+);

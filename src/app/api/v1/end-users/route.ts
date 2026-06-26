@@ -3,7 +3,7 @@ import { db } from "@/db/index";
 import { endUsers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { getAdminUser } from "@/lib/admin-auth";
+import { resolveAdmin } from "@/lib/api-guards";
 import {
   findOrCreateEndUser,
   verifyTurnkeySessionJwt,
@@ -13,7 +13,7 @@ import {
  * GET /api/v1/end-users -- List end users (admin auth) or get current end user (Turnkey session JWT)
  */
 export async function GET(request: NextRequest) {
-  const adminUser = await getAdminUser(request);
+  const adminUser = await resolveAdmin(request);
   if (adminUser) {
     const allEndUsers = await db.select().from(endUsers);
     return NextResponse.json({ endUsers: allEndUsers });
@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
-  const adminUser = await getAdminUser(request);
+  const adminUser = await resolveAdmin(request);
   if (adminUser) {
     const id = uuidv4();
     await db.insert(endUsers).values({

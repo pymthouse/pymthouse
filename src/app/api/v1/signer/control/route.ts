@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getAdminUser } from "@/lib/admin-auth";
+import { withAdminGuard } from "@/lib/api-guards";
 import { isManagedRemoteSigner, syncSignerStatus } from "@/lib/signer-proxy";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "@/lib/signer-local-compose";
 import {
@@ -86,12 +86,7 @@ function runShellWithStreamingOutput(options: {
  *
  * Body: { action: "start" | "stop" | "restart" | "sync" }
  */
-export async function POST(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAdminGuard(async (request) => {
   const body = await request.json();
   const action = body.action;
 
@@ -186,7 +181,7 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
 
 function getComposeCommand(action: string): string {
   const svc = DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE;

@@ -1,14 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAdminUser } from "@/lib/admin-auth";
+import { withAdminGuard } from "@/lib/api-guards";
 import { getTransactions } from "@/lib/billing";
 import { weiToEthString } from "@/lib/billing-runtime";
 
-export async function GET(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAdminGuard(async (request) => {
   const url = new URL(request.url);
   const endUserId = url.searchParams.get("endUserId");
   const limit = parseInt(url.searchParams.get("limit") || "50");
@@ -42,8 +36,8 @@ export async function GET(request: NextRequest) {
     ownerChargeUsdMicros: tx.ownerChargeUsdMicros ?? null,
   }));
 
-  return NextResponse.json({
+  return Response.json({
     transactions: enriched,
     pagination: { limit, offset, hasMore: recentTransactions.length === limit },
   });
-}
+});

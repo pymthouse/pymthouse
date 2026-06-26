@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getAdminUser } from "@/lib/admin-auth";
+import { withAdminGuard } from "@/lib/api-guards";
 import { isManagedRemoteSigner, syncSignerStatus } from "@/lib/signer-proxy";
 
 const SUPPORTED_NETWORK = "arbitrum-one-mainnet";
@@ -26,13 +26,7 @@ function isValidDuration(s: string): boolean {
 /**
  * GET /api/v1/signer -- Get singleton signer status + config
  */
-export async function GET(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Sync live status from go-livepeer container
+export const GET = withAdminGuard(async () => {
   const liveStatus = await syncSignerStatus();
 
   const signerRows = await db
@@ -49,18 +43,13 @@ export async function GET(request: NextRequest) {
       ethAddress: liveStatus.ethAddress,
     },
   });
-}
+});
 
 /**
  * PATCH /api/v1/signer -- Update signer config
  * Changing config requires a restart to take effect.
  */
-export async function PATCH(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const PATCH = withAdminGuard(async (request) => {
   const body = await request.json();
   const updates: Record<string, unknown> = {};
   const currentRows = await db
@@ -197,5 +186,5 @@ export async function PATCH(request: NextRequest) {
     signer: updated,
     message,
   });
-}
+});
 

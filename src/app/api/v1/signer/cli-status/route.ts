@@ -1,5 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAdminUser } from "@/lib/admin-auth";
+import { withAdminGuard } from "@/lib/api-guards";
 import { fetchSignerCliStatus } from "@/lib/signer-cli";
 
 /**
@@ -9,13 +8,7 @@ import { fetchSignerCliStatus } from "@/lib/signer-cli";
  * /__signer_cli when configured), the same data
  * that livepeer_cli reads. Admin-only.
  */
-export async function GET(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAdminGuard(async () => {
   const status = await fetchSignerCliStatus();
-  return NextResponse.json(status);
-}
-
+  return Response.json(status);
+});

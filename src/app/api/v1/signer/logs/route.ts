@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getAdminUser } from "@/lib/admin-auth";
+import { withAdminGuard } from "@/lib/api-guards";
 import { spawn } from "child_process";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "@/lib/signer-local-compose";
 import { isManagedRemoteSigner } from "@/lib/signer-proxy";
@@ -14,12 +14,7 @@ const LOG_FETCH_TIMEOUT_MS = 10000;
 /**
  * GET /api/v1/signer/logs -- Fetch recent container logs
  */
-export async function GET(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAdminGuard(async (request) => {
   const responseTail = parseTail(request.nextUrl.searchParams.get("tail"));
 
   const signerRows = await db
@@ -57,7 +52,7 @@ export async function GET(request: NextRequest) {
       error instanceof Error ? error.message : "Failed to fetch logs";
     return NextResponse.json({ lines: [message], count: 1, error: true });
   }
-}
+});
 
 function parseTail(value: string | null): number {
   if (!value || !/^\d+$/.test(value)) {

@@ -69,13 +69,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   },
   {
     "method": "get",
-    "path": "/api/v1/admin/invites",
-    "sourceFile": "admin/invites/route.ts",
-    "excluded": true,
-    "excludedReason": "excluded prefix: admin/"
-  },
-  {
-    "method": "get",
     "path": "/api/v1/admin/oidc-clients",
     "sourceFile": "admin/oidc-clients/route.ts",
     "excluded": true,
@@ -322,13 +315,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   },
   {
     "method": "patch",
-    "path": "/api/v1/admin/invites",
-    "sourceFile": "admin/invites/route.ts",
-    "excluded": true,
-    "excludedReason": "excluded prefix: admin/"
-  },
-  {
-    "method": "patch",
     "path": "/api/v1/admin/oidc-clients",
     "sourceFile": "admin/oidc-clients/route.ts",
     "excluded": true,
@@ -351,13 +337,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
     "method": "post",
     "path": "/api/v1/admin/apps/{id}/revoke",
     "sourceFile": "admin/apps/[id]/revoke/route.ts",
-    "excluded": true,
-    "excludedReason": "excluded prefix: admin/"
-  },
-  {
-    "method": "post",
-    "path": "/api/v1/admin/invites",
-    "sourceFile": "admin/invites/route.ts",
     "excluded": true,
     "excludedReason": "excluded prefix: admin/"
   },

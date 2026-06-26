@@ -51,13 +51,6 @@ const allNavItems: NavItem[] = [
     group: "Admin",
   },
   {
-    label: "Admin Mgmt",
-    href: "/admin/manage",
-    icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z",
-    roles: ["admin"],
-    group: "Admin",
-  },
-  {
     label: "Streams",
     href: "/streams",
     icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
