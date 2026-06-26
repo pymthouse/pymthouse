@@ -19,6 +19,26 @@ export function billingStableFeatureKeysEnabled(): boolean {
 }
 
 /**
+ * Gate the durable, idempotent, acked OpenMeter write on the synchronous
+ * signed-ticket ingest endpoint (`POST /api/v1/internal/ingest/signed-ticket`).
+ *
+ * Default OFF: flag-off keeps the endpoint diagnostic-only (writes a receipt,
+ * returns `ingested:false`, never touches OpenMeter) — byte-identical to the
+ * legacy behavior, so the existing Kafka → Benthos → OpenMeter pipeline remains
+ * the only metering path and there is zero regression.
+ *
+ * Flip `SIGNED_TICKET_DURABLE_INGEST=1` to make the endpoint synchronously write
+ * the `create_signed_ticket` CloudEvent to OpenMeter and ACK with
+ * `ingested:true` only after the write is accepted. The write is idempotent on
+ * `(clientId, requestId)` (receipts table) and on the CloudEvent `id`
+ * (OpenMeter's own dedupe), so it is safe to run in parallel with the legacy
+ * Kafka path during rollout without double-counting.
+ */
+export function durableSignedTicketIngestEnabled(): boolean {
+  return envFlag("SIGNED_TICKET_DURABLE_INGEST", false);
+}
+
+/**
  * Gate the C0-conformant BPP ② `validate` shape (PYMT-3).
  *
  * `GET /api/v1/auth/validate` was removed. This flag controls
