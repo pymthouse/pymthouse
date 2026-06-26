@@ -225,6 +225,7 @@ export default function AppSettingsScreen({
         );
         return { ...prev, redirectUris: uris, grantTypes: nextGrantTypes };
       });
+      setIsDirty(true);
     },
     [appState.clientId],
   );

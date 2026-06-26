@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface SignerConfigFormProps {
@@ -95,11 +95,20 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
   const router = useRouter();
   const signerUrlEnvLocked = config.signerUrlSource === "env";
   const localComposeLocked = config.managedRemote;
+  const saveStateResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "success" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (saveStateResetTimerRef.current !== null) {
+        clearTimeout(saveStateResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const [formData, setFormData] = useState({
     name: config.name,
@@ -120,6 +129,10 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saveStateResetTimerRef.current !== null) {
+      clearTimeout(saveStateResetTimerRef.current);
+      saveStateResetTimerRef.current = null;
+    }
     setSaving(true);
     setSaveState("idle");
     setSaveMessage(null);
@@ -161,7 +174,10 @@ export default function SignerConfigForm({ config }: Readonly<SignerConfigFormPr
         setSaveState("success");
         setSaveMessage(data.message || "Configuration saved.");
         router.refresh();
-        setTimeout(() => setSaveState("idle"), 4000);
+        saveStateResetTimerRef.current = setTimeout(() => {
+          saveStateResetTimerRef.current = null;
+          setSaveState("idle");
+        }, 4000);
       } else {
         setSaveState("error");
         setSaveMessage(data.error || "Failed to save configuration.");
