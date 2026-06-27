@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "deploy/openmeter-collector/Dockerfile",
-    "watchPatterns": ["deploy/openmeter-collector/**", "deploy/collector.yaml"]
+    "watchPatterns": ["deploy/openmeter-collector/**"]
   },
   "deploy": {
     "numReplicas": 1,

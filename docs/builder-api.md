@@ -806,7 +806,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 **Billing oracle and catalog**
 
 - [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, USD micros)
-- [`deploy/collector.yaml`](../deploy/collector.yaml) (Kafka → OpenMeter collector for `create_signed_ticket` events)
+- [`deploy/openmeter-collector/collector.yaml`](../deploy/openmeter-collector/collector.yaml) (Kafka → OpenMeter collector for `create_signed_ticket` events)
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
