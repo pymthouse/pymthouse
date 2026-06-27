@@ -184,7 +184,7 @@ async function main() {
       } catch (err) {
         failed += 1;
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[fail] ${target.clientId}:${target.externalUserId} ${message}`);
+        console.error(`[fail] ${target.clientId} ${message}`);
       }
     }
 
