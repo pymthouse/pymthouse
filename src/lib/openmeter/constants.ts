@@ -56,3 +56,13 @@ export function requireOpenMeterForUsageReads(): boolean {
 export function openMeterUsesLiveNetworkInTests(): boolean {
   return process.env.OPENMETER_TEST_LIVE === "1";
 }
+
+/**
+ * Platform-level fallback billing profile for free/starter subscriptions.
+ * Set OPENMETER_DEFAULT_BILLING_PROFILE_ID to the OpenMeter billing profile ID
+ * (e.g. the sandbox profile) that should be applied when the app owner has not
+ * connected Stripe, or after they disconnect it.
+ */
+export function getDefaultBillingProfileId(): string | null {
+  return process.env.OPENMETER_DEFAULT_BILLING_PROFILE_ID?.trim() || null;
+}

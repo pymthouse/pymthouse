@@ -4,7 +4,8 @@ import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { assignCustomerBillingProfileOverride, ensureOpenMeterCustomerForAppUser } from "./customers";
+import { getDefaultBillingProfileId } from "./constants";
 import {
   isOpenMeterConflictError,
   isOpenMeterPlanNotFoundError,
@@ -169,6 +170,49 @@ async function createStarterSubscriptionWithRecovery(input: {
       };
     }
     if (isOpenMeterStripeBillingError(err)) {
+      // OpenMeter rejected the subscription because the customer has no Stripe
+      // app data (e.g. namespace default billing profile is Stripe but the
+      // customer was never through checkout). Apply the platform default profile
+      // (sandbox) as a customer-level override and retry once.
+      const defaultProfileId = getDefaultBillingProfileId();
+      if (defaultProfileId) {
+        try {
+          await assignCustomerBillingProfileOverride({
+            client: input.client,
+            customerId: input.customerId,
+            billingProfileId: defaultProfileId,
+          });
+          const retried = await createStarterOpenMeterSubscription({
+            client: input.client,
+            customerId: input.customerId,
+            starter: activeStarter,
+            planKey: input.planKey,
+          });
+          if (retried?.id) {
+            return {
+              subscription: subscriptionViewFromCreateResult(
+                retried,
+                input.planKey,
+                activeStarter.openmeterPlanId,
+              ),
+              starter: activeStarter,
+              created: true,
+            };
+          }
+        } catch (retryErr) {
+          if (isOpenMeterConflictError(retryErr)) {
+            const existing = await findOpenMeterSubscriptionByPlanKey(
+              input.client,
+              input.customerId,
+              input.planKey,
+              { openmeterPlanId: activeStarter.openmeterPlanId },
+            );
+            if (existing) {
+              return { subscription: existing, starter: activeStarter, created: false };
+            }
+          }
+        }
+      }
       console.warn(
         "[openmeter] Starter subscription skipped: Stripe billing is not ready for this customer",
         err,

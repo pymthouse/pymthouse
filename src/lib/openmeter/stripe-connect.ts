@@ -2,8 +2,10 @@ import { eq, and, lt } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { appBillingConfig, appBillingOauthStates } from "@/db/schema";
-import { getHostedAdminClient } from "./admin-client";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
+import { getDefaultBillingProfileId } from "./constants";
 import { ensureTenantBillingProfile, upsertAppBillingConfig } from "./billing-profiles";
+import { assignCustomerBillingProfileOverride, listTenantCustomerIds } from "./customers";
 
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
 
@@ -106,6 +108,29 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
       /* best effort */
     }
   }
+
+  // Re-point all existing tenant customers to the platform default billing
+  // profile (e.g. sandbox) so future starter subscription creates don't fail
+  // with a Stripe precondition error against the namespace default profile.
+  const defaultProfileId = getDefaultBillingProfileId();
+  if (defaultProfileId && isHostedAdminClientAvailable()) {
+    try {
+      const client = getHostedAdminClient();
+      const customerIds = await listTenantCustomerIds(client, clientId);
+      await Promise.all(
+        customerIds.map((id) =>
+          assignCustomerBillingProfileOverride({
+            client,
+            customerId: id,
+            billingProfileId: defaultProfileId,
+          }).catch(() => undefined),
+        ),
+      );
+    } catch {
+      /* best effort — disconnect still completes */
+    }
+  }
+
   await upsertAppBillingConfig(clientId, {
     stripeConnectStatus: "disconnected",
     openmeterStripeAppId: null,
