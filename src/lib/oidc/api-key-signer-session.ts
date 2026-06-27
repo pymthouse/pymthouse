@@ -11,7 +11,7 @@ import {
   ProgrammaticTokenError,
 } from "@/lib/oidc/programmatic-tokens";
 import { resolveSubjectAccessToken, SubjectAccessTokenResolveError } from "@/lib/oidc/resolve-subject-access-token";
-import { mintSignerJwtForExternalUser } from "@/lib/oidc/mint-user-signer-token";
+import { mintSignerJwtForExternalUser, MintUserSignerTokenError } from "@/lib/oidc/mint-user-signer-token";
 import type { SignerSession } from "@/lib/openapi/schemas/credentials-types";
 
 const ISSUED_ACCESS_TOKEN_TYPE =
@@ -93,11 +93,19 @@ export async function mintSignerSessionFromAppApiKey(input: {
     );
   }
 
-  const minted = await mintSignerJwtForExternalUser({
-    publicClientId: resolved.publicClientId,
-    developerAppId: resolved.developerAppId,
-    externalUserId: subject.externalUserId,
-  });
+  let minted;
+  try {
+    minted = await mintSignerJwtForExternalUser({
+      publicClientId: resolved.publicClientId,
+      developerAppId: resolved.developerAppId,
+      externalUserId: subject.externalUserId,
+    });
+  } catch (err) {
+    if (err instanceof MintUserSignerTokenError) {
+      throw new ApiKeySignerSessionError(err.code, err.message, err.status);
+    }
+    throw err;
+  }
 
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,

@@ -3,10 +3,7 @@ import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import {
-  applyFreeBillingProfileToCustomer,
-  isStripeBillingEnabledForApp,
-} from "./billing-profiles";
+import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
@@ -20,6 +17,8 @@ import {
 } from "./plans-sync";
 import {
   findOpenMeterSubscriptionByPlanKey,
+  isOpenMeterSubscriptionActive,
+  listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
   verifyOpenMeterSubscriptionId,
 } from "./subscription-read";
@@ -118,6 +117,7 @@ function subscriptionViewFromCreateResult(
 async function createStarterSubscriptionWithRecovery(input: {
   client: OpenMeter;
   customerId: string;
+  clientId: string;
   starter: typeof plans.$inferSelect;
   planKey: string;
 }): Promise<{
@@ -178,10 +178,66 @@ async function createStarterSubscriptionWithRecovery(input: {
         input.planKey,
         { openmeterPlanId: activeStarter.openmeterPlanId },
       );
-      if (!existing) {
-        throw err;
+      if (existing) {
+        return { subscription: existing, starter: activeStarter, created: false };
       }
-      return { subscription: existing, starter: activeStarter, created: false };
+
+      for (const item of await listOpenMeterSubscriptionsForCustomer(
+        input.client,
+        input.customerId,
+      )) {
+        if (isOpenMeterSubscriptionActive(item.status)) {
+          return { subscription: item, starter: activeStarter, created: false };
+        }
+      }
+
+      await applyFreeBillingProfileToCustomer({
+        client: input.client,
+        customerId: input.customerId,
+      });
+      try {
+        const createdSub = await createStarterOpenMeterSubscription({
+          client: input.client,
+          customerId: input.customerId,
+          starter: activeStarter,
+          planKey: input.planKey,
+        });
+        if (createdSub?.id) {
+          return {
+            subscription: subscriptionViewFromCreateResult(
+              createdSub,
+              input.planKey,
+              activeStarter.openmeterPlanId,
+            ),
+            starter: activeStarter,
+            created: true,
+          };
+        }
+      } catch (retryErr) {
+        const existingAfterRetry = await findOpenMeterSubscriptionByPlanKey(
+          input.client,
+          input.customerId,
+          input.planKey,
+          { openmeterPlanId: activeStarter.openmeterPlanId },
+        );
+        if (existingAfterRetry) {
+          return {
+            subscription: existingAfterRetry,
+            starter: activeStarter,
+            created: false,
+          };
+        }
+        for (const item of await listOpenMeterSubscriptionsForCustomer(
+          input.client,
+          input.customerId,
+        )) {
+          if (isOpenMeterSubscriptionActive(item.status)) {
+            return { subscription: item, starter: activeStarter, created: false };
+          }
+        }
+        throw retryErr;
+      }
+      throw err;
     }
     throw err;
   }
@@ -216,12 +272,12 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
-  if (!(await isStripeBillingEnabledForApp(input.clientId))) {
-    await applyFreeBillingProfileToCustomer({
-      client,
-      customerId: customer.id,
-    });
-  }
+  // Starter trial subscriptions always use the sandbox billing profile so Konnect
+  // does not require Stripe customer data, even when the app has Stripe Connect.
+  await applyFreeBillingProfileToCustomer({
+    client,
+    customerId: customer.id,
+  });
 
   const planKey = buildOpenMeterPlanKey(input.clientId, starter.id);
 
@@ -239,6 +295,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     const provisioned = await createStarterSubscriptionWithRecovery({
       client,
       customerId: customer.id,
+      clientId: input.clientId,
       starter: activeStarter,
       planKey,
     });
