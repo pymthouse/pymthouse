@@ -88,9 +88,14 @@ function rowsHappyPathSibling(): unknown[][] {
   return [[m2mRowOk], [{ externalUserId: "ext-1" }]];
 }
 
+/** Slot 0: M2M `oidcClients`. Slot 1: `appUsers` by id (empty). Slot 2: `appUsers` by externalUserId. */
+function rowsExternalUserIdSubject(): unknown[][] {
+  return [[m2mRowOk], [], [{ externalUserId: "owner-user-uuid" }]];
+}
+
 /** Slot 0: M2M `oidcClients`. Slot 1: `appUsers` (empty). Slot 2: `endUsers` (empty) — legacy machine `sub` path. */
 function rowsLegacyMachineSubject(): unknown[][] {
-  return [[m2mRowOk], [], []];
+  return [[m2mRowOk], [], [], []];
 }
 
 test("isGatewayTokenExchangeRequest is false for device_code resource", () => {
@@ -131,6 +136,26 @@ test("handleGatewayTokenExchange success when subject client_id is public siblin
       db: dbMock(rowsHappyPathSibling()),
       verifyAccessToken: async () => baseJwtPayload(),
       findOrCreateAppEndUser: async () => ({ id: "eu-1", isNew: false }),
+    },
+  );
+  assert.equal(out.access_token, "pmth_testtoken");
+  assert.equal(out.scope, "sign:job");
+});
+
+test("handleGatewayTokenExchange success when subject sub is app external user id", async () => {
+  const out = await handleGatewayTokenExchange(
+    {
+      clientId: M2M_ID,
+      clientSecret: "secret",
+      subjectToken: "jwt",
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+    },
+    {
+      ...noopDeps,
+      db: dbMock(rowsExternalUserIdSubject()),
+      verifyAccessToken: async () =>
+        baseJwtPayload({ sub: "owner-user-uuid", client_id: PUBLIC_ID }),
+      findOrCreateAppEndUser: async () => ({ id: "eu-owner", isNew: false }),
     },
   );
   assert.equal(out.access_token, "pmth_testtoken");

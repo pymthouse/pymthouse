@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import AuthorizationCodeRedirectBlock from "./steps/AuthorizationCodeRedirectBlock";
-import TestingStep from "./steps/TestingStep";
+import TestingStep, { AuthCodeFlowTestSection } from "./steps/TestingStep";
 import PlansTab from "./PlansTab";
 import PaymentsTab from "./PaymentsTab";
 import {
@@ -13,6 +13,10 @@ import {
   type AppFormData,
   type AppState,
 } from "./AppWizard";
+import {
+  AUTHORIZATION_CODE_GRANT,
+  syncPublicClientGrantTypes,
+} from "@/lib/oidc/grants";
 
 interface Props {
   appId: string;
@@ -29,6 +33,8 @@ interface Props {
   canSubmitForReview?: boolean;
   /** Only app owner may connect/disconnect Stripe (matches billing API). */
   canManageBilling?: boolean;
+  /** App owner identity used when minting owner-scoped API keys from Credentials tab. */
+  ownerExternalUserId?: string | null;
   /** Called after a successful submit so the parent can refresh status UI. */
   onReviewSubmitted?: () => void;
   /** Called after reverting from submitted to draft (header badge, etc.). */
@@ -60,7 +66,6 @@ function mergeFormData(
 
 const INTEGRATION_TABS = [
   { id: "profile", label: "App profile" },
-  { id: "auth", label: "Auth & scopes" },
   { id: "credentials", label: "Credentials & URLs" },
   { id: "plans", label: "Billing Plans" },
   { id: "payments", label: "Payments" },
@@ -71,6 +76,9 @@ type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
 function resolveInitialTab(tab: string | undefined): IntegrationSection {
   if (tab === "network-discovery") {
     return "plans";
+  }
+  if (tab === "auth") {
+    return "profile";
   }
   const validTabs = INTEGRATION_TABS.map((t) => t.id);
   if (tab && validTabs.includes(tab as IntegrationSection)) {
@@ -90,6 +98,7 @@ export default function AppSettingsScreen({
   canEdit = true,
   canSubmitForReview = false,
   canManageBilling = false,
+  ownerExternalUserId = null,
   onReviewSubmitted,
   onRevertedToDraft,
   initialTab,
@@ -113,13 +122,14 @@ export default function AppSettingsScreen({
   const [message, setMessage] = useState<string | null>(null);
   const [submittingForReview, setSubmittingForReview] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const [confirmRevert, setConfirmRevert] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [integrationSection, setIntegrationSection] =
     useState<IntegrationSection>(() => resolveInitialTab(initialTab));
   const tabRefs = useRef<Partial<Record<IntegrationSection, HTMLButtonElement | null>>>({});
-  const [savedGrantTypes, setSavedGrantTypes] = useState<string[]>(
-    initialData.grantTypes ?? [...defaultAppFormData.grantTypes],
-  );
 
   const selectIntegrationSection = useCallback(
     (section: IntegrationSection, updateUrl = true) => {
@@ -173,11 +183,54 @@ export default function AppSettingsScreen({
     [selectIntegrationSection],
   );
 
+  const showMessage = useCallback((msg: string) => {
+    setMessage(msg);
+    if (messageTimerRef.current !== null) {
+      clearTimeout(messageTimerRef.current);
+    }
+    messageTimerRef.current = setTimeout(() => {
+      messageTimerRef.current = null;
+      setMessage(null);
+    }, 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (messageTimerRef.current !== null) {
+        clearTimeout(messageTimerRef.current);
+      }
+    };
+  }, []);
+
   const updateFormData = useCallback(
     (updates: Partial<AppFormData>) => {
       setFormData((prev) => ({ ...prev, ...updates }));
+      setIsDirty(true);
     },
     [],
+  );
+
+  const updatePostLogoutRedirectUris = useCallback(
+    (updater: React.SetStateAction<string[]>) => {
+      setPostLogoutRedirectUris(updater);
+      setIsDirty(true);
+    },
+    [],
+  );
+
+  const handleRedirectUrisChange = useCallback(
+    (uris: string[]) => {
+      setFormData((prev) => {
+        const nextGrantTypes = syncPublicClientGrantTypes(
+          prev.grantTypes,
+          uris,
+          appState.clientId ?? "",
+        );
+        return { ...prev, redirectUris: uris, grantTypes: nextGrantTypes };
+      });
+      setIsDirty(true);
+    },
+    [appState.clientId],
   );
 
   const syncCredentialsFromServer = useCallback(async () => {
@@ -236,7 +289,6 @@ export default function AppSettingsScreen({
         ...prev,
         backendDeviceHelper: Boolean(putJson.m2mOidcClient),
       }));
-      setSavedGrantTypes([...formData.grantTypes]);
 
       const settingsRes = await fetch(`/api/v1/apps/${appId}/settings`, {
         method: "PUT",
@@ -255,7 +307,8 @@ export default function AppSettingsScreen({
         );
       }
 
-      setMessage("All settings saved.");
+      setIsDirty(false);
+      showMessage("All settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -266,6 +319,7 @@ export default function AppSettingsScreen({
     formData,
     postLogoutRedirectUris,
     canEdit,
+    showMessage,
   ]);
 
   const submitForReview = useCallback(async () => {
@@ -291,26 +345,18 @@ export default function AppSettingsScreen({
       }
       setAppState((s) => ({ ...s, status: "submitted" }));
       onReviewSubmitted?.();
-      setMessage("App submitted for review. An administrator will approve it.");
+      showMessage("App submitted for review. An administrator will approve it.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setSubmittingForReview(false);
     }
-  }, [appId, canSubmitForReview, onReviewSubmitted]);
+  }, [appId, canSubmitForReview, onReviewSubmitted, showMessage]);
 
   const deleteDraftApp = useCallback(async () => {
     if (!canSubmitForReview || appState.status !== "draft") return;
-    if (
-      !confirm(
-        `Delete "${formData.name.trim() || "this app"}"? This permanently removes the draft app and cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setDeleting(true);
     setError(null);
-    setMessage(null);
     try {
       const res = await fetch(`/api/v1/apps/${appId}`, { method: "DELETE" });
       if (!res.ok) {
@@ -326,21 +372,14 @@ export default function AppSettingsScreen({
       setError(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setDeleting(false);
+      setConfirmDelete(false);
     }
-  }, [appId, appState.status, canSubmitForReview, formData.name, router]);
+  }, [appId, appState.status, canSubmitForReview, router]);
 
   const revertToDraft = useCallback(async () => {
     if (!canSubmitForReview || appState.status !== "submitted") return;
-    if (
-      !confirm(
-        "Revert this app to draft? It will leave the review queue until you submit again.",
-      )
-    ) {
-      return;
-    }
     setReverting(true);
     setError(null);
-    setMessage(null);
     try {
       const res = await fetch(`/api/v1/apps/${appId}/revert-draft`, {
         method: "POST",
@@ -359,18 +398,19 @@ export default function AppSettingsScreen({
       }
       setAppState((s) => ({ ...s, status: "draft" }));
       onRevertedToDraft?.();
-      setMessage("App is back in draft. You can edit and submit again when ready.");
+      showMessage("App is back in draft. You can edit and submit again when ready.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Revert failed");
     } finally {
       setReverting(false);
+      setConfirmRevert(false);
     }
-  }, [appId, appState.status, canSubmitForReview, onRevertedToDraft]);
+  }, [appId, appState.status, canSubmitForReview, onRevertedToDraft, showMessage]);
 
   const addPostLogoutUri = () => {
     const trimmed = newPostLogoutUri.trim();
     if (!trimmed || postLogoutRedirectUris.includes(trimmed)) return;
-    setPostLogoutRedirectUris((u) => [...u, trimmed]);
+    updatePostLogoutRedirectUris((u) => [...u, trimmed]);
     setNewPostLogoutUri("");
   };
 
@@ -386,7 +426,11 @@ export default function AppSettingsScreen({
     typeof window !== "undefined"
       ? `${window.location.origin}/api/v1/oidc/token`
       : "";
-  const showPostLogoutRedirectUris = savedGrantTypes.includes("authorization_code");
+  const showPostLogoutRedirectUris = syncPublicClientGrantTypes(
+    formData.grantTypes,
+    formData.redirectUris,
+    appState.clientId ?? "",
+  ).includes(AUTHORIZATION_CODE_GRANT);
 
   return (
     <div className="max-w-3xl">
@@ -431,14 +475,35 @@ export default function AppSettingsScreen({
                   from the queue to make changes, then submit again.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void revertToDraft()}
-                disabled={reverting}
-                className="px-4 py-2 text-sm font-medium rounded-md border border-amber-500/40 text-amber-200 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {reverting ? "Reverting…" : "Revert to draft"}
-              </button>
+              {confirmRevert ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-amber-300">Withdraw from review queue?</span>
+                  <button
+                    type="button"
+                    onClick={() => void revertToDraft()}
+                    disabled={reverting}
+                    className="px-3 py-1.5 text-sm font-medium rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {reverting ? "Reverting…" : "Yes, revert"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRevert(false)}
+                    disabled={reverting}
+                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmRevert(true)}
+                  className="px-4 py-2 text-sm font-medium rounded-md border border-amber-500/40 text-amber-200 hover:bg-amber-500/10 transition-colors"
+                >
+                  Revert to draft
+                </button>
+              )}
             </div>
           )}
         {error && (
@@ -497,6 +562,12 @@ export default function AppSettingsScreen({
             <AppInfoStep data={formData} onChange={updateFormData} readOnly={!canEdit} />
           </section>
 
+          <AppModeStep
+            data={formData}
+            onChange={updateFormData}
+            readOnly={!canEdit}
+          />
+
           {canSubmitForReview && appState.status === "draft" && (
             <section className="space-y-3 pt-2 border-t border-zinc-800">
               <h2 className="text-sm font-semibold text-zinc-100">Delete draft app</h2>
@@ -504,51 +575,40 @@ export default function AppSettingsScreen({
                 Permanently remove this app, its OIDC client, and related data. This
                 cannot be undone.
               </p>
-              <button
-                type="button"
-                onClick={() => void deleteDraftApp()}
-                disabled={deleting}
-                className="px-4 py-2 text-sm font-medium rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {deleting ? "Deleting…" : "Delete app"}
-              </button>
+              {confirmDelete ? (
+                <div className="flex items-center gap-3 p-3 rounded-md bg-red-500/5 border border-red-500/20">
+                  <span className="text-sm text-red-300 flex-1">
+                    Delete &ldquo;{formData.name.trim() || "this app"}&rdquo;? This cannot be undone.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void deleteDraftApp()}
+                    disabled={deleting}
+                    className="px-3 py-1.5 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {deleting ? "Deleting…" : "Delete"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    disabled={deleting}
+                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="px-4 py-2 text-sm font-medium rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 transition-colors"
+                >
+                  Delete app
+                </button>
+              )}
             </section>
           )}
         </div>
-      )}
-
-      {integrationSection === "auth" && (
-        <section
-          id="panel-auth"
-          role="tabpanel"
-          aria-labelledby="tab-auth"
-          className="space-y-10 pb-6"
-        >
-          <AppModeStep
-            data={formData}
-            onChange={updateFormData}
-            readOnly={!canEdit}
-          />
-
-          <div className="border-t border-zinc-800 pt-8 space-y-3">
-            <div>
-              <h2 className="text-base font-semibold text-zinc-100">Browser sign-in</h2>
-              <p className="text-sm text-zinc-500 mt-1">
-                Authorization Code + PKCE (browser-based login) is enabled automatically
-                when at least one redirect URI is registered. Device flow (CLI/SDK) works
-                without one.
-              </p>
-            </div>
-            <AuthorizationCodeRedirectBlock
-              appId={appState.id}
-              redirectUris={formData.redirectUris}
-              onRedirectUrisChange={(uris) => updateFormData({ redirectUris: uris })}
-              domains={domains}
-              onDomainsChange={setDomains}
-              readOnly={!canEdit}
-            />
-          </div>
-        </section>
       )}
 
       {integrationSection === "credentials" && (
@@ -586,74 +646,109 @@ export default function AppSettingsScreen({
                     : s.backendHelper,
                 }));
               }}
+              ownerExternalUserId={ownerExternalUserId}
               readOnly={!canEdit}
               hideRedirectUriEditor
+              hideAuthCodeFlowSection
             />
           </section>
 
-          {showPostLogoutRedirectUris && (
-            <section className="space-y-4">
-              <div>
-                <h2 className="text-lg font-semibold text-zinc-100">Post-logout Redirects</h2>
-                <p className="text-sm text-zinc-500 mt-1">
-                  URIs to redirect users to after sign-out for browser-based auth flows. Saved with{" "}
-                  <strong className="text-zinc-400">Save changes</strong> below.
-                </p>
-              </div>
-              <div>
-                <label
-                  htmlFor="postLogoutUriInput"
-                  className="block text-sm font-medium text-zinc-300 mb-1.5"
-                >
-                  Post-logout redirect URIs
-                </label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    id="postLogoutUriInput"
-                    type="text"
-                    value={newPostLogoutUri}
-                    onChange={(e) => setNewPostLogoutUri(e.target.value)}
-                    onKeyDown={(e) =>
-                      e.key === "Enter" && (e.preventDefault(), addPostLogoutUri())
-                    }
-                    placeholder="https://example.com/logout-complete"
-                    disabled={!canEdit}
-                    className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <button
-                    type="button"
-                    onClick={addPostLogoutUri}
-                    disabled={!canEdit}
-                    className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          <section className="space-y-4 border-t border-zinc-800 pt-10">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-100">Sign-in URLs</h2>
+              <p className="text-sm text-zinc-500 mt-1">
+                Authorization Code + PKCE is enabled automatically when at least one
+                redirect URI is registered. Device flow (CLI/SDK) works without one.
+              </p>
+            </div>
+            <AuthorizationCodeRedirectBlock
+              appId={appState.id}
+              redirectUris={formData.redirectUris}
+              onRedirectUrisChange={handleRedirectUrisChange}
+              domains={domains}
+              onDomainsChange={setDomains}
+              readOnly={!canEdit}
+            />
+
+            {showPostLogoutRedirectUris ? (
+              <div className="space-y-3 pt-4 border-t border-zinc-800">
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-200">Post-logout redirects</h3>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    URIs to redirect users to after sign-out. Saved with{" "}
+                    <strong className="text-zinc-400">Save changes</strong> below.
+                  </p>
+                </div>
+                <div>
+                  <label
+                    htmlFor="postLogoutUriInput"
+                    className="block text-sm font-medium text-zinc-300 mb-1.5"
                   >
-                    Add
-                  </button>
-                </div>
-                <div className="space-y-1.5">
-                  {postLogoutRedirectUris.map((uri) => (
-                    <div
-                      key={uri}
-                      className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+                    Post-logout redirect URIs
+                  </label>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      id="postLogoutUriInput"
+                      type="text"
+                      value={newPostLogoutUri}
+                      onChange={(e) => setNewPostLogoutUri(e.target.value)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && (e.preventDefault(), addPostLogoutUri())
+                      }
+                      placeholder="https://example.com/logout-complete"
+                      disabled={!canEdit}
+                      className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <button
+                      type="button"
+                      onClick={addPostLogoutUri}
+                      disabled={!canEdit}
+                      className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      <code className="text-xs text-zinc-300">{uri}</code>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPostLogoutRedirectUris((items) =>
-                            items.filter((item) => item !== uri),
-                          )
-                        }
-                        disabled={!canEdit}
-                        className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                      Add
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {postLogoutRedirectUris.map((uri) => (
+                      <div
+                        key={uri}
+                        className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
                       >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
+                        <code className="text-xs text-zinc-300">{uri}</code>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updatePostLogoutRedirectUris((items) =>
+                              items.filter((item) => item !== uri),
+                            )
+                          }
+                          disabled={!canEdit}
+                          className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </section>
-          )}
+            ) : null}
+          </section>
+
+          <AuthCodeFlowTestSection
+            appId={appState.id}
+            clientId={appState.clientId}
+            grantTypes={formData.grantTypes}
+            redirectUris={formData.redirectUris}
+            allowedScopes={formData.allowedScopes}
+            backendDeviceHelper={formData.backendDeviceHelper}
+            initiateLoginUri={formData.initiateLoginUri}
+            deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
+            domains={domains}
+            onChange={updateFormData}
+            onDomainsChange={setDomains}
+            readOnly={!canEdit}
+          />
 
           <ReferenceEndpointsSection
             clientId={appState.clientId || ""}
@@ -692,14 +787,35 @@ export default function AppSettingsScreen({
           <strong className="text-zinc-400">Save changes</strong> for metadata,
           auth mode, scopes, and OIDC fields.
         </p>
-        <button
-          type="button"
-          onClick={() => void saveChanges()}
-          disabled={!canEdit || saving || !formData.name.trim()}
-          className="px-5 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-        >
-          {saving ? "Saving…" : "Save changes"}
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          {isDirty && !saving && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              {" "}
+              Unsaved changes
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void saveChanges()}
+            disabled={!canEdit || saving || !formData.name.trim()}
+            className={`px-5 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              isDirty
+                ? "bg-emerald-600 text-white hover:bg-emerald-500 ring-2 ring-emerald-500/20"
+                : "bg-emerald-600 text-white hover:bg-emerald-500"
+            }`}
+          >
+            {saving ? (
+              <span className="flex items-center gap-2">
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Saving…
+              </span>
+            ) : "Save changes"}
+          </button>
+        </div>
       </div>
       )}
     </div>

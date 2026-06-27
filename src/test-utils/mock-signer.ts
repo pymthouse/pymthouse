@@ -1,6 +1,6 @@
 /**
- * Replace globalThis.fetch for the duration of a test so signer proxy routes
- * never hit the network. Any intercepted URL/body can be inspected via the
+ * Replace globalThis.fetch for the duration of a test so remote signer HTTP
+ * never hits the network. Any intercepted URL/body can be inspected via the
  * returned `calls` array. Non-signer URLs throw so we notice leaks.
  */
 

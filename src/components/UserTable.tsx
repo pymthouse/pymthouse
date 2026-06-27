@@ -27,6 +27,7 @@ function timeAgo(dateStr: string): string {
 const roleBadge: Record<string, string> = {
   admin: "bg-amber-500/20 text-amber-400 border-amber-500/30",
   operator: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  developer: "bg-zinc-500/20 text-zinc-400 border-zinc-700",
 };
 
 const providerIcon: Record<string, string> = {
@@ -79,7 +80,7 @@ export default function UserTable({ users }: UserTableProps) {
               <td className="py-3 px-4 text-center">
                 <span
                   className={`px-2 py-0.5 text-xs font-medium rounded-full border ${
-                    roleBadge[user.role] || roleBadge.operator
+                    roleBadge[user.role] || roleBadge.developer
                   }`}
                 >
                   {user.role}

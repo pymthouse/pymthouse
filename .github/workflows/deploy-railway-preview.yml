@@ -1,7 +1,7 @@
 name: Deploy Railway preview clearinghouse stack
 
-# main deploys the full clearinghouse stack (kafka + collector + signer DMZ) to Railway
-# preview (staging). Production deploys on v* tag via deploy-railway-production.yml.
+# Invoked by deploy-staging.yml (push to staging or manual) or workflow_dispatch below.
+# Production deploys on v* tag via deploy-railway-production.yml.
 #
 # Enable with repository variable:
 #   RAILWAY_PREVIEW_AUTO_DEPLOY=true
@@ -14,17 +14,6 @@ name: Deploy Railway preview clearinghouse stack
 #   OPENMETER_URL, OPENMETER_API_KEY, WEBHOOK_SECRET
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "deploy/**"
-      - "docker/signer-dmz/**"
-      - "docker-compose.clearinghouse.railway.yml"
-      - "scripts/railway-*.sh"
-      - "scripts/lib/railway-*.sh"
-      - "railway.json"
-      - ".github/workflows/deploy-railway-preview.yml"
   workflow_dispatch:
     inputs:
       apply_env:

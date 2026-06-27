@@ -11,7 +11,9 @@ import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "@/lib/openmeter/client-factory";
+import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
 export async function grantAllowanceUsdMicros(input: {
@@ -48,12 +50,19 @@ export async function grantAllowanceUsdMicros(input: {
     input.featureKey?.trim() || (await getTrialFeatureKeyForApp(input.clientId));
 
   await ensureOpenMeterCustomer(client, customerKey);
-  await grantTrialCredits({
-    client,
-    customerKey,
-    featureKey,
-    amountUsdMicros: input.amountUsdMicros,
-  });
+
+  const omApiKey = process.env.OPENMETER_API_KEY?.trim();
+  const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);
+  // Konnect trial balance is derived from Starter subscription included usage, not
+  // SDK entitlement grants. Provisioning above is the grant path on hosted Konnect.
+  if (!useKonnect) {
+    await grantTrialCredits({
+      client,
+      customerKey,
+      featureKey,
+      amountUsdMicros: input.amountUsdMicros,
+    });
+  }
 
   const balance = await getTrialCreditBalance({
     clientId: input.clientId,

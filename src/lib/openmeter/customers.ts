@@ -9,6 +9,30 @@ export type OpenMeterCustomerIdentity = {
   key: string;
 };
 
+type OpenMeterCustomerRecord = {
+  id: string;
+  key?: string;
+  name?: string;
+  usageAttribution?: { subjectKeys?: string[] };
+};
+
+async function ensureCustomerUsageAttribution(
+  client: OpenMeter,
+  customer: OpenMeterCustomerRecord,
+  customerKey: string,
+): Promise<void> {
+  const subjectKeys = customer.usageAttribution?.subjectKeys ?? [];
+  if (subjectKeys.includes(customerKey)) {
+    return;
+  }
+
+  const nextKeys = [...new Set([...subjectKeys, customerKey])];
+  await client.customers.update(customer.id, {
+    name: customer.name?.trim() || customerKey,
+    usageAttribution: { subjectKeys: nextKeys },
+  });
+}
+
 async function findOpenMeterCustomerByKey(
   client: OpenMeter,
   customerKey: string,
@@ -35,18 +59,28 @@ export async function ensureOpenMeterCustomer(
 ): Promise<OpenMeterCustomerIdentity> {
   const existing = await findOpenMeterCustomerByKey(client, customerKey);
   if (existing?.id) {
+    await ensureCustomerUsageAttribution(client, existing, customerKey);
     return { id: existing.id, key: customerKey };
   }
 
-  const created = await client.customers.create({
-    key: customerKey,
-    name: displayName || customerKey,
-    usageAttribution: { subjectKeys: [customerKey] },
-  });
-  if (!created?.id) {
-    throw new Error(`OpenMeter customer create failed for key ${customerKey}`);
+  try {
+    const created = await client.customers.create({
+      key: customerKey,
+      name: displayName || customerKey,
+      usageAttribution: { subjectKeys: [customerKey] },
+    });
+    if (!created?.id) {
+      throw new Error(`OpenMeter customer create failed for key ${customerKey}`);
+    }
+    return { id: created.id, key: customerKey };
+  } catch (err) {
+    const raced = await findOpenMeterCustomerByKey(client, customerKey);
+    if (raced?.id) {
+      await ensureCustomerUsageAttribution(client, raced, customerKey);
+      return { id: raced.id, key: customerKey };
+    }
+    throw err;
   }
-  return { id: created.id, key: customerKey };
 }
 
 export async function ensureOpenMeterCustomerForAppUser(input: {

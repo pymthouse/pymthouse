@@ -23,6 +23,14 @@ import { TokenExchangeError } from "@/lib/oidc/token-exchange";
 export const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
+/**
+ * RFC 8693 §2.2.1 requires `issued_token_type` on every token-exchange
+ * response. The signer JWT is an access token (consistent with the device and
+ * gateway exchanges), so callers never have to derive this value client-side.
+ */
+const ISSUED_ACCESS_TOKEN_TYPE =
+  "urn:ietf:params:oauth:token-type:access_token";
+
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 const DEVICE_CODE_RESOURCE_PREFIX = "urn:pmth:device_code:";
 
@@ -119,6 +127,7 @@ export async function handleSignerJwtTokenExchange(
   token_type: "Bearer";
   expires_in: number;
   scope: string;
+  issued_token_type: string;
   balanceUsdMicros: string;
   lifetimeGrantedUsdMicros: string;
 }> {
@@ -238,6 +247,7 @@ export async function handleSignerJwtTokenExchange(
     token_type: "Bearer",
     expires_in: minted.expires_in,
     scope: minted.scope,
+    issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
   };

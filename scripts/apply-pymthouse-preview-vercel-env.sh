@@ -7,7 +7,7 @@
 # Usage:
 #   set -a && source .env.local && set +a
 #   bash scripts/apply-pymthouse-preview-vercel-env.sh
-#   PREVIEW_GIT_BRANCH=feat/openmeter-hosted bash scripts/apply-pymthouse-preview-vercel-env.sh
+#   PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +21,14 @@ fi
 STAGING_URL="${STAGING_URL:-https://staging.pymthouse.com}"
 STAGING_URL="${STAGING_URL%/}"
 SIGNER_BASE="${SIGNER_BASE:-https://pymthouse-preview.up.railway.app}"
-PREVIEW_GIT_BRANCH="${PREVIEW_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo feat/openmeter-hosted)}"
+_git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -z "${PREVIEW_GIT_BRANCH:-}" ]]; then
+  if [[ -z "$_git_branch" || "$_git_branch" == "HEAD" ]]; then
+    PREVIEW_GIT_BRANCH="staging"
+  else
+    PREVIEW_GIT_BRANCH="$_git_branch"
+  fi
+fi
 OIDC_ISSUER_VAL="${STAGING_URL}/api/v1/oidc"
 
 if [[ -z "${OPENMETER_URL:-}" ]]; then
@@ -67,4 +74,5 @@ echo "Done. Redeploy preview so runtime picks up vars."
 echo "  NEXTAUTH_URL=$STAGING_URL"
 echo "  OPENMETER_URL=${OPENMETER_URL%/}"
 echo ""
-echo "In Vercel → Domains → staging.pymthouse.com → set Git Branch to: $PREVIEW_GIT_BRANCH"
+echo "Assign domain to branch:"
+echo "  STAGING_GIT_BRANCH=$PREVIEW_GIT_BRANCH bash scripts/assign-staging-domain-branch.sh"

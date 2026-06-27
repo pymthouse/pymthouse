@@ -1,16 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/next-auth-options";
+import { NextResponse } from "next/server";
 import { db } from "@/db/index";
-import { signerConfig, users } from "@/db/schema";
+import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { authenticateRequest, hasScope } from "@/lib/auth";
+import { withAdminGuard } from "@/lib/api-guards";
 import { isManagedRemoteSigner, syncSignerStatus } from "@/lib/signer-proxy";
 
 const SUPPORTED_NETWORK = "arbitrum-one-mainnet";
 
-// Duration format: number + unit (s, m, h) e.g. 5m, 10s, 1h
-const DURATION_REGEX = /^\d+[smh]$/;
+// Duration format: number + unit for live AI capability reports.
+const LIVE_AI_CAP_DURATION_REGEX = /^\d+(ns|us|µs|ms|s|m|h)$/;
 
 function isValidUrl(s: string): boolean {
   try {
@@ -21,20 +19,232 @@ function isValidUrl(s: string): boolean {
   }
 }
 
-function isValidDuration(s: string): boolean {
-  return DURATION_REGEX.test(s);
+function applySignerUrlUpdate(
+  value: unknown,
+  updates: Record<string, unknown>,
+): NextResponse | null {
+  if (value === undefined) {
+    return null;
+  }
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (raw === "") {
+    updates.signerUrl = null;
+    return null;
+  }
+  if (!isValidUrl(raw)) {
+    return NextResponse.json(
+      { error: "signerUrl must be a valid http(s) URL or empty" },
+      { status: 400 },
+    );
+  }
+  updates.signerUrl = raw;
+  return null;
+}
+
+function applySignerPortUpdate(
+  value: unknown,
+  updates: Record<string, unknown>,
+): NextResponse | null {
+  if (value === undefined) {
+    return null;
+  }
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    return NextResponse.json(
+      { error: "signerPort must be an integer between 1024 and 65535" },
+      { status: 400 },
+    );
+  }
+  updates.signerPort = port;
+  return null;
+}
+
+function applyNetworkUpdate(
+  value: unknown,
+  updates: Record<string, unknown>,
+): NextResponse | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (value !== SUPPORTED_NETWORK) {
+    return NextResponse.json(
+      { error: `Invalid network. Must be: ${SUPPORTED_NETWORK}` },
+      { status: 400 },
+    );
+  }
+  updates.network = SUPPORTED_NETWORK;
+  return null;
+}
+
+function applyRemoteDiscoveryUpdate(
+  value: unknown,
+  updates: Record<string, unknown>,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  const enabled = value === true || value === "true";
+  updates.remoteDiscovery = enabled ? 1 : 0;
+  if (!enabled) {
+    updates.orchWebhookUrl = null;
+    updates.liveAICapReportInterval = null;
+  }
+}
+
+function applyOrchWebhookUpdate(
+  value: unknown,
+  effectiveRemoteDiscovery: boolean,
+  updates: Record<string, unknown>,
+): NextResponse | null {
+  if (value === undefined || !effectiveRemoteDiscovery) {
+    return null;
+  }
+  const url = typeof value === "string" ? value.trim() : "";
+  const normalized = url || null;
+  if (normalized && !isValidUrl(normalized)) {
+    return NextResponse.json(
+      { error: "orchWebhookUrl must be a valid http(s) URL" },
+      { status: 400 },
+    );
+  }
+  updates.orchWebhookUrl = normalized;
+  return null;
+}
+
+function applyLiveAICapIntervalUpdate(
+  value: unknown,
+  effectiveRemoteDiscovery: boolean,
+  updates: Record<string, unknown>,
+): NextResponse | null {
+  if (value === undefined || !effectiveRemoteDiscovery) {
+    return null;
+  }
+  const interval = typeof value === "string" ? value.trim() : "";
+  const normalized = interval || null;
+  if (normalized && !LIVE_AI_CAP_DURATION_REGEX.test(normalized)) {
+    return NextResponse.json(
+      {
+        error:
+          "liveAICapReportInterval must be a valid duration (e.g. 5m, 10s, 1h)",
+      },
+      { status: 400 },
+    );
+  }
+  updates.liveAICapReportInterval = normalized;
+  return null;
+}
+
+function assignIfDefined(
+  source: Record<string, unknown>,
+  sourceKey: string,
+  updates: Record<string, unknown>,
+): void {
+  const value = source[sourceKey];
+  if (value !== undefined) {
+    updates[sourceKey] = value;
+  }
+}
+
+function applySignerApiKeyUpdate(
+  value: unknown,
+  updates: Record<string, unknown>,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  updates.signerApiKey = trimmed === "" ? null : trimmed;
+}
+
+type SignerPatchComputation = {
+  updates: Record<string, unknown>;
+  localComposeTouched: boolean;
+};
+
+function isLocalComposeFieldTouched(body: Record<string, unknown>): boolean {
+  return (
+    body.ethRpcUrl !== undefined ||
+    body.signerPort !== undefined ||
+    body.ethAcctAddr !== undefined ||
+    body.remoteDiscovery !== undefined ||
+    body.orchWebhookUrl !== undefined ||
+    body.liveAICapReportInterval !== undefined
+  );
+}
+
+function buildSignerUpdateMessage(
+  signer: Parameters<typeof isManagedRemoteSigner>[0],
+  localComposeTouched: boolean,
+): string {
+  const remote = isManagedRemoteSigner(signer);
+  if (remote) {
+    return localComposeTouched
+      ? "Platform settings saved. Signer process settings (RPC, port, discovery) must be changed on the remote host."
+      : "Platform settings saved.";
+  }
+  return localComposeTouched
+    ? "Config updated. Restart the signer for changes to take effect."
+    : "Config updated.";
+}
+
+function computeSignerPatch(
+  body: Record<string, unknown>,
+  current: { remoteDiscovery: number } | undefined,
+): SignerPatchComputation | NextResponse {
+  const updates: Record<string, unknown> = {};
+
+  assignIfDefined(body, "name", updates);
+  const signerUrlError = applySignerUrlUpdate(body.signerUrl, updates);
+  if (signerUrlError) {
+    return signerUrlError;
+  }
+  applySignerApiKeyUpdate(body.signerApiKey, updates);
+  const signerPortError = applySignerPortUpdate(body.signerPort, updates);
+  if (signerPortError) {
+    return signerPortError;
+  }
+  const networkError = applyNetworkUpdate(body.network, updates);
+  if (networkError) {
+    return networkError;
+  }
+  assignIfDefined(body, "ethRpcUrl", updates);
+  assignIfDefined(body, "ethAcctAddr", updates);
+  assignIfDefined(body, "defaultCutPercent", updates);
+  assignIfDefined(body, "billingMode", updates);
+
+  applyRemoteDiscoveryUpdate(body.remoteDiscovery, updates);
+  const effectiveRemoteDiscovery =
+    updates.remoteDiscovery !== undefined
+      ? updates.remoteDiscovery === 1
+      : current?.remoteDiscovery === 1;
+
+  const orchWebhookError = applyOrchWebhookUpdate(
+    body.orchWebhookUrl,
+    effectiveRemoteDiscovery,
+    updates,
+  );
+  if (orchWebhookError) {
+    return orchWebhookError;
+  }
+  const liveAICapIntervalError = applyLiveAICapIntervalUpdate(
+    body.liveAICapReportInterval,
+    effectiveRemoteDiscovery,
+    updates,
+  );
+  if (liveAICapIntervalError) {
+    return liveAICapIntervalError;
+  }
+
+  return {
+    updates,
+    localComposeTouched: isLocalComposeFieldTouched(body),
+  };
 }
 
 /**
  * GET /api/v1/signer -- Get singleton signer status + config
  */
-export async function GET(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Sync live status from go-livepeer container
+export const GET = withAdminGuard(async () => {
   const liveStatus = await syncSignerStatus();
 
   const signerRows = await db
@@ -51,20 +261,14 @@ export async function GET(request: NextRequest) {
       ethAddress: liveStatus.ethAddress,
     },
   });
-}
+});
 
 /**
  * PATCH /api/v1/signer -- Update signer config
  * Changing config requires a restart to take effect.
  */
-export async function PATCH(request: NextRequest) {
-  const admin = await getAdminUser(request);
-  if (!admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
-  const updates: Record<string, unknown> = {};
+export const PATCH = withAdminGuard(async (request) => {
+  const body = (await request.json()) as Record<string, unknown>;
   const currentRows = await db
     .select()
     .from(signerConfig)
@@ -72,93 +276,12 @@ export async function PATCH(request: NextRequest) {
     .limit(1);
   const current = currentRows[0];
 
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.signerUrl !== undefined) {
-    const raw = typeof body.signerUrl === "string" ? body.signerUrl.trim() : "";
-    if (raw === "") {
-      updates.signerUrl = null;
-    } else if (!isValidUrl(raw)) {
-      return NextResponse.json(
-        { error: "signerUrl must be a valid http(s) URL or empty" },
-        { status: 400 }
-      );
-    } else {
-      updates.signerUrl = raw;
-    }
-  }
-  if (body.signerApiKey !== undefined) {
-    const trimmed =
-      typeof body.signerApiKey === "string" ? body.signerApiKey.trim() : "";
-    updates.signerApiKey = trimmed === "" ? null : trimmed;
-  }
-  if (body.signerPort !== undefined) {
-    const port = Number(body.signerPort);
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-      return NextResponse.json(
-        { error: "signerPort must be an integer between 1024 and 65535" },
-        { status: 400 }
-      );
-    }
-    updates.signerPort = port;
-  }
-  if (body.network !== undefined) {
-    if (body.network !== SUPPORTED_NETWORK) {
-      return NextResponse.json(
-        { error: `Invalid network. Must be: ${SUPPORTED_NETWORK}` },
-        { status: 400 }
-      );
-    }
-    updates.network = SUPPORTED_NETWORK;
-  }
-  if (body.ethRpcUrl !== undefined) updates.ethRpcUrl = body.ethRpcUrl;
-  if (body.ethAcctAddr !== undefined) updates.ethAcctAddr = body.ethAcctAddr;
-  if (body.defaultCutPercent !== undefined)
-    updates.defaultCutPercent = body.defaultCutPercent;
-  if (body.billingMode !== undefined) updates.billingMode = body.billingMode;
-
-  // Remote discovery: when enabled, orchWebhookUrl and liveAICapReportInterval are used
-  if (body.remoteDiscovery !== undefined) {
-    const rd = body.remoteDiscovery === true || body.remoteDiscovery === "true";
-    updates.remoteDiscovery = rd ? 1 : 0;
-    if (!rd) {
-      updates.orchWebhookUrl = null;
-      updates.liveAICapReportInterval = null;
-    }
-  }
-  const effectiveRemoteDiscovery =
-    updates.remoteDiscovery !== undefined
-      ? updates.remoteDiscovery === 1
-      : current?.remoteDiscovery === 1;
-
-  if (body.orchWebhookUrl !== undefined) {
-    if (effectiveRemoteDiscovery) {
-      const url = body.orchWebhookUrl?.trim() || null;
-      if (url && !isValidUrl(url)) {
-        return NextResponse.json(
-          { error: "orchWebhookUrl must be a valid http(s) URL" },
-          { status: 400 }
-        );
-      }
-      updates.orchWebhookUrl = url;
-    }
-  }
-  if (body.liveAICapReportInterval !== undefined) {
-    if (effectiveRemoteDiscovery) {
-      const val = body.liveAICapReportInterval?.trim() || null;
-      if (val && !/^\d+(ns|us|µs|ms|s|m|h)$/.test(val)) {
-        return NextResponse.json(
-          {
-            error:
-              "liveAICapReportInterval must be a valid duration (e.g. 5m, 10s, 1h)",
-          },
-          { status: 400 }
-        );
-      }
-      updates.liveAICapReportInterval = val;
-    }
+  const computed = computeSignerPatch(body, current);
+  if (computed instanceof NextResponse) {
+    return computed;
   }
 
-  if (Object.keys(updates).length === 0) {
+  if (Object.keys(computed.updates).length === 0) {
     return NextResponse.json(
       { error: "No valid fields to update" },
       { status: 400 }
@@ -167,7 +290,7 @@ export async function PATCH(request: NextRequest) {
 
   await db
     .update(signerConfig)
-    .set(updates)
+    .set(computed.updates)
     .where(eq(signerConfig.id, "default"));
 
   const updatedRows = await db
@@ -177,57 +300,9 @@ export async function PATCH(request: NextRequest) {
     .limit(1);
   const updated = updatedRows[0];
 
-  const remote = isManagedRemoteSigner(updated);
-  const localComposeTouched =
-    body.ethRpcUrl !== undefined ||
-    body.signerPort !== undefined ||
-    body.ethAcctAddr !== undefined ||
-    body.remoteDiscovery !== undefined ||
-    body.orchWebhookUrl !== undefined ||
-    body.liveAICapReportInterval !== undefined;
-
-  let message = "Config updated.";
-  if (remote) {
-    message = localComposeTouched
-      ? "Platform settings saved. Signer process settings (RPC, port, discovery) must be changed on the remote host."
-      : "Platform settings saved.";
-  } else if (localComposeTouched) {
-    message = "Config updated. Restart the signer for changes to take effect.";
-  }
-
   return NextResponse.json({
     signer: updated,
-    message,
+    message: buildSignerUpdateMessage(updated, computed.localComposeTouched),
   });
-}
+});
 
-async function getAdminUser(request: NextRequest) {
-  const oauthSession = await getServerSession(authOptions);
-  if (oauthSession?.user) {
-    const sessionUser = oauthSession.user as Record<string, unknown>;
-    if (sessionUser.id) {
-      const rows = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, sessionUser.id as string))
-        .limit(1);
-      const user = rows[0];
-      if (user?.role !== "admin") return null;
-      return user;
-    }
-  }
-
-  const auth = await authenticateRequest(request);
-  if (auth && hasScope(auth.scopes, "admin") && auth.userId) {
-    const rows = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, auth.userId))
-      .limit(1);
-    const user = rows[0];
-    if (user?.role !== "admin") return null;
-    return user;
-  }
-
-  return null;
-}

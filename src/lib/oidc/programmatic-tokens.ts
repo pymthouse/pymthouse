@@ -13,6 +13,7 @@ import { appUsers, developerApps, oidcClients } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { validateClientSecret } from "./clients";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
+import { assertSignJobNotMixedWithAdmin, SignJobScopeExclusivityError } from "@/lib/oidc/scopes";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -34,6 +35,15 @@ export async function issueProgrammaticTokens(input: {
   appUserId: string;
   scopes: string[];
 }) {
+  try {
+    assertSignJobNotMixedWithAdmin(input.scopes);
+  } catch (err) {
+    if (err instanceof SignJobScopeExclusivityError) {
+      throw new ProgrammaticTokenError(err.code, err.message);
+    }
+    throw err;
+  }
+
   const appRows = await db
     .select({ allowedScopes: oidcClients.allowedScopes })
     .from(developerApps)
@@ -57,6 +67,7 @@ export async function issueProgrammaticTokens(input: {
     .select({
       oauthClientId: oidcClients.clientId,
       appUserId: appUsers.id,
+      externalUserId: appUsers.externalUserId,
     })
     .from(developerApps)
     .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -80,6 +91,14 @@ export async function issueProgrammaticTokens(input: {
     );
   }
 
+  const externalUserId = binding.externalUserId?.trim();
+  if (!externalUserId) {
+    throw new ProgrammaticTokenError(
+      "invalid_request",
+      "App user is missing external_user_id",
+    );
+  }
+
   const issuer = getIssuer();
   const keyPair = await ensureSigningKey();
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -89,6 +108,7 @@ export async function issueProgrammaticTokens(input: {
     scope,
     scp: input.scopes,
     client_id: binding.oauthClientId,
+    external_user_id: externalUserId,
     user_type: "app_user",
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })

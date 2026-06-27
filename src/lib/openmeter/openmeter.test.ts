@@ -314,7 +314,14 @@ test("buildOpenMeterUsageResponse does not copy network fee into endUserBillable
 test("ensureOpenMeterCustomer returns existing id and key", async () => {
   const client = {
     customers: {
-      get: async (key: string) => ({ id: "om-cust-1", key }),
+      get: async (key: string) => ({
+        id: "om-cust-1",
+        key,
+        usageAttribution: { subjectKeys: [key] },
+      }),
+      update: async () => {
+        throw new Error("should not update when subject key present");
+      },
       create: async () => {
         throw new Error("should not create");
       },
@@ -327,6 +334,34 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
     "User One",
   );
   assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
+});
+
+test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", async () => {
+  let updatedSubjectKeys: string[] | undefined;
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-cust-1",
+        key,
+        usageAttribution: { subjectKeys: [] },
+      }),
+      update: async (_id: string, input: { usageAttribution: { subjectKeys: string[] } }) => {
+        updatedSubjectKeys = input.usageAttribution.subjectKeys;
+        return { id: "om-cust-1", key: "app_1:user-1" };
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOpenMeterCustomer(
+    openMeterTestClient(client),
+    "app_1:user-1",
+    "User One",
+  );
+  assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
+  assert.deepEqual(updatedSubjectKeys, ["app_1:user-1"]);
 });
 
 test("ensureOpenMeterCustomer creates customer when missing", async () => {
@@ -521,6 +556,21 @@ test("isOpenMeterConflictError detects duplicate entitlement failures", async ()
   );
   assert.equal(isOpenMeterConflictError({ status: 409 }), true);
   assert.equal(isOpenMeterConflictError(new Error("validation failed")), false);
+});
+
+test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {
+  const { isOpenMeterStripeBillingError, isOpenMeterConflictError } = await import("./plan-errors");
+  const stripeErr = new Error(
+    "conflict error: invalid billing setup: failed to get stripe customer data: " +
+      "customer has no data for stripe app",
+  );
+  (stripeErr as { status: number }).status = 409;
+  assert.equal(isOpenMeterStripeBillingError(stripeErr), true);
+  assert.equal(isOpenMeterConflictError(stripeErr), true);
+
+  const stripeMessageOnly = new Error(stripeErr.message);
+  (stripeMessageOnly as { status: number }).status = 500;
+  assert.equal(isOpenMeterStripeBillingError(stripeMessageOnly), false);
 });
 
 test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () => {

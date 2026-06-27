@@ -3,6 +3,7 @@ import {
   getMeterSlugForApp,
 } from "@/lib/openmeter/client-factory";
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
+import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import {
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
@@ -617,6 +618,7 @@ export async function queryOpenMeterUserPipelineByModel(input: {
     return [];
   }
 
+  const meterClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const client = await getOpenMeterClientForApp(input.clientId);
   if (!client) {
     return [];
@@ -624,7 +626,7 @@ export async function queryOpenMeterUserPipelineByModel(input: {
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
   const periodQuery = buildMeterQuery({
-    clientId: input.clientId,
+    clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
@@ -638,7 +640,7 @@ export async function queryOpenMeterUserPipelineByModel(input: {
   ]);
 
   return aggregatePipelineModelRows({
-    clientId: input.clientId,
+    clientId: meterClientId,
     feeRows: feeResult.data || [],
     countRows: countResult.data || [],
   });
@@ -666,6 +668,7 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
     return [];
   }
 
+  const meterClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const client = await getOpenMeterClientForApp(input.clientId);
   if (!client) {
     return [];
@@ -673,7 +676,7 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
   const dayQuery = buildMeterQuery({
-    clientId: input.clientId,
+    clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "DAY",
@@ -687,7 +690,7 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
   ]);
 
   return aggregateDailyPipelineModelRows({
-    clientId: input.clientId,
+    clientId: meterClientId,
     feeRows: feeResult.data || [],
     countRows: countResult.data || [],
   });
@@ -729,6 +732,7 @@ export async function queryOpenMeterUsage(input: {
     return [];
   }
 
+  const meterClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const client = await getOpenMeterClientForApp(input.clientId);
   if (!client) {
     return [];
@@ -736,7 +740,7 @@ export async function queryOpenMeterUsage(input: {
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
   const periodQuery = buildMeterQuery({
-    clientId: input.clientId,
+    clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
@@ -750,7 +754,7 @@ export async function queryOpenMeterUsage(input: {
   ]);
 
   return aggregateUserRows({
-    clientId: input.clientId,
+    clientId: meterClientId,
     feeRows: feeResult.data || [],
     countRows: countResult.data || [],
     filterExternalUserId: input.externalUserId,
@@ -778,6 +782,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     return null;
   }
 
+  const meterClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const client = await getOpenMeterClientForApp(input.clientId);
   if (!client) {
     return null;
@@ -785,14 +790,14 @@ export async function queryOpenMeterAppDashboardUsage(input: {
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
   const periodQuery = buildMeterQuery({
-    clientId: input.clientId,
+    clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
     groupBy: METER_GROUP_BY_DETAIL,
   });
   const dayQuery = buildMeterQuery({
-    clientId: input.clientId,
+    clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "DAY",
@@ -810,22 +815,22 @@ export async function queryOpenMeterAppDashboardUsage(input: {
 
   return {
     byUser: aggregateUserRows({
-      clientId: input.clientId,
+      clientId: meterClientId,
       feeRows,
       countRows,
     }),
     byPipelineModel: aggregatePipelineModelRows({
-      clientId: input.clientId,
+      clientId: meterClientId,
       feeRows,
       countRows,
     }),
     byUserPipelineModel: aggregateUserPipelineModelRows({
-      clientId: input.clientId,
+      clientId: meterClientId,
       feeRows,
       countRows,
     }),
     requestsByDay: aggregateDailyRequestCounts({
-      clientId: input.clientId,
+      clientId: meterClientId,
       countRows: dayCountResult.data || [],
     }),
   };

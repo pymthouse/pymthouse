@@ -99,7 +99,7 @@ export function toBillingProduct(input: {
   };
 }
 
-export function toLegacyPlanRow(input: {
+export function toPlanApiRow(input: {
   clientId: string;
   resolved: ResolvedPlanRow;
   includeInternals: boolean;

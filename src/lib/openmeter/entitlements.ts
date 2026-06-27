@@ -16,7 +16,7 @@ import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-disp
 import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
-  getOpenMeterSubscriptionForAppUser,
+  getPrimaryOpenMeterSubscriptionForAppUser,
   isOpenMeterSubscriptionActive,
 } from "./subscription-read";
 import { queryOpenMeterUsage } from "./usage-read";
@@ -96,7 +96,7 @@ async function getKonnectTrialCreditBalance(input: {
 
   let periodStart: string | null = null;
   if (!hasAccess) {
-    const starterSubscription = await getOpenMeterSubscriptionForAppUser({
+    const starterSubscription = await getPrimaryOpenMeterSubscriptionForAppUser({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
     });

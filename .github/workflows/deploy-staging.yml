@@ -1,21 +1,25 @@
 name: Deploy staging
 
-# Manually deploys a chosen branch to the staging region. Staging is a paired unit:
-# the Railway preview clearinghouse stack (kafka + OpenMeter collector + signer DMZ)
-# and the Vercel staging app (staging.pymthouse.com) are dependent services deployed
-# together from the same branch. Railway goes first, then Vercel (the frontend
-# depends on the backend services being up).
+# Auto-deploys on push to any branch except `main`, or manually deploys a chosen branch.
+# Vercel (pymthouse project, Preview environment): every feature branch push creates a
+# prebuilt Preview deployment and re-aliases staging.pymthouse.com onto it.
+# Railway preview stack: only on push to `staging` (or manual dispatch with branch=staging).
 #
-# Vercel: an ordinary Preview deployment is created and staging.pymthouse.com is
-# re-aliased onto it. This requires staging.pymthouse.com to be aliasable, i.e.
+# Git-triggered Vercel builds are disabled repo-wide (`vercel.json` deploymentEnabled=false)
+# so only this workflow deploys to the pymthouse project. The legacy pymthouse-preview
+# Vercel project should stay disconnected from Git.
+#
 # pymthouse.com must be a verified team domain under ecs-vercel (TXT verification,
 # no nameserver migration) — otherwise `vercel alias set` returns "no access".
 #
 # Enable with repository variables:
-#   RAILWAY_PREVIEW_AUTO_DEPLOY=true   (Railway half)
-#   VERCEL_PREVIEW_AUTO_DEPLOY=true    (Vercel half)
+#   RAILWAY_PREVIEW_AUTO_DEPLOY=true   (Railway half, staging branch only)
+#   VERCEL_PREVIEW_AUTO_DEPLOY=true    (Vercel half, all non-main branches)
 
 on:
+  push:
+    branches-ignore:
+      - main
   workflow_dispatch:
     inputs:
       branch:
@@ -32,12 +36,15 @@ permissions:
 
 jobs:
   deploy-railway:
+    if: >
+      (github.event_name == 'push' && github.ref_name == 'staging') ||
+      (github.event_name == 'workflow_dispatch' && inputs.branch == 'staging')
     permissions:
       contents: read
       deployments: write
     uses: ./.github/workflows/deploy-railway-preview.yml
     with:
-      ref: ${{ inputs.branch }}
+      ref: ${{ inputs.branch || github.ref_name }}
     secrets:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
@@ -46,7 +53,10 @@ jobs:
 
   deploy-vercel:
     needs: deploy-railway
-    if: vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true'
+    if: >
+      always() &&
+      vars.VERCEL_PREVIEW_AUTO_DEPLOY == 'true' &&
+      (needs.deploy-railway.result == 'success' || needs.deploy-railway.result == 'skipped')
     permissions:
       contents: read
       deployments: write
@@ -59,6 +69,7 @@ jobs:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      DEPLOY_BRANCH: ${{ inputs.branch || github.ref_name }}
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
       AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
       # Branch-scoped Preview vars are not always present in `vercel pull` during CI
@@ -69,7 +80,7 @@ jobs:
       - name: Checkout requested branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.branch || github.ref_name }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -86,7 +97,7 @@ jobs:
         run: npm install -g vercel@latest
 
       - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+        run: vercel pull --yes --environment=preview --git-branch="$DEPLOY_BRANCH" --token="$VERCEL_TOKEN"
 
       - name: Build
         run: vercel build --token="$VERCEL_TOKEN"

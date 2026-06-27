@@ -8,6 +8,7 @@ import {
 } from "react";
 import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
+import AppStatusBadge, { appStatusAriaLabel } from "@/components/apps/AppStatusBadge";
 
 interface AppSummary {
   id: string;
@@ -21,23 +22,7 @@ interface AppSummary {
 }
 
 const STATUS_REVIEW = new Set(["submitted", "in_review"]);
-
-function appStatusAriaLabel(status: string): string {
-  switch (status) {
-    case "approved":
-      return "Live — approved";
-    case "draft":
-      return "Draft";
-    case "submitted":
-      return "Submitted — awaiting review";
-    case "in_review":
-      return "In review";
-    case "rejected":
-      return "Rejected";
-    default:
-      return status.replaceAll("_", " ");
-  }
-}
+const APP_SKELETON_KEYS = ["app-sk-a", "app-sk-b", "app-sk-c"] as const;
 
 function AppStatusIndicator({
   status,
@@ -258,11 +243,30 @@ export default function AppsPage() {
       </div>
 
       {loading ? (
-        <div className="text-zinc-500 text-center py-12 animate-pulse">
-          Loading apps...
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading apps" aria-busy="true">
+          {APP_SKELETON_KEYS.map((key) => (
+            <div
+              key={key}
+              className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5 space-y-3 animate-pulse"
+            >
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-lg bg-zinc-800 shrink-0" />
+                <div className="flex-1 space-y-2 pt-1">
+                  <div className="h-3.5 w-32 rounded bg-zinc-800" />
+                  <div className="h-2.5 w-48 rounded bg-zinc-800/70" />
+                </div>
+              </div>
+              <div className="h-2.5 w-24 rounded bg-zinc-800/60" />
+              <div className="h-px bg-zinc-800/60" />
+              <div className="flex justify-end gap-3">
+                <div className="h-2.5 w-10 rounded bg-zinc-800/50" />
+                <div className="h-2.5 w-12 rounded bg-zinc-800/50" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : apps.length === 0 ? (
-        <div className="text-center py-16 border border-zinc-800 rounded-xl bg-zinc-900/20">
+          <div className="text-center py-16 rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm">
           <div className="w-16 h-16 bg-zinc-800 rounded-xl flex items-center justify-center mx-auto mb-4">
             <svg
               className="w-8 h-8 text-zinc-600"
@@ -297,7 +301,7 @@ export default function AppsPage() {
           {apps.map((app) => (
             <div
               key={app.id}
-              className="relative flex h-full min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900/30 transition-colors group hover:border-zinc-700 hover:bg-zinc-900/60"
+              className="relative flex h-full min-h-0 flex-col rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm transition-all duration-200 group hover:border-white/[0.10] hover:bg-white/[0.035] hover:shadow-[0_0_20px_rgba(52,211,153,0.04)]"
             >
               <Link
                 href={`/apps/${app.id}`}
@@ -339,11 +343,10 @@ export default function AppsPage() {
                   </div>
                   <Link
                     href={`/apps/${app.id}`}
-                    className="pointer-events-auto relative z-10 inline-flex shrink-0 rounded outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500/60"
-                    title={appStatusAriaLabel(app.status)}
+                    className="pointer-events-auto relative z-10 shrink-0 rounded outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500/60"
                     aria-label={`App status: ${appStatusAriaLabel(app.status)}`}
                   >
-                    <AppStatusIndicator status={app.status} suppressAccessibleLabel />
+                    <AppStatusBadge status={app.status} />
                   </Link>
                 </div>
 

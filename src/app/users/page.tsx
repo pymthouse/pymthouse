@@ -1,5 +1,8 @@
 export const dynamic = "force-dynamic";
 
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { users, endUsers, sessions, streamSessions, transactions } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -17,6 +20,13 @@ function formatWei(wei: string): string {
 }
 
 export default async function UsersPage() {
+  const session = await getServerSession(authOptions);
+  const userRole = (session?.user as Record<string, unknown> | undefined)
+    ?.role as string | undefined;
+  if (!session?.user || (userRole !== "admin" && userRole !== "operator")) {
+    redirect("/");
+  }
+
   const adminUsers = await db.select().from(users);
   const allEndUsers = await db.select().from(endUsers);
 

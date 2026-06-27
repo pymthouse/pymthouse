@@ -19,6 +19,42 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 - Builder API paths use `/api/v1/apps/{clientId}/...`.
 - Internal database IDs are implementation details and are not part of the public API contract.
 
+## OpenAPI
+
+Machine-readable contract and interactive reference:
+
+- `GET /api/v1/openapi.json` — OpenAPI 3.1 document (generated from scanned route handlers + per-route metadata).
+- `GET /api/v1/docs` — Scalar API reference UI.
+
+Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
+
+OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration` (not duplicated in OpenAPI except for a virtual `POST /api/v1/oidc/token` pointer).
+
+### Breaking changes (API cleanup)
+
+The following deprecated routes were **removed**. Use the canonical replacement:
+
+| Removed | Replacement |
+| --- | --- |
+| `GET /api/v1/auth/validate` | `POST /api/v1/auth/validate` with `{ "key": "pmth_…" }` (`BPP_VALIDATE_V2=1`) |
+| `GET` / `POST` / `DELETE /api/v1/subscriptions` | `POST /api/v1/apps/{clientId}/users`, `GET …/users/{externalUserId}/subscription`, `POST …/allowances` |
+| `POST /api/v1/apps/{clientId}/usage/signed-tickets` | Kafka `create_signed_ticket` → OpenMeter collector (no HTTP ingest) |
+| `GET` / `POST` / `DELETE /api/v1/apps/{clientId}/keys` | Per-user keys: `…/users/{externalUserId}/keys` |
+| `…/users/{externalUserId}/credits` | `…/users/{externalUserId}/allowances` |
+| Dashboard BFF `POST /api/pymthouse/keys/exchange` (not served by pymthouse) | `POST /api/v1/apps/{clientId}/auth/api-key/signer-session` on the issuer |
+
+M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provider session).
+
+## Credential types (do not mix)
+
+| Prefix | Role | RFC usage |
+| --- | --- | --- |
+| `pmth_<hex>` | Per-app-user **API key** | Bearer credential (`Authorization: Bearer pmth_…`) on API-key exchange routes |
+| `pmth_cs_<hex>` | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
+| `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
+
+Presenting `pmth_cs_*` to `POST …/auth/api-key/token` or `…/auth/api-key/signer-session` returns **`400 invalid_request`** (not `401 invalid_client`).
+
 ## Authentication
 
 ### 1) Obtain machine token (client credentials grant)
@@ -82,6 +118,28 @@ Authorization: Basic base64(client_id:client_secret)
 - Requested scope must be a subset of the **public app client’s** allowed scopes (see product-specific validation in code).
 - `admin` is explicitly rejected.
 - Default scope when omitted: `sign:job`.
+
+---
+
+## API key → user JWT (subject token)
+
+`POST /api/v1/apps/{clientId}/auth/api-key/token`
+
+- `Authorization: Bearer pmth_<hex>` (per-app-user API key only).
+- Optional JSON body: `{ "scope": "sign:job" }`.
+- Returns a short-lived user access JWT suitable as `subject_token` for RFC 8693 signer exchange.
+
+---
+
+## API key → signer session (canonical single call)
+
+`POST /api/v1/apps/{clientId}/auth/api-key/signer-session`
+
+- Same Bearer `pmth_*` authentication as above.
+- Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, `balanceUsdMicros`, `lifetimeGrantedUsdMicros`, optional `signer_url`, optional `issued_token_type`, optional `correlation_id`.
+- Integrator/dashboard facades may expose `POST …/api/pymthouse/keys/exchange`, but that route is external to PymtHouse and not part of this OpenAPI contract.
+
+Integrator facades should pass through this response shape unchanged.
 
 ---
 
@@ -248,7 +306,7 @@ audience=livepeer-remote-signer
 
 Response includes `access_token` (user-scoped JWT, `aud=livepeer-remote-signer`), `balanceUsdMicros`, and `lifetimeGrantedUsdMicros`.
 
-Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` HTTP proxy is **removed** (returns `410 Gone`); use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
+Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
 **Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT and receive `auth_id` for metering attribution.
 
@@ -521,8 +579,7 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | --- | --- | --- |
 | `GET` | `/api/v1/apps/{clientId}/plans?apiVersion=2` | Returns `products[]` (`BillingProduct` DTOs with `sync`, `capabilities[].effectiveRetailRateUsd`) |
 | `POST` | `/api/v1/apps/{clientId}/plans/{planId}/sync` | Explicit OpenMeter sync command |
-| `POST` | `/api/v1/apps/{clientId}/usage/signed-tickets` | Idempotent usage ingest (platform direct-DMZ path) |
-| `GET` | `/api/v1/apps/{clientId}/signer/routing` | Signer facade vs platform-ingest routing config |
+| `GET` | `/api/v1/apps/{clientId}/signer/routing` | Direct DMZ signing + webhook routing config |
 | `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Unified grants (source: `trial`, `manual`, `promo`, `plan_adjustment`) |
 | `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | End-user subscription read model |
 
@@ -756,8 +813,8 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 
 **Billing oracle and catalog**
 
-- [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, USD micros; legacy `resolveUpcharge` deprecated)
-- [`deploy/collector.yaml`](../deploy/collector.yaml) (Kafka → OpenMeter collector for `create_signed_ticket` events)
+- [`src/lib/billing-runtime.ts`](../src/lib/billing-runtime.ts) (pipeline/model validation, USD micros)
+- [`deploy/openmeter-collector/collector.yaml`](../deploy/openmeter-collector/collector.yaml) (Kafka → OpenMeter collector for `create_signed_ticket` events)
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)

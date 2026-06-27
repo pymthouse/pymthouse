@@ -9,7 +9,7 @@ import {
 } from "@/lib/provider-apps";
 import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import { toLegacyPlanRow } from "@/lib/billing/product-dto";
+import { toPlanApiRow } from "@/lib/billing/product-dto";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 
 function isNonNegativeIntegerString(s: string): boolean {
@@ -39,7 +39,7 @@ export async function GET(
     url.searchParams.get("includeInternals") === "true";
 
   return NextResponse.json({
-    plan: toLegacyPlanRow({
+    plan: toPlanApiRow({
       clientId: auth.app.id,
       resolved: {
         ...row,

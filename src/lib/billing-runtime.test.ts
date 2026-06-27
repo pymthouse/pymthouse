@@ -10,7 +10,6 @@ import {
   resolveGatewayAttribution,
   resolvePaymentPipelineModelConstraint,
   resolveRequestPipelineModelConstraint,
-  resolveUpcharge, // NOSONAR S1874 - intentional contract test for deprecated API
   weiToEthString,
 } from "./billing-runtime";
 
@@ -222,55 +221,4 @@ test("weiToEthString: 1.5 ETH", () => {
 test("weiToEthString: strips trailing zeros", () => {
   const result = weiToEthString(10n ** 18n + 100_000_000n);
   assert.ok(!result.endsWith("0"), `Expected no trailing zeros, got: ${result}`);
-});
-
-// ─── resolveUpcharge ─────────────────────────────────────────────────────────
-
-// Minimal plan/bundle shapes for the upcharge tests
-const basePlan = {
-  id: "plan-1",
-  clientId: "app-1",
-  name: "Test",
-  type: "subscription",
-  priceAmount: "0",
-  priceCurrency: "USD",
-  status: "active",
-  includedUnits: null,
-  overageRateUsd: null,
-  includedUsdMicros: null,
-  billingCycle: "monthly",
-  discoveryProfileId: null,
-  isNetworkDefault: false,
-  isStarterDefault: false,
-  discoveryExcludedCapabilities: null,
-  openmeterPlanId: null,
-  openmeterPlanVersion: null,
-  lastSyncedAt: null,
-  syncError: null,
-  createdAt: "",
-  updatedAt: "",
-} as const;
-
-const baseBundle = {
-  id: "bundle-1",
-  planId: "plan-1",
-  clientId: "app-1",
-  pipeline: "text-to-image",
-  modelId: "stabilityai/sdxl",
-  slaTargetP95Ms: null,
-  maxPricePerUnit: null,
-  retailRateUsd: "0.0000015",
-  openmeterFeatureKey: null,
-  createdAt: "",
-} as const;
-
-test("resolveUpcharge is deprecated and always returns unpriced", () => {
-  const result = resolveUpcharge({ // NOSONAR S1874
-    plan: basePlan,
-    bundles: [baseBundle],
-    pipeline: "text-to-image",
-    modelId: "stabilityai/sdxl",
-  });
-  assert.equal(result.bps, 0);
-  assert.equal(result.source, "unpriced");
 });

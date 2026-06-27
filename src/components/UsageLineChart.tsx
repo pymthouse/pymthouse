@@ -45,9 +45,13 @@ function chartPointRadius(activeIndex: number | null, index: number, value: numb
   return value > 0 ? 3 : 2;
 }
 
-export function buildYTicks(maxValue: number, tickCount = 4): number[] {
+function sanitizeChartValue(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function buildYTicks(maxValue: number, tickCount = 4): number[] {
   if (!Number.isFinite(maxValue) || maxValue <= 0) {
-    return [0];
+    return Array.from({ length: tickCount + 1 }, (_, i) => i);
   }
   const padded = Math.ceil(maxValue * 1.1);
   const step = Math.max(1, Math.ceil(padded / tickCount));
@@ -83,12 +87,12 @@ export default function UsageLineChart({
   const plotH = height - padTop - padBottom;
 
   const values = useMemo(
-    () => data.map((d) => (Number.isFinite(d.value) ? Math.max(0, d.value) : 0)),
+    () => data.map((d) => sanitizeChartValue(d.value)),
     [data],
   );
-  const maxValue = values.length > 0 ? Math.max(0, ...values) : 0;
+  const maxValue = Math.max(0, ...values);
   const yTicks = useMemo(() => buildYTicks(maxValue), [maxValue]);
-  const yMax = chartYScaleMax(yTicks);
+  const yMax = Math.max(1, yTicks.at(-1) ?? 1);
   const n = data.length;
   const todayKey = utcTodayKey();
 
@@ -102,18 +106,18 @@ export default function UsageLineChart({
   );
 
   const linePoints = useMemo(
-    () => data.map((d, i) => `${xAt(i)},${yAt(d.value)}`).join(" "),
-    [data, xAt, yAt],
+    () => values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" "),
+    [values, xAt, yAt],
   );
 
   const areaPath = useMemo(() => {
     if (n === 0) {
       return "";
     }
-    const top = data.map((d, i) => `${i === 0 ? "M" : "L"}${xAt(i)},${yAt(d.value)}`).join(" ");
+    const top = values.map((v, i) => `${i === 0 ? "M" : "L"}${xAt(i)},${yAt(v)}`).join(" ");
     const baseY = yAt(0);
     return `${top} L${xAt(n - 1)},${baseY} L${xAt(0)},${baseY} Z`;
-  }, [data, n, xAt, yAt]);
+  }, [values, n, xAt, yAt]);
 
   const xLabelTicks = useMemo(
     () =>
@@ -209,18 +213,21 @@ export default function UsageLineChart({
           strokeLinejoin="round"
           points={linePoints}
         />
-        {data.map((d, i) => (
-          <circle
-            key={d.date}
-            cx={xAt(i)}
-            cy={yAt(d.value)}
-            r={chartPointRadius(activeIndex, i, d.value)}
-            fill="rgb(16 185 129)"
-            stroke={activeIndex === i ? "rgb(24 24 27)" : "none"}
-            strokeWidth={activeIndex === i ? 1.5 : 0}
-            opacity={d.value > 0 || activeIndex === i ? 1 : 0.35}
-          />
-        ))}
+        {data.map((d, i) => {
+          const value = values[i] ?? 0;
+          return (
+            <circle
+              key={d.date}
+              cx={xAt(i)}
+              cy={yAt(value)}
+              r={chartPointRadius(activeIndex, i, value)}
+              fill="rgb(16 185 129)"
+              stroke={activeIndex === i ? "rgb(24 24 27)" : "none"}
+              strokeWidth={activeIndex === i ? 1.5 : 0}
+              opacity={value > 0 || activeIndex === i ? 1 : 0.35}
+            />
+          );
+        })}
         {activeIndex !== null && (
           <line
             x1={xAt(activeIndex)}
@@ -309,13 +316,16 @@ export default function UsageLineChart({
         }}
       >
         <div className="flex h-full w-full">
-          {data.map((d, i) => (
-            <div
-              key={d.date}
-              className="h-full min-w-0 flex-1"
-              aria-label={`${formatDayTooltipTitle(d.date, todayKey)}: ${d.value} ${valueUnit}`}
-            />
-          ))}
+          {data.map((d, i) => {
+            const value = values[i] ?? 0;
+            return (
+              <div
+                key={d.date}
+                className="h-full min-w-0 flex-1"
+                aria-label={`${formatDayTooltipTitle(d.date, todayKey)}: ${value} ${valueUnit}`}
+              />
+            );
+          })}
         </div>
 
         {activeIndex !== null && data[activeIndex] && (
@@ -334,9 +344,9 @@ export default function UsageLineChart({
             </p>
             <p className="mt-0.5 font-mono text-[10px] tabular-nums text-zinc-400">
               <span className="font-medium text-emerald-400">
-                {data[activeIndex].value.toLocaleString("en-US")}
+                {(values[activeIndex] ?? 0).toLocaleString("en-US")}
               </span>{" "}
-              {data[activeIndex].value === 1 ? valueUnit.replace(/s$/, "") : valueUnit}
+              {(values[activeIndex] ?? 0) === 1 ? valueUnit.replace(/s$/, "") : valueUnit}
             </p>
             <p className="mt-1 border-t border-zinc-800 pt-1 font-mono text-[9px] text-zinc-500">
               {valueLabel}
