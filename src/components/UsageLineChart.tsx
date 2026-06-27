@@ -63,6 +63,12 @@ function buildYTicks(maxValue: number, tickCount = 4): number[] {
   return ticks;
 }
 
+/** Y-axis scale maximum; never zero (avoids NaN in SVG coordinates). */
+export function chartYScaleMax(yTicks: number[]): number {
+  const top = yTicks.at(-1) ?? 0;
+  return Number.isFinite(top) && top > 0 ? top : 1;
+}
+
 /**
  * SVG line chart with Y-axis ticks, grid lines, and per-day hover tooltips.
  */

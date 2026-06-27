@@ -558,7 +558,15 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Stripe Connect status for the app |
-| `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start Stripe Connect OAuth |
+| `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start Stripe Connect (see table below) |
+
+**Stripe Connect by backend:**
+
+| Backend | `POST …/billing/stripe/connect` behavior |
+| --- | --- |
+| **Konnect** | No OAuth. Links the developer app to the org-level Stripe app installed in Konnect and creates a per-app billing profile. Returns `{ "method": "konnect", "connected": true }`. |
+| **Self-hosted** | OAuth redirect when marketplace OAuth is available; otherwise returns `{ "method": "api_key", … }` and accepts `{ "stripeSecretKey": "sk_…" }` for API-key install. |
+| **OpenMeter Cloud** | OAuth redirect (`{ "method": "oauth", "url": "…" }`). |
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect Stripe |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session | End-user checkout via OpenMeter subscription + Stripe Checkout |

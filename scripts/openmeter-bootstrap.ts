@@ -12,6 +12,7 @@ import {
   ensureKonnectTenantCatalog,
   unwrapOpenMeterListResult,
 } from "../src/lib/openmeter/konnect-catalog";
+import { resolveKonnectStripeAppId } from "../src/lib/openmeter/konnect-billing-profiles";
 import { defaultStarterIncludedUsdMicros } from "../src/lib/starter-default-plan-display";
 
 async function waitForHealthy(baseUrl: string, attempts = 30): Promise<void> {
@@ -81,6 +82,15 @@ async function main() {
     console.log(
       "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
     );
+    try {
+      await resolveKonnectStripeAppId();
+      console.log("[openmeter-bootstrap] Konnect Stripe app is ready");
+    } catch (err) {
+      console.warn(
+        "[openmeter-bootstrap] Konnect Stripe app not ready — install Stripe in Konnect → Metering & Billing → Settings → Stripe:",
+        err instanceof Error ? err.message : err,
+      );
+    }
     return;
   }
 
@@ -131,6 +141,31 @@ async function main() {
   console.log(
     "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant",
   );
+
+  const appsBaseUrl = process.env.OPENMETER_APPS_BASE_URL?.trim() || baseUrl;
+  try {
+    const installResp = await fetch(
+      `${baseUrl}/api/v1/marketplace/listings/stripe/install/oauth2`,
+      {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      },
+    );
+    if (installResp.status === 501) {
+      console.warn(
+        "[openmeter-bootstrap] Stripe Connect unavailable (501). Set apps.baseURL on OpenMeter " +
+          `(OPENMETER_APPS_BASE_URL=${appsBaseUrl}) and redeploy.`,
+      );
+    } else if (!installResp.ok) {
+      console.warn(
+        `[openmeter-bootstrap] Stripe install probe returned ${installResp.status} (apps.baseURL should be ${appsBaseUrl})`,
+      );
+    } else {
+      console.log("[openmeter-bootstrap] Stripe marketplace OAuth is available");
+    }
+  } catch (err) {
+    console.warn("[openmeter-bootstrap] Stripe install probe skipped:", err);
+  }
+
   console.log("[openmeter-bootstrap] done");
 }
 

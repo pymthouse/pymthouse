@@ -4,7 +4,14 @@ import {
   getAuthorizedProviderApp,
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
-import { createStripeOAuthState } from "@/lib/openmeter/stripe-connect";
+import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
+import {
+  connectStripeOnKonnect,
+  connectStripeWithApiKey,
+  createStripeOAuthState,
+  StripeOAuthUnavailableError,
+} from "@/lib/openmeter/stripe-connect";
+import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 
 export async function POST(
@@ -28,14 +35,51 @@ export async function POST(
     );
   }
 
+  let body: { stripeSecretKey?: string } = {};
   try {
+    body = (await request.json()) as { stripeSecretKey?: string };
+  } catch {
+    /* empty body → OAuth */
+  }
+
+  const stripeSecretKey = body.stripeSecretKey?.trim();
+  if (stripeSecretKey) {
+    try {
+      await connectStripeWithApiKey({
+        clientId: auth.app.id,
+        stripeSecretKey,
+      });
+      return NextResponse.json({ method: "api_key", connected: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.includes("Cannot reach OpenMeter") ? 503 : 502;
+      return NextResponse.json({ error: message }, { status });
+    }
+  }
+
+  try {
+    if (
+      shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+    ) {
+      await connectStripeOnKonnect({ clientId: auth.app.id });
+      return NextResponse.json({ method: "konnect", connected: true });
+    }
+
     const { url } = await createStripeOAuthState({
       clientId: auth.app.id,
       userId: auth.userId,
     });
-    return NextResponse.json({ url });
+    return NextResponse.json({ method: "oauth", url });
   } catch (err) {
+    if (err instanceof StripeOAuthUnavailableError) {
+      return NextResponse.json({
+        method: "api_key",
+        message:
+          "Self-hosted OpenMeter does not support Stripe OAuth. Connect using a restricted secret key from the Stripe Dashboard for this merchant account.",
+      });
+    }
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 502 });
+    const status = message.includes("Cannot reach OpenMeter") ? 503 : 502;
+    return NextResponse.json({ error: message }, { status });
   }
 }

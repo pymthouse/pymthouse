@@ -37,6 +37,15 @@ telemetry:
   log:
     level: info
 
+billing:
+  advancementStrategy: foreground
+
+credits:
+  enabled: true
+
+apps:
+  baseURL: ${OPENMETER_APPS_BASE_URL}
+
 meters:
   - slug: network_fee_usd_micros
     description: Livepeer signed-ticket network fee (USD micros)

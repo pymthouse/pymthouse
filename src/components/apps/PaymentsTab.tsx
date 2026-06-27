@@ -30,6 +30,9 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showApiKeyForm, setShowApiKeyForm] = useState(false);
+  const [stripeSecretKey, setStripeSecretKey] = useState("");
+  const [apiKeyHint, setApiKeyHint] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,22 +59,76 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
 
   useEffect(() => {
     load().catch(() => undefined);
+    if (globalThis.window !== undefined) {
+      const params = new URLSearchParams(globalThis.location.search);
+      const oauthError = params.get("error");
+      if (oauthError) {
+        setError(oauthError);
+      }
+      if (params.get("connected") === "1") {
+        void load();
+      }
+    }
   }, [load]);
 
   async function connectStripe() {
     setBusy(true);
     setError(null);
+    setApiKeyHint(null);
     try {
       const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
         method: "POST",
       });
       const body = await res.json();
-      if (!res.ok || !body.url) {
+      if (!res.ok) {
+        throw new Error(body.error || "Connect failed");
+      }
+      if (body.method === "api_key") {
+        setShowApiKeyForm(true);
+        setApiKeyHint(body.message ?? null);
+        setBusy(false);
+        return;
+      }
+      if (body.method === "konnect" && body.connected) {
+        await load();
+        setBusy(false);
+        return;
+      }
+      if (!body.url) {
         throw new Error(body.error || "Connect failed");
       }
       globalThis.location.href = body.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  }
+
+  async function connectStripeWithApiKey() {
+    const key = stripeSecretKey.trim();
+    if (!key) {
+      setError("Enter a Stripe secret key");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stripeSecretKey: key }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.connected) {
+        throw new Error(body.error || "Connect failed");
+      }
+      setStripeSecretKey("");
+      setShowApiKeyForm(false);
+      setApiKeyHint(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setBusy(false);
     }
   }
@@ -111,7 +168,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           <div>
             <h3 className="text-base font-semibold">Stripe Connect</h3>
             <p className="text-sm text-muted-foreground">
-              Connect your Stripe account to bill end users via OpenMeter.
+              Connect Stripe to bill end users via OpenMeter. On Konnect, this uses the
+              platform Stripe account configured in Metering &amp; Billing settings.
             </p>
           </div>
           <span
@@ -159,6 +217,48 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 Connect Stripe
               </button>
             )}
+          </div>
+        )}
+
+        {canManageBilling && showApiKeyForm && !connected && (
+          <div className="rounded-md border border-dashed p-3 space-y-2 bg-muted/30">
+            <p className="text-sm text-muted-foreground">
+              {apiKeyHint ??
+                "Paste a restricted secret key (sk_live_… or sk_test_…) from the Stripe Dashboard for this merchant account."}
+            </p>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Stripe secret key</span>
+              <input
+                type="password"
+                autoComplete="off"
+                className="mt-1 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+                value={stripeSecretKey}
+                onChange={(e) => setStripeSecretKey(e.target.value)}
+                placeholder="sk_live_…"
+              />
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void connectStripeWithApiKey()}
+              >
+                Save Stripe key
+              </button>
+              <button
+                type="button"
+                className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+                disabled={busy}
+                onClick={() => {
+                  setShowApiKeyForm(false);
+                  setStripeSecretKey("");
+                  setApiKeyHint(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
       </div>
