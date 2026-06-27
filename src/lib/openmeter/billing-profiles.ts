@@ -183,7 +183,7 @@ export async function applyFreeBillingProfileToCustomer(input: {
   client: OpenMeter;
   customerId: string;
 }): Promise<void> {
-  const profileId = await ensureFreeBillingProfile();
+  const profileId = await ensureFreeBillingProfile(input.client);
   await assignCustomerBillingProfileOverride({
     client: input.client,
     customerId: input.customerId,

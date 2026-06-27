@@ -12,7 +12,7 @@
  */
 import "./load-env-first";
 import { eq } from "drizzle-orm";
-import { db } from "../src/db/index";
+import { db, postgresClient } from "../src/db/index";
 import { appUsers } from "../src/db/schema";
 import {
   ensureAppUserKonnectCustomer,
@@ -164,31 +164,35 @@ async function main() {
     process.exit(1);
   }
 
-  const args = parseArgs(process.argv.slice(2));
-  const targets = await resolveTargets(args);
-  getHostedAdminClient();
+  try {
+    const args = parseArgs(process.argv.slice(2));
+    const targets = await resolveTargets(args);
+    getHostedAdminClient();
 
-  console.log(
-    `[openmeter-ensure-customer] ensuring ${targets.length} user(s) (customerOnly=${args.customerOnly}, provisionDb=${args.provisionDb})`,
-  );
+    console.log(
+      `[openmeter-ensure-customer] ensuring ${targets.length} user(s) (customerOnly=${args.customerOnly}, provisionDb=${args.provisionDb})`,
+    );
 
-  let failed = 0;
-  for (const target of targets) {
-    try {
-      await ensureOne({
-        ...target,
-        customerOnly: args.customerOnly,
-        provisionDb: args.provisionDb,
-      });
-    } catch (err) {
-      failed += 1;
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[fail] ${target.clientId}:${target.externalUserId} ${message}`);
+    let failed = 0;
+    for (const target of targets) {
+      try {
+        await ensureOne({
+          ...target,
+          customerOnly: args.customerOnly,
+          provisionDb: args.provisionDb,
+        });
+      } catch (err) {
+        failed += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[fail] ${target.clientId}:${target.externalUserId} ${message}`);
+      }
     }
-  }
 
-  if (failed > 0) {
-    process.exit(1);
+    if (failed > 0) {
+      process.exit(1);
+    }
+  } finally {
+    await postgresClient.end({ timeout: 5 });
   }
 }
 

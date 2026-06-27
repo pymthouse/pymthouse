@@ -192,15 +192,14 @@ export async function mintSignerJwtForExternalUser(input: {
     );
   }
 
-  if (isHostedAdminClientAvailable()) {
-    await ensureAppUserKonnectCustomer({
-      clientId: input.developerAppId,
-      externalUserId,
-    });
-  }
-
   let allowance: TrialCreditBalance | null;
   try {
+    if (isHostedAdminClientAvailable()) {
+      await ensureAppUserKonnectCustomer({
+        clientId: input.developerAppId,
+        externalUserId,
+      });
+    }
     ({ allowance } = await provisionAppUserBilling({
       clientId: input.developerAppId,
       externalUserId,

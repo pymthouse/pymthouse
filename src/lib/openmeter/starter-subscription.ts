@@ -17,8 +17,6 @@ import {
 } from "./plans-sync";
 import {
   findOpenMeterSubscriptionByPlanKey,
-  isOpenMeterSubscriptionActive,
-  listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
   verifyOpenMeterSubscriptionId,
 } from "./subscription-read";
@@ -182,15 +180,6 @@ async function createStarterSubscriptionWithRecovery(input: {
         return { subscription: existing, starter: activeStarter, created: false };
       }
 
-      for (const item of await listOpenMeterSubscriptionsForCustomer(
-        input.client,
-        input.customerId,
-      )) {
-        if (isOpenMeterSubscriptionActive(item.status)) {
-          return { subscription: item, starter: activeStarter, created: false };
-        }
-      }
-
       await applyFreeBillingProfileToCustomer({
         client: input.client,
         customerId: input.customerId,
@@ -226,14 +215,6 @@ async function createStarterSubscriptionWithRecovery(input: {
             starter: activeStarter,
             created: false,
           };
-        }
-        for (const item of await listOpenMeterSubscriptionsForCustomer(
-          input.client,
-          input.customerId,
-        )) {
-          if (isOpenMeterSubscriptionActive(item.status)) {
-            return { subscription: item, starter: activeStarter, created: false };
-          }
         }
         throw retryErr;
       }
@@ -306,7 +287,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
 
   if (!omSubscription) {
     throw new Error(
-      `Failed to provision OpenMeter Starter subscription for ${input.clientId}:${input.externalUserId}`,
+      `Failed to provision OpenMeter Starter subscription for client ${input.clientId}`,
     );
   }
 
