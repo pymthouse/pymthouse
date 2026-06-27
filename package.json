@@ -21,6 +21,7 @@
     "api-keys:hard-cutover": "npx tsx scripts/api-keys-hard-cutover.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
+    "openmeter:ensure-customer": "npx tsx scripts/openmeter-ensure-customer.ts",
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
     "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",
     "railway:stack:deploy": "bash scripts/railway-deploy-stack.sh",

@@ -3,12 +3,15 @@ import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import {
+  applyFreeBillingProfileToCustomer,
+  isStripeBillingEnabledForApp,
+} from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
   isOpenMeterConflictError,
   isOpenMeterPlanNotFoundError,
-  isOpenMeterStripeBillingError,
 } from "./plan-errors";
 import {
   buildOpenMeterPlanKey,
@@ -168,13 +171,6 @@ async function createStarterSubscriptionWithRecovery(input: {
         created: true,
       };
     }
-    if (isOpenMeterStripeBillingError(err)) {
-      console.warn(
-        "[openmeter] Starter subscription skipped: Stripe billing is not ready for this customer",
-        err,
-      );
-      return { subscription: null, starter: activeStarter, created: false };
-    }
     if (isOpenMeterConflictError(err)) {
       const existing = await findOpenMeterSubscriptionByPlanKey(
         input.client,
@@ -220,8 +216,12 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
-  // Starter is free — do not attach the tenant Stripe billing profile here.
-  // Paid checkout applies billing profiles in subscriptions-billing.ts.
+  if (!(await isStripeBillingEnabledForApp(input.clientId))) {
+    await applyFreeBillingProfileToCustomer({
+      client,
+      customerId: customer.id,
+    });
+  }
 
   const planKey = buildOpenMeterPlanKey(input.clientId, starter.id);
 
@@ -248,11 +248,9 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   }
 
   if (!omSubscription) {
-    return {
-      openmeterSubscriptionId: null,
-      planId: activeStarter.id,
-      created: false,
-    };
+    throw new Error(
+      `Failed to provision OpenMeter Starter subscription for ${input.clientId}:${input.externalUserId}`,
+    );
   }
 
   return {

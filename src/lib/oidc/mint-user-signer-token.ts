@@ -6,7 +6,12 @@ import { developerApps, oidcClients } from "@/db/schema";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
-import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
+import {
+  ensureAppUserKonnectCustomer,
+  provisionAppUserBilling,
+} from "@/lib/billing/provision-app-user";
+import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
@@ -145,6 +150,35 @@ export function signerJwtAudience(): string {
   return trimTrailingSlashes(getIssuer());
 }
 
+export function mintAllowanceGateDecision(
+  allowance: TrialCreditBalance | null,
+  hostedBillingEnabled: boolean,
+): { code: "billing_unavailable" | "trial_credits_exhausted"; message: string } | null {
+  if (!hostedBillingEnabled) {
+    return null;
+  }
+  if (!allowance) {
+    return {
+      code: "billing_unavailable",
+      message: "Billing allowance could not be confirmed",
+    };
+  }
+  if (!allowance.hasAccess) {
+    return {
+      code: "trial_credits_exhausted",
+      message: "Starter allowance exhausted",
+    };
+  }
+  return null;
+}
+
+export function enforceMintAllowanceGate(allowance: TrialCreditBalance | null): void {
+  const decision = mintAllowanceGateDecision(allowance, isHostedAdminClientAvailable());
+  if (decision) {
+    throw new MintUserSignerTokenError(decision.code, decision.message, 402);
+  }
+}
+
 export async function mintSignerJwtForExternalUser(input: {
   publicClientId: string;
   developerAppId: string;
@@ -158,18 +192,31 @@ export async function mintSignerJwtForExternalUser(input: {
     );
   }
 
-  const { allowance } = await provisionAppUserBilling({
-    clientId: input.developerAppId,
-    externalUserId,
-  });
-
-  if (allowance && !allowance.hasAccess) {
-    throw new MintUserSignerTokenError(
-      "trial_credits_exhausted",
-      "Starter allowance exhausted",
-      402,
-    );
+  if (isHostedAdminClientAvailable()) {
+    await ensureAppUserKonnectCustomer({
+      clientId: input.developerAppId,
+      externalUserId,
+    });
   }
+
+  let allowance: TrialCreditBalance | null;
+  try {
+    ({ allowance } = await provisionAppUserBilling({
+      clientId: input.developerAppId,
+      externalUserId,
+    }));
+  } catch (err) {
+    if (isHostedAdminClientAvailable()) {
+      throw new MintUserSignerTokenError(
+        "billing_unavailable",
+        err instanceof Error ? err.message : "Billing provisioning failed",
+        402,
+      );
+    }
+    throw err;
+  }
+
+  enforceMintAllowanceGate(allowance);
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

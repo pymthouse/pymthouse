@@ -1,4 +1,9 @@
 import { findOrCreateAppEndUser } from "@/lib/billing";
+import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import {
+  ensureOpenMeterCustomerForAppUser,
+  type OpenMeterCustomerIdentity,
+} from "@/lib/openmeter/customers";
 import { getTrialCreditBalance, type TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
 import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
@@ -10,7 +15,27 @@ export type ProvisionAppUserBillingResult = {
   externalUserId: string;
   allowance: TrialCreditBalance | null;
   starterSubscriptionCreated: boolean;
+  starterSubscriptionReady: boolean;
 };
+
+/** Konnect/OpenMeter customer + subject attribution only (no DB plan/subscription). */
+export async function ensureAppUserKonnectCustomer(input: {
+  clientId: string;
+  externalUserId: string;
+  displayName?: string;
+}): Promise<OpenMeterCustomerIdentity> {
+  if (!isHostedAdminClientAvailable()) {
+    throw new Error(
+      "OpenMeter is not configured (set OPENMETER_URL; OPENMETER_API_KEY for Konnect)",
+    );
+  }
+  return ensureOpenMeterCustomerForAppUser({
+    client: getHostedAdminClient(),
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    displayName: input.displayName,
+  });
+}
 
 /**
  * Upsert app/end-user rows, ensure OpenMeter customer + Starter subscription,
@@ -47,5 +72,8 @@ export async function provisionAppUserBilling(input: {
     externalUserId,
     allowance,
     starterSubscriptionCreated: sub.created,
+    starterSubscriptionReady: isHostedAdminClientAvailable()
+      ? Boolean(sub.openmeterSubscriptionId)
+      : true,
   };
 }
