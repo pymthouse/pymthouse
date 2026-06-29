@@ -285,11 +285,10 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
       get: async (key: string) => ({
         id: "om-cust-1",
         key,
-        // Already attributed by both bare usage_subject and compound key.
-        usageAttribution: { subjectKeys: [key, "user-1"] },
+        usageAttribution: { subjectKeys: [key] },
       }),
       update: async () => {
-        throw new Error("should not update when subject keys present");
+        throw new Error("should not update when subject key present");
       },
       create: async () => {
         throw new Error("should not create");
@@ -330,31 +329,24 @@ test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", asy
     "User One",
   );
   assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
-  // Bare usage_subject (event subject) + compound key (historical attribution).
-  assert.deepEqual(updatedSubjectKeys, ["user-1", "app_1:user-1"]);
+  assert.deepEqual(updatedSubjectKeys, ["app_1:user-1"]);
 });
 
 test("ensureOpenMeterCustomer creates customer when missing", async () => {
-  let createdSubjectKeys: string[] | undefined;
   const client = {
     customers: {
       get: async () => {
         throw new Error("not found");
       },
-      create: async (input: {
-        key: string;
-        name: string;
-        usageAttribution: { subjectKeys: string[] };
-      }) => {
-        createdSubjectKeys = input.usageAttribution.subjectKeys;
-        return { id: "om-new", key: input.key };
-      },
+      create: async (input: { key: string; name: string }) => ({
+        id: "om-new",
+        key: input.key,
+      }),
     },
   };
 
   const identity = await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-2");
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
-  assert.deepEqual(createdSubjectKeys, ["user-2", "app_1:user-2"]);
 });
 
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
