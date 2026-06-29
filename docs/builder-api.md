@@ -308,12 +308,16 @@ Response includes `access_token` (user-scoped JWT, `aud=livepeer-remote-signer`)
 
 Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
-**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT and receive `auth_id` for metering attribution.
+**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence — this wire format is unchanged.
 
 **Usage metering (signer-authoritative, async collector):**
 
-1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id`.
-2. **Collector ingest:** OpenMeter collector consumes Kafka, converts Wei to `network_fee_usd_micros`, and writes CloudEvents to OpenMeter/Konnect.
+1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
+2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros`, and writes normalized CloudEvents to OpenMeter/Konnect:
+   - `subject` = end user (`usage_subject`)
+   - `data.client_id` = tenant (developer app OAuth `client_id`)
+   - `data.usage_subject` = end user (OIDC `sub` analog)
+   - `data.auth_id` retained for compatibility; `data.external_user_id` mirrors `usage_subject` for existing meter `groupBy`
 3. **Async diagnostics:** go-livepeer can still POST monitor events to `POST /api/v1/ingest/events` (alias of internal signed-ticket route) with `Bearer INGEST_SHARED_SECRET`. That endpoint remains diagnostic-only and does not write billing usage.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
@@ -324,7 +328,7 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs the signer's `computed_fee_usd_micros` per `(client_id, external_user_id)`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 **Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns OpenMeter entitlement balance (`balanceUsdMicros`, `hasAccess`, etc.) from the user’s active plan subscription (Starter free tier or paid checkout).
 
