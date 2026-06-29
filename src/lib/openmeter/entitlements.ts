@@ -209,7 +209,7 @@ export async function ingestSignedTicketEvent(input: {
   client: OpenMeter;
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
-  const usageSubject = input.event.externalUserId;
+  const usageSubject = input.event.externalUserId.trim();
   const subject = buildOpenMeterCustomerKey(input.event.clientId, usageSubject);
 
   await input.client.events.ingest({
