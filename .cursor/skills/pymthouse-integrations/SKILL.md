@@ -53,7 +53,6 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 
 | Area | File |
 | --- | --- |
-| Ingest relay (go-livepeer) | `src/app/api/v1/internal/ingest/signed-ticket/route.ts` (alias `/api/v1/ingest/events`) — trusts signer `computed_fee_usd_micros` |
 | OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |
 | Signer-authoritative metering | go-livepeer `create_signed_ticket` → Kafka → OpenMeter collector (normalizes `subject` = `usage_subject`, explicit `data.client_id`); `/api/signer/*` proxy removed |
 | Usage API OpenMeter reads | `src/lib/openmeter/usage-read.ts` (requires `OPENMETER_URL`) |

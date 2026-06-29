@@ -55,14 +55,13 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 | --- | --- |
 | **OpenMeter writer (metering)** | Kafka `create_signed_ticket` → `deploy/openmeter-collector/collector.yaml` → Konnect OpenMeter |
 | Signer ops (no HTTP proxy) | `src/lib/signer-proxy.ts` — DMZ URL, health/sync only; `POST /api/signer/device/exchange` for JWT mint |
-| Ingest relay (diagnostics only) | `src/app/api/v1/internal/ingest/signed-ticket/route.ts` — receipt logging; **no** OpenMeter write |
 | OpenMeter facade | `src/lib/openmeter/` — `customers.ts` (`ensureOpenMeterCustomer` → `{ id, key }`), `invoices.ts`, `plans-sync.ts`, `usage-read.ts`, `stripe-connect.ts` |
 | OpenMeter client + BYO config | `src/lib/openmeter/client-factory.ts`, `src/app/api/v1/apps/[id]/openmeter/route.ts` |
 | Usage API OpenMeter reads | `src/lib/openmeter/usage-read.ts` (requires `OPENMETER_URL`) |
 | Merchant billing routes | `src/app/api/v1/apps/[id]/billing/*` (Stripe connect, invoices, checkout) |
 | Bootstrap meters/features | `npm run openmeter:bootstrap`, `docker-compose.openmeter.yml` |
 
-**Flow:** go-livepeer returns authoritative billing snapshot in `RemotePaymentResponse.usage` → pymthouse proxy records network cost to OpenMeter → strips `usage` from gateway response. Async monitor events to `/ingest/events` are diagnostic only.
+**Flow:** go-livepeer returns authoritative billing snapshot in `RemotePaymentResponse.usage` → pymthouse proxy records network cost to OpenMeter → strips `usage` from gateway response. Metering is Kafka-only via the OpenMeter collector.
 
 **Retail pricing:** OpenMeter-native plans/rate cards synced on plan publish — not bps markup on network cost in the proxy.
 

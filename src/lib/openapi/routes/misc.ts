@@ -1,5 +1,4 @@
 import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
-import { OAuthErrorSchema } from "@/lib/openapi/schemas/common";
 import {
   C0ValidateRequestBodySchema,
   C0ValidateResponseSchema,
@@ -37,16 +36,6 @@ defineRouteMetadata("post", "/api/v1/auth/validate", {
     400: { description: "Missing key" },
     401: { description: "Invalid key" },
     404: { description: "Feature disabled" },
-  },
-});
-
-defineRouteMetadata("post", "/api/v1/ingest/events", {
-  tags: ["Usage"],
-  summary: "Ingest signed ticket events",
-  description: "Public alias of `/api/v1/internal/ingest/signed-ticket`.",
-  responses: {
-    202: { description: "Accepted" },
-    401: { description: "Unauthorized", content: { "application/json": { schema: OAuthErrorSchema } } },
   },
 });
 
