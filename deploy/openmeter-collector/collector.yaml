@@ -23,7 +23,7 @@ cache_resources:
 
 processor_resources:
   - label: fetch_eth_usd_price
-    processors:
+    try:
       - http:
           url: ${PRICE_ORACLE_URL:https://api.coinbase.com/v2/prices/ETH-USD/spot}
           verb: GET
