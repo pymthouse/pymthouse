@@ -15,7 +15,8 @@
 # - Upstream auth_id stays client_id:usage_subject (webhook -> go-livepeer state -> Kafka).
 # - Collector parses auth_id once (first-colon split), then emits:
 #   subject = usage_subject (end user), data.client_id = tenant, data.usage_subject = end user.
-# - data.auth_id and data.external_user_id kept for compatibility (meters group by external_user_id).
+# - data.external_user_id kept for compatibility (meters group by external_user_id).
+#   The compound auth_id is still carried in the CloudEvent subject for traceability.
 
 cache_resources:
   - label: eth_usd
@@ -144,7 +145,6 @@ pipeline:
               "pixels": $data.pixels.string().or("0"),
               "fee_wei": $data.computed_fee.or("0"),
               "gateway_request_id": $data.request_id,
-              "auth_id": $auth_id,
             }
           }
         }
