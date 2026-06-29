@@ -1,25 +1,103 @@
 # OpenMeter Collector: go-livepeer remote signer Kafka -> hosted OpenMeter/Konnect.
 #
-# Notes:
-# - Topic carries multiple event types; filter to create_signed_ticket only.
+# ETH/USD: fetched from PRICE_ORACLE_URL at startup (defaults to Coinbase spot endpoint;
+# sequence blocks until
+# warm succeeds; collector never reads Kafka until cache is populated). Refreshed on
+# PRICE_ORACLE_REFRESH; refresh errors keep the last cached value. Runtime events read
+# from cache only (no static default).
+#
+# Oracle JSON (any one shape):
+#   {"price": 3456.78}
+#   {"ethereum":{"usd":3456.78}}              # CoinGecko simple price API
+#   {"data":{"amount":"3456.78"}}             # Coinbase spot API
+#
+# Identity (go-livepeer Kafka wire -> normalized CloudEvent egress):
 # - Upstream auth_id stays client_id:usage_subject (webhook -> go-livepeer state -> Kafka).
-# - Collector parses auth_id once (first-colon split), then emits normalized CloudEvents:
+# - Collector parses auth_id once (first-colon split), then emits:
 #   subject = usage_subject (end user), data.client_id = tenant, data.usage_subject = end user.
 # - data.auth_id and data.external_user_id kept for compatibility (meters group by external_user_id).
 
+cache_resources:
+  - label: eth_usd
+    memory: {}
+
+processor_resources:
+  - label: fetch_eth_usd_price
+    processors:
+      - http:
+          url: ${PRICE_ORACLE_URL:https://api.coinbase.com/v2/prices/ETH-USD/spot}
+          verb: GET
+      - mapping: |
+          let price = match {
+            this.exists("price") => this.price.number(),
+            this.exists("ethereum.usd") => this.ethereum.usd.number(),
+            this.exists("data.amount") => this.data.amount.number(),
+            _ => null
+          }
+          root = if $price == null { throw("price oracle response missing price field") }
+          root = $price.string()
+      - cache:
+          resource: eth_usd
+          operator: set
+          key: eth_usd
+          value: ${! content() }
+
 input:
-  kafka:
-    addresses:
-      - ${KAFKA_BROKERS}
-    topics:
-      - ${KAFKA_GATEWAY_TOPIC}
-    consumer_group: openmeter-collector
-    start_from_oldest: true
+  sequence:
+    inputs:
+      # Startup warm — must succeed before Kafka starts (no catch).
+      - label: price_warm
+        generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+        processors:
+          - resource: fetch_eth_usd_price
+          - mapping: root = deleted()
+
+      # Ongoing: background refresh + Kafka events.
+      - label: runtime
+        broker:
+          inputs:
+            - label: price_refresh
+              generate:
+                count: 0
+                interval: ${PRICE_ORACLE_REFRESH:5m}
+                mapping: 'root = {}'
+              processors:
+                - try:
+                    - resource: fetch_eth_usd_price
+                    - mapping: root = deleted()
+                - catch:
+                    - log:
+                        level: WARN
+                        message: "price oracle refresh failed: ${! error() }"
+                    - mapping: root = deleted()
+
+            - label: kafka_events
+              kafka:
+                addresses:
+                  - ${KAFKA_BROKERS}
+                topics:
+                  - ${KAFKA_GATEWAY_TOPIC}
+                consumer_group: openmeter-collector
+                start_from_oldest: true
 
 pipeline:
   processors:
     - mapping: |
         root = if this.type != "create_signed_ticket" { deleted() }
+
+    - branch:
+        request_map: 'root = ""'
+        processors:
+          - cache:
+              resource: eth_usd
+              operator: get
+              key: eth_usd
+        result_map: |
+          meta eth_usd_price = content().number()
+          root = @
 
     - mapping: |
         let data = this.data.or({})
@@ -40,7 +118,9 @@ pipeline:
         let usage_subject_parsed = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
         let usage_subject_type = $data.usage_subject_type.or("external_user_id").string().trim()
 
-        let eth_usd = env("ETH_USD_PRICE").number().or(3500)
+        let eth_usd = meta("eth_usd_price").number()
+        root = if $eth_usd == null { throw("eth_usd price cache miss") }
+
         let fee_wei = $data.computed_fee.number().or(0)
         let fee_usd_micros = ($fee_wei * $eth_usd / 1000000000000).round()
 
