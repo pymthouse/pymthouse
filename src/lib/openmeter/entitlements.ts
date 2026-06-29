@@ -210,13 +210,14 @@ export async function ingestSignedTicketEvent(input: {
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
   const usageSubject = input.event.externalUserId;
+  const subject = buildOpenMeterCustomerKey(input.event.clientId, usageSubject);
 
   await input.client.events.ingest({
     specversion: "1.0",
     type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     id: input.event.requestId,
     source: SIGNED_TICKET_EVENT_SOURCE,
-    subject: usageSubject,
+    subject,
     data: {
       client_id: input.event.clientId,
       usage_subject: usageSubject,
@@ -231,7 +232,7 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
-      auth_id: buildOpenMeterCustomerKey(input.event.clientId, usageSubject),
+      auth_id: subject,
     },
   });
 }

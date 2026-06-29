@@ -3,6 +3,7 @@ import {
   getMeterSlugForApp,
 } from "@/lib/openmeter/client-factory";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
+import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import {
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
@@ -76,8 +77,8 @@ function buildMeterQuery(input: {
     query.to = new Date(input.endDate);
   }
   if (input.externalUserId) {
-    // CloudEvent subject is usage_subject (end user); tenant is data.client_id.
-    query.subject = input.externalUserId.trim();
+    // CloudEvent subject is the compound client_id:external_user_id (matches the customer key).
+    query.subject = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
   }
   return query;
 }
