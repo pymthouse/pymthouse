@@ -1,6 +1,6 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import { getHostedOpenMeterUrl } from "./constants";
-import { buildOpenMeterCustomerKey } from "./customer-key";
+import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
 import { isOpenMeterUlid } from "./konnect-routes";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
@@ -19,16 +19,16 @@ type OpenMeterCustomerRecord = {
 async function ensureCustomerUsageAttribution(
   client: OpenMeter,
   customer: OpenMeterCustomerRecord,
-  customerKey: string,
+  subjectKeys: string[],
 ): Promise<void> {
-  const subjectKeys = customer.usageAttribution?.subjectKeys ?? [];
-  if (subjectKeys.includes(customerKey)) {
+  const existing = customer.usageAttribution?.subjectKeys ?? [];
+  const nextKeys = [...new Set([...existing, ...subjectKeys])];
+  if (nextKeys.length === existing.length) {
     return;
   }
 
-  const nextKeys = [...new Set([...subjectKeys, customerKey])];
   await client.customers.update(customer.id, {
-    name: customer.name?.trim() || customerKey,
+    name: customer.name?.trim() || customer.key || nextKeys[0],
     usageAttribution: { subjectKeys: nextKeys },
   });
 }
@@ -56,10 +56,19 @@ export async function ensureOpenMeterCustomer(
   client: OpenMeter,
   customerKey: string,
   displayName?: string,
+  subjectKey?: string,
 ): Promise<OpenMeterCustomerIdentity> {
+  // Normalized CloudEvents set `subject` to the bare usage_subject (end user),
+  // while the customer key stays compound (client_id:user) as the tenant-scoped
+  // identity. Attribute usage by both the bare subject (new events) and the
+  // compound key (already-ingested historical events) so balances stay continuous.
+  const usageSubject =
+    subjectKey?.trim() || parseOpenMeterCustomerKey(customerKey)?.externalUserId || customerKey;
+  const subjectKeys = [...new Set([usageSubject, customerKey])];
+
   const existing = await findOpenMeterCustomerByKey(client, customerKey);
   if (existing?.id) {
-    await ensureCustomerUsageAttribution(client, existing, customerKey);
+    await ensureCustomerUsageAttribution(client, existing, subjectKeys);
     return { id: existing.id, key: customerKey };
   }
 
@@ -67,7 +76,7 @@ export async function ensureOpenMeterCustomer(
     const created = await client.customers.create({
       key: customerKey,
       name: displayName || customerKey,
-      usageAttribution: { subjectKeys: [customerKey] },
+      usageAttribution: { subjectKeys },
     });
     if (!created?.id) {
       throw new Error(`OpenMeter customer create failed for key ${customerKey}`);
@@ -76,7 +85,7 @@ export async function ensureOpenMeterCustomer(
   } catch (err) {
     const raced = await findOpenMeterCustomerByKey(client, customerKey);
     if (raced?.id) {
-      await ensureCustomerUsageAttribution(client, raced, customerKey);
+      await ensureCustomerUsageAttribution(client, raced, subjectKeys);
       return { id: raced.id, key: customerKey };
     }
     throw err;
@@ -90,7 +99,7 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
   displayName?: string;
 }): Promise<OpenMeterCustomerIdentity> {
   const key = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
-  return ensureOpenMeterCustomer(input.client, key, input.displayName);
+  return ensureOpenMeterCustomer(input.client, key, input.displayName, input.externalUserId);
 }
 
 export async function assignCustomerBillingProfileOverride(input: {

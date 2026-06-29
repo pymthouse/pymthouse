@@ -49,7 +49,7 @@ export async function grantAllowanceUsdMicros(input: {
   const featureKey =
     input.featureKey?.trim() || (await getTrialFeatureKeyForApp(input.clientId));
 
-  await ensureOpenMeterCustomer(client, customerKey);
+  await ensureOpenMeterCustomer(client, customerKey, undefined, externalUserId);
 
   const omApiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);

@@ -152,7 +152,7 @@ export async function getTrialCreditBalance(input: {
   const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
   const featureKey = input.featureKey || (await getTrialFeatureKeyForApp(input.clientId));
 
-  const customer = await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await ensureOpenMeterCustomer(client, customerKey, undefined, input.externalUserId);
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
 
   if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
