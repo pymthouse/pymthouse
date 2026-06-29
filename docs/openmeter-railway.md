@@ -136,7 +136,7 @@ SIGNER_INTERNAL_URL=https://your-pymthouse.up.railway.app
 SIGNER_CLI_URL=https://your-pymthouse.up.railway.app/__signer_cli
 ```
 
-Signed-ticket metering: signer → PymtHouse ingest → OpenMeter (async). The signer container does **not** need `OPENMETER_URL`.
+Signed-ticket metering: signer → Kafka → openmeter-collector → OpenMeter (async). The signer container does **not** need `OPENMETER_URL`.
 
 ### Turnkey bootstrap on Railway
 

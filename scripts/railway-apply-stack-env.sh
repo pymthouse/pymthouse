@@ -31,8 +31,9 @@ if [[ -z "${OPENMETER_URL:-}" ]]; then
   echo "OPENMETER_URL is required (hosted OpenMeter/Konnect API base)" >&2
   exit 1
 fi
-if [[ -z "${OPENMETER_API_KEY:-}" ]]; then
-  echo "OPENMETER_API_KEY is required for collector ingest" >&2
+OPENMETER_INGEST_API_KEY="${OPENMETER_INGEST_API_KEY:-${OPENMETER_API_KEY:-}}"
+if [[ -z "${OPENMETER_INGEST_API_KEY:-}" ]]; then
+  echo "OPENMETER_INGEST_API_KEY (or OPENMETER_API_KEY fallback) is required for collector ingest" >&2
   exit 1
 fi
 if [[ -z "${WEBHOOK_SECRET:-}" ]]; then
@@ -83,7 +84,7 @@ set_kv openmeter-collector \
   "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC}" \
   "OPENMETER_URL=${OPENMETER_URL}" \
   "OPENMETER_INGEST_URL=${OPENMETER_INGEST_URL}" \
-  "OPENMETER_API_KEY=${OPENMETER_API_KEY}" \
+  "OPENMETER_API_KEY=${OPENMETER_INGEST_API_KEY}" \
   "ETH_USD_PRICE=${ETH_USD_PRICE}"
 
 # Signer DMZ (pymthouse service). For signer-only updates use scripts/railway-apply-signer-env.sh.

@@ -314,7 +314,6 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id`.
 2. **Collector ingest:** OpenMeter collector consumes Kafka, converts Wei to `network_fee_usd_micros`, and writes CloudEvents to OpenMeter/Konnect.
-3. **Async diagnostics:** go-livepeer can still POST monitor events to `POST /api/v1/ingest/events` (alias of internal signed-ticket route) with `Bearer INGEST_SHARED_SECRET`. That endpoint remains diagnostic-only and does not write billing usage.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
