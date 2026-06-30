@@ -9,6 +9,50 @@ import {
 import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppStatusBadge, { appStatusAriaLabel } from "@/components/apps/AppStatusBadge";
+import GenerateSigningTokenDialog from "@/components/apps/GenerateSigningTokenDialog";
+
+async function postJson(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let parsed: Record<string, unknown> = {};
+  try { parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {}; } catch { parsed = {}; }
+  if (!response.ok) {
+    const message =
+      (typeof parsed.error_description === "string" && parsed.error_description) ||
+      (typeof parsed.error === "string" && parsed.error) ||
+      text || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return parsed;
+}
+
+async function mintOwnerApiKey(input: {
+  clientId: string;
+  ownerExternalUserId: string;
+}): Promise<Record<string, unknown>> {
+  const externalUserId = input.ownerExternalUserId.trim();
+  if (!externalUserId) throw new Error("Owner identity is unavailable.");
+  await postJson(`/api/v1/apps/${encodeURIComponent(input.clientId)}/users`, {
+    externalUserId,
+    status: "active",
+  });
+  return postJson(
+    `/api/v1/apps/${encodeURIComponent(input.clientId)}/users/${encodeURIComponent(externalUserId)}/keys`,
+    { label: "signing-token" },
+  );
+}
+
+type CardMintState =
+  | { phase: "minting"; appId: string }
+  | { phase: "success"; app: AppSummary; apiKey: string; response: Record<string, unknown> }
+  | { phase: "error"; app: AppSummary; message: string };
 
 interface AppSummary {
   id: string;
@@ -19,6 +63,8 @@ interface AppSummary {
   logoLightUrl: string | null;
   clientId: string | null;
   createdAt: string;
+  isOwner: boolean;
+  ownerExternalUserId: string | null;
 }
 
 const STATUS_REVIEW = new Set(["submitted", "in_review"]);
@@ -217,12 +263,28 @@ function CopyPublicAppIdButton({
 export default function AppsPage() {
   const [apps, setApps] = useState<AppSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mintState, setMintState] = useState<CardMintState | null>(null);
 
   useEffect(() => {
     fetch("/api/v1/apps")
       .then((r) => r.json())
       .then((data) => setApps(data.apps || []))
       .finally(() => setLoading(false));
+  }, []);
+
+  const handleGetApiKey = useCallback((app: AppSummary) => {
+    if (!app.clientId || !app.ownerExternalUserId) return;
+    setMintState({ phase: "minting", appId: app.id });
+    void mintOwnerApiKey({ clientId: app.clientId, ownerExternalUserId: app.ownerExternalUserId })
+      .then((data) => {
+        const apiKey = typeof data.apiKey === "string" && data.apiKey.trim() ? data.apiKey.trim() : null;
+        if (!apiKey) throw new Error("API key mint response missing apiKey.");
+        setMintState({ phase: "success", app, apiKey, response: data });
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "Failed to mint API key.";
+        setMintState({ phase: "error", app, message });
+      });
   }, []);
 
   return (
@@ -365,21 +427,48 @@ export default function AppsPage() {
 
                 {app.clientId ? (
                   <nav
-                    className="pointer-events-auto relative z-10 mt-auto flex flex-wrap justify-end gap-x-3 gap-y-1 border-t border-zinc-800/80 pt-3 text-sm font-medium"
+                    className="pointer-events-auto relative z-10 mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-zinc-800/80 pt-3 text-sm font-medium"
                     aria-label={`Shortcuts for ${app.name}`}
                   >
-                    <Link
-                      href={`/apps/${app.id}/usage`}
-                      className="shrink-0 text-zinc-400 underline decoration-zinc-600/45 decoration-1 underline-offset-[3px] hover:text-emerald-400 hover:decoration-emerald-500/35"
-                    >
-                      Usage
-                    </Link>
-                    <Link
-                      href={`/apps/${app.id}`}
-                      className="shrink-0 text-zinc-400 underline decoration-zinc-600/45 decoration-1 underline-offset-[3px] hover:text-emerald-400 hover:decoration-emerald-500/35"
-                    >
-                      Settings
-                    </Link>
+                    <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
+                      <Link
+                        href={`/apps/${app.id}/usage`}
+                        className="shrink-0 text-zinc-400 underline decoration-zinc-600/45 decoration-1 underline-offset-[3px] hover:text-emerald-400 hover:decoration-emerald-500/35"
+                      >
+                        Usage
+                      </Link>
+                      <Link
+                        href={`/apps/${app.id}`}
+                        className="shrink-0 text-zinc-400 underline decoration-zinc-600/45 decoration-1 underline-offset-[3px] hover:text-emerald-400 hover:decoration-emerald-500/35"
+                      >
+                        Settings
+                      </Link>
+                    </div>
+                    {app.isOwner && app.ownerExternalUserId ? (
+                      <button
+                        type="button"
+                        onClick={() => handleGetApiKey(app)}
+                        disabled={mintState?.phase === "minting" && mintState.appId === app.id}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-emerald-600/50 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {mintState?.phase === "minting" && mintState.appId === app.id ? (
+                          <span
+                            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
+                            aria-hidden
+                          />
+                        ) : (
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={1.75}
+                              d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                            />
+                          </svg>
+                        )}
+                        {mintState?.phase === "minting" && mintState.appId === app.id ? "Getting…" : "Get API Key"}
+                      </button>
+                    ) : null}
                   </nav>
                 ) : null}
               </div>
@@ -387,6 +476,25 @@ export default function AppsPage() {
           ))}
         </div>
       )}
+      {mintState?.phase === "success" ? (
+        <GenerateSigningTokenDialog
+          phase="success"
+          appName={mintState.app.name}
+          ownerExternalUserId={mintState.app.ownerExternalUserId ?? ""}
+          apiKey={mintState.apiKey}
+          response={mintState.response}
+          onClose={() => setMintState(null)}
+        />
+      ) : mintState?.phase === "error" ? (
+        <GenerateSigningTokenDialog
+          phase="error"
+          appName={mintState.app.name}
+          ownerExternalUserId={mintState.app.ownerExternalUserId ?? ""}
+          message={mintState.message}
+          onClose={() => setMintState(null)}
+          onRetry={() => handleGetApiKey(mintState.app)}
+        />
+      ) : null}
     </DashboardLayout>
   );
 }

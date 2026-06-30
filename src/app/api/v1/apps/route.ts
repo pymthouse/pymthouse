@@ -78,7 +78,19 @@ export async function GET() {
         .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
         .where(inArray(developerApps.id, memberIds));
 
-  const apps = [...ownedApps, ...memberApps].filter(
+  const ownedWithFlags = ownedApps.map((app) => ({
+    ...app,
+    isOwner: true,
+    ownerExternalUserId: userId,
+  }));
+
+  const memberWithFlags = memberApps.map((app) => ({
+    ...app,
+    isOwner: false,
+    ownerExternalUserId: null,
+  }));
+
+  const apps = [...ownedWithFlags, ...memberWithFlags].filter(
     (app, index, rows) => rows.findIndex((row) => row.id === app.id) === index,
   );
 
