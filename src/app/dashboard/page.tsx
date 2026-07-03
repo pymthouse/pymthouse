@@ -7,8 +7,8 @@ import { db } from "@/db/index";
 import { signerConfig, transactions, endUsers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import Link from "next/link";
-import AppStatusBadge from "@/components/apps/AppStatusBadge";
-import { listUserAccessibleApps, type UserAppSummary } from "@/lib/user-apps";
+import { listUserAccessibleApps } from "@/lib/user-apps";
+import MyAppsSection from "@/components/apps/MyAppsSection";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
   countActiveStreamsByRecentPayment,
@@ -291,142 +291,6 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
         <DocumentationCard />
       </div>
     </>
-  );
-}
-
-function myAppsSummaryText(appCount: number): string {
-  if (appCount === 0) {
-    return "Create an app to configure identity, plans, and payments.";
-  }
-  const noun = appCount === 1 ? "app" : "apps";
-  return `${appCount} ${noun} — open settings or usage from here.`;
-}
-
-function appListSecondaryLine(app: UserAppSummary): string | null {
-  if (app.subtitle) {
-    return app.subtitle;
-  }
-  if (app.clientId) {
-    return app.clientId;
-  }
-  return null;
-}
-
-function AppListSecondaryLine({ app }: Readonly<{ app: UserAppSummary }>) {
-  const secondaryLine = appListSecondaryLine(app);
-  if (!secondaryLine) {
-    return null;
-  }
-  return (
-    <p
-      className={`text-xs mt-0.5 truncate ${
-        app.subtitle ? "text-zinc-500" : "font-mono text-zinc-600"
-      }`}
-    >
-      {secondaryLine}
-    </p>
-  );
-}
-
-function MyAppsSection({ apps }: Readonly<{ apps: UserAppSummary[] }>) {
-  return (
-    <section className="rounded-xl border border-emerald-500/15 bg-white/[0.02] backdrop-blur-sm shadow-[inset_0_1px_0_rgba(52,211,153,0.06)]">
-      <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="font-semibold text-zinc-100">My Apps</h3>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            {myAppsSummaryText(apps.length)}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {apps.length > 0 && (
-            <Link
-              href="/apps"
-              className="px-3 py-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-            >
-              View all
-            </Link>
-          )}
-          <Link
-            href="/apps/new"
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 transition-colors"
-          >
-            Create app
-          </Link>
-        </div>
-      </div>
-
-      {apps.length === 0 ? (
-        <div className="px-5 py-10 text-center">
-          <div className="w-12 h-12 bg-zinc-800/80 rounded-xl flex items-center justify-center mx-auto mb-3">
-            <svg
-              className="w-6 h-6 text-zinc-600"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-              />
-            </svg>
-          </div>
-          <p className="text-sm text-zinc-400 mb-4">No apps yet.</p>
-          <Link
-            href="/apps/new"
-            className="inline-flex px-4 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 rounded-lg text-sm font-medium hover:bg-emerald-500/20 transition-colors"
-          >
-            Create your first app
-          </Link>
-        </div>
-      ) : (
-        <ul className="divide-y divide-zinc-800/60">
-          {apps.map((app) => (
-            <li key={app.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-white/[0.03] transition-colors group">
-              <Link
-                href={`/apps/${app.id}`}
-                className="flex min-w-0 flex-1 items-center gap-4"
-              >
-                <div
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500/20 to-teal-500/20 text-sm font-bold text-emerald-400"
-                  aria-hidden="true"
-                >
-                  {app.name[0]?.toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium text-zinc-200 group-hover:text-emerald-400 transition-colors truncate">
-                      {app.name}
-                    </span>
-                    <AppStatusBadge status={app.status} />
-                  </div>
-                  <AppListSecondaryLine app={app} />
-                </div>
-              </Link>
-              <div className="hidden sm:flex items-center gap-3 shrink-0 text-xs font-medium">
-                {app.clientId && (
-                  <Link
-                    href={`/apps/${app.id}/usage`}
-                    className="text-zinc-500 hover:text-emerald-400 transition-colors"
-                  >
-                    Usage
-                  </Link>
-                )}
-                <Link
-                  href={`/apps/${app.id}`}
-                  className="text-zinc-600 hover:text-zinc-300 transition-colors"
-                >
-                  Settings →
-                </Link>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
   );
 }
 

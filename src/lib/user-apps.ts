@@ -11,6 +11,8 @@ export type UserAppSummary = {
   logoLightUrl: string | null;
   clientId: string | null;
   createdAt: string;
+  isOwner: boolean;
+  ownerExternalUserId: string | null;
 };
 
 /** Apps the user owns or is an admin of (same set as GET /api/v1/apps). */
@@ -55,6 +57,8 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
           .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
           .where(inArray(developerApps.id, memberIds));
 
+  const ownedIds = new Set(ownedApps.map((a) => a.id).filter(Boolean));
+
   return [...ownedApps, ...memberApps]
     .filter(
       (app, index, rows) => rows.findIndex((row) => row.id === app.id) === index,
@@ -68,6 +72,8 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
       logoLightUrl: app.logoLightUrl,
       clientId: app.clientId,
       createdAt: app.createdAt,
+      isOwner: ownedIds.has(app.id ?? ""),
+      ownerExternalUserId: ownedIds.has(app.id ?? "") ? userId : null,
     }))
     .filter((app) => app.id.length > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
