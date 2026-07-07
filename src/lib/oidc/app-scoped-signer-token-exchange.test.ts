@@ -90,6 +90,17 @@ test("resolveAppScopedSubjectToken rejects non-jwt non-api-key tokens", async ()
   );
 });
 
+test("resolveAppScopedSubjectToken rejects pmth_cs_* client secrets as subject_token", async () => {
+  await assert.rejects(
+    () => resolveAppScopedSubjectToken("pmth_cs_secretvalue123", PUBLIC_ID),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "invalid_grant");
+      return true;
+    },
+  );
+});
+
 test("handleAppScopedSignerTokenExchange rejects wrong grant_type", async () => {
   await assert.rejects(
     () =>
@@ -103,6 +114,7 @@ test("handleAppScopedSignerTokenExchange rejects wrong grant_type", async () => 
         requestedTokenType: "",
         resource: "",
         audiences: [],
+        correlationId: "corr-test",
       }),
     (err: unknown) => {
       assert.ok(err instanceof AppScopedSignerTokenExchangeError);
@@ -168,6 +180,7 @@ test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope
       requestedTokenType: "",
       resource: signerJwtAudience(),
       audiences: [],
+      correlationId: "corr-jwt",
     },
     {
       resolveSubjectAccessToken: async () => ({

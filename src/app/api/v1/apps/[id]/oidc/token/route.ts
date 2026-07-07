@@ -69,8 +69,14 @@ export async function POST(
     );
   }
 
+  const appStart = Date.now();
   const app = await getProviderApp(clientId);
   if (!app) {
+    const elapsed = Date.now() - appStart;
+    const minMs = 50;
+    if (elapsed < minMs) {
+      await new Promise((r) => setTimeout(r, minMs - elapsed));
+    }
     return NextResponse.json(
       {
         error: "invalid_request",

@@ -23,6 +23,8 @@ export const GRANT_TYPE_TOKEN_EXCHANGE =
 export const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
+// Same URN as SUBJECT — intentionally separate constants for RFC 8693 semantics:
+// SUBJECT identifies the inbound token type; ISSUED identifies the outbound token type.
 const ISSUED_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
@@ -82,6 +84,9 @@ export function acceptedSignerAudiences(): Set<string> {
 }
 
 function isJwtSubjectToken(subjectToken: string): boolean {
+  if (subjectToken.startsWith("pmth_")) {
+    return false;
+  }
   return subjectToken.split(".").length === 3;
 }
 
@@ -248,7 +253,7 @@ export async function handleAppScopedSignerTokenExchange(
     requestedTokenType: string;
     resource: string;
     audiences: string[];
-    correlationId?: string;
+    correlationId: string;
   },
   inject: Partial<AppScopedSignerTokenExchangeDeps> = {},
 ): Promise<SignerSession> {
@@ -327,21 +332,15 @@ export async function handleAppScopedSignerTokenExchange(
     throw err;
   }
 
-  const session = buildSignerSessionEnvelope({
+  return buildSignerSessionEnvelope({
     access_token: minted.access_token,
     expires_in: minted.expires_in,
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
     signer_url: deps.getClientSignerApiUrl(),
+    discovery_url: deps.getSignerDiscoveryUrl(),
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     correlation_id: input.correlationId,
   });
-
-  const discoveryUrl = deps.getSignerDiscoveryUrl();
-  if (discoveryUrl) {
-    session.discovery_url = discoveryUrl;
-  }
-
-  return session;
 }

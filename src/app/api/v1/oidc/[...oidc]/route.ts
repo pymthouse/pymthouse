@@ -40,7 +40,7 @@ import {
   assertSignJobNotMixedWithAdmin,
   SignJobScopeExclusivityError,
 } from "@/lib/oidc/scopes";
-import { isSignerJwtTokenExchangeRequest } from "@/lib/oidc/signer-jwt-token-exchange";
+import { handleSignerJwtTokenExchange, isSignerJwtTokenExchangeRequest } from "@/lib/oidc/signer-jwt-token-exchange";
 import { rotateProgrammaticRefreshToken } from "@/lib/oidc/programmatic-tokens";
 
 const RESOURCE_REQUIRED_GRANTS = new Set([
@@ -225,17 +225,23 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
             audience: exchangeParams.getAll("audience"),
           })
         ) {
-          return NextResponse.json(
-            {
-              error: "invalid_target",
-              error_description:
-                "Signer session exchange moved to POST /api/v1/apps/{clientId}/oidc/token",
+          const result = await handleSignerJwtTokenExchange({
+            clientId,
+            clientSecret,
+            subjectToken: exchangeParams.get("subject_token") || "",
+            subjectTokenType,
+            resource: resourceParam,
+            audience: exchangeParams.getAll("audience"),
+          });
+          return NextResponse.json(result, {
+            headers: {
+              "Cache-Control": "no-store",
+              Pragma: "no-cache",
+              Deprecation: "true",
+              Link: '</api/v1/apps/{clientId}/oidc/token>; rel="successor-version"',
+              "Sunset": "2026-10-01",
             },
-            {
-              status: 400,
-              headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-            },
-          );
+          });
         }
 
         if (
