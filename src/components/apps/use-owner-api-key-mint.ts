@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { mintOwnerApiKey } from "@/components/apps/mint-owner-api-key";
 
 type MintableApp = {
@@ -18,10 +18,12 @@ export function useOwnerApiKeyMint<TApp extends MintableApp>() {
   const [mintState, setMintState] = useState<OwnerApiKeyMintState<TApp> | null>(
     null,
   );
+  const isMintingRef = useRef(false);
 
   const handleGetApiKey = useCallback((app: TApp) => {
-    if (!app.clientId || !app.ownerExternalUserId) return;
+    if (!app.clientId || !app.ownerExternalUserId || isMintingRef.current) return;
 
+    isMintingRef.current = true;
     setMintState({ phase: "minting", appId: app.id });
     mintOwnerApiKey({
       clientId: app.clientId,
@@ -39,6 +41,9 @@ export function useOwnerApiKeyMint<TApp extends MintableApp>() {
         const message =
           err instanceof Error ? err.message : "Failed to mint API key.";
         setMintState({ phase: "error", app, message });
+      })
+      .finally(() => {
+        isMintingRef.current = false;
       });
   }, []);
 

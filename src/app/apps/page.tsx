@@ -222,6 +222,7 @@ export default function AppsPage() {
   const [apps, setApps] = useState<AppSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const { mintState, handleGetApiKey, closeMintDialog } = useOwnerApiKeyMint<AppSummary>();
+  const isMintingApiKey = mintState?.phase === "minting";
 
   useEffect(() => {
     fetch("/api/v1/apps")
@@ -391,10 +392,10 @@ export default function AppsPage() {
                       <button
                         type="button"
                         onClick={() => handleGetApiKey(app)}
-                        disabled={mintState?.phase === "minting" && mintState.appId === app.id}
+                        disabled={isMintingApiKey}
                         className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-emerald-600/50 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {mintState?.phase === "minting" && mintState.appId === app.id ? (
+                        {isMintingApiKey && mintState.appId === app.id ? (
                           <span
                             className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
                             aria-hidden
@@ -409,7 +410,7 @@ export default function AppsPage() {
                             />
                           </svg>
                         )}
-                        {mintState?.phase === "minting" && mintState.appId === app.id ? "Getting…" : "Get API Key"}
+                        {isMintingApiKey && mintState.appId === app.id ? "Getting…" : "Get API Key"}
                       </button>
                     ) : null}
                   </nav>

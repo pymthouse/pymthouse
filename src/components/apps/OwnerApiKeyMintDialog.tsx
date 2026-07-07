@@ -4,6 +4,8 @@ import GenerateSigningTokenDialog from "@/components/apps/GenerateSigningTokenDi
 import type { OwnerApiKeyMintState } from "@/components/apps/use-owner-api-key-mint";
 
 type DialogApp = {
+  id: string;
+  clientId: string | null;
   name: string;
   ownerExternalUserId: string | null;
 };
