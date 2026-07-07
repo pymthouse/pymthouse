@@ -8,25 +8,20 @@ async function postJson(
     body: JSON.stringify(body),
   });
 
-  const text = await response.text();
-  let parsed: Record<string, unknown> = {};
-
-  try {
-    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-  } catch {
-    parsed = {};
-  }
+  const parsed = (await response.json().catch(() => null)) as
+    | { error_description?: unknown; error?: unknown }
+    | null;
 
   if (!response.ok) {
-    const message =
-      (typeof parsed.error_description === "string" && parsed.error_description) ||
-      (typeof parsed.error === "string" && parsed.error) ||
-      text ||
-      `Request failed (${response.status})`;
+    const message = [
+      parsed?.error_description,
+      parsed?.error,
+      `Request failed (${response.status})`,
+    ].find((value): value is string => typeof value === "string" && value.trim());
     throw new Error(message);
   }
 
-  return parsed;
+  return parsed ? (parsed as Record<string, unknown>) : {};
 }
 
 export async function mintOwnerApiKey(input: {
