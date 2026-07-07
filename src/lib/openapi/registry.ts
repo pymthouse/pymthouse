@@ -53,8 +53,8 @@ export function generateOpenApiDocument() {
       version: "1.0.0",
       description:
         "Machine-facing Builder API for integrator backends. " +
-        "OIDC issuer metadata (device flow, RFC 8693 token exchange at `/api/v1/oidc/token`) " +
-        "is published separately via OpenID Provider Configuration.",
+        "Signer session exchange: `POST /api/v1/apps/{clientId}/oidc/token`. " +
+        "OIDC provider metadata (device flow, client_credentials) is published via OpenID Provider Configuration.",
     },
   });
 }

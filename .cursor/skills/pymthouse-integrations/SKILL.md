@@ -46,7 +46,8 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 - Auth: Basic (`m2m_…` + secret) or Bearer (machine token).
 - **Upsert user**: `POST .../users` with `externalUserId` (idempotent; use DB upsert to avoid duplicate-key races under concurrency).
 - **Mint user access token**: `POST .../users/{externalUserId}/token` with optional `{ "scope": "sign:job" }`. Issued JWT `sub` is **`app_users.id`** (app user row), not necessarily a `users` / `end_users` row by itself.
-- **Clearinghouse direct signer mint**: M2M `POST {issuer}/token` with `scope=sign:mint_user_token`, `external_user_id`, `audience=livepeer-remote-signer` — see `src/lib/oidc/mint-user-signer-token.ts`. Requires M2M `sign:mint_user_token` (inherited when public client has `sign:job`).
+- **Signer session exchange (canonical)**: `POST /api/v1/apps/{clientId}/oidc/token` — RFC 8693 form body with `subject_token` = user JWT or `pmth_*` API key. Optional M2M Basic auth.
+- **Clearinghouse direct signer mint**: M2M `POST /api/v1/oidc/token` with `scope=sign:mint_user_token`, `external_user_id` — see `src/lib/oidc/mint-user-signer-token.ts`. Requires M2M `sign:mint_user_token` (inherited when public client has `sign:job`).
 - **Allowances**: `POST .../users/{externalUserId}/allowances`, balance `GET .../usage/balance?externalUserId=...` — OpenMeter entitlements on hosted instance.
 
 ## OpenMeter / usage ingest

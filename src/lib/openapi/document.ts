@@ -69,7 +69,7 @@ export function buildOpenApiDocument() {
   };
 
   doc.externalDocs = {
-    description: "OIDC issuer discovery (device flow, RFC 8693 token endpoint)",
+    description: "OIDC issuer discovery (device flow, client_credentials)",
     url: `${oidcIssuer}/.well-known/openid-configuration`,
   };
 

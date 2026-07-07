@@ -426,6 +426,10 @@ export default function AppSettingsScreen({
     typeof window !== "undefined"
       ? `${window.location.origin}/api/v1/oidc/token`
       : "";
+  const signerSessionUrl =
+    typeof window !== "undefined" && appState.clientId
+      ? `${window.location.origin}/api/v1/apps/${encodeURIComponent(appState.clientId)}/oidc/token`
+      : "";
   const showPostLogoutRedirectUris = syncPublicClientGrantTypes(
     formData.grantTypes,
     formData.redirectUris,
@@ -755,6 +759,7 @@ export default function AppSettingsScreen({
             discoveryUrl={discoveryUrl}
             authorizeUrl={authorizeUrl}
             tokenUrl={tokenUrl}
+            signerSessionUrl={signerSessionUrl}
           />
         </div>
       )}
@@ -827,11 +832,13 @@ function ReferenceEndpointsSection({
   discoveryUrl,
   authorizeUrl,
   tokenUrl,
+  signerSessionUrl,
 }: {
   clientId: string;
   discoveryUrl: string;
   authorizeUrl: string;
   tokenUrl: string;
+  signerSessionUrl: string;
 }) {
   const rows = useMemo(
     () =>
@@ -839,9 +846,15 @@ function ReferenceEndpointsSection({
         { key: "client", label: "Client ID", value: clientId, accent: true as const },
         { key: "discovery", label: "OIDC discovery", value: discoveryUrl, accent: false as const },
         { key: "authorize", label: "Authorize", value: authorizeUrl, accent: false as const },
-        { key: "token", label: "Token", value: tokenUrl, accent: false as const },
+        { key: "token", label: "OIDC token", value: tokenUrl, accent: false as const },
+        {
+          key: "signerSession",
+          label: "Signer session exchange",
+          value: signerSessionUrl,
+          accent: false as const,
+        },
       ] as const,
-    [authorizeUrl, clientId, discoveryUrl, tokenUrl],
+    [authorizeUrl, clientId, discoveryUrl, signerSessionUrl, tokenUrl],
   );
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);

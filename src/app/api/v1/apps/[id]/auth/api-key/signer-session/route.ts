@@ -8,12 +8,19 @@ import {
 } from "@/lib/openapi/api-key-route-auth";
 import { ApiKeySignerSessionRequestBodySchema } from "@/lib/openapi/schemas/credentials";
 import {
-  ApiKeySignerSessionError,
-  mintSignerSessionFromAppApiKey,
-} from "@/lib/oidc/api-key-signer-session";
+  AppScopedSignerTokenExchangeError,
+  GRANT_TYPE_TOKEN_EXCHANGE,
+  handleAppScopedSignerTokenExchange,
+  SUBJECT_ACCESS_TOKEN_TYPE,
+} from "@/lib/oidc/app-scoped-signer-token-exchange";
+
+const DEPRECATION_HEADERS = {
+  Deprecation: "true",
+  Link: '</api/v1/apps/{clientId}/oidc/token>; rel="successor-version"',
+};
 
 /**
- * Canonical single-call exchange: pmth_* API key → SignerSession (signer JWT).
+ * Deprecated wrapper: Bearer pmth_* → SignerSession via app-scoped RFC 8693 exchange.
  */
 export async function POST(
   request: NextRequest,
@@ -36,10 +43,17 @@ export async function POST(
   }
 
   try {
-    const session = await mintSignerSessionFromAppApiKey({
-      apiKey,
+    const session = await handleAppScopedSignerTokenExchange({
       publicClientId: clientId,
-      scope: body.scope,
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: apiKey,
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId,
     });
 
     await writeAuditLog({
@@ -49,12 +63,9 @@ export async function POST(
       correlationId,
     });
 
-    return NextResponse.json({
-      ...session,
-      correlation_id: correlationId,
-    });
+    return NextResponse.json(session, { headers: DEPRECATION_HEADERS });
   } catch (err) {
-    if (err instanceof ApiKeySignerSessionError) {
+    if (err instanceof AppScopedSignerTokenExchangeError) {
       await writeAuditLog({
         clientId: app.id,
         action: "api_key_signer_session_exchange",

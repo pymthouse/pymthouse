@@ -93,9 +93,17 @@ export async function POST(
     },
   });
 
-  return NextResponse.json({
-    ...tokens,
-    externalUserId: resolved.externalUserId,
-    correlation_id: correlationId,
-  });
+  return NextResponse.json(
+    {
+      ...tokens,
+      externalUserId: resolved.externalUserId,
+      correlation_id: correlationId,
+    },
+    {
+      headers: {
+        Deprecation: "true",
+        Link: '</api/v1/apps/{clientId}/oidc/token>; rel="successor-version"',
+      },
+    },
+  );
 }

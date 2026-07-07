@@ -28,7 +28,7 @@ Machine-readable contract and interactive reference:
 
 Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
 
-OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration` (not duplicated in OpenAPI except for a virtual `POST /api/v1/oidc/token` pointer).
+OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration`. Signer session exchange is documented at `POST /api/v1/apps/{clientId}/oidc/token`. The OIDC provider token endpoint (`POST /api/v1/oidc/token`) covers standard OAuth grants only.
 
 ### Breaking changes (API cleanup)
 
@@ -41,7 +41,9 @@ The following deprecated routes were **removed**. Use the canonical replacement:
 | `POST /api/v1/apps/{clientId}/usage/signed-tickets` | Kafka `create_signed_ticket` → OpenMeter collector (no HTTP ingest) |
 | `GET` / `POST` / `DELETE /api/v1/apps/{clientId}/keys` | Per-user keys: `…/users/{externalUserId}/keys` |
 | `…/users/{externalUserId}/credits` | `…/users/{externalUserId}/allowances` |
-| Dashboard BFF `POST /api/pymthouse/keys/exchange` (not served by pymthouse) | `POST /api/v1/apps/{clientId}/auth/api-key/signer-session` on the issuer |
+| Dashboard BFF `POST /api/pymthouse/keys/exchange` (not served by pymthouse) | `POST /api/v1/apps/{clientId}/oidc/token` |
+| `POST /api/v1/apps/{clientId}/auth/api-key/signer-session` | `POST /api/v1/apps/{clientId}/oidc/token` (form `subject_token=pmth_*`) |
+| `POST /api/v1/apps/{clientId}/auth/api-key/token` | `POST /api/v1/apps/{clientId}/oidc/token` or M2M `…/users/{externalUserId}/token` |
 
 M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provider session).
 
@@ -104,6 +106,53 @@ Authorization: Basic base64(client_id:client_secret)
 
 ---
 
+## Signer session exchange (RFC 8693)
+
+`POST /api/v1/apps/{clientId}/oidc/token`
+
+Clearinghouse-compatible signer session issuance. `Content-Type: application/x-www-form-urlencoded`.
+
+| Field | Value |
+| --- | --- |
+| `grant_type` | `urn:ietf:params:oauth:grant-type:token-exchange` |
+| `subject_token` | User access JWT **or** per-app-user API key (`pmth_*`) |
+| `subject_token_type` | `urn:ietf:params:oauth:token-type:access_token` |
+| `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
+
+Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange.
+
+Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (Livepeer network discovery, not OIDC metadata), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
+
+Example (API key as `subject_token`):
+
+```bash
+curl -sS \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  --data-urlencode "subject_token=pmth_..." \
+  --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  "https://your-pymthouse.example/api/v1/apps/app_…/oidc/token"
+```
+
+Example (user JWT after device flow or M2M user-token mint):
+
+```bash
+curl -sS \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  --data-urlencode "subject_token=USER_JWT" \
+  --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  "https://your-pymthouse.example/api/v1/apps/app_…/oidc/token"
+```
+
+---
+
+## Deprecated API key convenience routes
+
+`POST /api/v1/apps/{clientId}/auth/api-key/signer-session` and `POST …/auth/api-key/token` remain available with `Deprecation: true` but integrators should use the app-scoped OIDC token route above.
+
+---
+
 ## Issue user-scoped JWT
 
 `POST /api/v1/apps/{clientId}/users/{externalUserId}/token`
@@ -121,25 +170,15 @@ Authorization: Basic base64(client_id:client_secret)
 
 ---
 
-## API key → user JWT (subject token)
+## API key → user JWT (deprecated)
 
-`POST /api/v1/apps/{clientId}/auth/api-key/token`
-
-- `Authorization: Bearer pmth_<hex>` (per-app-user API key only).
-- Optional JSON body: `{ "scope": "sign:job" }`.
-- Returns a short-lived user access JWT suitable as `subject_token` for RFC 8693 signer exchange.
+`POST /api/v1/apps/{clientId}/auth/api-key/token` — **deprecated**. Use `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token=pmth_*` for single-call signer session exchange, or M2M `…/users/{externalUserId}/token` to mint a user JWT.
 
 ---
 
-## API key → signer session (canonical single call)
+## API key → signer session (deprecated)
 
-`POST /api/v1/apps/{clientId}/auth/api-key/signer-session`
-
-- Same Bearer `pmth_*` authentication as above.
-- Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, `balanceUsdMicros`, `lifetimeGrantedUsdMicros`, optional `signer_url`, optional `issued_token_type`, optional `correlation_id`.
-- Integrator/dashboard facades may expose `POST …/api/pymthouse/keys/exchange`, but that route is external to PymtHouse and not part of this OpenAPI contract.
-
-Integrator facades should pass through this response shape unchanged.
+`POST /api/v1/apps/{clientId}/auth/api-key/signer-session` — **deprecated**. Use `POST /api/v1/apps/{clientId}/oidc/token` instead (see [Signer session exchange](#signer-session-exchange-rfc-8693)).
 
 ---
 
@@ -300,11 +339,12 @@ grant_type=client_credentials&
 client_id=<m2m_client_id>&
 client_secret=<m2m_client_secret>&
 scope=sign:mint_user_token&
-external_user_id=<platform-user-id>&
-audience=livepeer-remote-signer
+external_user_id=<platform-user-id>
 ```
 
-Response includes `access_token` (user-scoped JWT, `aud=livepeer-remote-signer`), `balanceUsdMicros`, and `lifetimeGrantedUsdMicros`.
+Response is a **`SignerSession`** envelope (`access_token` is a short-lived signer JWT). Optional PymtHouse extensions: `balanceUsdMicros`, `lifetimeGrantedUsdMicros`.
+
+For RFC 8693 exchange after minting a user JWT, use `POST /api/v1/apps/{clientId}/oidc/token` (not the global OIDC token endpoint).
 
 Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
