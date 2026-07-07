@@ -6,7 +6,6 @@ import { redirect } from "next/navigation";
 import { db } from "@/db/index";
 import { signerConfig, transactions, endUsers } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import Link from "next/link";
 import { listUserAccessibleApps } from "@/lib/user-apps";
 import MyAppsSection from "@/components/apps/MyAppsSection";
 import {

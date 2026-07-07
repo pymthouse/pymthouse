@@ -16,7 +16,15 @@ type GenerateSigningTokenDialogProps = Readonly<{
   | { phase: "error"; message: string; onRetry: () => void }
 )>;
 
-function CopyApiKeyButton({ apiKey }: { apiKey: string }) {
+function maskApiKey(apiKey: unknown): unknown {
+  if (typeof apiKey !== "string" || apiKey.length <= 24) {
+    return apiKey;
+  }
+
+  return `${apiKey.slice(0, 12)}…${apiKey.slice(-8)}`;
+}
+
+function CopyApiKeyButton({ apiKey }: Readonly<{ apiKey: string }>) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -45,13 +53,20 @@ function CopyApiKeyButton({ apiKey }: { apiKey: string }) {
     );
   }, [apiKey]);
 
+  let buttonLabel = "Copy";
+  if (copied) {
+    buttonLabel = "Copied";
+  } else if (copyFailed) {
+    buttonLabel = "Copy failed";
+  }
+
   return (
     <button
       type="button"
       onClick={copy}
       className="shrink-0 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
     >
-      {copied ? "Copied" : copyFailed ? "Copy failed" : "Copy"}
+      {buttonLabel}
     </button>
   );
 }
@@ -75,11 +90,11 @@ export default function GenerateSigningTokenDialog(props: GenerateSigningTokenDi
         aria-label="Close dialog"
         onClick={onClose}
       />
-      <div
-        role="dialog"
+      <dialog
+        open
         aria-modal="true"
         aria-labelledby="signing-token-dialog-title"
-        className="relative z-10 w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl"
+        className="relative z-10 m-0 w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
@@ -153,10 +168,7 @@ export default function GenerateSigningTokenDialog(props: GenerateSigningTokenDi
                 {JSON.stringify(
                   {
                     ...props.response,
-                    apiKey:
-                      typeof props.response.apiKey === "string" && props.response.apiKey.length > 24
-                        ? `${props.response.apiKey.slice(0, 12)}…${props.response.apiKey.slice(-8)}`
-                        : props.response.apiKey,
+                    apiKey: maskApiKey(props.response.apiKey),
                   },
                   null,
                   2,
@@ -174,7 +186,7 @@ export default function GenerateSigningTokenDialog(props: GenerateSigningTokenDi
             </div>
           </div>
         ) : null}
-      </div>
+      </dialog>
     </div>
   );
 }

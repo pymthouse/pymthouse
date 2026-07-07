@@ -1,53 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
 import Link from "next/link";
 import AppStatusBadge from "@/components/apps/AppStatusBadge";
-import GenerateSigningTokenDialog from "@/components/apps/GenerateSigningTokenDialog";
+import OwnerApiKeyMintDialog from "@/components/apps/OwnerApiKeyMintDialog";
+import { useOwnerApiKeyMint } from "@/components/apps/use-owner-api-key-mint";
 import type { UserAppSummary } from "@/lib/user-apps";
-
-async function postJson(
-  path: string,
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  let parsed: Record<string, unknown> = {};
-  try { parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {}; } catch { parsed = {}; }
-  if (!response.ok) {
-    const message =
-      (typeof parsed.error_description === "string" && parsed.error_description) ||
-      (typeof parsed.error === "string" && parsed.error) ||
-      text || `Request failed (${response.status})`;
-    throw new Error(message);
-  }
-  return parsed;
-}
-
-async function mintOwnerApiKey(input: {
-  clientId: string;
-  ownerExternalUserId: string;
-}): Promise<Record<string, unknown>> {
-  const externalUserId = input.ownerExternalUserId.trim();
-  if (!externalUserId) throw new Error("Owner identity is unavailable.");
-  await postJson(`/api/v1/apps/${encodeURIComponent(input.clientId)}/users`, {
-    externalUserId,
-    status: "active",
-  });
-  return postJson(
-    `/api/v1/apps/${encodeURIComponent(input.clientId)}/users/${encodeURIComponent(externalUserId)}/keys`,
-    { label: "signing-token" },
-  );
-}
-
-type CardMintState =
-  | { phase: "minting"; appId: string }
-  | { phase: "success"; app: UserAppSummary; apiKey: string; response: Record<string, unknown> }
-  | { phase: "error"; app: UserAppSummary; message: string };
 
 function myAppsSummaryText(count: number): string {
   if (count === 0) return "No apps yet — create one to get started.";
@@ -74,22 +31,8 @@ function AppListSecondaryLine({ app }: AppListSecondaryLineProps) {
 }
 
 export default function MyAppsSection({ apps }: Readonly<{ apps: UserAppSummary[] }>) {
-  const [mintState, setMintState] = useState<CardMintState | null>(null);
-
-  const handleGetApiKey = useCallback((app: UserAppSummary) => {
-    if (!app.clientId || !app.ownerExternalUserId) return;
-    setMintState({ phase: "minting", appId: app.id });
-    void mintOwnerApiKey({ clientId: app.clientId, ownerExternalUserId: app.ownerExternalUserId })
-      .then((data) => {
-        const apiKey = typeof data.apiKey === "string" && data.apiKey.trim() ? data.apiKey.trim() : null;
-        if (!apiKey) throw new Error("API key mint response missing apiKey.");
-        setMintState({ phase: "success", app, apiKey, response: data });
-      })
-      .catch((err) => {
-        const message = err instanceof Error ? err.message : "Failed to mint API key.";
-        setMintState({ phase: "error", app, message });
-      });
-  }, []);
+  const { mintState, handleGetApiKey, closeMintDialog } =
+    useOwnerApiKeyMint<UserAppSummary>();
 
   return (
     <>
@@ -216,25 +159,13 @@ export default function MyAppsSection({ apps }: Readonly<{ apps: UserAppSummary[
         )}
       </section>
 
-      {mintState?.phase === "success" ? (
-        <GenerateSigningTokenDialog
-          phase="success"
-          appName={mintState.app.name}
-          ownerExternalUserId={mintState.app.ownerExternalUserId ?? ""}
-          apiKey={mintState.apiKey}
-          response={mintState.response}
-          onClose={() => setMintState(null)}
-        />
-      ) : mintState?.phase === "error" ? (
-        <GenerateSigningTokenDialog
-          phase="error"
-          appName={mintState.app.name}
-          ownerExternalUserId={mintState.app.ownerExternalUserId ?? ""}
-          message={mintState.message}
-          onClose={() => setMintState(null)}
-          onRetry={() => handleGetApiKey(mintState.app)}
-        />
-      ) : null}
+      <OwnerApiKeyMintDialog
+        mintState={
+          mintState?.phase === "minting" ? null : mintState
+        }
+        onClose={closeMintDialog}
+        onRetry={handleGetApiKey}
+      />
     </>
   );
 }
