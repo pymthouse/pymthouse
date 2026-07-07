@@ -12,6 +12,7 @@ import {
   resolveSubjectAccessToken,
   SubjectAccessTokenResolveError,
 } from "@/lib/oidc/resolve-subject-access-token";
+import { scopeStringFromPayload } from "@/lib/oidc/scope-string";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 import type { SignerSession } from "@/lib/openapi/schemas/credentials-types";
@@ -82,22 +83,6 @@ export function acceptedSignerAudiences(): Set<string> {
 
 function isJwtSubjectToken(subjectToken: string): boolean {
   return subjectToken.split(".").length === 3;
-}
-
-function scopeStringFromPayload(payload: Record<string, unknown>): string {
-  const scopeFromScope =
-    typeof payload.scope === "string" ? payload.scope.trim() : "";
-  if (scopeFromScope) {
-    return scopeFromScope.replace(/\s+/g, " ").trim();
-  }
-  const scpRaw = payload.scp;
-  if (Array.isArray(scpRaw)) {
-    return scpRaw.filter((v): v is string => typeof v === "string").join(" ");
-  }
-  if (typeof scpRaw === "string") {
-    return scpRaw.trim();
-  }
-  return "sign:job";
 }
 
 export function validateRequestedTokenType(requested: string): void {

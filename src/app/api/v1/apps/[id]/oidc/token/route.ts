@@ -1,36 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
-import { decodeBasicAuthComponent } from "@/lib/auth";
 import {
   AppScopedSignerTokenExchangeError,
   handleAppScopedSignerTokenExchange,
 } from "@/lib/oidc/app-scoped-signer-token-exchange";
+import { clientCredentialsFromTokenRequest } from "@/lib/oidc/token-request-client-credentials";
 import { getProviderApp } from "@/lib/provider-apps";
-
-function clientCredentialsFromRequest(
-  request: NextRequest,
-  form: URLSearchParams,
-): { clientId: string; clientSecret: string } {
-  const auth = request.headers.get("authorization") || "";
-  if (auth.startsWith("Basic ")) {
-    try {
-      const decoded = Buffer.from(auth.slice(6), "base64").toString("utf-8");
-      const idx = decoded.indexOf(":");
-      if (idx > 0) {
-        return {
-          clientId: decodeBasicAuthComponent(decoded.slice(0, idx)),
-          clientSecret: decodeBasicAuthComponent(decoded.slice(idx + 1)),
-        };
-      }
-    } catch {
-      /* fall through to body */
-    }
-  }
-  return {
-    clientId: form.get("client_id") || "",
-    clientSecret: form.get("client_secret") || "",
-  };
-}
 
 function tokenExchangeErrorResponse(
   err: AppScopedSignerTokenExchangeError,
@@ -106,7 +81,7 @@ export async function POST(
     );
   }
 
-  const { clientId: m2mClientId, clientSecret } = clientCredentialsFromRequest(
+  const { clientId: m2mClientId, clientSecret } = clientCredentialsFromTokenRequest(
     request,
     form,
   );
