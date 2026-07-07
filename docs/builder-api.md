@@ -51,11 +51,11 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
-| `pmth_<hex>` | Per-app-user **API key** | Bearer credential (`Authorization: Bearer pmth_…`) on API-key exchange routes |
+| `pmth_<hex>` | Per-app-user **API key** | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
 | `pmth_cs_<hex>` | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
 
-Presenting `pmth_cs_*` to `POST …/auth/api-key/token` or `…/auth/api-key/signer-session` returns **`400 invalid_request`** (not `401 invalid_client`).
+Do not pass `pmth_cs_*` as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
 
 ## Authentication
 
@@ -147,12 +147,6 @@ curl -sS \
 
 ---
 
-## Deprecated API key convenience routes
-
-`POST /api/v1/apps/{clientId}/auth/api-key/signer-session` and `POST …/auth/api-key/token` remain available with `Deprecation: true` but integrators should use the app-scoped OIDC token route above.
-
----
-
 ## Issue user-scoped JWT
 
 `POST /api/v1/apps/{clientId}/users/{externalUserId}/token`
@@ -167,18 +161,6 @@ curl -sS \
 - Requested scope must be a subset of the **public app client’s** allowed scopes (see product-specific validation in code).
 - `admin` is explicitly rejected.
 - Default scope when omitted: `sign:job`.
-
----
-
-## API key → user JWT (deprecated)
-
-`POST /api/v1/apps/{clientId}/auth/api-key/token` — **deprecated**. Use `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token=pmth_*` for single-call signer session exchange, or M2M `…/users/{externalUserId}/token` to mint a user JWT.
-
----
-
-## API key → signer session (deprecated)
-
-`POST /api/v1/apps/{clientId}/auth/api-key/signer-session` — **deprecated**. Use `POST /api/v1/apps/{clientId}/oidc/token` instead (see [Signer session exchange](#signer-session-exchange-rfc-8693)).
 
 ---
 

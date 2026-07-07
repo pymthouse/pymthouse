@@ -4,8 +4,6 @@ import {
   ExternalUserIdParamSchema,
 } from "@/lib/openapi/schemas/common";
 import {
-  ApiKeySignerSessionRequestBodySchema,
-  ApiKeyTokenRequestBodySchema,
   OAuthErrorResponseSchema,
   ProgrammaticTokenResponseSchema,
   ProgrammaticUserTokenRequestBodySchema,
@@ -52,81 +50,6 @@ defineRouteMetadata("post", "/api/v1/apps/{clientId}/oidc/token", {
     },
     500: {
       description: "Server error",
-      content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-  },
-});
-
-defineRouteMetadata("post", "/api/v1/apps/{clientId}/auth/api-key/token", {
-  deprecated: true,
-  tags: ["Credentials"],
-  summary: "Exchange API key for user access token (deprecated)",
-  description:
-    "Deprecated. Use `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` set to " +
-    "the API key for single-call signer session exchange, or mint a user JWT via M2M " +
-    "`POST …/users/{externalUserId}/token` then exchange at the app-scoped OIDC token route.",
-  security: [{ bearerApiKey: [] }],
-  request: {
-    params: z.object({ clientId: clientIdParam }),
-    body: {
-      content: {
-        "application/json": { schema: ApiKeyTokenRequestBodySchema },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "User access token (subject token for signer exchange).",
-      content: {
-        "application/json": { schema: ProgrammaticTokenResponseSchema },
-      },
-    },
-    400: {
-      description: "Invalid request (including client secret presented as API key).",
-      content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-    401: {
-      description: "Missing or invalid API key.",
-      content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-    404: {
-      description: "App not found.",
-      content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-  },
-});
-
-defineRouteMetadata("post", "/api/v1/apps/{clientId}/auth/api-key/signer-session", {
-  deprecated: true,
-  tags: ["Credentials"],
-  summary: "Exchange API key for signer session (deprecated)",
-  description:
-    "Deprecated. Use `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` set to " +
-    "the `pmth_*` API key (RFC 8693 form body).",
-  security: [{ bearerApiKey: [] }],
-  request: {
-    params: z.object({ clientId: clientIdParam }),
-    body: {
-      content: {
-        "application/json": { schema: ApiKeySignerSessionRequestBodySchema },
-      },
-    },
-  },
-  responses: {
-    200: {
-      description: "SignerSession envelope.",
-      content: { "application/json": { schema: SignerSessionSchema } },
-    },
-    400: {
-      description: "Invalid request.",
-      content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-    401: {
-      description: "Missing or invalid API key.",
-      content: { "application/json": { schema: OAuthErrorResponseSchema } },
-    },
-    404: {
-      description: "App not found.",
       content: { "application/json": { schema: OAuthErrorResponseSchema } },
     },
   },

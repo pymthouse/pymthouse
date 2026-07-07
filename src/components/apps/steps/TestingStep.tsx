@@ -119,7 +119,7 @@ curl -sS -X POST ${origin}/api/v1/oidc/token \
   -d "scope=sign:job"
 
 # 2) Exchange it for a long-lived opaque pmth_* signer session (no resource parameter):
-#    NOTE: this token is NOT a per-user API key and cannot be used on /auth/api-key/* routes.
+#    NOTE: this token is NOT a per-user API key and cannot be used as subject_token on /oidc/token.
 curl -sS -X POST ${origin}/api/v1/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
