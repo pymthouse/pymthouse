@@ -17,7 +17,7 @@ async function postJson(
       parsed?.error_description,
       parsed?.error,
       `Request failed (${response.status})`,
-    ].find((value): value is string => typeof value === "string" && value.trim());
+    ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
     throw new Error(message);
   }
 
