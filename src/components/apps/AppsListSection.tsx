@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import AppStatusBadge from "@/components/apps/AppStatusBadge";
+import CopyIdButton from "@/components/apps/CopyIdButton";
 import OwnerApiKeyMintDialog from "@/components/apps/OwnerApiKeyMintDialog";
 import { useOwnerApiKeyMint } from "@/components/apps/use-owner-api-key-mint";
 import type { UserAppSummary } from "@/lib/user-apps";
@@ -20,9 +21,14 @@ function AppListSecondaryLine({ app, showOwner }: AppListSecondaryLineProps) {
   }
   if (app.clientId) {
     return (
-      <p className="text-xs text-zinc-500 font-mono mt-0.5 truncate">
-        {app.clientId}
-      </p>
+      <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+        <p className="truncate font-mono text-xs text-zinc-500">{app.clientId}</p>
+        <CopyIdButton
+          value={app.clientId}
+          label="Copy app id"
+          className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+        />
+      </div>
     );
   }
   if (app.subtitle) {

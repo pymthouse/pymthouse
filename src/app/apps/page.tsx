@@ -1,14 +1,10 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppStatusBadge, { appStatusAriaLabel } from "@/components/apps/AppStatusBadge";
+import CopyIdButton from "@/components/apps/CopyIdButton";
 import OwnerApiKeyMintDialog from "@/components/apps/OwnerApiKeyMintDialog";
 import { useOwnerApiKeyMint } from "@/components/apps/use-owner-api-key-mint";
 
@@ -111,110 +107,6 @@ function AppStatusIndicator({
     <span className="inline-flex shrink-0 items-center justify-center p-1 text-zinc-500" {...common}>
       <span className="h-2 w-2 rounded-full bg-zinc-500" />
     </span>
-  );
-}
-
-function CopyPublicAppIdButton({
-  clientId,
-  className,
-}: {
-  clientId: string;
-  /** Merged onto the button (e.g. for stacking above a card hit-area link). */
-  className?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current !== null) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  const copy = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) {
-      setCopied(false);
-      setCopyFailed(true);
-      if (timeoutRef.current !== null) {
-        clearTimeout(timeoutRef.current);
-      }
-      timeoutRef.current = setTimeout(() => {
-        timeoutRef.current = null;
-        setCopyFailed(false);
-      }, 2000);
-      return;
-    }
-
-    void navigator.clipboard.writeText(clientId).then(
-      () => {
-        setCopyFailed(false);
-        setCopied(true);
-        if (timeoutRef.current !== null) {
-          clearTimeout(timeoutRef.current);
-        }
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null;
-          setCopied(false);
-        }, 2000);
-      },
-      () => {
-        setCopied(false);
-        setCopyFailed(true);
-        if (timeoutRef.current !== null) {
-          clearTimeout(timeoutRef.current);
-        }
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null;
-          setCopyFailed(false);
-        }, 2000);
-      },
-    );
-  }, [clientId]);
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className={`pointer-events-auto relative z-10 shrink-0 rounded-md border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors ${className ?? ""}`}
-      aria-label={
-        copied ? "Copied" : copyFailed ? "Copy failed" : "Copy public app id"
-      }
-    >
-      {copied ? (
-        <svg
-          className="h-4 w-4 text-emerald-400"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M5 13l4 4L19 7"
-          />
-        </svg>
-      ) : (
-        <svg
-          className="h-4 w-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-          />
-        </svg>
-      )}
-    </button>
   );
 }
 
@@ -338,8 +230,9 @@ export default function AppsPage() {
                             <code className="min-w-0 col-start-1 text-left text-xs font-mono leading-snug text-zinc-400 break-all">
                               {app.clientId}
                             </code>
-                            <CopyPublicAppIdButton
-                              clientId={app.clientId}
+                            <CopyIdButton
+                              value={app.clientId}
+                              label="Copy public app id"
                               className="col-start-2 self-start -translate-y-0.5"
                             />
                           </div>
