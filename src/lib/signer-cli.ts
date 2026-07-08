@@ -57,7 +57,6 @@ export interface SignerCliStatus {
 
 async function cliFetch(
   path: string,
-  parse: "json" | "text",
   options?: {
     method?: "GET" | "POST";
     body?: string;
@@ -84,25 +83,21 @@ async function cliFetch(
   });
   if (!res.ok) {
     const detail = (await res.text()).trim();
-    throw new Error(
-      `CLI ${method} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ""}`,
-    );
+    const detailSuffix = detail ? ` — ${detail}` : "";
+    throw new Error(`CLI ${method} ${path} failed: ${res.status}${detailSuffix}`);
   }
   const text = await res.text();
   if (!text) throw new Error(`CLI ${method} ${path} returned empty body`);
-  if (parse === "text") {
-    return text;
-  }
   return text;
 }
 
 async function cliGet<T>(path: string): Promise<T> {
-  const text = await cliFetch(path, "json");
+  const text = await cliFetch(path);
   return JSON.parse(text) as T;
 }
 
 async function cliGetText(path: string): Promise<string> {
-  return cliFetch(path, "text");
+  return cliFetch(path);
 }
 
 /**
@@ -186,7 +181,7 @@ export async function fundDepositAndReserve(
     depositAmount: depositWei,
     reserveAmount: reserveWei,
   }).toString();
-  await cliFetch("/fundDepositAndReserve", "text", {
+  await cliFetch("/fundDepositAndReserve", {
     method: "POST",
     body,
     contentType: "application/x-www-form-urlencoded",

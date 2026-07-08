@@ -48,60 +48,72 @@ async function verifyTurnkeyWebhook(
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const rawBody = await request.text();
-  const verified = await verifyTurnkeyWebhook(request, rawBody);
-  if (!verified.ok) {
-    return Response.json(
-      { status: "error", reason: verified.reason },
-      { status: 401 },
-    );
-  }
-
-  const payload = parseTurnkeyBalanceWebhookPayload(rawBody);
-  if (!payload) {
-    return Response.json({ status: "ignored", reason: "invalid_json" });
-  }
-
-  const config = getTurnkeyFundingConfig();
-  let decision: Awaited<ReturnType<typeof shouldProcessTurnkeyDeposit>>;
   try {
-    decision = await shouldProcessTurnkeyDeposit(payload, config);
+    const rawBody = await request.text();
+    const verified = await verifyTurnkeyWebhook(request, rawBody);
+    if (!verified.ok) {
+      return Response.json(
+        { status: "error", reason: verified.reason },
+        { status: 401 },
+      );
+    }
+
+    const payload = parseTurnkeyBalanceWebhookPayload(rawBody);
+    if (!payload) {
+      return Response.json({ status: "ignored", reason: "invalid_json" });
+    }
+
+    const config = getTurnkeyFundingConfig();
+    let decision: Awaited<ReturnType<typeof shouldProcessTurnkeyDeposit>>;
+    try {
+      decision = await shouldProcessTurnkeyDeposit(payload, config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json(
+        { status: "error", reason: message },
+        { status: 503 },
+      );
+    }
+
+    if (decision.action === "skip") {
+      return Response.json({ status: "ignored", reason: decision.reason });
+    }
+
+    const claim = await claimTurnkeyFundingEvent({
+      idempotencyKey: decision.idempotencyKey,
+      txHash: decision.txHash,
+      address: decision.address,
+      amountWei: decision.amountWei,
+      fundWei: decision.fundWei,
+    });
+
+    if (claim.action === "skip") {
+      return Response.json({ status: "ignored", reason: claim.reason });
+    }
+
+    try {
+      await executeTurnkeyFunding(decision.fundWei, claim.eventId);
+      return Response.json({
+        status: "funded",
+        eventId: claim.eventId,
+        fundedWei: decision.fundWei.toString(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await markTurnkeyFundingFailed(claim.eventId, message);
+      } catch {
+        // Best-effort: preserve original funding error response.
+      }
+      return Response.json(
+        { status: "error", reason: message, eventId: claim.eventId },
+        { status: 500 },
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return Response.json(
       { status: "error", reason: message },
-      { status: 503 },
-    );
-  }
-
-  if (decision.action === "skip") {
-    return Response.json({ status: "ignored", reason: decision.reason });
-  }
-
-  const claim = await claimTurnkeyFundingEvent({
-    idempotencyKey: decision.idempotencyKey,
-    txHash: decision.txHash,
-    address: decision.address,
-    amountWei: decision.amountWei,
-    fundWei: decision.fundWei,
-  });
-
-  if (claim.action === "skip") {
-    return Response.json({ status: "ignored", reason: claim.reason });
-  }
-
-  try {
-    await executeTurnkeyFunding(decision.fundWei, claim.eventId);
-    return Response.json({
-      status: "funded",
-      eventId: claim.eventId,
-      fundedWei: decision.fundWei.toString(),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await markTurnkeyFundingFailed(claim.eventId, message);
-    return Response.json(
-      { status: "error", reason: message, eventId: claim.eventId },
       { status: 500 },
     );
   }

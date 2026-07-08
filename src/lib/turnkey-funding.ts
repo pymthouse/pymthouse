@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { turnkeyFundingEvents } from "@/db/schema";
@@ -109,7 +109,7 @@ export async function shouldProcessTurnkeyDeposit(
   }
 
   const msg = payload.msg;
-  if (!msg || msg.operation !== "deposit") {
+  if (msg?.operation !== "deposit") {
     return { action: "skip", reason: "not_deposit" };
   }
 
@@ -140,10 +140,7 @@ export async function shouldProcessTurnkeyDeposit(
     return { action: "skip", reason: "invalid_amount" };
   }
 
-  const signerAddress =
-    options?.signerAddress !== undefined
-      ? options.signerAddress
-      : await getEthAddr();
+  const signerAddress = options?.signerAddress ?? (await getEthAddr());
   if (!signerAddress) {
     throw new Error("signer eth address unavailable");
   }
@@ -222,11 +219,16 @@ export async function claimTurnkeyFundingEvent(input: {
     return { action: "skip", reason: `already_${existing.status}` };
   }
 
+  if (existing.status === "failed") {
+    return { action: "skip", reason: "already_failed" };
+  }
+
   if (existing.status === "pending" && !isStalePending(existing.createdAt)) {
     return { action: "skip", reason: "in_progress" };
   }
 
-  await db
+  const staleThreshold = new Date(Date.now() - STALE_PENDING_MS).toISOString();
+  const claimed = await db
     .update(turnkeyFundingEvents)
     .set({
       status: "pending",
@@ -234,7 +236,18 @@ export async function claimTurnkeyFundingEvent(input: {
       error: null,
       updatedAt: now,
     })
-    .where(eq(turnkeyFundingEvents.id, existing.id));
+    .where(
+      and(
+        eq(turnkeyFundingEvents.id, existing.id),
+        eq(turnkeyFundingEvents.status, "pending"),
+        lt(turnkeyFundingEvents.createdAt, staleThreshold),
+      ),
+    )
+    .returning({ id: turnkeyFundingEvents.id });
+
+  if (claimed.length === 0) {
+    return { action: "skip", reason: "claim_lost" };
+  }
 
   return { action: "fund", eventId: existing.id };
 }
