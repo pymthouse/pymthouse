@@ -137,12 +137,14 @@ export type BillingUsageDashboardResult =
 
 export async function getBillingUsageDashboardData(
   filterAppId?: string | null,
+  options?: { ownAppsOnly?: boolean },
 ): Promise<BillingUsageDashboardResult> {
   const session = await getServerSession(authOptions);
   const sessionUser = session?.user as Record<string, unknown> | undefined;
   const userId = sessionUser?.id as string | undefined;
   const role = sessionUser?.role as string | undefined;
   const isAdmin = role === "admin";
+  const ownAppsOnly = options?.ownAppsOnly === true;
 
   if (!userId) {
     return { ok: false, reason: "no_session" };
@@ -175,10 +177,10 @@ export async function getBillingUsageDashboardData(
     orderedApps = [row as BillingAppRow];
     scope = "single";
   } else {
-    const visibleApps = (isAdmin
+    const visibleApps = (isAdmin && !ownAppsOnly
       ? await appsQuery
       : await appsQuery.where(eq(developerApps.ownerId, userId))) as BillingAppRow[];
-    orderedApps = sortAppsForViewer(visibleApps, userId, isAdmin);
+    orderedApps = sortAppsForViewer(visibleApps, userId, isAdmin && !ownAppsOnly);
     scope = "all";
   }
 

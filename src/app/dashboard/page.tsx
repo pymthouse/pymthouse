@@ -8,6 +8,8 @@ import { signerConfig, transactions, endUsers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { listUserAccessibleApps } from "@/lib/user-apps";
 import MyAppsSection from "@/components/apps/MyAppsSection";
+import AdminAppsSection from "@/components/apps/AdminAppsSection";
+import DashboardUsagePanel from "@/components/DashboardUsagePanel";
 import {
   ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
   countActiveStreamsByRecentPayment,
@@ -31,14 +33,16 @@ export default async function DashboardPage() {
   const userId = (session.user as Record<string, unknown>)?.id as string;
 
   if (role === "admin" || role === "operator") {
-    return <AdminDashboard />;
+    return <AdminDashboard userId={userId} />;
   }
 
   return <DeveloperDashboard userId={userId} />;
 }
 
-async function AdminDashboard() {
+async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
   await syncSignerStatus();
+
+  const myApps = userId ? await listUserAccessibleApps(userId) : [];
 
   const signerRows = await db
     .select()
@@ -140,6 +144,14 @@ async function AdminDashboard() {
       </div>
 
       <FreeUsageBanner />
+
+      <div className="mb-8">
+        <AdminAppsSection initialApps={myApps} />
+      </div>
+
+      <div className="mb-8">
+        <DashboardUsagePanel />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         {stats.map((stat) => (
@@ -285,6 +297,10 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
       <FreeUsageBanner />
 
       <MyAppsSection apps={apps} />
+
+      <div className="mt-6">
+        <DashboardUsagePanel />
+      </div>
 
       <div className="mt-6">
         <DocumentationCard />
