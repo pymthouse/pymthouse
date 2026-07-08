@@ -48,18 +48,24 @@ async function verifyTurnkeyWebhook(
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const tag = "[turnkey-balance]";
   try {
     const rawBody = await request.text();
+    console.log(tag, "POST received, body length:", rawBody.length);
+
     const verified = await verifyTurnkeyWebhook(request, rawBody);
     if (!verified.ok) {
+      console.warn(tag, "signature rejected:", verified.reason);
       return Response.json(
         { status: "error", reason: verified.reason },
         { status: 401 },
       );
     }
+    console.log(tag, "signature verified");
 
     const payload = parseTurnkeyBalanceWebhookPayload(rawBody);
     if (!payload) {
+      console.warn(tag, "invalid JSON payload");
       return Response.json({ status: "ignored", reason: "invalid_json" });
     }
 
@@ -69,6 +75,7 @@ export async function POST(request: Request): Promise<Response> {
       decision = await shouldProcessTurnkeyDeposit(payload, config);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(tag, "shouldProcessTurnkeyDeposit threw:", message);
       return Response.json(
         { status: "error", reason: message },
         { status: 503 },
@@ -76,8 +83,11 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     if (decision.action === "skip") {
+      console.log(tag, "skipped:", decision.reason);
       return Response.json({ status: "ignored", reason: decision.reason });
     }
+
+    console.log(tag, "decision: fund", decision.idempotencyKey, "amount:", decision.amountWei.toString(), "fund:", decision.fundWei.toString());
 
     const claim = await claimTurnkeyFundingEvent({
       idempotencyKey: decision.idempotencyKey,
@@ -88,11 +98,15 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     if (claim.action === "skip") {
+      console.log(tag, "claim skipped:", claim.reason);
       return Response.json({ status: "ignored", reason: claim.reason });
     }
 
+    console.log(tag, "claimed eventId:", claim.eventId, "— calling fundDepositAndReserve");
+
     try {
       await executeTurnkeyFunding(decision.fundWei, claim.eventId);
+      console.log(tag, "funded successfully, eventId:", claim.eventId);
       return Response.json({
         status: "funded",
         eventId: claim.eventId,
@@ -100,6 +114,7 @@ export async function POST(request: Request): Promise<Response> {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(tag, "executeTurnkeyFunding failed:", message);
       try {
         await markTurnkeyFundingFailed(claim.eventId, message);
       } catch {
@@ -112,6 +127,7 @@ export async function POST(request: Request): Promise<Response> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error(tag, "unhandled error:", message);
     return Response.json(
       { status: "error", reason: message },
       { status: 500 },
