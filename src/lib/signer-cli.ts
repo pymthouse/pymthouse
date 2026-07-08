@@ -58,6 +58,12 @@ export interface SignerCliStatus {
 async function cliFetch(
   path: string,
   parse: "json" | "text",
+  options?: {
+    method?: "GET" | "POST";
+    body?: string;
+    contentType?: string;
+    timeoutMs?: number;
+  },
 ): Promise<string> {
   const url = `${getSignerCliUrl()}${path}`;
   const headers: Record<string, string> = {};
@@ -65,16 +71,25 @@ async function cliFetch(
   if (bearer) {
     headers.Authorization = `Bearer ${bearer}`;
   }
+  if (options?.contentType) {
+    headers["Content-Type"] = options.contentType;
+  }
+  const method = options?.method ?? "GET";
   const res = await fetch(url, {
+    method,
     headers,
-    signal: AbortSignal.timeout(5000),
+    body: options?.body,
+    signal: AbortSignal.timeout(options?.timeoutMs ?? 5000),
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`CLI GET ${path} failed: ${res.status}`);
+    const detail = (await res.text()).trim();
+    throw new Error(
+      `CLI ${method} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ""}`,
+    );
   }
   const text = await res.text();
-  if (!text) throw new Error(`CLI GET ${path} returned empty body`);
+  if (!text) throw new Error(`CLI ${method} ${path} returned empty body`);
   if (parse === "text") {
     return text;
   }
@@ -157,6 +172,26 @@ export async function getTokenBalance(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * POST /fundDepositAndReserve — funds TicketBroker deposit and reserve.
+ * Blocks until the transaction is mined (go-livepeer CheckTx).
+ */
+export async function fundDepositAndReserve(
+  depositWei: string,
+  reserveWei: string,
+): Promise<void> {
+  const body = new URLSearchParams({
+    depositAmount: depositWei,
+    reserveAmount: reserveWei,
+  }).toString();
+  await cliFetch("/fundDepositAndReserve", "text", {
+    method: "POST",
+    body,
+    contentType: "application/x-www-form-urlencoded",
+    timeoutMs: 300_000,
+  });
 }
 
 /**

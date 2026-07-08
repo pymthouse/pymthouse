@@ -603,6 +603,30 @@ export const authAuditLog = pgTable("auth_audit_log", {
     .$defaultFn(() => new Date().toISOString()),
 });
 
+/** Idempotency audit for Turnkey balance → TicketBroker auto-funding. */
+export const turnkeyFundingEvents = pgTable(
+  "turnkey_funding_events",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    txHash: text("tx_hash"),
+    address: text("address").notNull(),
+    amountWei: text("amount_wei").notNull(),
+    fundedWei: text("funded_wei"),
+    status: text("status").notNull().default("pending"),
+    error: text("error"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_turnkey_funding_events_idempotency_key").on(t.idempotencyKey),
+  ],
+);
+
 export const adminInvites = pgTable("admin_invites", {
   id: text("id").primaryKey(),
   code: text("code").notNull().unique(),
@@ -731,6 +755,8 @@ export type PlanCapabilityBundle = typeof planCapabilityBundles.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type AuthAuditLog = typeof authAuditLog.$inferSelect;
+export type TurnkeyFundingEvent = typeof turnkeyFundingEvents.$inferSelect;
+export type NewTurnkeyFundingEvent = typeof turnkeyFundingEvents.$inferInsert;
 export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
 export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;
