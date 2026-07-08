@@ -1,4 +1,4 @@
-import { OIDC_MOUNT_PATH } from "@/lib/oidc/issuer-urls";
+import { getIssuer, getPublicOrigin, OIDC_MOUNT_PATH } from "@/lib/oidc/issuer-urls";
 import { generateOpenApiDocument } from "@/lib/openapi/registry";
 import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
@@ -23,7 +23,7 @@ function resolveApiServerUrl(): string {
       /* fall through */
     }
   }
-  return "http://localhost:3001";
+  return getPublicOrigin();
 }
 
 function resolveOidcIssuerUrl(): string {
@@ -31,7 +31,7 @@ function resolveOidcIssuerUrl(): string {
   if (issuer) {
     return trimTrailingSlashes(issuer);
   }
-  return `${resolveApiServerUrl()}${OIDC_MOUNT_PATH}`;
+  return getIssuer();
 }
 
 export function buildOpenApiDocument() {
