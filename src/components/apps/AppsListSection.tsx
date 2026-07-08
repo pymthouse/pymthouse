@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import AppStatusBadge from "@/components/apps/AppStatusBadge";
 import CopyIdButton from "@/components/apps/CopyIdButton";
@@ -48,7 +49,34 @@ export type AppsListSectionProps = Readonly<{
   headerRight?: React.ReactNode;
   showOwner?: boolean;
   loading?: boolean;
+  /** Number of apps shown per page (default 5); apps are pre-sorted by the caller. */
+  pageSize?: number;
 }>;
+
+function PageNavButton({
+  direction,
+  disabled,
+  onClick,
+}: Readonly<{ direction: "prev" | "next"; disabled: boolean; onClick: () => void }>) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={direction === "prev" ? "Previous page" : "Next page"}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-zinc-700 disabled:hover:text-zinc-400"
+    >
+      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d={direction === "prev" ? "M15 19l-7-7 7-7" : "M9 5l7 7-7 7"}
+        />
+      </svg>
+    </button>
+  );
+}
 
 export default function AppsListSection({
   apps,
@@ -59,9 +87,17 @@ export default function AppsListSection({
   headerRight,
   showOwner = false,
   loading = false,
+  pageSize = 5,
 }: AppsListSectionProps) {
   const { mintState, handleGetApiKey, closeMintDialog } =
     useOwnerApiKeyMint<UserAppSummary>();
+  const [page, setPage] = useState(0);
+
+  const totalPages = Math.max(1, Math.ceil(apps.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pageStart = currentPage * pageSize;
+  const pageApps = apps.slice(pageStart, pageStart + pageSize);
+  const showPagination = !loading && apps.length > pageSize;
 
   return (
     <>
@@ -133,7 +169,7 @@ export default function AppsListSection({
           </div>
         ) : (
           <ul className="divide-y divide-zinc-800/60">
-            {apps.map((app) => (
+            {pageApps.map((app) => (
               <li key={app.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-white/[0.03] transition-colors group">
                 <Link
                   href={`/apps/${app.id}`}
@@ -199,6 +235,30 @@ export default function AppsListSection({
               </li>
             ))}
           </ul>
+        )}
+
+        {showPagination && (
+          <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] px-5 py-3">
+            <p className="text-xs text-zinc-500">
+              Showing {pageStart + 1}–{Math.min(pageStart + pageSize, apps.length)} of{" "}
+              {apps.length}
+            </p>
+            <div className="flex items-center gap-2">
+              <PageNavButton
+                direction="prev"
+                disabled={currentPage === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              />
+              <span className="text-xs font-medium text-zinc-500 tabular-nums">
+                {currentPage + 1} / {totalPages}
+              </span>
+              <PageNavButton
+                direction="next"
+                disabled={currentPage >= totalPages - 1}
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              />
+            </div>
+          </div>
         )}
       </section>
 

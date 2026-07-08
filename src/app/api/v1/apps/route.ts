@@ -17,7 +17,7 @@ import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
 import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import { listAllAppsForAdmin } from "@/lib/user-apps";
+import { listAllAppsForAdmin, sortAppsByPriority } from "@/lib/user-apps";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const ADMIN_ROLES = new Set(["admin", "operator"]);
@@ -100,9 +100,11 @@ export async function GET(request: NextRequest) {
     ownerExternalUserId: null,
   }));
 
-  const apps = [...ownedWithFlags, ...memberWithFlags].filter(
-    (app, index, rows) => rows.findIndex((row) => row.id === app.id) === index,
-  );
+  const dedupedApps = [...ownedWithFlags, ...memberWithFlags]
+    .filter((app, index, rows) => rows.findIndex((row) => row.id === app.id) === index)
+    .filter((app): app is typeof app & { id: string } => Boolean(app.id));
+
+  const apps = await sortAppsByPriority(dedupedApps);
 
   return NextResponse.json({ apps });
 }

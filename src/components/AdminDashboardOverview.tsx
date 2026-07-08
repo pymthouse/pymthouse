@@ -88,19 +88,17 @@ export default function AdminDashboardOverview({
         />
       </div>
 
-      <div className="mb-8">
-        <AdminAppsSection
-          initialApps={myApps}
-          showAll={showAllApps}
-          onToggleShowAll={handleToggleShowAll}
-        />
-      </div>
-
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         <StatCard stat={signerStat} />
         {showAllApps && <StatCard stat={volumeStat} />}
         {showAllApps && <StatCard stat={revenueStat} />}
       </div>
+
+      <AdminAppsSection
+        initialApps={myApps}
+        showAll={showAllApps}
+        onToggleShowAll={handleToggleShowAll}
+      />
     </>
   );
 }

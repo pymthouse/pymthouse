@@ -53,6 +53,7 @@ export default function AdminAppsSection({
   return (
     <div className="space-y-2">
       <AppsListSection
+        key={showAll ? "all" : "own"}
         apps={apps}
         title="Apps"
         summaryText={summaryText(apps.length, showAll)}
