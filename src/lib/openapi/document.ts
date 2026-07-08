@@ -5,7 +5,11 @@ function resolveApiServerUrl(): string {
   const configured = process.env.NEXTAUTH_URL?.trim() || "http://localhost:3001";
   try {
     return new URL(configured).origin;
-  } catch {
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `Invalid NEXTAUTH_URL for OpenAPI server URL (${JSON.stringify(configured)}): ${detail}; falling back to http://localhost:3001`,
+    );
     return "http://localhost:3001";
   }
 }
