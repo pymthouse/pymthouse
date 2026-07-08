@@ -167,7 +167,8 @@ ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
 EXPOSE 8080 8082
 
 # Production / Railway: livepeer from official Docker image (default final stage).
-FROM livepeer/go-livepeer:sha-33380bc9088cbd26b3797387dc6a783a68a69f84 AS livepeer-prod
+ARG LIVEPEER_IMAGE
+FROM ${LIVEPEER_IMAGE} AS livepeer-prod
 
 FROM gateway AS signer-dmz
 
