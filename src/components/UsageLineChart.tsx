@@ -12,6 +12,8 @@ interface UsageLineChartProps {
   /** Label for tooltip / aria (e.g. "Requests / day") */
   valueLabel?: string;
   className?: string;
+  /** Pixel height of the chart (default 200; use a smaller value for compact panels). */
+  height?: number;
 }
 
 function utcTodayKey(): string {
@@ -70,13 +72,13 @@ export default function UsageLineChart({
   data,
   valueLabel = "Requests",
   className = "",
+  height = 200,
 }: UsageLineChartProps) {
   const width = 720;
-  const height = 200;
   const padLeft = 44;
   const padRight = 12;
   const padTop = 12;
-  const padBottom = 26;
+  const padBottom = height < 140 ? 20 : 26;
   const plotW = width - padLeft - padRight;
   const plotH = height - padTop - padBottom;
 

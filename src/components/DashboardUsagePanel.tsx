@@ -1,9 +1,7 @@
 import Link from "next/link";
 import UsageLineChart from "@/components/UsageLineChart";
-import {
-  formatBillingPeriod,
-  getBillingUsageDashboardData,
-} from "@/lib/billing-usage-dashboard-data";
+import { formatBillingPeriod } from "@/lib/billing-usage-dashboard-data";
+import { getDashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 /**
@@ -12,19 +10,19 @@ import { formatUsdMicrosString } from "@/lib/format-usd-micros";
  * apps on the dedicated Usage page instead.
  */
 export default async function DashboardUsagePanel() {
-  const result = await getBillingUsageDashboardData(undefined, { ownAppsOnly: true });
+  const summary = await getDashboardUsageSummary(true);
 
-  if (!result.ok) {
+  if (!summary) {
     return null;
   }
 
-  const { cycle, chartData, totalRequests, totalNetworkFeeUsdMicros, orderedApps, appsWithUsage } =
-    result.data;
+  const { cycle, chartData, totalRequests, totalNetworkFeeUsdMicros, appsCount, appsWithUsage } =
+    summary;
 
-  const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros.toString(), 4) ?? "$0";
+  const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 4) ?? "$0";
 
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
+    <div className="max-h-[25vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div>
           <h3 className="font-semibold text-zinc-100">Your usage this billing period</h3>
@@ -45,9 +43,7 @@ export default async function DashboardUsagePanel() {
           <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
             Apps
           </p>
-          <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">
-            {orderedApps.length}
-          </p>
+          <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">{appsCount}</p>
           <p className="text-xs text-zinc-600 mt-0.5">{appsWithUsage} with usage</p>
         </div>
         <div>
@@ -68,12 +64,12 @@ export default async function DashboardUsagePanel() {
         </div>
       </div>
 
-      {orderedApps.length === 0 ? (
+      {appsCount === 0 ? (
         <p className="text-sm text-zinc-500">
           Create an app to start tracking your personal usage here.
         </p>
       ) : (
-        <UsageLineChart data={chartData} valueLabel="Requests / day" />
+        <UsageLineChart data={chartData} valueLabel="Requests / day" height={110} />
       )}
     </div>
   );

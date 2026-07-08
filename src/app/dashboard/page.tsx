@@ -4,17 +4,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { redirect } from "next/navigation";
 import { db } from "@/db/index";
-import { signerConfig, transactions, endUsers } from "@/db/schema";
+import { signerConfig, transactions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { listUserAccessibleApps } from "@/lib/user-apps";
+import { getDashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import MyAppsSection from "@/components/apps/MyAppsSection";
-import AdminAppsSection from "@/components/apps/AdminAppsSection";
+import AdminDashboardOverview, { type AdminStatCard } from "@/components/AdminDashboardOverview";
 import DashboardUsagePanel from "@/components/DashboardUsagePanel";
-import {
-  ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
-  countActiveStreamsByRecentPayment,
-  getActiveStreamSessionsByRecentPayment,
-} from "@/lib/active-streams";
 import { syncSignerStatus } from "@/lib/signer-proxy";
 
 function formatWei(wei: string): string {
@@ -42,13 +38,17 @@ export default async function DashboardPage() {
 async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
   await syncSignerStatus();
 
-  const myApps = userId ? await listUserAccessibleApps(userId) : [];
-
-  const signerRows = await db
-    .select()
-    .from(signerConfig)
-    .where(eq(signerConfig.id, "default"))
-    .limit(1);
+  const [myApps, initialUsage, signerRows, allTransactions] = await Promise.all([
+    userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
+    getDashboardUsageSummary(true),
+    db.select().from(signerConfig).where(eq(signerConfig.id, "default")).limit(1),
+    db
+      .select({
+        amountWei: transactions.amountWei,
+        platformCutWei: transactions.platformCutWei,
+      })
+      .from(transactions),
+  ]);
   const signer = signerRows[0];
 
   const signerOnline = signer?.status === "running";
@@ -59,19 +59,6 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
     signerSub = "connected";
   }
 
-  const [activeStreamCount, recentActiveSessions, allTransactions, allEndUsers] =
-    await Promise.all([
-      countActiveStreamsByRecentPayment(),
-      getActiveStreamSessionsByRecentPayment(5),
-      db
-        .select({
-          amountWei: transactions.amountWei,
-          platformCutWei: transactions.platformCutWei,
-        })
-        .from(transactions),
-      db.select().from(endUsers),
-    ]);
-
   let totalFeeWei = 0n;
   let totalPlatformCutWei = 0n;
   for (const txn of allTransactions) {
@@ -79,50 +66,32 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
     totalPlatformCutWei += BigInt(txn.platformCutWei || "0");
   }
 
-  const stats = [
-    {
-      label: "Signer",
-      value: signerOnline ? "Online" : signer?.status || "N/A",
-      sub: signerSub,
-      color: signerOnline ? "text-emerald-400" : "text-zinc-400",
-      glow: signerOnline
-        ? "border-emerald-500/20 shadow-[inset_0_1px_0_rgba(52,211,153,0.06)]"
-        : "border-white/[0.06]",
-      live: signerOnline,
-    },
-    {
-      label: "Active Streams",
-      value: activeStreamCount.toString(),
-      sub: ACTIVE_STREAM_PAYMENT_WINDOW_LABEL,
-      color: "text-blue-400",
-      glow: "border-blue-500/20 shadow-[inset_0_1px_0_rgba(96,165,250,0.06)]",
-      live: activeStreamCount > 0,
-    },
-    {
-      label: "App Users",
-      value: allEndUsers.length.toString(),
-      sub: `${allEndUsers.filter((u) => u.isActive).length} active`,
-      color: "text-cyan-400",
-      glow: "border-cyan-500/15 shadow-[inset_0_1px_0_rgba(34,211,238,0.05)]",
-      live: false,
-    },
-    {
-      label: "Total Volume",
-      value: formatWei(totalFeeWei.toString()),
-      sub: `${allTransactions.length} transactions`,
-      color: "text-amber-400",
-      glow: "border-amber-500/15 shadow-[inset_0_1px_0_rgba(251,191,36,0.05)]",
-      live: false,
-    },
-    {
-      label: "Platform Revenue",
-      value: formatWei(totalPlatformCutWei.toString()),
-      sub: "total cut earned",
-      color: "text-purple-400",
-      glow: "border-purple-500/15 shadow-[inset_0_1px_0_rgba(167,139,250,0.05)]",
-      live: false,
-    },
-  ];
+  const signerStat: AdminStatCard = {
+    label: "Signer",
+    value: signerOnline ? "Online" : signer?.status || "N/A",
+    sub: signerSub,
+    color: signerOnline ? "text-emerald-400" : "text-zinc-400",
+    glow: signerOnline
+      ? "border-emerald-500/20 shadow-[inset_0_1px_0_rgba(52,211,153,0.06)]"
+      : "border-white/[0.06]",
+    live: signerOnline,
+  };
+  const volumeStat: AdminStatCard = {
+    label: "Total Volume",
+    value: formatWei(totalFeeWei.toString()),
+    sub: `${allTransactions.length} transactions across the platform`,
+    color: "text-amber-400",
+    glow: "border-amber-500/15 shadow-[inset_0_1px_0_rgba(251,191,36,0.05)]",
+    live: false,
+  };
+  const revenueStat: AdminStatCard = {
+    label: "Platform Revenue",
+    value: formatWei(totalPlatformCutWei.toString()),
+    sub: "total cut earned",
+    color: "text-purple-400",
+    glow: "border-purple-500/15 shadow-[inset_0_1px_0_rgba(167,139,250,0.05)]",
+    live: false,
+  };
 
   return (
     <>
@@ -145,109 +114,13 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
 
       <FreeUsageBanner />
 
-      <div className="mb-8">
-        <AdminAppsSection initialApps={myApps} />
-      </div>
-
-      <div className="mb-8">
-        <DashboardUsagePanel />
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-        {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className={`relative overflow-hidden rounded-xl border bg-white/[0.02] backdrop-blur-sm p-5 transition-colors hover:bg-white/[0.035] ${stat.glow}`}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-                {stat.label}
-              </p>
-              {stat.live && (
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-                </span>
-              )}
-            </div>
-            <p className={`text-2xl font-bold tabular-nums leading-none ${stat.color}`}>
-              {stat.value}
-            </p>
-            <p className="text-xs text-zinc-600 mt-2 leading-snug">{stat.sub}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
-          <h3 className="font-semibold text-zinc-200 mb-4">App Users</h3>
-          {allEndUsers.length === 0 ? (
-            <p className="text-zinc-500 text-sm">
-              No app users yet. Create one from the Users page.
-            </p>
-          ) : (
-            <div className="divide-y divide-zinc-800/60">
-              {allEndUsers.slice(0, 5).map((user) => (
-                <div
-                  key={user.id}
-                  className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0 text-sm"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        user.isActive ? "bg-emerald-400" : "bg-zinc-600"
-                      }`}
-                    />
-                    <span className="text-zinc-300">
-                      {user.name || user.email || user.id.slice(0, 8)}
-                    </span>
-                  </div>
-                  <span className="text-zinc-500 text-xs font-mono">
-                    {user.externalUserId || user.id.slice(0, 8)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-zinc-200">Recent Streams</h3>
-            {activeStreamCount > 0 && (
-              <span className="flex items-center gap-1.5 text-xs text-blue-400 font-medium">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500" />
-                </span>
-                {" "}
-                Live
-              </span>
-            )}
-          </div>
-          {recentActiveSessions.length === 0 ? (
-            <p className="text-zinc-500 text-sm">No active streams</p>
-          ) : (
-            <div className="divide-y divide-zinc-800/60">
-              {recentActiveSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0 text-sm"
-                >
-                  <span className="text-zinc-300 font-mono text-xs">
-                    {session.manifestId.length > 16
-                      ? `${session.manifestId.slice(0, 12)}…`
-                      : session.manifestId}
-                  </span>
-                  <span className="text-emerald-400/80 text-xs font-mono tabular-nums">
-                    {formatWei(session.totalFeeWei)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <AdminDashboardOverview
+        myApps={myApps}
+        initialUsage={initialUsage}
+        signerStat={signerStat}
+        volumeStat={volumeStat}
+        revenueStat={revenueStat}
+      />
     </>
   );
 }

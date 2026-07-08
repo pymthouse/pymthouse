@@ -16,8 +16,13 @@ function summaryText(count: number, showingAll: boolean): string {
 
 export default function AdminAppsSection({
   initialApps,
-}: Readonly<{ initialApps: UserAppSummary[] }>) {
-  const [showAll, setShowAll] = useState(false);
+  showAll,
+  onToggleShowAll,
+}: Readonly<{
+  initialApps: UserAppSummary[];
+  showAll: boolean;
+  onToggleShowAll: (next: boolean) => void;
+}>) {
   const [allApps, setAllApps] = useState<UserAppSummary[] | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +43,7 @@ export default function AdminAppsSection({
 
   const handleToggle = () => {
     const next = !showAll;
-    setShowAll(next);
+    onToggleShowAll(next);
     if (next) loadAllApps();
   };
 
