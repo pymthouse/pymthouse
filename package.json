@@ -39,6 +39,7 @@
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@braintree/sanitize-url": "^7.1.2",
+    "@livepeer/clearinghouse-identity-webhook": "file:../clearinghouse/identity-webhook",
     "@openmeter/sdk": "^1.0.0-beta.228",
     "@pymthouse/builder-sdk": "^0.5.0",
     "@tailwindcss/postcss": "^4.1.18",

@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     "oidc-provider",
     "@pymthouse/builder-sdk",
     "@pymthouse/builder-sdk/signer/server",
-    "@pymthouse/builder-sdk/signer/webhook",
+    "@livepeer/clearinghouse-identity-webhook",
   ],
   webpack: (config, { isServer }) => {
     if (isServer) {
