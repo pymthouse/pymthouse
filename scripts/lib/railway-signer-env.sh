@@ -24,9 +24,17 @@ railway_apply_signer_env() {
     "OIDC_AUDIENCE=${audience}"
     "JWKS_URI=${jwks_uri}"
     "SIGNER_DMZ_ENABLE_CLI_LISTENER=${SIGNER_DMZ_ENABLE_CLI_LISTENER:-0}"
+    "SIGNER_REMOTE_DISCOVERY=${SIGNER_REMOTE_DISCOVERY:-0}"
     "TURNKEY_WALLET_NAME=${TURNKEY_WALLET_NAME:-livepeer-remote-signer}"
     "TURNKEY_API_HOST=${TURNKEY_API_HOST:-api.turnkey.com}"
   )
+
+  if [[ -n "${ORCH_WEBHOOK_URL:-}" ]]; then
+    signer_args+=("ORCH_WEBHOOK_URL=${ORCH_WEBHOOK_URL}")
+  fi
+  if [[ -n "${LIVE_AI_CAP_REPORT_INTERVAL:-}" ]]; then
+    signer_args+=("LIVE_AI_CAP_REPORT_INTERVAL=${LIVE_AI_CAP_REPORT_INTERVAL}")
+  fi
 
   if [[ -n "${TURNKEY_ORG_ID:-}" ]]; then
     signer_args+=("TURNKEY_ORG_ID=${TURNKEY_ORG_ID}")
