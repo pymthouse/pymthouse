@@ -1,0 +1,87 @@
+name: Bump package version
+
+# Bumps package.json / package-lock.json on main via PR. After merge, tag and push
+# from your machine so deploy workflows fire (GITHUB_TOKEN tag pushes do not re-trigger).
+#
+# See docs/vercel-deployment.md — Production release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >
+          Semver bump keyword (patch, minor, major) or exact version (e.g. 0.3.2).
+          Passed to `npm version --no-git-tag-version`.
+        required: true
+        default: patch
+        type: string
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump package version
+        id: bump
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          npm version "${{ inputs.version }}" --no-git-tag-version
+          NEW=$(node -p "require('./package.json').version")
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Bumped $CURRENT → $NEW"
+
+      - name: Create branch, commit, and open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="release/v${{ steps.bump.outputs.version }}"
+          git checkout -b "$BRANCH"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to v${{ steps.bump.outputs.version }}"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "Release v${{ steps.bump.outputs.version }}" \
+            --body "$(cat <<EOF
+          ## Version bump: v${{ steps.bump.outputs.version }}
+
+          - \`package.json\`: \`${{ steps.bump.outputs.current }}\` → \`${{ steps.bump.outputs.version }}\`
+
+          ### After merge
+
+          Tag and push from your machine (user push triggers production deploy workflows):
+
+          \`\`\`bash
+          git pull origin main
+          git tag v${{ steps.bump.outputs.version }}
+          git push origin v${{ steps.bump.outputs.version }}
+          \`\`\`
+
+          Optionally: \`gh release create v${{ steps.bump.outputs.version }} --generate-notes\`
+
+          ---
+          _Automated version bump via GitHub Actions_
+          EOF
+          )" \
+            --base main \
+            --head "$BRANCH"
