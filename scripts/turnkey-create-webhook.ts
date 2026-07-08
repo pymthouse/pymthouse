@@ -15,14 +15,18 @@
  *   TURNKEY_FUNDING_WEBHOOK_URL (default ${NEXTAUTH_URL}/webhooks/turnkey-balance)
  *   TURNKEY_FUNDING_WEBHOOK_NAME (default pymthouse-ticketbroker-funding)
  *
+ * Minimum deposit (defaults; see docs/turnkey-ticket-funding.md):
+ *   fundWei = depositWei - TICKET_FUNDING_GAS_BUFFER_WEI must be > 0 and >= TICKET_FUNDING_MIN_WEI.
+ *   Default buffer: 0.0001 ETH, default min fund: 0.001 ETH → send >= ~0.0011 ETH (recommend >= 0.002 ETH).
+ *
  * End-to-end verification (staging/prod):
  *   1. Deploy pymthouse with SIGNER_CLI_URL pointing at /__signer_cli on Railway.
- *   2. Run this script to register the webhook with Turnkey.
- *   3. Send a small ETH amount (> TICKET_FUNDING_MIN_WEI + buffer) to SIGNER_ETH_ADDR
- *      on Arbitrum One (0x6CAE...7260 in production).
- *   4. Confirm POST /webhooks/turnkey-balance returns { status: "funded" } in Vercel logs.
- *   5. Check turnkey_funding_events row status=funded for the idempotency key.
- *   6. Confirm deposit increased via GET /api/v1/signer/cli-status (senderInfo.deposit).
+ *   2. Run db:migrate on the target Neon branch (Vercel skips migrations on deploy).
+ *   3. Run this script to register the webhook with Turnkey.
+ *   4. Send >= 0.002 ETH on Arbitrum One to SIGNER_ETH_ADDR.
+ *   5. Confirm POST /webhooks/turnkey-balance logs "funded successfully" (ignore dust skips).
+ *   6. Check turnkey_funding_events row status=funded for the idempotency key.
+ *   7. Confirm deposit increased via GET /api/v1/signer/cli-status (senderInfo.deposit).
  */
 
 import "./load-env-first";
