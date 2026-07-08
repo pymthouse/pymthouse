@@ -1,43 +1,19 @@
-import { getIssuer, getPublicOrigin, OIDC_MOUNT_PATH } from "@/lib/oidc/issuer-urls";
+import { OIDC_MOUNT_PATH } from "@/lib/oidc/issuer-urls";
 import { generateOpenApiDocument } from "@/lib/openapi/registry";
-import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 function resolveApiServerUrl(): string {
-  const issuer = process.env.PYMTHOUSE_ISSUER_URL?.trim();
-  if (issuer) {
-    try {
-      const url = new URL(issuer);
-      if (url.pathname.endsWith(OIDC_MOUNT_PATH)) {
-        url.pathname = url.pathname.slice(0, -OIDC_MOUNT_PATH.length) || "/";
-      }
-      return url.origin;
-    } catch {
-      /* fall through */
-    }
+  const configured = process.env.NEXTAUTH_URL?.trim() || "http://localhost:3001";
+  try {
+    return new URL(configured).origin;
+  } catch {
+    return "http://localhost:3001";
   }
-  const base = process.env.PYMTHOUSE_BASE_URL?.trim();
-  if (base) {
-    try {
-      return new URL(base).origin;
-    } catch {
-      /* fall through */
-    }
-  }
-  return getPublicOrigin();
-}
-
-function resolveOidcIssuerUrl(): string {
-  const issuer = process.env.PYMTHOUSE_ISSUER_URL?.trim();
-  if (issuer) {
-    return trimTrailingSlashes(issuer);
-  }
-  return getIssuer();
 }
 
 export function buildOpenApiDocument() {
   const doc = generateOpenApiDocument();
   const serverUrl = resolveApiServerUrl();
-  const oidcIssuer = resolveOidcIssuerUrl();
+  const oidcIssuer = `${serverUrl}${OIDC_MOUNT_PATH}`;
 
   doc.servers = [{ url: serverUrl, description: "PymtHouse API origin" }];
 

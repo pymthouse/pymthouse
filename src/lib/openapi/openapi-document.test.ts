@@ -16,13 +16,13 @@ test("buildOpenApiDocument produces OpenAPI 3.1 with credential routes", () => {
 
 test("buildOpenApiDocument servers follow NEXTAUTH_URL", () => {
   const prevNextAuth = process.env.NEXTAUTH_URL;
-  const prevOidcIssuer = process.env.OIDC_ISSUER;
   const prevPymthouseIssuer = process.env.PYMTHOUSE_ISSUER_URL;
   const prevPymthouseBase = process.env.PYMTHOUSE_BASE_URL;
+  const prevOidcIssuer = process.env.OIDC_ISSUER;
   process.env.NEXTAUTH_URL = "https://pymthouse.com";
-  delete process.env.OIDC_ISSUER;
-  delete process.env.PYMTHOUSE_ISSUER_URL;
-  delete process.env.PYMTHOUSE_BASE_URL;
+  process.env.PYMTHOUSE_ISSUER_URL = "http://localhost:3001/api/v1/oidc";
+  process.env.PYMTHOUSE_BASE_URL = "http://localhost:3001";
+  process.env.OIDC_ISSUER = "http://localhost:3001/api/v1/oidc";
   try {
     const doc = buildOpenApiDocument();
     assert.equal(doc.servers?.[0]?.url, "https://pymthouse.com");
@@ -36,11 +36,6 @@ test("buildOpenApiDocument servers follow NEXTAUTH_URL", () => {
     } else {
       process.env.NEXTAUTH_URL = prevNextAuth;
     }
-    if (prevOidcIssuer === undefined) {
-      delete process.env.OIDC_ISSUER;
-    } else {
-      process.env.OIDC_ISSUER = prevOidcIssuer;
-    }
     if (prevPymthouseIssuer === undefined) {
       delete process.env.PYMTHOUSE_ISSUER_URL;
     } else {
@@ -50,6 +45,11 @@ test("buildOpenApiDocument servers follow NEXTAUTH_URL", () => {
       delete process.env.PYMTHOUSE_BASE_URL;
     } else {
       process.env.PYMTHOUSE_BASE_URL = prevPymthouseBase;
+    }
+    if (prevOidcIssuer === undefined) {
+      delete process.env.OIDC_ISSUER;
+    } else {
+      process.env.OIDC_ISSUER = prevOidcIssuer;
     }
   }
 });
