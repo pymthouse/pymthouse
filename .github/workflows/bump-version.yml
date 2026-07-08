@@ -43,10 +43,12 @@ jobs:
 
       - name: Bump package version
         id: bump
+        env:
+          VERSION_BUMP: ${{ inputs.version }}
         run: |
           CURRENT=$(node -p "require('./package.json').version")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          npm version "${{ inputs.version }}" --no-git-tag-version
+          npm version "$VERSION_BUMP" --no-git-tag-version
           NEW=$(node -p "require('./package.json').version")
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
           echo "Bumped $CURRENT → $NEW"
