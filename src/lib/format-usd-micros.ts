@@ -27,3 +27,26 @@ export function formatUsdMicrosString(
     return null;
   }
 }
+
+/**
+ * Always returns a `$…` string (including `$0`) for allowance / meter UI.
+ * Adaptive fraction digits match the Livepeer dashboard usage strip.
+ */
+export function formatUsdMicrosDisplay(microsStr: string | undefined | null): string {
+  if (microsStr == null || microsStr === "" || !/^-?\d+$/.test(microsStr.trim())) {
+    return "$0";
+  }
+  try {
+    const t = microsStr.trim();
+    const negative = t.startsWith("-");
+    const abs = BigInt(negative ? t.slice(1) : t);
+    const usd = Number(abs) / 1_000_000;
+    let digits = 4;
+    if (usd >= 1) digits = 2;
+    else if (usd >= 0.01) digits = 3;
+    const formatted = usd.toFixed(digits).replace(/\.?0+$/, "");
+    return `${negative ? "-" : ""}$${formatted === "" ? "0" : formatted}`;
+  } catch {
+    return "$0";
+  }
+}

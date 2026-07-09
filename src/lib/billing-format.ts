@@ -22,3 +22,14 @@ export function formatBillingPeriod(iso: string): string {
     return iso;
   }
 }
+
+/** Short label for when the current billing period resets (e.g. "Jul 31"). */
+export function formatPeriodResetLabel(periodEndIso: string): string {
+  try {
+    const end = new Date(periodEndIso);
+    if (Number.isNaN(end.getTime())) return "next period";
+    return end.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "next period";
+  }
+}

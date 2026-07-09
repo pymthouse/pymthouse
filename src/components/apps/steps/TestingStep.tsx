@@ -110,7 +110,7 @@ const TOKEN_EXCHANGE_GRANT =
 const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
-function buildSignerBearerCurl(origin: string, publicClientId: string): string {
+function buildSignerTokenExchangeCurl(origin: string, publicClientId: string): string {
   const encodedClientId = encodeURIComponent(publicClientId);
   return String.raw`curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -119,13 +119,126 @@ function buildSignerBearerCurl(origin: string, publicClientId: string): string {
   -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
 }
 
-function buildSignerJwtExchangeCurl(origin: string, publicClientId: string): string {
-  const encodedClientId = encodeURIComponent(publicClientId);
-  return String.raw`curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
+function buildDeviceAuthorizeCurl(origin: string, publicClientId: string): string {
+  return String.raw`curl -sS -X POST ${origin}/api/v1/oidc/device/auth \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
-  -d "subject_token=${publicClientId}.pmth_YOUR_API_KEY" \
-  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
+  -d "client_id=${publicClientId}" \
+  -d "scope=openid sign:job"`;
+}
+
+function buildDevicePollCurl(origin: string, publicClientId: string): string {
+  return String.raw`curl -sS -X POST ${origin}/api/v1/oidc/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=${DEVICE_CODE_GRANT}" \
+  -d "device_code=DEVICE_CODE_FROM_STEP_1" \
+  -d "client_id=${publicClientId}"`;
+}
+
+function buildBearerUsageCurl(publicClientId: string): string {
+  return String.raw`curl -sS https://your-signer.example/path \
+  -H "Authorization: Bearer ${publicClientId}.pmth_YOUR_API_KEY"`;
+}
+
+type CurlSnippet = Readonly<{
+  id: string;
+  title: string;
+  body: string;
+}>;
+
+function resolveCurlSnippetsForSelection(input: {
+  activeKind: M2mTokenTestKind;
+  useBearerSigning: boolean;
+  origin: string;
+  m2mClientId: string;
+  publicClientId: string | null;
+  adminScopes: string;
+}): CurlSnippet[] {
+  const {
+    activeKind,
+    useBearerSigning,
+    origin,
+    m2mClientId,
+    publicClientId,
+    adminScopes,
+  } = input;
+  if (activeKind === "admin") {
+    return [
+      {
+        id: "admin-cc",
+        title: "Client credentials (administrative)",
+        body: buildM2mAdminCurl(origin, m2mClientId, adminScopes),
+      },
+    ];
+  }
+
+  if (useBearerSigning && publicClientId) {
+    return [
+      {
+        id: "bearer-usage",
+        title: "2. Use the API key as Bearer",
+        body: buildBearerUsageCurl(publicClientId),
+      },
+      {
+        id: "api-key-exchange",
+        title: "3. Exchange API key for signer JWT (optional)",
+        body: buildSignerTokenExchangeCurl(origin, publicClientId),
+      },
+    ];
+  }
+
+  if (publicClientId) {
+    return [
+      {
+        id: "device-auth",
+        title: "1. Start device authorization",
+        body: buildDeviceAuthorizeCurl(origin, publicClientId),
+      },
+      {
+        id: "device-poll",
+        title: "2. Poll for signer JWT",
+        body: buildDevicePollCurl(origin, publicClientId),
+      },
+    ];
+  }
+
+  return [
+    {
+      id: "owner-sign-job",
+      title: "Client credentials (sign:job)",
+      body: buildOwnerSignJobCurl(origin, m2mClientId),
+    },
+  ];
+}
+
+function CurlSnippetDetails({
+  snippet,
+  onCopy,
+  copiedLabel,
+}: Readonly<{
+  snippet: CurlSnippet;
+  onCopy: (text: string, label: string) => void;
+  copiedLabel: string | null;
+}>): ReactNode {
+  const copyLabel = `curl-${snippet.id}`;
+  return (
+    <details className="rounded-lg border border-zinc-800 bg-zinc-950/50">
+      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-400 hover:text-zinc-300">
+        {snippet.title}
+      </summary>
+      <div className="relative border-t border-zinc-800">
+        <pre className="p-3 text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
+          {snippet.body}
+        </pre>
+        <button
+          type="button"
+          onClick={() => onCopy(snippet.body, copyLabel)}
+          className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+        >
+          {copiedLabel === copyLabel ? "Copied!" : "Copy"}
+        </button>
+      </div>
+    </details>
+  );
 }
 
 type M2mTokenTestKind = "admin" | "owner";
@@ -217,12 +330,24 @@ function extractAccessToken(data: Record<string, unknown>): string | null {
   return null;
 }
 
+function maskSecretValue(value: unknown): unknown {
+  if (typeof value !== "string" || value.length <= 24) return value;
+  return `${value.slice(0, 12)}…${value.slice(-8)}`;
+}
+
 function formatTokenTestResult(data: Record<string, unknown>): string {
   const redacted = { ...data };
-  if (typeof redacted.access_token === "string" && redacted.access_token.length > 24) {
-    redacted.access_token = `${redacted.access_token.slice(0, 12)}…${redacted.access_token.slice(-8)}`;
-  }
+  redacted.access_token = maskSecretValue(redacted.access_token);
+  redacted.accessToken = maskSecretValue(redacted.accessToken);
+  redacted.apiKey = maskSecretValue(redacted.apiKey);
   return JSON.stringify(redacted, null, 2);
+}
+
+function tokenTestResultTitle(tokenKind: "api_key" | "signer_session" | "jwt" | null): string {
+  if (tokenKind === "api_key") return "API key";
+  if (tokenKind === "signer_session") return "Signer session token";
+  if (tokenKind === "jwt") return "Access token";
+  return "Token";
 }
 
 function getOidcErrorDescription(data: Record<string, unknown>, fallbackStatus: string): string {
@@ -241,30 +366,28 @@ function resolveActiveM2mKind(
   return availableFlows[0] ?? "admin";
 }
 
-function resolveCurlForM2mSelection(
-  activeKind: M2mTokenTestKind,
-  useBearerSigning: boolean,
-  origin: string,
-  m2mClientId: string,
-  publicClientId: string | null,
-  adminScopes: string,
-): string {
-  if (activeKind === "admin") return buildM2mAdminCurl(origin, m2mClientId, adminScopes);
-  if (publicClientId) {
-    return useBearerSigning
-      ? buildSignerBearerCurl(origin, publicClientId)
-      : buildSignerJwtExchangeCurl(origin, publicClientId);
-  }
-  // No public app_ client (M2M-only app): fall back to a direct sign:job JWT mint.
-  return buildOwnerSignJobCurl(origin, m2mClientId);
+function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): string | null {
+  if (showFlowPicker || showRemoteSigning) return null;
+  return "Review the curl below, then exchange credentials for an administrative token.";
 }
 
-function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): string | null {
-  if (showFlowPicker) return null;
-  if (showRemoteSigning) {
-    return "Use your app_<clientId>.pmth_* API key as a Bearer token, or exchange it once for a short-lived signer JWT.";
+function getSigningFormatHint(format: SigningTokenFormat): string {
+  if (format === "bearer") {
+    return "1. Get API Key for a long-lived app_<clientId>.pmth_* Bearer token. Optionally exchange it for a short-lived signer JWT.";
   }
-  return "Review the curl below, then exchange credentials for an administrative token.";
+  return "Device code login: authorize, then poll the token endpoint for a signer JWT.";
+}
+
+function getTokenTestActionLabel(
+  activeKind: M2mTokenTestKind,
+  useBearerSigning: boolean,
+  loading: boolean,
+): string {
+  if (activeKind === "owner") {
+    if (!useBearerSigning) return loading ? "Exchanging…" : "Exchange token";
+    return loading ? "Getting…" : "Get API Key";
+  }
+  return loading ? "Exchanging…" : "Exchange token";
 }
 
 function getCredentialsIntroText(isM2MOnly: boolean, hideAuthCodeFlowSection: boolean): string {
@@ -446,6 +569,12 @@ type M2mTokenTestPanelProps = Readonly<{
   showTopBorder?: boolean;
   /** When false, only remote signing is available (no confidential m2m_ backend helper). */
   hasM2mBackend: boolean;
+  /**
+   * Restrict which token-test flows appear. Defaults to every flow this app
+   * can support (admin when a confidential backend exists, remote signing when
+   * sign:job is allowed).
+   */
+  flows?: readonly M2mTokenTestKind[];
 }>;
 
 function m2mOptionButtonClass(kind: M2mTokenTestKind, activeKind: M2mTokenTestKind) {
@@ -468,36 +597,33 @@ function M2mSingleFlowHint({
   showRemoteSigning,
   showAdministrative,
   bearerFormatToggle,
+  signingFormatHint,
 }: Readonly<{
   showRemoteSigning: boolean;
   showAdministrative: boolean;
   bearerFormatToggle: ReactNode;
+  signingFormatHint: string | null;
 }>): ReactNode {
   if (showRemoteSigning) {
+    // Section chrome already names the flow; only surface the format toggle + hint.
+    if (!bearerFormatToggle && !signingFormatHint) return null;
     return (
       <div className="space-y-2">
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-3">
-          <span className="block text-xs font-semibold text-emerald-100/90">Remote signing</span>
-          <span className="mt-1 block text-[11px] text-zinc-500">
-            Bearer API key, or a signer JWT via token exchange or device code login.
-          </span>
-        </div>
         {bearerFormatToggle ? (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
             <span className="text-[11px] text-zinc-500">Signing token format</span>
             {bearerFormatToggle}
           </div>
         ) : null}
+        {signingFormatHint ? (
+          <p className="text-[11px] text-zinc-500 leading-relaxed">{signingFormatHint}</p>
+        ) : null}
       </div>
     );
   }
   if (showAdministrative) {
-    return (
-      <p className="text-xs text-zinc-400">
-        <span className="font-semibold text-zinc-200">Administrative access</span>
-        {" — "}Builder APIs, user provisioning, and device approval.
-      </p>
-    );
+    // Section chrome already names the flow.
+    return null;
   }
   return null;
 }
@@ -510,6 +636,7 @@ function M2mTokenTestResult({
   onCopy,
   copiedLabel,
   tokenCopyLabel,
+  onDismiss,
 }: Readonly<{
   error: string | null;
   result: string | null;
@@ -518,55 +645,101 @@ function M2mTokenTestResult({
   onCopy: (text: string, label: string) => void;
   copiedLabel: string | null;
   tokenCopyLabel: string;
+  onDismiss: () => void;
 }>): ReactNode {
-  return (
-    <>
-      {error ? <p className="text-xs text-red-400">{error}</p> : null}
-      {result ? (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium text-zinc-400">Response</p>
-            {rawAccessToken ? (
-              <button
-                type="button"
-                onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
-                className="px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors shrink-0"
-              >
-                {copiedLabel === tokenCopyLabel ? "Copied!" : "Copy token"}
-              </button>
-            ) : null}
+  if (error) {
+    return (
+      <div
+        role="alert"
+        className="rounded-lg border border-red-500/30 bg-red-500/10 p-3"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-red-300">Token exchange failed</p>
+            <p className="text-xs text-red-200/80 mt-1">{error}</p>
           </div>
-          <pre className="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-emerald-300/90 font-mono overflow-x-auto whitespace-pre-wrap">
-            {result}
-          </pre>
-          {tokenKind === "api_key" ? (
-            <p className="text-[11px] text-zinc-500">
-              Returned{" "}
-              <span className="font-mono text-zinc-400">app_&lt;clientId&gt;.pmth_*</span> is a
-              per-user API key. Use it as{" "}
-              <span className="font-mono text-zinc-400">Authorization: Bearer</span> on the remote
-              signer (python-gateway <span className="font-mono text-zinc-400">--token</span>{" "}
-              blob), or as <span className="font-mono text-zinc-400">subject_token</span> at{" "}
-              <span className="font-mono text-zinc-400">
-                POST /api/v1/apps/{`{clientId}`}/oidc/token
-              </span>
-              {"."}
-            </p>
-          ) : null}
-          {tokenKind === "signer_session" ? (
-            <p className="text-[11px] text-zinc-500">
-              Returned <span className="font-mono text-zinc-400">pmth_*</span> is an opaque
-              signer-session token from RFC 8693 exchange, not a per-user API key.
-              Mint API keys via{" "}
-              <span className="font-mono text-zinc-400">
-                POST /api/v1/apps/{`{clientId}`}/users/{`{externalUserId}`}/keys
-              </span>
-              .
-            </p>
-          ) : null}
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-500/40 px-2 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20 transition-colors"
+            aria-label="Clear error from screen"
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!result) return null;
+
+  return (
+    <output className="block rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-amber-200">
+            {tokenTestResultTitle(tokenKind)}
+          </p>
+          <p className="text-[11px] text-amber-300/80 mt-0.5">
+            {tokenKind === "api_key"
+              ? "Store this securely — it will not be shown again."
+              : "Copy the token now for use in your client."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-100 hover:bg-amber-500/20 transition-colors"
+          aria-label="Clear token result from screen"
+        >
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          Close
+        </button>
+      </div>
+
+      {rawAccessToken ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
+          <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
+            {rawAccessToken}
+          </code>
+          <button
+            type="button"
+            onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
+            className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
+          >
+            {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
+          </button>
         </div>
       ) : null}
-    </>
+
+      {tokenKind === "api_key" ? (
+        <p className="text-[11px] text-amber-300/70">
+          Use as <span className="font-mono text-amber-200/80">Authorization: Bearer</span> on the
+          remote signer, or as <span className="font-mono text-amber-200/80">subject_token</span> at{" "}
+          <span className="font-mono text-amber-200/80">
+            POST /api/v1/apps/{`{clientId}`}/oidc/token
+          </span>
+          .
+        </p>
+      ) : null}
+      {tokenKind === "signer_session" ? (
+        <p className="text-[11px] text-amber-300/70">
+          Opaque signer-session token from RFC 8693 exchange — not a per-user API key.
+        </p>
+      ) : null}
+
+      <details className="text-[11px] text-amber-300/70">
+        <summary className="cursor-pointer hover:text-amber-200">Show full response body</summary>
+        <pre className="mt-2 overflow-x-auto rounded-md border border-amber-500/15 bg-black/30 p-2 font-mono text-[10px] text-amber-200/70 whitespace-pre-wrap">
+          {result}
+        </pre>
+      </details>
+    </output>
   );
 }
 
@@ -578,6 +751,7 @@ function M2mFlowSelection({
   readOnly,
   selectKind,
   bearerFormatToggle,
+  signingFormatHint,
 }: Readonly<{
   showFlowPicker: boolean;
   showAdministrative: boolean;
@@ -586,6 +760,7 @@ function M2mFlowSelection({
   readOnly: boolean;
   selectKind: (kind: M2mTokenTestKind) => void;
   bearerFormatToggle: ReactNode;
+  signingFormatHint: string | null;
 }>): ReactNode {
   if (showFlowPicker) {
     return (
@@ -625,15 +800,22 @@ function M2mFlowSelection({
                 Remote signing
               </span>
               <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
-                Bearer API key, or a signer JWT via token exchange or device code login
+                Bearer API key (optional JWT exchange), or signer JWT via device code login
               </span>
             </button>
           ) : null}
         </div>
-        {activeKind === "owner" && bearerFormatToggle ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-            <span className="text-[11px] text-zinc-500">Signing token format</span>
-            {bearerFormatToggle}
+        {activeKind === "owner" ? (
+          <div className="space-y-2">
+            {bearerFormatToggle ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+                <span className="text-[11px] text-zinc-500">Signing token format</span>
+                {bearerFormatToggle}
+              </div>
+            ) : null}
+            {signingFormatHint ? (
+              <p className="text-[11px] text-zinc-500 leading-relaxed">{signingFormatHint}</p>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -645,6 +827,7 @@ function M2mFlowSelection({
       showRemoteSigning={showRemoteSigning}
       showAdministrative={showAdministrative}
       bearerFormatToggle={bearerFormatToggle}
+      signingFormatHint={signingFormatHint}
     />
   );
 }
@@ -661,6 +844,7 @@ function M2mTokenTestPanel({
   copiedLabel,
   showTopBorder = true,
   hasM2mBackend,
+  flows,
 }: M2mTokenTestPanelProps) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -670,15 +854,17 @@ function M2mTokenTestPanel({
   const [clientSecretInput, setClientSecretInput] = useState("");
   const [selectedKind, setSelectedKind] = useState<M2mTokenTestKind>("admin");
   const [signingTokenFormat, setSigningTokenFormat] = useState<SigningTokenFormat>("bearer");
-  const [curlDetailsOpen, setCurlDetailsOpen] = useState(true);
 
   const adminScopes = computeBackendM2mClientCredentialsScopes(
     allowedScopes || DEFAULT_OIDC_SCOPES,
   );
   const canSignJob = publicAppAllowsSignJob(allowedScopes || DEFAULT_OIDC_SCOPES);
-  const showAdministrative = hasM2mBackend && Boolean(adminScopes);
-  const showRemoteSigning = canSignJob;
-  const canUseBearerSigning = hasM2mBackend && canSignJob && Boolean(publicClientId);
+  const allowAdmin = flows ? flows.includes("admin") : true;
+  const allowOwner = flows ? flows.includes("owner") : true;
+  const showAdministrative = allowAdmin && hasM2mBackend && Boolean(adminScopes);
+  const showRemoteSigning = allowOwner && canSignJob;
+  // Bearer signing uses the public app_ API key — no confidential m2m_ secret.
+  const canUseBearerSigning = canSignJob && Boolean(publicClientId);
   const availableFlows = useMemo(
     (): M2mTokenTestKind[] => [
       ...(showAdministrative ? (["admin"] as const) : []),
@@ -691,17 +877,28 @@ function M2mTokenTestPanel({
   const activeKind = resolveActiveM2mKind(showFlowPicker, availableFlows, selectedKind);
   const useBearerSigning =
     activeKind === "owner" && canUseBearerSigning && signingTokenFormat === "bearer";
-  const curlForSelection = resolveCurlForM2mSelection(
-    activeKind,
-    useBearerSigning,
-    origin,
-    clientId,
-    publicClientId,
-    adminScopes,
+  const curlSnippets = useMemo(
+    () =>
+      resolveCurlSnippetsForSelection({
+        activeKind,
+        useBearerSigning,
+        origin,
+        m2mClientId: clientId,
+        publicClientId,
+        adminScopes,
+      }),
+    [activeKind, adminScopes, clientId, origin, publicClientId, useBearerSigning],
   );
-  const curlCopyLabel = `curlM2m-${clientId}-${activeKind}-${useBearerSigning ? "bearer" : "jwt"}`;
   const tokenCopyLabel = `tokenM2m-${clientId}`;
   const introText = getM2mIntroText(showFlowPicker, showRemoteSigning);
+  const signingFormatHint =
+    activeKind === "owner" && canUseBearerSigning
+      ? getSigningFormatHint(signingTokenFormat)
+      : activeKind === "owner"
+        ? getSigningFormatHint("jwt")
+        : null;
+  const actionLabel = getTokenTestActionLabel(activeKind, useBearerSigning, loading);
+  const showOwnerKeyAction = activeKind === "owner" && useBearerSigning;
 
   useEffect(() => {
     if (generatedSecret) {
@@ -807,6 +1004,7 @@ function M2mTokenTestPanel({
         readOnly={readOnly}
         selectKind={selectKind}
         bearerFormatToggle={bearerFormatToggle}
+        signingFormatHint={signingFormatHint}
       />
 
       {activeKind === "admin" ? (
@@ -825,59 +1023,68 @@ function M2mTokenTestPanel({
             className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 font-mono placeholder:text-zinc-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
           />
           <p className="text-xs text-zinc-500">
-            Required only for the administrative M2M flow. Paste a stored secret, or generate one above — it fills in here automatically once.
+            Paste the Backend helper client secret, or generate/rotate one in that section — it fills in here
+            automatically once.
           </p>
         </div>
-      ) : (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5 space-y-1">
-          <p className="text-xs text-zinc-400">
-            No client secret needed — remote signing uses your{" "}
-            <span className="font-mono text-zinc-300">app_&lt;clientId&gt;.pmth_*</span> API key from{" "}
-            <span className="font-medium text-zinc-300">Get API Key</span>.
-          </p>
-          {ownerExternalUserId?.trim() ? (
-            <p className="text-[11px] text-zinc-500">
-              Bound to the app owner identity:{" "}
-              <span className="font-mono text-zinc-400">{ownerExternalUserId.trim()}</span>.
-            </p>
-          ) : null}
-        </div>
-      )}
+      ) : null}
 
-      <details
-        className="rounded-lg border border-zinc-800 bg-zinc-950/50"
-        open={curlDetailsOpen}
-        onToggle={(event) => setCurlDetailsOpen(event.currentTarget.open)}
-      >
-        <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-400 hover:text-zinc-300">
-          Curl reference for selected flow
-        </summary>
-        <div className="relative border-t border-zinc-800">
-          <pre className="p-3 text-xs text-zinc-300 font-mono overflow-x-auto whitespace-pre">
-            {curlForSelection}
-          </pre>
+      {showOwnerKeyAction ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5">
+          <span className="text-[11px] text-zinc-500">1. Get API Key</span>
           <button
             type="button"
-            onClick={() => onCopy(curlForSelection, curlCopyLabel)}
-            className="absolute top-2 right-2 px-2 py-1 bg-zinc-700 text-zinc-200 rounded text-xs hover:bg-zinc-600 transition-colors"
+            onClick={() => {
+              runTest();
+            }}
+            disabled={readOnly || loading || availableFlows.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-md border border-emerald-600/50 px-2.5 py-1.5 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {copiedLabel === curlCopyLabel ? "Copied!" : "Copy"}
+            {loading ? (
+              <span
+                className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
+                aria-hidden
+              />
+            ) : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.75}
+                  d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                />
+              </svg>
+            )}
+            {actionLabel}
           </button>
         </div>
-      </details>
+      ) : null}
 
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => {
-            runTest();
-          }}
-          disabled={readOnly || loading || availableFlows.length === 0}
-          className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 disabled:opacity-40 transition-colors"
-        >
-          {loading ? "Exchanging…" : "Exchange token"}
-        </button>
+      <div className="space-y-2">
+        {curlSnippets.map((snippet) => (
+          <CurlSnippetDetails
+            key={snippet.id}
+            snippet={snippet}
+            onCopy={onCopy}
+            copiedLabel={copiedLabel}
+          />
+        ))}
       </div>
+
+      {activeKind === "admin" ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              runTest();
+            }}
+            disabled={readOnly || loading || availableFlows.length === 0}
+            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 disabled:opacity-40 transition-colors"
+          >
+            {actionLabel}
+          </button>
+        </div>
+      ) : null}
 
       <M2mTokenTestResult
         error={error}
@@ -887,6 +1094,12 @@ function M2mTokenTestPanel({
         onCopy={onCopy}
         copiedLabel={copiedLabel}
         tokenCopyLabel={tokenCopyLabel}
+        onDismiss={() => {
+          setError(null);
+          setResult(null);
+          setRawAccessToken(null);
+          setResultTokenKind(null);
+        }}
       />
     </div>
   );
@@ -1157,6 +1370,7 @@ export default function TestingStep({
   const [secretFetchError, setSecretFetchError] = useState<string | null>(null);
   const [backendSecretFetchError, setBackendSecretFetchError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [authTestTab, setAuthTestTab] = useState<"remote" | "admin">("remote");
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1292,6 +1506,24 @@ export default function TestingStep({
   const browserOrigin = getBrowserOrigin();
   const hasM2mBackend =
     Boolean(backendHelper?.clientId) || Boolean(clientId?.startsWith("m2m_"));
+  const showRemoteSigningTab =
+    !isM2MOnly &&
+    Boolean(clientId?.startsWith("app_")) &&
+    publicAppAllowsSignJob(allowedScopes ?? DEFAULT_OIDC_SCOPES);
+  const showAdminAccessTab = Boolean(backendHelper?.clientId);
+  const showAuthTestSection = showRemoteSigningTab || showAdminAccessTab;
+  const effectiveAuthTestTab =
+    authTestTab === "admin" && showAdminAccessTab
+      ? "admin"
+      : showRemoteSigningTab
+        ? "remote"
+        : "admin";
+
+  useEffect(() => {
+    if (authTestTab === "admin" && !showAdminAccessTab && showRemoteSigningTab) {
+      setAuthTestTab("remote");
+    }
+  }, [authTestTab, showAdminAccessTab, showRemoteSigningTab]);
 
   return (
     <div className="space-y-8">
@@ -1484,20 +1716,6 @@ export default function TestingStep({
               <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
             )}
           </div>
-          {backendHelper?.clientId ? (
-            <M2mTokenTestPanel
-              clientId={backendHelper.clientId}
-              publicClientId={clientId?.startsWith("app_") ? clientId : null}
-              ownerExternalUserId={ownerExternalUserId}
-              generatedSecret={m2mSecretForTests}
-              allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
-              readOnly={readOnly}
-              origin={browserOrigin}
-              onCopy={copyToClipboard}
-              copiedLabel={copied}
-              hasM2mBackend
-            />
-          ) : null}
         </div>
       ) : !isM2MOnly && backendDeviceHelper ? (
         <p className="text-sm text-zinc-500 mt-4">
@@ -1513,6 +1731,89 @@ export default function TestingStep({
           <strong className="text-zinc-400">Confidential M2M backend</strong>{" "}
           there to manage M2M credentials on this tab.
         </p>
+      ) : null}
+
+      {showAuthTestSection ? (
+        <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-zinc-200">Test authentication</h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                {effectiveAuthTestTab === "remote"
+                  ? "Bearer API key for direct signing (optional exchange to a signer JWT), or device code login for a signer JWT."
+                  : "Client-credentials token exchange with the Backend helper for Builder APIs, user provisioning, and device approval."}
+              </p>
+            </div>
+            {showRemoteSigningTab && showAdminAccessTab ? (
+              <div
+                className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5"
+                role="tablist"
+                aria-label="Authentication test type"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={effectiveAuthTestTab === "remote"}
+                  onClick={() => setAuthTestTab("remote")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    effectiveAuthTestTab === "remote"
+                      ? "bg-emerald-500/15 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.25)]"
+                      : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
+                  }`}
+                >
+                  Remote signing
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={effectiveAuthTestTab === "admin"}
+                  onClick={() => setAuthTestTab("admin")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    effectiveAuthTestTab === "admin"
+                      ? "bg-cyan-500/15 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.25)]"
+                      : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
+                  }`}
+                >
+                  Administrative
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {effectiveAuthTestTab === "remote" && showRemoteSigningTab && clientId ? (
+            <M2mTokenTestPanel
+              clientId={clientId}
+              publicClientId={clientId}
+              ownerExternalUserId={ownerExternalUserId}
+              generatedSecret={null}
+              allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
+              readOnly={readOnly}
+              origin={browserOrigin}
+              onCopy={copyToClipboard}
+              copiedLabel={copied}
+              showTopBorder={false}
+              hasM2mBackend={false}
+              flows={["owner"]}
+            />
+          ) : null}
+
+          {effectiveAuthTestTab === "admin" && backendHelper?.clientId ? (
+            <M2mTokenTestPanel
+              clientId={backendHelper.clientId}
+              publicClientId={clientId?.startsWith("app_") ? clientId : null}
+              ownerExternalUserId={ownerExternalUserId}
+              generatedSecret={m2mSecretForTests}
+              allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
+              readOnly={readOnly}
+              origin={browserOrigin}
+              onCopy={copyToClipboard}
+              copiedLabel={copied}
+              showTopBorder={false}
+              hasM2mBackend
+              flows={["admin"]}
+            />
+          ) : null}
+        </div>
       ) : null}
 
       {isM2MOnly && clientId ? (

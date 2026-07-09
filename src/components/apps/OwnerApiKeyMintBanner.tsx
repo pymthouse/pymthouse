@@ -128,10 +128,7 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
   }
 
   return (
-    <div
-      role="status"
-      className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2"
-    >
+    <output className="block rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-medium text-amber-200">
@@ -180,6 +177,6 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
           )}
         </pre>
       </details>
-    </div>
+    </output>
   );
 }

@@ -198,9 +198,9 @@ export default function UsageBreakdownChart({
           viewBox={`0 0 ${width} ${height}`}
           className="block h-full w-full text-zinc-400"
           preserveAspectRatio="none"
-          role="img"
           aria-label={`${valueLabel} by app and job type`}
         >
+          <title>{`${valueLabel} by app and job type`}</title>
           {yTicks.map((tick) => (
             <line
               key={tick}

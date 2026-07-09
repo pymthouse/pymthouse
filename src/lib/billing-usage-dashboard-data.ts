@@ -1,8 +1,8 @@
 import { getServerSession } from "next-auth";
-import { eq } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { developerApps, users } from "@/db/schema";
+import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
@@ -14,6 +14,12 @@ export type BillingAppRow = {
   ownerId: string;
   ownerName: string | null;
   ownerEmail: string | null;
+  /**
+   * Public OIDC client_id — same value as UserAppSummary.id / apps list selection.
+   * Chart series and client-side filters must use this, not developer_apps.id
+   * (those can differ for legacy apps).
+   */
+  publicClientId: string;
 };
 
 export type BillingUserUsageRow = {
@@ -145,12 +151,31 @@ export async function getBillingUsageDashboardData(
       ownerId: developerApps.ownerId,
       ownerName: users.name,
       ownerEmail: users.email,
+      publicClientId: oidcClients.clientId,
     })
     .from(developerApps)
-    .leftJoin(users, eq(developerApps.ownerId, users.id));
+    .leftJoin(users, eq(developerApps.ownerId, users.id))
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id));
 
   let orderedApps: BillingAppRow[];
   let scope: "all" | "single";
+
+  const toBillingApp = (row: {
+    id: string;
+    name: string;
+    ownerId: string;
+    ownerName: string | null;
+    ownerEmail: string | null;
+    publicClientId: string | null;
+  }): BillingAppRow => ({
+    id: row.id,
+    name: row.name,
+    ownerId: row.ownerId,
+    ownerName: row.ownerName,
+    ownerEmail: row.ownerEmail,
+    // Prefer public OIDC client_id; fall back to developer_apps.id when unset.
+    publicClientId: row.publicClientId?.trim() || row.id,
+  });
 
   if (filterAppId) {
     const auth = await getAuthorizedProviderApp(filterAppId);
@@ -162,13 +187,25 @@ export async function getBillingUsageDashboardData(
     if (!row) {
       return { ok: false, reason: "forbidden" };
     }
-    orderedApps = [row as BillingAppRow];
+    orderedApps = [toBillingApp(row)];
     scope = "single";
+  } else if (isAdmin && !ownAppsOnly) {
+    const visibleApps = (await appsQuery).map(toBillingApp);
+    orderedApps = sortAppsForViewer(visibleApps, userId, true);
+    scope = "all";
   } else {
-    const visibleApps = (isAdmin && !ownAppsOnly
-      ? await appsQuery
-      : await appsQuery.where(eq(developerApps.ownerId, userId))) as BillingAppRow[];
-    orderedApps = sortAppsForViewer(visibleApps, userId, isAdmin && !ownAppsOnly);
+    // Match My Apps / listUserAccessibleApps: owned + administered.
+    const memberships = await db
+      .select({ clientId: providerAdmins.clientId })
+      .from(providerAdmins)
+      .where(eq(providerAdmins.userId, userId));
+    const memberIds = memberships.map((m) => m.clientId);
+    const ownOrAdmin =
+      memberIds.length === 0
+        ? eq(developerApps.ownerId, userId)
+        : or(eq(developerApps.ownerId, userId), inArray(developerApps.id, memberIds));
+    const visibleApps = (await appsQuery.where(ownOrAdmin!)).map(toBillingApp);
+    orderedApps = sortAppsForViewer(visibleApps, userId, false);
     scope = "all";
   }
 
@@ -236,10 +273,11 @@ async function buildOpenMeterBillingDashboard(input: {
 
       for (const row of om.byDailyPipeline ?? []) {
         const jobType = row.pipeline || "unknown";
-        const seriesKey = `${app.id}|${jobType}`;
+        const chartAppId = app.publicClientId;
+        const seriesKey = `${chartAppId}|${jobType}`;
         if (!seriesMeta.has(seriesKey)) {
           seriesMeta.set(seriesKey, {
-            appId: app.id,
+            appId: chartAppId,
             appName: app.name,
             jobType,
           });

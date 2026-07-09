@@ -56,13 +56,17 @@ export default function CopyIdButton({
     [value],
   );
 
+  let statusLabel = label;
+  if (copied) statusLabel = "Copied";
+  else if (copyFailed) statusLabel = "Copy failed";
+
   return (
     <button
       type="button"
       onClick={copy}
       className={`pointer-events-auto relative z-10 shrink-0 rounded-md border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors ${className}`}
-      aria-label={copied ? "Copied" : copyFailed ? "Copy failed" : label}
-      title={copied ? "Copied" : copyFailed ? "Copy failed" : label}
+      aria-label={statusLabel}
+      title={statusLabel}
     >
       {copied ? (
         <svg

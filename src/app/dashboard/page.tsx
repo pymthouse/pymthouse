@@ -93,46 +93,12 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
         </div>
       </div>
 
-      <FreeUsageBanner />
-
       <AdminDashboardOverview
         myApps={myApps}
         initialUsage={initialUsage}
         volumeStat={volumeStat}
       />
     </>
-  );
-}
-
-function FreeUsageBanner() {
-  return (
-    <div className="mb-6 flex items-start gap-3 p-4 rounded-xl border border-teal-500/15 bg-teal-500/[0.04] backdrop-blur-sm">
-      <div className="shrink-0 mt-0.5 w-7 h-7 rounded-lg bg-teal-500/10 flex items-center justify-center">
-        <svg
-          className="w-4 h-4 text-teal-400"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-teal-300">
-          $5 free credit during beta
-        </p>
-        <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-          Users get $5 of free credit per month during beta. Usage is tracked via
-          signing requests.
-        </p>
-      </div>
-    </div>
   );
 }
 
@@ -145,8 +111,6 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
         <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-zinc-500 mt-1">Developer overview</p>
       </div>
-
-      <FreeUsageBanner />
 
       <MyAppsSection apps={apps} />
 

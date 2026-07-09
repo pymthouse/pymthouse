@@ -14,6 +14,8 @@ export type DashboardUsageSummary = {
   chartSeries: DashboardUsageChartSeries[];
   totalRequests: number;
   totalNetworkFeeUsdMicros: string;
+  /** Per-app network fees keyed by public OIDC client_id (matches chartSeries.appId). */
+  feesByAppId: Record<string, string>;
   appsCount: number;
   appsWithUsage: number;
 };
@@ -40,7 +42,13 @@ export async function getDashboardUsageSummary(
     totalNetworkFeeUsdMicros,
     orderedApps,
     appsWithUsage,
+    appUsage,
   } = result.data;
+
+  const feesByAppId: Record<string, string> = {};
+  for (const row of appUsage) {
+    feesByAppId[row.app.publicClientId] = row.networkFeeUsdMicros;
+  }
 
   return {
     cycle,
@@ -48,6 +56,7 @@ export async function getDashboardUsageSummary(
     chartSeries,
     totalRequests,
     totalNetworkFeeUsdMicros: totalNetworkFeeUsdMicros.toString(),
+    feesByAppId,
     appsCount: orderedApps.length,
     appsWithUsage,
   };
