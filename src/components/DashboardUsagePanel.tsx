@@ -22,7 +22,7 @@ export default async function DashboardUsagePanel() {
   const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 4) ?? "$0";
 
   return (
-    <div className="max-h-[25vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div>
           <h3 className="font-semibold text-zinc-100">Your usage this billing period</h3>
@@ -34,7 +34,7 @@ export default async function DashboardUsagePanel() {
           href="/billing"
           className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
         >
-          View full usage →
+          View full usage
         </Link>
       </div>
 

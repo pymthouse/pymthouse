@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import AppStatusBadge from "@/components/apps/AppStatusBadge";
-import OwnerApiKeyMintDialog from "@/components/apps/OwnerApiKeyMintDialog";
+import OwnerApiKeyMintBanner from "@/components/apps/OwnerApiKeyMintBanner";
 import { useOwnerApiKeyMint } from "@/components/apps/use-owner-api-key-mint";
 import type { UserAppSummary } from "@/lib/user-apps";
 
@@ -193,15 +193,20 @@ export default function AppsListSection({
           <ul className="divide-y divide-zinc-800/60">
             {pageApps.map((app) => {
               const selected = selectedAppId === app.id;
+              const showKeyBanner =
+                mintState &&
+                mintState.phase !== "minting" &&
+                mintState.app.id === app.id;
               return (
                 <li
                   key={app.id}
-                  className={`flex items-center gap-3 px-5 py-3.5 transition-colors group ${
+                  className={`transition-colors group ${
                     selected
                       ? "bg-emerald-500/[0.07] ring-1 ring-inset ring-emerald-500/25"
                       : "hover:bg-white/[0.03]"
                   }`}
                 >
+                  <div className="flex items-center gap-3 px-5 py-3.5">
                   {selectable ? (
                     <button
                       type="button"
@@ -304,6 +309,16 @@ export default function AppsListSection({
                       </button>
                     ) : null}
                   </div>
+                  </div>
+                  {showKeyBanner ? (
+                    <div className="px-5 pb-3.5">
+                      <OwnerApiKeyMintBanner
+                        mintState={mintState}
+                        onClose={closeMintDialog}
+                        onRetry={handleGetApiKey}
+                      />
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
@@ -334,12 +349,6 @@ export default function AppsListSection({
           </div>
         )}
       </section>
-
-      <OwnerApiKeyMintDialog
-        mintState={mintState?.phase === "minting" ? null : mintState}
-        onClose={closeMintDialog}
-        onRetry={handleGetApiKey}
-      />
     </>
   );
 }

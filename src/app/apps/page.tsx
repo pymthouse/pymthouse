@@ -5,7 +5,7 @@ import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppStatusBadge, { appStatusAriaLabel } from "@/components/apps/AppStatusBadge";
 import CopyIdButton from "@/components/apps/CopyIdButton";
-import OwnerApiKeyMintDialog from "@/components/apps/OwnerApiKeyMintDialog";
+import OwnerApiKeyMintBanner from "@/components/apps/OwnerApiKeyMintBanner";
 import { useOwnerApiKeyMint } from "@/components/apps/use-owner-api-key-mint";
 
 interface AppSummary {
@@ -254,17 +254,21 @@ export default function AppsPage() {
                   </nav>
                 ) : null}
               </div>
+              {mintState &&
+              mintState.phase !== "minting" &&
+              mintState.app.id === app.id ? (
+                <div className="pointer-events-auto relative z-10 border-t border-zinc-800/80 px-5 py-3">
+                  <OwnerApiKeyMintBanner
+                    mintState={mintState}
+                    onClose={closeMintDialog}
+                    onRetry={handleGetApiKey}
+                  />
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
       )}
-      <OwnerApiKeyMintDialog
-        mintState={
-          mintState?.phase === "minting" ? null : mintState
-        }
-        onClose={closeMintDialog}
-        onRetry={handleGetApiKey}
-      />
     </DashboardLayout>
   );
 }
