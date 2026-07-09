@@ -1,3 +1,24 @@
+function isIntegerMicrosString(value: string): boolean {
+  if (value.length === 0) return false;
+  let i = 0;
+  if (value[0] === "-") {
+    if (value.length === 1) return false;
+    i = 1;
+  }
+  for (; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 48 || code > 57) return false;
+  }
+  return true;
+}
+
+function trimTrailingZeros(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "0") end -= 1;
+  if (end > 0 && value[end - 1] === ".") end -= 1;
+  return value.slice(0, end);
+}
+
 /**
  * Format integer USD micros strings (1 USD = 1_000_000 micros) without Number precision loss.
  * Returns null for missing, invalid, or zero values.
@@ -8,7 +29,7 @@ export function formatUsdMicrosString(
 ): string | null {
   if (microsStr == null || microsStr === "") return null;
   const t = microsStr.trim();
-  if (!/^-?\d+$/.test(t)) return null;
+  if (!isIntegerMicrosString(t)) return null;
   try {
     const negative = t.startsWith("-");
     const abs = BigInt(negative ? t.slice(1) : t);
@@ -16,8 +37,9 @@ export function formatUsdMicrosString(
     const whole = abs / 1_000_000n;
     const frac = abs % 1_000_000n;
     const digits = Math.min(6, Math.max(0, Math.floor(maxFractionDigits)));
-    let fracStr = frac.toString().padStart(6, "0").slice(0, digits);
-    fracStr = fracStr.replace(/0+$/, "");
+    const fracStr = trimTrailingZeros(
+      frac.toString().padStart(6, "0").slice(0, digits),
+    );
     const sign = negative ? "-" : "";
     if (fracStr.length === 0) {
       return `${sign}$${whole.toString()}`;
@@ -33,19 +55,17 @@ export function formatUsdMicrosString(
  * Adaptive fraction digits match the Livepeer dashboard usage strip.
  */
 export function formatUsdMicrosDisplay(microsStr: string | undefined | null): string {
-  if (microsStr == null || microsStr === "" || !/^-?\d+$/.test(microsStr.trim())) {
-    return "$0";
-  }
+  if (microsStr == null || microsStr === "") return "$0";
+  const t = microsStr.trim();
+  if (!isIntegerMicrosString(t)) return "$0";
   try {
-    const t = microsStr.trim();
     const negative = t.startsWith("-");
     const abs = BigInt(negative ? t.slice(1) : t);
     const usd = Number(abs) / 1_000_000;
     let digits = 4;
     if (usd >= 1) digits = 2;
     else if (usd >= 0.01) digits = 3;
-    // Strip trailing zeros, then a dangling decimal — avoid `\.?0+$` backtracking.
-    const formatted = usd.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "");
+    const formatted = trimTrailingZeros(usd.toFixed(digits));
     return `${negative ? "-" : ""}$${formatted === "" ? "0" : formatted}`;
   } catch {
     return "$0";
