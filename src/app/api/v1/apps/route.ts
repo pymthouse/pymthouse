@@ -12,6 +12,7 @@ import {
 import { syncPublicClientGrantTypes } from "@/lib/oidc/grants";
 import { resetProvider } from "@/lib/oidc/provider";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
+import { getPlatformJwksUrlForDatabase } from "@/lib/oidc/issuer-urls";
 import { ensureProviderAdminMembership } from "@/lib/provider-apps";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
@@ -194,7 +195,9 @@ export async function POST(request: NextRequest) {
         name: name.trim(),
         developerName: body.developerName || null,
         websiteUrl: body.websiteUrl || null,
-        status: "draft", // Apps start as draft and require admin approval
+        status: "approved",
+        publishedAt: now,
+        jwksUri: getPlatformJwksUrlForDatabase(),
         createdAt: now,
         updatedAt: now,
       });
@@ -229,7 +232,7 @@ export async function POST(request: NextRequest) {
   await ensureProviderAdminMembership(userId, appId);
 
   return NextResponse.json(
-    { id: clientId, clientId, status: "draft" },
+    { id: clientId, clientId, status: "approved" },
     { status: 201 }
   );
 }
