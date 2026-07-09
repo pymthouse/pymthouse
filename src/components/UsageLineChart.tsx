@@ -51,11 +51,12 @@ function sanitizeChartValue(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+/** Y-axis top ≈ 20% above the peak so the line fills ~80% of the plot height. */
 function buildYTicks(maxValue: number, tickCount = 4): number[] {
   if (!Number.isFinite(maxValue) || maxValue <= 0) {
     return Array.from({ length: tickCount + 1 }, (_, i) => i);
   }
-  const padded = Math.ceil(maxValue * 1.1);
+  const padded = Math.ceil(maxValue * 1.2);
   const step = Math.max(1, Math.ceil(padded / tickCount));
   const top = Math.ceil(padded / step) * step;
   const ticks: number[] = [];

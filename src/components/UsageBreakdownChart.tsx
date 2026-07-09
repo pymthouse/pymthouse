@@ -43,11 +43,12 @@ function formatXTick(dayKey: string, todayKey: string): string {
   return dayKey.slice(5);
 }
 
+/** Y-axis top ≈ 20% above the peak so lines fill ~80% of the plot height. */
 function buildYTicks(maxValue: number, tickCount = 4): number[] {
   if (!Number.isFinite(maxValue) || maxValue <= 0) {
     return Array.from({ length: tickCount + 1 }, (_, i) => i);
   }
-  const padded = Math.ceil(maxValue * 1.1);
+  const padded = Math.ceil(maxValue * 1.2);
   const step = Math.max(1, Math.ceil(padded / tickCount));
   const top = Math.ceil(padded / step) * step;
   const ticks: number[] = [];
@@ -83,14 +84,12 @@ export default function UsageBreakdownChart({
   const plotW = width - padLeft - padRight;
   const plotH = height - padTop - padBottom;
 
-  const dailyTotals = useMemo(
-    () =>
-      dates.map((_, i) =>
-        visible.reduce((sum, s) => sum + (s.points[i]?.value ?? 0), 0),
-      ),
-    [dates, visible],
+  // Scale to the tallest individual series point (not the stacked daily sum),
+  // so multi-line charts fill ~80% of the Y-axis rather than sitting halfway up.
+  const maxValue = useMemo(
+    () => Math.max(0, ...visible.flatMap((s) => s.points.map((p) => p.value))),
+    [visible],
   );
-  const maxValue = Math.max(0, ...dailyTotals);
   const yTicks = useMemo(() => buildYTicks(maxValue), [maxValue]);
   const yMax = Math.max(1, yTicks.at(-1) ?? 1);
 
@@ -112,6 +111,17 @@ export default function UsageBreakdownChart({
       ),
     [visible, xAt, yAt],
   );
+
+  const areaPaths = useMemo(() => {
+    if (n === 0) return [];
+    const baseY = yAt(0);
+    return visible.map((s) => {
+      const top = s.points
+        .map((p, i) => `${i === 0 ? "M" : "L"}${xAt(i)},${yAt(p.value)}`)
+        .join(" ");
+      return `${top} L${xAt(n - 1)},${baseY} L${xAt(0)},${baseY} Z`;
+    });
+  }, [visible, n, xAt, yAt]);
 
   const xLabelTicks = useMemo(
     () =>
@@ -201,6 +211,14 @@ export default function UsageBreakdownChart({
               stroke="rgb(39 39 42)"
               strokeDasharray={tick === 0 ? undefined : "3 4"}
               strokeOpacity={tick === 0 ? 1 : 0.75}
+            />
+          ))}
+          {areaPaths.map((d, i) => (
+            <path
+              key={`area-${visible[i].appId}-${visible[i].jobType}`}
+              d={d}
+              fill={SERIES_COLORS[i % SERIES_COLORS.length]}
+              fillOpacity={0.12}
             />
           ))}
           {linePaths.map((d, i) => (

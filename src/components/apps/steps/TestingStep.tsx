@@ -110,28 +110,22 @@ const TOKEN_EXCHANGE_GRANT =
 const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
-function buildSignerBearerCurl(publicClientId: string): string {
-  return String.raw`# Bearer API key — works out of the box, single request, no user provisioning.
-# Use the app_<clientId>.pmth_* key from "Get API Key" directly as a Bearer token.
-# The remote signer validates it and performs the token exchange server-side.
-curl -sS $SIGNER_URL/... \
-  -H "Authorization: Bearer ${publicClientId}.pmth_YOUR_API_KEY"
-
-# livepeer-gateway: pass the same composite value as --token ${publicClientId}.pmth_*`;
+function buildSignerBearerCurl(origin: string, publicClientId: string): string {
+  const encodedClientId = encodeURIComponent(publicClientId);
+  return String.raw`curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
+  -d "subject_token=${publicClientId}.pmth_YOUR_API_KEY" \
+  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
 }
 
 function buildSignerJwtExchangeCurl(origin: string, publicClientId: string): string {
   const encodedClientId = encodeURIComponent(publicClientId);
-  return String.raw`# Short-lived signer JWT via RFC 8693 token exchange — single request.
-# subject_token is the app_<clientId>.pmth_* key from "Get API Key".
-curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
+  return String.raw`curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
   -d "subject_token=${publicClientId}.pmth_YOUR_API_KEY" \
-  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"
-
-# End users obtain this JWT by signing in through the device code flow
-# (OAuth device authorization grant) rather than handling an API key.`;
+  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
 }
 
 type M2mTokenTestKind = "admin" | "owner";
@@ -258,7 +252,7 @@ function resolveCurlForM2mSelection(
   if (activeKind === "admin") return buildM2mAdminCurl(origin, m2mClientId, adminScopes);
   if (publicClientId) {
     return useBearerSigning
-      ? buildSignerBearerCurl(publicClientId)
+      ? buildSignerBearerCurl(origin, publicClientId)
       : buildSignerJwtExchangeCurl(origin, publicClientId);
   }
   // No public app_ client (M2M-only app): fall back to a direct sign:job JWT mint.

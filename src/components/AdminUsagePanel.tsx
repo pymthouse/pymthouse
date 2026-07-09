@@ -170,6 +170,7 @@ export default function AdminUsagePanel({
                   label={volumeStat.label}
                   value={volumeStat.value}
                   sub={volumeStat.sub}
+                  live={volumeStat.live}
                 />
                 <UsageMetricCell
                   label="Requests"
