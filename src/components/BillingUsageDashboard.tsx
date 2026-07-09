@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import UsageLineChart from "@/components/UsageLineChart";
 import {
@@ -13,8 +14,10 @@ import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 export default async function BillingUsageDashboard({
   filterAppId,
+  fundPanel,
 }: {
   filterAppId?: string | null;
+  fundPanel?: ReactNode;
 }) {
   const result = await getBillingUsageDashboardData(filterAppId ?? undefined);
 
@@ -63,6 +66,7 @@ export default async function BillingUsageDashboard({
 
   return (
     <DashboardLayout>
+      {fundPanel}
       <div className="mb-6 sm:mb-8">
         <BillingDashboardHeader
           scope={scope}

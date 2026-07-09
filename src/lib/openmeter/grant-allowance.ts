@@ -53,9 +53,9 @@ export async function grantAllowanceUsdMicros(input: {
 
   const omApiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);
-  // Konnect trial balance is derived from Starter subscription included usage, not
-  // SDK entitlement grants. Provisioning above is the grant path on hosted Konnect.
-  if (!useKonnect) {
+  const usesAdditiveGrant =
+    input.source === "manual" || input.source === "onramp" || input.source === "promo";
+  if (!useKonnect || usesAdditiveGrant) {
     await grantTrialCredits({
       client,
       customerKey,

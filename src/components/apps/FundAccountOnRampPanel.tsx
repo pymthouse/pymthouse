@@ -1,0 +1,328 @@
+"use client";
+
+import {
+  AuthState,
+  ClientState,
+  useTurnkey,
+} from "@turnkey/react-wallet-kit";
+import {
+  FiatOnRampBlockchainNetwork,
+  FiatOnRampCryptoCurrency,
+  FiatOnRampCurrency,
+  FiatOnRampProvider,
+} from "@turnkey/sdk-types";
+import { useCallback, useEffect, useState } from "react";
+import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+
+type FundAccountOnRampPanelProps = Readonly<{
+  clientId: string;
+  ownerExternalUserId: string;
+}>;
+
+type BalanceState = {
+  balanceUsdMicros: string;
+  hasAccess: boolean;
+};
+
+function firstEvmWalletAddress(
+  wallets: { accounts: { address: string }[] }[],
+): string | null {
+  for (const wallet of wallets) {
+    for (const account of wallet.accounts) {
+      const address = account.address;
+      if (typeof address === "string" && address.startsWith("0x")) {
+        return address;
+      }
+    }
+  }
+  return null;
+}
+
+function truncateAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+const POLL_INTERVAL_MS = 3000;
+const DEFAULT_FIAT_AMOUNT = "25";
+
+export default function FundAccountOnRampPanel({
+  clientId,
+  ownerExternalUserId,
+}: FundAccountOnRampPanelProps) {
+  const turnkeyConfigured =
+    !!process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
+    !!process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim();
+
+  const {
+    authState,
+    clientState,
+    wallets,
+    refreshWallets,
+    initFiatOnRamp,
+    getOnRampTransactionStatus,
+    getSession,
+  } = useTurnkey();
+
+  const [fiatAmount, setFiatAmount] = useState(DEFAULT_FIAT_AMOUNT);
+  const [balance, setBalance] = useState<BalanceState | null>(null);
+  const [depositWallet, setDepositWallet] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"idle" | "funding" | "settling" | "done" | "error">("idle");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastGrantedUsdMicros, setLastGrantedUsdMicros] = useState<string | null>(null);
+
+  const loadBalance = useCallback(async () => {
+    const params = new URLSearchParams({ externalUserId: ownerExternalUserId });
+    const response = await fetch(
+      `/api/v1/apps/${encodeURIComponent(clientId)}/usage/balance?${params.toString()}`,
+      { credentials: "include" },
+    );
+    if (!response.ok) {
+      return;
+    }
+    const data = (await response.json()) as BalanceState;
+    setBalance(data);
+  }, [clientId, ownerExternalUserId]);
+
+  useEffect(() => {
+    void loadBalance();
+  }, [loadBalance]);
+
+  useEffect(() => {
+    const address = firstEvmWalletAddress(wallets);
+    setDepositWallet(address);
+  }, [wallets]);
+
+  const pollUntilTerminal = useCallback(
+    async (transactionId: string): Promise<string> => {
+      for (;;) {
+        const response = await getOnRampTransactionStatus({
+          transactionId,
+          refresh: true,
+        });
+        const status = response.transactionStatus?.trim() || "";
+        if (["COMPLETED", "FAILED", "CANCELLED"].includes(status)) {
+          return status;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+    },
+    [getOnRampTransactionStatus],
+  );
+
+  const handleFund = async () => {
+    setError(null);
+    setStatusMessage(null);
+    setLastGrantedUsdMicros(null);
+
+    if (!turnkeyConfigured) {
+      setError("Turnkey Wallet Kit is not configured in this environment.");
+      setPhase("error");
+      return;
+    }
+
+    if (authState !== AuthState.Authenticated || clientState !== ClientState.Ready) {
+      setError("Sign in with Turnkey Wallet Kit to fund your account.");
+      setPhase("error");
+      return;
+    }
+
+    const amount = fiatAmount.trim();
+    const parsedAmount = Number.parseFloat(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 20) {
+      setError("Enter a fiat amount greater than 20 USD for MoonPay sandbox.");
+      setPhase("error");
+      return;
+    }
+
+    setPhase("funding");
+    setStatusMessage("Preparing MoonPay sandbox checkout...");
+
+    try {
+      const latestWallets = await refreshWallets();
+      const walletAddress = firstEvmWalletAddress(latestWallets);
+      if (!walletAddress) {
+        throw new Error("No Turnkey EVM wallet found. Complete Wallet Kit onboarding first.");
+      }
+
+      const session = await getSession();
+      const organizationId = session?.organizationId;
+      if (!organizationId) {
+        throw new Error("Turnkey session is missing organization context.");
+      }
+
+      const initResult = await initFiatOnRamp({
+        organizationId,
+        onrampProvider: FiatOnRampProvider.MOONPAY,
+        walletAddress,
+        network: FiatOnRampBlockchainNetwork.ETHEREUM,
+        cryptoCurrencyCode: FiatOnRampCryptoCurrency.ETHEREUM,
+        fiatCurrencyCode: FiatOnRampCurrency.USD,
+        fiatCurrencyAmount: amount,
+        sandboxMode: true,
+      });
+
+      if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
+        throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
+      }
+
+      const sessionResponse = await fetch(
+        `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            externalUserId: ownerExternalUserId,
+            depositWalletAddress: walletAddress,
+            onRampTransactionId: initResult.onRampTransactionId,
+            onrampProvider: "moonpay",
+            fiatCurrencyCode: "USD",
+            fiatAmount: amount,
+          }),
+        },
+      );
+      const sessionBody = await sessionResponse.json().catch(() => ({}));
+      if (!sessionResponse.ok) {
+        throw new Error(
+          typeof sessionBody.error === "string"
+            ? sessionBody.error
+            : "Failed to register on-ramp session",
+        );
+      }
+
+      const sessionId =
+        typeof sessionBody.sessionId === "string" ? sessionBody.sessionId : null;
+      if (!sessionId) {
+        throw new Error("On-ramp session response missing sessionId.");
+      }
+
+      const popup = window.open(initResult.onRampUrl, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        throw new Error("Popup blocked. Allow popups for this site and retry.");
+      }
+
+      setStatusMessage("Complete the MoonPay sandbox purchase in the popup window...");
+      const terminalStatus = await pollUntilTerminal(initResult.onRampTransactionId);
+      try {
+        popup.close();
+      } catch {
+        // Best-effort close after terminal status.
+      }
+
+      if (terminalStatus !== "COMPLETED") {
+        throw new Error(`MoonPay purchase ${terminalStatus.toLowerCase()}.`);
+      }
+
+      setPhase("settling");
+      setStatusMessage("Clearing payment and crediting allowance...");
+
+      const settleResponse = await fetch(
+        `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions/${encodeURIComponent(sessionId)}/settle`,
+        {
+          method: "POST",
+          credentials: "include",
+        },
+      );
+      const settleBody = await settleResponse.json().catch(() => ({}));
+      if (!settleResponse.ok) {
+        throw new Error(
+          typeof settleBody.error === "string" ? settleBody.error : "Settlement failed",
+        );
+      }
+
+      const granted =
+        typeof settleBody.grantedUsdMicros === "string"
+          ? settleBody.grantedUsdMicros
+          : null;
+      setLastGrantedUsdMicros(granted);
+      setPhase("done");
+      setStatusMessage("Allowance credited successfully.");
+      await loadBalance();
+    } catch (fundError) {
+      const message =
+        fundError instanceof Error ? fundError.message : "On-ramp funding failed";
+      setError(message);
+      setPhase("error");
+      setStatusMessage(null);
+    }
+  };
+
+  if (!turnkeyConfigured) {
+    return null;
+  }
+
+  const balanceLabel = formatUsdMicrosString(balance?.balanceUsdMicros, 4) ?? "$0";
+  const grantedLabel = formatUsdMicrosString(lastGrantedUsdMicros, 4);
+
+  return (
+    <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-200/90">
+            Fund account (demo)
+          </p>
+          <p className="mt-1 text-sm text-zinc-400">
+            MoonPay sandbox purchase credits OpenMeter allowance for your app owner identity.
+          </p>
+        </div>
+        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200">
+          Sandbox
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+          <p className="text-[11px] uppercase tracking-wider text-zinc-500">Deposit wallet</p>
+          <p className="mt-1 font-mono text-sm text-zinc-200">
+            {depositWallet ? truncateAddress(depositWallet) : "—"}
+          </p>
+        </div>
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+          <p className="text-[11px] uppercase tracking-wider text-zinc-500">Allowance balance</p>
+          <p className="mt-1 text-sm font-semibold text-zinc-100 tabular-nums">{balanceLabel}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wider text-zinc-500">USD amount</span>
+          <input
+            type="number"
+            min={21}
+            step="1"
+            value={fiatAmount}
+            onChange={(event) => setFiatAmount(event.target.value)}
+            disabled={phase === "funding" || phase === "settling"}
+            className="w-28 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => void handleFund()}
+          disabled={phase === "funding" || phase === "settling"}
+          className="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {phase === "funding" || phase === "settling"
+            ? "Processing..."
+            : "Fund with MoonPay"}
+        </button>
+      </div>
+
+      {statusMessage ? (
+        <p className="mt-3 text-sm text-amber-100/90">{statusMessage}</p>
+      ) : null}
+      {grantedLabel ? (
+        <p className="mt-2 text-sm text-emerald-300">
+          Credited {grantedLabel} to <span className="font-mono">{ownerExternalUserId}</span>.
+        </p>
+      ) : null}
+      {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
+
+      <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+        Owner identity: <span className="font-mono text-zinc-400">{ownerExternalUserId}</span>.
+        ETH lands in your Turnkey wallet on Ethereum; TicketBroker sweeps are phase 2.
+      </p>
+    </div>
+  );
+}
