@@ -46,6 +46,14 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
   ]);
   const signer = signerRows[0];
   const signerOnline = signer?.status === "running";
+  let signerDetail = "no address";
+  if (signer?.ethAddress) {
+    signerDetail = `${signer.ethAddress.slice(0, 6)}...${signer.ethAddress.slice(-4)}`;
+  } else if (signerOnline) {
+    signerDetail = "connected";
+  } else if (signer?.status) {
+    signerDetail = signer.status;
+  }
 
   let totalFeeWei = 0n;
   for (const txn of allTransactions) {
@@ -65,16 +73,24 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
           <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
           <p className="text-zinc-500 mt-1">Platform overview</p>
         </div>
-        {signerOnline && (
-          <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium">
-            <span className="relative flex h-2 w-2">
+        <div
+          className={`flex items-center gap-2 text-xs font-medium ${
+            signerOnline ? "text-emerald-400" : "text-zinc-500"
+          }`}
+          title={`Signer ${signerOnline ? "Online" : signer?.status || "offline"} · ${signerDetail}`}
+        >
+          <span className="relative flex h-2 w-2">
+            {signerOnline && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-            </span>
-            {" "}
-            Network live
-          </div>
-        )}
+            )}
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                signerOnline ? "bg-emerald-500" : "bg-zinc-600"
+              }`}
+            />
+          </span>
+          {signerOnline ? "Network live" : "Network offline"}
+        </div>
       </div>
 
       <FreeUsageBanner />
