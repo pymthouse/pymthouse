@@ -2,45 +2,17 @@
 
 import { useCallback, useState } from "react";
 import AdminAppsSection from "@/components/apps/AdminAppsSection";
-import AdminUsagePanel from "@/components/AdminUsagePanel";
+import AdminUsagePanel, { type AdminPlatformStat } from "@/components/AdminUsagePanel";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import type { UserAppSummary } from "@/lib/user-apps";
 
-export type AdminStatCard = {
-  label: string;
-  value: string;
-  sub: string;
-  color: string;
-  glow: string;
-  live: boolean;
-};
-
-function StatCard({ stat }: Readonly<{ stat: AdminStatCard }>) {
-  return (
-    <div
-      className={`relative overflow-hidden rounded-xl border bg-white/[0.02] backdrop-blur-sm p-5 transition-colors hover:bg-white/[0.035] ${stat.glow}`}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-          {stat.label}
-        </p>
-        {stat.live && (
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-          </span>
-        )}
-      </div>
-      <p className={`text-2xl font-bold tabular-nums leading-none ${stat.color}`}>{stat.value}</p>
-      <p className="text-xs text-zinc-600 mt-2 leading-snug">{stat.sub}</p>
-    </div>
-  );
-}
+export type AdminStatCard = AdminPlatformStat;
 
 /**
  * Admin Dashboard interactive area, laid out like the Developer Dashboard:
  * apps list first (with an admin-only "All apps" toggle), then the usage
- * panel scoped to that toggle, then signer / platform stats.
+ * panel scoped to that toggle. Platform signer/volume/revenue stats live as
+ * compact labels inside the all-apps usage view.
  */
 export default function AdminDashboardOverview({
   myApps,
@@ -102,13 +74,10 @@ export default function AdminDashboardOverview({
           allUsageError={allUsageError}
           showAllApps={showAllApps}
           onRetryAllUsage={fetchAllUsage}
+          signerStat={signerStat}
+          volumeStat={volumeStat}
+          revenueStat={revenueStat}
         />
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard stat={signerStat} />
-        {showAllApps && <StatCard stat={volumeStat} />}
-        {showAllApps && <StatCard stat={revenueStat} />}
       </div>
     </>
   );

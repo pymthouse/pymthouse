@@ -71,26 +71,19 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
     value: signerOnline ? "Online" : signer?.status || "N/A",
     sub: signerSub,
     color: signerOnline ? "text-emerald-400" : "text-zinc-400",
-    glow: signerOnline
-      ? "border-emerald-500/20 shadow-[inset_0_1px_0_rgba(52,211,153,0.06)]"
-      : "border-white/[0.06]",
     live: signerOnline,
   };
   const volumeStat: AdminStatCard = {
     label: "Total Volume",
     value: formatWei(totalFeeWei.toString()),
-    sub: `${allTransactions.length} transactions across the platform`,
+    sub: `${allTransactions.length} transactions`,
     color: "text-amber-400",
-    glow: "border-amber-500/15 shadow-[inset_0_1px_0_rgba(251,191,36,0.05)]",
-    live: false,
   };
   const revenueStat: AdminStatCard = {
     label: "Platform Revenue",
     value: formatWei(totalPlatformCutWei.toString()),
     sub: "total cut earned",
     color: "text-purple-400",
-    glow: "border-purple-500/15 shadow-[inset_0_1px_0_rgba(167,139,250,0.05)]",
-    live: false,
   };
 
   return (

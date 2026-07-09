@@ -6,10 +6,47 @@ import { formatBillingPeriod } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
+export type AdminPlatformStat = {
+  label: string;
+  value: string;
+  sub: string;
+  color: string;
+  live?: boolean;
+};
+
+function PlatformStatLabel({
+  stat,
+}: Readonly<{
+  stat: AdminPlatformStat;
+}>) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1.5">
+        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">
+          {stat.label}
+        </p>
+        {stat.live && (
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+          </span>
+        )}
+      </div>
+      <p className={`text-sm font-semibold tabular-nums mt-0.5 truncate ${stat.color}`}>
+        {stat.value}
+      </p>
+      <p className="text-[11px] text-zinc-600 mt-0.5 truncate" title={stat.sub}>
+        {stat.sub}
+      </p>
+    </div>
+  );
+}
+
 /**
  * Usage panel for the Admin Dashboard. Scope follows the Apps section's
  * "All apps" toggle: own/administered apps by default, or every app on the
- * platform when the toggle is on. All-apps data is fetched by the parent.
+ * platform when the toggle is on. Platform signer/volume/revenue stats are
+ * shown as compact labels when viewing all-apps usage.
  */
 export default function AdminUsagePanel({
   initialOwnUsage,
@@ -18,6 +55,9 @@ export default function AdminUsagePanel({
   allUsageError,
   showAllApps,
   onRetryAllUsage,
+  signerStat,
+  volumeStat,
+  revenueStat,
 }: Readonly<{
   initialOwnUsage: DashboardUsageSummary | null;
   allUsage: DashboardUsageSummary | null;
@@ -25,6 +65,9 @@ export default function AdminUsagePanel({
   allUsageError: boolean;
   showAllApps: boolean;
   onRetryAllUsage: () => void;
+  signerStat: AdminPlatformStat;
+  volumeStat: AdminPlatformStat;
+  revenueStat: AdminPlatformStat;
 }>) {
   if (!initialOwnUsage) {
     return null;
@@ -63,6 +106,14 @@ export default function AdminUsagePanel({
           View full usage →
         </Link>
       </div>
+
+      {showAllApps && (
+        <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-2.5">
+          <PlatformStatLabel stat={signerStat} />
+          <PlatformStatLabel stat={volumeStat} />
+          <PlatformStatLabel stat={revenueStat} />
+        </div>
+      )}
 
       {failed ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
