@@ -31,12 +31,10 @@ const iconBtnClass =
 function UsageIcon(props: Readonly<{ className?: string }>) {
   return (
     <svg className={props.className ?? "h-3.5 w-3.5"} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={1.75}
-        d="M3 13h2l2-5 3 10 3-7 2 2h6"
-      />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 3v18h18" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 16V9" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 16v-5" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 16V6" />
     </svg>
   );
 }
