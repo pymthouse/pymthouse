@@ -38,10 +38,9 @@ function StatCard({ stat }: Readonly<{ stat: AdminStatCard }>) {
 }
 
 /**
- * Orchestrates the Admin Dashboard's interactive area: a single "All apps"
- * toggle shared between the Apps section and the Usage panel's "App Usage"
- * tab, plus platform-wide volume/revenue stats that only make sense (and
- * only render) once "All apps" is switched on.
+ * Admin Dashboard interactive area, laid out like the Developer Dashboard:
+ * apps list first (with an admin-only "All apps" toggle), then the usage
+ * panel scoped to that toggle, then signer / platform stats.
  */
 export default function AdminDashboardOverview({
   myApps,
@@ -89,7 +88,13 @@ export default function AdminDashboardOverview({
 
   return (
     <>
-      <div className="mb-8">
+      <AdminAppsSection
+        initialApps={myApps}
+        showAll={showAllApps}
+        onToggleShowAll={handleToggleShowAll}
+      />
+
+      <div className="mt-6">
         <AdminUsagePanel
           initialOwnUsage={initialUsage}
           allUsage={allUsage}
@@ -100,17 +105,11 @@ export default function AdminDashboardOverview({
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard stat={signerStat} />
         {showAllApps && <StatCard stat={volumeStat} />}
         {showAllApps && <StatCard stat={revenueStat} />}
       </div>
-
-      <AdminAppsSection
-        initialApps={myApps}
-        showAll={showAllApps}
-        onToggleShowAll={handleToggleShowAll}
-      />
     </>
   );
 }

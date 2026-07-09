@@ -1,42 +1,15 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import UsageLineChart from "@/components/UsageLineChart";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
-type UsageTab = "mine" | "apps";
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: Readonly<{ active: boolean; onClick: () => void; children: React.ReactNode }>) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-        active
-          ? "bg-emerald-500/15 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.25)]"
-          : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
 /**
- * Usage panel for the Admin Dashboard with a "Your Usage" / "App Usage" tab
- * switch. "App Usage" mirrors whatever the Apps section's "All apps" toggle
- * is currently showing — the viewer's own apps, or every app on the
- * platform. The all-apps usage data itself is fetched by the parent
- * (triggered from the "All apps" toggle click) so this component stays a
- * pure display of whatever summaries it's handed.
+ * Usage panel for the Admin Dashboard. Scope follows the Apps section's
+ * "All apps" toggle: own/administered apps by default, or every app on the
+ * platform when the toggle is on. All-apps data is fetched by the parent.
  */
 export default function AdminUsagePanel({
   initialOwnUsage,
@@ -53,17 +26,13 @@ export default function AdminUsagePanel({
   showAllApps: boolean;
   onRetryAllUsage: () => void;
 }>) {
-  const [activeTab, setActiveTab] = useState<UsageTab>("mine");
-
   if (!initialOwnUsage) {
     return null;
   }
 
-  const showingApps = activeTab === "apps";
-  const usingAllScope = showingApps && showAllApps;
-  const summary = usingAllScope ? allUsage : initialOwnUsage;
-  const loading = usingAllScope && summary === null && loadingAllUsage;
-  const failed = usingAllScope && allUsageError && !loadingAllUsage;
+  const summary = showAllApps ? allUsage : initialOwnUsage;
+  const loading = showAllApps && summary === null && loadingAllUsage;
+  const failed = showAllApps && allUsageError && !loadingAllUsage;
 
   const totalFeesLabel = summary
     ? formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 4) ?? "$0"
@@ -71,28 +40,18 @@ export default function AdminUsagePanel({
 
   return (
     <div className="max-h-[25vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <h3 className="font-semibold text-zinc-100">
-              {showingApps ? "App Usage" : "Your Usage"}
-            </h3>
-            <div className="flex items-center gap-1 rounded-lg bg-black/20 p-0.5">
-              <TabButton active={!showingApps} onClick={() => setActiveTab("mine")}>
-                Your Usage
-              </TabButton>
-              <TabButton active={showingApps} onClick={() => setActiveTab("apps")}>
-                App Usage
-              </TabButton>
-            </div>
-          </div>
+          <h3 className="font-semibold text-zinc-100">
+            {showAllApps
+              ? "All apps usage this billing period"
+              : "Your usage this billing period"}
+          </h3>
           {summary && (
-            <p className="text-xs text-zinc-500 mt-2">
+            <p className="text-xs text-zinc-500 mt-1">
               {formatBillingPeriod(summary.cycle.start)} — {formatBillingPeriod(summary.cycle.end)}
-              {showingApps && (
-                <span className="ml-2 text-zinc-600">
-                  · {showAllApps ? "all apps on the platform" : "apps you own or administer"}
-                </span>
+              {showAllApps && (
+                <span className="ml-2 text-zinc-600">· all apps on the platform</span>
               )}
             </p>
           )}
@@ -165,7 +124,7 @@ export default function AdminUsagePanel({
 
           {summary.appsCount === 0 ? (
             <p className="text-sm text-zinc-500">
-              {showingApps
+              {showAllApps
                 ? "No apps to show usage for yet."
                 : "Create an app to start tracking your personal usage here."}
             </p>

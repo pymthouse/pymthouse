@@ -55,7 +55,7 @@ export default function AdminAppsSection({
       <AppsListSection
         key={showAll ? "all" : "own"}
         apps={apps}
-        title="Apps"
+        title={showAll ? "All Apps" : "My Apps"}
         summaryText={summaryText(apps.length, showAll)}
         emptyStateTitle={showAll ? "No apps yet." : "You don't own any apps yet."}
         showOwner={showAll}
