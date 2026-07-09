@@ -5,8 +5,8 @@ import type { UserAppSummary } from "@/lib/user-apps";
 
 function myAppsSummaryText(count: number): string {
   if (count === 0) return "No apps yet — create one to get started.";
-  if (count === 1) return "1 app — open settings or usage from here.";
-  return `${count} apps — open settings or usage from here.`;
+  if (count === 1) return "1 app — open settings or usage from the icons.";
+  return `${count} apps — open settings or usage from the icons.`;
 }
 
 export default function MyAppsSection({ apps }: Readonly<{ apps: UserAppSummary[] }>) {

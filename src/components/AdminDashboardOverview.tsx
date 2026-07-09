@@ -10,8 +10,8 @@ export type AdminStatCard = AdminPlatformStat;
 
 /**
  * Admin Dashboard interactive area: usage panel on top (My Usage / All Usage),
- * then the apps list with its own independent All apps toggle. Platform
- * signer/volume/revenue stats live as compact labels on the All Usage tab.
+ * then the apps list with its own independent All apps toggle. Selecting an
+ * app in the list filters the usage chart to that app.
  */
 export default function AdminDashboardOverview({
   myApps,
@@ -27,6 +27,7 @@ export default function AdminDashboardOverview({
   revenueStat: AdminStatCard;
 }>) {
   const [showAllApps, setShowAllApps] = useState(false);
+  const [selectedApp, setSelectedApp] = useState<UserAppSummary | null>(null);
   const [allUsage, setAllUsage] = useState<DashboardUsageSummary | null>(null);
   const [loadingAllUsage, setLoadingAllUsage] = useState(false);
   const [allUsageError, setAllUsageError] = useState(false);
@@ -53,6 +54,10 @@ export default function AdminDashboardOverview({
     fetchAllUsage();
   }, [allUsage, loadingAllUsage, fetchAllUsage]);
 
+  const handleSelectApp = useCallback((app: UserAppSummary | null) => {
+    setSelectedApp(app);
+  }, []);
+
   return (
     <>
       <div className="mb-6">
@@ -66,6 +71,9 @@ export default function AdminDashboardOverview({
           signerStat={signerStat}
           volumeStat={volumeStat}
           revenueStat={revenueStat}
+          filterAppId={selectedApp?.id ?? null}
+          filterAppName={selectedApp?.name ?? null}
+          onClearAppFilter={() => setSelectedApp(null)}
         />
       </div>
 
@@ -73,6 +81,8 @@ export default function AdminDashboardOverview({
         initialApps={myApps}
         showAll={showAllApps}
         onToggleShowAll={setShowAllApps}
+        selectedAppId={selectedApp?.id ?? null}
+        onSelectApp={handleSelectApp}
       />
     </>
   );

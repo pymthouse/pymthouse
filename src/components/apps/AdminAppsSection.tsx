@@ -18,10 +18,14 @@ export default function AdminAppsSection({
   initialApps,
   showAll,
   onToggleShowAll,
+  selectedAppId,
+  onSelectApp,
 }: Readonly<{
   initialApps: UserAppSummary[];
   showAll: boolean;
   onToggleShowAll: (next: boolean) => void;
+  selectedAppId?: string | null;
+  onSelectApp?: (app: UserAppSummary | null) => void;
 }>) {
   const [allApps, setAllApps] = useState<UserAppSummary[] | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
@@ -44,6 +48,7 @@ export default function AdminAppsSection({
   const handleToggle = () => {
     const next = !showAll;
     onToggleShowAll(next);
+    onSelectApp?.(null);
     if (next) loadAllApps();
   };
 
@@ -60,6 +65,8 @@ export default function AdminAppsSection({
         emptyStateTitle={showAll ? "No apps yet." : "You don't own any apps yet."}
         showOwner={showAll}
         loading={loading}
+        selectedAppId={selectedAppId}
+        onSelectApp={onSelectApp}
         headerRight={
           <div className="flex items-center gap-2.5 select-none">
             <span className="text-sm font-medium text-zinc-400">All apps</span>

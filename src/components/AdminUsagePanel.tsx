@@ -69,7 +69,8 @@ function TabButton({
 /**
  * Admin Dashboard usage panel. My Usage / All Usage is independent of the
  * Apps section's All apps toggle. Platform signer/volume/revenue stats appear
- * as compact labels on the All Usage tab. Chart series are app × job type.
+ * as compact labels on the All Usage tab. Chart series are app × job type,
+ * optionally filtered to a selected app from the list below.
  */
 export default function AdminUsagePanel({
   initialOwnUsage,
@@ -81,6 +82,9 @@ export default function AdminUsagePanel({
   signerStat,
   volumeStat,
   revenueStat,
+  filterAppId = null,
+  filterAppName = null,
+  onClearAppFilter,
 }: Readonly<{
   initialOwnUsage: DashboardUsageSummary | null;
   allUsage: DashboardUsageSummary | null;
@@ -91,6 +95,9 @@ export default function AdminUsagePanel({
   signerStat: AdminPlatformStat;
   volumeStat: AdminPlatformStat;
   revenueStat: AdminPlatformStat;
+  filterAppId?: string | null;
+  filterAppName?: string | null;
+  onClearAppFilter?: () => void;
 }>) {
   const [activeTab, setActiveTab] = useState<UsageTab>("mine");
 
@@ -102,6 +109,18 @@ export default function AdminUsagePanel({
   const summary = showingAll ? allUsage : initialOwnUsage;
   const loading = showingAll && summary === null && loadingAllUsage;
   const failed = showingAll && allUsageError && !loadingAllUsage;
+
+  const filteredSeries =
+    summary && filterAppId
+      ? summary.chartSeries.filter((s) => s.appId === filterAppId)
+      : summary?.chartSeries ?? [];
+  const filteredRequests = filteredSeries.reduce((sum, s) => sum + s.totalRequests, 0);
+  const filteredAppsWithUsage = filterAppId
+    ? filteredSeries.length > 0
+      ? 1
+      : 0
+    : summary?.appsWithUsage ?? 0;
+  const filteredAppsCount = filterAppId ? 1 : summary?.appsCount ?? 0;
 
   const totalFeesLabel = summary
     ? formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 4) ?? "$0"
@@ -137,12 +156,29 @@ export default function AdminUsagePanel({
               </span>
             </p>
           )}
+          {filterAppId && filterAppName && (
+            <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300">
+              <span>
+                Filtered to <span className="font-medium text-emerald-200">{filterAppName}</span>
+              </span>
+              {onClearAppFilter && (
+                <button
+                  type="button"
+                  onClick={onClearAppFilter}
+                  className="rounded px-1 text-emerald-400/80 hover:bg-emerald-500/20 hover:text-emerald-200"
+                  aria-label="Clear app filter"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <Link
           href="/billing"
           className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
         >
-          View full usage →
+          View full usage
         </Link>
       </div>
 
@@ -185,16 +221,22 @@ export default function AdminUsagePanel({
                 Apps
               </p>
               <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">
-                {summary.appsCount}
+                {filteredAppsCount}
               </p>
-              <p className="text-xs text-zinc-600 mt-0.5">{summary.appsWithUsage} with usage</p>
+              <p className="text-xs text-zinc-600 mt-0.5">
+                {filterAppId
+                  ? filteredAppsWithUsage
+                    ? "with usage"
+                    : "no usage this cycle"
+                  : `${filteredAppsWithUsage} with usage`}
+              </p>
             </div>
             <div>
               <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
                 Requests
               </p>
               <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">
-                {summary.totalRequests}
+                {filterAppId ? filteredRequests : summary.totalRequests}
               </p>
               <p className="text-xs text-zinc-600 mt-0.5">this cycle</p>
             </div>
@@ -206,9 +248,11 @@ export default function AdminUsagePanel({
                 className="text-lg font-bold text-emerald-400 tabular-nums mt-1"
                 title={totalFeesLabel}
               >
-                {totalFeesLabel}
+                {filterAppId ? "—" : totalFeesLabel}
               </p>
-              <p className="text-xs text-zinc-600 mt-0.5">estimated</p>
+              <p className="text-xs text-zinc-600 mt-0.5">
+                {filterAppId ? "see full usage" : "estimated"}
+              </p>
             </div>
           </div>
 
@@ -218,9 +262,13 @@ export default function AdminUsagePanel({
                 ? "No apps to show usage for yet."
                 : "Create an app to start tracking your personal usage here."}
             </p>
+          ) : filteredSeries.length === 0 && filterAppId ? (
+            <p className="text-sm text-zinc-500">
+              No usage for {filterAppName ?? "this app"} in the current billing period.
+            </p>
           ) : (
             <UsageBreakdownChart
-              series={summary.chartSeries}
+              series={filteredSeries}
               valueLabel="Requests / day"
               height={160}
             />

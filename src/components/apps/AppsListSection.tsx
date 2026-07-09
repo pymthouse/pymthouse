@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import AppStatusBadge from "@/components/apps/AppStatusBadge";
-import CopyIdButton from "@/components/apps/CopyIdButton";
 import OwnerApiKeyMintDialog from "@/components/apps/OwnerApiKeyMintDialog";
 import { useOwnerApiKeyMint } from "@/components/apps/use-owner-api-key-mint";
 import type { UserAppSummary } from "@/lib/user-apps";
@@ -20,24 +19,40 @@ function AppListSecondaryLine({ app, showOwner }: AppListSecondaryLineProps) {
       </p>
     );
   }
-  if (app.clientId) {
-    return (
-      <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-        <p className="truncate font-mono text-xs text-zinc-500">{app.clientId}</p>
-        <CopyIdButton
-          value={app.clientId}
-          label="Copy app id"
-          className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
-        />
-      </div>
-    );
-  }
   if (app.subtitle) {
-    return (
-      <p className="text-xs text-zinc-500 mt-0.5 truncate">{app.subtitle}</p>
-    );
+    return <p className="text-xs text-zinc-500 mt-0.5 truncate">{app.subtitle}</p>;
   }
   return null;
+}
+
+const iconBtnClass =
+  "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/80 text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-white/[0.04] hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40";
+
+function UsageIcon(props: Readonly<{ className?: string }>) {
+  return (
+    <svg className={props.className ?? "h-3.5 w-3.5"} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.75}
+        d="M3 13h2l2-5 3 10 3-7 2 2h6"
+      />
+    </svg>
+  );
+}
+
+function SettingsIcon(props: Readonly<{ className?: string }>) {
+  return (
+    <svg className={props.className ?? "h-3.5 w-3.5"} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.75}
+        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+      />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  );
 }
 
 export type AppsListSectionProps = Readonly<{
@@ -51,6 +66,10 @@ export type AppsListSectionProps = Readonly<{
   loading?: boolean;
   /** Number of apps shown per page (default 5); apps are pre-sorted by the caller. */
   pageSize?: number;
+  /** Currently selected app id for usage filtering (optional). */
+  selectedAppId?: string | null;
+  /** When set, clicking a row selects/deselects that app for usage filtering. */
+  onSelectApp?: (app: UserAppSummary | null) => void;
 }>;
 
 function PageNavButton({
@@ -88,6 +107,8 @@ export default function AppsListSection({
   showOwner = false,
   loading = false,
   pageSize = 5,
+  selectedAppId = null,
+  onSelectApp,
 }: AppsListSectionProps) {
   const { mintState, handleGetApiKey, closeMintDialog } =
     useOwnerApiKeyMint<UserAppSummary>();
@@ -98,6 +119,7 @@ export default function AppsListSection({
   const pageStart = currentPage * pageSize;
   const pageApps = apps.slice(pageStart, pageStart + pageSize);
   const showPagination = !loading && apps.length > pageSize;
+  const selectable = typeof onSelectApp === "function";
 
   return (
     <>
@@ -169,71 +191,122 @@ export default function AppsListSection({
           </div>
         ) : (
           <ul className="divide-y divide-zinc-800/60">
-            {pageApps.map((app) => (
-              <li key={app.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-white/[0.03] transition-colors group">
-                <Link
-                  href={`/apps/${app.id}`}
-                  className="flex min-w-0 flex-1 items-center gap-4"
+            {pageApps.map((app) => {
+              const selected = selectedAppId === app.id;
+              return (
+                <li
+                  key={app.id}
+                  className={`flex items-center gap-3 px-5 py-3.5 transition-colors group ${
+                    selected
+                      ? "bg-emerald-500/[0.07] ring-1 ring-inset ring-emerald-500/25"
+                      : "hover:bg-white/[0.03]"
+                  }`}
                 >
-                  <div
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500/20 to-teal-500/20 text-sm font-bold text-emerald-400"
-                    aria-hidden="true"
-                  >
-                    {app.name[0]?.toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium text-zinc-200 group-hover:text-emerald-400 transition-colors truncate">
-                        {app.name}
-                      </span>
-                      <AppStatusBadge status={app.status} />
-                    </div>
-                    <AppListSecondaryLine app={app} showOwner={showOwner} />
-                  </div>
-                </Link>
-                <div className="hidden sm:flex items-center gap-3 shrink-0 text-xs font-medium">
-                  {app.clientId && (
-                    <Link
-                      href={`/apps/${app.id}/usage`}
-                      className="text-zinc-500 hover:text-emerald-400 transition-colors"
-                    >
-                      Usage
-                    </Link>
-                  )}
-                  <Link
-                    href={`/apps/${app.id}`}
-                    className="text-zinc-600 hover:text-zinc-300 transition-colors"
-                  >
-                    Settings →
-                  </Link>
-                  {app.isOwner && app.ownerExternalUserId && app.clientId ? (
+                  {selectable ? (
                     <button
                       type="button"
-                      onClick={() => handleGetApiKey(app)}
-                      disabled={mintState?.phase === "minting" && mintState.appId === app.id}
-                      className="inline-flex items-center gap-1 rounded-md border border-emerald-600/50 px-2 py-0.5 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => onSelectApp(selected ? null : app)}
+                      aria-pressed={selected}
+                      aria-label={
+                        selected
+                          ? `Clear usage filter for ${app.name}`
+                          : `Filter usage to ${app.name}`
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-4 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                     >
-                      {mintState?.phase === "minting" && mintState.appId === app.id ? (
-                        <span
-                          className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
-                          aria-hidden
-                        />
-                      ) : (
-                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={1.75}
-                            d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                          />
-                        </svg>
-                      )}
-                      {mintState?.phase === "minting" && mintState.appId === app.id ? "Getting…" : "Get API Key"}
+                      <div
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500/20 to-teal-500/20 text-sm font-bold text-emerald-400"
+                        aria-hidden="true"
+                      >
+                        {app.name[0]?.toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`text-sm font-medium truncate transition-colors ${
+                              selected
+                                ? "text-emerald-300"
+                                : "text-zinc-200 group-hover:text-emerald-400"
+                            }`}
+                          >
+                            {app.name}
+                          </span>
+                          <AppStatusBadge status={app.status} />
+                        </div>
+                        <AppListSecondaryLine app={app} showOwner={showOwner} />
+                      </div>
                     </button>
-                  ) : null}
-                </div>
-              </li>
-            ))}
+                  ) : (
+                    <Link
+                      href={`/apps/${app.id}`}
+                      className="flex min-w-0 flex-1 items-center gap-4"
+                    >
+                      <div
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-emerald-500/20 to-teal-500/20 text-sm font-bold text-emerald-400"
+                        aria-hidden="true"
+                      >
+                        {app.name[0]?.toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium text-zinc-200 group-hover:text-emerald-400 transition-colors truncate">
+                            {app.name}
+                          </span>
+                          <AppStatusBadge status={app.status} />
+                        </div>
+                        <AppListSecondaryLine app={app} showOwner={showOwner} />
+                      </div>
+                    </Link>
+                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {app.clientId && (
+                      <Link
+                        href={`/apps/${app.id}/usage`}
+                        className={iconBtnClass}
+                        title="Usage"
+                        aria-label={`Open usage for ${app.name}`}
+                      >
+                        <UsageIcon />
+                      </Link>
+                    )}
+                    <Link
+                      href={`/apps/${app.id}`}
+                      className={iconBtnClass}
+                      title="Settings"
+                      aria-label={`Open settings for ${app.name}`}
+                    >
+                      <SettingsIcon />
+                    </Link>
+                    {app.isOwner && app.ownerExternalUserId && app.clientId ? (
+                      <button
+                        type="button"
+                        onClick={() => handleGetApiKey(app)}
+                        disabled={mintState?.phase === "minting" && mintState.appId === app.id}
+                        title="Get API Key"
+                        aria-label={`Get API key for ${app.name}`}
+                        className={`${iconBtnClass} border-emerald-600/40 text-emerald-400 hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60`}
+                      >
+                        {mintState?.phase === "minting" && mintState.appId === app.id ? (
+                          <span
+                            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
+                            aria-hidden
+                          />
+                        ) : (
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={1.75}
+                              d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                            />
+                          </svg>
+                        )}
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -263,9 +336,7 @@ export default function AppsListSection({
       </section>
 
       <OwnerApiKeyMintDialog
-        mintState={
-          mintState?.phase === "minting" ? null : mintState
-        }
+        mintState={mintState?.phase === "minting" ? null : mintState}
         onClose={closeMintDialog}
         onRetry={handleGetApiKey}
       />
