@@ -9,9 +9,9 @@ import type { UserAppSummary } from "@/lib/user-apps";
 export type AdminStatCard = AdminPlatformStat;
 
 /**
- * Admin Dashboard interactive area: usage panel on top (My Usage / All Usage),
- * then the apps list with its own independent All apps toggle. Selecting an
- * app in the list filters the usage chart to that app.
+ * Admin Dashboard interactive area: Apps first until the viewer has usage to
+ * show this cycle, then Usage above Apps. Selecting an app in the list filters
+ * the usage chart. My Usage / All Usage is independent of the Apps "All apps" toggle.
  */
 export default function AdminDashboardOverview({
   myApps,
@@ -54,30 +54,48 @@ export default function AdminDashboardOverview({
     setSelectedApp(app);
   }, []);
 
+  // Keep Apps above Usage until there is something to chart — creating an empty
+  // app should not rearrange the page.
+  const usageFirst = (initialUsage?.appsWithUsage ?? 0) > 0;
+
+  const usagePanel = (
+    <AdminUsagePanel
+      initialOwnUsage={initialUsage}
+      allUsage={allUsage}
+      loadingAllUsage={loadingAllUsage}
+      allUsageError={allUsageError}
+      onEnsureAllUsage={ensureAllUsage}
+      onRetryAllUsage={fetchAllUsage}
+      volumeStat={volumeStat}
+      filterAppId={selectedApp?.id ?? null}
+      filterAppName={selectedApp?.name ?? null}
+      onClearAppFilter={() => setSelectedApp(null)}
+    />
+  );
+
+  const appsSection = (
+    <AdminAppsSection
+      initialApps={myApps}
+      showAll={showAllApps}
+      onToggleShowAll={setShowAllApps}
+      selectedAppId={selectedApp?.id ?? null}
+      onSelectApp={handleSelectApp}
+    />
+  );
+
   return (
     <>
-      <div className="mb-6">
-        <AdminUsagePanel
-          initialOwnUsage={initialUsage}
-          allUsage={allUsage}
-          loadingAllUsage={loadingAllUsage}
-          allUsageError={allUsageError}
-          onEnsureAllUsage={ensureAllUsage}
-          onRetryAllUsage={fetchAllUsage}
-          volumeStat={volumeStat}
-          filterAppId={selectedApp?.id ?? null}
-          filterAppName={selectedApp?.name ?? null}
-          onClearAppFilter={() => setSelectedApp(null)}
-        />
-      </div>
-
-      <AdminAppsSection
-        initialApps={myApps}
-        showAll={showAllApps}
-        onToggleShowAll={setShowAllApps}
-        selectedAppId={selectedApp?.id ?? null}
-        onSelectApp={handleSelectApp}
-      />
+      {usageFirst ? (
+        <>
+          <div className="mb-6">{usagePanel}</div>
+          {appsSection}
+        </>
+      ) : (
+        <>
+          {appsSection}
+          <div className="mt-6">{usagePanel}</div>
+        </>
+      )}
     </>
   );
 }
