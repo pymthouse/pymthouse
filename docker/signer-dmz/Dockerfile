@@ -54,7 +54,7 @@ RUN git clone https://github.com/AnthonyDeroche/mod_authnz_jwt.git && \
     make && \
     make install
 
-FROM golang:1.25.11-bookworm AS turnkey-bootstrap-build
+FROM golang:1.25.12-bookworm AS turnkey-bootstrap-build
 
 WORKDIR /src
 COPY docker/signer-dmz/turnkey-bootstrap/go.mod ./go.mod
