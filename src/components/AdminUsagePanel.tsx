@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import UsageMetricCell from "@/components/UsageMetricCell";
 import { formatBillingPeriod } from "@/lib/billing-format";
@@ -105,21 +104,11 @@ export default function AdminUsagePanel({
 
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <h3 className="font-semibold text-zinc-100">
-              {showingAll ? "All Usage" : "My Usage"}
-            </h3>
-            <div className="flex items-center gap-1 rounded-lg bg-black/20 p-0.5">
-              <TabButton active={!showingAll} onClick={() => selectTab("mine")}>
-                My Usage
-              </TabButton>
-              <TabButton active={showingAll} onClick={() => selectTab("all")}>
-                All Usage
-              </TabButton>
-            </div>
-          </div>
+          <h3 className="font-semibold text-zinc-100">
+            {showingAll ? "All Usage" : "My Usage"}
+          </h3>
           {summary && (
             <p className="text-xs text-zinc-500 mt-2">
               {formatBillingPeriod(summary.cycle.start)} — {formatBillingPeriod(summary.cycle.end)}
@@ -146,12 +135,14 @@ export default function AdminUsagePanel({
             </div>
           )}
         </div>
-        <Link
-          href="/billing"
-          className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
-        >
-          View full usage
-        </Link>
+        <div className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5 sm:ml-auto">
+          <TabButton active={!showingAll} onClick={() => selectTab("mine")}>
+            My Usage
+          </TabButton>
+          <TabButton active={showingAll} onClick={() => selectTab("all")}>
+            All Usage
+          </TabButton>
+        </div>
       </div>
 
       {failed ? (
