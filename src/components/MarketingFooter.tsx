@@ -44,7 +44,7 @@ export function MarketingFooter({ className = "" }: { className?: string }) {
           <p className="text-zinc-500 uppercase tracking-wider mb-2">Help</p>
           <div className="space-y-1.5">
             <a
-              href="https://github.com/eliteprox/pymthouse"
+              href="https://github.com/pymthouse/pymthouse"
               target="_blank"
               rel="noopener noreferrer"
               className="block text-zinc-400 hover:text-zinc-200 transition-colors"

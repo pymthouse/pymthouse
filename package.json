@@ -34,13 +34,14 @@
     "validate:env": "node scripts/validate-env.js",
     "openapi:generate": "npx tsx scripts/generate-openapi-routes.ts",
     "check:openapi": "npm run openapi:generate && npx tsx scripts/check-openapi.ts",
-    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\""
+    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\""
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@braintree/sanitize-url": "^7.1.2",
     "@openmeter/sdk": "^1.0.0-beta.228",
     "@pymthouse/builder-sdk": "^0.5.0",
+    "@pymthouse/clearinghouse-identity-webhook": "^0.3.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@turnkey/crypto": "^2.10.0",
     "@turnkey/react-wallet-kit": "^1.11.1",
