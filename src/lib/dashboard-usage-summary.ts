@@ -1,8 +1,17 @@
 import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data";
 
+export type DashboardUsageChartSeries = {
+  appId: string;
+  appName: string;
+  jobType: string;
+  totalRequests: number;
+  points: { date: string; value: number }[];
+};
+
 export type DashboardUsageSummary = {
   cycle: { start: string; end: string };
   chartData: { date: string; value: number }[];
+  chartSeries: DashboardUsageChartSeries[];
   totalRequests: number;
   totalNetworkFeeUsdMicros: string;
   appsCount: number;
@@ -23,12 +32,20 @@ export async function getDashboardUsageSummary(
     return null;
   }
 
-  const { cycle, chartData, totalRequests, totalNetworkFeeUsdMicros, orderedApps, appsWithUsage } =
-    result.data;
+  const {
+    cycle,
+    chartData,
+    chartSeries,
+    totalRequests,
+    totalNetworkFeeUsdMicros,
+    orderedApps,
+    appsWithUsage,
+  } = result.data;
 
   return {
     cycle,
     chartData,
+    chartSeries,
     totalRequests,
     totalNetworkFeeUsdMicros: totalNetworkFeeUsdMicros.toString(),
     appsCount: orderedApps.length,

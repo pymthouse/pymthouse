@@ -92,6 +92,14 @@ function sortAppUsageByMostUsed(appUsage: BillingAppUsageSummary[]): BillingAppU
   });
 }
 
+export type BillingChartSeries = {
+  appId: string;
+  appName: string;
+  jobType: string;
+  totalRequests: number;
+  points: { date: string; value: number }[];
+};
+
 export type BillingUsageDashboardPayload = {
   scope: "all" | "single";
   userId: string;
@@ -102,6 +110,7 @@ export type BillingUsageDashboardPayload = {
   orderedApps: BillingAppRow[];
   appUsage: BillingAppUsageSummary[];
   chartData: { date: string; value: number }[];
+  chartSeries: BillingChartSeries[];
   totalRequests: number;
   totalFeeWei: bigint;
   totalNetworkFeeUsdMicros: bigint;
@@ -201,6 +210,9 @@ async function buildOpenMeterBillingDashboard(input: {
   );
 
   const requestsByDay = new Map<string, number>();
+  /** appId|jobType → day → count */
+  const seriesDayCounts = new Map<string, Map<string, number>>();
+  const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
 
   const appUsage: BillingAppUsageSummary[] = sortAppUsageByMostUsed(
     input.orderedApps.map((app, index) => {
@@ -220,6 +232,21 @@ async function buildOpenMeterBillingDashboard(input: {
 
       for (const [day, count] of om.requestsByDay) {
         requestsByDay.set(day, (requestsByDay.get(day) ?? 0) + count);
+      }
+
+      for (const row of om.byDailyPipeline ?? []) {
+        const jobType = row.pipeline || "unknown";
+        const seriesKey = `${app.id}|${jobType}`;
+        if (!seriesMeta.has(seriesKey)) {
+          seriesMeta.set(seriesKey, {
+            appId: app.id,
+            appName: app.name,
+            jobType,
+          });
+        }
+        const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
+        dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
+        seriesDayCounts.set(seriesKey, dayMap);
       }
 
       let networkFeeUsdMicros = 0n;
@@ -301,15 +328,37 @@ async function buildOpenMeterBillingDashboard(input: {
   );
   const appsWithUsage = appUsage.filter((app) => app.requestCount > 0).length;
   const todayKeyUtc = new Date().toISOString().slice(0, 10);
-  const chartData: { date: string; value: number }[] = dateKeysInclusiveUtc(
-    input.cycleBounds.start,
-    input.cycleBounds.end,
-  )
-    .filter((date) => date <= todayKeyUtc)
-    .map((date) => ({
-      date,
-      value: requestsByDay.get(date) ?? 0,
-    }));
+  const dateKeys = dateKeysInclusiveUtc(input.cycleBounds.start, input.cycleBounds.end).filter(
+    (date) => date <= todayKeyUtc,
+  );
+  const chartData: { date: string; value: number }[] = dateKeys.map((date) => ({
+    date,
+    value: requestsByDay.get(date) ?? 0,
+  }));
+
+  const chartSeries: BillingChartSeries[] = [...seriesMeta.entries()]
+    .map(([seriesKey, meta]) => {
+      const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
+      const points = dateKeys.map((date) => ({
+        date,
+        value: dayMap.get(date) ?? 0,
+      }));
+      const totalRequests = points.reduce((sum, point) => sum + point.value, 0);
+      return {
+        appId: meta.appId,
+        appName: meta.appName,
+        jobType: meta.jobType,
+        totalRequests,
+        points,
+      };
+    })
+    .filter((series) => series.totalRequests > 0)
+    .sort((a, b) => {
+      if (b.totalRequests !== a.totalRequests) return b.totalRequests - a.totalRequests;
+      const appCmp = a.appName.localeCompare(b.appName);
+      if (appCmp !== 0) return appCmp;
+      return a.jobType.localeCompare(b.jobType);
+    });
 
   return {
     ok: true,
@@ -323,6 +372,7 @@ async function buildOpenMeterBillingDashboard(input: {
       orderedApps: input.orderedApps,
       appUsage,
       chartData,
+      chartSeries,
       totalRequests,
       totalFeeWei: 0n,
       totalNetworkFeeUsdMicros,

@@ -9,10 +9,9 @@ import type { UserAppSummary } from "@/lib/user-apps";
 export type AdminStatCard = AdminPlatformStat;
 
 /**
- * Admin Dashboard interactive area, laid out like the Developer Dashboard:
- * apps list first (with an admin-only "All apps" toggle), then the usage
- * panel scoped to that toggle. Platform signer/volume/revenue stats live as
- * compact labels inside the all-apps usage view.
+ * Admin Dashboard interactive area: usage panel on top (My Usage / All Usage),
+ * then the apps list with its own independent All apps toggle. Platform
+ * signer/volume/revenue stats live as compact labels on the All Usage tab.
  */
 export default function AdminDashboardOverview({
   myApps,
@@ -49,36 +48,32 @@ export default function AdminDashboardOverview({
       .finally(() => setLoadingAllUsage(false));
   }, [loadingAllUsage]);
 
-  const handleToggleShowAll = useCallback(
-    (next: boolean) => {
-      setShowAllApps(next);
-      if (!next || allUsage !== null || loadingAllUsage) return;
-      fetchAllUsage();
-    },
-    [allUsage, loadingAllUsage, fetchAllUsage],
-  );
+  const ensureAllUsage = useCallback(() => {
+    if (allUsage !== null || loadingAllUsage) return;
+    fetchAllUsage();
+  }, [allUsage, loadingAllUsage, fetchAllUsage]);
 
   return (
     <>
-      <AdminAppsSection
-        initialApps={myApps}
-        showAll={showAllApps}
-        onToggleShowAll={handleToggleShowAll}
-      />
-
-      <div className="mt-6">
+      <div className="mb-6">
         <AdminUsagePanel
           initialOwnUsage={initialUsage}
           allUsage={allUsage}
           loadingAllUsage={loadingAllUsage}
           allUsageError={allUsageError}
-          showAllApps={showAllApps}
+          onEnsureAllUsage={ensureAllUsage}
           onRetryAllUsage={fetchAllUsage}
           signerStat={signerStat}
           volumeStat={volumeStat}
           revenueStat={revenueStat}
         />
       </div>
+
+      <AdminAppsSection
+        initialApps={myApps}
+        showAll={showAllApps}
+        onToggleShowAll={setShowAllApps}
+      />
     </>
   );
 }

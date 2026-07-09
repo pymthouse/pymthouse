@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import UsageLineChart from "@/components/UsageLineChart";
+import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
@@ -13,6 +14,8 @@ export type AdminPlatformStat = {
   color: string;
   live?: boolean;
 };
+
+type UsageTab = "mine" | "all";
 
 function PlatformStatLabel({
   stat,
@@ -42,18 +45,38 @@ function PlatformStatLabel({
   );
 }
 
+function TabButton({
+  active,
+  onClick,
+  children,
+}: Readonly<{ active: boolean; onClick: () => void; children: React.ReactNode }>) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+        active
+          ? "bg-emerald-500/15 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.25)]"
+          : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
- * Usage panel for the Admin Dashboard. Scope follows the Apps section's
- * "All apps" toggle: own/administered apps by default, or every app on the
- * platform when the toggle is on. Platform signer/volume/revenue stats are
- * shown as compact labels when viewing all-apps usage.
+ * Admin Dashboard usage panel. My Usage / All Usage is independent of the
+ * Apps section's All apps toggle. Platform signer/volume/revenue stats appear
+ * as compact labels on the All Usage tab. Chart series are app × job type.
  */
 export default function AdminUsagePanel({
   initialOwnUsage,
   allUsage,
   loadingAllUsage,
   allUsageError,
-  showAllApps,
+  onEnsureAllUsage,
   onRetryAllUsage,
   signerStat,
   volumeStat,
@@ -63,39 +86,55 @@ export default function AdminUsagePanel({
   allUsage: DashboardUsageSummary | null;
   loadingAllUsage: boolean;
   allUsageError: boolean;
-  showAllApps: boolean;
+  onEnsureAllUsage: () => void;
   onRetryAllUsage: () => void;
   signerStat: AdminPlatformStat;
   volumeStat: AdminPlatformStat;
   revenueStat: AdminPlatformStat;
 }>) {
+  const [activeTab, setActiveTab] = useState<UsageTab>("mine");
+
   if (!initialOwnUsage) {
     return null;
   }
 
-  const summary = showAllApps ? allUsage : initialOwnUsage;
-  const loading = showAllApps && summary === null && loadingAllUsage;
-  const failed = showAllApps && allUsageError && !loadingAllUsage;
+  const showingAll = activeTab === "all";
+  const summary = showingAll ? allUsage : initialOwnUsage;
+  const loading = showingAll && summary === null && loadingAllUsage;
+  const failed = showingAll && allUsageError && !loadingAllUsage;
 
   const totalFeesLabel = summary
     ? formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 4) ?? "$0"
     : "$0";
 
+  const selectTab = (tab: UsageTab) => {
+    setActiveTab(tab);
+    if (tab === "all") onEnsureAllUsage();
+  };
+
   return (
-    <div className="max-h-[25vh] overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div className="min-w-0">
-          <h3 className="font-semibold text-zinc-100">
-            {showAllApps
-              ? "All apps usage this billing period"
-              : "Your usage this billing period"}
-          </h3>
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="font-semibold text-zinc-100">
+              {showingAll ? "All Usage" : "My Usage"}
+            </h3>
+            <div className="flex items-center gap-1 rounded-lg bg-black/20 p-0.5">
+              <TabButton active={!showingAll} onClick={() => selectTab("mine")}>
+                My Usage
+              </TabButton>
+              <TabButton active={showingAll} onClick={() => selectTab("all")}>
+                All Usage
+              </TabButton>
+            </div>
+          </div>
           {summary && (
-            <p className="text-xs text-zinc-500 mt-1">
+            <p className="text-xs text-zinc-500 mt-2">
               {formatBillingPeriod(summary.cycle.start)} — {formatBillingPeriod(summary.cycle.end)}
-              {showAllApps && (
-                <span className="ml-2 text-zinc-600">· all apps on the platform</span>
-              )}
+              <span className="ml-2 text-zinc-600">
+                · {showingAll ? "all apps on the platform" : "apps you own or administer"}
+              </span>
             </p>
           )}
         </div>
@@ -107,7 +146,7 @@ export default function AdminUsagePanel({
         </Link>
       </div>
 
-      {showAllApps && (
+      {showingAll && (
         <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-2.5">
           <PlatformStatLabel stat={signerStat} />
           <PlatformStatLabel stat={volumeStat} />
@@ -136,7 +175,7 @@ export default function AdminUsagePanel({
               </div>
             ))}
           </div>
-          <div className="h-16 rounded bg-zinc-800/60" />
+          <div className="h-28 rounded bg-zinc-800/60" />
         </div>
       ) : (
         <>
@@ -175,12 +214,16 @@ export default function AdminUsagePanel({
 
           {summary.appsCount === 0 ? (
             <p className="text-sm text-zinc-500">
-              {showAllApps
+              {showingAll
                 ? "No apps to show usage for yet."
                 : "Create an app to start tracking your personal usage here."}
             </p>
           ) : (
-            <UsageLineChart data={summary.chartData} valueLabel="Requests / day" height={110} />
+            <UsageBreakdownChart
+              series={summary.chartSeries}
+              valueLabel="Requests / day"
+              height={160}
+            />
           )}
         </>
       )}
