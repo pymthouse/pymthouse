@@ -25,6 +25,7 @@ import {
   syncPublicClientGrantTypes,
 } from "@/lib/oidc/grants";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
+import { mintOwnerApiKey } from "../mint-owner-api-key";
 
 const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
 
@@ -174,96 +175,35 @@ async function postM2mClientCredentials(input: {
   return postOidcToken(body);
 }
 
-async function postM2mTokenExchange(input: {
-  clientId: string;
-  clientSecret: string;
+async function postAppScopedSignerExchange(input: {
+  publicClientId: string;
   subjectToken: string;
 }): Promise<Record<string, unknown>> {
   const body = new URLSearchParams({
     grant_type: TOKEN_EXCHANGE_GRANT,
-    client_id: input.clientId,
-    client_secret: input.clientSecret,
     subject_token: input.subjectToken,
     subject_token_type: SUBJECT_ACCESS_TOKEN_TYPE,
-    scope: "sign:job",
   });
-  return postOidcToken(body);
-}
-
-async function postBuilderJson(input: {
-  path: string;
-  method: "POST";
-  m2mClientId: string;
-  m2mClientSecret: string;
-  body: Record<string, unknown>;
-}): Promise<Record<string, unknown>> {
-  const basic =
-    typeof globalThis.btoa === "function"
-      ? globalThis.btoa(`${input.m2mClientId}:${input.m2mClientSecret}`)
-      : "";
-  if (!basic) {
-    throw new Error("Browser base64 encoder unavailable for Basic auth.");
-  }
-
-  const response = await fetch(input.path, {
-    method: input.method,
-    headers: {
-      Authorization: `Basic ${basic}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
+  const res = await fetch(
+    `/api/v1/apps/${encodeURIComponent(input.publicClientId)}/oidc/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
     },
-    body: JSON.stringify(input.body),
-  });
-
-  const text = await response.text();
-  let parsed: Record<string, unknown> = {};
+  );
+  const text = await res.text();
+  let data: Record<string, unknown> = {};
   try {
-    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch {
-    parsed = {};
+    /* keep empty */
   }
-
-  if (!response.ok) {
-    const message =
-      (typeof parsed.error_description === "string" && parsed.error_description) ||
-      (typeof parsed.error === "string" && parsed.error) ||
-      text ||
-      `Request failed (${response.status})`;
-    throw new Error(message);
+  if (!res.ok) {
+    const description = getOidcErrorDescription(data, res.statusText);
+    throw new Error(description || `Request failed (${res.status})`);
   }
-  return parsed;
-}
-
-async function ensureAppUserAndMintApiKey(input: {
-  publicClientId: string;
-  m2mClientId: string;
-  m2mClientSecret: string;
-  externalUserId: string;
-}): Promise<Record<string, unknown>> {
-  const externalUserId = input.externalUserId.trim();
-  if (!externalUserId) {
-    throw new Error("external user id is required to mint an API key.");
-  }
-
-  await postBuilderJson({
-    path: `/api/v1/apps/${encodeURIComponent(input.publicClientId)}/users`,
-    method: "POST",
-    m2mClientId: input.m2mClientId,
-    m2mClientSecret: input.m2mClientSecret,
-    body: {
-      externalUserId,
-      email: `${externalUserId}@example.test`,
-      status: "active",
-    },
-  });
-
-  return postBuilderJson({
-    path: `/api/v1/apps/${encodeURIComponent(input.publicClientId)}/users/${encodeURIComponent(externalUserId)}/keys`,
-    method: "POST",
-    m2mClientId: input.m2mClientId,
-    m2mClientSecret: input.m2mClientSecret,
-    body: { label: "livepeer-gateway" },
-  });
+  return data;
 }
 
 function extractAccessToken(data: Record<string, unknown>): string | null {
@@ -378,51 +318,41 @@ async function executeM2mTokenTest(input: {
   rawAccessToken: string | null;
   tokenKind: "api_key" | "signer_session" | "jwt";
 }> {
-  if (input.activeKind === "owner" && input.useBearerSigning) {
+  if (input.activeKind === "owner") {
+    // Remote signing needs no client secret: mint the composite key with the
+    // signed-in session (same as the Get API Key easy flow), then either return
+    // it as a Bearer key or exchange it once for a signer JWT.
     if (!input.publicClientId?.trim()) {
-      throw new Error("Public client_id is required to mint per-user API keys.");
+      throw new Error("Public client_id is required for remote signing.");
     }
     const ownerExternalUserId = input.ownerExternalUserId?.trim();
     if (!ownerExternalUserId) {
       throw new Error("App owner identity is unavailable. Refresh the page and retry.");
     }
-    const data = await ensureAppUserAndMintApiKey({
-      publicClientId: input.publicClientId,
-      m2mClientId: input.m2mClientId,
-      m2mClientSecret: input.effectiveSecret,
-      externalUserId: ownerExternalUserId,
+    const minted = await mintOwnerApiKey({
+      clientId: input.publicClientId,
+      ownerExternalUserId,
     });
-    const apiKey =
-      typeof data.apiKey === "string" && data.apiKey.trim() ? data.apiKey.trim() : null;
-    if (!apiKey) {
+    const compositeKey =
+      typeof minted.apiKey === "string" && minted.apiKey.trim() ? minted.apiKey.trim() : null;
+    if (!compositeKey) {
       throw new Error("API key mint response missing apiKey.");
     }
-    return {
-      result: formatTokenTestResult(data),
-      rawAccessToken: apiKey,
-      tokenKind: "api_key",
-    };
-  }
-
-  if (input.activeKind === "owner") {
-    const mintData = await postM2mClientCredentials({
-      clientId: input.m2mClientId,
-      clientSecret: input.effectiveSecret,
-      scope: "sign:job",
-    });
-    const subjectJwt = extractAccessToken(mintData);
-    if (!subjectJwt) {
-      throw new Error("Remote signing mint did not return an access_token.");
+    if (input.useBearerSigning) {
+      return {
+        result: formatTokenTestResult(minted),
+        rawAccessToken: compositeKey,
+        tokenKind: "api_key",
+      };
     }
-    const data = await postM2mTokenExchange({
-      clientId: input.m2mClientId,
-      clientSecret: input.effectiveSecret,
-      subjectToken: subjectJwt,
+    const exchanged = await postAppScopedSignerExchange({
+      publicClientId: input.publicClientId,
+      subjectToken: compositeKey,
     });
     return {
-      result: formatTokenTestResult(data),
-      rawAccessToken: extractAccessToken(data),
-      tokenKind: "signer_session",
+      result: formatTokenTestResult(exchanged),
+      rawAccessToken: extractAccessToken(exchanged),
+      tokenKind: "jwt",
     };
   }
 
@@ -816,8 +746,9 @@ function M2mTokenTestPanel({
   ) : null;
 
   const runTest = useCallback(async () => {
-    if (!effectiveSecret || readOnly) {
-      setError("Enter your client secret to run a test token exchange.");
+    if (readOnly) return;
+    if (activeKind === "admin" && !effectiveSecret) {
+      setError("Enter your client secret to run the administrative token test.");
       return;
     }
     setLoading(true);
@@ -874,25 +805,6 @@ function M2mTokenTestPanel({
         </a>
       </div>
 
-      <div className="space-y-1.5">
-        <label className="block text-xs font-medium text-zinc-400" htmlFor={`m2m-secret-${clientId}`}>
-          Client secret
-        </label>
-        <input
-          id={`m2m-secret-${clientId}`}
-          type="password"
-          value={clientSecretInput}
-          onChange={(e) => setClientSecretInput(e.target.value)}
-          placeholder="pmth_cs_…"
-          autoComplete="new-password"
-          disabled={readOnly}
-          className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 font-mono placeholder:text-zinc-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-        />
-        <p className="text-xs text-zinc-500">
-          Paste a secret you have stored, or generate one above — it fills in here automatically once.
-        </p>
-      </div>
-
       <M2mFlowSelection
         showFlowPicker={showFlowPicker}
         showAdministrative={showAdministrative}
@@ -903,15 +815,40 @@ function M2mTokenTestPanel({
         bearerFormatToggle={bearerFormatToggle}
       />
 
-      {activeKind === "owner" && useBearerSigning ? (
-        <p className="text-xs text-zinc-500">
-          API key minting is bound to the app owner identity:{" "}
-          <span className="font-mono text-zinc-400">
-            {ownerExternalUserId?.trim() || "(unavailable)"}
-          </span>
-          .
-        </p>
-      ) : null}
+      {activeKind === "admin" ? (
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-zinc-400" htmlFor={`m2m-secret-${clientId}`}>
+            Client secret
+          </label>
+          <input
+            id={`m2m-secret-${clientId}`}
+            type="password"
+            value={clientSecretInput}
+            onChange={(e) => setClientSecretInput(e.target.value)}
+            placeholder="pmth_cs_…"
+            autoComplete="new-password"
+            disabled={readOnly}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 font-mono placeholder:text-zinc-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          />
+          <p className="text-xs text-zinc-500">
+            Required only for the administrative M2M flow. Paste a stored secret, or generate one above — it fills in here automatically once.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5 space-y-1">
+          <p className="text-xs text-zinc-400">
+            No client secret needed — remote signing uses your{" "}
+            <span className="font-mono text-zinc-300">app_&lt;clientId&gt;.pmth_*</span> API key from{" "}
+            <span className="font-medium text-zinc-300">Get API Key</span>.
+          </p>
+          {ownerExternalUserId?.trim() ? (
+            <p className="text-[11px] text-zinc-500">
+              Bound to the app owner identity:{" "}
+              <span className="font-mono text-zinc-400">{ownerExternalUserId.trim()}</span>.
+            </p>
+          ) : null}
+        </div>
+      )}
 
       <details
         className="rounded-lg border border-zinc-800 bg-zinc-950/50"
