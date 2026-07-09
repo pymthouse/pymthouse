@@ -113,12 +113,13 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md p-1 text-red-300/70 hover:bg-red-500/20 hover:text-red-200"
-              aria-label="Dismiss"
+              className="inline-flex items-center gap-1 rounded-md border border-red-500/40 px-2 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20 transition-colors"
+              aria-label="Clear error from screen"
             >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
+              Close
             </button>
           </div>
         </div>
@@ -143,12 +144,13 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
         <button
           type="button"
           onClick={onClose}
-          className="shrink-0 rounded-md p-1 text-amber-300/70 hover:bg-amber-500/20 hover:text-amber-100"
-          aria-label="Dismiss"
+          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-100 hover:bg-amber-500/20 transition-colors"
+          aria-label="Clear API key from screen"
         >
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
+          Close
         </button>
       </div>
 

@@ -289,11 +289,11 @@ export default function AppsListSection({
                         disabled={mintState?.phase === "minting" && mintState.appId === app.id}
                         title="Get API Key"
                         aria-label={`Get API key for ${app.name}`}
-                        className={`${iconBtnClass} border-emerald-600/40 text-emerald-400 hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {mintState?.phase === "minting" && mintState.appId === app.id ? (
                           <span
-                            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
+                            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
                             aria-hidden
                           />
                         ) : (
