@@ -187,15 +187,22 @@ function resolveCurlSnippetsForSelection(input: {
   }
 
   if (publicClientId) {
+    // JWT test action mints an owner API key then exchanges it; device code is
+    // the end-user alternative, not what the panel button runs.
     return [
       {
+        id: "api-key-exchange",
+        title: "1. Exchange owner API key for signer JWT",
+        body: buildSignerTokenExchangeCurl(origin, publicClientId),
+      },
+      {
         id: "device-auth",
-        title: "1. Start device authorization",
+        title: "End-user alternative: start device authorization",
         body: buildDeviceAuthorizeCurl(origin, publicClientId),
       },
       {
         id: "device-poll",
-        title: "2. Poll for signer JWT",
+        title: "End-user alternative: poll for signer JWT",
         body: buildDevicePollCurl(origin, publicClientId),
       },
     ];
@@ -335,12 +342,29 @@ function maskSecretValue(value: unknown): unknown {
   return `${value.slice(0, 12)}…${value.slice(-8)}`;
 }
 
+const SECRET_RESULT_KEYS = new Set([
+  "access_token",
+  "accessToken",
+  "apiKey",
+  "api_key",
+]);
+
+function redactTokenFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactTokenFields);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      SECRET_RESULT_KEYS.has(key)
+        ? maskSecretValue(nested)
+        : redactTokenFields(nested),
+    ]),
+  );
+}
+
 function formatTokenTestResult(data: Record<string, unknown>): string {
-  const redacted = { ...data };
-  redacted.access_token = maskSecretValue(redacted.access_token);
-  redacted.accessToken = maskSecretValue(redacted.accessToken);
-  redacted.apiKey = maskSecretValue(redacted.apiKey);
-  return JSON.stringify(redacted, null, 2);
+  return JSON.stringify(redactTokenFields(data), null, 2);
 }
 
 function tokenTestResultTitle(tokenKind: "api_key" | "signer_session" | "jwt" | null): string {
@@ -375,7 +399,7 @@ function getSigningFormatHint(format: SigningTokenFormat): string {
   if (format === "bearer") {
     return "Get API Key for a long-lived Bearer token";
   }
-  return "Device code login: authorize, then poll the token endpoint for a signer JWT.";
+  return "Mint an owner API key with your session, then exchange it for a short-lived signer JWT. End users can instead use device code login.";
 }
 
 function getTokenTestActionLabel(
@@ -800,7 +824,7 @@ function M2mFlowSelection({
                 Remote signing
               </span>
               <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
-                Bearer API key (optional JWT exchange), or signer JWT via device code login
+                Bearer API key, or mint + exchange for a signer JWT (device code is the end-user path)
               </span>
             </button>
           ) : null}
@@ -862,9 +886,15 @@ function M2mTokenTestPanel({
   const allowAdmin = flows ? flows.includes("admin") : true;
   const allowOwner = flows ? flows.includes("owner") : true;
   const showAdministrative = allowAdmin && hasM2mBackend && Boolean(adminScopes);
-  const showRemoteSigning = allowOwner && canSignJob;
+  // Owner remote signing needs the public app_ client and the signed-in owner
+  // identity (both Bearer mint and JWT mint+exchange use them).
+  const showRemoteSigning =
+    allowOwner &&
+    canSignJob &&
+    Boolean(publicClientId) &&
+    Boolean(ownerExternalUserId?.trim());
   // Bearer signing uses the public app_ API key — no confidential m2m_ secret.
-  const canUseBearerSigning = canSignJob && Boolean(publicClientId);
+  const canUseBearerSigning = showRemoteSigning;
   const availableFlows = useMemo(
     (): M2mTokenTestKind[] => [
       ...(showAdministrative ? (["admin"] as const) : []),
@@ -1740,7 +1770,7 @@ export default function TestingStep({
               <h3 className="text-sm font-semibold text-zinc-200">Test authentication</h3>
               <p className="text-xs text-zinc-500 mt-1">
                 {effectiveAuthTestTab === "remote"
-                  ? "Bearer API key for direct signing (optional exchange to a signer JWT), or device code login for a signer JWT."
+                  ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
                   : "Client-credentials token exchange with the Backend helper for Builder APIs, user provisioning, and device approval."}
               </p>
             </div>
