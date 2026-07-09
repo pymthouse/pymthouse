@@ -12,13 +12,17 @@ function isIntegerMicrosString(value: string): boolean {
   return true;
 }
 
-function trimTrailingZeros(value: string): string {
+/** Drop trailing zeros from a fractional digit string (no decimal point). */
+function trimFracDigitZeros(fracDigits: string): string {
+  let end = fracDigits.length;
+  while (end > 0 && fracDigits[end - 1] === "0") end -= 1;
+  return fracDigits.slice(0, end);
+}
+
+/** Drop trailing fractional zeros from a `Number#toFixed` string. */
+function trimFixedDecimalZeros(value: string): string {
   const dot = value.indexOf(".");
-  if (dot === -1) {
-    let end = value.length;
-    while (end > 0 && value[end - 1] === "0") end -= 1;
-    return value.slice(0, end);
-  }
+  if (dot === -1) return value;
   let end = value.length;
   while (end > dot + 1 && value[end - 1] === "0") end -= 1;
   if (end === dot + 1) end = dot;
@@ -43,7 +47,7 @@ export function formatUsdMicrosString(
     const whole = abs / 1_000_000n;
     const frac = abs % 1_000_000n;
     const digits = Math.min(6, Math.max(0, Math.floor(maxFractionDigits)));
-    const fracStr = trimTrailingZeros(
+    const fracStr = trimFracDigitZeros(
       frac.toString().padStart(6, "0").slice(0, digits),
     );
     const sign = negative ? "-" : "";
@@ -71,7 +75,7 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
     let digits = 4;
     if (usd >= 1) digits = 2;
     else if (usd >= 0.01) digits = 3;
-    const formatted = trimTrailingZeros(usd.toFixed(digits));
+    const formatted = trimFixedDecimalZeros(usd.toFixed(digits));
     return `${negative ? "-" : ""}$${formatted === "" ? "0" : formatted}`;
   } catch {
     return "$0";
