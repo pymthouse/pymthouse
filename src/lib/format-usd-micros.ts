@@ -1,13 +1,13 @@
 function isIntegerMicrosString(value: string): boolean {
   if (value.length === 0) return false;
   let i = 0;
-  if (value[0] === "-") {
+  if (value.startsWith("-")) {
     if (value.length === 1) return false;
     i = 1;
   }
   for (; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code < 48 || code > 57) return false;
+    const code = value.codePointAt(i);
+    if (code == null || code < 48 || code > 57) return false;
   }
   return true;
 }
