@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
+import UsageMetricCell from "@/components/UsageMetricCell";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
@@ -15,45 +16,6 @@ export type AdminPlatformStat = {
 };
 
 type UsageTab = "mine" | "all";
-
-function MetricCell({
-  label,
-  value,
-  sub,
-  live,
-  title,
-}: Readonly<{
-  label: string;
-  value: string;
-  sub: string;
-  live?: boolean;
-  title?: string;
-}>) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-1.5">
-        <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-          {label}
-        </p>
-        {live && (
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-          </span>
-        )}
-      </div>
-      <p
-        className="text-lg font-bold text-zinc-100 tabular-nums mt-1 truncate"
-        title={title ?? value}
-      >
-        {value}
-      </p>
-      <p className="text-xs text-zinc-600 mt-0.5 truncate" title={sub}>
-        {sub}
-      </p>
-    </div>
-  );
-}
 
 function TabButton({
   active,
@@ -208,18 +170,18 @@ export default function AdminUsagePanel({
           <div className="mb-5 grid grid-cols-3 gap-4 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
             {showingAll && (
               <>
-                <MetricCell
+                <UsageMetricCell
                   label={signerStat.label}
                   value={signerStat.value}
                   sub={signerStat.sub}
                   live={signerStat.live}
                 />
-                <MetricCell
+                <UsageMetricCell
                   label={volumeStat.label}
                   value={volumeStat.value}
                   sub={volumeStat.sub}
                 />
-                <MetricCell
+                <UsageMetricCell
                   label={revenueStat.label}
                   value={revenueStat.value}
                   sub={revenueStat.sub}
@@ -238,7 +200,7 @@ export default function AdminUsagePanel({
               </>
             ) : (
               <>
-                <MetricCell
+                <UsageMetricCell
                   label="Apps"
                   value={String(filteredAppsCount)}
                   sub={
@@ -249,12 +211,12 @@ export default function AdminUsagePanel({
                       : `${filteredAppsWithUsage} with usage`
                   }
                 />
-                <MetricCell
+                <UsageMetricCell
                   label="Requests"
                   value={String(filterAppId ? filteredRequests : summary.totalRequests)}
                   sub="this cycle"
                 />
-                <MetricCell
+                <UsageMetricCell
                   label="Network fees"
                   value={filterAppId ? "—" : totalFeesLabel}
                   sub={filterAppId ? "see full usage" : "estimated"}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
+import UsageMetricCell from "@/components/UsageMetricCell";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { getDashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
@@ -44,30 +45,23 @@ export default async function DashboardUsagePanel() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-5">
-        <div>
-          <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-            Apps
-          </p>
-          <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">{appsCount}</p>
-          <p className="text-xs text-zinc-600 mt-0.5">{appsWithUsage} with usage</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-            Requests
-          </p>
-          <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">{totalRequests}</p>
-          <p className="text-xs text-zinc-600 mt-0.5">this cycle</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-            Network fees
-          </p>
-          <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1" title={totalFeesLabel}>
-            {totalFeesLabel}
-          </p>
-          <p className="text-xs text-zinc-600 mt-0.5">estimated</p>
-        </div>
+      <div className="mb-5 grid grid-cols-3 gap-4 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
+        <UsageMetricCell
+          label="Apps"
+          value={String(appsCount)}
+          sub={`${appsWithUsage} with usage`}
+        />
+        <UsageMetricCell
+          label="Requests"
+          value={String(totalRequests)}
+          sub="this cycle"
+        />
+        <UsageMetricCell
+          label="Network fees"
+          value={totalFeesLabel}
+          sub="estimated"
+          title={totalFeesLabel}
+        />
       </div>
 
       {appsCount === 0 ? (
