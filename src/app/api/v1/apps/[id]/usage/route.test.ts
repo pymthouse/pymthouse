@@ -177,6 +177,22 @@ run("usage API groupBy=pipeline_model reads OpenMeter dashboard meters", async (
         networkFeeUsdMicros: "3000000",
       },
     ],
+    byDailyPipeline: [
+      {
+        pipeline: "text-to-image",
+        modelId: "stabilityai/sdxl",
+        date: "2026-06-01",
+        requestCount: 2,
+        networkFeeUsdMicros: "0",
+      },
+      {
+        pipeline: "llm",
+        modelId: "openai-chat-completions",
+        date: "2026-06-01",
+        requestCount: 1,
+        networkFeeUsdMicros: "0",
+      },
+    ],
     requestsByDay: new Map([["2026-06-01", 3]]),
   });
   t.after(() => __testClearOpenMeterUsageStubs());

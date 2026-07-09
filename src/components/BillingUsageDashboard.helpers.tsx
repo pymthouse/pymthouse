@@ -1,10 +1,9 @@
 import Link from "next/link";
-import {
-  formatBillingPeriod,
-  formatBillingWei,
-  type BillingAppUsageSummary,
-  type BillingUsageDashboardPayload,
-  type BillingUserUsageRow,
+import { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
+import type {
+  BillingAppUsageSummary,
+  BillingUsageDashboardPayload,
+  BillingUserUsageRow,
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
