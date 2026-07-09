@@ -112,29 +112,34 @@ test("splitCompositeApiKey parses app_*.pmth_* and rejects malformed forms", asy
   const { splitCompositeApiKey, formatCompositeApiKey, normalizeAppApiKeySubjectToken } =
     await import("@/lib/app-api-keys");
 
+  const clientId = "app_3b386c81a1db1169fd2c3986";
+  const otherClientId = "app_aaaaaaaaaaaaaaaaaaaaaaaa";
+
   assert.deepEqual(
-    splitCompositeApiKey("app_abc123.pmth_deadbeef"),
-    { publicClientId: "app_abc123", apiKey: "pmth_deadbeef" },
+    splitCompositeApiKey(`${clientId}.pmth_deadbeef`),
+    { publicClientId: clientId, apiKey: "pmth_deadbeef" },
   );
   assert.equal(splitCompositeApiKey("pmth_deadbeef"), null);
   assert.equal(splitCompositeApiKey("app_abc:pmth_deadbeef"), null);
   assert.equal(splitCompositeApiKey("app_abc.pmth_cs_secret"), null);
   assert.equal(splitCompositeApiKey("app_ABC.pmth_x"), null);
+  assert.equal(splitCompositeApiKey("app_abc123.pmth_deadbeef"), null);
+  assert.equal(splitCompositeApiKey("app_nothexnothexnothexnot!.pmth_x"), null);
 
   assert.equal(
-    formatCompositeApiKey("app_abc123", "pmth_deadbeef"),
-    "app_abc123.pmth_deadbeef",
+    formatCompositeApiKey(clientId, "pmth_deadbeef"),
+    `${clientId}.pmth_deadbeef`,
   );
   assert.equal(
-    normalizeAppApiKeySubjectToken("app_abc123.pmth_deadbeef", "app_abc123"),
+    normalizeAppApiKeySubjectToken(`${clientId}.pmth_deadbeef`, clientId),
     "pmth_deadbeef",
   );
   assert.equal(
-    normalizeAppApiKeySubjectToken("app_other.pmth_deadbeef", "app_abc123"),
+    normalizeAppApiKeySubjectToken(`${otherClientId}.pmth_deadbeef`, clientId),
     null,
   );
   assert.equal(
-    normalizeAppApiKeySubjectToken("pmth_deadbeef", "app_abc123"),
+    normalizeAppApiKeySubjectToken("pmth_deadbeef", clientId),
     "pmth_deadbeef",
   );
 });

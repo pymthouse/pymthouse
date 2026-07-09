@@ -659,7 +659,7 @@ function M2mTokenTestResult({
               <span className="font-mono text-zinc-400">
                 POST /api/v1/apps/{`{clientId}`}/oidc/token
               </span>
-              .
+              {"."}
             </p>
           ) : null}
           {tokenKind === "signer_session" ? (

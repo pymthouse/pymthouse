@@ -30,8 +30,8 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
   return raw.slice(-4);
 }
 
-/** Public client id segment: `app_` + lowercase hex (matches generateClientId). */
-const COMPOSITE_CLIENT_ID_RE = /^app_[a-z0-9]+$/;
+/** Public client id segment: `app_` + 24 lowercase hex chars (matches generateClientId). */
+const COMPOSITE_CLIENT_ID_RE = /^app_[a-f0-9]{24}$/;
 
 /**
  * Split a composite credential `app_<clientId>.pmth_<key>` into parts.
@@ -42,7 +42,7 @@ export function splitCompositeApiKey(
 ): { publicClientId: string; apiKey: string } | null {
   const trimmed = token.trim();
   const dot = trimmed.indexOf(".");
-  if (dot <= 0 || trimmed.indexOf(".", dot + 1) !== -1) {
+  if (dot <= 0 || trimmed.slice(dot + 1).includes(".")) {
     return null;
   }
   const publicClientId = trimmed.slice(0, dot);
