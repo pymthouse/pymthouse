@@ -231,11 +231,11 @@ export default function AppsPage() {
                         type="button"
                         onClick={() => handleGetApiKey(app)}
                         disabled={isMintingApiKey}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-emerald-600/50 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isMintingApiKey && mintState.appId === app.id ? (
                           <span
-                            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+                            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
                             aria-hidden
                           />
                         ) : (
