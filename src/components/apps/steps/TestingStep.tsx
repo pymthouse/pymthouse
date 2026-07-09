@@ -109,57 +109,28 @@ const TOKEN_EXCHANGE_GRANT =
 const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
-function buildOpaqueSignerSessionCurl(origin: string, clientId: string): string {
-  return String.raw`# 1) Mint a short-lived sign:job JWT (remote signing flow)
-curl -sS -X POST ${origin}/api/v1/oidc/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=client_credentials" \
-  -d "client_id=${clientId}" \
-  -d "client_secret=YOUR_CLIENT_SECRET" \
-  -d "scope=sign:job"
+function buildSignerBearerCurl(publicClientId: string): string {
+  return String.raw`# Bearer API key — works out of the box, single request, no user provisioning.
+# Use the app_<clientId>.pmth_* key from "Get API Key" directly as a Bearer token.
+# The remote signer validates it and performs the token exchange server-side.
+curl -sS $SIGNER_URL/... \
+  -H "Authorization: Bearer ${publicClientId}.pmth_YOUR_API_KEY"
 
-# 2) Exchange it for a long-lived opaque pmth_* signer session (no resource parameter):
-#    NOTE: this token is NOT a per-user API key and cannot be used as subject_token on /oidc/token.
-curl -sS -X POST ${origin}/api/v1/oidc/token \
+# livepeer-gateway: pass the same composite value as --token ${publicClientId}.pmth_*`;
+}
+
+function buildSignerJwtExchangeCurl(origin: string, publicClientId: string): string {
+  const encodedClientId = encodeURIComponent(publicClientId);
+  return String.raw`# Short-lived signer JWT via RFC 8693 token exchange — single request.
+# subject_token is the app_<clientId>.pmth_* key from "Get API Key".
+curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
-  -d "client_id=${clientId}" \
-  -d "client_secret=YOUR_CLIENT_SECRET" \
-  -d "subject_token=YOUR_SHORT_LIVED_JWT" \
-  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}" \
-  -d "scope=sign:job"`;
-}
+  -d "subject_token=${publicClientId}.pmth_YOUR_API_KEY" \
+  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function buildGatewayApiKeyCurl(
-  origin: string,
-  m2mClientId: string,
-  publicClientId: string,
-  externalUserId: string,
-): string {
-  const encodedClientId = encodeURIComponent(publicClientId);
-  const encodedUserId = encodeURIComponent(externalUserId);
-  const createUserBody = shellSingleQuote(
-    JSON.stringify({
-      externalUserId,
-      email: `${externalUserId}@example.test`,
-      status: "active",
-    }),
-  );
-  return String.raw`# 1) Ensure app user exists
-curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
-  -H "Content-Type: application/json" \
-  -X POST ${origin}/api/v1/apps/${encodedClientId}/users \
-  -d ${createUserBody}
-
-# 2) Mint per-user API key (returned as app_<clientId>.pmth_*):
-curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
-  -H "Content-Type: application/json" \
-  -X POST ${origin}/api/v1/apps/${encodedClientId}/users/${encodedUserId}/keys \
-  -d '{"label":"livepeer-gateway"}'`;
+# End users obtain this JWT by signing in through the device code flow
+# (OAuth device authorization grant) rather than handling an API key.`;
 }
 
 type M2mTokenTestKind = "admin" | "owner";
@@ -342,26 +313,22 @@ function resolveCurlForM2mSelection(
   origin: string,
   m2mClientId: string,
   publicClientId: string | null,
-  ownerExternalUserId: string | null,
   adminScopes: string,
 ): string {
   if (activeKind === "admin") return buildM2mAdminCurl(origin, m2mClientId, adminScopes);
-  if (useBearerSigning && publicClientId) {
-    return buildGatewayApiKeyCurl(
-      origin,
-      m2mClientId,
-      publicClientId,
-      ownerExternalUserId?.trim() || "OWNER_EXTERNAL_USER_ID",
-    );
+  if (publicClientId) {
+    return useBearerSigning
+      ? buildSignerBearerCurl(publicClientId)
+      : buildSignerJwtExchangeCurl(origin, publicClientId);
   }
-  if (useBearerSigning) return buildOpaqueSignerSessionCurl(origin, m2mClientId);
+  // No public app_ client (M2M-only app): fall back to a direct sign:job JWT mint.
   return buildOwnerSignJobCurl(origin, m2mClientId);
 }
 
 function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): string | null {
   if (showFlowPicker) return null;
   if (showRemoteSigning) {
-    return "Review the curl below, then mint either a remote-signing JWT or a gateway-ready per-user API key.";
+    return "Use your app_<clientId>.pmth_* API key as a Bearer token, or exchange it once for a short-lived signer JWT.";
   }
   return "Review the curl below, then exchange credentials for an administrative token.";
 }
@@ -588,7 +555,7 @@ function M2mSingleFlowHint({
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-3">
           <span className="block text-xs font-semibold text-emerald-100/90">Remote signing</span>
           <span className="mt-1 block text-[11px] text-zinc-500">
-            Payment signing tokens for your app owner identity.
+            Bearer API key, or a signer JWT via token exchange or device code login.
           </span>
         </div>
         {bearerFormatToggle ? (
@@ -734,7 +701,7 @@ function M2mFlowSelection({
                 Remote signing
               </span>
               <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
-                Payment signing tokens for your app owner identity
+                Bearer API key, or a signer JWT via token exchange or device code login
               </span>
             </button>
           ) : null}
@@ -806,7 +773,6 @@ function M2mTokenTestPanel({
     origin,
     clientId,
     publicClientId,
-    ownerExternalUserId,
     adminScopes,
   );
   const curlCopyLabel = `curlM2m-${clientId}-${activeKind}-${useBearerSigning ? "bearer" : "jwt"}`;
