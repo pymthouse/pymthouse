@@ -373,7 +373,7 @@ function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): s
 
 function getSigningFormatHint(format: SigningTokenFormat): string {
   if (format === "bearer") {
-    return "1. Get API Key for a long-lived app_<clientId>.pmth_* Bearer token. Optionally exchange it for a short-lived signer JWT.";
+    return "Get API Key for a long-lived Bearer token";
   }
   return "Device code login: authorize, then poll the token endpoint for a signer JWT.";
 }
