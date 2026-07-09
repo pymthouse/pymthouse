@@ -129,14 +129,6 @@ export default function AppsListSection({
           </div>
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             {headerRight}
-            {apps.length > 0 && (
-              <Link
-                href="/apps"
-                className="px-3 py-1.5 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-              >
-                View all
-              </Link>
-            )}
             <Link
               href="/apps/new"
               className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 transition-colors"
