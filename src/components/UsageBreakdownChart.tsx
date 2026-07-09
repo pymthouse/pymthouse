@@ -315,9 +315,9 @@ export default function UsageBreakdownChart({
         </div>
       </div>
 
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 flex flex-wrap items-start gap-x-5 gap-y-2">
         {appsInLegend.map((group) => (
-          <div key={group.appId}>
+          <div key={group.appId} className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
               {group.appName}
             </p>
@@ -347,12 +347,12 @@ export default function UsageBreakdownChart({
             </div>
           </div>
         ))}
-        {series.length > maxSeries && (
-          <p className="text-[11px] text-zinc-600">
-            Showing top {maxSeries} of {series.length} app × job-type series
-          </p>
-        )}
       </div>
+      {series.length > maxSeries && (
+        <p className="mt-2 text-[11px] text-zinc-600">
+          Showing top {maxSeries} of {series.length} app × job-type series
+        </p>
+      )}
     </div>
   );
 }
