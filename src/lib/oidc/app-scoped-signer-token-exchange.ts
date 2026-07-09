@@ -87,6 +87,10 @@ function isJwtSubjectToken(subjectToken: string): boolean {
   if (subjectToken.startsWith("pmth_")) {
     return false;
   }
+  // Composite API keys are `app_*.pmth_*` (one dot); JWTs have three segments.
+  if (subjectToken.startsWith("app_") && subjectToken.includes(".pmth_")) {
+    return false;
+  }
   return subjectToken.split(".").length === 3;
 }
 
@@ -202,7 +206,11 @@ export async function resolveAppScopedSubjectToken(
     }
   }
 
-  if (!token.startsWith("pmth_") || token.startsWith("pmth_cs_")) {
+  // Bare pmth_* or composite app_*.pmth_* (resolved via resolveActiveAppApiKey).
+  const looksLikeApiKey =
+    (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) ||
+    (token.startsWith("app_") && token.includes(".pmth_"));
+  if (!looksLikeApiKey) {
     throw new AppScopedSignerTokenExchangeError(
       "invalid_grant",
       "subject_token is not a valid access token for this issuer",

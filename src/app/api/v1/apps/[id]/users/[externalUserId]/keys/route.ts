@@ -111,6 +111,7 @@ export async function POST(
   const created = await createAppUserApiKey({
     developerAppId: access.app.id,
     appUserId: appUser.id,
+    publicClientId: clientId,
     label,
   });
 
@@ -139,7 +140,8 @@ export async function POST(
       suffix: created.suffix,
       label: created.label,
       createdAt: created.createdAt,
-      message: "Store this API key securely. It will not be shown again.",
+      message:
+        "Store this API key securely. It will not be shown again. Use the full app_<clientId>.pmth_<key> value as Authorization: Bearer <token> for the remote signer.",
       correlation_id: correlationId,
     },
     { status: 201 },
