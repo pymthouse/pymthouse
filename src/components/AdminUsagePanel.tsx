@@ -203,21 +203,9 @@ export default function AdminUsagePanel({
             Retry
           </button>
         </div>
-      ) : loading || !summary ? (
-        <div className="animate-pulse space-y-3">
-          <div className="grid grid-cols-3 gap-4">
-            {["a", "b", "c"].map((key) => (
-              <div key={key} className="space-y-2">
-                <div className="h-2.5 w-16 rounded bg-zinc-800" />
-                <div className="h-4 w-10 rounded bg-zinc-800" />
-              </div>
-            ))}
-          </div>
-          <div className="h-28 rounded bg-zinc-800/60" />
-        </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-4 mb-5">
+          <div className="mb-5 grid grid-cols-3 gap-4 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
             {showingAll && (
               <>
                 <MetricCell
@@ -238,31 +226,47 @@ export default function AdminUsagePanel({
                 />
               </>
             )}
-            <MetricCell
-              label="Apps"
-              value={String(filteredAppsCount)}
-              sub={
-                filterAppId
-                  ? filteredAppsWithUsage
-                    ? "with usage"
-                    : "no usage this cycle"
-                  : `${filteredAppsWithUsage} with usage`
-              }
-            />
-            <MetricCell
-              label="Requests"
-              value={String(filterAppId ? filteredRequests : summary.totalRequests)}
-              sub="this cycle"
-            />
-            <MetricCell
-              label="Network fees"
-              value={filterAppId ? "—" : totalFeesLabel}
-              sub={filterAppId ? "see full usage" : "estimated"}
-              title={filterAppId ? undefined : totalFeesLabel}
-            />
+            {loading || !summary ? (
+              <>
+                {["apps", "requests", "fees"].map((key) => (
+                  <div key={key} className="min-w-0 animate-pulse space-y-2">
+                    <div className="h-2.5 w-16 rounded bg-zinc-800" />
+                    <div className="h-5 w-12 rounded bg-zinc-800" />
+                    <div className="h-2.5 w-20 rounded bg-zinc-800/70" />
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                <MetricCell
+                  label="Apps"
+                  value={String(filteredAppsCount)}
+                  sub={
+                    filterAppId
+                      ? filteredAppsWithUsage
+                        ? "with usage"
+                        : "no usage this cycle"
+                      : `${filteredAppsWithUsage} with usage`
+                  }
+                />
+                <MetricCell
+                  label="Requests"
+                  value={String(filterAppId ? filteredRequests : summary.totalRequests)}
+                  sub="this cycle"
+                />
+                <MetricCell
+                  label="Network fees"
+                  value={filterAppId ? "—" : totalFeesLabel}
+                  sub={filterAppId ? "see full usage" : "estimated"}
+                  title={filterAppId ? undefined : totalFeesLabel}
+                />
+              </>
+            )}
           </div>
 
-          {summary.appsCount === 0 ? (
+          {loading || !summary ? (
+            <div className="h-28 animate-pulse rounded bg-zinc-800/60" />
+          ) : summary.appsCount === 0 ? (
             <p className="text-sm text-zinc-500">
               {showingAll
                 ? "No apps to show usage for yet."
