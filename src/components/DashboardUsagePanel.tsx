@@ -1,13 +1,13 @@
 import Link from "next/link";
-import UsageLineChart from "@/components/UsageLineChart";
+import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { getDashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 /**
  * Compact usage summary for the current billing period, scoped to apps the
- * viewer personally owns or administers — even for admins, who can see all
- * apps on the dedicated Usage page instead.
+ * viewer personally owns or administers. Chart series are app × job type,
+ * matching the Admin Dashboard usage panel.
  */
 export default async function DashboardUsagePanel() {
   const summary = await getDashboardUsageSummary(true);
@@ -16,8 +16,14 @@ export default async function DashboardUsagePanel() {
     return null;
   }
 
-  const { cycle, chartData, totalRequests, totalNetworkFeeUsdMicros, appsCount, appsWithUsage } =
-    summary;
+  const {
+    cycle,
+    chartSeries,
+    totalRequests,
+    totalNetworkFeeUsdMicros,
+    appsCount,
+    appsWithUsage,
+  } = summary;
 
   const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 4) ?? "$0";
 
@@ -57,7 +63,7 @@ export default async function DashboardUsagePanel() {
           <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
             Network fees
           </p>
-          <p className="text-lg font-bold text-emerald-400 tabular-nums mt-1" title={totalFeesLabel}>
+          <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1" title={totalFeesLabel}>
             {totalFeesLabel}
           </p>
           <p className="text-xs text-zinc-600 mt-0.5">estimated</p>
@@ -68,8 +74,14 @@ export default async function DashboardUsagePanel() {
         <p className="text-sm text-zinc-500">
           Create an app to start tracking your personal usage here.
         </p>
+      ) : chartSeries.length === 0 ? (
+        <p className="text-sm text-zinc-500">No usage in the current billing period yet.</p>
       ) : (
-        <UsageLineChart data={chartData} valueLabel="Requests / day" height={110} />
+        <UsageBreakdownChart
+          series={chartSeries}
+          valueLabel="Requests / day"
+          height={160}
+        />
       )}
     </div>
   );
