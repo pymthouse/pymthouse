@@ -29,16 +29,12 @@ interface Props {
   initialDeviceThirdPartyInitiateLogin?: boolean;
   /** When false, settings are view-only (non-admin team members). */
   canEdit?: boolean;
-  /** Only the app owner may submit for review (matches submit API). */
-  canSubmitForReview?: boolean;
+  /** Only the app owner may delete the app. */
+  canDeleteApp?: boolean;
   /** Only app owner may connect/disconnect Stripe (matches billing API). */
   canManageBilling?: boolean;
   /** App owner identity used when minting owner-scoped API keys from Credentials tab. */
   ownerExternalUserId?: string | null;
-  /** Called after a successful submit so the parent can refresh status UI. */
-  onReviewSubmitted?: () => void;
-  /** Called after reverting from submitted to draft (header badge, etc.). */
-  onRevertedToDraft?: () => void;
   /** Initial tab to display (e.g. "plans" from URL query param). */
   initialTab?: string;
 }
@@ -96,11 +92,9 @@ export default function AppSettingsScreen({
   initialInitiateLoginUri = null,
   initialDeviceThirdPartyInitiateLogin = false,
   canEdit = true,
-  canSubmitForReview = false,
+  canDeleteApp = false,
   canManageBilling = false,
   ownerExternalUserId = null,
-  onReviewSubmitted,
-  onRevertedToDraft,
   initialTab,
 }: Props) {
   const router = useRouter();
@@ -120,11 +114,8 @@ export default function AppSettingsScreen({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [submittingForReview, setSubmittingForReview] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [reverting, setReverting] = useState(false);
-  const [confirmRevert, setConfirmRevert] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [integrationSection, setIntegrationSection] =
@@ -322,39 +313,8 @@ export default function AppSettingsScreen({
     showMessage,
   ]);
 
-  const submitForReview = useCallback(async () => {
-    if (!canSubmitForReview) return;
-    setSubmittingForReview(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/submit`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let msg = `Submit failed (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data.message) msg = data.message;
-          else if (data.error) msg = data.error;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
-      setAppState((s) => ({ ...s, status: "submitted" }));
-      onReviewSubmitted?.();
-      showMessage("App submitted for review. An administrator will approve it.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setSubmittingForReview(false);
-    }
-  }, [appId, canSubmitForReview, onReviewSubmitted, showMessage]);
-
-  const deleteDraftApp = useCallback(async () => {
-    if (!canSubmitForReview || appState.status !== "draft") return;
+  const deleteApp = useCallback(async () => {
+    if (!canDeleteApp) return;
     setDeleting(true);
     setError(null);
     try {
@@ -374,38 +334,7 @@ export default function AppSettingsScreen({
       setDeleting(false);
       setConfirmDelete(false);
     }
-  }, [appId, appState.status, canSubmitForReview, router]);
-
-  const revertToDraft = useCallback(async () => {
-    if (!canSubmitForReview || appState.status !== "submitted") return;
-    setReverting(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/revert-draft`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        let msg = `Revert failed (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data.message) msg = data.message;
-          else if (data.error) msg = data.error;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
-      setAppState((s) => ({ ...s, status: "draft" }));
-      onRevertedToDraft?.();
-      showMessage("App is back in draft. You can edit and submit again when ready.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Revert failed");
-    } finally {
-      setReverting(false);
-      setConfirmRevert(false);
-    }
-  }, [appId, appState.status, canSubmitForReview, onRevertedToDraft, showMessage]);
+  }, [appId, canDeleteApp, router]);
 
   const addPostLogoutUri = () => {
     const trimmed = newPostLogoutUri.trim();
@@ -446,70 +375,6 @@ export default function AppSettingsScreen({
             administrators can change settings.
           </div>
         )}
-        {canEdit &&
-          canSubmitForReview &&
-          (appState.status === "draft" || appState.status === "rejected") && (
-            <div className="p-4 rounded-md border border-blue-500/25 bg-blue-500/5 space-y-3">
-              <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Submit for review</h2>
-                <p className="text-sm text-zinc-400 mt-1">
-                  While this app is in draft, only you and platform staff can use
-                  it. Submit it when you are ready so an administrator can approve
-                  it for production.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void submitForReview()}
-                disabled={submittingForReview}
-                className="px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {submittingForReview ? "Submitting…" : "Submit for review"}
-              </button>
-            </div>
-          )}
-        {canEdit &&
-          canSubmitForReview &&
-          appState.status === "submitted" && (
-            <div className="p-4 rounded-md border border-amber-500/25 bg-amber-500/5 space-y-3">
-              <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Revert to draft</h2>
-                <p className="text-sm text-zinc-400 mt-1">
-                  This app is waiting for administrator review. You can withdraw it
-                  from the queue to make changes, then submit again.
-                </p>
-              </div>
-              {confirmRevert ? (
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-amber-300">Withdraw from review queue?</span>
-                  <button
-                    type="button"
-                    onClick={() => void revertToDraft()}
-                    disabled={reverting}
-                    className="px-3 py-1.5 text-sm font-medium rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {reverting ? "Reverting…" : "Yes, revert"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmRevert(false)}
-                    disabled={reverting}
-                    className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmRevert(true)}
-                  className="px-4 py-2 text-sm font-medium rounded-md border border-amber-500/40 text-amber-200 hover:bg-amber-500/10 transition-colors"
-                >
-                  Revert to draft
-                </button>
-              )}
-            </div>
-          )}
         {error && (
           <div className="p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-300 text-sm">
             {error}
@@ -572,9 +437,9 @@ export default function AppSettingsScreen({
             readOnly={!canEdit}
           />
 
-          {canSubmitForReview && appState.status === "draft" && (
+          {canDeleteApp && (
             <section className="space-y-3 pt-2 border-t border-zinc-800">
-              <h2 className="text-sm font-semibold text-zinc-100">Delete draft app</h2>
+              <h2 className="text-sm font-semibold text-zinc-100">Delete app</h2>
               <p className="text-sm text-zinc-400">
                 Permanently remove this app, its OIDC client, and related data. This
                 cannot be undone.
@@ -586,7 +451,7 @@ export default function AppSettingsScreen({
                   </span>
                   <button
                     type="button"
-                    onClick={() => void deleteDraftApp()}
+                    onClick={() => void deleteApp()}
                     disabled={deleting}
                     className="px-3 py-1.5 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
