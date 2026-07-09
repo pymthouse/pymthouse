@@ -86,6 +86,61 @@ function AppsEmptyState() {
   );
 }
 
+function AppCardGetApiKeyButton({
+  app,
+  isMintingThisApp,
+  isMintingApiKey,
+  onGetApiKey,
+}: Readonly<{
+  app: AppSummary;
+  isMintingThisApp: boolean;
+  isMintingApiKey: boolean;
+  onGetApiKey: (app: AppSummary) => void;
+}>) {
+  return (
+    <button
+      type="button"
+      onClick={() => onGetApiKey(app)}
+      disabled={isMintingApiKey}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-emerald-600/50 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {isMintingThisApp ? (
+        <span
+          className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
+          aria-hidden
+        />
+      ) : (
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.75}
+            d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+          />
+        </svg>
+      )}
+      {isMintingThisApp ? "Getting…" : "Get API Key"}
+    </button>
+  );
+}
+
+function resolveAppCardMintUi(
+  app: AppSummary,
+  mintState: OwnerApiKeyMintState<AppSummary> | null,
+): { isMintingThisApp: boolean; showKeyBanner: boolean; canMint: boolean } {
+  const isMintingThisApp =
+    mintState?.phase === "minting" && mintState.appId === app.id;
+  const showKeyBanner =
+    mintState != null &&
+    mintState.phase !== "minting" &&
+    mintState.app.id === app.id;
+  return {
+    isMintingThisApp,
+    showKeyBanner,
+    canMint: Boolean(app.isOwner && app.ownerExternalUserId),
+  };
+}
+
 function AppCard({
   app,
   mintState,
@@ -99,13 +154,7 @@ function AppCard({
   onGetApiKey: (app: AppSummary) => void;
   onCloseMint: () => void;
 }>) {
-  const isMintingThisApp =
-    mintState?.phase === "minting" && mintState.appId === app.id;
-  const showKeyBanner =
-    mintState != null &&
-    mintState.phase !== "minting" &&
-    mintState.app.id === app.id;
-  const canMint = Boolean(app.isOwner && app.ownerExternalUserId);
+  const { isMintingThisApp, showKeyBanner, canMint } = resolveAppCardMintUi(app, mintState);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm transition-all duration-200 group hover:border-white/[0.10] hover:bg-white/[0.035] hover:shadow-[0_0_20px_rgba(52,211,153,0.04)]">
@@ -190,29 +239,12 @@ function AppCard({
               </Link>
             </div>
             {canMint ? (
-              <button
-                type="button"
-                onClick={() => onGetApiKey(app)}
-                disabled={isMintingApiKey}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-emerald-600/50 px-2.5 py-1 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isMintingThisApp ? (
-                  <span
-                    className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
-                    aria-hidden
-                  />
-                ) : (
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.75}
-                      d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                    />
-                  </svg>
-                )}
-                {isMintingThisApp ? "Getting…" : "Get API Key"}
-              </button>
+              <AppCardGetApiKeyButton
+                app={app}
+                isMintingThisApp={isMintingThisApp}
+                isMintingApiKey={isMintingApiKey}
+                onGetApiKey={onGetApiKey}
+              />
             ) : null}
           </nav>
         ) : null}
@@ -220,7 +252,9 @@ function AppCard({
       {showKeyBanner ? (
         <div className="pointer-events-auto relative z-10 border-t border-zinc-800/80 px-5 py-3">
           <OwnerApiKeyMintBanner
-            mintState={mintState}
+            mintState={
+              mintState && mintState.phase !== "minting" ? mintState : null
+            }
             onClose={onCloseMint}
             onRetry={onGetApiKey}
           />

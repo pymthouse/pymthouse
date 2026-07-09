@@ -44,7 +44,8 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
     let digits = 4;
     if (usd >= 1) digits = 2;
     else if (usd >= 0.01) digits = 3;
-    const formatted = usd.toFixed(digits).replace(/\.?0+$/, "");
+    // Strip trailing zeros, then a dangling decimal — avoid `\.?0+$` backtracking.
+    const formatted = usd.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "");
     return `${negative ? "-" : ""}$${formatted === "" ? "0" : formatted}`;
   } catch {
     return "$0";

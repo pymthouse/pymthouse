@@ -72,15 +72,19 @@ export default function AllowanceStrip({
         </span>
       </div>
 
-      <div
-        className="h-1.5 overflow-hidden rounded-[3px] bg-zinc-800"
-        role="meter"
-        aria-label="Starter allowance used"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(pct)}
-      >
-        <div className={`h-full rounded-[3px] ${barClass}`} style={{ width: `${pct}%` }} />
+      <div className="relative h-1.5 overflow-hidden rounded-[3px] bg-zinc-800">
+        <meter
+          className="absolute inset-0 h-full w-full opacity-0"
+          min={0}
+          max={100}
+          value={pct}
+          aria-label="Starter allowance used"
+        />
+        <div
+          className={`pointer-events-none absolute inset-y-0 left-0 rounded-[3px] ${barClass}`}
+          style={{ width: `${pct}%` }}
+          aria-hidden
+        />
       </div>
 
       <div className="flex flex-wrap items-baseline justify-between gap-4 text-[12px] text-zinc-500">
