@@ -315,36 +315,37 @@ export default function UsageBreakdownChart({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-start gap-x-5 gap-y-2">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
         {appsInLegend.map((group) => (
-          <div key={group.appId} className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+          <div
+            key={group.appId}
+            className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1"
+          >
+            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
               {group.appName}
-            </p>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-              {group.series.map((s) => {
-                const colorIndex = visible.findIndex(
-                  (v) => v.appId === s.appId && v.jobType === s.jobType,
-                );
-                return (
+            </span>
+            {group.series.map((s) => {
+              const colorIndex = visible.findIndex(
+                (v) => v.appId === s.appId && v.jobType === s.jobType,
+              );
+              return (
+                <span
+                  key={s.jobType}
+                  className="inline-flex items-center gap-1.5 text-[11px] text-zinc-400"
+                >
                   <span
-                    key={s.jobType}
-                    className="inline-flex items-center gap-1.5 text-[11px] text-zinc-400"
-                  >
-                    <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{
-                        background: SERIES_COLORS[colorIndex % SERIES_COLORS.length],
-                      }}
-                    />
-                    {s.jobType}
-                    <span className="tabular-nums text-zinc-600">
-                      {s.totalRequests.toLocaleString("en-US")}
-                    </span>
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{
+                      background: SERIES_COLORS[colorIndex % SERIES_COLORS.length],
+                    }}
+                  />
+                  {s.jobType}
+                  <span className="tabular-nums text-zinc-600">
+                    {s.totalRequests.toLocaleString("en-US")}
                   </span>
-                );
-              })}
-            </div>
+                </span>
+              );
+            })}
           </div>
         ))}
       </div>
