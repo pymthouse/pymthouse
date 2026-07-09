@@ -39,9 +39,9 @@ function TabButton({
 
 /**
  * Admin Dashboard usage panel. My Usage / All Usage is independent of the
- * Apps section's All apps toggle. Platform signer/volume/revenue stats appear
- * as compact labels on the All Usage tab. Chart series are app × job type,
- * optionally filtered to a selected app from the list below.
+ * Apps section's All apps toggle. All Usage shows volume + request + fee
+ * metrics in one row (USD fees from usage events). Chart series are
+ * app × job type, optionally filtered to a selected app from the list below.
  */
 export default function AdminUsagePanel({
   initialOwnUsage,
@@ -50,9 +50,7 @@ export default function AdminUsagePanel({
   allUsageError,
   onEnsureAllUsage,
   onRetryAllUsage,
-  signerStat,
   volumeStat,
-  revenueStat,
   filterAppId = null,
   filterAppName = null,
   onClearAppFilter,
@@ -63,9 +61,7 @@ export default function AdminUsagePanel({
   allUsageError: boolean;
   onEnsureAllUsage: () => void;
   onRetryAllUsage: () => void;
-  signerStat: AdminPlatformStat;
   volumeStat: AdminPlatformStat;
-  revenueStat: AdminPlatformStat;
   filterAppId?: string | null;
   filterAppName?: string | null;
   onClearAppFilter?: () => void;
@@ -159,35 +155,37 @@ export default function AdminUsagePanel({
       ) : (
         <>
           <div className="mb-5 grid grid-cols-3 gap-4 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
-            {showingAll && (
+            {loading || !summary ? (
               <>
-                <UsageMetricCell
-                  label={signerStat.label}
-                  value={signerStat.value}
-                  sub={signerStat.sub}
-                  live={signerStat.live}
-                />
+                {["a", "b", "c"].map((key) => (
+                  <div key={key} className="min-w-0 animate-pulse space-y-2">
+                    <div className="h-2.5 w-16 rounded bg-zinc-800" />
+                    <div className="h-5 w-12 rounded bg-zinc-800" />
+                  </div>
+                ))}
+              </>
+            ) : showingAll ? (
+              <>
                 <UsageMetricCell
                   label={volumeStat.label}
                   value={volumeStat.value}
                   sub={volumeStat.sub}
                 />
                 <UsageMetricCell
-                  label={revenueStat.label}
-                  value={revenueStat.value}
-                  sub={revenueStat.sub}
+                  label="Requests"
+                  value={String(filterAppId ? filteredRequests : summary.totalRequests)}
+                  sub="this cycle"
                 />
-              </>
-            )}
-            {loading || !summary ? (
-              <>
-                {["apps", "requests", "fees"].map((key) => (
-                  <div key={key} className="min-w-0 animate-pulse space-y-2">
-                    <div className="h-2.5 w-16 rounded bg-zinc-800" />
-                    <div className="h-5 w-12 rounded bg-zinc-800" />
-                    <div className="h-2.5 w-20 rounded bg-zinc-800/70" />
-                  </div>
-                ))}
+                <UsageMetricCell
+                  label="Network fees"
+                  value={filterAppId ? "—" : totalFeesLabel}
+                  sub={
+                    filterAppId
+                      ? "see full usage"
+                      : "USD from usage events this cycle"
+                  }
+                  title={filterAppId ? undefined : totalFeesLabel}
+                />
               </>
             ) : (
               <>
@@ -210,7 +208,11 @@ export default function AdminUsagePanel({
                 <UsageMetricCell
                   label="Network fees"
                   value={filterAppId ? "—" : totalFeesLabel}
-                  sub={filterAppId ? "see full usage" : "estimated"}
+                  sub={
+                    filterAppId
+                      ? "see full usage"
+                      : "USD from usage events this cycle"
+                  }
                   title={filterAppId ? undefined : totalFeesLabel}
                 />
               </>

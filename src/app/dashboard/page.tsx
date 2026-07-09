@@ -42,45 +42,20 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
     userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
     getDashboardUsageSummary(true),
     db.select().from(signerConfig).where(eq(signerConfig.id, "default")).limit(1),
-    db
-      .select({
-        amountWei: transactions.amountWei,
-        platformCutWei: transactions.platformCutWei,
-      })
-      .from(transactions),
+    db.select({ amountWei: transactions.amountWei }).from(transactions),
   ]);
   const signer = signerRows[0];
-
   const signerOnline = signer?.status === "running";
-  let signerSub = "no address";
-  if (signer?.ethAddress) {
-    signerSub = `${signer.ethAddress.slice(0, 6)}...${signer.ethAddress.slice(-4)}`;
-  } else if (signerOnline) {
-    signerSub = "connected";
-  }
 
   let totalFeeWei = 0n;
-  let totalPlatformCutWei = 0n;
   for (const txn of allTransactions) {
     totalFeeWei += BigInt(txn.amountWei);
-    totalPlatformCutWei += BigInt(txn.platformCutWei || "0");
   }
 
-  const signerStat: AdminStatCard = {
-    label: "Signer",
-    value: signerOnline ? "Online" : signer?.status || "N/A",
-    sub: signerSub,
-    live: signerOnline,
-  };
   const volumeStat: AdminStatCard = {
     label: "Total Volume",
     value: formatWei(totalFeeWei.toString()),
     sub: `${allTransactions.length} transactions`,
-  };
-  const revenueStat: AdminStatCard = {
-    label: "Platform Revenue",
-    value: formatWei(totalPlatformCutWei.toString()),
-    sub: "total cut earned",
   };
 
   return (
@@ -107,9 +82,7 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
       <AdminDashboardOverview
         myApps={myApps}
         initialUsage={initialUsage}
-        signerStat={signerStat}
         volumeStat={volumeStat}
-        revenueStat={revenueStat}
       />
     </>
   );

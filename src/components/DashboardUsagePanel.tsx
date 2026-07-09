@@ -59,7 +59,7 @@ export default async function DashboardUsagePanel() {
         <UsageMetricCell
           label="Network fees"
           value={totalFeesLabel}
-          sub="estimated"
+          sub="USD from usage events this cycle"
           title={totalFeesLabel}
         />
       </div>

@@ -16,15 +16,11 @@ export type AdminStatCard = AdminPlatformStat;
 export default function AdminDashboardOverview({
   myApps,
   initialUsage,
-  signerStat,
   volumeStat,
-  revenueStat,
 }: Readonly<{
   myApps: UserAppSummary[];
   initialUsage: DashboardUsageSummary | null;
-  signerStat: AdminStatCard;
   volumeStat: AdminStatCard;
-  revenueStat: AdminStatCard;
 }>) {
   const [showAllApps, setShowAllApps] = useState(false);
   const [selectedApp, setSelectedApp] = useState<UserAppSummary | null>(null);
@@ -68,9 +64,7 @@ export default function AdminDashboardOverview({
           allUsageError={allUsageError}
           onEnsureAllUsage={ensureAllUsage}
           onRetryAllUsage={fetchAllUsage}
-          signerStat={signerStat}
           volumeStat={volumeStat}
-          revenueStat={revenueStat}
           filterAppId={selectedApp?.id ?? null}
           filterAppName={selectedApp?.name ?? null}
           onClearAppFilter={() => setSelectedApp(null)}
