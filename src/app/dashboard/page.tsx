@@ -70,20 +70,17 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
     label: "Signer",
     value: signerOnline ? "Online" : signer?.status || "N/A",
     sub: signerSub,
-    color: signerOnline ? "text-emerald-400" : "text-zinc-400",
     live: signerOnline,
   };
   const volumeStat: AdminStatCard = {
     label: "Total Volume",
     value: formatWei(totalFeeWei.toString()),
     sub: `${allTransactions.length} transactions`,
-    color: "text-amber-400",
   };
   const revenueStat: AdminStatCard = {
     label: "Platform Revenue",
     value: formatWei(totalPlatformCutWei.toString()),
     sub: "total cut earned",
-    color: "text-purple-400",
   };
 
   return (

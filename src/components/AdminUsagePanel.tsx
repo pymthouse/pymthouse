@@ -11,35 +11,45 @@ export type AdminPlatformStat = {
   label: string;
   value: string;
   sub: string;
-  color: string;
   live?: boolean;
 };
 
 type UsageTab = "mine" | "all";
 
-function PlatformStatLabel({
-  stat,
+function MetricCell({
+  label,
+  value,
+  sub,
+  live,
+  title,
 }: Readonly<{
-  stat: AdminPlatformStat;
+  label: string;
+  value: string;
+  sub: string;
+  live?: boolean;
+  title?: string;
 }>) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-1.5">
-        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">
-          {stat.label}
+        <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
+          {label}
         </p>
-        {stat.live && (
+        {live && (
           <span className="relative flex h-1.5 w-1.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
           </span>
         )}
       </div>
-      <p className={`text-sm font-semibold tabular-nums mt-0.5 truncate ${stat.color}`}>
-        {stat.value}
+      <p
+        className="text-lg font-bold text-zinc-100 tabular-nums mt-1 truncate"
+        title={title ?? value}
+      >
+        {value}
       </p>
-      <p className="text-[11px] text-zinc-600 mt-0.5 truncate" title={stat.sub}>
-        {stat.sub}
+      <p className="text-xs text-zinc-600 mt-0.5 truncate" title={sub}>
+        {sub}
       </p>
     </div>
   );
@@ -182,14 +192,6 @@ export default function AdminUsagePanel({
         </Link>
       </div>
 
-      {showingAll && (
-        <div className="mb-4 grid grid-cols-3 gap-3 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-2.5">
-          <PlatformStatLabel stat={signerStat} />
-          <PlatformStatLabel stat={volumeStat} />
-          <PlatformStatLabel stat={revenueStat} />
-        </div>
-      )}
-
       {failed ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-red-400">Failed to load app usage.</p>
@@ -216,44 +218,48 @@ export default function AdminUsagePanel({
       ) : (
         <>
           <div className="grid grid-cols-3 gap-4 mb-5">
-            <div>
-              <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-                Apps
-              </p>
-              <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">
-                {filteredAppsCount}
-              </p>
-              <p className="text-xs text-zinc-600 mt-0.5">
-                {filterAppId
+            {showingAll && (
+              <>
+                <MetricCell
+                  label={signerStat.label}
+                  value={signerStat.value}
+                  sub={signerStat.sub}
+                  live={signerStat.live}
+                />
+                <MetricCell
+                  label={volumeStat.label}
+                  value={volumeStat.value}
+                  sub={volumeStat.sub}
+                />
+                <MetricCell
+                  label={revenueStat.label}
+                  value={revenueStat.value}
+                  sub={revenueStat.sub}
+                />
+              </>
+            )}
+            <MetricCell
+              label="Apps"
+              value={String(filteredAppsCount)}
+              sub={
+                filterAppId
                   ? filteredAppsWithUsage
                     ? "with usage"
                     : "no usage this cycle"
-                  : `${filteredAppsWithUsage} with usage`}
-              </p>
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-                Requests
-              </p>
-              <p className="text-lg font-bold text-zinc-100 tabular-nums mt-1">
-                {filterAppId ? filteredRequests : summary.totalRequests}
-              </p>
-              <p className="text-xs text-zinc-600 mt-0.5">this cycle</p>
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">
-                Network fees
-              </p>
-              <p
-                className="text-lg font-bold text-emerald-400 tabular-nums mt-1"
-                title={totalFeesLabel}
-              >
-                {filterAppId ? "—" : totalFeesLabel}
-              </p>
-              <p className="text-xs text-zinc-600 mt-0.5">
-                {filterAppId ? "see full usage" : "estimated"}
-              </p>
-            </div>
+                  : `${filteredAppsWithUsage} with usage`
+              }
+            />
+            <MetricCell
+              label="Requests"
+              value={String(filterAppId ? filteredRequests : summary.totalRequests)}
+              sub="this cycle"
+            />
+            <MetricCell
+              label="Network fees"
+              value={filterAppId ? "—" : totalFeesLabel}
+              sub={filterAppId ? "see full usage" : "estimated"}
+              title={filterAppId ? undefined : totalFeesLabel}
+            />
           </div>
 
           {summary.appsCount === 0 ? (
