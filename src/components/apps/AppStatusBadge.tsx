@@ -1,10 +1,8 @@
 export function appStatusAriaLabel(status: string): string {
-  switch (status) {
-    case "approved":
-      return "Live";
-    default:
-      return status.replaceAll("_", " ");
+  if (status === "approved") {
+    return "Live";
   }
+  return status.replaceAll("_", " ");
 }
 
 export default function AppStatusBadge({ status }: Readonly<{ status: string }>) {

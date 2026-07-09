@@ -8,7 +8,7 @@ export const GET = withSessionAdminGuard(async () => {
   try {
     const apps = await db
       .select({
-        id: oidcClients.clientId,
+        id: developerApps.id,
         name: developerApps.name,
         subtitle: developerApps.subtitle,
         category: developerApps.category,

@@ -451,7 +451,9 @@ export default function AppSettingsScreen({
                   </span>
                   <button
                     type="button"
-                    onClick={() => void deleteApp()}
+                    onClick={() => {
+                      deleteApp().catch(() => undefined);
+                    }}
                     disabled={deleting}
                     className="px-3 py-1.5 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
