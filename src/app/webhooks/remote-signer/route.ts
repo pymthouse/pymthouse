@@ -1,6 +1,6 @@
 import { getIssuer } from "@/lib/oidc/issuer-urls";
-import { handleAuthorize } from "@livepeer/clearinghouse-identity-webhook/protocol";
-import { createLegacyWebhookConfigFromEnv } from "@livepeer/clearinghouse-identity-webhook/legacy-env";
+import { handleAuthorize } from "@pymthouse/clearinghouse-identity-webhook/protocol";
+import { createLegacyWebhookConfigFromEnv } from "@pymthouse/clearinghouse-identity-webhook/legacy-env";
 
 function buildWebhookConfig() {
   return createLegacyWebhookConfigFromEnv(process.env, {
