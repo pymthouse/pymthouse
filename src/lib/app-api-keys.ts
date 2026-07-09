@@ -30,12 +30,68 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
   return raw.slice(-4);
 }
 
+/** Public client id segment: `app_` + lowercase hex (matches generateClientId). */
+const COMPOSITE_CLIENT_ID_RE = /^app_[a-z0-9]+$/;
+
+/**
+ * Split a composite credential `app_<clientId>.pmth_<key>` into parts.
+ * Returns null for bare `pmth_*`, JWTs, or malformed forms.
+ */
+export function splitCompositeApiKey(
+  token: string,
+): { publicClientId: string; apiKey: string } | null {
+  const trimmed = token.trim();
+  const dot = trimmed.indexOf(".");
+  if (dot <= 0 || trimmed.indexOf(".", dot + 1) !== -1) {
+    return null;
+  }
+  const publicClientId = trimmed.slice(0, dot);
+  const apiKey = trimmed.slice(dot + 1);
+  if (!COMPOSITE_CLIENT_ID_RE.test(publicClientId)) {
+    return null;
+  }
+  if (!apiKey.startsWith("pmth_") || apiKey.startsWith("pmth_cs_")) {
+    return null;
+  }
+  return { publicClientId, apiKey };
+}
+
+/** Format the one-time presented API key as `app_<clientId>.pmth_<key>`. */
+export function formatCompositeApiKey(
+  publicClientId: string,
+  bareApiKey: string,
+): string {
+  return `${publicClientId.trim()}.${bareApiKey.trim()}`;
+}
+
+/**
+ * Normalize a subject_token that may be bare `pmth_*` or composite
+ * `app_*.pmth_*`. When composite, the prefix must match `publicClientId`.
+ */
+export function normalizeAppApiKeySubjectToken(
+  subjectToken: string,
+  publicClientId: string,
+): string | null {
+  const trimmed = subjectToken.trim();
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    if (composite.publicClientId !== publicClientId.trim()) {
+      return null;
+    }
+    return composite.apiKey;
+  }
+  if (!trimmed.startsWith("pmth_") || trimmed.startsWith("pmth_cs_")) {
+    return null;
+  }
+  return trimmed;
+}
+
 export async function resolveActiveAppApiKey(
   bearerToken: string,
   publicClientId: string,
 ): Promise<ResolvedAppApiKey | null> {
-  const token = bearerToken.trim();
-  if (!token.startsWith("pmth_")) {
+  const token = normalizeAppApiKeySubjectToken(bearerToken, publicClientId);
+  if (!token) {
     return null;
   }
 
@@ -125,6 +181,8 @@ export async function listAppUserApiKeys(input: {
 export async function createAppUserApiKey(input: {
   developerAppId: string;
   appUserId: string;
+  /** Public OIDC client id (`app_*`); when set, returned `apiKey` is composite. */
+  publicClientId?: string | null;
   label?: string | null;
 }) {
   const apiKeyValue = generateApiKeyValue();
@@ -145,9 +203,14 @@ export async function createAppUserApiKey(input: {
     revokedAt: null,
   });
 
+  const publicClientId = input.publicClientId?.trim() || "";
+  const presented = publicClientId
+    ? formatCompositeApiKey(publicClientId, apiKeyValue)
+    : apiKeyValue;
+
   return {
     id,
-    apiKey: apiKeyValue,
+    apiKey: presented,
     prefix: maskApiKeyPrefix(apiKeyValue.slice(0, 16)),
     suffix: maskApiKeySuffix(apiKeyValue),
     label: input.label?.trim() || null,

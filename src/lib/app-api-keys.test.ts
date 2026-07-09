@@ -107,3 +107,66 @@ test("resolveActiveAppApiKey returns null for non-pmth tokens without DB", async
   const resolved = await resolveActiveAppApiKey("sk_not_pmth", "app_test");
   assert.equal(resolved, null);
 });
+
+test("splitCompositeApiKey parses app_*.pmth_* and rejects malformed forms", async () => {
+  const { splitCompositeApiKey, formatCompositeApiKey, normalizeAppApiKeySubjectToken } =
+    await import("@/lib/app-api-keys");
+
+  assert.deepEqual(
+    splitCompositeApiKey("app_abc123.pmth_deadbeef"),
+    { publicClientId: "app_abc123", apiKey: "pmth_deadbeef" },
+  );
+  assert.equal(splitCompositeApiKey("pmth_deadbeef"), null);
+  assert.equal(splitCompositeApiKey("app_abc:pmth_deadbeef"), null);
+  assert.equal(splitCompositeApiKey("app_abc.pmth_cs_secret"), null);
+  assert.equal(splitCompositeApiKey("app_ABC.pmth_x"), null);
+
+  assert.equal(
+    formatCompositeApiKey("app_abc123", "pmth_deadbeef"),
+    "app_abc123.pmth_deadbeef",
+  );
+  assert.equal(
+    normalizeAppApiKeySubjectToken("app_abc123.pmth_deadbeef", "app_abc123"),
+    "pmth_deadbeef",
+  );
+  assert.equal(
+    normalizeAppApiKeySubjectToken("app_other.pmth_deadbeef", "app_abc123"),
+    null,
+  );
+  assert.equal(
+    normalizeAppApiKeySubjectToken("pmth_deadbeef", "app_abc123"),
+    "pmth_deadbeef",
+  );
+});
+
+run("resolveActiveAppApiKey accepts composite app_*.pmth_* subject tokens", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const appUser = await createAppUser({
+    clientId: app.clientId,
+    externalUserId: `user-${randomUUID()}`,
+  });
+  const bare = `pmth_${"e".repeat(64)}`;
+  const composite = `${app.clientId}.${bare}`;
+
+  await db.insert(apiKeys).values({
+    id: `key-${randomUUID()}`,
+    keyHash: hashToken(bare),
+    clientId: app.clientId,
+    appUserId: appUser.id,
+    label: "composite key",
+    status: "active",
+  });
+
+  const resolved = await resolveActiveAppApiKey(composite, app.clientId);
+  assert.ok(resolved);
+  assert.equal(resolved?.appUserId, appUser.id);
+  assert.equal(resolved?.publicClientId, app.clientId);
+
+  const mismatched = await resolveActiveAppApiKey(
+    `app_otherclientid000.${bare}`,
+    app.clientId,
+  );
+  assert.equal(mismatched, null);
+});

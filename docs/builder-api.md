@@ -51,9 +51,12 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
-| `pmth_<hex>` | Per-app-user **API key** | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
+| `pmth_<hex>` | Per-app-user **API key** (stored / hashed form) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
+| `app_<clientId>.pmth_<hex>` | **Presented** API key (issuance + remote-signer Bearer) | Same as bare `pmth_*`; prefix is public routing for the app-scoped exchange URL |
 | `pmth_cs_<hex>` | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
+
+Newly issued keys are returned as `app_<clientId>.pmth_<hex>` (RFC 6750-safe `.` separator). The remote-signer identity webhook accepts that composite Bearer, parses the `app_*` prefix, and performs RFC 8693 exchange at `/api/v1/apps/{clientId}/oidc/token`. Bare `pmth_*` remains valid as `subject_token` when the path already supplies `{clientId}`.
 
 Do not pass `pmth_cs_*` as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
 

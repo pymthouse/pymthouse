@@ -101,6 +101,45 @@ test("resolveAppScopedSubjectToken rejects pmth_cs_* client secrets as subject_t
   );
 });
 
+test("resolveAppScopedSubjectToken accepts composite app_*.pmth_* via resolveActiveAppApiKey", async () => {
+  const bare = "pmth_compositesubject";
+  const composite = `${PUBLIC_ID}.${bare}`;
+  const resolved = await resolveAppScopedSubjectToken(composite, PUBLIC_ID, {
+    resolveActiveAppApiKey: async (token, publicClientId) => {
+      assert.equal(token, composite);
+      assert.equal(publicClientId, PUBLIC_ID);
+      return {
+        apiKeyId: "key-1",
+        developerAppId: "dev-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      };
+    },
+  });
+  assert.equal(resolved.externalUserId, "ext-1");
+  assert.equal(resolved.publicClientId, PUBLIC_ID);
+});
+
+test("resolveAppScopedSubjectToken rejects composite with mismatched app_ prefix", async () => {
+  await assert.rejects(
+    () =>
+      resolveAppScopedSubjectToken(
+        "app_otherclientid000.pmth_compositesubject",
+        PUBLIC_ID,
+        {
+          resolveActiveAppApiKey: async () => null,
+        },
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "invalid_grant");
+      return true;
+    },
+  );
+});
+
 test("handleAppScopedSignerTokenExchange rejects wrong grant_type", async () => {
   await assert.rejects(
     () =>
