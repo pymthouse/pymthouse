@@ -13,9 +13,15 @@ function isIntegerMicrosString(value: string): boolean {
 }
 
 function trimTrailingZeros(value: string): string {
+  const dot = value.indexOf(".");
+  if (dot === -1) {
+    let end = value.length;
+    while (end > 0 && value[end - 1] === "0") end -= 1;
+    return value.slice(0, end);
+  }
   let end = value.length;
-  while (end > 0 && value[end - 1] === "0") end -= 1;
-  if (end > 0 && value[end - 1] === ".") end -= 1;
+  while (end > dot + 1 && value[end - 1] === "0") end -= 1;
+  if (end === dot + 1) end = dot;
   return value.slice(0, end);
 }
 
