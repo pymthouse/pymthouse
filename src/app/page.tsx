@@ -297,7 +297,7 @@ export default async function HomePage() {
               Marketplace
             </Link>
             <a
-              href="https://github.com/eliteprox/pymthouse"
+              href="https://github.com/pymthouse/pymthouse"
               target="_blank"
               rel="noopener noreferrer"
               className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60 border border-transparent hover:border-zinc-700 transition-colors"
