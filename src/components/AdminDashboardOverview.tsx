@@ -59,22 +59,32 @@ export default function AdminDashboardOverview({
   const [showAllApps, setShowAllApps] = useState(false);
   const [allUsage, setAllUsage] = useState<DashboardUsageSummary | null>(null);
   const [loadingAllUsage, setLoadingAllUsage] = useState(false);
+  const [allUsageError, setAllUsageError] = useState(false);
+
+  const fetchAllUsage = useCallback(() => {
+    if (loadingAllUsage) return;
+    setLoadingAllUsage(true);
+    setAllUsageError(false);
+    fetch("/api/v1/dashboard/usage?scope=all")
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to load app usage");
+        return r.json();
+      })
+      .then((data: DashboardUsageSummary) => setAllUsage(data))
+      .catch(() => {
+        setAllUsage(null);
+        setAllUsageError(true);
+      })
+      .finally(() => setLoadingAllUsage(false));
+  }, [loadingAllUsage]);
 
   const handleToggleShowAll = useCallback(
     (next: boolean) => {
       setShowAllApps(next);
       if (!next || allUsage !== null || loadingAllUsage) return;
-      setLoadingAllUsage(true);
-      fetch("/api/v1/dashboard/usage?scope=all")
-        .then((r) => {
-          if (!r.ok) throw new Error("Failed to load app usage");
-          return r.json();
-        })
-        .then((data: DashboardUsageSummary) => setAllUsage(data))
-        .catch(() => setAllUsage(null))
-        .finally(() => setLoadingAllUsage(false));
+      fetchAllUsage();
     },
-    [allUsage, loadingAllUsage],
+    [allUsage, loadingAllUsage, fetchAllUsage],
   );
 
   return (
@@ -84,7 +94,9 @@ export default function AdminDashboardOverview({
           initialOwnUsage={initialUsage}
           allUsage={allUsage}
           loadingAllUsage={loadingAllUsage}
+          allUsageError={allUsageError}
           showAllApps={showAllApps}
+          onRetryAllUsage={fetchAllUsage}
         />
       </div>
 

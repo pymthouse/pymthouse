@@ -61,7 +61,7 @@ export default function AdminAppsSection({
         showOwner={showAll}
         loading={loading}
         headerRight={
-          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <div className="flex items-center gap-2.5 select-none">
             <span className="text-sm font-medium text-zinc-400">All apps</span>
             <button
               type="button"
@@ -79,7 +79,7 @@ export default function AdminAppsSection({
                 }`}
               />
             </button>
-          </label>
+          </div>
         }
       />
       {error && <p className="text-xs text-red-400">{error}</p>}

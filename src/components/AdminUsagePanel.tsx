@@ -42,12 +42,16 @@ export default function AdminUsagePanel({
   initialOwnUsage,
   allUsage,
   loadingAllUsage,
+  allUsageError,
   showAllApps,
+  onRetryAllUsage,
 }: Readonly<{
   initialOwnUsage: DashboardUsageSummary | null;
   allUsage: DashboardUsageSummary | null;
   loadingAllUsage: boolean;
+  allUsageError: boolean;
   showAllApps: boolean;
+  onRetryAllUsage: () => void;
 }>) {
   const [activeTab, setActiveTab] = useState<UsageTab>("mine");
 
@@ -59,6 +63,7 @@ export default function AdminUsagePanel({
   const usingAllScope = showingApps && showAllApps;
   const summary = usingAllScope ? allUsage : initialOwnUsage;
   const loading = usingAllScope && summary === null && loadingAllUsage;
+  const failed = usingAllScope && allUsageError && !loadingAllUsage;
 
   const totalFeesLabel = summary
     ? formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 4) ?? "$0"
@@ -100,7 +105,18 @@ export default function AdminUsagePanel({
         </Link>
       </div>
 
-      {loading || !summary ? (
+      {failed ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-red-400">Failed to load app usage.</p>
+          <button
+            type="button"
+            onClick={onRetryAllUsage}
+            className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      ) : loading || !summary ? (
         <div className="animate-pulse space-y-3">
           <div className="grid grid-cols-3 gap-4">
             {["a", "b", "c"].map((key) => (
