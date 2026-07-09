@@ -1,11 +1,21 @@
-import { getIssuer } from "@/lib/oidc/issuer-urls";
+import { getIssuer, getOidcJwksUrl } from "@/lib/oidc/issuer-urls";
 import { handleAuthorize } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { createLegacyWebhookConfigFromEnv } from "@pymthouse/clearinghouse-identity-webhook/legacy-env";
 
 function buildWebhookConfig() {
-  return createLegacyWebhookConfigFromEnv(process.env, {
-    jwtIssuer: process.env.JWT_ISSUER?.trim() || getIssuer(),
-  });
+  const jwtIssuer = process.env.JWT_ISSUER?.trim() || getIssuer();
+  // identity-webhook defaults to {issuer}/.well-known/jwks.json; pymthouse serves {issuer}/jwks.
+  const jwksUri =
+    process.env.OIDC_JWKS_URI?.trim() ||
+    process.env.JWKS_URI?.trim() ||
+    getOidcJwksUrl();
+  return createLegacyWebhookConfigFromEnv(
+    {
+      ...process.env,
+      OIDC_JWKS_URI: jwksUri,
+    },
+    { jwtIssuer },
+  );
 }
 
 export async function POST(request: Request): Promise<Response> {

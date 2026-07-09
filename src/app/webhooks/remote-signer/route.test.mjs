@@ -6,10 +6,15 @@ import { createLegacyWebhookConfigFromEnv } from "@pymthouse/clearinghouse-ident
 const WEBHOOK_SECRET = "test-webhook-secret";
 const JWT_ISSUER = "https://pymthouse.com/api/v1/oidc";
 
+/** Mirror route.ts: pymthouse serves JWKS at {issuer}/jwks, not /.well-known/jwks.json. */
 function buildWebhookConfig(env) {
-  return createLegacyWebhookConfigFromEnv(env, {
-    jwtIssuer: env.JWT_ISSUER?.trim() || JWT_ISSUER,
-  });
+  const jwtIssuer = env.JWT_ISSUER?.trim() || JWT_ISSUER;
+  const jwksUri =
+    env.OIDC_JWKS_URI?.trim() || env.JWKS_URI?.trim() || `${jwtIssuer}/jwks`;
+  return createLegacyWebhookConfigFromEnv(
+    { ...env, OIDC_JWKS_URI: jwksUri },
+    { jwtIssuer },
+  );
 }
 
 test("remote-signer webhook config requires WEBHOOK_SECRET", () => {
@@ -66,4 +71,18 @@ test("remote-signer webhook rejects invalid request json", async () => {
   const body = await response.json();
   assert.equal(body.status, 400);
   assert.equal(body.reason, "invalid request json");
+});
+
+test("remote-signer webhook JWKS path is issuer/jwks", () => {
+  const jwtIssuer = JWT_ISSUER;
+  const jwksUri = `${jwtIssuer}/jwks`;
+  assert.equal(jwksUri, "https://pymthouse.com/api/v1/oidc/jwks");
+  assert.notEqual(jwksUri, `${jwtIssuer}/.well-known/jwks.json`);
+  // Config builds without throwing when OIDC_JWKS_URI is set to pymthouse path.
+  const config = buildWebhookConfig({
+    WEBHOOK_SECRET,
+    JWT_ISSUER,
+    OIDC_JWKS_URI: jwksUri,
+  });
+  assert.equal(config.endUserAuth.kind, "oidc");
 });
