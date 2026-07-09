@@ -201,8 +201,6 @@ defineRouteMetadata("delete", "/api/v1/apps/{clientId}/discovery-profiles/{profi
 registerAppMetadata("get", "/manifest", "App manifest", { tags: ["Discovery"] });
 registerAppMetadata("put", "/manifest", "Update app manifest", { tags: ["Discovery"] });
 registerAppMetadata("post", "/publish", "Publish app", { tags: ["Discovery"] });
-registerAppMetadata("post", "/submit", "Submit app for review", { tags: ["Discovery"] });
-registerAppMetadata("post", "/revert-draft", "Revert draft manifest", { tags: ["Discovery"] });
 
 // Settings & admin
 registerAppMetadata("put", "/settings", "Update app settings");

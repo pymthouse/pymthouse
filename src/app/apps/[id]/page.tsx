@@ -1,20 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppSettingsScreen from "@/components/apps/AppSettingsScreen";
+import AppStatusBadge from "@/components/apps/AppStatusBadge";
 import type { AppFormData, AppState } from "@/components/apps/AppWizard";
 import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
 import { DEFAULT_OIDC_SCOPES, ensureOpenIdScope } from "@/lib/oidc/scopes";
-
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  draft: { label: "Draft", color: "bg-zinc-700 text-zinc-300" },
-  submitted: { label: "Submitted", color: "bg-blue-500/20 text-blue-400" },
-  in_review: { label: "In Review", color: "bg-amber-500/20 text-amber-400" },
-  approved: { label: "Approved", color: "bg-emerald-500/20 text-emerald-400" },
-  rejected: { label: "Rejected", color: "bg-red-500/20 text-red-400" },
-};
 
 export default function AppDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -30,7 +23,7 @@ export default function AppDetailPage() {
     initiateLoginUri: string | null;
     deviceThirdPartyInitiateLogin: boolean;
     canEdit: boolean;
-    canSubmitForReview: boolean;
+    canDeleteApp: boolean;
     canManageBilling: boolean;
     ownerExternalUserId: string | null;
   } | null>(null);
@@ -81,7 +74,7 @@ export default function AppDetailPage() {
           deviceThirdPartyInitiateLogin:
             data.oidcClient?.deviceThirdPartyInitiateLogin === true,
           canEdit: data.canEdit === true,
-          canSubmitForReview: data.canSubmitForReview === true,
+          canDeleteApp: data.canDeleteApp === true,
           canManageBilling: data.canManageBilling === true,
           ownerExternalUserId:
             typeof data.ownerId === "string" && data.ownerId.trim()
@@ -92,28 +85,6 @@ export default function AppDetailPage() {
       .catch(() => setAppData(null))
       .finally(() => setLoading(false));
   }, [id]);
-
-  const handleReviewSubmitted = useCallback(() => {
-    setAppData((prev) =>
-      prev
-        ? {
-            ...prev,
-            state: { ...prev.state, status: "submitted" },
-          }
-        : null,
-    );
-  }, []);
-
-  const handleRevertedToDraft = useCallback(() => {
-    setAppData((prev) =>
-      prev
-        ? {
-            ...prev,
-            state: { ...prev.state, status: "draft" },
-          }
-        : null,
-    );
-  }, []);
 
   if (loading) {
     return (
@@ -135,9 +106,6 @@ export default function AppDetailPage() {
     );
   }
 
-  const statusInfo =
-    STATUS_LABELS[appData.state.status] || STATUS_LABELS.draft;
-
   return (
     <DashboardLayout>
       <div className="mb-8">
@@ -145,11 +113,7 @@ export default function AppDetailPage() {
           <h1 className="text-2xl font-bold text-zinc-100">
             {appData.formData.name || "App"}
           </h1>
-          <span
-            className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusInfo.color}`}
-          >
-            {statusInfo.label}
-          </span>
+          <AppStatusBadge status={appData.state.status} />
         </div>
         <p className="text-sm text-zinc-500 mt-1">
           Edit integration settings, credentials, network discovery, and pricing.
@@ -167,11 +131,9 @@ export default function AppDetailPage() {
           appData.deviceThirdPartyInitiateLogin
         }
         canEdit={appData.canEdit}
-        canSubmitForReview={appData.canSubmitForReview}
+        canDeleteApp={appData.canDeleteApp}
         canManageBilling={appData.canManageBilling}
         ownerExternalUserId={appData.ownerExternalUserId}
-        onReviewSubmitted={handleReviewSubmitted}
-        onRevertedToDraft={handleRevertedToDraft}
         initialTab={initialTab}
       />
     </DashboardLayout>

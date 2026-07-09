@@ -155,7 +155,7 @@ curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
   -X POST ${origin}/api/v1/apps/${encodedClientId}/users \
   -d ${createUserBody}
 
-# 2) Mint per-user API key (pmth_*) for livepeer-gateway:
+# 2) Mint per-user API key (returned as app_<clientId>.pmth_*):
 curl -sS -u "${m2mClientId}:YOUR_CLIENT_SECRET" \
   -H "Content-Type: application/json" \
   -X POST ${origin}/api/v1/apps/${encodedClientId}/users/${encodedUserId}/keys \
@@ -650,12 +650,16 @@ function M2mTokenTestResult({
           </pre>
           {tokenKind === "api_key" ? (
             <p className="text-[11px] text-zinc-500">
-              Returned <span className="font-mono text-zinc-400">pmth_*</span> is a per-user API
-              key and can be exchanged at{" "}
+              Returned{" "}
+              <span className="font-mono text-zinc-400">app_&lt;clientId&gt;.pmth_*</span> is a
+              per-user API key. Use it as{" "}
+              <span className="font-mono text-zinc-400">Authorization: Bearer</span> on the remote
+              signer (python-gateway <span className="font-mono text-zinc-400">--token</span>{" "}
+              blob), or as <span className="font-mono text-zinc-400">subject_token</span> at{" "}
               <span className="font-mono text-zinc-400">
                 POST /api/v1/apps/{`{clientId}`}/oidc/token
-              </span>{" "}
-              (for example from <span className="font-mono text-zinc-400">livepeer-gateway</span>).
+              </span>
+              {"."}
             </p>
           ) : null}
           {tokenKind === "signer_session" ? (

@@ -21,7 +21,6 @@ interface AppSummary {
   ownerExternalUserId: string | null;
 }
 
-const STATUS_REVIEW = new Set(["submitted", "in_review"]);
 const APP_SKELETON_KEYS = ["app-sk-a", "app-sk-b", "app-sk-c"] as const;
 
 function AppStatusIndicator({
@@ -45,60 +44,6 @@ function AppStatusIndicator({
     return (
       <span className="inline-flex shrink-0 items-center justify-center p-1" {...common}>
         <span className="h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-emerald-500/35" />
-      </span>
-    );
-  }
-
-  if (status === "draft") {
-    return (
-      <span
-        className="inline-flex shrink-0 items-center justify-center p-1 text-zinc-500"
-        {...common}
-      >
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.75}
-            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-          />
-        </svg>
-      </span>
-    );
-  }
-
-  if (STATUS_REVIEW.has(status)) {
-    return (
-      <span
-        className="inline-flex shrink-0 items-center justify-center p-1 text-amber-400/95"
-        {...common}
-      >
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.75}
-            d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"
-          />
-        </svg>
-      </span>
-    );
-  }
-
-  if (status === "rejected") {
-    return (
-      <span
-        className="inline-flex shrink-0 items-center justify-center p-1 text-red-400/90"
-        {...common}
-      >
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.75}
-            d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-          />
-        </svg>
       </span>
     );
   }
