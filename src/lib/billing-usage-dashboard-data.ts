@@ -101,10 +101,20 @@ function sortAppUsageByMostUsed(appUsage: BillingAppUsageSummary[]): BillingAppU
 export type BillingChartSeries = {
   appId: string;
   appName: string;
+  /** Display label: pipeline capability + model/constraint (e.g. `byoc / transcode/ffmpeg`). */
   jobType: string;
   totalRequests: number;
   points: { date: string; value: number }[];
 };
+
+/** Chart legend label from OpenMeter pipeline + model_id (signer constraint). */
+export function formatUsageJobTypeLabel(pipeline: string, modelId: string): string {
+  const pipe = (pipeline || "unknown").trim() || "unknown";
+  const model = (modelId || "").trim();
+  if (!model || model === "unknown") return pipe;
+  const shortModel = model.length > 40 ? `${model.slice(0, 38)}…` : model;
+  return `${pipe} / ${shortModel}`;
+}
 
 export type BillingUsageDashboardPayload = {
   scope: "all" | "single";
@@ -247,7 +257,7 @@ async function buildOpenMeterBillingDashboard(input: {
   );
 
   const requestsByDay = new Map<string, number>();
-  /** appId|jobType → day → count */
+  /** appId|pipeline|modelId → day → count */
   const seriesDayCounts = new Map<string, Map<string, number>>();
   const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
 
@@ -272,9 +282,12 @@ async function buildOpenMeterBillingDashboard(input: {
       }
 
       for (const row of om.byDailyPipeline ?? []) {
-        const jobType = row.pipeline || "unknown";
+        const pipeline = row.pipeline || "unknown";
+        const modelId = row.modelId || "unknown";
+        const jobType = formatUsageJobTypeLabel(pipeline, modelId);
         const chartAppId = app.publicClientId;
-        const seriesKey = `${chartAppId}|${jobType}`;
+        // Key by both dimensions so distinct constraints do not collapse under one pipeline.
+        const seriesKey = `${chartAppId}|${pipeline}|${modelId}`;
         if (!seriesMeta.has(seriesKey)) {
           seriesMeta.set(seriesKey, {
             appId: chartAppId,

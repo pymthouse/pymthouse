@@ -61,7 +61,8 @@ function seriesLabel(s: DashboardUsageChartSeries): string {
 }
 
 /**
- * Multi-series daily usage chart. Each series is one app × job-type (pipeline)
+ * Multi-series daily usage chart. Each series is one app × pipeline/model
+ * constraint (OpenMeter `pipeline` + `model_id` from signer events).
  * pair — the two primary visual separators for admin usage.
  */
 export default function UsageBreakdownChart({
@@ -369,7 +370,7 @@ export default function UsageBreakdownChart({
       </div>
       {series.length > maxSeries && (
         <p className="mt-2 text-[11px] text-zinc-600">
-          Showing top {maxSeries} of {series.length} app × job-type series
+          Showing top {maxSeries} of {series.length} app × pipeline/model series
         </p>
       )}
     </div>

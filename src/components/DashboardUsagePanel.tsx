@@ -40,7 +40,8 @@ function DashboardUsageChart({
 
 /**
  * Compact usage summary for the current billing period, scoped to apps the
- * viewer personally owns or administers. Chart series are app × job type,
+ * viewer personally owns or administers. Chart series are app × pipeline/model
+ * (signer constraint), not pipeline capability alone.
  * matching the Admin Dashboard usage panel.
  */
 export default async function DashboardUsagePanel() {

@@ -405,7 +405,7 @@ function deriveFilteredUsage(
  * Admin Dashboard usage panel. My Usage / All Usage is independent of the
  * Apps section's All apps toggle. All Usage shows volume + request + fee
  * metrics in one row (USD fees from usage events). Chart series are
- * app × job type, optionally filtered to a selected app from the list below.
+ * app × pipeline/model constraint, optionally filtered to a selected app from the list below.
  */
 export default function AdminUsagePanel({
   initialOwnUsage,
