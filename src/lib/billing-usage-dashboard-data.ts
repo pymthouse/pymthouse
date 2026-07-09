@@ -48,28 +48,7 @@ export type BillingAppUsageSummary = {
   byPipelineModel: BillingPipelineModelSummary[];
 };
 
-export function formatBillingWei(wei: string): string {
-  if (!wei || !/^\d+$/.test(wei)) return "0";
-  const value = BigInt(wei);
-  if (value === 0n) return "0";
-  const divisor = 10n ** 18n;
-  const whole = value / divisor;
-  const remainder = value % divisor;
-  if (whole === 0n && remainder > 0n) return `${value.toString()} wei`;
-  const fracStr = remainder.toString().padStart(18, "0").slice(0, 6);
-  return `${whole}.${fracStr} ETH`;
-}
-
-export function formatBillingPeriod(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
+export { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
 
 function sortAppsForViewer(apps: BillingAppRow[], userId: string, isAdmin: boolean): BillingAppRow[] {
   const byName = (a: BillingAppRow, b: BillingAppRow) => a.name.localeCompare(b.name);

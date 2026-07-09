@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import UsageLineChart from "@/components/UsageLineChart";
-import { formatBillingPeriod } from "@/lib/billing-usage-dashboard-data";
+import { formatBillingPeriod } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 

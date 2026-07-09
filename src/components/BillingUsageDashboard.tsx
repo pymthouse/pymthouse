@@ -5,10 +5,8 @@ import {
   AppUsageSection,
   BillingDashboardHeader,
 } from "@/components/BillingUsageDashboard.helpers";
-import {
-  formatBillingWei,
-  getBillingUsageDashboardData,
-} from "@/lib/billing-usage-dashboard-data";
+import { formatBillingWei } from "@/lib/billing-format";
+import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 export default async function BillingUsageDashboard({
