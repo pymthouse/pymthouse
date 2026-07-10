@@ -21,6 +21,44 @@ const BENIGN_TURNKEY_CODES = new Set([
   "CLIENT_NOT_INITIALIZED",
 ]);
 
+function trimEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+/**
+ * Optional OAuth overrides for Wallet Kit social logins.
+ * Prefer Auth Proxy dashboard toggles; set these when local/prod need different
+ * client IDs or redirect URIs than the dashboard defaults.
+ */
+function buildOauthConfig(): TurnkeyProviderConfig["auth"] | undefined {
+  const oauthRedirectUri = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_OAUTH_REDIRECT_URI);
+  const googleClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID);
+  const appleClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_APPLE_CLIENT_ID);
+  const discordClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_DISCORD_CLIENT_ID);
+  const xClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_X_CLIENT_ID);
+
+  if (
+    !oauthRedirectUri &&
+    !googleClientId &&
+    !appleClientId &&
+    !discordClientId &&
+    !xClientId
+  ) {
+    return undefined;
+  }
+
+  return {
+    oauthConfig: {
+      ...(oauthRedirectUri ? { oauthRedirectUri } : {}),
+      ...(googleClientId ? { google: { primaryClientId: googleClientId } } : {}),
+      ...(appleClientId ? { apple: { primaryClientId: appleClientId } } : {}),
+      ...(discordClientId ? { discord: { primaryClientId: discordClientId } } : {}),
+      ...(xClientId ? { x: { primaryClientId: xClientId } } : {}),
+    },
+  };
+}
+
 export default function TurnkeyProviderWrapper({
   children,
 }: {
@@ -33,9 +71,11 @@ export default function TurnkeyProviderWrapper({
     return <>{children}</>;
   }
 
+  const auth = buildOauthConfig();
   const turnkeyConfig: TurnkeyProviderConfig = {
     organizationId,
     authProxyConfigId,
+    ...(auth ? { auth } : {}),
   };
 
   return (

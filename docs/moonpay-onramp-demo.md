@@ -13,6 +13,17 @@ sweep work).
 
 - MoonPay sandbox credential configured via Turnkey (`CreateFiatOnRampCredential`)
 - Wallet Kit Auth Proxy enabled for your org
+- **Social logins** (so every funder gets a wallet): Embedded Wallets → Configuration
+  - OAuth **on**
+  - Enable **Google** (and/or Apple / Discord / X — GitHub is not a native toggle)
+  - **Redirect URL** = your app origin (local: `http://localhost:3001`, not `example.com`)
+  - **Allowed Origins** includes that same origin
+  - Paste the Google OAuth **Web** client ID into the Google field (or use env below)
+  - In Google Cloud Console, authorized redirect URI must match that Redirect URL
+
+Users who need MoonPay / deposit wallets must sign in via **Turnkey Wallet Kit**
+(`Sign In / Create Account` on `/login`). Bare NextAuth GitHub/Google does **not**
+provision a Turnkey wallet.
 
 ### Environment (`.env.local`)
 
@@ -20,6 +31,8 @@ sweep work).
 | --- | --- |
 | `NEXT_PUBLIC_ORGANIZATION_ID` | Turnkey org for Wallet Kit |
 | `NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID` | Turnkey Auth Proxy config |
+| `NEXT_PUBLIC_TURNKEY_OAUTH_REDIRECT_URI` | Optional override if not set in dashboard |
+| `NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID` | Optional Google client ID override |
 | `DATABASE_URL` | Postgres (Neon/local) |
 | `OPENMETER_URL` | Hosted Konnect or self-hosted OpenMeter |
 | `OPENMETER_API_KEY` | OpenMeter API key |
