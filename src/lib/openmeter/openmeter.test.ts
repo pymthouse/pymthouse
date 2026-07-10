@@ -22,6 +22,7 @@ import {
 import {
   getNetworkFeeMicrosEmitDeprecateAfter,
   getNetworkFeeNanosCutoverAt,
+  NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER,
   NETWORK_FEE_USD_MICROS_METER,
   NETWORK_FEE_USD_NANOS_METER,
 } from "@/lib/openmeter/constants";
@@ -740,19 +741,14 @@ test("getNetworkFeeNanosCutoverAt defaults to 2026-07-10 and honors env override
   );
 });
 
-test("getNetworkFeeMicrosEmitDeprecateAfter defaults to cutover plus two months", () => {
+test("NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER is fixed at 2026-09-10", () => {
   assert.equal(
-    getNetworkFeeMicrosEmitDeprecateAfter({
-      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-10T00:00:00.000Z",
-    }).toISOString(),
+    NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.toISOString(),
     "2026-09-10T00:00:00.000Z",
   );
   assert.equal(
-    getNetworkFeeMicrosEmitDeprecateAfter({
-      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-10T00:00:00.000Z",
-      OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER: "2026-10-01T00:00:00.000Z",
-    }).toISOString(),
-    "2026-10-01T00:00:00.000Z",
+    getNetworkFeeMicrosEmitDeprecateAfter().toISOString(),
+    "2026-09-10T00:00:00.000Z",
   );
 });
 

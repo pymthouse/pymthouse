@@ -4,9 +4,15 @@ export const NETWORK_FEE_USD_NANOS_METER = "network_fee_usd_nanos";
 /**
  * Legacy network-fee meter (USD micros). Historical usage before the nanos cutover
  * still lives here. Usage reads time-split across micros + nanos; collector dual-emits
- * until getNetworkFeeMicrosEmitDeprecateAfter() / OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.
+ * until NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.
  */
 export const NETWORK_FEE_USD_MICROS_METER = "network_fee_usd_micros";
+
+/**
+ * Stop dual-emitting `network_fee_usd_micros` from the collector on/after this date
+ * (2026-07-10 cutover + 2 months). Legacy meter stays for historical reads.
+ */
+export const NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER = new Date("2026-09-10T00:00:00.000Z");
 
 /** 1 USD micro = 1_000 USD nanos. Meter stores nanos; app ledger/UI stays in micros. */
 export const USD_NANOS_PER_MICRO = 1000n;
@@ -37,23 +43,9 @@ export function getNetworkFeeNanosCutoverAt(env: EnvLike = process.env): Date {
   return new Date("2026-07-10T00:00:00.000Z");
 }
 
-/**
- * After this date, stop dual-emitting `network_fee_usd_micros` from the collector
- * (legacy meter can remain for historical queries). Default: cutover + 2 months.
- * Override with OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER (ISO-8601).
- */
-export function getNetworkFeeMicrosEmitDeprecateAfter(env: EnvLike = process.env): Date {
-  const raw = env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER?.trim();
-  if (raw) {
-    const parsed = new Date(raw);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-  const cutover = getNetworkFeeNanosCutoverAt(env);
-  const deprecate = new Date(cutover);
-  deprecate.setUTCMonth(deprecate.getUTCMonth() + 2);
-  return deprecate;
+/** Fixed date to stop dual-emitting legacy micros fields from the collector. */
+export function getNetworkFeeMicrosEmitDeprecateAfter(): Date {
+  return NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER;
 }
 
 /** OpenMeter meter slug for signed-ticket request counts. */

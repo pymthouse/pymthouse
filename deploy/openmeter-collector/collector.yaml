@@ -125,8 +125,7 @@ pipeline:
         # Nanos avoid .round() collapsing sub-micro staging fees to 0.
         # Also emit micros (nanos/1000) so the legacy network_fee_usd_micros
         # meter keeps accepting events during cutover. Remove network_fee_usd_micros
-        # from this payload after OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER
-        # (default: nanos cutover + 2 months).
+        # from this payload on/after 2026-09-10 (NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER).
         let fee_wei = $data.computed_fee.number().or(0)
         let fee_usd_nanos = ($fee_wei * $eth_usd / 1000000000).round()
         let fee_usd_micros = ($fee_usd_nanos / 1000).round()
