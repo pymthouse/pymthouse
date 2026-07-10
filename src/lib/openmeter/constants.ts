@@ -1,8 +1,12 @@
 /** OpenMeter meter slug for network fee aggregation (USD nanos; 1 USD = 1e9). */
 export const NETWORK_FEE_USD_NANOS_METER = "network_fee_usd_nanos";
 
-/** @deprecated Use NETWORK_FEE_USD_NANOS_METER. Kept as alias for older app meterSlug rows. */
-export const NETWORK_FEE_USD_MICROS_METER = NETWORK_FEE_USD_NANOS_METER;
+/**
+ * Legacy network-fee meter (USD micros). Historical usage before the nanos cutover
+ * still lives here. Usage reads time-split across micros + nanos; collector dual-emits
+ * until NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.
+ */
+export const NETWORK_FEE_USD_MICROS_METER = "network_fee_usd_micros";
 
 /** 1 USD micro = 1_000 USD nanos. Meter stores nanos; app ledger/UI stays in micros. */
 export const USD_NANOS_PER_MICRO = 1000n;
@@ -13,6 +17,40 @@ export function usdNanosToMicros(nanos: bigint): bigint {
 
 export function usdMicrosToNanos(micros: bigint): bigint {
   return micros * USD_NANOS_PER_MICRO;
+}
+
+/**
+ * Instant when `network_fee_usd_nanos` became the authoritative fee meter.
+ * Override with OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT (ISO-8601).
+ * Default: day of the nanos meter cutover (#220).
+ */
+export function getNetworkFeeNanosCutoverAt(): Date {
+  const raw = process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT?.trim();
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return new Date("2026-07-10T00:00:00.000Z");
+}
+
+/**
+ * After this date, stop dual-emitting `network_fee_usd_micros` from the collector
+ * (legacy meter can remain for historical queries). Default: cutover + 2 months.
+ */
+export function getNetworkFeeMicrosEmitDeprecateAfter(): Date {
+  const raw = process.env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER?.trim();
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  const cutover = getNetworkFeeNanosCutoverAt();
+  const deprecate = new Date(cutover);
+  deprecate.setUTCMonth(deprecate.getUTCMonth() + 2);
+  return deprecate;
 }
 
 /** OpenMeter meter slug for signed-ticket request counts. */

@@ -124,7 +124,8 @@ pipeline:
         # USD nanos = fee_wei * eth_usd / 1e9  (1 USD = 1e9 nanos).
         # Nanos avoid .round() collapsing sub-micro staging fees to 0.
         # Also emit micros (nanos/1000) so the legacy network_fee_usd_micros
-        # meter does not reject create_signed_ticket events during cutover.
+        # meter keeps accepting events during cutover. Remove network_fee_usd_micros
+        # from this payload after 2026-09-10 (2 months post nanos cutover).
         let fee_wei = $data.computed_fee.number().or(0)
         let fee_usd_nanos = ($fee_wei * $eth_usd / 1000000000).round()
         let fee_usd_micros = ($fee_usd_nanos / 1000).round()
