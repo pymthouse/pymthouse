@@ -65,6 +65,7 @@ jobs:
       OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
       WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
       NEXTAUTH_URL: ${{ vars.RAILWAY_PREVIEW_NEXTAUTH_URL || 'https://staging.pymthouse.com' }}
+      TURNKEY_WALLET_NAME: livepeer-remote-signer-staging
       SIGNER_ETH_ADDR: 0xB3ac0AeBC3209C17F4c7Ea107476f848042e21e8
 
     steps:
@@ -84,7 +85,9 @@ jobs:
           railway_export_auth
           PE_FLAGS="$(railway_pe_flags "$RAILWAY_ENVIRONMENT")"
           # shellcheck disable=SC2086
-          railway_retry railway variable set "SIGNER_ETH_ADDR=$SIGNER_ETH_ADDR" \
+          railway_retry railway variable set \
+            "TURNKEY_WALLET_NAME=$TURNKEY_WALLET_NAME" \
+            "SIGNER_ETH_ADDR=$SIGNER_ETH_ADDR" \
             --service pymthouse $PE_FLAGS --skip-deploys
 
       - name: Apply preview environment variables
