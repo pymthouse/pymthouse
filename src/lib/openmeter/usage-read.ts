@@ -16,7 +16,10 @@ function avoidOpenMeterNetworkInTests(): boolean {
   return process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests();
 }
 
-/** Meter stores USD nanos; app ledger/UI stays in micros. */
+/**
+ * OpenMeter `network_fee_usd_nanos` meter values → USD micros for ledger/UI.
+ * Display with `formatUsdMicros` from `@/lib/format-usd` (not formatUsdNanos).
+ */
 function feeMicrosFromMeterValue(value: unknown): bigint {
   return usdNanosToMicros(BigInt(Math.floor(Number(value ?? 0))));
 }

@@ -1,4 +1,4 @@
-import { formatUsdMicrosDisplay } from "@/lib/format-usd-micros";
+import { formatUsdMicrosDisplay } from "@/lib/format-usd";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 
 type AllowanceStripProps = Readonly<{

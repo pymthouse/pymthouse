@@ -7,7 +7,7 @@ import {
 } from "@/components/BillingUsageDashboard.helpers";
 import { formatBillingWei } from "@/lib/billing-format";
 import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data";
-import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { formatUsdMicros } from "@/lib/format-usd";
 
 export default async function BillingUsageDashboard({
   filterAppId,
@@ -48,7 +48,7 @@ export default async function BillingUsageDashboard({
 
   const isOpenMeter = usageSource === "openmeter";
   const totalFeesLabel = isOpenMeter
-    ? formatUsdMicrosString(totalNetworkFeeUsdMicros.toString(), 6) ?? "$0"
+    ? formatUsdMicros(totalNetworkFeeUsdMicros.toString(), 6) ?? "$0"
     : formatBillingWei(totalFeeWei.toString());
 
   const singleAppName = scope === "single" ? orderedApps[0]?.name : null;
