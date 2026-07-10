@@ -16,6 +16,7 @@ export async function createOnRampSession(input: {
   externalUserId: string;
   depositWalletAddress: string;
   onRampTransactionId: string;
+  turnkeyOrganizationId?: string;
   onrampProvider?: string;
   fiatCurrencyCode?: string;
   fiatAmount?: string;
@@ -28,6 +29,7 @@ export async function createOnRampSession(input: {
   const externalUserId = input.externalUserId.trim();
   const depositWalletAddress = input.depositWalletAddress.trim();
   const onRampTransactionId = input.onRampTransactionId.trim();
+  const turnkeyOrganizationId = input.turnkeyOrganizationId?.trim() || null;
 
   if (!externalUserId || !depositWalletAddress || !onRampTransactionId) {
     throw new Error("externalUserId, depositWalletAddress, and onRampTransactionId are required");
@@ -62,8 +64,9 @@ export async function createOnRampSession(input: {
       clientId,
       externalUserId,
       depositWalletAddress,
-      onrampTransactionId,
+      onrampTransactionId: onRampTransactionId,
       onrampProvider: input.onrampProvider?.trim() || "moonpay",
+      turnkeyOrganizationId,
       fiatCurrencyCode: input.fiatCurrencyCode?.trim() || null,
       fiatAmount: input.fiatAmount?.trim() || null,
       status: "pending",
@@ -87,6 +90,13 @@ export async function createOnRampSession(input: {
     }
     if (existing.clientId !== clientId) {
       throw new Error("on-ramp transaction id belongs to another app");
+    }
+
+    if (turnkeyOrganizationId && !existing.turnkeyOrganizationId) {
+      await db
+        .update(onrampSessions)
+        .set({ turnkeyOrganizationId, updatedAt: now })
+        .where(eq(onrampSessions.id, existing.id));
     }
 
     return {
@@ -138,6 +148,7 @@ export async function settleOnRampSession(input: {
 
   const turnkeyStatus = await verifyOnRampTransactionStatus({
     transactionId: session.onrampTransactionId,
+    organizationId: session.turnkeyOrganizationId || undefined,
     refresh: true,
   });
 

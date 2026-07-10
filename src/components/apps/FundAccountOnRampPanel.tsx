@@ -92,6 +92,7 @@ export default function FundAccountOnRampPanel({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastGrantedUsdMicros, setLastGrantedUsdMicros] = useState<string | null>(null);
+  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
 
   const loadBalance = useCallback(async () => {
     const params = new URLSearchParams({ externalUserId: ownerExternalUserId });
@@ -116,12 +117,16 @@ export default function FundAccountOnRampPanel({
   }, [wallets]);
 
   const pollUntilTerminal = useCallback(
-    async (transactionId: string): Promise<string> => {
+    async (
+      transactionId: string,
+      organizationId: string,
+    ): Promise<string> => {
       if (!httpClient) {
         throw new Error("Turnkey client is not ready.");
       }
       for (;;) {
         const response = await httpClient.getOnRampTransactionStatus({
+          organizationId,
           transactionId,
           refresh: true,
         });
@@ -139,6 +144,7 @@ export default function FundAccountOnRampPanel({
     setError(null);
     setStatusMessage(null);
     setLastGrantedUsdMicros(null);
+    setCheckoutUrl(null);
 
     if (!turnkeyConfigured) {
       setError("Turnkey Wallet Kit is not configured in this environment.");
@@ -164,6 +170,18 @@ export default function FundAccountOnRampPanel({
       setError("Enter a fiat amount greater than 20 USD for MoonPay sandbox.");
       setPhase("error");
       return;
+    }
+
+    // Open synchronously on click so popup blockers don't treat the later
+    // navigation as unsolicited. window.open(..., "noopener") returns null
+    // even when the tab opens, so never treat a null handle as "blocked".
+    const checkoutWindow = window.open("about:blank", "_blank");
+    if (checkoutWindow) {
+      try {
+        checkoutWindow.document.write("Preparing MoonPay checkout…");
+      } catch {
+        // Cross-origin / restricted document access is fine.
+      }
     }
 
     setPhase("funding");
@@ -209,6 +227,7 @@ export default function FundAccountOnRampPanel({
         throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
       }
       const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
+      setCheckoutUrl(onRampUrl);
 
       const sessionResponse = await fetch(
         `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions`,
@@ -220,6 +239,7 @@ export default function FundAccountOnRampPanel({
             externalUserId: ownerExternalUserId,
             depositWalletAddress: walletAddress,
             onRampTransactionId: initResult.onRampTransactionId,
+            turnkeyOrganizationId: organizationId,
             onrampProvider: "moonpay",
             fiatCurrencyCode: "USD",
             fiatAmount: amount,
@@ -241,15 +261,21 @@ export default function FundAccountOnRampPanel({
         throw new Error("On-ramp session response missing sessionId.");
       }
 
-      const popup = window.open(onRampUrl, "_blank", "noopener,noreferrer");
-      if (!popup) {
-        throw new Error("Popup blocked. Allow popups for this site and retry.");
+      if (checkoutWindow && !checkoutWindow.closed) {
+        checkoutWindow.location.href = onRampUrl;
+        setStatusMessage("Complete the MoonPay sandbox purchase in the checkout window...");
+      } else {
+        setStatusMessage(
+          "Checkout ready — open the MoonPay link below, then wait here for confirmation.",
+        );
       }
 
-      setStatusMessage("Complete the MoonPay sandbox purchase in the popup window...");
-      const terminalStatus = await pollUntilTerminal(initResult.onRampTransactionId);
+      const terminalStatus = await pollUntilTerminal(
+        initResult.onRampTransactionId,
+        organizationId,
+      );
       try {
-        popup.close();
+        checkoutWindow?.close();
       } catch {
         // Best-effort close after terminal status.
       }
@@ -259,7 +285,7 @@ export default function FundAccountOnRampPanel({
       }
 
       setPhase("settling");
-      setStatusMessage("Clearing payment and crediting allowance...");
+      setStatusMessage("Purchase completed. Crediting OpenMeter allowance...");
 
       const settleResponse = await fetch(
         `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions/${encodeURIComponent(sessionId)}/settle`,
@@ -282,8 +308,14 @@ export default function FundAccountOnRampPanel({
       setLastGrantedUsdMicros(granted);
       setPhase("done");
       setStatusMessage("Allowance credited successfully.");
+      setCheckoutUrl(null);
       await loadBalance();
     } catch (fundError) {
+      try {
+        checkoutWindow?.close();
+      } catch {
+        // ignore
+      }
       const message =
         fundError instanceof Error ? fundError.message : "On-ramp funding failed";
       setError(message);
@@ -355,6 +387,19 @@ export default function FundAccountOnRampPanel({
 
       {statusMessage ? (
         <p className="mt-3 text-sm text-amber-100/90">{statusMessage}</p>
+      ) : null}
+      {checkoutUrl && phase === "funding" ? (
+        <p className="mt-2 text-sm text-zinc-300">
+          <a
+            href={checkoutUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200"
+          >
+            Open MoonPay checkout
+          </a>
+          {" · "}waiting for Turnkey status COMPLETED, then allowance credit.
+        </p>
       ) : null}
       {grantedLabel ? (
         <p className="mt-2 text-sm text-emerald-300">

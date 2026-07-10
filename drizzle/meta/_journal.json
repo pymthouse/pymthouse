@@ -204,6 +204,13 @@
       "when": 1778700000000,
       "tag": "0027_onramp_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1778800000000,
+      "tag": "0028_onramp_turnkey_organization",
+      "breakpoints": true
     }
   ]
 }

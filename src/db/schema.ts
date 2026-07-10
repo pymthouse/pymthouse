@@ -638,6 +638,8 @@ export const onrampSessions = pgTable(
     depositWalletAddress: text("deposit_wallet_address").notNull(),
     onrampTransactionId: text("onramp_transaction_id").notNull(),
     onrampProvider: text("onramp_provider").notNull().default("moonpay"),
+    /** Turnkey sub-org that owns the on-ramp transaction (Wallet Kit session org). */
+    turnkeyOrganizationId: text("turnkey_organization_id"),
     fiatCurrencyCode: text("fiat_currency_code"),
     fiatAmount: text("fiat_amount"),
     status: text("status").notNull().default("pending"),

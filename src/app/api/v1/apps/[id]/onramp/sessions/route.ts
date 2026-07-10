@@ -22,6 +22,10 @@ export async function POST(
     typeof body.fiatAmount === "string" ? body.fiatAmount.trim() : undefined;
   const onrampProvider =
     typeof body.onrampProvider === "string" ? body.onrampProvider.trim() : undefined;
+  const turnkeyOrganizationId =
+    typeof body.turnkeyOrganizationId === "string"
+      ? body.turnkeyOrganizationId.trim()
+      : undefined;
 
   if (!externalUserId || !depositWalletAddress || !onRampTransactionId) {
     return NextResponse.json(
@@ -39,6 +43,7 @@ export async function POST(
       externalUserId,
       depositWalletAddress,
       onRampTransactionId,
+      turnkeyOrganizationId,
       onrampProvider,
       fiatCurrencyCode,
       fiatAmount,
