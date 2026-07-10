@@ -4,7 +4,7 @@ export const NETWORK_FEE_USD_NANOS_METER = "network_fee_usd_nanos";
 /**
  * Legacy network-fee meter (USD micros). Historical usage before the nanos cutover
  * still lives here. Usage reads time-split across micros + nanos; collector dual-emits
- * until NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.
+ * until getNetworkFeeMicrosEmitDeprecateAfter() / OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.
  */
 export const NETWORK_FEE_USD_MICROS_METER = "network_fee_usd_micros";
 
@@ -19,13 +19,15 @@ export function usdMicrosToNanos(micros: bigint): bigint {
   return micros * USD_NANOS_PER_MICRO;
 }
 
+type EnvLike = Record<string, string | undefined>;
+
 /**
  * Instant when `network_fee_usd_nanos` became the authoritative fee meter.
  * Override with OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT (ISO-8601).
  * Default: day of the nanos meter cutover (#220).
  */
-export function getNetworkFeeNanosCutoverAt(): Date {
-  const raw = process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT?.trim();
+export function getNetworkFeeNanosCutoverAt(env: EnvLike = process.env): Date {
+  const raw = env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT?.trim();
   if (raw) {
     const parsed = new Date(raw);
     if (!Number.isNaN(parsed.getTime())) {
@@ -38,16 +40,17 @@ export function getNetworkFeeNanosCutoverAt(): Date {
 /**
  * After this date, stop dual-emitting `network_fee_usd_micros` from the collector
  * (legacy meter can remain for historical queries). Default: cutover + 2 months.
+ * Override with OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER (ISO-8601).
  */
-export function getNetworkFeeMicrosEmitDeprecateAfter(): Date {
-  const raw = process.env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER?.trim();
+export function getNetworkFeeMicrosEmitDeprecateAfter(env: EnvLike = process.env): Date {
+  const raw = env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER?.trim();
   if (raw) {
     const parsed = new Date(raw);
     if (!Number.isNaN(parsed.getTime())) {
       return parsed;
     }
   }
-  const cutover = getNetworkFeeNanosCutoverAt();
+  const cutover = getNetworkFeeNanosCutoverAt(env);
   const deprecate = new Date(cutover);
   deprecate.setUTCMonth(deprecate.getUTCMonth() + 2);
   return deprecate;

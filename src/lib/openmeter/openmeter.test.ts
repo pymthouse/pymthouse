@@ -731,43 +731,29 @@ test("NETWORK_FEE_USD_MICROS_METER keeps the legacy slug for historical reads", 
 });
 
 test("getNetworkFeeNanosCutoverAt defaults to 2026-07-10 and honors env override", () => {
-  const prev = process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT;
-  try {
-    delete process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT;
-    assert.equal(getNetworkFeeNanosCutoverAt().toISOString(), "2026-07-10T00:00:00.000Z");
-    process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT = "2026-07-11T12:00:00.000Z";
-    assert.equal(getNetworkFeeNanosCutoverAt().toISOString(), "2026-07-11T12:00:00.000Z");
-  } finally {
-    if (prev === undefined) {
-      delete process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT;
-    } else {
-      process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT = prev;
-    }
-  }
+  assert.equal(getNetworkFeeNanosCutoverAt({}).toISOString(), "2026-07-10T00:00:00.000Z");
+  assert.equal(
+    getNetworkFeeNanosCutoverAt({
+      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-11T12:00:00.000Z",
+    }).toISOString(),
+    "2026-07-11T12:00:00.000Z",
+  );
 });
 
 test("getNetworkFeeMicrosEmitDeprecateAfter defaults to cutover plus two months", () => {
-  const prevCutover = process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT;
-  const prevDeprecate = process.env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER;
-  try {
-    delete process.env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER;
-    process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT = "2026-07-10T00:00:00.000Z";
-    assert.equal(
-      getNetworkFeeMicrosEmitDeprecateAfter().toISOString(),
-      "2026-09-10T00:00:00.000Z",
-    );
-  } finally {
-    if (prevCutover === undefined) {
-      delete process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT;
-    } else {
-      process.env.OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT = prevCutover;
-    }
-    if (prevDeprecate === undefined) {
-      delete process.env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER;
-    } else {
-      process.env.OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER = prevDeprecate;
-    }
-  }
+  assert.equal(
+    getNetworkFeeMicrosEmitDeprecateAfter({
+      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-10T00:00:00.000Z",
+    }).toISOString(),
+    "2026-09-10T00:00:00.000Z",
+  );
+  assert.equal(
+    getNetworkFeeMicrosEmitDeprecateAfter({
+      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-10T00:00:00.000Z",
+      OPENMETER_NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER: "2026-10-01T00:00:00.000Z",
+    }).toISOString(),
+    "2026-10-01T00:00:00.000Z",
+  );
 });
 
 test("splitMeterQueryAtCutover isolates legacy micros and current nanos windows", () => {
