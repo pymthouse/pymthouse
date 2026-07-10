@@ -5,11 +5,14 @@ dotenv.config();
 import { createOpenMeterClient } from "../src/lib/openmeter/client";
 import {
   isKonnectMeteringUrl,
+  NETWORK_FEE_USD_NANOS_METER,
   normalizeKonnectMeteringUrl,
+  SIGNED_TICKET_COUNT_METER,
 } from "../src/lib/openmeter/constants";
 import { OPENMETER_METER_DEFINITIONS } from "../src/lib/openmeter/entitlements";
 import {
   ensureKonnectTenantCatalog,
+  resolveKonnectMeterId,
   unwrapOpenMeterListResult,
 } from "../src/lib/openmeter/konnect-catalog";
 import { defaultStarterIncludedUsdMicros } from "../src/lib/starter-default-plan-display";
@@ -70,7 +73,21 @@ async function main() {
 
   if (isKonnectMeteringUrl(baseUrl, apiKey) && apiKey) {
     await waitForKonnectHealthy(baseUrl, apiKey);
-    await ensureKonnectTenantCatalog();
+    console.log("[openmeter-bootstrap] ensuring Konnect meters:");
+    for (const meter of OPENMETER_METER_DEFINITIONS) {
+      console.log(`  - ${meter.slug} (${meter.aggregation} ${meter.valueProperty ?? "count"})`);
+    }
+
+    await ensureKonnectTenantCatalog(featureKey);
+
+    const networkFeeMeterId = await resolveKonnectMeterId(NETWORK_FEE_USD_NANOS_METER);
+    const ticketCountMeterId = await resolveKonnectMeterId(SIGNED_TICKET_COUNT_METER);
+    console.log(
+      `[openmeter-bootstrap] Konnect meter ready: ${NETWORK_FEE_USD_NANOS_METER} id=${networkFeeMeterId}`,
+    );
+    console.log(
+      `[openmeter-bootstrap] Konnect meter ready: ${SIGNED_TICKET_COUNT_METER} id=${ticketCountMeterId}`,
+    );
     console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
     console.log(
       "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
@@ -81,6 +98,7 @@ async function main() {
     console.log(
       "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
     );
+    console.log("[openmeter-bootstrap] done");
     return;
   }
 
@@ -120,7 +138,7 @@ async function main() {
       await client.features.create({
         key: featureKey,
         name: "Network spend",
-        meterSlug: "network_fee_usd_nanos",
+        meterSlug: NETWORK_FEE_USD_NANOS_METER,
       });
       console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
     }

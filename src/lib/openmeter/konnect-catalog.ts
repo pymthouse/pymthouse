@@ -110,20 +110,28 @@ async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T
 let konnectCatalogEnsured = false;
 let konnectMeterIdByKeyCache: Map<string, string> | null = null;
 
+function cacheKonnectMeters(meters: KonnectMeter[]): void {
+  konnectMeterIdByKeyCache = new Map(meters.map((meter) => [meter.key, meter.id]));
+}
+
+async function listKonnectMeters(): Promise<KonnectMeter[]> {
+  const listed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
+  return listed.data ?? [];
+}
+
 /** Konnect meter query paths require ULIDs; the SDK passes slugs like network_fee_usd_nanos. */
 export async function resolveKonnectMeterId(meterIdOrSlug: string): Promise<string> {
   if (isOpenMeterUlid(meterIdOrSlug)) {
     return meterIdOrSlug;
   }
 
-  if (!konnectMeterIdByKeyCache) {
-    const listed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
-    konnectMeterIdByKeyCache = new Map(
-      (listed.data ?? []).map((meter) => [meter.key, meter.id]),
-    );
-  }
+  await ensureKonnectTenantCatalog();
 
-  const meterId = konnectMeterIdByKeyCache.get(meterIdOrSlug);
+  let meterId = konnectMeterIdByKeyCache?.get(meterIdOrSlug);
+  if (!meterId) {
+    cacheKonnectMeters(await listKonnectMeters());
+    meterId = konnectMeterIdByKeyCache?.get(meterIdOrSlug);
+  }
   if (!meterId) {
     throw new Error(`Konnect meter not found for key: ${meterIdOrSlug}`);
   }
@@ -137,16 +145,19 @@ export async function resolveKonnectMeterId(meterIdOrSlug: string): Promise<stri
 export async function ensureKonnectTenantCatalog(
   trialFeatureKey: string = DEFAULT_TRIAL_FEATURE_KEY,
 ): Promise<void> {
-  if (konnectCatalogEnsured) {
-    return;
-  }
-
   if (!shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)) {
     return;
   }
 
-  const listed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
-  const existingMeters = listed.data ?? [];
+  if (
+    konnectCatalogEnsured &&
+    konnectMeterIdByKeyCache?.has(NETWORK_FEE_USD_NANOS_METER) &&
+    konnectMeterIdByKeyCache.has(SIGNED_TICKET_COUNT_METER)
+  ) {
+    return;
+  }
+
+  let existingMeters = await listKonnectMeters();
 
   for (const meter of KONNECT_METER_DEFINITIONS) {
     if (existingMeters.some((item) => item.key === meter.key)) {
@@ -158,8 +169,10 @@ export async function ensureKonnectTenantCatalog(
     });
   }
 
-  const refreshed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
-  const networkFeeMeter = (refreshed.data ?? []).find(
+  existingMeters = await listKonnectMeters();
+  cacheKonnectMeters(existingMeters);
+
+  const networkFeeMeter = existingMeters.find(
     (meter) => meter.key === NETWORK_FEE_USD_NANOS_METER,
   );
   if (!networkFeeMeter) {
