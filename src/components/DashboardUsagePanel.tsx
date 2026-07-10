@@ -43,9 +43,16 @@ function DashboardUsageChart({
  * viewer personally owns or administers. Chart series are app × pipeline/model
  * (signer constraint), not pipeline capability alone.
  * matching the Admin Dashboard usage panel.
+ *
+ * Pass `summary` when the parent already loaded it (avoids a second fetch).
  */
-export default async function DashboardUsagePanel() {
-  const summary = await getDashboardUsageSummary(true);
+export default async function DashboardUsagePanel({
+  summary: summaryProp,
+}: Readonly<{
+  summary?: DashboardUsageSummary | null;
+}> = {}) {
+  const summary =
+    summaryProp !== undefined ? summaryProp : await getDashboardUsageSummary(true);
 
   if (!summary) {
     return null;

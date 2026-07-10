@@ -103,7 +103,13 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
 }
 
 async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
-  const apps = userId ? await listUserAccessibleApps(userId) : [];
+  const [apps, usage] = await Promise.all([
+    userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
+    getDashboardUsageSummary(true),
+  ]);
+  // Keep Apps above Usage until there is something to chart — creating an empty
+  // app should not rearrange the page.
+  const usageFirst = (usage?.appsWithUsage ?? 0) > 0;
 
   return (
     <>
@@ -112,11 +118,21 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
         <p className="text-zinc-500 mt-1">Developer overview</p>
       </div>
 
-      <MyAppsSection apps={apps} />
-
-      <div className="mt-6">
-        <DashboardUsagePanel />
-      </div>
+      {usageFirst ? (
+        <>
+          <DashboardUsagePanel summary={usage} />
+          <div className="mt-6">
+            <MyAppsSection apps={apps} />
+          </div>
+        </>
+      ) : (
+        <>
+          <MyAppsSection apps={apps} />
+          <div className="mt-6">
+            <DashboardUsagePanel summary={usage} />
+          </div>
+        </>
+      )}
 
       <div className="mt-6">
         <DocumentationCard />
