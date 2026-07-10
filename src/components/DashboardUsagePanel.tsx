@@ -9,6 +9,10 @@ import {
   type DashboardUsageSummary,
 } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import {
+  getViewerAllowanceSummary,
+  type ViewerAllowanceSummary,
+} from "@/lib/viewer-allowance-summary";
 
 function DashboardUsageChart({
   appsCount,
@@ -48,11 +52,19 @@ function DashboardUsageChart({
  */
 export default async function DashboardUsagePanel({
   summary: summaryProp,
+  allowance: allowanceProp,
 }: Readonly<{
   summary?: DashboardUsageSummary | null;
+  allowance?: ViewerAllowanceSummary | null;
 }> = {}) {
-  const summary =
-    summaryProp !== undefined ? summaryProp : await getDashboardUsageSummary(true);
+  const [summary, allowance] = await Promise.all([
+    summaryProp !== undefined
+      ? Promise.resolve(summaryProp)
+      : getDashboardUsageSummary(true),
+    allowanceProp !== undefined
+      ? Promise.resolve(allowanceProp)
+      : getViewerAllowanceSummary(),
+  ]);
 
   if (!summary) {
     return null;
@@ -90,8 +102,11 @@ export default async function DashboardUsagePanel({
       </div>
 
       <AllowanceStrip
-        consumedUsdMicros={totalNetworkFeeUsdMicros}
+        consumedUsdMicros={allowance?.consumedUsdMicros ?? totalNetworkFeeUsdMicros}
         requestCount={totalRequests}
+        grantedUsdMicros={allowance?.grantedUsdMicros}
+        remainingUsdMicros={allowance?.remainingUsdMicros}
+        hasPrepaidCredits={allowance?.hasPrepaidCredits}
       />
 
       <div className="mb-5 grid grid-cols-3 gap-4 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">

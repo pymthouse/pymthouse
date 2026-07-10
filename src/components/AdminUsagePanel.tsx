@@ -8,6 +8,7 @@ import UsageMetricCell from "@/components/UsageMetricCell";
 import { formatBillingPeriod, formatPeriodResetLabel } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import type { ViewerAllowanceSummary } from "@/lib/viewer-allowance-summary";
 
 export type AdminPlatformStat = {
   label: string;
@@ -292,6 +293,7 @@ function UsagePanelBody({
   filteredAppsCount,
   filteredAppsWithUsage,
   totalFeesLabel,
+  allowance,
   onRetryAllUsage,
 }: Readonly<{
   failed: boolean;
@@ -306,6 +308,7 @@ function UsagePanelBody({
   filteredAppsCount: number;
   filteredAppsWithUsage: number;
   totalFeesLabel: string;
+  allowance: ViewerAllowanceSummary | null;
   onRetryAllUsage: () => void;
 }>) {
   if (failed) {
@@ -330,8 +333,13 @@ function UsagePanelBody({
     <>
       {showAllowance ? (
         <AllowanceStrip
-          consumedUsdMicros={summary.totalNetworkFeeUsdMicros}
+          consumedUsdMicros={
+            allowance?.consumedUsdMicros ?? summary.totalNetworkFeeUsdMicros
+          }
           requestCount={summary.totalRequests}
+          grantedUsdMicros={allowance?.grantedUsdMicros}
+          remainingUsdMicros={allowance?.remainingUsdMicros}
+          hasPrepaidCredits={allowance?.hasPrepaidCredits}
         />
       ) : null}
       <UsageMetricsGrid
@@ -418,6 +426,7 @@ export default function AdminUsagePanel({
   filterAppId = null,
   filterAppName = null,
   onClearAppFilter,
+  allowance = null,
 }: Readonly<{
   initialOwnUsage: DashboardUsageSummary | null;
   allUsage: DashboardUsageSummary | null;
@@ -429,6 +438,7 @@ export default function AdminUsagePanel({
   filterAppId?: string | null;
   filterAppName?: string | null;
   onClearAppFilter?: () => void;
+  allowance?: ViewerAllowanceSummary | null;
 }>) {
   const [activeTab, setActiveTab] = useState<UsageTab>("mine");
 
@@ -470,6 +480,7 @@ export default function AdminUsagePanel({
         filteredAppsCount={derived.filteredAppsCount}
         filteredAppsWithUsage={derived.filteredAppsWithUsage}
         totalFeesLabel={derived.totalFeesLabel}
+        allowance={allowance}
         onRetryAllUsage={onRetryAllUsage}
       />
     </div>

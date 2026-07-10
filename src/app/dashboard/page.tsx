@@ -8,6 +8,7 @@ import { signerConfig, transactions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { listUserAccessibleApps } from "@/lib/user-apps";
 import { getDashboardUsageSummary } from "@/lib/dashboard-usage-summary";
+import { getViewerAllowanceSummary } from "@/lib/viewer-allowance-summary";
 import MyAppsSection from "@/components/apps/MyAppsSection";
 import AdminDashboardOverview, { type AdminStatCard } from "@/components/AdminDashboardOverview";
 import DashboardUsagePanel from "@/components/DashboardUsagePanel";
@@ -38,12 +39,14 @@ export default async function DashboardPage() {
 async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
   await syncSignerStatus();
 
-  const [myApps, initialUsage, signerRows, allTransactions] = await Promise.all([
-    userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
-    getDashboardUsageSummary(true),
-    db.select().from(signerConfig).where(eq(signerConfig.id, "default")).limit(1),
-    db.select({ amountWei: transactions.amountWei }).from(transactions),
-  ]);
+  const [myApps, initialUsage, allowance, signerRows, allTransactions] =
+    await Promise.all([
+      userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
+      getDashboardUsageSummary(true),
+      getViewerAllowanceSummary(),
+      db.select().from(signerConfig).where(eq(signerConfig.id, "default")).limit(1),
+      db.select({ amountWei: transactions.amountWei }).from(transactions),
+    ]);
   const signer = signerRows[0];
   const signerOnline = signer?.status === "running";
   let signerDetail = "no address";
@@ -97,15 +100,17 @@ async function AdminDashboard({ userId }: Readonly<{ userId: string }>) {
         myApps={myApps}
         initialUsage={initialUsage}
         volumeStat={volumeStat}
+        allowance={allowance}
       />
     </>
   );
 }
 
 async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
-  const [apps, usage] = await Promise.all([
+  const [apps, usage, allowance] = await Promise.all([
     userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
     getDashboardUsageSummary(true),
+    getViewerAllowanceSummary(),
   ]);
   // Keep Apps above Usage until there is something to chart — creating an empty
   // app should not rearrange the page.
@@ -120,7 +125,7 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
 
       {usageFirst ? (
         <>
-          <DashboardUsagePanel summary={usage} />
+          <DashboardUsagePanel summary={usage} allowance={allowance} />
           <div className="mt-6">
             <MyAppsSection apps={apps} />
           </div>
@@ -129,7 +134,7 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
         <>
           <MyAppsSection apps={apps} />
           <div className="mt-6">
-            <DashboardUsagePanel summary={usage} />
+            <DashboardUsagePanel summary={usage} allowance={allowance} />
           </div>
         </>
       )}

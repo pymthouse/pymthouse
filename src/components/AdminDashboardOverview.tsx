@@ -5,6 +5,7 @@ import AdminAppsSection from "@/components/apps/AdminAppsSection";
 import AdminUsagePanel, { type AdminPlatformStat } from "@/components/AdminUsagePanel";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
 import type { UserAppSummary } from "@/lib/user-apps";
+import type { ViewerAllowanceSummary } from "@/lib/viewer-allowance-summary";
 
 export type AdminStatCard = AdminPlatformStat;
 
@@ -17,10 +18,12 @@ export default function AdminDashboardOverview({
   myApps,
   initialUsage,
   volumeStat,
+  allowance = null,
 }: Readonly<{
   myApps: UserAppSummary[];
   initialUsage: DashboardUsageSummary | null;
   volumeStat: AdminStatCard;
+  allowance?: ViewerAllowanceSummary | null;
 }>) {
   const [showAllApps, setShowAllApps] = useState(false);
   const [selectedApp, setSelectedApp] = useState<UserAppSummary | null>(null);
@@ -70,6 +73,7 @@ export default function AdminDashboardOverview({
       filterAppId={selectedApp?.id ?? null}
       filterAppName={selectedApp?.name ?? null}
       onClearAppFilter={() => setSelectedApp(null)}
+      allowance={allowance}
     />
   );
 

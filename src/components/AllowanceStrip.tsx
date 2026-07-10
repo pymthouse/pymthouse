@@ -6,19 +6,30 @@ type AllowanceStripProps = Readonly<{
   consumedUsdMicros: string;
   /** Signed / metered request count this period. */
   requestCount: number;
-  /** Override grant; defaults to Starter included micros. */
+  /**
+   * Total granted balance (Starter included + prepaid credits), USD micros.
+   * Defaults to Starter included only when omitted.
+   */
   grantedUsdMicros?: string;
+  /**
+   * Remaining spendable balance. When omitted, derived as granted − consumed
+   * (Starter-only math). Pass explicitly when prepaid credits are included.
+   */
+  remainingUsdMicros?: string;
+  /** When true, label as Allowance (includes top-ups) instead of Starter. */
+  hasPrepaidCredits?: boolean;
 }>;
 
 /**
- * Starter allowance / credit-remaining strip with usage meter.
- * Mirrors the Livepeer dashboard Usage "Starter allowance" treatment.
+ * Allowance / credit-remaining strip with usage meter.
  * Period / reset details live on the parent panel's info tooltip.
  */
 export default function AllowanceStrip({
   consumedUsdMicros,
   requestCount,
   grantedUsdMicros,
+  remainingUsdMicros,
+  hasPrepaidCredits = false,
 }: AllowanceStripProps) {
   const grantedRaw = grantedUsdMicros ?? defaultStarterIncludedUsdMicros();
   const granted = BigInt(grantedRaw || "0");
@@ -34,11 +45,23 @@ export default function AllowanceStrip({
   }
   if (consumed < 0n) consumed = 0n;
 
-  const remaining = consumed >= granted ? 0n : granted - consumed;
+  let remaining: bigint;
+  if (remainingUsdMicros != null && remainingUsdMicros !== "") {
+    try {
+      remaining = BigInt(remainingUsdMicros);
+    } catch {
+      remaining = consumed >= granted ? 0n : granted - consumed;
+    }
+  } else {
+    remaining = consumed >= granted ? 0n : granted - consumed;
+  }
+  if (remaining < 0n) remaining = 0n;
+
   const hasAccess = remaining > 0n;
   const usedPct = Number((consumed * 10000n) / granted) / 100;
   const pct = Math.min(100, usedPct);
   const nearExhausted = pct >= 90;
+  const label = hasPrepaidCredits ? "Allowance" : "Starter allowance";
 
   let barClass = "bg-gradient-to-r from-emerald-600 to-emerald-400";
   if (!hasAccess) {
@@ -51,8 +74,13 @@ export default function AllowanceStrip({
     <div className="mb-5 flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3.5">
       <div className="flex flex-wrap items-center gap-2">
         <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
-          Starter allowance
+          {label}
         </p>
+        {hasPrepaidCredits ? (
+          <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-emerald-400">
+            Includes top-ups
+          </span>
+        ) : null}
         {!hasAccess && (
           <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-amber-400">
             Exhausted
@@ -78,7 +106,7 @@ export default function AllowanceStrip({
           min={0}
           max={100}
           value={pct}
-          aria-label="Starter allowance used"
+          aria-label={`${label} used`}
         />
         <div
           className={`pointer-events-none absolute inset-y-0 left-0 rounded-[3px] ${barClass}`}
