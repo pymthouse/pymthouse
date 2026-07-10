@@ -42,6 +42,29 @@ function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function assertSafeOnRampUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Turnkey returned an invalid on-ramp URL.");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("On-ramp URL must use HTTPS.");
+  }
+  const host = parsed.hostname.toLowerCase();
+  const allowed =
+    host === "buy.moonpay.com" ||
+    host === "buy-sandbox.moonpay.com" ||
+    host.endsWith(".moonpay.com") ||
+    host === "pay.coinbase.com" ||
+    host.endsWith(".coinbase.com");
+  if (!allowed) {
+    throw new Error(`Blocked unexpected on-ramp host: ${host}`);
+  }
+  return parsed.toString();
+}
+
 const POLL_INTERVAL_MS = 3000;
 const DEFAULT_FIAT_AMOUNT = "25";
 
@@ -58,8 +81,7 @@ export default function FundAccountOnRampPanel({
     clientState,
     wallets,
     refreshWallets,
-    initFiatOnRamp,
-    getOnRampTransactionStatus,
+    httpClient,
     getSession,
   } = useTurnkey();
 
@@ -95,8 +117,11 @@ export default function FundAccountOnRampPanel({
 
   const pollUntilTerminal = useCallback(
     async (transactionId: string): Promise<string> => {
+      if (!httpClient) {
+        throw new Error("Turnkey client is not ready.");
+      }
       for (;;) {
-        const response = await getOnRampTransactionStatus({
+        const response = await httpClient.getOnRampTransactionStatus({
           transactionId,
           refresh: true,
         });
@@ -107,7 +132,7 @@ export default function FundAccountOnRampPanel({
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       }
     },
-    [getOnRampTransactionStatus],
+    [httpClient],
   );
 
   const handleFund = async () => {
@@ -127,6 +152,12 @@ export default function FundAccountOnRampPanel({
       return;
     }
 
+    if (!httpClient) {
+      setError("Turnkey client is not ready. Refresh and try again.");
+      setPhase("error");
+      return;
+    }
+
     const amount = fiatAmount.trim();
     const parsedAmount = Number.parseFloat(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 20) {
@@ -139,8 +170,18 @@ export default function FundAccountOnRampPanel({
     setStatusMessage("Preparing MoonPay sandbox checkout...");
 
     try {
-      const latestWallets = await refreshWallets();
-      const walletAddress = firstEvmWalletAddress(latestWallets);
+      // Prefer the address already loaded into Wallet Kit state. refreshWallets()
+      // can return wallets with empty accounts even when the hook's `wallets`
+      // (and the UI deposit address) are populated from the active session.
+      let walletAddress = depositWallet ?? firstEvmWalletAddress(wallets);
+      if (!walletAddress) {
+        try {
+          const latestWallets = await refreshWallets();
+          walletAddress = firstEvmWalletAddress(latestWallets);
+        } catch {
+          // Keep going with whatever we already have from session state.
+        }
+      }
       if (!walletAddress) {
         throw new Error("No Turnkey EVM wallet found. Complete Wallet Kit onboarding first.");
       }
@@ -151,7 +192,9 @@ export default function FundAccountOnRampPanel({
         throw new Error("Turnkey session is missing organization context.");
       }
 
-      const initResult = await initFiatOnRamp({
+      // Wallet Kit exposes initFiatOnRamp on httpClient, not on useTurnkey() itself.
+      // Prefer this over handleOnRamp so we can register the transaction id before settle.
+      const initResult = await httpClient.initFiatOnRamp({
         organizationId,
         onrampProvider: FiatOnRampProvider.MOONPAY,
         walletAddress,
@@ -165,6 +208,7 @@ export default function FundAccountOnRampPanel({
       if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
         throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
       }
+      const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
 
       const sessionResponse = await fetch(
         `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions`,
@@ -197,7 +241,7 @@ export default function FundAccountOnRampPanel({
         throw new Error("On-ramp session response missing sessionId.");
       }
 
-      const popup = window.open(initResult.onRampUrl, "_blank", "noopener,noreferrer");
+      const popup = window.open(onRampUrl, "_blank", "noopener,noreferrer");
       if (!popup) {
         throw new Error("Popup blocked. Allow popups for this site and retry.");
       }

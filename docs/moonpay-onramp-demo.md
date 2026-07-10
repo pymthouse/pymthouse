@@ -102,7 +102,7 @@ sequenceDiagram
   participant MP as MoonPay_Sandbox
   participant OM as OpenMeter
 
-  Owner->>TK: initFiatOnRamp (deposit wallet)
+  Owner->>TK: httpClient.initFiatOnRamp (deposit wallet)
   Owner->>PH: POST /onramp/sessions
   Owner->>MP: Complete sandbox purchase
   Owner->>TK: poll transaction status
