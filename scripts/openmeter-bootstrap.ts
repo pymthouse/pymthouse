@@ -37,20 +37,26 @@ async function waitForKonnectHealthy(
   apiKey: string,
   attempts = 15,
 ): Promise<void> {
+  // Konnect has no /healthz/ready on the metering base; /meters is the catalog we need.
   for (let i = 0; i < attempts; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/healthz/ready`, {
+      const resp = await fetch(`${baseUrl}/meters`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (resp.ok) {
         return;
       }
-    } catch {
-      /* retry */
+      console.warn(
+        `[openmeter-bootstrap] Konnect /meters not ready (${resp.status}); retry ${i + 1}/${attempts}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[openmeter-bootstrap] Konnect /meters probe failed; retry ${i + 1}/${attempts}: ${err}`,
+      );
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  throw new Error(`Konnect Metering & Billing not ready at ${baseUrl}/healthz/ready`);
+  throw new Error(`Konnect Metering & Billing not ready at ${baseUrl}/meters`);
 }
 
 async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: string): Promise<void> {
