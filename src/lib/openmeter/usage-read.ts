@@ -75,7 +75,7 @@ function mapRowsToFeeMicros(
   unit: "micros" | "nanos",
 ): MeterQueryRow[] {
   return rows.map((row) => {
-    const raw = BigInt(Math.floor(Number(row.value ?? 0)));
+    const raw = feeMicrosFromMeterValue(row.value);
     const micros = unit === "nanos" ? usdNanosToMicros(raw) : raw;
     return { ...row, value: Number(micros) };
   });
