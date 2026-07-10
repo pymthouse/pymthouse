@@ -2,7 +2,7 @@ import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
-  NETWORK_FEE_USD_MICROS_METER,
+  NETWORK_FEE_USD_NANOS_METER,
   normalizeKonnectMeteringUrl,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";
@@ -25,13 +25,13 @@ type KonnectFeature = {
 
 const KONNECT_METER_DEFINITIONS = [
   {
-    key: NETWORK_FEE_USD_MICROS_METER,
-    name: "Network fee (USD micros)",
+    key: NETWORK_FEE_USD_NANOS_METER,
+    name: "Network fee (USD nanos)",
     description:
-      "Livepeer signed-ticket network fee (USD micros) — sum of signer computed_fee_usd_micros",
+      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — sum of collector network_fee_usd_nanos",
     event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "sum" as const,
-    value_property: "$.network_fee_usd_micros",
+    value_property: "$.network_fee_usd_nanos",
     dimensions: {
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
@@ -110,7 +110,7 @@ async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T
 let konnectCatalogEnsured = false;
 let konnectMeterIdByKeyCache: Map<string, string> | null = null;
 
-/** Konnect meter query paths require ULIDs; the SDK passes slugs like network_fee_usd_micros. */
+/** Konnect meter query paths require ULIDs; the SDK passes slugs like network_fee_usd_nanos. */
 export async function resolveKonnectMeterId(meterIdOrSlug: string): Promise<string> {
   if (isOpenMeterUlid(meterIdOrSlug)) {
     return meterIdOrSlug;
@@ -160,10 +160,10 @@ export async function ensureKonnectTenantCatalog(
 
   const refreshed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
   const networkFeeMeter = (refreshed.data ?? []).find(
-    (meter) => meter.key === NETWORK_FEE_USD_MICROS_METER,
+    (meter) => meter.key === NETWORK_FEE_USD_NANOS_METER,
   );
   if (!networkFeeMeter) {
-    throw new Error(`Konnect meter missing: ${NETWORK_FEE_USD_MICROS_METER}`);
+    throw new Error(`Konnect meter missing: ${NETWORK_FEE_USD_NANOS_METER}`);
   }
 
   const features = await konnectAdminFetch<KonnectPage<KonnectFeature>>("/features");

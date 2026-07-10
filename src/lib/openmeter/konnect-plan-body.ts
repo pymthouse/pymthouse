@@ -1,4 +1,6 @@
 /** Convert SDK camelCase keys to Konnect snake_case (recursive). */
+import { usdMicrosToNanos } from "./constants";
+
 export function camelToSnakeKey(key: string): string {
   return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
@@ -97,7 +99,7 @@ export function buildKonnectUsageRateCard(input: {
   featureId: string;
   unitAmount: string;
   billingCadence?: string;
-  /** Free usage units (USD micros for network_spend) before billing starts. */
+  /** Free usage units (USD micros in app; converted to meter nanos below). */
   includedMicros?: number;
 }): Record<string, unknown> {
   const card: Record<string, unknown> = {
@@ -113,7 +115,7 @@ export function buildKonnectUsageRateCard(input: {
 
   if (input.includedMicros != null && input.includedMicros > 0) {
     card.discounts = {
-      usage: String(input.includedMicros),
+      usage: String(usdMicrosToNanos(BigInt(input.includedMicros))),
     };
   }
 

@@ -66,7 +66,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
     clientId: "app_1",
     feeRows: [
       {
-        value: 1000,
+        value: 1_000_000, // nanos → 1000 micros
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -75,7 +75,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
         },
       },
       {
-        value: 500,
+        value: 500_000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -109,7 +109,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
     clientId: "app_1",
     feeRows: [
       {
-        value: 1000,
+        value: 1_000_000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -119,7 +119,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
         },
       },
       {
-        value: 500,
+        value: 500_000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -169,7 +169,7 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
     clientId: "app_1",
     feeRows: [
       {
-        value: 100,
+        value: 100_000,
         windowStart: new Date("2026-06-02T00:00:00Z"),
         groupBy: {
           client_id: "app_1",
@@ -619,7 +619,7 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   assert.equal(
     (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
       ?.issueAfterReset,
-    5_000_000,
+    5_000_000_000,
   );
 });
 

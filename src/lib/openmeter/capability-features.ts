@@ -1,6 +1,6 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import { billingStableFeatureKeysEnabled } from "@/lib/billing/feature-flags";
-import { NETWORK_FEE_USD_MICROS_METER } from "./constants";
+import { NETWORK_FEE_USD_NANOS_METER } from "./constants";
 import { unwrapOpenMeterListResult } from "./konnect-catalog";
 import {
   compactClientSlug,
@@ -134,7 +134,7 @@ export async function ensureCapabilityOpenMeterFeature(input: {
   await input.client.features.create({
     key,
     name: input.displayName,
-    meterSlug: NETWORK_FEE_USD_MICROS_METER,
+    meterSlug: NETWORK_FEE_USD_NANOS_METER,
     advancedMeterGroupByFilters: buildCapabilityMeterGroupByFilters({
       pipeline: input.pipeline,
       modelId: input.modelId,

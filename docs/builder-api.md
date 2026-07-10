@@ -338,7 +338,7 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
-2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros`, and writes normalized CloudEvents to OpenMeter/Konnect:
+2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_nanos` (1 USD = 1e9 nanos), and writes normalized CloudEvents to OpenMeter/Konnect:
    - `subject` = compound `auth_id` (`client_id:usage_subject`) — matches OpenMeter customer `subject_key`
    - `data.client_id` = tenant (developer app OAuth `client_id`)
    - `data.usage_subject` = end user (OIDC `sub` analog)
@@ -352,7 +352,7 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_nanos`, `signed_ticket_count`). The `network_fee_usd_nanos` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`; the app converts nanos → micros for ledger/UI. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 **Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns OpenMeter entitlement balance (`balanceUsdMicros`, `hasAccess`, etc.) from the user’s active plan subscription (Starter free tier or paid checkout).
 
@@ -581,7 +581,22 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 
 ### Merchant billing (OpenMeter behind Builder API)
 
-Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. All billing mutations and reads go through Builder API routes backed by `src/lib/openmeter/*`.
+> **Deprecation path (clearinghouse Konnect SPATs):** Prefer per-tenant Konnect
+> orgs with Provisioner / Usage SPATs issued by clearinghouse
+> [`konnect-credentials`](https://github.com/livepeer/clearinghouse/tree/main/konnect-credentials)
+> instead of expanding this Builder billing facade. Tenants then call Konnect
+> Metering & Billing (`/v3/openmeter/*`) directly. Do not add new Konnect adapter
+> surface area in `src/lib/openmeter/konnect-*` for features that SPATs can cover.
+> Keep Builder routes below for OIDC, API keys, Stripe Connect checkout, and
+> transitional usage reads until integrators migrate.
+>
+> Isolation requires **one Konnect org per `clientId`** (Metering roles are
+> org-wide). Clearinghouse binds the org and hands SPATs; it does not mirror the
+> OpenMeter API.
+
+Tenants never receive the **platform** `OPENMETER_API_KEY` or direct access to the
+platform’s shared OpenMeter org. Legacy billing mutations and reads go through
+Builder API routes backed by `src/lib/openmeter/*`.
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
@@ -591,7 +606,7 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session | End-user checkout via OpenMeter subscription + Stripe Checkout |
 
-**Plan → OpenMeter sync:** Publishing a paid plan (`status: active`) creates/updates an OpenMeter plan keyed `{clientId}:{planId}` with flat subscription fee, included allowance on `network_fee_usd_micros`, and usage rate cards. Plans expose `openmeterPlanId`, `lastSyncedAt`, and `syncError` in the dashboard. Sync requires `OPENMETER_URL` / `OPENMETER_API_KEY`; Stripe Connect is for invoicing/checkout, not for provisioning plans in OpenMeter. Stale `openmeterPlanId` values are recreated automatically when OpenMeter returns plan-not-found.
+**Plan → OpenMeter sync:** Publishing a paid plan (`status: active`) creates/updates an OpenMeter plan keyed `{clientId}:{planId}` with flat subscription fee, included allowance on `network_fee_usd_nanos` (allowance micros × 1000), and usage rate cards. Plans expose `openmeterPlanId`, `lastSyncedAt`, and `syncError` in the dashboard. Sync requires `OPENMETER_URL` / `OPENMETER_API_KEY`; Stripe Connect is for invoicing/checkout, not for provisioning plans in OpenMeter. Stale `openmeterPlanId` values are recreated automatically when OpenMeter returns plan-not-found.
 
 **Billing API v2 (loosely coupled):**
 

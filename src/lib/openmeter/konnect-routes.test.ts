@@ -199,20 +199,20 @@ test("buildKonnectUsageRateCard applies included usage discounts", () => {
     unitAmount: "0.000001",
     includedMicros: 5_000_000,
   });
-  assert.deepEqual(card.discounts, { usage: "5000000" });
+  assert.deepEqual(card.discounts, { usage: "5000000000" });
 });
 
 test("isKonnectMeterQueryGet detects SDK meter query GETs", () => {
   assert.equal(
     isKonnectMeterQueryGet(
-      "/v3/openmeter/api/v1/meters/network_fee_usd_micros/query",
+      "/v3/openmeter/api/v1/meters/network_fee_usd_nanos/query",
       "GET",
     ),
     true,
   );
   assert.equal(
     isKonnectMeterQueryGet(
-      "/v3/openmeter/meters/network_fee_usd_micros/query",
+      "/v3/openmeter/meters/network_fee_usd_nanos/query",
       "POST",
     ),
     false,

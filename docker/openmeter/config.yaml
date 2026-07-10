@@ -38,11 +38,11 @@ telemetry:
     level: info
 
 meters:
-  - slug: network_fee_usd_micros
-    description: Livepeer signed-ticket network fee (USD micros)
+  - slug: network_fee_usd_nanos
+    description: Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9)
     eventType: create_signed_ticket
     aggregation: SUM
-    valueProperty: $.network_fee_usd_micros
+    valueProperty: $.network_fee_usd_nanos
     groupBy:
       client_id: $.client_id
       external_user_id: $.external_user_id

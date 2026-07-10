@@ -1,5 +1,19 @@
-/** OpenMeter meter slug for network fee aggregation (USD micros). */
-export const NETWORK_FEE_USD_MICROS_METER = "network_fee_usd_micros";
+/** OpenMeter meter slug for network fee aggregation (USD nanos; 1 USD = 1e9). */
+export const NETWORK_FEE_USD_NANOS_METER = "network_fee_usd_nanos";
+
+/** @deprecated Use NETWORK_FEE_USD_NANOS_METER. Kept as alias for older app meterSlug rows. */
+export const NETWORK_FEE_USD_MICROS_METER = NETWORK_FEE_USD_NANOS_METER;
+
+/** 1 USD micro = 1_000 USD nanos. Meter stores nanos; app ledger/UI stays in micros. */
+export const USD_NANOS_PER_MICRO = 1000n;
+
+export function usdNanosToMicros(nanos: bigint): bigint {
+  return nanos / USD_NANOS_PER_MICRO;
+}
+
+export function usdMicrosToNanos(micros: bigint): bigint {
+  return micros * USD_NANOS_PER_MICRO;
+}
 
 /** OpenMeter meter slug for signed-ticket request counts. */
 export const SIGNED_TICKET_COUNT_METER = "signed_ticket_count";

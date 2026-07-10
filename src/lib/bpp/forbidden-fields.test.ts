@@ -12,7 +12,7 @@ test("the forbidden list mirrors the C0 provider-internal-openmeter contract", (
   const expected = [
     "openmeter_subscription_id",
     "openmeter_customer_id",
-    "network_fee_usd_micros",
+    "network_fee_usd_nanos",
     "fee_wei",
     "eth_usd_price",
     "eth_usd_round_id",

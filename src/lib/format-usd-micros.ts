@@ -62,7 +62,8 @@ export function formatUsdMicrosString(
 
 /**
  * Always returns a `$…` string (including `$0`) for allowance / meter UI.
- * Adaptive fraction digits match the Livepeer dashboard usage strip.
+ * Adaptive fraction digits match the Livepeer dashboard usage strip, with up
+ * to 6 places so sub-cent staging fees (e.g. 33 micros) are visible.
  */
 export function formatUsdMicrosDisplay(microsStr: string | undefined | null): string {
   if (microsStr == null || microsStr === "") return "$0";
@@ -71,10 +72,12 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
   try {
     const negative = t.startsWith("-");
     const abs = BigInt(negative ? t.slice(1) : t);
+    if (abs === 0n) return "$0";
     const usd = Number(abs) / 1_000_000;
-    let digits = 4;
+    let digits = 6;
     if (usd >= 1) digits = 2;
     else if (usd >= 0.01) digits = 3;
+    else if (usd >= 0.0001) digits = 4;
     const formatted = trimFixedDecimalZeros(usd.toFixed(digits));
     return `${negative ? "-" : ""}$${formatted === "" ? "0" : formatted}`;
   } catch {

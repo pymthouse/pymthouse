@@ -120,7 +120,7 @@ async function main() {
       await client.features.create({
         key: featureKey,
         name: "Network spend",
-        meterSlug: "network_fee_usd_micros",
+        meterSlug: "network_fee_usd_nanos",
       });
       console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
     }

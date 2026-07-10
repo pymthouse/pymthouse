@@ -512,7 +512,7 @@ export const appOpenMeterConfig = pgTable(
     mode: text("mode").notNull().default("pymthouse_hosted"),
     baseUrl: text("base_url"),
     apiKeyEncrypted: text("api_key_encrypted"),
-    meterSlug: text("meter_slug").notNull().default("network_fee_usd_micros"),
+    meterSlug: text("meter_slug").notNull().default("network_fee_usd_nanos"),
     trialFeatureKey: text("trial_feature_key").notNull().default("network_spend"),
     createdAt: text("created_at")
       .notNull()
