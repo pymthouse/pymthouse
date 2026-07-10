@@ -156,7 +156,8 @@ flowchart LR
 | Popup blocked / no confirmation | Hard-refresh; panel opens checkout on click and keeps polling even if the tab handle is null |
 | `transaction does not belong to organization` | Status must use the Wallet Kit **sub-org** id (session `organizationId`), not the parent org |
 | Settle 503 | `TURNKEY_ORG_ID` (or `NEXT_PUBLIC_ORGANIZATION_ID`) + API keys on server |
-| Allowance unchanged | `OPENMETER_URL` / API key; Konnect `createGrant` path |
+| Allowance unchanged | `OPENMETER_URL` / API key; Konnect uses `POST /customers/{ulid}/credits/grants` (not entitlement grants) |
+| Settle 404 on `.../entitlements/.../grants` | Wrong Konnect path — fixed via prepaid credit grants API |
 | `below_min_fund` on signer | Unrelated — that's Arbitrum signer webhook, not this demo |
 
 ## Related docs

@@ -14,6 +14,7 @@ import {
 } from "./client-factory";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
+import { getKonnectCreditBalanceUsdMicros } from "./konnect-credit-grants";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
@@ -129,13 +130,23 @@ async function getKonnectTrialCreditBalance(input: {
     externalUserId: input.externalUserId,
     startDate: periodStart,
   });
-  const balance = consumed >= grant ? 0n : grant - consumed;
+  const trialBalance = consumed >= grant ? 0n : grant - consumed;
+  const prepaidCredits =
+    (await getKonnectCreditBalanceUsdMicros({
+      customerId: input.customerId,
+      apiKey: input.apiKey,
+    })) ?? 0n;
+  // Prepaid credit grants (MoonPay on-ramp / manual top-ups) sit in the
+  // Konnect credits wallet; trial included usage is still derived from the
+  // starter subscription + network_fee meter.
+  const balance = trialBalance + prepaidCredits;
+  const lifetimeGranted = grant + prepaidCredits;
 
   return {
     hasAccess: balance > 0n,
     balanceUsdMicros: balance.toString(),
     consumedUsdMicros: consumed.toString(),
-    lifetimeGrantedUsdMicros: defaultGrant,
+    lifetimeGrantedUsdMicros: lifetimeGranted.toString(),
   };
 }
 

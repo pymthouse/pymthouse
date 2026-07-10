@@ -13,6 +13,7 @@ import {
 } from "@/lib/openmeter/client-factory";
 import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import { createKonnectCreditGrant } from "@/lib/openmeter/konnect-credit-grants";
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
@@ -22,6 +23,8 @@ export async function grantAllowanceUsdMicros(input: {
   amountUsdMicros: bigint;
   source: GrantSource;
   featureKey?: string;
+  /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
+  idempotencyKey?: string;
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -49,19 +52,36 @@ export async function grantAllowanceUsdMicros(input: {
   const featureKey =
     input.featureKey?.trim() || (await getTrialFeatureKeyForApp(input.clientId));
 
-  await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await ensureOpenMeterCustomer(client, customerKey);
 
   const omApiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);
   const usesAdditiveGrant =
     input.source === "manual" || input.source === "onramp" || input.source === "promo";
-  if (!useKonnect || usesAdditiveGrant) {
-    await grantTrialCredits({
-      client,
-      customerKey,
-      featureKey,
-      amountUsdMicros: input.amountUsdMicros,
-    });
+
+  if (usesAdditiveGrant) {
+    if (useKonnect) {
+      // Kong Konnect does not expose OpenMeter SDK entitlement grants
+      // (/customers/.../entitlements/{feature}/grants → 404). Use prepaid
+      // credit grants instead: POST /customers/{ulid}/credits/grants.
+      const idempotencyKey =
+        input.idempotencyKey?.trim() ||
+        `pymthouse-${input.source}-${customer.id}-${input.amountUsdMicros.toString()}`;
+      await createKonnectCreditGrant({
+        customerId: customer.id,
+        amountUsdMicros: input.amountUsdMicros,
+        name: `pymthouse ${input.source}`,
+        idempotencyKey,
+        apiKey: omApiKey,
+      });
+    } else {
+      await grantTrialCredits({
+        client,
+        customerKey,
+        featureKey,
+        amountUsdMicros: input.amountUsdMicros,
+      });
+    }
   }
 
   const balance = await getTrialCreditBalance({

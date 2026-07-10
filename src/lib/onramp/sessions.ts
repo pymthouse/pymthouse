@@ -186,6 +186,7 @@ export async function settleOnRampSession(input: {
     externalUserId: session.externalUserId,
     amountUsdMicros,
     source: "onramp",
+    idempotencyKey: session.id,
   });
 
   await db
