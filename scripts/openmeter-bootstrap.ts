@@ -53,6 +53,93 @@ async function waitForKonnectHealthy(
   throw new Error(`Konnect Metering & Billing not ready at ${baseUrl}/healthz/ready`);
 }
 
+async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: string): Promise<void> {
+  await waitForKonnectHealthy(baseUrl, apiKey);
+  console.log("[openmeter-bootstrap] ensuring Konnect meters:");
+  for (const meter of OPENMETER_METER_DEFINITIONS) {
+    console.log(`  - ${meter.slug} (${meter.aggregation} ${meter.valueProperty ?? "count"})`);
+  }
+
+  await ensureKonnectTenantCatalog(featureKey);
+
+  const networkFeeMeterId = await resolveKonnectMeterId(NETWORK_FEE_USD_NANOS_METER);
+  const ticketCountMeterId = await resolveKonnectMeterId(SIGNED_TICKET_COUNT_METER);
+  console.log(
+    `[openmeter-bootstrap] Konnect meter ready: ${NETWORK_FEE_USD_NANOS_METER} id=${networkFeeMeterId}`,
+  );
+  console.log(
+    `[openmeter-bootstrap] Konnect meter ready: ${SIGNED_TICKET_COUNT_METER} id=${ticketCountMeterId}`,
+  );
+  console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
+  console.log(
+    "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
+  );
+  console.log("  - Starter plans sync with rate_cards.discounts.usage on Konnect");
+  console.log(
+    "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
+  );
+}
+
+async function ensureSelfHostedMeters(
+  client: ReturnType<typeof createOpenMeterClient>,
+): Promise<void> {
+  const existing = unwrapOpenMeterListResult<{ slug: string; groupBy?: Record<string, string> }>(
+    await client.meters.list(),
+  );
+
+  for (const meter of OPENMETER_METER_DEFINITIONS) {
+    const existingMeter = existing.find((m) => m.slug === meter.slug);
+    if (!existingMeter) {
+      await client.meters.create(meter);
+      console.log(`[openmeter-bootstrap] created meter: ${meter.slug}`);
+      continue;
+    }
+
+    const groupBy = existingMeter.groupBy ?? {};
+    console.log(`[openmeter-bootstrap] meter exists: ${meter.slug}`);
+    if (!("pipeline" in groupBy && "model_id" in groupBy)) {
+      console.warn(
+        `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/model_id groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
+      );
+    }
+  }
+}
+
+async function ensureSelfHostedFeature(
+  client: ReturnType<typeof createOpenMeterClient>,
+  featureKey: string,
+): Promise<void> {
+  try {
+    const features = unwrapOpenMeterListResult<{ key: string }>(await client.features.list());
+    if (features.some((f) => f.key === featureKey)) {
+      console.log(`[openmeter-bootstrap] feature exists: ${featureKey}`);
+      return;
+    }
+    await client.features.create({
+      key: featureKey,
+      name: "Network spend",
+      meterSlug: NETWORK_FEE_USD_NANOS_METER,
+    });
+    console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
+  } catch (err) {
+    console.warn("[openmeter-bootstrap] feature bootstrap skipped:", err);
+  }
+}
+
+async function bootstrapSelfHosted(
+  baseUrl: string,
+  apiKey: string | undefined,
+  featureKey: string,
+): Promise<void> {
+  await waitForHealthy(baseUrl);
+  const client = createOpenMeterClient({ baseUrl, apiKey });
+  await ensureSelfHostedMeters(client);
+  await ensureSelfHostedFeature(client, featureKey);
+  console.log(
+    "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant",
+  );
+}
+
 async function main() {
   const rawBaseUrl = (process.env.OPENMETER_URL || "http://127.0.0.1:48888").replace(/\/$/, "");
   const apiKey = process.env.OPENMETER_API_KEY?.trim() || undefined;
@@ -72,83 +159,10 @@ async function main() {
   );
 
   if (isKonnectMeteringUrl(baseUrl, apiKey) && apiKey) {
-    await waitForKonnectHealthy(baseUrl, apiKey);
-    console.log("[openmeter-bootstrap] ensuring Konnect meters:");
-    for (const meter of OPENMETER_METER_DEFINITIONS) {
-      console.log(`  - ${meter.slug} (${meter.aggregation} ${meter.valueProperty ?? "count"})`);
-    }
-
-    await ensureKonnectTenantCatalog(featureKey);
-
-    const networkFeeMeterId = await resolveKonnectMeterId(NETWORK_FEE_USD_NANOS_METER);
-    const ticketCountMeterId = await resolveKonnectMeterId(SIGNED_TICKET_COUNT_METER);
-    console.log(
-      `[openmeter-bootstrap] Konnect meter ready: ${NETWORK_FEE_USD_NANOS_METER} id=${networkFeeMeterId}`,
-    );
-    console.log(
-      `[openmeter-bootstrap] Konnect meter ready: ${SIGNED_TICKET_COUNT_METER} id=${ticketCountMeterId}`,
-    );
-    console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
-    console.log(
-      "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
-    );
-    console.log(
-      "  - Starter plans sync with rate_cards.discounts.usage on Konnect",
-    );
-    console.log(
-      "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
-    );
-    console.log("[openmeter-bootstrap] done");
-    return;
+    await bootstrapKonnect(baseUrl, apiKey, featureKey);
+  } else {
+    await bootstrapSelfHosted(baseUrl, apiKey, featureKey);
   }
-
-  await waitForHealthy(baseUrl);
-  const client = createOpenMeterClient({
-    baseUrl,
-    apiKey,
-  });
-
-  const existing = unwrapOpenMeterListResult<{ slug: string; groupBy?: Record<string, string> }>(
-    await client.meters.list(),
-  );
-
-  for (const meter of OPENMETER_METER_DEFINITIONS) {
-    const existingMeter = (existing || []).find((m) => m.slug === meter.slug);
-    if (existingMeter) {
-      const groupBy = existingMeter.groupBy ?? {};
-      const hasPipelineGroupBy = "pipeline" in groupBy && "model_id" in groupBy;
-      console.log(`[openmeter-bootstrap] meter exists: ${meter.slug}`);
-      if (!hasPipelineGroupBy) {
-        console.warn(
-          `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/model_id groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
-        );
-      }
-      continue;
-    }
-    await client.meters.create(meter);
-    console.log(`[openmeter-bootstrap] created meter: ${meter.slug}`);
-  }
-
-  try {
-    const features = unwrapOpenMeterListResult<{ key: string }>(await client.features.list());
-    const hasFeature = features.some((f) => f.key === featureKey);
-    if (hasFeature) {
-      console.log(`[openmeter-bootstrap] feature exists: ${featureKey}`);
-    } else {
-      await client.features.create({
-        key: featureKey,
-        name: "Network spend",
-        meterSlug: NETWORK_FEE_USD_NANOS_METER,
-      });
-      console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
-    }
-  } catch (err) {
-    console.warn("[openmeter-bootstrap] feature bootstrap skipped:", err);
-  }
-
-  console.log(
-    "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant",
-  );
   console.log("[openmeter-bootstrap] done");
 }
 
