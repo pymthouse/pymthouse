@@ -169,6 +169,34 @@
       "when": 1777800000000,
       "tag": "0022_api_keys_openmeter_subscription",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777900000000,
+      "tag": "0023_turnkey_funding_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1778000000000,
+      "tag": "0024_api_keys_openmeter_subscription_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778100000000,
+      "tag": "0025_auto_approve_developer_apps",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1778600000000,
+      "tag": "0026_auto_approve_developer_apps_repair",
+      "breakpoints": true
     }
   ]
 }

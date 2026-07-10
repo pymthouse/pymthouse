@@ -4,8 +4,8 @@ import { developerApps, oidcClients } from "@/db/schema";
 
 /**
  * OpenMeter meter groupBy `client_id` matches the public OIDC client_id emitted
- * in signed-ticket CloudEvents (auth_id prefix), not developer_apps.id when those
- * differ (legacy apps created before id === client_id).
+ * in signed-ticket CloudEvents (`data.client_id` from collector normalization),
+ * not developer_apps.id when those differ (legacy apps created before id === client_id).
  */
 export async function resolveOpenMeterMeterClientId(appId: string): Promise<string> {
   const trimmed = appId.trim();

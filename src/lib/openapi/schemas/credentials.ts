@@ -14,8 +14,8 @@ export const AppApiKeyBearerSchema = z
   .refine((value) => !value.startsWith("pmth_cs_"), {
     message:
       "pmth_cs_* is an M2M client secret (RFC 6749 client authentication). " +
-      "Use HTTP Basic with the m2m_* client id, or exchange via client_credentials — " +
-      "not the API-key bearer exchange.",
+      "Use HTTP Basic with the m2m_* client id, or pass the API key as subject_token " +
+      "to POST /api/v1/apps/{clientId}/oidc/token.",
   })
   .refine((value) => value.startsWith("pmth_"), {
     message: "API key must start with pmth_ (per-user app API key).",
@@ -25,14 +25,6 @@ export const AppApiKeyBearerSchema = z
       "Long-lived per-app-user API key (`pmth_<hex>`). Rejects `pmth_cs_*` client secrets.",
     examples: ["pmth_abc123…"],
   });
-
-export const ApiKeyTokenRequestBodySchema = z
-  .object({
-    scope: ScopeStringSchema.optional().openapi({
-      description: "Requested scopes for the user JWT. Defaults to sign:job.",
-    }),
-  })
-  .openapi("ApiKeyTokenRequest");
 
 export const ProgrammaticTokenResponseSchema = z
   .object({
@@ -63,12 +55,17 @@ export const SignerSessionSchema = z
     token_type: z.literal("Bearer"),
     expires_in: z.number().int().positive(),
     scope: ScopeStringSchema,
-    balanceUsdMicros: z.string().openapi({ description: "Remaining balance in USD micros." }),
-    lifetimeGrantedUsdMicros: z.string().openapi({
-      description: "Lifetime granted balance in USD micros.",
+    balanceUsdMicros: z.string().optional().openapi({
+      description: "PymtHouse extension: remaining balance in USD micros.",
+    }),
+    lifetimeGrantedUsdMicros: z.string().optional().openapi({
+      description: "PymtHouse extension: lifetime granted balance in USD micros.",
     }),
     signer_url: z.string().url().optional().openapi({
       description: "Public remote-signer base URL.",
+    }),
+    discovery_url: z.string().url().optional().openapi({
+      description: "Livepeer network discovery URL (not OIDC issuer metadata).",
     }),
     issued_token_type: z
       .literal("urn:ietf:params:oauth:token-type:access_token")
@@ -78,10 +75,27 @@ export const SignerSessionSchema = z
   })
   .openapi("SignerSession");
 
-export const ApiKeySignerSessionRequestBodySchema = z
+export const TokenExchangeRequestSchema = z
   .object({
-    scope: ScopeStringSchema.optional(),
+    grant_type: z
+      .literal("urn:ietf:params:oauth:grant-type:token-exchange")
+      .openapi({ description: "RFC 8693 token exchange grant type." }),
+    subject_token: z.string().openapi({
+      description: "User access JWT or per-app-user API key (`pmth_*`).",
+    }),
+    subject_token_type: z
+      .literal("urn:ietf:params:oauth:token-type:access_token")
+      .openapi({ description: "Subject token type for signer session exchange." }),
+    requested_token_type: z
+      .literal("urn:ietf:params:oauth:token-type:access_token")
+      .optional(),
+    audience: z.string().optional().openapi({
+      description: "Must match configured signer audience when provided.",
+    }),
+    resource: z.string().optional().openapi({
+      description: "Must match configured signer audience when provided.",
+    }),
   })
-  .openapi("ApiKeySignerSessionRequest");
+  .openapi("TokenExchangeRequest");
 
 export { OAuthErrorSchema as OAuthErrorResponseSchema } from "./common";

@@ -77,11 +77,11 @@ export async function handleTokenExchange(params: {
     .where(eq(developerApps.oidcClientId, clientRow.id))
     .limit(1);
   const app = appRows[0];
-  if (!app || app.status !== "approved") {
+  if (!app) {
     throw new TokenExchangeError(
       "invalid_client",
-      "App is not approved for token exchange",
-      "Client is not approved for token exchange",
+      "App is not registered for token exchange",
+      "Client is not registered for token exchange",
     );
   }
 

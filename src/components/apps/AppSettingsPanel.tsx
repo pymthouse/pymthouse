@@ -46,6 +46,10 @@ export default function AppSettingsPanel({ data }: Props) {
     typeof window !== "undefined"
       ? `${window.location.origin}/api/v1/oidc/token`
       : "";
+  const signerSessionUrl =
+    typeof window !== "undefined" && data.clientId
+      ? `${window.location.origin}/api/v1/apps/${encodeURIComponent(data.clientId)}/oidc/token`
+      : "";
 
   const addValue = (
     value: string,
@@ -325,7 +329,8 @@ export default function AppSettingsPanel({ data }: Props) {
         <Field label="Client ID" value={data.clientId} />
         <Field label="OIDC Discovery" value={discoveryUrl} />
         <Field label="Authorize" value={authorizeUrl} />
-        <Field label="Token" value={tokenUrl} />
+        <Field label="OIDC token" value={tokenUrl} />
+        <Field label="Signer session exchange" value={signerSessionUrl} />
       </section>
 
       {(message || error) && (

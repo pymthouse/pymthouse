@@ -205,13 +205,13 @@ Canonical URLs for the Deployments sidebar (`VERCEL_PRODUCTION_URL`, `VERCEL_PRE
 2. Tag and push from your machine (a user push fires deploy workflows; tags pushed by `GITHUB_TOKEN` in CI do **not** re-trigger workflows):
 
 ```bash
-git tag v0.2.4
-git push origin v0.2.4
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The tag push fires [deploy-production-vercel.yml](../.github/workflows/deploy-production-vercel.yml) and [deploy-railway-production.yml](../.github/workflows/deploy-railway-production.yml) via their `on: push: tags` triggers (each runs in its own environment so env-scoped secrets resolve).
 
-Optionally create a GitHub Release for the tag: `gh release create v0.2.4 --generate-notes`
+Optionally create a GitHub Release for the tag: `gh release create v0.3.0 --generate-notes`
 
 **Manual staging deploy** (paired Railway + Vercel):
 

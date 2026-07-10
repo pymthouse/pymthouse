@@ -31,8 +31,9 @@ if [[ -z "${OPENMETER_URL:-}" ]]; then
   echo "OPENMETER_URL is required (hosted OpenMeter/Konnect API base)" >&2
   exit 1
 fi
-if [[ -z "${OPENMETER_API_KEY:-}" ]]; then
-  echo "OPENMETER_API_KEY is required for collector ingest" >&2
+OPENMETER_INGEST_API_KEY="${OPENMETER_INGEST_API_KEY:-${OPENMETER_API_KEY:-}}"
+if [[ -z "${OPENMETER_INGEST_API_KEY:-}" ]]; then
+  echo "OPENMETER_INGEST_API_KEY (or OPENMETER_API_KEY fallback) is required for collector ingest" >&2
   exit 1
 fi
 if [[ -z "${WEBHOOK_SECRET:-}" ]]; then
@@ -72,7 +73,8 @@ set_kv kafka \
 
 KAFKA_BROKERS="${KAFKA_BROKERS:-kafka.railway.internal:9092}"
 KAFKA_GATEWAY_TOPIC="${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
-ETH_USD_PRICE="${ETH_USD_PRICE:-3500}"
+PRICE_ORACLE_URL="${PRICE_ORACLE_URL:-https://api.coinbase.com/v2/prices/ETH-USD/spot}"
+PRICE_ORACLE_REFRESH="${PRICE_ORACLE_REFRESH:-5m}"
 
 REMOTE_SIGNER_WEBHOOK_URL="${REMOTE_SIGNER_WEBHOOK_URL:-${NEXTAUTH_URL:-https://pymthouse.com}/webhooks/remote-signer}"
 
@@ -83,8 +85,9 @@ set_kv openmeter-collector \
   "KAFKA_GATEWAY_TOPIC=${KAFKA_GATEWAY_TOPIC}" \
   "OPENMETER_URL=${OPENMETER_URL}" \
   "OPENMETER_INGEST_URL=${OPENMETER_INGEST_URL}" \
-  "OPENMETER_API_KEY=${OPENMETER_API_KEY}" \
-  "ETH_USD_PRICE=${ETH_USD_PRICE}"
+  "OPENMETER_API_KEY=${OPENMETER_INGEST_API_KEY}" \
+  "PRICE_ORACLE_URL=${PRICE_ORACLE_URL}" \
+  "PRICE_ORACLE_REFRESH=${PRICE_ORACLE_REFRESH}"
 
 # Signer DMZ (pymthouse service). For signer-only updates use scripts/railway-apply-signer-env.sh.
 export NEXTAUTH_URL="${NEXTAUTH_URL:-https://pymthouse.com}"

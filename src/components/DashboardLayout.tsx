@@ -36,7 +36,7 @@ const allNavItems: NavItem[] = [
     group: "Admin",
   },
   {
-    label: "App Reviews",
+    label: "Marketplace Apps",
     href: "/admin/apps",
     icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
     roles: ["admin"],
@@ -48,12 +48,6 @@ const allNavItems: NavItem[] = [
     icon: "M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z",
     roles: ["admin"],
     group: "Admin",
-  },
-  {
-    label: "Streams",
-    href: "/streams",
-    icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
-    roles: ["admin", "operator"],
   },
   {
     label: "Users",

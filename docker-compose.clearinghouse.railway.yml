@@ -48,7 +48,8 @@ services:
       OPENMETER_URL: ${OPENMETER_URL}
       OPENMETER_INGEST_URL: ${OPENMETER_INGEST_URL:-${OPENMETER_URL}/events}
       OPENMETER_API_KEY: ${OPENMETER_API_KEY}
-      ETH_USD_PRICE: ${ETH_USD_PRICE:-3500}
+      PRICE_ORACLE_URL: ${PRICE_ORACLE_URL:-https://api.coinbase.com/v2/prices/ETH-USD/spot}
+      PRICE_ORACLE_REFRESH: ${PRICE_ORACLE_REFRESH:-5m}
 
   pymthouse:
     image: ${SIGNER_DMZ_IMAGE:-pymthouse/signer-dmz:local}
@@ -57,7 +58,7 @@ services:
       dockerfile: docker/signer-dmz/Dockerfile
       target: signer-dmz-local
       args:
-        LIVEPEER_IMAGE: ${LIVEPEER_IMAGE:-livepeer/go-livepeer:sha-7938edbdaf8e9f82882859b8001cc09c28f339c0}
+        LIVEPEER_IMAGE: ${LIVEPEER_IMAGE:-livepeer/go-livepeer:sha-c884fa6617bbd67345af81ab4be8921edd59f19e}
     restart: unless-stopped
     ports:
       - target: 8080

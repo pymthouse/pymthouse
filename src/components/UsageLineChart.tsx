@@ -12,6 +12,8 @@ interface UsageLineChartProps {
   /** Label for tooltip / aria (e.g. "Requests / day") */
   valueLabel?: string;
   className?: string;
+  /** Pixel height of the chart (default 200; use a smaller value for compact panels). */
+  height?: number;
 }
 
 function utcTodayKey(): string {
@@ -49,11 +51,12 @@ function sanitizeChartValue(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+/** Y-axis top ≈ 20% above the peak so the line fills ~80% of the plot height. */
 function buildYTicks(maxValue: number, tickCount = 4): number[] {
   if (!Number.isFinite(maxValue) || maxValue <= 0) {
     return Array.from({ length: tickCount + 1 }, (_, i) => i);
   }
-  const padded = Math.ceil(maxValue * 1.1);
+  const padded = Math.ceil(maxValue * 1.2);
   const step = Math.max(1, Math.ceil(padded / tickCount));
   const top = Math.ceil(padded / step) * step;
   const ticks: number[] = [];
@@ -76,13 +79,13 @@ export default function UsageLineChart({
   data,
   valueLabel = "Requests",
   className = "",
+  height = 200,
 }: UsageLineChartProps) {
   const width = 720;
-  const height = 200;
   const padLeft = 44;
   const padRight = 12;
   const padTop = 12;
-  const padBottom = 26;
+  const padBottom = height < 140 ? 20 : 26;
   const plotW = width - padLeft - padRight;
   const plotH = height - padTop - padBottom;
 

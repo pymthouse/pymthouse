@@ -24,6 +24,7 @@ import {
   handleGatewayTokenExchange,
   isGatewayTokenExchangeRequest,
 } from "@/lib/oidc/gateway-token-exchange";
+import { clientCredentialsFromTokenRequest } from "@/lib/oidc/token-request-client-credentials";
 import {
   handleDeviceApprovalTokenExchange,
   isDeviceApprovalTokenExchangeRequest,
@@ -39,12 +40,8 @@ import {
   assertSignJobNotMixedWithAdmin,
   SignJobScopeExclusivityError,
 } from "@/lib/oidc/scopes";
-import {
-  handleSignerJwtTokenExchange,
-  isSignerJwtTokenExchangeRequest,
-} from "@/lib/oidc/signer-jwt-token-exchange";
+import { handleSignerJwtTokenExchange, isSignerJwtTokenExchangeRequest } from "@/lib/oidc/signer-jwt-token-exchange";
 import { rotateProgrammaticRefreshToken } from "@/lib/oidc/programmatic-tokens";
-import { decodeBasicAuthComponent } from "@/lib/auth";
 
 const RESOURCE_REQUIRED_GRANTS = new Set([
   "urn:ietf:params:oauth:grant-type:device_code",
@@ -75,32 +72,6 @@ function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
     );
   }
   return null;
-}
-
-/** RFC 6749 §2.3.1 Appendix B decoding for `client_id` / `client_secret` in Basic auth — see `decodeBasicAuthComponent` in `@/lib/auth`. */
-function clientCredentialsFromTokenRequest(
-  request: NextRequest,
-  params: URLSearchParams,
-): { clientId: string; clientSecret: string } {
-  const auth = request.headers.get("authorization") || "";
-  if (auth.startsWith("Basic ")) {
-    try {
-      const decoded = Buffer.from(auth.slice(6), "base64").toString("utf-8");
-      const idx = decoded.indexOf(":");
-      if (idx > 0) {
-        return {
-          clientId: decodeBasicAuthComponent(decoded.slice(0, idx)),
-          clientSecret: decodeBasicAuthComponent(decoded.slice(idx + 1)),
-        };
-      }
-    } catch {
-      /* fall through to body */
-    }
-  }
-  return {
-    clientId: params.get("client_id") || "",
-    clientSecret: params.get("client_secret") || "",
-  };
 }
 
 /**
@@ -263,7 +234,13 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
             audience: exchangeParams.getAll("audience"),
           });
           return NextResponse.json(result, {
-            headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+            headers: {
+              "Cache-Control": "no-store",
+              Pragma: "no-cache",
+              Deprecation: "true",
+              Link: '</api/v1/apps/{clientId}/oidc/token>; rel="successor-version"',
+              "Sunset": "2026-10-01",
+            },
           });
         }
 
