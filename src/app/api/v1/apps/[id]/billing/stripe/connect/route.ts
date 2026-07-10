@@ -14,6 +14,62 @@ import {
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 
+function openMeterStatus(message: string): number {
+  return message.includes("Cannot reach OpenMeter") ? 503 : 502;
+}
+
+async function readStripeSecretKey(request: NextRequest): Promise<string | undefined> {
+  try {
+    const body = (await request.json()) as { stripeSecretKey?: string };
+    return body.stripeSecretKey?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function connectWithSecretKey(clientId: string, stripeSecretKey: string) {
+  try {
+    await connectStripeWithApiKey({
+      clientId,
+      stripeSecretKey,
+    });
+    return NextResponse.json({ method: "api_key", connected: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: openMeterStatus(message) });
+  }
+}
+
+async function connectViaHostedFlow(input: {
+  clientId: string;
+  userId: string;
+}) {
+  try {
+    if (
+      shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+    ) {
+      await connectStripeOnKonnect({ clientId: input.clientId });
+      return NextResponse.json({ method: "konnect", connected: true });
+    }
+
+    const { url } = await createStripeOAuthState({
+      clientId: input.clientId,
+      userId: input.userId,
+    });
+    return NextResponse.json({ method: "oauth", url });
+  } catch (err) {
+    if (err instanceof StripeOAuthUnavailableError) {
+      return NextResponse.json({
+        method: "api_key",
+        message:
+          "Self-hosted OpenMeter does not support Stripe OAuth. Connect using a restricted secret key from the Stripe Dashboard for this merchant account.",
+      });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: openMeterStatus(message) });
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -35,51 +91,13 @@ export async function POST(
     );
   }
 
-  let body: { stripeSecretKey?: string } = {};
-  try {
-    body = (await request.json()) as { stripeSecretKey?: string };
-  } catch {
-    /* empty body → OAuth */
-  }
-
-  const stripeSecretKey = body.stripeSecretKey?.trim();
+  const stripeSecretKey = await readStripeSecretKey(request);
   if (stripeSecretKey) {
-    try {
-      await connectStripeWithApiKey({
-        clientId: auth.app.id,
-        stripeSecretKey,
-      });
-      return NextResponse.json({ method: "api_key", connected: true });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const status = message.includes("Cannot reach OpenMeter") ? 503 : 502;
-      return NextResponse.json({ error: message }, { status });
-    }
+    return connectWithSecretKey(auth.app.id, stripeSecretKey);
   }
 
-  try {
-    if (
-      shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
-    ) {
-      await connectStripeOnKonnect({ clientId: auth.app.id });
-      return NextResponse.json({ method: "konnect", connected: true });
-    }
-
-    const { url } = await createStripeOAuthState({
-      clientId: auth.app.id,
-      userId: auth.userId,
-    });
-    return NextResponse.json({ method: "oauth", url });
-  } catch (err) {
-    if (err instanceof StripeOAuthUnavailableError) {
-      return NextResponse.json({
-        method: "api_key",
-        message:
-          "Self-hosted OpenMeter does not support Stripe OAuth. Connect using a restricted secret key from the Stripe Dashboard for this merchant account.",
-      });
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("Cannot reach OpenMeter") ? 503 : 502;
-    return NextResponse.json({ error: message }, { status });
-  }
+  return connectViaHostedFlow({
+    clientId: auth.app.id,
+    userId: auth.userId,
+  });
 }

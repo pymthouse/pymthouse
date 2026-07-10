@@ -66,7 +66,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         setError(oauthError);
       }
       if (params.get("connected") === "1") {
-        void load();
+        load().catch(() => undefined);
       }
     }
   }, [load]);

@@ -564,12 +564,12 @@ test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409"
     "conflict error: invalid billing setup: failed to get stripe customer data: " +
       "customer has no data for stripe app",
   );
-  (stripeErr as { status: number }).status = 409;
+  (stripeErr as unknown as { status: number }).status = 409;
   assert.equal(isOpenMeterStripeBillingError(stripeErr), true);
   assert.equal(isOpenMeterConflictError(stripeErr), true);
 
   const stripeMessageOnly = new Error(stripeErr.message);
-  (stripeMessageOnly as { status: number }).status = 500;
+  (stripeMessageOnly as unknown as { status: number }).status = 500;
   assert.equal(isOpenMeterStripeBillingError(stripeMessageOnly), false);
 });
 

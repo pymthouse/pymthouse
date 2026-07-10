@@ -124,7 +124,7 @@ function stripeAppInstallName(clientId: string): string {
 
 export function parseStripeAccountIdFromConflict(err: unknown): string | null {
   const message = err instanceof Error ? err.message : String(err);
-  const match = message.match(/acct_[a-zA-Z0-9]+/);
+  const match = /acct_[a-zA-Z0-9]+/.exec(message);
   return match?.[0] ?? null;
 }
 
@@ -243,9 +243,9 @@ export async function createStripeOAuthState(input: {
     createdAt: new Date().toISOString(),
   });
 
-  let install: { url?: string };
+  let install: { url?: string } | undefined;
   try {
-    install = await client.apps.marketplace.getOauth2InstallUrl("stripe");
+    install = (await client.apps.marketplace.getOauth2InstallUrl("stripe")) ?? undefined;
   } catch (err) {
     if (isOpenMeterUnreachable(err)) {
       throw new Error(formatOpenMeterBillingError(err));

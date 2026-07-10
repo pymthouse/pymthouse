@@ -3,9 +3,9 @@ import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
   NETWORK_FEE_USD_MICROS_METER,
-  normalizeKonnectMeteringUrl,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";
+import { konnectAdminFetch } from "./konnect-admin-client";
 import { isOpenMeterUlid } from "./konnect-routes";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
@@ -71,40 +71,8 @@ export function unwrapOpenMeterListResult<T>(value: unknown): T[] {
   return [];
 }
 
-function konnectAdminConfig(): { baseUrl: string; apiKey: string } {
-  const apiKey = process.env.OPENMETER_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error("OPENMETER_API_KEY is required for Konnect catalog provisioning");
-  }
-  return {
-    baseUrl: normalizeKonnectMeteringUrl(getHostedOpenMeterUrl()),
-    apiKey,
-  };
-}
-
-async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const { baseUrl, apiKey } = konnectAdminConfig();
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      ...init?.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `Konnect catalog API ${init?.method ?? "GET"} ${path} failed (${response.status}): ${body}`,
-    );
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
+function catalogFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  return konnectAdminFetch<T>(path, init, "catalog");
 }
 
 let konnectCatalogEnsured = false;
@@ -117,7 +85,7 @@ export async function resolveKonnectMeterId(meterIdOrSlug: string): Promise<stri
   }
 
   if (!konnectMeterIdByKeyCache) {
-    const listed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
+    const listed = await catalogFetch<KonnectPage<KonnectMeter>>("/meters");
     konnectMeterIdByKeyCache = new Map(
       (listed.data ?? []).map((meter) => [meter.key, meter.id]),
     );
@@ -145,20 +113,20 @@ export async function ensureKonnectTenantCatalog(
     return;
   }
 
-  const listed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
+  const listed = await catalogFetch<KonnectPage<KonnectMeter>>("/meters");
   const existingMeters = listed.data ?? [];
 
   for (const meter of KONNECT_METER_DEFINITIONS) {
     if (existingMeters.some((item) => item.key === meter.key)) {
       continue;
     }
-    await konnectAdminFetch<KonnectMeter>("/meters", {
+    await catalogFetch<KonnectMeter>("/meters", {
       method: "POST",
       body: JSON.stringify(meter),
     });
   }
 
-  const refreshed = await konnectAdminFetch<KonnectPage<KonnectMeter>>("/meters");
+  const refreshed = await catalogFetch<KonnectPage<KonnectMeter>>("/meters");
   const networkFeeMeter = (refreshed.data ?? []).find(
     (meter) => meter.key === NETWORK_FEE_USD_MICROS_METER,
   );
@@ -166,10 +134,10 @@ export async function ensureKonnectTenantCatalog(
     throw new Error(`Konnect meter missing: ${NETWORK_FEE_USD_MICROS_METER}`);
   }
 
-  const features = await konnectAdminFetch<KonnectPage<KonnectFeature>>("/features");
+  const features = await catalogFetch<KonnectPage<KonnectFeature>>("/features");
   const featureKey = trialFeatureKey.trim() || DEFAULT_TRIAL_FEATURE_KEY;
   if (!(features.data ?? []).some((feature) => feature.key === featureKey)) {
-    await konnectAdminFetch<KonnectFeature>("/features", {
+    await catalogFetch<KonnectFeature>("/features", {
       method: "POST",
       body: JSON.stringify({
         key: featureKey,
@@ -188,6 +156,6 @@ export function resetKonnectCatalogEnsuredForTests(): void {
 }
 
 export async function findKonnectFeatureIdByKey(featureKey: string): Promise<string | null> {
-  const features = await konnectAdminFetch<KonnectPage<KonnectFeature>>("/features");
+  const features = await catalogFetch<KonnectPage<KonnectFeature>>("/features");
   return (features.data ?? []).find((feature) => feature.key === featureKey)?.id ?? null;
 }

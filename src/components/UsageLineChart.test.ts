@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildYTicks, chartYScaleMax } from "./UsageLineChart";
 
-test("buildYTicks returns [0] when max is zero or invalid", () => {
-  assert.deepEqual(buildYTicks(0), [0]);
-  assert.deepEqual(buildYTicks(-1), [0]);
-  assert.deepEqual(buildYTicks(Number.NaN), [0]);
+test("buildYTicks returns identity ticks when max is zero or invalid", () => {
+  assert.deepEqual(buildYTicks(0), [0, 1, 2, 3, 4]);
+  assert.deepEqual(buildYTicks(-1), [0, 1, 2, 3, 4]);
+  assert.deepEqual(buildYTicks(Number.NaN), [0, 1, 2, 3, 4]);
 });
 
 test("chartYScaleMax is at least 1 when ticks are all zero", () => {

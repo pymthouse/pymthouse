@@ -1,7 +1,4 @@
-import {
-  getHostedOpenMeterUrl,
-  normalizeKonnectMeteringUrl,
-} from "./constants";
+import { konnectAdminConfig, konnectAdminFetch } from "./konnect-admin-client";
 
 type KonnectPage<T> = {
   data?: T[];
@@ -64,40 +61,8 @@ function billingSupplierCountryCode(): string {
   return raw.toUpperCase();
 }
 
-function konnectAdminConfig(): { baseUrl: string; apiKey: string } {
-  const apiKey = process.env.OPENMETER_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error("OPENMETER_API_KEY is required for Konnect billing profiles");
-  }
-  return {
-    baseUrl: normalizeKonnectMeteringUrl(getHostedOpenMeterUrl()),
-    apiKey,
-  };
-}
-
-async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const { baseUrl, apiKey } = konnectAdminConfig();
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      ...init?.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `Konnect billing API ${init?.method ?? "GET"} ${path} failed (${response.status}): ${body}`,
-    );
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
+function billingFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  return konnectAdminFetch<T>(path, init, "billing");
 }
 
 export function konnectAppType(app: KonnectBillingApp): string {
@@ -150,7 +115,7 @@ function formatKonnectAppSummary(apps: KonnectBillingApp[]): string {
 
 export async function getKonnectApp(appId: string): Promise<KonnectBillingApp | null> {
   try {
-    return await konnectAdminFetch<KonnectBillingApp>(
+    return await billingFetch<KonnectBillingApp>(
       `/apps/${encodeURIComponent(appId)}`,
     );
   } catch (err) {
@@ -171,7 +136,7 @@ export async function listKonnectBillingProfiles(): Promise<KonnectBillingProfil
     const params = new URLSearchParams();
     params.set("page[number]", String(pageNumber));
     params.set("page[size]", String(pageSize));
-    const page = await konnectAdminFetch<KonnectPage<KonnectBillingProfileListItem>>(
+    const page = await billingFetch<KonnectPage<KonnectBillingProfileListItem>>(
       `/profiles?${params.toString()}`,
     );
     const batch = page.data ?? [];
@@ -209,7 +174,7 @@ export async function listKonnectApps(): Promise<KonnectBillingApp[]> {
     const params = new URLSearchParams();
     params.set("page[number]", String(pageNumber));
     params.set("page[size]", String(pageSize));
-    const page = await konnectAdminFetch<KonnectPage<KonnectBillingApp>>(
+    const page = await billingFetch<KonnectPage<KonnectBillingApp>>(
       `/apps?${params.toString()}`,
     );
     const batch = page.data ?? [];
@@ -313,7 +278,7 @@ export async function createKonnectBillingProfile(input: {
     stripeAppId: input.openmeterStripeAppId,
     name: input.name,
   });
-  const profile = await konnectAdminFetch<KonnectBillingProfile>("/profiles", {
+  const profile = await billingFetch<KonnectBillingProfile>("/profiles", {
     method: "POST",
     body: JSON.stringify(body),
   });

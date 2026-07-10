@@ -51,55 +51,32 @@ async function waitForKonnectHealthy(
   throw new Error(`Konnect Metering & Billing not ready at ${baseUrl}/healthz/ready`);
 }
 
-async function main() {
-  const rawBaseUrl = (process.env.OPENMETER_URL || "http://127.0.0.1:48888").replace(/\/$/, "");
-  const apiKey = process.env.OPENMETER_API_KEY?.trim() || undefined;
-  const baseUrl = isKonnectMeteringUrl(rawBaseUrl, apiKey)
-    ? normalizeKonnectMeteringUrl(rawBaseUrl)
-    : rawBaseUrl;
-  const trialUsdMicros = defaultStarterIncludedUsdMicros();
-  const featureKey = process.env.OPENMETER_TRIAL_FEATURE_KEY?.trim() || "network_spend";
-
-  if (!process.env.OPENMETER_URL) {
-    console.log("[openmeter-bootstrap] OPENMETER_URL unset; using", baseUrl);
-  }
+async function bootstrapKonnect(baseUrl: string, apiKey: string): Promise<void> {
+  await waitForKonnectHealthy(baseUrl, apiKey);
+  await ensureKonnectTenantCatalog();
+  console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
   console.log(
-    `[openmeter-bootstrap] default starter trial allowance: ${trialUsdMicros} USD micros ($${(
-      Number(trialUsdMicros) / 1_000_000
-    ).toFixed(2)}) on feature ${featureKey}`,
+    "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
   );
-
-  if (isKonnectMeteringUrl(baseUrl, apiKey) && apiKey) {
-    await waitForKonnectHealthy(baseUrl, apiKey);
-    await ensureKonnectTenantCatalog();
-    console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
-    console.log(
-      "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
+  console.log(
+    "  - Starter plans sync with rate_cards.discounts.usage on Konnect",
+  );
+  console.log(
+    "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
+  );
+  try {
+    await resolveKonnectStripeAppId();
+    console.log("[openmeter-bootstrap] Konnect Stripe app is ready");
+  } catch {
+    console.warn(
+      "[openmeter-bootstrap] Konnect Stripe app not ready — install Stripe in Konnect → Metering & Billing → Settings → Stripe",
     );
-    console.log(
-      "  - Starter plans sync with rate_cards.discounts.usage on Konnect",
-    );
-    console.log(
-      "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
-    );
-    try {
-      await resolveKonnectStripeAppId();
-      console.log("[openmeter-bootstrap] Konnect Stripe app is ready");
-    } catch (err) {
-      console.warn(
-        "[openmeter-bootstrap] Konnect Stripe app not ready — install Stripe in Konnect → Metering & Billing → Settings → Stripe:",
-        err instanceof Error ? err.message : err,
-      );
-    }
-    return;
   }
+}
 
-  await waitForHealthy(baseUrl);
-  const client = createOpenMeterClient({
-    baseUrl,
-    apiKey,
-  });
-
+async function ensureMeters(
+  client: ReturnType<typeof createOpenMeterClient>,
+): Promise<void> {
   const existing = unwrapOpenMeterListResult<{ slug: string; groupBy?: Record<string, string> }>(
     await client.meters.list(),
   );
@@ -120,29 +97,35 @@ async function main() {
     await client.meters.create(meter);
     console.log(`[openmeter-bootstrap] created meter: ${meter.slug}`);
   }
+}
 
+async function ensureTrialFeature(
+  client: ReturnType<typeof createOpenMeterClient>,
+  featureKey: string,
+): Promise<void> {
   try {
     const features = unwrapOpenMeterListResult<{ key: string }>(await client.features.list());
     const hasFeature = features.some((f) => f.key === featureKey);
     if (hasFeature) {
       console.log(`[openmeter-bootstrap] feature exists: ${featureKey}`);
-    } else {
-      await client.features.create({
-        key: featureKey,
-        name: "Network spend",
-        meterSlug: "network_fee_usd_micros",
-      });
-      console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
+      return;
     }
+    await client.features.create({
+      key: featureKey,
+      name: "Network spend",
+      meterSlug: "network_fee_usd_micros",
+    });
+    console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
   } catch (err) {
     console.warn("[openmeter-bootstrap] feature bootstrap skipped:", err);
   }
+}
 
-  console.log(
-    "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant",
-  );
-
-  const appsBaseUrl = process.env.OPENMETER_APPS_BASE_URL?.trim() || baseUrl;
+async function probeStripeOAuth(
+  baseUrl: string,
+  apiKey: string | undefined,
+  appsBaseUrl: string,
+): Promise<void> {
   try {
     const installResp = await fetch(
       `${baseUrl}/api/v1/marketplace/listings/stripe/install/oauth2`,
@@ -155,16 +138,58 @@ async function main() {
         "[openmeter-bootstrap] Stripe Connect unavailable (501). Set apps.baseURL on OpenMeter " +
           `(OPENMETER_APPS_BASE_URL=${appsBaseUrl}) and redeploy.`,
       );
-    } else if (!installResp.ok) {
+      return;
+    }
+    if (!installResp.ok) {
       console.warn(
         `[openmeter-bootstrap] Stripe install probe returned ${installResp.status} (apps.baseURL should be ${appsBaseUrl})`,
       );
-    } else {
-      console.log("[openmeter-bootstrap] Stripe marketplace OAuth is available");
+      return;
     }
+    console.log("[openmeter-bootstrap] Stripe marketplace OAuth is available");
   } catch (err) {
     console.warn("[openmeter-bootstrap] Stripe install probe skipped:", err);
   }
+}
+
+async function main() {
+  const rawBaseUrl = (process.env.OPENMETER_URL || "http://127.0.0.1:48888").replace(/\/$/, "");
+  const apiKey = process.env.OPENMETER_API_KEY?.trim() || undefined;
+  const baseUrl = isKonnectMeteringUrl(rawBaseUrl, apiKey)
+    ? normalizeKonnectMeteringUrl(rawBaseUrl)
+    : rawBaseUrl;
+  const trialUsdMicros = defaultStarterIncludedUsdMicros();
+  const featureKey = process.env.OPENMETER_TRIAL_FEATURE_KEY?.trim() || "network_spend";
+
+  if (!process.env.OPENMETER_URL) {
+    console.log("[openmeter-bootstrap] OPENMETER_URL unset; using", baseUrl);
+  }
+  console.log(
+    `[openmeter-bootstrap] default starter trial allowance: ${trialUsdMicros} USD micros ($${(
+      Number(trialUsdMicros) / 1_000_000
+    ).toFixed(2)}) on feature ${featureKey}`,
+  );
+
+  if (isKonnectMeteringUrl(baseUrl, apiKey) && apiKey) {
+    await bootstrapKonnect(baseUrl, apiKey);
+    return;
+  }
+
+  await waitForHealthy(baseUrl);
+  const client = createOpenMeterClient({
+    baseUrl,
+    apiKey,
+  });
+
+  await ensureMeters(client);
+  await ensureTrialFeature(client, featureKey);
+
+  console.log(
+    "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant",
+  );
+
+  const appsBaseUrl = process.env.OPENMETER_APPS_BASE_URL?.trim() || baseUrl;
+  await probeStripeOAuth(baseUrl, apiKey, appsBaseUrl);
 
   console.log("[openmeter-bootstrap] done");
 }
