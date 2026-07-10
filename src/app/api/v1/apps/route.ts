@@ -12,15 +12,18 @@ import {
 import { syncPublicClientGrantTypes } from "@/lib/oidc/grants";
 import { resetProvider } from "@/lib/oidc/provider";
 import { DEFAULT_OIDC_SCOPES, OIDC_SCOPES } from "@/lib/oidc/scopes";
+import { getPlatformJwksUrlForDatabase } from "@/lib/oidc/issuer-urls";
 import { ensureProviderAdminMembership } from "@/lib/provider-apps";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
 import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { listAllAppsForAdmin, sortAppsByPriority } from "@/lib/user-apps";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const ADMIN_ROLES = new Set(["admin", "operator"]);
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -29,6 +32,14 @@ export async function GET() {
   const userId = (session.user as Record<string, unknown>).id as string;
   if (!userId) {
     return NextResponse.json({ error: "Invalid session" }, { status: 401 });
+  }
+
+  const role = (session.user as Record<string, unknown>).role as string | undefined;
+  const wantsAllApps = new URL(request.url).searchParams.get("scope") === "all";
+
+  if (wantsAllApps && role && ADMIN_ROLES.has(role)) {
+    const apps = await listAllAppsForAdmin(userId);
+    return NextResponse.json({ apps, scope: "all" });
   }
 
   const memberships = await db
@@ -90,9 +101,11 @@ export async function GET() {
     ownerExternalUserId: null,
   }));
 
-  const apps = [...ownedWithFlags, ...memberWithFlags].filter(
-    (app, index, rows) => rows.findIndex((row) => row.id === app.id) === index,
-  );
+  const dedupedApps = [...ownedWithFlags, ...memberWithFlags]
+    .filter((app, index, rows) => rows.findIndex((row) => row.id === app.id) === index)
+    .filter((app): app is typeof app & { id: string } => Boolean(app.id));
+
+  const apps = await sortAppsByPriority(dedupedApps);
 
   return NextResponse.json({ apps });
 }
@@ -194,7 +207,9 @@ export async function POST(request: NextRequest) {
         name: name.trim(),
         developerName: body.developerName || null,
         websiteUrl: body.websiteUrl || null,
-        status: "draft", // Apps start as draft and require admin approval
+        status: "approved",
+        publishedAt: now,
+        jwksUri: getPlatformJwksUrlForDatabase(),
         createdAt: now,
         updatedAt: now,
       });
@@ -229,7 +244,7 @@ export async function POST(request: NextRequest) {
   await ensureProviderAdminMembership(userId, appId);
 
   return NextResponse.json(
-    { id: clientId, clientId, status: "draft" },
+    { id: clientId, clientId, status: "approved" },
     { status: 201 }
   );
 }

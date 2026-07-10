@@ -249,7 +249,7 @@ export const developerApps = pgTable("developer_apps", {
   tosUrl: text("tos_url"),
   demoRecordingUrl: text("demo_recording_url"),
   linksToPurchases: integer("links_to_purchases").notNull().default(0),
-  status: text("status").notNull().default("draft"), // draft | submitted | in_review | approved | rejected
+  status: text("status").notNull().default("approved"), // approved (live on create); legacy: draft | submitted | in_review | rejected
   reviewerNotes: text("reviewer_notes"),
   reviewedBy: text("reviewed_by").references(() => users.id),
   reviewedAt: text("reviewed_at"),

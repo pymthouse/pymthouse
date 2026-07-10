@@ -44,6 +44,7 @@ export type OpenMeterAppDashboardUsage = {
   byUser: OpenMeterUsageRow[];
   byPipelineModel: OpenMeterPipelineModelRow[];
   byUserPipelineModel: OpenMeterUserPipelineModelRow[];
+  byDailyPipeline: OpenMeterDailyPipelineRow[];
   requestsByDay: Map<string, number>;
 };
 
@@ -814,6 +815,8 @@ export async function queryOpenMeterAppDashboardUsage(input: {
   const feeRows = feeResult.data || [];
   const countRows = countResult.data || [];
 
+  const dayCountRows = dayCountResult.data || [];
+
   return {
     byUser: aggregateUserRows({
       clientId: meterClientId,
@@ -830,9 +833,14 @@ export async function queryOpenMeterAppDashboardUsage(input: {
       feeRows,
       countRows,
     }),
+    byDailyPipeline: aggregateDailyPipelineModelRows({
+      clientId: meterClientId,
+      feeRows: [],
+      countRows: dayCountRows,
+    }),
     requestsByDay: aggregateDailyRequestCounts({
       clientId: meterClientId,
-      countRows: dayCountResult.data || [],
+      countRows: dayCountRows,
     }),
   };
 }
