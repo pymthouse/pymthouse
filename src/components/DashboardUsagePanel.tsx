@@ -67,7 +67,7 @@ export default async function DashboardUsagePanel({
     appsWithUsage,
   } = summary;
 
-  const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 4) ?? "$0";
+  const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 6) ?? "$0";
   const periodTooltip = [
     `${formatBillingPeriod(cycle.start)} — ${formatBillingPeriod(cycle.end)}`,
     `Resets ${formatPeriodResetLabel(cycle.end)}`,

@@ -8,6 +8,7 @@ import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
 import {
   encodeApiKeyForStorage,
   getAppOpenMeterConfigRow,
+  resolveNetworkFeeMeterSlug,
 } from "@/lib/openmeter/client-factory";
 import type { OpenMeterBackendMode } from "@/lib/openmeter/constants";
 
@@ -40,7 +41,7 @@ export async function GET(
     clientId: access.app.id,
     mode: (row?.mode || "pymthouse_hosted") as OpenMeterBackendMode,
     baseUrl: row?.baseUrl || null,
-    meterSlug: row?.meterSlug || "network_fee_usd_nanos",
+    meterSlug: resolveNetworkFeeMeterSlug(row?.meterSlug),
     trialFeatureKey: row?.trialFeatureKey || "network_spend",
     hasApiKey: Boolean(row?.apiKeyEncrypted),
   });
@@ -82,7 +83,9 @@ export async function PUT(
     mode,
     baseUrl: mode === "pymthouse_hosted" ? null : String(body.baseUrl).trim(),
     apiKeyEncrypted,
-    meterSlug: String(body.meterSlug || existing?.meterSlug || "network_fee_usd_nanos"),
+    meterSlug: resolveNetworkFeeMeterSlug(
+      String(body.meterSlug || existing?.meterSlug || "network_fee_usd_nanos"),
+    ),
     trialFeatureKey: String(body.trialFeatureKey || existing?.trialFeatureKey || "network_spend"),
     updatedAt: new Date().toISOString(),
   };

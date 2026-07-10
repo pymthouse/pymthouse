@@ -48,7 +48,7 @@ export default async function BillingUsageDashboard({
 
   const isOpenMeter = usageSource === "openmeter";
   const totalFeesLabel = isOpenMeter
-    ? formatUsdMicrosString(totalNetworkFeeUsdMicros.toString(), 4) ?? "$0"
+    ? formatUsdMicrosString(totalNetworkFeeUsdMicros.toString(), 6) ?? "$0"
     : formatBillingWei(totalFeeWei.toString());
 
   const singleAppName = scope === "single" ? orderedApps[0]?.name : null;

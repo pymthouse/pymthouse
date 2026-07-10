@@ -386,9 +386,9 @@ function deriveFilteredUsage(
   if (summary) {
     if (filterAppId) {
       totalFeesLabel =
-        formatUsdMicrosString(summary.feesByAppId[filterAppId] ?? "0", 4) ?? "$0";
+        formatUsdMicrosString(summary.feesByAppId[filterAppId] ?? "0", 6) ?? "$0";
     } else {
-      totalFeesLabel = formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 4) ?? "$0";
+      totalFeesLabel = formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 6) ?? "$0";
     }
   }
 

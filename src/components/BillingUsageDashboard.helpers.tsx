@@ -159,7 +159,7 @@ export function AppUsageSection({
                 }`}
               >
                 {isOpenMeter
-                  ? formatUsdMicrosString(entry.networkFeeUsdMicros, 4) ?? "—"
+                  ? formatUsdMicrosString(entry.networkFeeUsdMicros, 6) ?? "—"
                   : formatBillingWei(entry.totalFeeWei)}
               </p>
             </div>
@@ -170,7 +170,7 @@ export function AppUsageSection({
               <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
                 {formatUsdMicrosString(
                   isOpenMeter ? entry.endUserBillableUsdMicros : entry.networkFeeUsdMicros,
-                  4,
+                  6,
                 ) ?? "—"}
               </p>
             </div>
@@ -273,7 +273,7 @@ function AppUsageUserTable({
                 )}
                 {isOpenMeter && (
                   <td className="px-4 sm:px-5 py-3 text-right text-emerald-400 font-mono text-xs font-semibold break-all">
-                    {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 4) ?? "—"}
+                    {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 6) ?? "—"}
                   </td>
                 )}
               </tr>
@@ -304,7 +304,7 @@ function AppUsageUserTable({
                 )}
                 {isOpenMeter && (
                   <td className="px-4 sm:px-5 py-2 text-right text-zinc-400 tabular-nums text-xs break-all">
-                    {formatUsdMicrosString(pm.networkFeeUsdMicros, 4) ?? "—"}
+                    {formatUsdMicrosString(pm.networkFeeUsdMicros, 6) ?? "—"}
                   </td>
                 )}
               </tr>
