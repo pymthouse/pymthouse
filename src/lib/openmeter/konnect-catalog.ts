@@ -83,19 +83,9 @@ function konnectAdminConfig(): { baseUrl: string; apiKey: string } {
   };
 }
 
-/** Allow only fixed catalog paths or /features|meters/{ULID}; return regex match to break taint. */
-function sanitizeKonnectAdminPath(path: string): string {
-  const match = /^(\/(?:meters|features)(?:\/[0-7][0-9A-HJKMNP-TV-Z]{25})?)$/i.exec(path);
-  if (!match) {
-    throw new Error(`Refusing Konnect catalog path: ${path}`);
-  }
-  return match[1];
-}
-
 async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { baseUrl, apiKey } = konnectAdminConfig();
-  const safePath = sanitizeKonnectAdminPath(path);
-  const response = await fetch(`${baseUrl}${safePath}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -185,21 +175,15 @@ export async function ensureKonnectTenantCatalog(
     existingFeature?.meter?.key === NETWORK_FEE_USD_MICROS_METER;
 
   if (existingFeature && !meterMatches) {
-    const featureIdMatch = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i.exec(existingFeature.id);
-    if (!featureIdMatch) {
-      throw new Error(
-        `Konnect feature id is not a valid ULID for key ${featureKey}: ${existingFeature.id}`,
-      );
-    }
-    await konnectAdminFetch(`/features/${featureIdMatch[0]}`, { method: "DELETE" });
-    await konnectAdminFetch<KonnectFeature>("/features", {
-      method: "POST",
-      body: JSON.stringify({
-        key: featureKey,
-        name: "Network spend",
-        meter: { id: networkFeeMeter.id },
-      }),
-    });
+    const featureIdOk = isOpenMeterUlid(existingFeature.id);
+    console.warn(
+      `[openmeter] Konnect feature ${featureKey} id=${existingFeature.id}` +
+        `${featureIdOk ? "" : " (not a ULID)"} ` +
+        `meter id=${existingFeature.meter?.id ?? "(none)"} ` +
+        `key=${existingFeature.meter?.key ?? "(none)"} ` +
+        `does not match ${NETWORK_FEE_USD_MICROS_METER} (${networkFeeMeter.id}); ` +
+        `manually recreate or repoint the feature to the micros meter`,
+    );
   } else if (!existingFeature) {
     await konnectAdminFetch<KonnectFeature>("/features", {
       method: "POST",
