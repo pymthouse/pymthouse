@@ -87,8 +87,12 @@ function isJwtSubjectToken(subjectToken: string): boolean {
   if (subjectToken.startsWith("pmth_")) {
     return false;
   }
-  // Composite API keys are `app_*.pmth_*` (one dot); JWTs have three segments.
-  if (subjectToken.startsWith("app_") && subjectToken.includes(".pmth_")) {
+  // Composite API keys are `app_<24hex>_<secret>` (no dots); JWTs have three segments.
+  if (/^app_[a-f0-9]{24}_/.test(subjectToken)) {
+    return false;
+  }
+  // Opaque hex secret from a composite exchange (subject_token after split).
+  if (/^[a-f0-9]{32,}$/i.test(subjectToken)) {
     return false;
   }
   return subjectToken.split(".").length === 3;
@@ -206,10 +210,11 @@ export async function resolveAppScopedSubjectToken(
     }
   }
 
-  // Bare pmth_* or composite app_*.pmth_* (resolved via resolveActiveAppApiKey).
+  // Bare stored API key, composite app_*_*, or opaque hex secret segment.
   const looksLikeApiKey =
     (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) ||
-    (token.startsWith("app_") && token.includes(".pmth_"));
+    /^app_[a-f0-9]{24}_.+/.test(token) ||
+    /^[a-f0-9]{32,}$/i.test(token);
   if (!looksLikeApiKey) {
     throw new AppScopedSignerTokenExchangeError(
       "invalid_grant",
