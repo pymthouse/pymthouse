@@ -107,9 +107,24 @@ function formatUsdMinorUnitsDisplay(
   }
 }
 
-/** Always returns a `$…` string for allowance / micros UI. */
+/**
+ * Format USD micros for starter allowance UI as fixed `$0.00` currency
+ * (cents precision; truncates sub-cent remainders).
+ */
 export function formatUsdMicrosDisplay(microsStr: string | undefined | null): string {
-  return formatUsdMinorUnitsDisplay(microsStr, USD_MICROS_PER_DOLLAR);
+  if (microsStr == null || microsStr === "") return "$0.00";
+  const t = microsStr.trim();
+  if (!isIntegerAmountString(t)) return "$0.00";
+  try {
+    const negative = t.startsWith("-");
+    const abs = BigInt(negative ? t.slice(1) : t);
+    const whole = abs / USD_MICROS_PER_DOLLAR;
+    const frac = abs % USD_MICROS_PER_DOLLAR;
+    const cents = frac.toString().padStart(6, "0").slice(0, 2);
+    return `${negative ? "-" : ""}$${whole.toString()}.${cents}`;
+  } catch {
+    return "$0.00";
+  }
 }
 
 /** Always returns a `$…` string for OpenMeter nanos fee UI. */

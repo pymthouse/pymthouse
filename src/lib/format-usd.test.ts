@@ -22,7 +22,9 @@ test("formatUsdNanosDisplay adapts fraction digits", () => {
   assert.equal(formatUsdNanosDisplay("14873"), "$0.000014");
 });
 
-test("formatUsdMicrosDisplay keeps allowance micros semantics", () => {
-  assert.equal(formatUsdMicrosDisplay("5000000"), "$5");
-  assert.equal(formatUsdMicrosDisplay("15"), "$0.000015");
+test("formatUsdMicrosDisplay uses fixed $0.00 cents for allowance UI", () => {
+  assert.equal(formatUsdMicrosDisplay("5000000"), "$5.00");
+  assert.equal(formatUsdMicrosDisplay("0"), "$0.00");
+  assert.equal(formatUsdMicrosDisplay("5250000"), "$5.25");
+  assert.equal(formatUsdMicrosDisplay("15"), "$0.00");
 });
