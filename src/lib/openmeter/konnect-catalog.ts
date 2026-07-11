@@ -83,9 +83,19 @@ function konnectAdminConfig(): { baseUrl: string; apiKey: string } {
   };
 }
 
+/** Allow only fixed catalog paths or /features|meters/{ULID}; return regex match to break taint. */
+function sanitizeKonnectAdminPath(path: string): string {
+  const match = /^(\/(?:meters|features)(?:\/[0-7][0-9A-HJKMNP-TV-Z]{25})?)$/i.exec(path);
+  if (!match) {
+    throw new Error(`Refusing Konnect catalog path: ${path}`);
+  }
+  return match[1];
+}
+
 async function konnectAdminFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { baseUrl, apiKey } = konnectAdminConfig();
-  const response = await fetch(`${baseUrl}${path}`, {
+  const safePath = sanitizeKonnectAdminPath(path);
+  const response = await fetch(`${baseUrl}${safePath}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -175,13 +185,13 @@ export async function ensureKonnectTenantCatalog(
     existingFeature?.meter?.key === NETWORK_FEE_USD_MICROS_METER;
 
   if (existingFeature && !meterMatches) {
-    if (!isOpenMeterUlid(existingFeature.id)) {
+    const featureIdMatch = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i.exec(existingFeature.id);
+    if (!featureIdMatch) {
       throw new Error(
         `Konnect feature id is not a valid ULID for key ${featureKey}: ${existingFeature.id}`,
       );
     }
-    const featureId = encodeURIComponent(existingFeature.id);
-    await konnectAdminFetch(`/features/${featureId}`, { method: "DELETE" });
+    await konnectAdminFetch(`/features/${featureIdMatch[0]}`, { method: "DELETE" });
     await konnectAdminFetch<KonnectFeature>("/features", {
       method: "POST",
       body: JSON.stringify({
