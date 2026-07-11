@@ -44,8 +44,12 @@ export function usdMicrosToDecimalDollars(amountUsdMicros: bigint): string {
   if (frac === 0n) {
     return whole.toString();
   }
-  const fracStr = frac.toString().padStart(6, "0").replace(/0+$/, "");
-  return `${whole}.${fracStr}`;
+  const padded = frac.toString().padStart(6, "0");
+  let end = padded.length;
+  while (end > 0 && padded[end - 1] === "0") {
+    end -= 1;
+  }
+  return `${whole}.${padded.slice(0, end)}`;
 }
 
 /** Convert Konnect decimal dollar string to USD micros (e.g. "5.00" → 5000000n). */
@@ -81,7 +85,7 @@ async function konnectCreditsFetch(
       ...init,
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        ...(init.headers ?? {}),
+        ...init.headers,
       },
       signal: controller.signal,
     });
