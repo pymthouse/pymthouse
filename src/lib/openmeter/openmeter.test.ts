@@ -17,19 +17,13 @@ import {
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
-  splitMeterQueryAtCutover,
 } from "@/lib/openmeter/usage-read";
-import {
-  getNetworkFeeMicrosEmitDeprecateAfter,
-  getNetworkFeeNanosCutoverAt,
-  NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER,
-  NETWORK_FEE_USD_MICROS_METER,
-  NETWORK_FEE_USD_NANOS_METER,
-} from "@/lib/openmeter/constants";
 import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
+import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
+import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -74,7 +68,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
     clientId: "app_1",
     feeRows: [
       {
-        value: 1000, // USD micros
+        value: 1000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -110,6 +104,48 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {
+  const rows = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: "34",
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+      {
+        value: 34,
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: "2",
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.ok(row);
+  assert.equal(row.requestCount, 2);
+  assert.equal(row.networkFeeUsdMicros, "68");
 });
 
 test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model", () => {
@@ -627,7 +663,7 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   assert.equal(
     (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
       ?.issueAfterReset,
-    5_000_000_000,
+    5_000_000,
   );
 });
 
@@ -725,74 +761,13 @@ test("verifyOpenMeterPlanId returns null when remote plan missing", async () => 
   assert.equal(view, null);
 });
 
-test("NETWORK_FEE_USD_MICROS_METER keeps the legacy slug for historical reads", () => {
-  assert.equal(NETWORK_FEE_USD_MICROS_METER, "network_fee_usd_micros");
-  assert.equal(NETWORK_FEE_USD_NANOS_METER, "network_fee_usd_nanos");
-  assert.notEqual(NETWORK_FEE_USD_MICROS_METER, NETWORK_FEE_USD_NANOS_METER);
-});
-
-test("getNetworkFeeNanosCutoverAt defaults to 2026-07-10 and honors env override", () => {
-  assert.equal(getNetworkFeeNanosCutoverAt({}).toISOString(), "2026-07-10T00:00:00.000Z");
+test("resolveNetworkFeeMeterSlug trims and remaps nanos onto micros", () => {
+  assert.equal(resolveNetworkFeeMeterSlug(null), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("  "), NETWORK_FEE_USD_MICROS_METER);
   assert.equal(
-    getNetworkFeeNanosCutoverAt({
-      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-11T12:00:00.000Z",
-    }).toISOString(),
-    "2026-07-11T12:00:00.000Z",
+    resolveNetworkFeeMeterSlug(" network_fee_usd_micros "),
+    NETWORK_FEE_USD_MICROS_METER,
   );
-});
-
-test("NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER is fixed at 2026-09-10", () => {
-  assert.equal(
-    NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.toISOString(),
-    "2026-09-10T00:00:00.000Z",
-  );
-  assert.equal(
-    getNetworkFeeMicrosEmitDeprecateAfter().toISOString(),
-    "2026-09-10T00:00:00.000Z",
-  );
-});
-
-test("splitMeterQueryAtCutover isolates legacy micros and current nanos windows", () => {
-  const cutover = new Date("2026-07-10T00:00:00.000Z");
-  const { legacy, current } = splitMeterQueryAtCutover(
-    {
-      windowSize: "MONTH",
-      from: new Date("2026-06-01T00:00:00.000Z"),
-      to: new Date("2026-08-01T00:00:00.000Z"),
-      groupBy: ["client_id"],
-    },
-    cutover,
-  );
-  assert.ok(legacy);
-  assert.ok(current);
-  assert.equal((legacy.to as Date).toISOString(), cutover.toISOString());
-  assert.equal((legacy.from as Date).toISOString(), "2026-06-01T00:00:00.000Z");
-  assert.equal((current.from as Date).toISOString(), cutover.toISOString());
-  assert.equal((current.to as Date).toISOString(), "2026-08-01T00:00:00.000Z");
-});
-
-test("splitMeterQueryAtCutover returns only legacy when range ends at cutover", () => {
-  const cutover = new Date("2026-07-10T00:00:00.000Z");
-  const { legacy, current } = splitMeterQueryAtCutover(
-    {
-      from: new Date("2026-07-01T00:00:00.000Z"),
-      to: cutover,
-    },
-    cutover,
-  );
-  assert.ok(legacy);
-  assert.equal(current, null);
-});
-
-test("splitMeterQueryAtCutover returns only current when range starts at cutover", () => {
-  const cutover = new Date("2026-07-10T00:00:00.000Z");
-  const { legacy, current } = splitMeterQueryAtCutover(
-    {
-      from: cutover,
-      to: new Date("2026-08-01T00:00:00.000Z"),
-    },
-    cutover,
-  );
-  assert.equal(legacy, null);
-  assert.ok(current);
+  assert.equal(resolveNetworkFeeMeterSlug("network_fee_usd_nanos"), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("custom_meter"), "custom_meter");
 });

@@ -142,6 +142,51 @@ test("mintAllowanceGateDecision allows positive Konnect credit balance", () => {
   );
 });
 
+test("mintAllowanceGateDecision allows 1-micro and 34-micro remainders", () => {
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: true,
+        balanceUsdMicros: "1",
+        consumedUsdMicros: "4999999",
+        lifetimeGrantedUsdMicros: "5000000",
+      },
+      true,
+    ),
+    null,
+  );
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: false, // stale flag must not override positive micros
+        balanceUsdMicros: "34",
+        consumedUsdMicros: "4999966",
+        lifetimeGrantedUsdMicros: "5000000",
+      },
+      true,
+    ),
+    null,
+  );
+});
+
+test("mintAllowanceGateDecision rejects zero micros even when hasAccess is stale true", () => {
+  assert.deepEqual(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: true,
+        balanceUsdMicros: "0",
+        consumedUsdMicros: "5000000",
+        lifetimeGrantedUsdMicros: "5000000",
+      },
+      true,
+    ),
+    {
+      code: "trial_credits_exhausted",
+      message: "Starter allowance exhausted",
+    },
+  );
+});
+
 test("enforceMintAllowanceGate throws billing_unavailable when allowance is null in test env", () => {
   const previousUrl = process.env.OPENMETER_URL;
   const previousLive = process.env.OPENMETER_TEST_LIVE;

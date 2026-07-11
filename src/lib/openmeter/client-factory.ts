@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appOpenMeterConfig } from "@/db/schema";
 import type { OpenMeterBackendMode } from "./constants";
-import { NETWORK_FEE_USD_NANOS_METER } from "./constants";
+import { NETWORK_FEE_USD_MICROS_METER } from "./constants";
 import { createOpenMeterClient, getHostedOpenMeterClient } from "./client";
 import type { OpenMeter } from "@openmeter/sdk";
 
@@ -14,12 +14,13 @@ export type ResolvedAppOpenMeterConfig = {
   trialFeatureKey: string;
 };
 
-/** Map legacy micros meter rows onto the nanos meter used by collector ingest. */
+/** Trim and default meter slugs; remap reverted nanos rows onto micros. */
 export function resolveNetworkFeeMeterSlug(raw: string | null | undefined): string {
-  if (!raw?.trim() || raw.trim() === "network_fee_usd_micros") {
-    return NETWORK_FEE_USD_NANOS_METER;
+  const trimmed = raw?.trim() || "";
+  if (!trimmed || trimmed === "network_fee_usd_nanos") {
+    return NETWORK_FEE_USD_MICROS_METER;
   }
-  return raw.trim();
+  return trimmed;
 }
 
 function decodeApiKey(stored: string | null | undefined): string | undefined {

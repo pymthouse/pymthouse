@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { formatIntegerString, weiHumanWithUnit } from "@/lib/format-wei";
-import { formatUsdMicros } from "@/lib/format-usd";
+import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 interface StreamSessionRow {
   id: string;
@@ -103,7 +103,7 @@ export default function StreamSessionTable({
         </thead>
         <tbody className="divide-y divide-zinc-800/50">
           {orderedSessions.map((s) => {
-            const feeUsd = formatUsdMicros(s.totalNetworkFeeUsdMicros ?? null, 6);
+            const feeUsd = formatUsdMicrosString(s.totalNetworkFeeUsdMicros ?? null, 6);
             return (
               <tr
                 key={s.id}

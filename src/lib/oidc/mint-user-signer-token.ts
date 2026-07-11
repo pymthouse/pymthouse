@@ -11,6 +11,7 @@ import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
@@ -163,7 +164,9 @@ export function mintAllowanceGateDecision(
       message: "Billing allowance could not be confirmed",
     };
   }
-  if (!allowance.hasAccess) {
+  // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
+  // remainders still authorize after collector ceil-to-micro billing.
+  if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
     return {
       code: "trial_credits_exhausted",
       message: "Starter allowance exhausted",

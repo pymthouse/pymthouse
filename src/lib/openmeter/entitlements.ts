@@ -2,11 +2,9 @@ import type { OpenMeter } from "@openmeter/sdk";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   getHostedOpenMeterUrl,
-  NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_MICROS_METER,
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
-  usdMicrosToNanos,
-  usdNanosToMicros,
 } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomer } from "./customers";
@@ -37,8 +35,7 @@ export async function grantTrialCredits(input: {
     input.customerKey,
     input.featureKey,
     {
-      // OpenMeter meter is USD nanos; app grants stay in micros.
-      amount: Number(usdMicrosToNanos(input.amountUsdMicros)),
+      amount: Number(input.amountUsdMicros),
       priority: 1,
       effectiveAt: new Date(),
       expiration: { duration: "YEAR", count: 1 },
@@ -100,29 +97,44 @@ export async function getTrialCreditBalance(input: {
     };
   }
 
-  const balance = Math.max(
-    0,
-    Number(usdNanosToMicros(BigInt(Math.floor(value.balance ?? 0)))),
-  );
-  const usage = Math.max(
-    0,
-    Number(usdNanosToMicros(BigInt(Math.floor(value.usage ?? 0)))),
-  );
-  const granted = Math.max(
-    0,
-    Number(
-      usdNanosToMicros(
-        BigInt(Math.floor(value.totalAvailableGrantAmount ?? (value.balance ?? 0) + (value.usage ?? 0))),
-      ),
-    ),
-  );
+  // Keep integer micros (including 1–99) so the mint gate matches Konnect/collector.
+  const balance = entitlementAmountToMicros(value.balance);
+  const usage = entitlementAmountToMicros(value.usage);
+  const grantedRaw = value.totalAvailableGrantAmount;
+  const granted =
+    grantedRaw == null ? balance + usage : entitlementAmountToMicros(grantedRaw);
 
   return {
-    hasAccess: Boolean(value.hasAccess) && balance > 0,
-    balanceUsdMicros: String(balance),
-    consumedUsdMicros: String(usage),
-    lifetimeGrantedUsdMicros: String(granted),
+    hasAccess: balance > 0n,
+    balanceUsdMicros: balance.toString(),
+    consumedUsdMicros: usage.toString(),
+    lifetimeGrantedUsdMicros: granted.toString(),
   };
+}
+
+/** Parse self-hosted OpenMeter entitlement amounts into non-negative USD micros. */
+function entitlementAmountToMicros(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === "bigint") return value > 0n ? value : 0n;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return 0n;
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0n;
+    if (/^\d+$/.test(t)) {
+      try {
+        return BigInt(t);
+      } catch {
+        return 0n;
+      }
+    }
+    const parsed = Number(t);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0n;
+    return BigInt(Math.trunc(parsed));
+  }
+  return 0n;
 }
 
 export type SignedTicketOpenMeterEvent = {
@@ -158,9 +170,7 @@ export async function ingestSignedTicketEvent(input: {
       usage_subject: usageSubject,
       usage_subject_type: "external_user_id",
       external_user_id: usageSubject,
-      network_fee_usd_nanos: Number(
-        usdMicrosToNanos(BigInt(input.event.networkFeeUsdMicros || "0")),
-      ),
+      network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: input.event.feeWei,
       pixels: input.event.pixels,
       pipeline: input.event.pipeline || "unknown",
@@ -176,12 +186,12 @@ export async function ingestSignedTicketEvent(input: {
 
 export const OPENMETER_METER_DEFINITIONS = [
   {
-    slug: NETWORK_FEE_USD_NANOS_METER,
+    slug: NETWORK_FEE_USD_MICROS_METER,
     description:
-      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — SUM of collector network_fee_usd_nanos; grouped by client, user, pipeline, model",
+      "Livepeer signed-ticket network fee (USD micros) — SUM of signer computed_fee_usd_micros; grouped by client, user, pipeline, model",
     eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "SUM" as const,
-    valueProperty: "$.network_fee_usd_nanos",
+    valueProperty: "$.network_fee_usd_micros",
     groupBy: {
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
@@ -206,6 +216,5 @@ export const OPENMETER_METER_DEFINITIONS = [
 export {
   DEFAULT_TRIAL_FEATURE_KEY,
   NETWORK_FEE_USD_MICROS_METER,
-  NETWORK_FEE_USD_NANOS_METER,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";

@@ -58,7 +58,7 @@ services:
       dockerfile: docker/signer-dmz/Dockerfile
       target: signer-dmz-local
       args:
-        LIVEPEER_IMAGE: ${LIVEPEER_IMAGE:-livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5}
+        LIVEPEER_IMAGE: ${LIVEPEER_IMAGE:-livepeer/go-livepeer:sha-469cf754a259b34927f8dc8d634da3b005493076}
     restart: unless-stopped
     ports:
       - target: 8080

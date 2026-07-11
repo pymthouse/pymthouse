@@ -78,13 +78,15 @@ export async function PUT(
       ? encodeApiKeyForStorage(body.apiKey.trim())
       : existing?.apiKeyEncrypted || null;
 
+  const requestedMeterSlug =
+    typeof body.meterSlug === "string" ? body.meterSlug.trim() : "";
   const values = {
     clientId: access.app.id,
     mode,
     baseUrl: mode === "pymthouse_hosted" ? null : String(body.baseUrl).trim(),
     apiKeyEncrypted,
     meterSlug: resolveNetworkFeeMeterSlug(
-      String(body.meterSlug || existing?.meterSlug || "network_fee_usd_nanos"),
+      requestedMeterSlug || existing?.meterSlug,
     ),
     trialFeatureKey: String(body.trialFeatureKey || existing?.trialFeatureKey || "network_spend"),
     updatedAt: new Date().toISOString(),
