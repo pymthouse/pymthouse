@@ -7,16 +7,13 @@ import {
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
+import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
 function trimEnv(env: EnvSource, name: string): string {
   const value = env[name];
   return typeof value === "string" ? value.trim() : "";
-}
-
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
 }
 
 /**
@@ -31,7 +28,7 @@ function resolveIssuer(env: EnvSource): string {
   if (!configured) {
     return getIssuer();
   }
-  const normalized = trimTrailingSlash(ensureHttpsForProduction(configured));
+  const normalized = trimTrailingSlashes(ensureHttpsForProduction(configured));
   return normalized.endsWith(OIDC_MOUNT_PATH)
     ? normalized
     : `${normalized}${OIDC_MOUNT_PATH}`;
@@ -63,7 +60,7 @@ export function resolveIdentityWebhookEnv(env: EnvSource): Record<string, string
       trimEnv(env, "NEXTAUTH_URL") ||
       (env === process.env ? getPublicOrigin() : "");
     if (fromNextAuth) {
-      next.OIDC_TOKEN_EXCHANGE_BASE_URL = trimTrailingSlash(fromNextAuth);
+      next.OIDC_TOKEN_EXCHANGE_BASE_URL = trimTrailingSlashes(fromNextAuth);
     } else {
       try {
         next.OIDC_TOKEN_EXCHANGE_BASE_URL = new URL(issuer).origin;
