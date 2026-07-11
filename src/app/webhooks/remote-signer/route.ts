@@ -1,10 +1,12 @@
 import { getIssuer } from "@/lib/oidc/issuer-urls";
+import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 import { handleAuthorize } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { createLegacyWebhookConfigFromEnv } from "@pymthouse/clearinghouse-identity-webhook/legacy-env";
 
 function buildWebhookConfig() {
   return createLegacyWebhookConfigFromEnv(process.env, {
     jwtIssuer: process.env.JWT_ISSUER?.trim() || getIssuer(),
+    checkBalance: buildSignerBalanceCheck(),
   });
 }
 
