@@ -1,138 +1,27 @@
 import {
   getOpenMeterClientForApp,
+  getMeterSlugForApp,
 } from "@/lib/openmeter/client-factory";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import {
-  getNetworkFeeNanosCutoverAt,
-  NETWORK_FEE_USD_MICROS_METER,
-  NETWORK_FEE_USD_NANOS_METER,
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
   usdNanosToMicros,
 } from "@/lib/openmeter/constants";
-import type { MeterQueryRow, OpenMeter } from "@openmeter/sdk";
+import type { MeterQueryRow } from "@openmeter/sdk";
 
 function avoidOpenMeterNetworkInTests(): boolean {
   return process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests();
 }
 
 /**
- * Fee meter query rows are normalized to USD micros before aggregation.
- * Display with `formatUsdMicros` from `@/lib/format-usd`.
+ * OpenMeter `network_fee_usd_nanos` meter values → USD micros for ledger/UI.
+ * Display with `formatUsdMicros` from `@/lib/format-usd` (not formatUsdNanos).
  */
 function feeMicrosFromMeterValue(value: unknown): bigint {
-  return BigInt(Math.floor(Number(value ?? 0)));
-}
-
-function asQueryDate(value: unknown): Date | null {
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  return null;
-}
-
-/**
- * Split a meter query at the nanos cutover so legacy micros and current nanos
- * windows do not overlap (avoids double-count while collector dual-emits).
- */
-export function splitMeterQueryAtCutover(
-  query: Record<string, unknown>,
-  cutover: Date = getNetworkFeeNanosCutoverAt(),
-): { legacy: Record<string, unknown> | null; current: Record<string, unknown> | null } {
-  const from = asQueryDate(query.from);
-  const to = asQueryDate(query.to);
-
-  let legacy: Record<string, unknown> | null = null;
-  let current: Record<string, unknown> | null = null;
-
-  if (!from || from < cutover) {
-    if (to && to <= cutover) {
-      legacy = { ...query };
-    } else {
-      legacy = { ...query, to: cutover };
-    }
-  }
-
-  if (!to || to > cutover) {
-    if (from && from >= cutover) {
-      current = { ...query };
-    } else {
-      current = { ...query, from: cutover };
-    }
-  }
-
-  return { legacy, current };
-}
-
-function mapRowsToFeeMicros(
-  rows: MeterQueryRow[],
-  unit: "micros" | "nanos",
-): MeterQueryRow[] {
-  return rows.map((row) => {
-    const raw = feeMicrosFromMeterValue(row.value);
-    const micros = unit === "nanos" ? usdNanosToMicros(raw) : raw;
-    return { ...row, value: Number(micros) };
-  });
-}
-
-function isMeterNotFoundError(err: unknown): boolean {
-  if (!err || typeof err !== "object") {
-    return false;
-  }
-  const record = err as { statusCode?: number; status?: number; message?: string };
-  const status = record.statusCode ?? record.status;
-  if (status === 404) {
-    return true;
-  }
-  const message = typeof record.message === "string" ? record.message.toLowerCase() : "";
-  return message.includes("not found") && message.includes("meter");
-}
-
-async function queryMeterRowsSafe(
-  client: OpenMeter,
-  meterSlug: string,
-  query: Record<string, unknown>,
-): Promise<MeterQueryRow[]> {
-  try {
-    const result = await client.meters.query(meterSlug, query);
-    return result.data || [];
-  } catch (err) {
-    if (meterSlug === NETWORK_FEE_USD_MICROS_METER && isMeterNotFoundError(err)) {
-      return [];
-    }
-    throw err;
-  }
-}
-
-/**
- * Query network-fee usage as USD micros, merging legacy micros (pre-cutover)
- * with nanos (post-cutover) without double-counting the dual-emit window.
- */
-export async function queryNetworkFeeMeterRowsAsMicros(
-  client: OpenMeter,
-  query: Record<string, unknown>,
-  cutover: Date = getNetworkFeeNanosCutoverAt(),
-): Promise<MeterQueryRow[]> {
-  const { legacy, current } = splitMeterQueryAtCutover(query, cutover);
-  const [legacyRows, currentRows] = await Promise.all([
-    legacy
-      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_MICROS_METER, legacy).then((rows) =>
-          mapRowsToFeeMicros(rows, "micros"),
-        )
-      : Promise.resolve([] as MeterQueryRow[]),
-    current
-      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_NANOS_METER, current).then((rows) =>
-          mapRowsToFeeMicros(rows, "nanos"),
-        )
-      : Promise.resolve([] as MeterQueryRow[]),
-  ]);
-  return [...legacyRows, ...currentRows];
+  return usdNanosToMicros(BigInt(Math.floor(Number(value ?? 0))));
 }
 
 export type OpenMeterUsageRow = {
@@ -746,6 +635,7 @@ export async function queryOpenMeterUserPipelineByModel(input: {
     return [];
   }
 
+  const meterSlug = await getMeterSlugForApp(input.clientId);
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
@@ -755,14 +645,14 @@ export async function queryOpenMeterUserPipelineByModel(input: {
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
-  const [feeRows, countResult] = await Promise.all([
-    queryNetworkFeeMeterRowsAsMicros(client, periodQuery),
+  const [feeResult, countResult] = await Promise.all([
+    client.meters.query(meterSlug, periodQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
   ]);
 
   return aggregatePipelineModelRows({
     clientId: meterClientId,
-    feeRows,
+    feeRows: feeResult.data || [],
     countRows: countResult.data || [],
   });
 }
@@ -795,6 +685,7 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
     return [];
   }
 
+  const meterSlug = await getMeterSlugForApp(input.clientId);
   const dayQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
@@ -804,14 +695,14 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
-  const [feeRows, countResult] = await Promise.all([
-    queryNetworkFeeMeterRowsAsMicros(client, dayQuery),
+  const [feeResult, countResult] = await Promise.all([
+    client.meters.query(meterSlug, dayQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
   ]);
 
   return aggregateDailyPipelineModelRows({
     clientId: meterClientId,
-    feeRows,
+    feeRows: feeResult.data || [],
     countRows: countResult.data || [],
   });
 }
@@ -858,6 +749,7 @@ export async function queryOpenMeterUsage(input: {
     return [];
   }
 
+  const meterSlug = await getMeterSlugForApp(input.clientId);
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
@@ -867,14 +759,14 @@ export async function queryOpenMeterUsage(input: {
     groupBy: METER_GROUP_BY_USER,
   });
 
-  const [feeRows, countResult] = await Promise.all([
-    queryNetworkFeeMeterRowsAsMicros(client, periodQuery),
+  const [feeResult, countResult] = await Promise.all([
+    client.meters.query(meterSlug, periodQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
   ]);
 
   return aggregateUserRows({
     clientId: meterClientId,
-    feeRows,
+    feeRows: feeResult.data || [],
     countRows: countResult.data || [],
     filterExternalUserId: input.externalUserId,
   });
@@ -907,6 +799,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     return null;
   }
 
+  const meterSlug = await getMeterSlugForApp(input.clientId);
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
@@ -922,12 +815,13 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
-  const [feeRows, countResult, dayCountResult] = await Promise.all([
-    queryNetworkFeeMeterRowsAsMicros(client, periodQuery),
+  const [feeResult, countResult, dayCountResult] = await Promise.all([
+    client.meters.query(meterSlug, periodQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
   ]);
 
+  const feeRows = feeResult.data || [];
   const countRows = countResult.data || [];
 
   const dayCountRows = dayCountResult.data || [];

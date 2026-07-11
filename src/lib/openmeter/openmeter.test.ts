@@ -17,15 +17,7 @@ import {
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
-  splitMeterQueryAtCutover,
 } from "@/lib/openmeter/usage-read";
-import {
-  getNetworkFeeMicrosEmitDeprecateAfter,
-  getNetworkFeeNanosCutoverAt,
-  NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER,
-  NETWORK_FEE_USD_MICROS_METER,
-  NETWORK_FEE_USD_NANOS_METER,
-} from "@/lib/openmeter/constants";
 import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
@@ -74,7 +66,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
     clientId: "app_1",
     feeRows: [
       {
-        value: 1000, // USD micros
+        value: 1_000_000, // nanos → 1000 micros
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -83,7 +75,7 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
         },
       },
       {
-        value: 500,
+        value: 500_000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -117,7 +109,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
     clientId: "app_1",
     feeRows: [
       {
-        value: 1000,
+        value: 1_000_000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -127,7 +119,7 @@ test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model",
         },
       },
       {
-        value: 500,
+        value: 500_000,
         windowStart: new Date("2026-05-01"),
         groupBy: {
           client_id: "app_1",
@@ -177,7 +169,7 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
     clientId: "app_1",
     feeRows: [
       {
-        value: 100,
+        value: 100_000,
         windowStart: new Date("2026-06-02T00:00:00Z"),
         groupBy: {
           client_id: "app_1",
@@ -723,76 +715,4 @@ test("verifyOpenMeterPlanId returns null when remote plan missing", async () => 
 
   const view = await verifyOpenMeterPlanId(openMeterTestClient(client), "missing");
   assert.equal(view, null);
-});
-
-test("NETWORK_FEE_USD_MICROS_METER keeps the legacy slug for historical reads", () => {
-  assert.equal(NETWORK_FEE_USD_MICROS_METER, "network_fee_usd_micros");
-  assert.equal(NETWORK_FEE_USD_NANOS_METER, "network_fee_usd_nanos");
-  assert.notEqual(NETWORK_FEE_USD_MICROS_METER, NETWORK_FEE_USD_NANOS_METER);
-});
-
-test("getNetworkFeeNanosCutoverAt defaults to 2026-07-10 and honors env override", () => {
-  assert.equal(getNetworkFeeNanosCutoverAt({}).toISOString(), "2026-07-10T00:00:00.000Z");
-  assert.equal(
-    getNetworkFeeNanosCutoverAt({
-      OPENMETER_NETWORK_FEE_NANOS_CUTOVER_AT: "2026-07-11T12:00:00.000Z",
-    }).toISOString(),
-    "2026-07-11T12:00:00.000Z",
-  );
-});
-
-test("NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER is fixed at 2026-09-10", () => {
-  assert.equal(
-    NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER.toISOString(),
-    "2026-09-10T00:00:00.000Z",
-  );
-  assert.equal(
-    getNetworkFeeMicrosEmitDeprecateAfter().toISOString(),
-    "2026-09-10T00:00:00.000Z",
-  );
-});
-
-test("splitMeterQueryAtCutover isolates legacy micros and current nanos windows", () => {
-  const cutover = new Date("2026-07-10T00:00:00.000Z");
-  const { legacy, current } = splitMeterQueryAtCutover(
-    {
-      windowSize: "MONTH",
-      from: new Date("2026-06-01T00:00:00.000Z"),
-      to: new Date("2026-08-01T00:00:00.000Z"),
-      groupBy: ["client_id"],
-    },
-    cutover,
-  );
-  assert.ok(legacy);
-  assert.ok(current);
-  assert.equal((legacy.to as Date).toISOString(), cutover.toISOString());
-  assert.equal((legacy.from as Date).toISOString(), "2026-06-01T00:00:00.000Z");
-  assert.equal((current.from as Date).toISOString(), cutover.toISOString());
-  assert.equal((current.to as Date).toISOString(), "2026-08-01T00:00:00.000Z");
-});
-
-test("splitMeterQueryAtCutover returns only legacy when range ends at cutover", () => {
-  const cutover = new Date("2026-07-10T00:00:00.000Z");
-  const { legacy, current } = splitMeterQueryAtCutover(
-    {
-      from: new Date("2026-07-01T00:00:00.000Z"),
-      to: cutover,
-    },
-    cutover,
-  );
-  assert.ok(legacy);
-  assert.equal(current, null);
-});
-
-test("splitMeterQueryAtCutover returns only current when range starts at cutover", () => {
-  const cutover = new Date("2026-07-10T00:00:00.000Z");
-  const { legacy, current } = splitMeterQueryAtCutover(
-    {
-      from: cutover,
-      to: new Date("2026-08-01T00:00:00.000Z"),
-    },
-    cutover,
-  );
-  assert.equal(legacy, null);
-  assert.ok(current);
 });
