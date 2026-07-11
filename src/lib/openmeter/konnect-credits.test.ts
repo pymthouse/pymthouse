@@ -20,7 +20,17 @@ test("decimalDollarsToUsdMicros converts Konnect decimal strings", () => {
   assert.equal(decimalDollarsToUsdMicros("5.00"), 5_000_000n);
   assert.equal(decimalDollarsToUsdMicros("5.25"), 5_250_000n);
   assert.equal(decimalDollarsToUsdMicros("0.000001"), 1n);
+  assert.equal(decimalDollarsToUsdMicros("0.000034"), 34n);
+  assert.equal(decimalDollarsToUsdMicros("4.999966"), 4_999_966n);
   assert.equal(decimalDollarsToUsdMicros("-1.5"), -1_500_000n);
+  // Truncate past micro precision (do not invent balance).
+  assert.equal(decimalDollarsToUsdMicros("0.0000349"), 34n);
+});
+
+test("usdMicrosToDecimalDollars round-trips ceil-sized live-runner fees", () => {
+  for (const micros of [1n, 34n, 100n, 612n, 5_000_000n]) {
+    assert.equal(decimalDollarsToUsdMicros(usdMicrosToDecimalDollars(micros)), micros);
+  }
 });
 
 test("getKonnectCreditBalance maps live balance and active grants", async () => {

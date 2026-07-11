@@ -204,6 +204,16 @@ test("computeUsdMicrosFromWei: small wei amount stays integer", () => {
   assert.ok(typeof result === "bigint");
 });
 
+test("computeUsdMicrosFromWei: ceils sub-micro fees to at least 1 micro", () => {
+  // 1 wei at $1 → floor would be 0; collector .ceil() bills 1 micro.
+  assert.equal(computeUsdMicrosFromWei(1n, 1), 1n);
+});
+
+test("computeUsdMicrosFromWei: exact multiples are not rounded up", () => {
+  const oneEthWei = 10n ** 18n;
+  assert.equal(computeUsdMicrosFromWei(oneEthWei, 3000), 3_000_000_000n);
+});
+
 // ─── weiToEthString ───────────────────────────────────────────────────────────
 
 test("weiToEthString: 0 returns '0'", () => {

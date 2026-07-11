@@ -149,13 +149,13 @@ export function buildSignedTicketConstraintHash(params: {
  * Uses integer arithmetic on the WEI → micros path to avoid floating-point
  * precision loss. Returns a bigint.
  *
- * Formula: weiAmt * ethUsdMicros / 1e18
- * where ethUsdMicros = floor(ethUsdPriceUsd * 1e6)
+ * Matches the OpenMeter collector mapping:
+ *   fee_usd_micros = ceil(fee_wei * eth_usd / 1e12)
+ * which is equivalent to ceil(wei * ethUsdMicros / 1e18) when
+ * ethUsdMicros = floor(ethUsdPriceUsd * 1e6).
  *
- * Derivation:
- *   networkFeeUsdMicros = (weiAmt / 1e18) * priceUsd * 1e6
- *                       = weiAmt * (priceUsd * 1e6) / 1e18
- *                       = weiAmt * ethUsdMicros / 1e18
+ * Sub-micro positive fees round up to 1 micro so tiny live-runner tickets
+ * still debit the starter allowance / mint gate.
  */
 export function computeUsdMicrosFromWei(weiAmt: bigint, ethUsdPriceUsd: number): bigint {
   if (weiAmt <= 0n || !Number.isFinite(ethUsdPriceUsd) || ethUsdPriceUsd <= 0) {
@@ -164,7 +164,10 @@ export function computeUsdMicrosFromWei(weiAmt: bigint, ethUsdPriceUsd: number):
   // ethUsdMicros = floor(priceUsd * 1e6)
   const ethUsdMicros = BigInt(Math.floor(ethUsdPriceUsd * 1_000_000));
   const DIVISOR = 10n ** 18n;
-  return (weiAmt * ethUsdMicros) / DIVISOR;
+  const product = weiAmt * ethUsdMicros;
+  const quotient = product / DIVISOR;
+  const remainder = product % DIVISOR;
+  return remainder === 0n ? quotient : quotient + 1n;
 }
 
 /**

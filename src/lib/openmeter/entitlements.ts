@@ -97,19 +97,44 @@ export async function getTrialCreditBalance(input: {
     };
   }
 
-  const balance = Math.max(0, Math.floor(value.balance ?? 0));
-  const usage = Math.max(0, Math.floor(value.usage ?? 0));
-  const granted = Math.max(
-    0,
-    Math.floor(value.totalAvailableGrantAmount ?? balance + usage),
-  );
+  // Keep integer micros (including 1–99) so the mint gate matches Konnect/collector.
+  const balance = entitlementAmountToMicros(value.balance);
+  const usage = entitlementAmountToMicros(value.usage);
+  const grantedRaw = value.totalAvailableGrantAmount;
+  const granted =
+    grantedRaw == null ? balance + usage : entitlementAmountToMicros(grantedRaw);
 
   return {
-    hasAccess: Boolean(value.hasAccess) && balance > 0,
-    balanceUsdMicros: String(balance),
-    consumedUsdMicros: String(usage),
-    lifetimeGrantedUsdMicros: String(granted),
+    hasAccess: balance > 0n,
+    balanceUsdMicros: balance.toString(),
+    consumedUsdMicros: usage.toString(),
+    lifetimeGrantedUsdMicros: granted.toString(),
   };
+}
+
+/** Parse self-hosted OpenMeter entitlement amounts into non-negative USD micros. */
+function entitlementAmountToMicros(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === "bigint") return value > 0n ? value : 0n;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return 0n;
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0n;
+    if (/^\d+$/.test(t)) {
+      try {
+        return BigInt(t);
+      } catch {
+        return 0n;
+      }
+    }
+    const parsed = Number(t);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0n;
+    return BigInt(Math.trunc(parsed));
+  }
+  return 0n;
 }
 
 export type SignedTicketOpenMeterEvent = {

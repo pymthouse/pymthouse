@@ -15,6 +15,39 @@ function avoidOpenMeterNetworkInTests(): boolean {
   return process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests();
 }
 
+/**
+ * Parse an OpenMeter/Konnect meter row value to integer micros (or counts).
+ * Prefers exact integer strings so small fee aggregates like `"34"` are not lost.
+ */
+export function meterRowValueToBigInt(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return 0n;
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0n;
+    if (/^-?\d+$/.test(t)) {
+      try {
+        return BigInt(t);
+      } catch {
+        return 0n;
+      }
+    }
+    const parsed = Number(t);
+    if (!Number.isFinite(parsed)) return 0n;
+    return BigInt(Math.trunc(parsed));
+  }
+  return 0n;
+}
+
+function meterRowValueToCount(value: unknown): number {
+  const n = Number(meterRowValueToBigInt(value));
+  return Number.isFinite(n) ? n : 0;
+}
+
 export type OpenMeterUsageRow = {
   externalUserId: string;
   requestCount: number;
@@ -133,7 +166,7 @@ function aggregateUserRows(input: {
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
     countByUser.set(
       externalUserId,
-      (countByUser.get(externalUserId) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (countByUser.get(externalUserId) ?? 0) + meterRowValueToCount(row.value),
     );
   }
 
@@ -146,7 +179,7 @@ function aggregateUserRows(input: {
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
     feeByUser.set(
       externalUserId,
-      (feeByUser.get(externalUserId) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+      (feeByUser.get(externalUserId) ?? 0n) + meterRowValueToBigInt(row.value),
     );
   }
 
@@ -185,7 +218,7 @@ export function aggregatePipelineModelRows(input: {
     metaByKey.set(key, { pipeline, modelId });
     countByKey.set(
       key,
-      (countByKey.get(key) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (countByKey.get(key) ?? 0) + meterRowValueToCount(row.value),
     );
   }
 
@@ -199,7 +232,7 @@ export function aggregatePipelineModelRows(input: {
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
       key,
-      (feeByKey.get(key) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+      (feeByKey.get(key) ?? 0n) + meterRowValueToBigInt(row.value),
     );
   }
 
@@ -269,7 +302,7 @@ export function aggregateUserPipelineModelRows(input: {
     });
     countByKey.set(
       meta.key,
-      (countByKey.get(meta.key) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (countByKey.get(meta.key) ?? 0) + meterRowValueToCount(row.value),
     );
   }
 
@@ -284,7 +317,7 @@ export function aggregateUserPipelineModelRows(input: {
     });
     feeByKey.set(
       meta.key,
-      (feeByKey.get(meta.key) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+      (feeByKey.get(meta.key) ?? 0n) + meterRowValueToBigInt(row.value),
     );
   }
 
@@ -337,7 +370,7 @@ export function aggregateDailyPipelineModelRows(input: {
       requestCount: 0,
       networkFeeUsdMicros: 0n,
     };
-    existing.requestCount += Math.floor(Number(row.value ?? 0));
+    existing.requestCount += meterRowValueToCount(row.value);
     byKey.set(key, existing);
   }
 
@@ -356,7 +389,7 @@ export function aggregateDailyPipelineModelRows(input: {
       requestCount: 0,
       networkFeeUsdMicros: 0n,
     };
-    existing.networkFeeUsdMicros += BigInt(Math.floor(Number(row.value ?? 0)));
+    existing.networkFeeUsdMicros += meterRowValueToBigInt(row.value);
     byKey.set(key, existing);
   }
 
@@ -389,7 +422,7 @@ export function aggregateDailyRequestCounts(input: {
     if (!day) continue;
     requestsByDay.set(
       day,
-      (requestsByDay.get(day) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (requestsByDay.get(day) ?? 0) + meterRowValueToCount(row.value),
     );
   }
   return requestsByDay;

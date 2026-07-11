@@ -52,7 +52,13 @@ export function usdMicrosToDecimalDollars(amountUsdMicros: bigint): string {
   return `${whole}.${padded.slice(0, end)}`;
 }
 
-/** Convert Konnect decimal dollar string to USD micros (e.g. "5.00" → 5000000n). */
+/**
+ * Convert Konnect decimal dollar string to USD micros (e.g. "5.00" → 5000000n).
+ *
+ * Truncates toward zero past 6 fractional digits so remaining credit never
+ * invents an extra micro the ledger did not grant. Round-trips with
+ * {@link usdMicrosToDecimalDollars} for integer micros (including 1 and 34).
+ */
 export function decimalDollarsToUsdMicros(raw: string): bigint {
   const trimmed = raw.trim();
   if (!trimmed || !/^-?\d+(\.\d+)?$/.test(trimmed)) {

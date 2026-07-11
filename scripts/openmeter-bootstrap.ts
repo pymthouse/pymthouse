@@ -17,30 +17,50 @@ import {
 } from "../src/lib/openmeter/konnect-catalog";
 import { defaultStarterIncludedUsdMicros } from "../src/lib/starter-default-plan-display";
 
-async function waitForHealthy(baseUrl: string, attempts = 30): Promise<void> {
+const DEFAULT_LOCAL_OPENMETER_URL = "http://127.0.0.1:48888";
+const PROBE_TIMEOUT_MS = 3_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<Response> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  return fetch(url, { ...init, signal });
+}
+
+async function waitForHealthy(baseUrl: string, attempts = 10): Promise<void> {
   for (let i = 0; i < attempts; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/api/v1/debug/metrics`);
+      const resp = await fetchWithTimeout(`${baseUrl}/api/v1/debug/metrics`);
       if (resp.ok) {
         return;
       }
-    } catch {
-      /* retry */
+      console.warn(
+        `[openmeter-bootstrap] OpenMeter not ready (${resp.status}); retry ${i + 1}/${attempts}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[openmeter-bootstrap] OpenMeter probe failed; retry ${i + 1}/${attempts}: ${err}`,
+      );
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1_000));
   }
-  throw new Error(`OpenMeter not healthy at ${baseUrl}`);
+  throw new Error(
+    `OpenMeter not healthy at ${baseUrl} after ${attempts} attempts. ` +
+      `Start local OpenMeter or set OPENMETER_URL (and OPENMETER_API_KEY for Konnect).`,
+  );
 }
 
 async function waitForKonnectHealthy(
   baseUrl: string,
   apiKey: string,
-  attempts = 15,
+  attempts = 10,
 ): Promise<void> {
   // Konnect has no /healthz/ready on the metering base; /meters is the catalog we need.
   for (let i = 0; i < attempts; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/meters`, {
+      const resp = await fetchWithTimeout(`${baseUrl}/meters`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (resp.ok) {
@@ -54,7 +74,7 @@ async function waitForKonnectHealthy(
         `[openmeter-bootstrap] Konnect /meters probe failed; retry ${i + 1}/${attempts}: ${err}`,
       );
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1_000));
   }
   throw new Error(`Konnect Metering & Billing not ready at ${baseUrl}/meters`);
 }
@@ -149,18 +169,42 @@ async function bootstrapSelfHosted(
   );
 }
 
-async function main() {
-  const rawBaseUrl = (process.env.OPENMETER_URL || "http://127.0.0.1:48888").replace(/\/$/, "");
+function requireBootstrapTarget(): { rawBaseUrl: string; apiKey: string | undefined } {
+  const rawBaseUrl = process.env.OPENMETER_URL?.trim().replace(/\/$/, "");
   const apiKey = process.env.OPENMETER_API_KEY?.trim() || undefined;
+  const allowLocal = process.env.OPENMETER_ALLOW_LOCAL === "1";
+
+  if (!rawBaseUrl) {
+    if (allowLocal) {
+      return { rawBaseUrl: DEFAULT_LOCAL_OPENMETER_URL, apiKey };
+    }
+    throw new Error(
+      "OPENMETER_URL is required.\n" +
+        "  Konnect:  export OPENMETER_URL=https://us.api.konghq.com/v3/openmeter\n" +
+        "            export OPENMETER_API_KEY=<kpat_… or spat_…>\n" +
+        "  Local:    export OPENMETER_ALLOW_LOCAL=1  (uses http://127.0.0.1:48888)",
+    );
+  }
+
+  if (isKonnectMeteringUrl(rawBaseUrl, apiKey) && !apiKey) {
+    throw new Error(
+      "OPENMETER_API_KEY is required for Konnect Metering & Billing " +
+        `(${normalizeKonnectMeteringUrl(rawBaseUrl)}).`,
+    );
+  }
+
+  return { rawBaseUrl, apiKey };
+}
+
+async function main() {
+  const { rawBaseUrl, apiKey } = requireBootstrapTarget();
   const baseUrl = isKonnectMeteringUrl(rawBaseUrl, apiKey)
     ? normalizeKonnectMeteringUrl(rawBaseUrl)
     : rawBaseUrl;
   const trialUsdMicros = defaultStarterIncludedUsdMicros();
   const featureKey = process.env.OPENMETER_TRIAL_FEATURE_KEY?.trim() || "network_spend";
 
-  if (!process.env.OPENMETER_URL) {
-    console.log("[openmeter-bootstrap] OPENMETER_URL unset; using", baseUrl);
-  }
+  console.log(`[openmeter-bootstrap] target: ${baseUrl}`);
   console.log(
     `[openmeter-bootstrap] default starter trial allowance: ${trialUsdMicros} USD micros ($${(
       Number(trialUsdMicros) / 1_000_000
@@ -176,6 +220,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[openmeter-bootstrap] failed:", err);
+  console.error("[openmeter-bootstrap] failed:", err instanceof Error ? err.message : err);
   process.exit(1);
 });

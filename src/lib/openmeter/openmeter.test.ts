@@ -104,6 +104,48 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.networkFeeUsdMicros, "1500");
 });
 
+test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {
+  const rows = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: "34",
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+      {
+        value: 34,
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: "2",
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.ok(row);
+  assert.equal(row.requestCount, 2);
+  assert.equal(row.networkFeeUsdMicros, "68");
+});
+
 test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model", () => {
   const rows = aggregateUserPipelineModelRows({
     clientId: "app_1",
