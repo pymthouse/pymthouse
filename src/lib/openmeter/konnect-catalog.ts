@@ -22,7 +22,11 @@ type KonnectMeter = {
 type KonnectFeature = {
   id: string;
   key: string;
+  meter?: { id?: string };
 };
+
+/** Meters that must not remain active: they reject ingest when their valueProperty is absent. */
+const DEPRECATED_NETWORK_FEE_METER_KEYS = [NETWORK_FEE_USD_NANOS_METER] as const;
 
 const KONNECT_METER_DEFINITIONS = [
   {
@@ -33,21 +37,6 @@ const KONNECT_METER_DEFINITIONS = [
     event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "sum" as const,
     value_property: "$.network_fee_usd_picos",
-    dimensions: {
-      client_id: "$.client_id",
-      external_user_id: "$.external_user_id",
-      pipeline: "$.pipeline",
-      model_id: "$.model_id",
-    },
-  },
-  {
-    key: NETWORK_FEE_USD_NANOS_METER,
-    name: "Network fee (USD nanos)",
-    description:
-      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — historical meter before picos hard cutover",
-    event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
-    aggregation: "sum" as const,
-    value_property: "$.network_fee_usd_nanos",
     dimensions: {
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",
@@ -174,6 +163,18 @@ export async function ensureKonnectTenantCatalog(
   }
 
   let existingMeters = await listKonnectMeters();
+
+  for (const deprecatedKey of DEPRECATED_NETWORK_FEE_METER_KEYS) {
+    const deprecated = existingMeters.find((meter) => meter.key === deprecatedKey);
+    if (!deprecated) {
+      continue;
+    }
+    // Active SUM meters reject ingest when their valueProperty is missing from events.
+    // Hard cutover stops emitting nanos — delete the meter so ingest can proceed.
+    await konnectAdminFetch<unknown>(`/meters/${encodeURIComponent(deprecated.id)}`, {
+      method: "DELETE",
+    });
+  }
 
   for (const meter of KONNECT_METER_DEFINITIONS) {
     if (existingMeters.some((item) => item.key === meter.key)) {

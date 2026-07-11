@@ -2,7 +2,6 @@ import type { OpenMeter } from "@openmeter/sdk";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   getHostedOpenMeterUrl,
-  NETWORK_FEE_USD_NANOS_METER,
   NETWORK_FEE_USD_PICOS_METER,
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
@@ -183,20 +182,6 @@ export const OPENMETER_METER_DEFINITIONS = [
     eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "SUM" as const,
     valueProperty: "$.network_fee_usd_picos",
-    groupBy: {
-      client_id: "$.client_id",
-      external_user_id: "$.external_user_id",
-      pipeline: "$.pipeline",
-      model_id: "$.model_id",
-    },
-  },
-  {
-    slug: NETWORK_FEE_USD_NANOS_METER,
-    description:
-      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — historical meter before picos hard cutover",
-    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
-    aggregation: "SUM" as const,
-    valueProperty: "$.network_fee_usd_nanos",
     groupBy: {
       client_id: "$.client_id",
       external_user_id: "$.external_user_id",

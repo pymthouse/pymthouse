@@ -142,6 +142,7 @@ async function queryMeterRowsSafe(
   } catch (err) {
     if (
       (meterSlug === NETWORK_FEE_USD_MICROS_METER ||
+        meterSlug === NETWORK_FEE_USD_NANOS_METER ||
         meterSlug === NETWORK_FEE_USD_PICOS_METER) &&
       isMeterNotFoundError(err)
     ) {

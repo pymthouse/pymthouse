@@ -49,17 +49,6 @@ meters:
       pipeline: $.pipeline
       model_id: $.model_id
 
-  - slug: network_fee_usd_nanos
-    description: Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — historical before picos hard cutover
-    eventType: create_signed_ticket
-    aggregation: SUM
-    valueProperty: $.network_fee_usd_nanos
-    groupBy:
-      client_id: $.client_id
-      external_user_id: $.external_user_id
-      pipeline: $.pipeline
-      model_id: $.model_id
-
   - slug: signed_ticket_count
     description: Signed ticket count per user
     eventType: create_signed_ticket
