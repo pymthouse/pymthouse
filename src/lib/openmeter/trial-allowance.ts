@@ -6,7 +6,9 @@ import {
 } from "./client-factory";
 import { getHostedOpenMeterUrl } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
+import { ensureOpenMeterCustomer } from "./customers";
 import { getTrialCreditBalance, grantTrialCredits } from "./entitlements";
+import { createKonnectCreditGrant } from "./konnect-credits";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   ensureStarterPlanSynced,
@@ -15,7 +17,7 @@ import {
 
 /**
  * Ensure new and existing customers have starter trial credits.
- * Konnect: sync starter plan (discounts.usage) and ensure an active subscription exists.
+ * Konnect: sync starter plan + subscription, then POST /credits/grants.
  * Self-hosted: explicit entitlement grant via OpenMeter grants API.
  */
 export async function ensureTrialAllowanceForAppUser(input: {
@@ -47,6 +49,23 @@ export async function ensureTrialAllowanceForAppUser(input: {
     await ensureStarterSubscriptionForAppUser({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
+    });
+
+    const trialClient = getHostedTrialOpenMeterClient();
+    if (!trialClient) {
+      return;
+    }
+    const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
+    const customer = await ensureOpenMeterCustomer(trialClient, customerKey);
+    const featureKey = await getTrialFeatureKeyForApp(input.clientId);
+    await createKonnectCreditGrant({
+      customerId: customer.id,
+      amountUsdMicros: amount,
+      name: "Starter trial credits",
+      description: "Pymthouse starter allowance",
+      featureKey,
+      idempotencyKey: `starter:${customer.id}:${featureKey}`,
+      apiKey: omApiKey,
     });
     return;
   }

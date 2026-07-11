@@ -21,6 +21,8 @@ import {
 import { parseOpenMeterCustomerKey } from "../src/lib/openmeter/customer-key";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "../src/lib/openmeter/admin-client";
 import { ensureStarterSubscriptionForAppUser } from "../src/lib/openmeter/starter-subscription";
+import { ensureTrialAllowanceForAppUser } from "../src/lib/openmeter/trial-allowance";
+import { getTrialCreditBalance } from "../src/lib/openmeter/entitlements";
 
 type Args = {
   customerKey?: string;
@@ -79,8 +81,8 @@ function usage(): string {
     "  --client-id <app_id> --all-users",
     "",
     "Options:",
-    "  --customer-only   Upsert Konnect customer + subject keys only (no Starter subscription)",
-    "  --provision-db    Run full provisionAppUserBilling (DB rows + subscription + allowance)",
+    "  --customer-only   Upsert Konnect customer + subject keys only (no Starter subscription / credits)",
+    "  --provision-db    Run full provisionAppUserBilling (DB rows + subscription + credit grant)",
   ].join("\n");
 }
 
@@ -153,8 +155,16 @@ async function ensureOne(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
+  await ensureTrialAllowanceForAppUser({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const allowance = await getTrialCreditBalance({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
   console.log(
-    `[ok] ${label} customer id=${customer.id} subscription=${sub.openmeterSubscriptionId ?? "none"} created=${sub.created}`,
+    `[ok] ${label} customer id=${customer.id} subscription=${sub.openmeterSubscriptionId ?? "none"} created=${sub.created} hasAccess=${allowance?.hasAccess ?? "n/a"} balanceUsdMicros=${allowance?.balanceUsdMicros ?? "n/a"}`,
   );
 }
 

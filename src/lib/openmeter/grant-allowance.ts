@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { GrantSource } from "@/lib/billing/types";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
 import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
@@ -13,6 +14,7 @@ import {
 } from "@/lib/openmeter/client-factory";
 import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import { createKonnectCreditGrant } from "@/lib/openmeter/konnect-credits";
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
@@ -49,13 +51,21 @@ export async function grantAllowanceUsdMicros(input: {
   const featureKey =
     input.featureKey?.trim() || (await getTrialFeatureKeyForApp(input.clientId));
 
-  await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await ensureOpenMeterCustomer(client, customerKey);
 
   const omApiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);
-  // Konnect trial balance is derived from Starter subscription included usage, not
-  // SDK entitlement grants. Provisioning above is the grant path on hosted Konnect.
-  if (!useKonnect) {
+  if (useKonnect) {
+    await createKonnectCreditGrant({
+      customerId: customer.id,
+      amountUsdMicros: input.amountUsdMicros,
+      name: `Manual allowance (${input.source})`,
+      description: `Pymthouse allowance grant source=${input.source}`,
+      featureKey,
+      idempotencyKey: `manual:${customer.id}:${input.source}:${randomUUID()}`,
+      apiKey: omApiKey,
+    });
+  } else {
     await grantTrialCredits({
       client,
       customerKey,
