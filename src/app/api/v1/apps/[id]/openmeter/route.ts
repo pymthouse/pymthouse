@@ -84,7 +84,7 @@ export async function PUT(
     baseUrl: mode === "pymthouse_hosted" ? null : String(body.baseUrl).trim(),
     apiKeyEncrypted,
     meterSlug: resolveNetworkFeeMeterSlug(
-      String(body.meterSlug || existing?.meterSlug || "network_fee_usd_nanos"),
+      String(body.meterSlug || existing?.meterSlug || "network_fee_usd_picos"),
     ),
     trialFeatureKey: String(body.trialFeatureKey || existing?.trialFeatureKey || "network_spend"),
     updatedAt: new Date().toISOString(),

@@ -20,6 +20,7 @@
 export const FORBIDDEN_INTERNAL_FIELD_NAMES: readonly string[] = [
   "openmeter_subscription_id",
   "openmeter_customer_id",
+  "network_fee_usd_picos",
   "network_fee_usd_nanos",
   "fee_wei",
   "eth_usd_price",

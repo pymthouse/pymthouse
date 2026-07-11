@@ -12,20 +12,27 @@ import {
 } from "@/lib/oidc/mint-user-signer-token";
 import { buildOpenMeterUsageResponse } from "@/lib/usage/query-openmeter";
 import {
+  getNetworkFeeMicrosEmitDeprecateAfter,
+  getNetworkFeeNanosCutoverAt,
+  getNetworkFeePicosCutoverAt,
+  NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER,
+  NETWORK_FEE_USD_MICROS_METER,
+  NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_PICOS_METER,
+  feeWeiToUsdPicos,
+  usdMicrosToPicos,
+  usdPicosToMicros,
+} from "@/lib/openmeter/constants";
+import {
   aggregateDailyRequestCounts,
   aggregateDailyPipelineModelRows,
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
   splitMeterQueryAtCutover,
+  splitNetworkFeeMeterQueryWindows,
 } from "@/lib/openmeter/usage-read";
-import {
-  getNetworkFeeMicrosEmitDeprecateAfter,
-  getNetworkFeeNanosCutoverAt,
-  NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER,
-  NETWORK_FEE_USD_MICROS_METER,
-  NETWORK_FEE_USD_NANOS_METER,
-} from "@/lib/openmeter/constants";
+import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
 import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
@@ -627,7 +634,7 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
   assert.equal(
     (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
       ?.issueAfterReset,
-    5_000_000_000,
+    5_000_000_000_000,
   );
 });
 
@@ -728,7 +735,16 @@ test("verifyOpenMeterPlanId returns null when remote plan missing", async () => 
 test("NETWORK_FEE_USD_MICROS_METER keeps the legacy slug for historical reads", () => {
   assert.equal(NETWORK_FEE_USD_MICROS_METER, "network_fee_usd_micros");
   assert.equal(NETWORK_FEE_USD_NANOS_METER, "network_fee_usd_nanos");
+  assert.equal(NETWORK_FEE_USD_PICOS_METER, "network_fee_usd_picos");
   assert.notEqual(NETWORK_FEE_USD_MICROS_METER, NETWORK_FEE_USD_NANOS_METER);
+  assert.notEqual(NETWORK_FEE_USD_NANOS_METER, NETWORK_FEE_USD_PICOS_METER);
+});
+
+test("resolveNetworkFeeMeterSlug maps legacy micros/nanos onto picos", () => {
+  assert.equal(resolveNetworkFeeMeterSlug(null), NETWORK_FEE_USD_PICOS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("network_fee_usd_micros"), NETWORK_FEE_USD_PICOS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("network_fee_usd_nanos"), NETWORK_FEE_USD_PICOS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("network_fee_usd_picos"), NETWORK_FEE_USD_PICOS_METER);
 });
 
 test("getNetworkFeeNanosCutoverAt defaults to 2026-07-10 and honors env override", () => {
@@ -739,6 +755,30 @@ test("getNetworkFeeNanosCutoverAt defaults to 2026-07-10 and honors env override
     }).toISOString(),
     "2026-07-11T12:00:00.000Z",
   );
+});
+
+test("getNetworkFeePicosCutoverAt defaults to 2026-07-11 and honors env override", () => {
+  assert.equal(getNetworkFeePicosCutoverAt({}).toISOString(), "2026-07-11T00:00:00.000Z");
+  assert.equal(
+    getNetworkFeePicosCutoverAt({
+      OPENMETER_NETWORK_FEE_PICOS_CUTOVER_AT: "2026-07-12T00:00:00.000Z",
+    }).toISOString(),
+    "2026-07-12T00:00:00.000Z",
+  );
+});
+
+test("feeWeiToUsdPicos ceils and never meters fee_wei>0 as free", () => {
+  // 300 wei * $3500 / 1e6 = 1.05 → ceil 2 picos
+  assert.equal(feeWeiToUsdPicos(300n, 3500), 2n);
+  // Sub-pico dust still meters as 1
+  assert.equal(feeWeiToUsdPicos(1n, 1), 1n);
+  assert.equal(feeWeiToUsdPicos(0n, 3500), 0n);
+});
+
+test("usdMicrosToPicos / usdPicosToMicros round-trip truncating", () => {
+  assert.equal(usdMicrosToPicos(5_000_000n), 5_000_000_000_000n);
+  assert.equal(usdPicosToMicros(5_000_000_000_000n), 5_000_000n);
+  assert.equal(usdPicosToMicros(999_999n), 0n);
 });
 
 test("NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER is fixed at 2026-09-10", () => {
@@ -769,6 +809,41 @@ test("splitMeterQueryAtCutover isolates legacy micros and current nanos windows"
   assert.equal((legacy.from as Date).toISOString(), "2026-06-01T00:00:00.000Z");
   assert.equal((current.from as Date).toISOString(), cutover.toISOString());
   assert.equal((current.to as Date).toISOString(), "2026-08-01T00:00:00.000Z");
+});
+
+test("splitNetworkFeeMeterQueryWindows hard-cuts to picos; micros|nanos only pre-cutover", () => {
+  const nanosCutover = new Date("2026-07-10T00:00:00.000Z");
+  const picosCutover = new Date("2026-07-11T00:00:00.000Z");
+  const { micros, nanos, picos } = splitNetworkFeeMeterQueryWindows(
+    {
+      from: new Date("2026-06-01T00:00:00.000Z"),
+      to: new Date("2026-08-01T00:00:00.000Z"),
+    },
+    nanosCutover,
+    picosCutover,
+  );
+  assert.ok(micros);
+  assert.ok(nanos);
+  assert.ok(picos);
+  assert.equal((micros.to as Date).toISOString(), nanosCutover.toISOString());
+  assert.equal((nanos.from as Date).toISOString(), nanosCutover.toISOString());
+  assert.equal((nanos.to as Date).toISOString(), picosCutover.toISOString());
+  assert.equal((picos.from as Date).toISOString(), picosCutover.toISOString());
+  assert.equal((picos.to as Date).toISOString(), "2026-08-01T00:00:00.000Z");
+});
+
+test("splitNetworkFeeMeterQueryWindows returns only picos after picos cutover", () => {
+  const { micros, nanos, picos } = splitNetworkFeeMeterQueryWindows(
+    {
+      from: new Date("2026-07-11T00:00:00.000Z"),
+      to: new Date("2026-08-01T00:00:00.000Z"),
+    },
+    new Date("2026-07-10T00:00:00.000Z"),
+    new Date("2026-07-11T00:00:00.000Z"),
+  );
+  assert.equal(micros, null);
+  assert.equal(nanos, null);
+  assert.ok(picos);
 });
 
 test("splitMeterQueryAtCutover returns only legacy when range ends at cutover", () => {

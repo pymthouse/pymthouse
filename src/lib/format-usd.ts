@@ -4,6 +4,9 @@ export const USD_MICROS_PER_DOLLAR = 1_000_000n;
 /** 1 USD = 1_000_000_000 nanos (OpenMeter network_fee_usd_nanos meter). */
 export const USD_NANOS_PER_DOLLAR = 1_000_000_000n;
 
+/** 1 USD = 1_000_000_000_000 picos (OpenMeter network_fee_usd_picos meter). */
+export const USD_PICOS_PER_DOLLAR = 1_000_000_000_000n;
+
 function isIntegerAmountString(value: string): boolean {
   if (value.length === 0) return false;
   let i = 0;
@@ -72,12 +75,20 @@ export function formatUsdMicros(
   return formatUsdMinorUnits(microsStr, USD_MICROS_PER_DOLLAR, maxFractionDigits);
 }
 
-/** Format integer USD nanos (1 USD = 1e9) — OpenMeter network fee meter unit. */
+/** Format integer USD nanos (1 USD = 1e9) — legacy OpenMeter network fee dual-emit unit. */
 export function formatUsdNanos(
   nanosStr: string | undefined | null,
   maxFractionDigits: number,
 ): string | null {
   return formatUsdMinorUnits(nanosStr, USD_NANOS_PER_DOLLAR, maxFractionDigits);
+}
+
+/** Format integer USD picos (1 USD = 1e12) — authoritative OpenMeter network fee meter unit. */
+export function formatUsdPicos(
+  picosStr: string | undefined | null,
+  maxFractionDigits: number,
+): string | null {
+  return formatUsdMinorUnits(picosStr, USD_PICOS_PER_DOLLAR, maxFractionDigits);
 }
 
 function formatUsdMinorUnitsDisplay(
@@ -98,6 +109,8 @@ function formatUsdMinorUnitsDisplay(
     if (usdApprox >= 1) digits = 2;
     else if (usdApprox >= 0.01) digits = 3;
     else if (usdApprox >= 0.0001) digits = 4;
+    // Picos (1e12) need full scale to show sub-micro dust; nanos stay at 6.
+    else if (usdApprox > 0 && scale >= 12) digits = scale;
     return (
       formatUsdMinorUnits(amountStr, subunitsPerDollar, digits) ??
       `${negative ? "-" : ""}$0`
@@ -130,4 +143,9 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
 /** Always returns a `$…` string for OpenMeter nanos fee UI. */
 export function formatUsdNanosDisplay(nanosStr: string | undefined | null): string {
   return formatUsdMinorUnitsDisplay(nanosStr, USD_NANOS_PER_DOLLAR);
+}
+
+/** Always returns a `$…` string for OpenMeter picos fee UI (sub-micro dust). */
+export function formatUsdPicosDisplay(picosStr: string | undefined | null): string {
+  return formatUsdMinorUnitsDisplay(picosStr, USD_PICOS_PER_DOLLAR);
 }

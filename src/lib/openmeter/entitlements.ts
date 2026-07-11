@@ -3,10 +3,11 @@ import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   getHostedOpenMeterUrl,
   NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_PICOS_METER,
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
-  usdMicrosToNanos,
-  usdNanosToMicros,
+  usdMicrosToPicos,
+  usdPicosToMicros,
 } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomer } from "./customers";
@@ -37,8 +38,8 @@ export async function grantTrialCredits(input: {
     input.customerKey,
     input.featureKey,
     {
-      // OpenMeter meter is USD nanos; app grants stay in micros.
-      amount: Number(usdMicrosToNanos(input.amountUsdMicros)),
+      // OpenMeter meter is USD picos; app grants stay in micros.
+      amount: Number(usdMicrosToPicos(input.amountUsdMicros)),
       priority: 1,
       effectiveAt: new Date(),
       expiration: { duration: "YEAR", count: 1 },
@@ -102,16 +103,16 @@ export async function getTrialCreditBalance(input: {
 
   const balance = Math.max(
     0,
-    Number(usdNanosToMicros(BigInt(Math.floor(value.balance ?? 0)))),
+    Number(usdPicosToMicros(BigInt(Math.floor(value.balance ?? 0)))),
   );
   const usage = Math.max(
     0,
-    Number(usdNanosToMicros(BigInt(Math.floor(value.usage ?? 0)))),
+    Number(usdPicosToMicros(BigInt(Math.floor(value.usage ?? 0)))),
   );
   const granted = Math.max(
     0,
     Number(
-      usdNanosToMicros(
+      usdPicosToMicros(
         BigInt(Math.floor(value.totalAvailableGrantAmount ?? (value.balance ?? 0) + (value.usage ?? 0))),
       ),
     ),
@@ -158,8 +159,8 @@ export async function ingestSignedTicketEvent(input: {
       usage_subject: usageSubject,
       usage_subject_type: "external_user_id",
       external_user_id: usageSubject,
-      network_fee_usd_nanos: Number(
-        usdMicrosToNanos(BigInt(input.event.networkFeeUsdMicros || "0")),
+      network_fee_usd_picos: Number(
+        usdMicrosToPicos(BigInt(input.event.networkFeeUsdMicros || "0")),
       ),
       fee_wei: input.event.feeWei,
       pixels: input.event.pixels,
@@ -176,9 +177,23 @@ export async function ingestSignedTicketEvent(input: {
 
 export const OPENMETER_METER_DEFINITIONS = [
   {
+    slug: NETWORK_FEE_USD_PICOS_METER,
+    description:
+      "Livepeer signed-ticket network fee (USD picos; 1 USD = 1e12) — SUM of collector network_fee_usd_picos; grouped by client, user, pipeline, model",
+    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "SUM" as const,
+    valueProperty: "$.network_fee_usd_picos",
+    groupBy: {
+      client_id: "$.client_id",
+      external_user_id: "$.external_user_id",
+      pipeline: "$.pipeline",
+      model_id: "$.model_id",
+    },
+  },
+  {
     slug: NETWORK_FEE_USD_NANOS_METER,
     description:
-      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — SUM of collector network_fee_usd_nanos; grouped by client, user, pipeline, model",
+      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — historical meter before picos hard cutover",
     eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "SUM" as const,
     valueProperty: "$.network_fee_usd_nanos",
@@ -207,5 +222,6 @@ export {
   DEFAULT_TRIAL_FEATURE_KEY,
   NETWORK_FEE_USD_MICROS_METER,
   NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_PICOS_METER,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";

@@ -34,7 +34,10 @@ services:
       start_period: 15s
 
   openmeter-collector:
-    image: ghcr.io/openmeterio/benthos-collector:latest
+    image: ${OPENMETER_COLLECTOR_IMAGE:-pymthouse/openmeter-collector:local}
+    build:
+      context: ./deploy/openmeter-collector
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       kafka:

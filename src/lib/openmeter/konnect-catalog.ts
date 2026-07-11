@@ -3,6 +3,7 @@ import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
   NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_PICOS_METER,
   normalizeKonnectMeteringUrl,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";
@@ -25,10 +26,25 @@ type KonnectFeature = {
 
 const KONNECT_METER_DEFINITIONS = [
   {
+    key: NETWORK_FEE_USD_PICOS_METER,
+    name: "Network fee (USD picos)",
+    description:
+      "Livepeer signed-ticket network fee (USD picos; 1 USD = 1e12) — sum of collector network_fee_usd_picos",
+    event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "sum" as const,
+    value_property: "$.network_fee_usd_picos",
+    dimensions: {
+      client_id: "$.client_id",
+      external_user_id: "$.external_user_id",
+      pipeline: "$.pipeline",
+      model_id: "$.model_id",
+    },
+  },
+  {
     key: NETWORK_FEE_USD_NANOS_METER,
     name: "Network fee (USD nanos)",
     description:
-      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — sum of collector network_fee_usd_nanos",
+      "Livepeer signed-ticket network fee (USD nanos; 1 USD = 1e9) — historical meter before picos hard cutover",
     event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     aggregation: "sum" as const,
     value_property: "$.network_fee_usd_nanos",
@@ -151,7 +167,7 @@ export async function ensureKonnectTenantCatalog(
 
   if (
     konnectCatalogEnsured &&
-    konnectMeterIdByKeyCache?.has(NETWORK_FEE_USD_NANOS_METER) &&
+    konnectMeterIdByKeyCache?.has(NETWORK_FEE_USD_PICOS_METER) &&
     konnectMeterIdByKeyCache.has(SIGNED_TICKET_COUNT_METER)
   ) {
     return;
@@ -173,10 +189,10 @@ export async function ensureKonnectTenantCatalog(
   cacheKonnectMeters(existingMeters);
 
   const networkFeeMeter = existingMeters.find(
-    (meter) => meter.key === NETWORK_FEE_USD_NANOS_METER,
+    (meter) => meter.key === NETWORK_FEE_USD_PICOS_METER,
   );
   if (!networkFeeMeter) {
-    throw new Error(`Konnect meter missing: ${NETWORK_FEE_USD_NANOS_METER}`);
+    throw new Error(`Konnect meter missing: ${NETWORK_FEE_USD_PICOS_METER}`);
   }
 
   const features = await konnectAdminFetch<KonnectPage<KonnectFeature>>("/features");

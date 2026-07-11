@@ -5,12 +5,15 @@ import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import {
   getNetworkFeeNanosCutoverAt,
+  getNetworkFeePicosCutoverAt,
   NETWORK_FEE_USD_MICROS_METER,
   NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_PICOS_METER,
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
   usdNanosToMicros,
+  usdPicosToMicros,
 } from "@/lib/openmeter/constants";
 import type { MeterQueryRow, OpenMeter } from "@openmeter/sdk";
 
@@ -38,8 +41,8 @@ function asQueryDate(value: unknown): Date | null {
 }
 
 /**
- * Split a meter query at the nanos cutover so legacy micros and current nanos
- * windows do not overlap (avoids double-count while collector dual-emits).
+ * Split a meter query at a single cutover so legacy and current windows do not
+ * overlap (avoids double-count while collector dual-emits).
  */
 export function splitMeterQueryAtCutover(
   query: Record<string, unknown>,
@@ -70,13 +73,47 @@ export function splitMeterQueryAtCutover(
   return { legacy, current };
 }
 
+/**
+ * Hard picos cutover for fee queries.
+ *
+ * - Before `picosCutover`: historical micros|nanos (nested at `nanosCutover`)
+ * - From `picosCutover`: picos only (collector no longer writes nanos)
+ */
+export function splitNetworkFeeMeterQueryWindows(
+  query: Record<string, unknown>,
+  nanosCutover: Date = getNetworkFeeNanosCutoverAt(),
+  picosCutover: Date = getNetworkFeePicosCutoverAt(),
+): {
+  micros: Record<string, unknown> | null;
+  nanos: Record<string, unknown> | null;
+  picos: Record<string, unknown> | null;
+} {
+  const { legacy: prePicos, current: picos } = splitMeterQueryAtCutover(
+    query,
+    picosCutover,
+  );
+  if (!prePicos) {
+    return { micros: null, nanos: null, picos };
+  }
+  const { legacy: micros, current: nanos } = splitMeterQueryAtCutover(
+    prePicos,
+    nanosCutover,
+  );
+  return { micros, nanos, picos };
+}
+
 function mapRowsToFeeMicros(
   rows: MeterQueryRow[],
-  unit: "micros" | "nanos",
+  unit: "micros" | "nanos" | "picos",
 ): MeterQueryRow[] {
   return rows.map((row) => {
     const raw = feeMicrosFromMeterValue(row.value);
-    const micros = unit === "nanos" ? usdNanosToMicros(raw) : raw;
+    let micros = raw;
+    if (unit === "nanos") {
+      micros = usdNanosToMicros(raw);
+    } else if (unit === "picos") {
+      micros = usdPicosToMicros(raw);
+    }
     return { ...row, value: Number(micros) };
   });
 }
@@ -103,7 +140,11 @@ async function queryMeterRowsSafe(
     const result = await client.meters.query(meterSlug, query);
     return result.data || [];
   } catch (err) {
-    if (meterSlug === NETWORK_FEE_USD_MICROS_METER && isMeterNotFoundError(err)) {
+    if (
+      (meterSlug === NETWORK_FEE_USD_MICROS_METER ||
+        meterSlug === NETWORK_FEE_USD_PICOS_METER) &&
+      isMeterNotFoundError(err)
+    ) {
       return [];
     }
     throw err;
@@ -111,28 +152,38 @@ async function queryMeterRowsSafe(
 }
 
 /**
- * Query network-fee usage as USD micros, merging legacy micros (pre-cutover)
- * with nanos (post-cutover) without double-counting the dual-emit window.
+ * Query network-fee usage as USD micros.
+ * Hard cutover: micros|nanos history before picos cutover; picos after.
  */
 export async function queryNetworkFeeMeterRowsAsMicros(
   client: OpenMeter,
   query: Record<string, unknown>,
-  cutover: Date = getNetworkFeeNanosCutoverAt(),
+  nanosCutover: Date = getNetworkFeeNanosCutoverAt(),
+  picosCutover: Date = getNetworkFeePicosCutoverAt(),
 ): Promise<MeterQueryRow[]> {
-  const { legacy, current } = splitMeterQueryAtCutover(query, cutover);
-  const [legacyRows, currentRows] = await Promise.all([
-    legacy
-      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_MICROS_METER, legacy).then((rows) =>
+  const { micros, nanos, picos } = splitNetworkFeeMeterQueryWindows(
+    query,
+    nanosCutover,
+    picosCutover,
+  );
+  const [microsRows, nanosRows, picosRows] = await Promise.all([
+    micros
+      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_MICROS_METER, micros).then((rows) =>
           mapRowsToFeeMicros(rows, "micros"),
         )
       : Promise.resolve([] as MeterQueryRow[]),
-    current
-      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_NANOS_METER, current).then((rows) =>
+    nanos
+      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_NANOS_METER, nanos).then((rows) =>
           mapRowsToFeeMicros(rows, "nanos"),
         )
       : Promise.resolve([] as MeterQueryRow[]),
+    picos
+      ? queryMeterRowsSafe(client, NETWORK_FEE_USD_PICOS_METER, picos).then((rows) =>
+          mapRowsToFeeMicros(rows, "picos"),
+        )
+      : Promise.resolve([] as MeterQueryRow[]),
   ]);
-  return [...legacyRows, ...currentRows];
+  return [...microsRows, ...nanosRows, ...picosRows];
 }
 
 export type OpenMeterUsageRow = {

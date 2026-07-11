@@ -2,7 +2,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
-import { getHostedOpenMeterUrl, DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_NANOS_METER, usdMicrosToNanos } from "./constants";
+import { getHostedOpenMeterUrl, DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_PICOS_METER, usdMicrosToPicos } from "./constants";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
@@ -120,8 +120,8 @@ function buildUsageRateCard(input: {
         ? {
             type: "metered",
             isSoftLimit: false,
-            // Meter is USD nanos; plan allowance is stored in micros.
-            issueAfterReset: Number(usdMicrosToNanos(BigInt(input.includedMicros))),
+            // Meter is USD picos; plan allowance is stored in micros.
+            issueAfterReset: Number(usdMicrosToPicos(BigInt(input.includedMicros))),
             issueAfterResetPriority: 1,
           }
         : undefined,
@@ -312,7 +312,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
       metadata: {
         pymthouse_client_id: input.clientId,
         pymthouse_plan_id: plan.id,
-        meter_slug: NETWORK_FEE_USD_NANOS_METER,
+        meter_slug: NETWORK_FEE_USD_PICOS_METER,
       },
     };
   }
@@ -333,7 +333,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
     metadata: {
       pymthouse_client_id: input.clientId,
       pymthouse_plan_id: plan.id,
-      meter_slug: NETWORK_FEE_USD_NANOS_METER,
+      meter_slug: NETWORK_FEE_USD_PICOS_METER,
     },
   };
 }

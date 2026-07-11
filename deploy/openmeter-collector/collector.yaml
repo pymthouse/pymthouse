@@ -121,14 +121,18 @@ pipeline:
         let eth_usd = meta("eth_usd_price").number()
         root = if $eth_usd == null { throw("eth_usd price cache miss") }
 
-        # USD nanos = fee_wei * eth_usd / 1e9  (1 USD = 1e9 nanos).
-        # Nanos avoid .round() collapsing sub-micro staging fees to 0.
-        # Also emit micros (nanos/1000) so the legacy network_fee_usd_micros
-        # meter keeps accepting events during cutover. Remove network_fee_usd_micros
-        # from this payload on/after 2026-09-10 (NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER).
+        # Authoritative fee unit: USD picos (1 USD = 1e12).
+        # Hard cutover from nanos: emit picos only (no network_fee_usd_nanos).
+        # picos = ceil(fee_wei * eth_usd / 1e6)  (== ceil(fee_usd * 1e12))
+        # Any fee_wei > 0 meters at least 1 pico — no free usage from dust.
+        # Dual-emit micros = floor(picos / 1e6) until 2026-09-10
+        # (NETWORK_FEE_MICROS_EMIT_DEPRECATE_AFTER).
         let fee_wei = $data.computed_fee.number().or(0)
-        let fee_usd_nanos = ($fee_wei * $eth_usd / 1000000000).round()
-        let fee_usd_micros = ($fee_usd_nanos / 1000).round()
+        let fee_usd_picos_raw = ($fee_wei * $eth_usd / 1000000).ceil().or(0)
+        let fee_usd_picos = if $fee_wei > 0 && $fee_usd_picos_raw < 1 { 1 } else { $fee_usd_picos_raw }
+        # Always emit concrete integers — OpenMeter SUM meters reject events
+        # when valueProperty paths are absent/null.
+        let fee_usd_micros = ($fee_usd_picos / 1000000).floor().or(0)
 
         root = if $auth_id == "" {
           deleted()
@@ -145,7 +149,7 @@ pipeline:
               "usage_subject": $usage_subject_parsed,
               "usage_subject_type": $usage_subject_type,
               "external_user_id": $usage_subject_parsed,
-              "network_fee_usd_nanos": $fee_usd_nanos,
+              "network_fee_usd_picos": $fee_usd_picos,
               "network_fee_usd_micros": $fee_usd_micros,
               "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
               "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
