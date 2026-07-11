@@ -5,7 +5,7 @@
 #   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
 
 # Base image for signer-dmz-local (override: docker build --build-arg LIVEPEER_IMAGE=...).
-ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-716dc1c75db713b6b13020ab9d1eb1f329409caa
+ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5
 
 FROM debian:bookworm-slim AS build-mod
 
