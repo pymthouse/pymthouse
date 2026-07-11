@@ -175,7 +175,13 @@ export async function ensureKonnectTenantCatalog(
     existingFeature?.meter?.key === NETWORK_FEE_USD_MICROS_METER;
 
   if (existingFeature && !meterMatches) {
-    await konnectAdminFetch(`/features/${existingFeature.id}`, { method: "DELETE" });
+    if (!isOpenMeterUlid(existingFeature.id)) {
+      throw new Error(
+        `Konnect feature id is not a valid ULID for key ${featureKey}: ${existingFeature.id}`,
+      );
+    }
+    const featureId = encodeURIComponent(existingFeature.id);
+    await konnectAdminFetch(`/features/${featureId}`, { method: "DELETE" });
     await konnectAdminFetch<KonnectFeature>("/features", {
       method: "POST",
       body: JSON.stringify({
