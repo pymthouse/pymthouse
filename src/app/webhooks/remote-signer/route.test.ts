@@ -8,16 +8,9 @@ import { buildRemoteSignerWebhookConfig } from "@/lib/oidc/remote-signer-webhook
 const WEBHOOK_SECRET = "test-webhook-secret";
 const OIDC_ISSUER = "https://pymthouse.com/api/v1/oidc";
 
-/** Canonical identity-webhook env required by createEndUserVerifierFromEnv. */
+/** Minimal env — claim/issuer defaults come from resolveIdentityWebhookEnv. */
 const CANONICAL_OIDC_ENV = {
-  IDENTITY_AUTH_MODE: "oidc",
-  IDENTITY_ISSUER: OIDC_ISSUER,
-  OIDC_ISSUER,
-  OIDC_AUDIENCE: OIDC_ISSUER,
-  OIDC_CLIENT_CLAIM: "client_id",
-  OIDC_SUBJECT_CLAIM: "external_user_id",
-  OIDC_SUBJECT_TYPE: "external_user_id",
-  OIDC_REQUIRED_SCOPES: "sign:job",
+  NEXTAUTH_URL: "https://pymthouse.com",
 } as const;
 
 function buildWebhookConfig(env: Record<string, string | undefined> = {}) {

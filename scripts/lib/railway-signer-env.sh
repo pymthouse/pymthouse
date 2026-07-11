@@ -8,7 +8,8 @@ railway_apply_signer_env() {
 
   local nextauth_url="${NEXTAUTH_URL:-https://pymthouse.com}"
   nextauth_url="${nextauth_url%/}"
-  local issuer="${OIDC_ISSUER:-${nextauth_url}/api/v1/oidc}"
+  # Apache JWT iss/aud (signer DMZ). Next app derives issuer from NEXTAUTH_URL.
+  local issuer="${IDENTITY_ISSUER:-${OIDC_ISSUER:-${nextauth_url}/api/v1/oidc}}"
   local audience="${OIDC_AUDIENCE:-$issuer}"
   local jwks_uri="${JWKS_URI:-${nextauth_url}/api/v1/oidc/jwks}"
 
@@ -23,14 +24,6 @@ railway_apply_signer_env() {
     "OIDC_ISSUER=${issuer}"
     "OIDC_AUDIENCE=${audience}"
     "JWKS_URI=${jwks_uri}"
-    # Canonical identity-webhook env for embedded POST /webhooks/remote-signer.
-    "IDENTITY_AUTH_MODE=oidc"
-    "IDENTITY_ISSUER=${issuer}"
-    "OIDC_CLIENT_CLAIM=client_id"
-    "OIDC_SUBJECT_CLAIM=external_user_id"
-    "OIDC_SUBJECT_TYPE=external_user_id"
-    "OIDC_REQUIRED_SCOPES=sign:job"
-    "OIDC_TOKEN_EXCHANGE_BASE_URL=${nextauth_url}"
     "SIGNER_DMZ_ENABLE_CLI_LISTENER=${SIGNER_DMZ_ENABLE_CLI_LISTENER:-0}"
     "SIGNER_REMOTE_DISCOVERY=${SIGNER_REMOTE_DISCOVERY:-1}"
     "TURNKEY_WALLET_NAME=${TURNKEY_WALLET_NAME:-livepeer-remote-signer}"

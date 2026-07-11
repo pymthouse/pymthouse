@@ -20,8 +20,6 @@ set -a && source .env.local && set +a
 STAGING_URL="${STAGING_URL:-https://pymthouse-staging.vercel.app}"
 STAGING_URL="${STAGING_URL%/}"
 SIGNER_BASE="${SIGNER_BASE:-https://pymthouse-preview.up.railway.app}"
-# Issuer matches staging host (same as NEXTAUTH_URL + /api/v1/oidc); signer DMZ must trust this + staging JWKS.
-OIDC_ISSUER_VAL="${OIDC_ISSUER_VAL:-${STAGING_URL}/api/v1/oidc}"
 
 add_env() {
   local key="$1" val="$2"
@@ -36,21 +34,13 @@ add_env DATABASE_URL "$DATABASE_URL"
 add_env NEXTAUTH_URL "$STAGING_URL"
 add_env NEXTAUTH_SECRET "${NEXTAUTH_SECRET:-$(openssl rand -base64 32)}"
 add_env AUTH_TOKEN_PEPPER "$AUTH_TOKEN_PEPPER"
-add_env OIDC_ISSUER "$OIDC_ISSUER_VAL"
-add_env OIDC_AUDIENCE "$OIDC_ISSUER_VAL"
-add_env IDENTITY_AUTH_MODE "oidc"
-add_env IDENTITY_ISSUER "$OIDC_ISSUER_VAL"
-add_env OIDC_CLIENT_CLAIM "client_id"
-add_env OIDC_SUBJECT_CLAIM "external_user_id"
-add_env OIDC_SUBJECT_TYPE "external_user_id"
-add_env OIDC_REQUIRED_SCOPES "sign:job"
-add_env OIDC_TOKEN_EXCHANGE_BASE_URL "$STAGING_URL"
+# Issuer / claims / exchange base default from NEXTAUTH_URL in-app.
+add_env PLATFORM_JWKS_URL "${STAGING_URL}/api/v1/oidc/jwks"
 add_env SIGNER_INTERNAL_URL "$SIGNER_BASE"
 add_env SIGNER_CLI_URL "${SIGNER_BASE}/__signer_cli"
 add_env SIGNER_NETWORK "${SIGNER_NETWORK:-arbitrum-one-mainnet}"
 add_env ETH_RPC_URL "${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc}"
 add_env OPENMETER_TRIAL_FEATURE_KEY "${OPENMETER_TRIAL_FEATURE_KEY:-network_spend}"
-add_env PLATFORM_JWKS_URL "${STAGING_URL}/api/v1/oidc/jwks"
 
 # Starter plan included allowance (USD micros). Legacy .env.local name still accepted.
 STARTER_INCLUDED_USD_MICROS="${OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS:-${OPENMETER_DEV_AUTO_GRANT_USD_MICROS:-5000000}}"
