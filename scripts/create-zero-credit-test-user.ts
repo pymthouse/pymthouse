@@ -6,7 +6,7 @@
  * ensureTrialAllowance hits 409 instead of topping up to $5.
  */
 import "./load-env-first";
-import { postgresClient } from "../src/db/index";
+import { closeDb } from "../src/db/index";
 import { createAppUserApiKey } from "../src/lib/app-api-keys";
 import { provisionAppUserBilling } from "../src/lib/billing/provision-app-user";
 import { ensureOpenMeterCustomer } from "../src/lib/openmeter/customers";
@@ -124,5 +124,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await postgresClient.end({ timeout: 5 });
+    await closeDb({ timeout: 5 });
   });
