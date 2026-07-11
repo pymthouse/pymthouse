@@ -202,6 +202,16 @@ test("buildKonnectUsageRateCard applies included usage discounts", () => {
   assert.deepEqual(card.discounts, { usage: "5000000000" });
 });
 
+test("buildKonnectUsageRateCard omits discounts when includedMicros is absent", () => {
+  const card = buildKonnectUsageRateCard({
+    key: "network_spend",
+    name: "Network usage",
+    featureId: "01G65Z755AFWAKHE12NY0CQ9FH",
+    unitAmount: "0.000001",
+  });
+  assert.equal(card.discounts, undefined);
+});
+
 test("isKonnectMeterQueryGet detects SDK meter query GETs", () => {
   assert.equal(
     isKonnectMeterQueryGet(

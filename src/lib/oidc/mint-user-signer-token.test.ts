@@ -127,6 +127,21 @@ test("mintAllowanceGateDecision rejects exhausted allowance when hosted billing 
   );
 });
 
+test("mintAllowanceGateDecision allows positive Konnect credit balance", () => {
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: true,
+        balanceUsdMicros: "44780000",
+        consumedUsdMicros: "5220000",
+        lifetimeGrantedUsdMicros: "50000000",
+      },
+      true,
+    ),
+    null,
+  );
+});
+
 test("enforceMintAllowanceGate throws billing_unavailable when allowance is null in test env", () => {
   const previousUrl = process.env.OPENMETER_URL;
   const previousLive = process.env.OPENMETER_TEST_LIVE;

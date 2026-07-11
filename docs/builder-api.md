@@ -354,11 +354,11 @@ Aggregated request and fee usage for a developer application — read-only, tena
 
 Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_nanos`, `signed_ticket_count`). The `network_fee_usd_nanos` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`; the app converts nanos → micros for ledger/UI. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
-**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns OpenMeter entitlement balance (`balanceUsdMicros`, `hasAccess`, etc.) from the user’s active plan subscription (Starter free tier or paid checkout).
+**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter with a `network_spend` rate card and included usage from `includedUsdMicros`. Providers edit allowance via `PUT /api/v1/apps/{clientId}/starter-plan` with `{ "includedUsdMicros": "5000000" }` (triggers OpenMeter plan sync). New end users are auto-subscribed to Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest) if they have no existing subscription row.
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.
 
-**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only; additive `createGrant` on top of Starter subscription included usage).
+**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`.
 
 **Endpoint:** `GET /api/v1/apps/{clientId}/usage`
 

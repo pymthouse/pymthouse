@@ -14,14 +14,8 @@ import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "./client-factory";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
-import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
+import { getKonnectCreditBalance } from "./konnect-credits";
 import { shouldUseKonnectRoutes } from "./route-mode";
-import {
-  getPrimaryOpenMeterSubscriptionForAppUser,
-  isOpenMeterSubscriptionActive,
-} from "./subscription-read";
-import { queryOpenMeterUsage } from "./usage-read";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
 export { ensureOpenMeterCustomer } from "./customers";
@@ -52,93 +46,24 @@ export async function grantTrialCredits(input: {
   );
 }
 
-/**
- * Konnect's entitlement-access endpoint only reports a boolean; it never
- * surfaces the consumed amount. Derive consumption from the signer-backed
- * network-fee meter (the same meter the usage dashboard reads) so the trial
- * allowance actually draws down. The trial grant is a one-year credit, so a
- * 365-day lookback safely bounds the meter query when the subscription start
- * is unknown.
- */
-async function sumKonnectNetworkFeeUsdMicros(input: {
-  clientId: string;
-  externalUserId: string;
-  startDate?: string | null;
-}): Promise<bigint> {
-  const startDate =
-    input.startDate ||
-    new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
-  const rows = await queryOpenMeterUsage({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-    startDate,
-    endDate: new Date().toISOString(),
-  });
-  let total = 0n;
-  for (const row of rows) {
-    total += BigInt(row.networkFeeUsdMicros || "0");
-  }
-  return total;
-}
-
+/** Konnect prepaid credits ledger (GET /credits/balance + grants list). */
 async function getKonnectTrialCreditBalance(input: {
-  clientId: string;
-  externalUserId: string;
   customerId: string;
-  featureKey: string;
   apiKey?: string;
 }): Promise<TrialCreditBalance | null> {
-  let hasAccess = await getKonnectEntitlementHasAccess({
+  const credits = await getKonnectCreditBalance({
     customerId: input.customerId,
-    featureKey: input.featureKey,
     apiKey: input.apiKey,
   });
-  if (hasAccess === null) {
+  if (!credits) {
     return null;
   }
 
-  let periodStart: string | null = null;
-  if (!hasAccess) {
-    const starterSubscription = await getPrimaryOpenMeterSubscriptionForAppUser({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
-    });
-    if (starterSubscription && isOpenMeterSubscriptionActive(starterSubscription.status)) {
-      // Konnect plan rate_cards.discounts.usage does not always surface in
-      // entitlement-access; an active starter subscription implies included trial usage.
-      //
-      // Known limitation: this assumes subscription existence implies provisioned
-      // trial credits. If a subscription exists but credits were never granted
-      // (e.g. plan sync or discount misconfiguration), the grant below is assumed
-      // present. Monitor until Konnect surfaces the discount in entitlement-access.
-      hasAccess = true;
-      periodStart = starterSubscription.activeFrom;
-    }
-  }
-
-  const defaultGrant = defaultStarterIncludedUsdMicros();
-  if (!hasAccess) {
-    return {
-      hasAccess: false,
-      balanceUsdMicros: "0",
-      consumedUsdMicros: "0",
-      lifetimeGrantedUsdMicros: "0",
-    };
-  }
-
-  const grant = BigInt(defaultGrant);
-  const consumed = await sumKonnectNetworkFeeUsdMicros({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-    startDate: periodStart,
-  });
-  const balance = consumed >= grant ? 0n : grant - consumed;
-
   return {
-    hasAccess: balance > 0n,
-    balanceUsdMicros: balance.toString(),
-    consumedUsdMicros: consumed.toString(),
-    lifetimeGrantedUsdMicros: defaultGrant,
+    hasAccess: credits.balanceUsdMicros > 0n,
+    balanceUsdMicros: credits.balanceUsdMicros.toString(),
+    consumedUsdMicros: credits.consumedUsdMicros.toString(),
+    lifetimeGrantedUsdMicros: credits.lifetimeGrantedUsdMicros.toString(),
   };
 }
 
@@ -160,10 +85,7 @@ export async function getTrialCreditBalance(input: {
 
   if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
     return getKonnectTrialCreditBalance({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
       customerId: customer.id,
-      featureKey,
       apiKey,
     });
   }

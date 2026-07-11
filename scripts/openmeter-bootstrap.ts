@@ -80,9 +80,12 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
   console.log(
     "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
   );
-  console.log("  - Starter plans sync with rate_cards.discounts.usage on Konnect");
+  console.log("  - Starter subscription is created for credit_then_invoice settlement");
   console.log(
-    "  - provisionAppUserBilling recreates subscriptions when entitlement-access is missing",
+    "  - ensureTrialAllowanceForAppUser POSTs /customers/{id}/credits/grants (idempotent starter key)",
+  );
+  console.log(
+    "  - Mint gate reads GET /customers/{id}/credits/balance (live); plan discounts.usage is not used",
   );
 }
 
@@ -142,7 +145,7 @@ async function bootstrapSelfHosted(
   await ensureSelfHostedMeters(client);
   await ensureSelfHostedFeature(client, featureKey);
   console.log(
-    "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant",
+    "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant (self-hosted)",
   );
 }
 
