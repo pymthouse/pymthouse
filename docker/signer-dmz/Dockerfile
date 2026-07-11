@@ -160,7 +160,7 @@ ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081
 ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
-ENV SIGNER_REMOTE_DISCOVERY=0
+ENV SIGNER_REMOTE_DISCOVERY=1
 # Local compose may enable a second CLI-only listener on CLI_PORT (8082).
 ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
 
@@ -193,7 +193,7 @@ ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081
 ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
-ENV SIGNER_REMOTE_DISCOVERY=0
+ENV SIGNER_REMOTE_DISCOVERY=1
 
 # Apache: $PORT = signing API; $CLI_PORT (8082) = livepeer-cli routes at / (no /__signer_cli prefix).
 # /__signer_cli on $PORT remains for single-port hosts (Railway). Loopback :8081 / :4935 are not public.
