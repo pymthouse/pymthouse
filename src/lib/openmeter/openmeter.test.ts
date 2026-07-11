@@ -22,6 +22,8 @@ import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
+import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
+import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -757,4 +759,15 @@ test("verifyOpenMeterPlanId returns null when remote plan missing", async () => 
 
   const view = await verifyOpenMeterPlanId(openMeterTestClient(client), "missing");
   assert.equal(view, null);
+});
+
+test("resolveNetworkFeeMeterSlug trims and remaps nanos onto micros", () => {
+  assert.equal(resolveNetworkFeeMeterSlug(null), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("  "), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(
+    resolveNetworkFeeMeterSlug(" network_fee_usd_micros "),
+    NETWORK_FEE_USD_MICROS_METER,
+  );
+  assert.equal(resolveNetworkFeeMeterSlug("network_fee_usd_nanos"), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("custom_meter"), "custom_meter");
 });

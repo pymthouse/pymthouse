@@ -839,9 +839,10 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
-  const [feeResult, countResult, dayCountResult] = await Promise.all([
+  const [feeResult, countResult, dayFeeResult, dayCountResult] = await Promise.all([
     client.meters.query(meterSlug, periodQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
+    client.meters.query(meterSlug, dayQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
   ]);
 
@@ -868,7 +869,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     }),
     byDailyPipeline: aggregateDailyPipelineModelRows({
       clientId: meterClientId,
-      feeRows: [],
+      feeRows: dayFeeResult.data || [],
       countRows: dayCountRows,
     }),
     requestsByDay: aggregateDailyRequestCounts({

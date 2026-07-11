@@ -139,17 +139,33 @@ async function ensureSelfHostedFeature(
   featureKey: string,
 ): Promise<void> {
   try {
-    const features = unwrapOpenMeterListResult<{ key: string }>(await client.features.list());
-    if (features.some((f) => f.key === featureKey)) {
+    const features = unwrapOpenMeterListResult<{
+      id: string;
+      key: string;
+      meterSlug?: string;
+    }>(await client.features.list());
+    const existing = features.find((f) => f.key === featureKey);
+    if (existing?.meterSlug === NETWORK_FEE_USD_MICROS_METER) {
       console.log(`[openmeter-bootstrap] feature exists: ${featureKey}`);
       return;
+    }
+    if (existing) {
+      console.warn(
+        `[openmeter-bootstrap] feature ${featureKey} meterSlug=${existing.meterSlug ?? "(none)"} ` +
+          `≠ ${NETWORK_FEE_USD_MICROS_METER}; recreating`,
+      );
+      await client.features.delete(existing.id);
     }
     await client.features.create({
       key: featureKey,
       name: "Network spend",
       meterSlug: NETWORK_FEE_USD_MICROS_METER,
     });
-    console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
+    console.log(
+      existing
+        ? `[openmeter-bootstrap] recreated feature: ${featureKey}`
+        : `[openmeter-bootstrap] created feature: ${featureKey}`,
+    );
   } catch (err) {
     console.warn("[openmeter-bootstrap] feature bootstrap skipped:", err);
   }

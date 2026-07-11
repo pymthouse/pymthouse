@@ -21,6 +21,7 @@ type KonnectMeter = {
 type KonnectFeature = {
   id: string;
   key: string;
+  meter?: { id?: string; key?: string };
 };
 
 const KONNECT_METER_DEFINITIONS = [
@@ -168,7 +169,22 @@ export async function ensureKonnectTenantCatalog(
 
   const features = await konnectAdminFetch<KonnectPage<KonnectFeature>>("/features");
   const featureKey = trialFeatureKey.trim() || DEFAULT_TRIAL_FEATURE_KEY;
-  if (!(features.data ?? []).some((feature) => feature.key === featureKey)) {
+  const existingFeature = (features.data ?? []).find((feature) => feature.key === featureKey);
+  const meterMatches =
+    existingFeature?.meter?.id === networkFeeMeter.id ||
+    existingFeature?.meter?.key === NETWORK_FEE_USD_MICROS_METER;
+
+  if (existingFeature && !meterMatches) {
+    await konnectAdminFetch(`/features/${existingFeature.id}`, { method: "DELETE" });
+    await konnectAdminFetch<KonnectFeature>("/features", {
+      method: "POST",
+      body: JSON.stringify({
+        key: featureKey,
+        name: "Network spend",
+        meter: { id: networkFeeMeter.id },
+      }),
+    });
+  } else if (!existingFeature) {
     await konnectAdminFetch<KonnectFeature>("/features", {
       method: "POST",
       body: JSON.stringify({

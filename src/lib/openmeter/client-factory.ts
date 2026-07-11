@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appOpenMeterConfig } from "@/db/schema";
 import type { OpenMeterBackendMode } from "./constants";
+import { NETWORK_FEE_USD_MICROS_METER } from "./constants";
 import { createOpenMeterClient, getHostedOpenMeterClient } from "./client";
 import type { OpenMeter } from "@openmeter/sdk";
 
@@ -12,6 +13,15 @@ export type ResolvedAppOpenMeterConfig = {
   meterSlug: string;
   trialFeatureKey: string;
 };
+
+/** Trim and default meter slugs; remap reverted nanos rows onto micros. */
+export function resolveNetworkFeeMeterSlug(raw: string | null | undefined): string {
+  const trimmed = raw?.trim() || "";
+  if (!trimmed || trimmed === "network_fee_usd_nanos") {
+    return NETWORK_FEE_USD_MICROS_METER;
+  }
+  return trimmed;
+}
 
 function decodeApiKey(stored: string | null | undefined): string | undefined {
   if (!stored?.trim()) {
@@ -64,7 +74,7 @@ export async function resolveAppOpenMeterConfig(
       mode,
       baseUrl: process.env.OPENMETER_URL?.replace(/\/$/, "") || "http://127.0.0.1:48888",
       apiKey: process.env.OPENMETER_API_KEY?.trim() || undefined,
-      meterSlug: row?.meterSlug || "network_fee_usd_micros",
+      meterSlug: resolveNetworkFeeMeterSlug(row?.meterSlug),
       trialFeatureKey: row?.trialFeatureKey || process.env.OPENMETER_TRIAL_FEATURE_KEY || "network_spend",
     };
   }
@@ -77,7 +87,7 @@ export async function resolveAppOpenMeterConfig(
     mode,
     baseUrl: row.baseUrl.replace(/\/$/, ""),
     apiKey: decodeApiKey(row.apiKeyEncrypted),
-    meterSlug: row.meterSlug || "network_fee_usd_micros",
+    meterSlug: resolveNetworkFeeMeterSlug(row.meterSlug),
     trialFeatureKey: row.trialFeatureKey || "network_spend",
   };
 }
