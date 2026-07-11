@@ -37,6 +37,22 @@ test("resolveIdentityWebhookEnv prefers IDENTITY_ISSUER over OIDC_ISSUER", () =>
   assert.equal(resolved.OIDC_CLIENT_CLAIM, "azp");
 });
 
+test("resolveIdentityWebhookEnv upgrades http IDENTITY_ISSUER for public hosts", () => {
+  const resolved = resolveIdentityWebhookEnv({
+    IDENTITY_ISSUER: "http://staging.pymthouse.com",
+  });
+
+  assert.equal(resolved.IDENTITY_ISSUER, ISSUER);
+});
+
+test("resolveIdentityWebhookEnv keeps http for localhost", () => {
+  const resolved = resolveIdentityWebhookEnv({
+    NEXTAUTH_URL: "http://localhost:3001",
+  });
+
+  assert.equal(resolved.IDENTITY_ISSUER, "http://localhost:3001/api/v1/oidc");
+});
+
 test("buildRemoteSignerWebhookConfig works with NEXTAUTH_URL only", () => {
   const config = buildRemoteSignerWebhookConfig({
     NEXTAUTH_URL: "https://staging.pymthouse.com",

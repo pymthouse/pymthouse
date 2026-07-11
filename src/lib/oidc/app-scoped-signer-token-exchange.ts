@@ -33,6 +33,13 @@ const LEGACY_SIGNER_AUDIENCES = new Set([
   "livepeer-remote-signer",
 ]);
 
+/** Composite API keys are `app_<24hex>_<secret>` (lowercase hex; no dots). */
+const COMPOSITE_APP_API_KEY_PREFIX_RE = /^app_[a-f0-9]{24}_/;
+/** Full composite key with a non-empty secret segment. */
+const COMPOSITE_APP_API_KEY_RE = /^app_[a-f0-9]{24}_.+/;
+/** Opaque hex secret from a composite exchange (subject_token after split). */
+const OPAQUE_HEX_SECRET_RE = /^[a-f0-9]{32,}$/i;
+
 export class AppScopedSignerTokenExchangeError extends Error {
   code: string;
   status: number;
@@ -88,11 +95,11 @@ function isJwtSubjectToken(subjectToken: string): boolean {
     return false;
   }
   // Composite API keys are `app_<24hex>_<secret>` (no dots); JWTs have three segments.
-  if (/^app_[a-f0-9]{24}_/.test(subjectToken)) {
+  if (COMPOSITE_APP_API_KEY_PREFIX_RE.test(subjectToken)) {
     return false;
   }
   // Opaque hex secret from a composite exchange (subject_token after split).
-  if (/^[a-f0-9]{32,}$/i.test(subjectToken)) {
+  if (OPAQUE_HEX_SECRET_RE.test(subjectToken)) {
     return false;
   }
   return subjectToken.split(".").length === 3;
@@ -213,8 +220,8 @@ export async function resolveAppScopedSubjectToken(
   // Bare stored API key, composite app_*_*, or opaque hex secret segment.
   const looksLikeApiKey =
     (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) ||
-    /^app_[a-f0-9]{24}_.+/.test(token) ||
-    /^[a-f0-9]{32,}$/i.test(token);
+    COMPOSITE_APP_API_KEY_RE.test(token) ||
+    OPAQUE_HEX_SECRET_RE.test(token);
   if (!looksLikeApiKey) {
     throw new AppScopedSignerTokenExchangeError(
       "invalid_grant",

@@ -58,7 +58,8 @@ function isLocalOrPrivateHost(hostname: string): boolean {
   return false;
 }
 
-function ensureHttpsForProduction(url: string): string {
+/** Upgrade http→https for public hosts; leave http for local/private hosts. */
+export function ensureHttpsForProduction(url: string): string {
   try {
     const u = new URL(url);
     if (!isLocalOrPrivateHost(u.hostname) && u.protocol === "http:") {

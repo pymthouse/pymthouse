@@ -1,6 +1,11 @@
 import type { RemoteSignerWebhookConfig } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { createEndUserVerifierFromEnv } from "@pymthouse/clearinghouse-identity-webhook/verifiers";
-import { OIDC_MOUNT_PATH, getIssuer, getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import {
+  OIDC_MOUNT_PATH,
+  ensureHttpsForProduction,
+  getIssuer,
+  getPublicOrigin,
+} from "@/lib/oidc/issuer-urls";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -26,7 +31,7 @@ function resolveIssuer(env: EnvSource): string {
   if (!configured) {
     return getIssuer();
   }
-  const normalized = trimTrailingSlash(configured);
+  const normalized = trimTrailingSlash(ensureHttpsForProduction(configured));
   return normalized.endsWith(OIDC_MOUNT_PATH)
     ? normalized
     : `${normalized}${OIDC_MOUNT_PATH}`;
@@ -41,8 +46,11 @@ export function resolveIdentityWebhookEnv(env: EnvSource): Record<string, string
   const issuer = resolveIssuer(env);
 
   next.IDENTITY_AUTH_MODE = trimEnv(env, "IDENTITY_AUTH_MODE") || "oidc";
-  next.IDENTITY_ISSUER = trimEnv(env, "IDENTITY_ISSUER") || issuer;
-  // Package still reads OIDC_ISSUER for JWT iss; keep it aligned with IDENTITY_ISSUER.
+  // Always use resolveIssuer so IDENTITY_ISSUER / OIDC_ISSUER / NEXTAUTH_URL
+  // get the same HTTPS + mount-path normalization as getIssuer().
+  next.IDENTITY_ISSUER = issuer;
+  // Package still reads OIDC_ISSUER for JWT iss; keep it aligned with IDENTITY_ISSUER
+  // unless an explicit OIDC_ISSUER override is set.
   next.OIDC_ISSUER = trimEnv(env, "OIDC_ISSUER") || next.IDENTITY_ISSUER;
   next.OIDC_AUDIENCE = trimEnv(env, "OIDC_AUDIENCE") || next.OIDC_ISSUER;
   next.OIDC_CLIENT_CLAIM = trimEnv(env, "OIDC_CLIENT_CLAIM") || "client_id";
