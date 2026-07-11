@@ -175,14 +175,9 @@ export async function ensureKonnectTenantCatalog(
     existingFeature?.meter?.key === NETWORK_FEE_USD_MICROS_METER;
 
   if (existingFeature && !meterMatches) {
-    const featureIdOk = isOpenMeterUlid(existingFeature.id);
     console.warn(
-      `[openmeter] Konnect feature ${featureKey} id=${existingFeature.id}` +
-        `${featureIdOk ? "" : " (not a ULID)"} ` +
-        `meter id=${existingFeature.meter?.id ?? "(none)"} ` +
-        `key=${existingFeature.meter?.key ?? "(none)"} ` +
-        `does not match ${NETWORK_FEE_USD_MICROS_METER} (${networkFeeMeter.id}); ` +
-        `manually recreate or repoint the feature to the micros meter`,
+      `[openmeter] Konnect feature ${featureKey} meter does not match ` +
+        `${NETWORK_FEE_USD_MICROS_METER}; manually recreate or repoint the feature`,
     );
   } else if (!existingFeature) {
     await konnectAdminFetch<KonnectFeature>("/features", {
