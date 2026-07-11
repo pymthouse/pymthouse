@@ -16,8 +16,8 @@ Everything needed to run the go-livepeer signer with an optional **Apache + mod_
 | Image | Dockerfile | go-livepeer source | Use |
 |-------|------------|--------------------|-----|
 | `pymthouse/signer-dmz:local` | `Dockerfile` → `signer-dmz-local` | `../go-livepeer` via `lpclearinghouse` | **Local dev** with PymtHouse (`docker-compose.yml`) |
-| `pymthouse/signer-dmz:latest` | `Dockerfile` → `signer-dmz` (default) | `livepeer/go-livepeer:sha-716dc1c75db713b6b13020ab9d1eb1f329409caa` | **Production** (Railway / Render) and prod smoke tests |
-| `pymthouse-signer:local` | `Dockerfile.signer` | `livepeer/go-livepeer:sha-716dc1c75db713b6b13020ab9d1eb1f329409caa` | **Livepeer only** (no Apache; not for public deploy) |
+| `pymthouse/signer-dmz:latest` | `Dockerfile` → `signer-dmz` (default) | `livepeer/go-livepeer:sha-469cf754a259b34927f8dc8d634da3b005493076` | **Production** (Railway / Render) and prod smoke tests |
+| `pymthouse-signer:local` | `Dockerfile.signer` | `livepeer/go-livepeer:sha-469cf754a259b34927f8dc8d634da3b005493076` | **Livepeer only** (no Apache; not for public deploy) |
 
 ### Force rebuild
 
