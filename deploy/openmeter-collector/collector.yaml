@@ -121,8 +121,11 @@ pipeline:
         let eth_usd = meta("eth_usd_price").number()
         root = if $eth_usd == null { throw("eth_usd price cache miss") }
 
+        # USD micros = fee_wei * eth_usd / 1e12 (1 USD = 1e6 micros).
+        # Ceil so sub-micro live-runner fees still count as at least 1 micro;
+        # do not use a nanos meter (reverted cutover).
         let fee_wei = $data.computed_fee.number().or(0)
-        let fee_usd_micros = ($fee_wei * $eth_usd / 1000000000000).round()
+        let fee_usd_micros = ($fee_wei * $eth_usd / 1000000000000).ceil()
 
         root = if $auth_id == "" {
           deleted()

@@ -338,7 +338,7 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
-2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros`, and writes normalized CloudEvents to OpenMeter/Konnect:
+2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros` via `ceil(fee_wei * eth_usd / 1e12)` so sub-micro fees still count as at least 1 micro, and writes normalized CloudEvents to OpenMeter/Konnect:
    - `subject` = compound `auth_id` (`client_id:usage_subject`) — matches OpenMeter customer `subject_key`
    - `data.client_id` = tenant (developer app OAuth `client_id`)
    - `data.usage_subject` = end user (OIDC `sub` analog)
