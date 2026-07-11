@@ -8,7 +8,7 @@ import {
   getDashboardUsageSummary,
   type DashboardUsageSummary,
 } from "@/lib/dashboard-usage-summary";
-import { formatUsdMicros } from "@/lib/format-usd";
+import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 function DashboardUsageChart({
   appsCount,
@@ -67,7 +67,7 @@ export default async function DashboardUsagePanel({
     appsWithUsage,
   } = summary;
 
-  const totalFeesLabel = formatUsdMicros(totalNetworkFeeUsdMicros, 6) ?? "$0";
+  const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 4) ?? "$0";
   const periodTooltip = [
     `${formatBillingPeriod(cycle.start)} — ${formatBillingPeriod(cycle.end)}`,
     `Resets ${formatPeriodResetLabel(cycle.end)}`,

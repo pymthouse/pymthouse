@@ -5,7 +5,7 @@ dotenv.config();
 import { createOpenMeterClient } from "../src/lib/openmeter/client";
 import {
   isKonnectMeteringUrl,
-  NETWORK_FEE_USD_NANOS_METER,
+  NETWORK_FEE_USD_MICROS_METER,
   normalizeKonnectMeteringUrl,
   SIGNED_TICKET_COUNT_METER,
 } from "../src/lib/openmeter/constants";
@@ -68,10 +68,10 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
 
   await ensureKonnectTenantCatalog(featureKey);
 
-  const networkFeeMeterId = await resolveKonnectMeterId(NETWORK_FEE_USD_NANOS_METER);
+  const networkFeeMeterId = await resolveKonnectMeterId(NETWORK_FEE_USD_MICROS_METER);
   const ticketCountMeterId = await resolveKonnectMeterId(SIGNED_TICKET_COUNT_METER);
   console.log(
-    `[openmeter-bootstrap] Konnect meter ready: ${NETWORK_FEE_USD_NANOS_METER} id=${networkFeeMeterId}`,
+    `[openmeter-bootstrap] Konnect meter ready: ${NETWORK_FEE_USD_MICROS_METER} id=${networkFeeMeterId}`,
   );
   console.log(
     `[openmeter-bootstrap] Konnect meter ready: ${SIGNED_TICKET_COUNT_METER} id=${ticketCountMeterId}`,
@@ -127,7 +127,7 @@ async function ensureSelfHostedFeature(
     await client.features.create({
       key: featureKey,
       name: "Network spend",
-      meterSlug: NETWORK_FEE_USD_NANOS_METER,
+      meterSlug: NETWORK_FEE_USD_MICROS_METER,
     });
     console.log(`[openmeter-bootstrap] created feature: ${featureKey}`);
   } catch (err) {

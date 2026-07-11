@@ -5,7 +5,7 @@ import type {
   BillingUsageDashboardPayload,
   BillingUserUsageRow,
 } from "@/lib/billing-usage-dashboard-data";
-import { formatUsdMicros } from "@/lib/format-usd";
+import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 type AppUsageEntry = BillingAppUsageSummary;
 type UserUsage = BillingUserUsageRow;
@@ -159,7 +159,7 @@ export function AppUsageSection({
                 }`}
               >
                 {isOpenMeter
-                  ? formatUsdMicros(entry.networkFeeUsdMicros, 6) ?? "—"
+                  ? formatUsdMicrosString(entry.networkFeeUsdMicros, 4) ?? "—"
                   : formatBillingWei(entry.totalFeeWei)}
               </p>
             </div>
@@ -168,9 +168,9 @@ export function AppUsageSection({
                 {isOpenMeter ? "Billable (USD est.)" : "Network fee (USD)"}
               </p>
               <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
-                {formatUsdMicros(
+                {formatUsdMicrosString(
                   isOpenMeter ? entry.endUserBillableUsdMicros : entry.networkFeeUsdMicros,
-                  6,
+                  4,
                 ) ?? "—"}
               </p>
             </div>
@@ -181,7 +181,7 @@ export function AppUsageSection({
                 <span
                   key={`${pm.pipeline}|${pm.modelId}`}
                   className="text-xs bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded"
-                  title={`${pm.requestCount} requests · ${formatUsdMicros(pm.networkFeeUsdMicros, 6) ?? "—"}`}
+                  title={`${pm.requestCount} requests · ${formatUsdMicrosString(pm.networkFeeUsdMicros, 6) ?? "—"}`}
                 >
                   {pm.pipeline} / {pm.modelId.length > 20 ? `${pm.modelId.slice(0, 18)}…` : pm.modelId}
                 </span>
@@ -273,7 +273,7 @@ function AppUsageUserTable({
                 )}
                 {isOpenMeter && (
                   <td className="px-4 sm:px-5 py-3 text-right text-emerald-400 font-mono text-xs font-semibold break-all">
-                    {formatUsdMicros(userUsage.networkFeeUsdMicros, 6) ?? "—"}
+                    {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 4) ?? "—"}
                   </td>
                 )}
               </tr>
@@ -304,7 +304,7 @@ function AppUsageUserTable({
                 )}
                 {isOpenMeter && (
                   <td className="px-4 sm:px-5 py-2 text-right text-zinc-400 tabular-nums text-xs break-all">
-                    {formatUsdMicros(pm.networkFeeUsdMicros, 6) ?? "—"}
+                    {formatUsdMicrosString(pm.networkFeeUsdMicros, 4) ?? "—"}
                   </td>
                 )}
               </tr>

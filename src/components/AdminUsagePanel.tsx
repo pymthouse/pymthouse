@@ -7,7 +7,7 @@ import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import UsageMetricCell from "@/components/UsageMetricCell";
 import { formatBillingPeriod, formatPeriodResetLabel } from "@/lib/billing-format";
 import type { DashboardUsageSummary } from "@/lib/dashboard-usage-summary";
-import { formatUsdMicros } from "@/lib/format-usd";
+import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 export type AdminPlatformStat = {
   label: string;
@@ -386,9 +386,9 @@ function deriveFilteredUsage(
   if (summary) {
     if (filterAppId) {
       totalFeesLabel =
-        formatUsdMicros(summary.feesByAppId[filterAppId] ?? "0", 6) ?? "$0";
+        formatUsdMicrosString(summary.feesByAppId[filterAppId] ?? "0", 4) ?? "$0";
     } else {
-      totalFeesLabel = formatUsdMicros(summary.totalNetworkFeeUsdMicros, 6) ?? "$0";
+      totalFeesLabel = formatUsdMicrosString(summary.totalNetworkFeeUsdMicros, 4) ?? "$0";
     }
   }
 
