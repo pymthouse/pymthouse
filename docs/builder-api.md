@@ -366,11 +366,13 @@ Aggregated request and fee usage for a developer application — read-only, tena
 
 Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
-**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
+**Balance (included usage):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns remaining included-usage balance (`balanceUsdMicros`, `hasAccess`, etc.). On self-hosted OpenMeter this is the metered entitlement balance (`issueAfterReset` from the plan). On Konnect, prepaid/manual credit grants still appear on `GET /credits/balance` (`live`); plan-attached monthly included usage is synced as `rate_cards.discounts.usage`.
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter is a **free** plan with the same unit rates as other plans and a monthly included-usage amount (`includedUsdMicros`, seeded at `$5` / `5000000` micros). That amount syncs onto the OpenMeter/Konnect plan (`entitlementTemplate.issueAfterReset` self-hosted; `discounts.usage` on Konnect) and resets each billing period. New end users are auto-subscribed to Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`). After the monthly included usage is exhausted, mint/sign is blocked until the period resets or the user upgrades to a paid plan. Set Starter `includedUsdMicros` to `0` to disable free monthly usage for that app.
 
-**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`.
+**Paid subscription included usage:** Custom `type=subscription` plans use the same `includedUsdMicros` field for monthly included usage on that plan. After included usage is consumed, overage settles via `credit_then_invoice` while the paid subscription remains active.
+
+**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`. These are additive to plan-attached included usage, not a replacement for Starter’s monthly allowance.
 
 **Endpoint:** `GET /api/v1/apps/{clientId}/usage`
 
@@ -580,7 +582,7 @@ Returns the active plan, subscription period, aggregated usage, per-day timeline
 
 | Field | Description |
 | --- | --- |
-| `includedUsdMicros` | Subscription usage allowance in USD micros (e.g. `10000000` = $10.00). |
+| `includedUsdMicros` | Monthly included usage in USD micros for Starter and subscription plans (e.g. `10000000` = $10.00). |
 | `billingCycle` | `"monthly"` (default). |
 | `discoveryProfileId` | Optional FK to legacy **`discovery_profiles`** rows. Omitted from billing summary payloads today; may still appear on **`GET .../plans`**. Integrator network capability limits use **`GET .../manifest`**. |
 

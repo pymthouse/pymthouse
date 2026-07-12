@@ -4,12 +4,11 @@ export const STARTER_DEFAULT_PLAN_INTERNAL_NAME = "__pymthouse_starter__";
 
 export const STARTER_DEFAULT_PLAN_DISPLAY_NAME = "Starter";
 
+/** Seed / UI fallback when a Starter plan has no includedUsdMicros yet ($5). */
+export const DEFAULT_STARTER_INCLUDED_USD_MICROS = "5000000";
+
 export function defaultStarterIncludedUsdMicros(): string {
-  const raw = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS?.trim();
-  if (raw && /^\d+$/.test(raw)) {
-    return raw;
-  }
-  return "5000000";
+  return DEFAULT_STARTER_INCLUDED_USD_MICROS;
 }
 
 export function planDisplayNameWithStarter(row: {

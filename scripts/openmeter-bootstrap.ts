@@ -98,14 +98,14 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
   );
   console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
   console.log(
-    "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
+    "[openmeter-bootstrap] Per-customer Starter subscriptions are applied when users are provisioned:",
   );
   console.log("  - Starter subscription is created for credit_then_invoice settlement");
   console.log(
-    "  - ensureTrialAllowanceForAppUser POSTs /customers/{id}/credits/grants (idempotent starter key)",
+    "  - Monthly included usage comes from the synced Starter plan (Konnect discounts.usage / self-hosted issueAfterReset)",
   );
   console.log(
-    "  - Mint gate reads GET /customers/{id}/credits/balance (live); plan discounts.usage is not used",
+    "  - Mint gate allows remaining included usage, manual credit grants, or an active paid subscription",
   );
 }
 
@@ -222,9 +222,9 @@ async function main() {
 
   console.log(`[openmeter-bootstrap] target: ${baseUrl}`);
   console.log(
-    `[openmeter-bootstrap] default starter trial allowance: ${trialUsdMicros} USD micros ($${(
+    `[openmeter-bootstrap] Starter plan seed default: ${trialUsdMicros} USD micros ($${(
       Number(trialUsdMicros) / 1_000_000
-    ).toFixed(2)}) on feature ${featureKey}`,
+    ).toFixed(2)}) — grants use each app's Starter plan includedUsdMicros; feature ${featureKey}`,
   );
 
   if (isKonnectMeteringUrl(baseUrl, apiKey) && apiKey) {

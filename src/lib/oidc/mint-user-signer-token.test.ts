@@ -122,7 +122,7 @@ test("mintAllowanceGateDecision rejects exhausted allowance when hosted billing 
     ),
     {
       code: "trial_credits_exhausted",
-      message: "Starter allowance exhausted",
+      message: "Starter included usage exhausted",
     },
   );
 });
@@ -182,8 +182,59 @@ test("mintAllowanceGateDecision rejects zero micros even when hasAccess is stale
     ),
     {
       code: "trial_credits_exhausted",
-      message: "Starter allowance exhausted",
+      message: "Starter included usage exhausted",
     },
+  );
+});
+
+test("mintAllowanceGateDecision allows paid subscription with zero starter balance", () => {
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: false,
+        balanceUsdMicros: "0",
+        consumedUsdMicros: "5000000",
+        lifetimeGrantedUsdMicros: "5000000",
+      },
+      true,
+      { hasPaidSubscription: true },
+    ),
+    null,
+  );
+});
+
+test("mintAllowanceGateDecision allows plan-included entitlement access with zero credits", () => {
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: false,
+        balanceUsdMicros: "0",
+        consumedUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      },
+      true,
+      { hasPlanIncludedAccess: true },
+    ),
+    null,
+  );
+});
+
+test("mintAllowanceGateDecision allows AllowanceAccessSnapshot with paid subscription", () => {
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        allowance: {
+          hasAccess: false,
+          balanceUsdMicros: "0",
+          consumedUsdMicros: "0",
+          lifetimeGrantedUsdMicros: "0",
+        },
+        hasPaidSubscription: true,
+        hasPlanIncludedAccess: false,
+      },
+      true,
+    ),
+    null,
   );
 });
 

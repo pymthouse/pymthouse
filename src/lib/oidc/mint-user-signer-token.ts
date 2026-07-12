@@ -11,7 +11,12 @@ import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
+import {
+  mintAllowanceGateDecision as decideMintAllowanceGate,
+  resolveAllowanceAccessForAppUser,
+  type AllowanceAccessSnapshot,
+  type MintAllowanceGateDenial,
+} from "@/lib/openmeter/allowance-access";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
@@ -152,31 +157,28 @@ export function signerJwtAudience(): string {
 }
 
 export function mintAllowanceGateDecision(
-  allowance: TrialCreditBalance | null,
+  allowanceOrSnapshot: TrialCreditBalance | AllowanceAccessSnapshot | null,
   hostedBillingEnabled: boolean,
-): { code: "billing_unavailable" | "trial_credits_exhausted"; message: string } | null {
-  if (!hostedBillingEnabled) {
-    return null;
-  }
-  if (!allowance) {
-    return {
-      code: "billing_unavailable",
-      message: "Billing allowance could not be confirmed",
-    };
-  }
-  // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
-  // remainders still authorize after collector ceil-to-micro billing.
-  if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
-    return {
-      code: "trial_credits_exhausted",
-      message: "Starter allowance exhausted",
-    };
-  }
-  return null;
+  options?: {
+    hasPaidSubscription?: boolean;
+    hasPlanIncludedAccess?: boolean;
+  },
+): MintAllowanceGateDenial | null {
+  return decideMintAllowanceGate(allowanceOrSnapshot, hostedBillingEnabled, options);
 }
 
-export function enforceMintAllowanceGate(allowance: TrialCreditBalance | null): void {
-  const decision = mintAllowanceGateDecision(allowance, isHostedAdminClientAvailable());
+export function enforceMintAllowanceGate(
+  allowanceOrSnapshot: TrialCreditBalance | AllowanceAccessSnapshot | null,
+  options?: {
+    hasPaidSubscription?: boolean;
+    hasPlanIncludedAccess?: boolean;
+  },
+): void {
+  const decision = mintAllowanceGateDecision(
+    allowanceOrSnapshot,
+    isHostedAdminClientAvailable(),
+    options,
+  );
   if (decision) {
     throw new MintUserSignerTokenError(decision.code, decision.message, 402);
   }
@@ -196,6 +198,7 @@ export async function mintSignerJwtForExternalUser(input: {
   }
 
   let allowance: TrialCreditBalance | null;
+  let access: AllowanceAccessSnapshot;
   try {
     if (isHostedAdminClientAvailable()) {
       await ensureAppUserKonnectCustomer({
@@ -207,6 +210,11 @@ export async function mintSignerJwtForExternalUser(input: {
       clientId: input.developerAppId,
       externalUserId,
     }));
+    access = await resolveAllowanceAccessForAppUser({
+      clientId: input.developerAppId,
+      externalUserId,
+      allowance,
+    });
   } catch (err) {
     if (isHostedAdminClientAvailable()) {
       throw new MintUserSignerTokenError(
@@ -218,7 +226,7 @@ export async function mintSignerJwtForExternalUser(input: {
     throw err;
   }
 
-  enforceMintAllowanceGate(allowance);
+  enforceMintAllowanceGate(access);
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

@@ -21,7 +21,6 @@ import {
 import { parseOpenMeterCustomerKey } from "../src/lib/openmeter/customer-key";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "../src/lib/openmeter/admin-client";
 import { ensureStarterSubscriptionForAppUser } from "../src/lib/openmeter/starter-subscription";
-import { ensureTrialAllowanceForAppUser } from "../src/lib/openmeter/trial-allowance";
 import { getTrialCreditBalance } from "../src/lib/openmeter/entitlements";
 
 type Args = {
@@ -152,10 +151,6 @@ async function ensureOne(input: {
     externalUserId: input.externalUserId,
   });
   const sub = await ensureStarterSubscriptionForAppUser({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  await ensureTrialAllowanceForAppUser({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });

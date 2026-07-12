@@ -25,6 +25,11 @@ import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
   validateCustomPlanName,
 } from "@/lib/openmeter/plan-naming";
+import {
+  dollarAmountToUsdMicros,
+  formatUsdMicrosAsDollars,
+  sanitizeDollarAmountInput,
+} from "@/lib/format-usd-micros";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -1149,23 +1154,27 @@ function StarterPlanCard({
   onSaved: () => void | Promise<void>;
 }>) {
   const [expanded, setExpanded] = useState(false);
-  const [includedUsdMicros, setIncludedUsdMicros] = useState(plan.includedUsdMicros ?? "5000000");
+  const [includedUsdDisplay, setIncludedUsdDisplay] = useState(
+    () => formatUsdMicrosAsDollars(plan.includedUsdMicros ?? "5000000") || "$0",
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const syncFailure = planSyncFailureMessage(plan);
 
   useEffect(() => {
     if (expanded) {
-      setIncludedUsdMicros(plan.includedUsdMicros ?? "5000000");
+      setIncludedUsdDisplay(
+        formatUsdMicrosAsDollars(plan.includedUsdMicros ?? "5000000") || "$0",
+      );
       setError(null);
     }
   }, [expanded, plan.includedUsdMicros]);
 
   const save = async () => {
     if (!canEdit) return;
-    const trimmed = includedUsdMicros.trim();
-    if (!/^\d+$/.test(trimmed)) {
-      setError("Allowance must be a non-negative whole number (USD micros)");
+    const micros = dollarAmountToUsdMicros(includedUsdDisplay);
+    if (micros == null) {
+      setError("Allowance must be a non-negative dollar amount (up to 6 decimal places)");
       return;
     }
     setSaving(true);
@@ -1174,7 +1183,7 @@ function StarterPlanCard({
       const res = await fetch(`/api/v1/apps/${appId}/starter-plan`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ includedUsdMicros: trimmed }),
+        body: JSON.stringify({ includedUsdMicros: micros }),
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
@@ -1225,16 +1234,16 @@ function StarterPlanCard({
               isStarterDefault: true,
             })}
             <span className="text-[10px] font-medium uppercase tracking-wide text-sky-400/90 border border-sky-500/30 rounded px-1.5 py-0.5">
-              Free tier
+              Free plan
             </span>
           </h3>
           <p className="text-xs text-zinc-500 mt-1">
-            Included usage for new end users via OpenMeter subscription entitlements (network
-            pass-through pricing)
+            Free plan for new end users: same unit rates as other plans, with monthly included
+            usage. After the allowance is used, users upgrade to a paid plan for more.
           </p>
           {!expanded && plan.includedUsdMicros && (
             <p className="text-sm text-sky-300/90 mt-2">
-              ${usdMicrosToDisplay(plan.includedUsdMicros)} USD included per billing period
+              {formatUsdMicrosAsDollars(plan.includedUsdMicros) || "$0"} USD included per month
             </p>
           )}
           {syncFailure && (
@@ -1257,18 +1266,30 @@ function StarterPlanCard({
       {expanded && (
         <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
           <label className="block text-sm text-zinc-300">
-            Included usage allowance (USD micros){" "}
+            Monthly included usage (USD)
             <input
               type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={includedUsdMicros}
-              onChange={(e) => setIncludedUsdMicros(e.target.value)}
+              inputMode="decimal"
+              value={includedUsdDisplay}
+              onChange={(e) => {
+                const next = sanitizeDollarAmountInput(
+                  e.target.value.includes("$") ? e.target.value : `$${e.target.value}`,
+                );
+                setIncludedUsdDisplay(next);
+              }}
+              onBlur={() => {
+                const micros = dollarAmountToUsdMicros(includedUsdDisplay);
+                if (micros != null) {
+                  setIncludedUsdDisplay(formatUsdMicrosAsDollars(micros) || "$0");
+                }
+              }}
+              placeholder="$5.000000"
               className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
             />
           </label>
           <p className="text-xs text-zinc-500">
-            Display: ${usdMicrosToDisplay(includedUsdMicros || "0")} USD · 1,000,000 micros = $1
+            Resets each billing period · up to 6 decimal places ($0.000001 = 1 micro) · set $0 to
+            disable free usage
           </p>
           <div className="flex flex-wrap gap-2">
             <button

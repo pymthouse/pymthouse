@@ -1,12 +1,15 @@
 /**
- * Create a zero-credit test user with starter idempotency key locked,
- * then mint a composite API key for balance-gate testing.
+ * Create a zero-included-usage test user and mint a composite API key for
+ * balance-gate testing.
  *
- * Locks `starter:{customerId}:{feature}` with a short-lived $5 grant so staging
- * ensureTrialAllowance hits 409 instead of topping up to $5.
+ * Temporarily sets the app Starter plan includedUsdMicros to 0 (and syncs) so
+ * provision does not attach monthly included usage, then restores the previous
+ * value. Prefer a dedicated test app client id.
  */
 import "./load-env-first";
-import { closeDb } from "../src/db/index";
+import { eq } from "drizzle-orm";
+import { closeDb, db } from "../src/db/index";
+import { plans } from "../src/db/schema";
 import { createAppUserApiKey } from "../src/lib/app-api-keys";
 import { provisionAppUserBilling } from "../src/lib/billing/provision-app-user";
 import { ensureOpenMeterCustomer } from "../src/lib/openmeter/customers";
@@ -15,12 +18,14 @@ import {
   getTrialFeatureKeyForApp,
 } from "../src/lib/openmeter/client-factory";
 import {
-  createKonnectCreditGrant,
   getKonnectCreditBalance,
   listKonnectCreditGrants,
 } from "../src/lib/openmeter/konnect-credits";
 import { getTrialCreditBalance } from "../src/lib/openmeter/entitlements";
+import { syncPlanToOpenMeter } from "../src/lib/openmeter/plans-sync";
+import { getOrCreateStarterPlan } from "../src/lib/starter-default-plan";
 import { getProviderAppByClientId } from "../src/lib/provider-apps";
+import { resolveOrCreateAppUser } from "../src/lib/usage/record-signed-ticket";
 
 function argValue(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
@@ -29,8 +34,6 @@ function argValue(flag: string): string | undefined {
 }
 
 async function main() {
-  process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = "0";
-
   const clientId = argValue("--client-id");
   if (!clientId?.startsWith("app_")) {
     throw new Error("--client-id app_<24hex> is required");
@@ -44,77 +47,86 @@ async function main() {
     throw new Error(`developer app not found for ${clientId}`);
   }
 
-  const provisioned = await provisionAppUserBilling({
-    clientId,
-    externalUserId,
-  });
+  const starter = await getOrCreateStarterPlan(clientId);
+  const previousIncluded = starter.includedUsdMicros;
+  const now = new Date().toISOString();
+  await db
+    .update(plans)
+    .set({ includedUsdMicros: "0", updatedAt: now })
+    .where(eq(plans.id, starter.id));
+  await syncPlanToOpenMeter(starter.id);
 
-  const om = getHostedTrialOpenMeterClient();
-  if (!om) throw new Error("OpenMeter not configured");
-  const customer = await ensureOpenMeterCustomer(
-    om,
-    `${clientId}:${externalUserId}`,
-  );
-  const featureKey = await getTrialFeatureKeyForApp(clientId);
-  const idempotencyKey = `starter:${customer.id}:${featureKey}`;
+  try {
+    await resolveOrCreateAppUser({ clientId, externalUserId });
 
-  const lock = await createKonnectCreditGrant({
-    customerId: customer.id,
-    amountUsdMicros: 5_000_000n,
-    name: "Starter trial credits",
-    description: "Balance-gate lock (expires in 10s)",
-    featureKey,
-    idempotencyKey,
-    expiresAfter: "PT10S",
-  });
-  console.log("starter lock", lock);
-  console.log("waiting for lock grant to expire...");
-  await new Promise((r) => setTimeout(r, 12_000));
+    const om = getHostedTrialOpenMeterClient();
+    if (!om) throw new Error("OpenMeter not configured");
+    const customer = await ensureOpenMeterCustomer(
+      om,
+      `${clientId}:${externalUserId}`,
+    );
+    await getTrialFeatureKeyForApp(clientId);
 
-  const created = await createAppUserApiKey({
-    developerAppId: app.id,
-    appUserId: provisioned.appUserId,
-    publicClientId: clientId,
-    label: "balance-gate-zero-credit",
-  });
+    const provisioned = await provisionAppUserBilling({
+      clientId,
+      externalUserId,
+    });
 
-  const grants = await listKonnectCreditGrants({ customerId: customer.id });
-  const raw = await getKonnectCreditBalance({ customerId: customer.id });
-  const balance = await getTrialCreditBalance({ clientId, externalUserId });
+    const created = await createAppUserApiKey({
+      developerAppId: app.id,
+      appUserId: provisioned.appUserId,
+      publicClientId: clientId,
+      label: "balance-gate-zero-credit",
+    });
 
-  console.log(
-    JSON.stringify(
-      {
-        clientId,
-        externalUserId,
-        appUserId: provisioned.appUserId,
-        customerId: customer.id,
-        customerKey: `${clientId}:${externalUserId}`,
-        idempotencyKey,
-        grants: grants.map((g) => ({
-          id: g.id,
-          key: g.key,
-          amount: g.amount,
-          status: g.status,
-        })),
-        raw: raw
-          ? {
-              balanceUsdMicros: raw.balanceUsdMicros.toString(),
-              lifetimeGrantedUsdMicros: raw.lifetimeGrantedUsdMicros.toString(),
-              consumedUsdMicros: raw.consumedUsdMicros.toString(),
-            }
-          : null,
-        balance,
-        apiKey: created.apiKey,
-        keyId: created.id,
-      },
-      null,
-      2,
-    ),
-  );
+    const grants = await listKonnectCreditGrants({ customerId: customer.id });
+    const raw = await getKonnectCreditBalance({ customerId: customer.id });
+    const balance = await getTrialCreditBalance({ clientId, externalUserId });
 
-  if (balance?.hasAccess || (raw && raw.balanceUsdMicros > 0n)) {
-    throw new Error("expected zero live balance after lock expiry");
+    console.log(
+      JSON.stringify(
+        {
+          clientId,
+          externalUserId,
+          appUserId: provisioned.appUserId,
+          customerId: customer.id,
+          customerKey: `${clientId}:${externalUserId}`,
+          starterIncludedUsdMicros: "0",
+          previousStarterIncludedUsdMicros: previousIncluded,
+          grants: grants.map((g) => ({
+            id: g.id,
+            key: g.key,
+            amount: g.amount,
+            status: g.status,
+          })),
+          raw: raw
+            ? {
+                balanceUsdMicros: raw.balanceUsdMicros.toString(),
+                lifetimeGrantedUsdMicros: raw.lifetimeGrantedUsdMicros.toString(),
+                consumedUsdMicros: raw.consumedUsdMicros.toString(),
+              }
+            : null,
+          balance,
+          apiKey: created.apiKey,
+          keyId: created.id,
+        },
+        null,
+        2,
+      ),
+    );
+
+    if (balance?.hasAccess || (raw && raw.balanceUsdMicros > 0n)) {
+      throw new Error("expected zero live balance with Starter included set to 0");
+    }
+  } finally {
+    await db
+      .update(plans)
+      .set({
+        includedUsdMicros: previousIncluded,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(plans.id, starter.id));
+    await syncPlanToOpenMeter(starter.id);
   }
 }
 

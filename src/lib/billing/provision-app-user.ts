@@ -6,7 +6,6 @@ import {
 } from "@/lib/openmeter/customers";
 import { getTrialCreditBalance, type TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
-import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
 
 export type ProvisionAppUserBillingResult = {
@@ -39,7 +38,7 @@ export async function ensureAppUserKonnectCustomer(input: {
 
 /**
  * Upsert app/end-user rows, ensure OpenMeter customer + Starter subscription,
- * and return subscription allowance balance (network_spend entitlement).
+ * and return included-usage balance for the active plan.
  */
 export async function provisionAppUserBilling(input: {
   clientId: string;
@@ -53,10 +52,6 @@ export async function provisionAppUserBilling(input: {
   const { id: endUserId } = await findOrCreateAppEndUser(input.clientId, externalUserId);
 
   const sub = await ensureStarterSubscriptionForAppUser({
-    clientId: input.clientId,
-    externalUserId,
-  });
-  await ensureTrialAllowanceForAppUser({
     clientId: input.clientId,
     externalUserId,
   });

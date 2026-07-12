@@ -36,6 +36,21 @@ function rateCardsFromPlanPhase(phase: {
   return phase.rateCards ?? phase.rate_cards ?? [];
 }
 
+/** Force self-hosted OpenMeter plan body shape regardless of developer machine env. */
+async function withSelfHostedOpenMeterRouteMode<T>(fn: () => Promise<T>): Promise<T> {
+  const previousMode = process.env.OPENMETER_ROUTE_MODE;
+  process.env.OPENMETER_ROUTE_MODE = "self_hosted";
+  try {
+    return await fn();
+  } finally {
+    if (previousMode === undefined) {
+      delete process.env.OPENMETER_ROUTE_MODE;
+    } else {
+      process.env.OPENMETER_ROUTE_MODE = previousMode;
+    }
+  }
+}
+
 test("buildOpenMeterCustomerKey encodes client and user", () => {
   const key = buildOpenMeterCustomerKey("app_abc", "user-123");
   assert.equal(key, "app_abc:user-123");
@@ -324,73 +339,79 @@ test("buildOpenMeterUsageResponse does not copy network fee into endUserBillable
 });
 
 test("ensureOpenMeterCustomer returns existing id and key", async () => {
-  const client = {
-    customers: {
-      get: async (key: string) => ({
-        id: "om-cust-1",
-        key,
-        usageAttribution: { subjectKeys: [key] },
-      }),
-      update: async () => {
-        throw new Error("should not update when subject key present");
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    const client = {
+      customers: {
+        get: async (key: string) => ({
+          id: "om-cust-1",
+          key,
+          usageAttribution: { subjectKeys: [key] },
+        }),
+        update: async () => {
+          throw new Error("should not update when subject key present");
+        },
+        create: async () => {
+          throw new Error("should not create");
+        },
       },
-      create: async () => {
-        throw new Error("should not create");
-      },
-    },
-  };
+    };
 
-  const identity = await ensureOpenMeterCustomer(
-    openMeterTestClient(client),
-    "app_1:user-1",
-    "User One",
-  );
-  assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
+    const identity = await ensureOpenMeterCustomer(
+      openMeterTestClient(client),
+      "app_1:user-1",
+      "User One",
+    );
+    assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
+  });
 });
 
 test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", async () => {
-  let updatedSubjectKeys: string[] | undefined;
-  const client = {
-    customers: {
-      get: async (key: string) => ({
-        id: "om-cust-1",
-        key,
-        usageAttribution: { subjectKeys: [] },
-      }),
-      update: async (_id: string, input: { usageAttribution: { subjectKeys: string[] } }) => {
-        updatedSubjectKeys = input.usageAttribution.subjectKeys;
-        return { id: "om-cust-1", key: "app_1:user-1" };
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    let updatedSubjectKeys: string[] | undefined;
+    const client = {
+      customers: {
+        get: async (key: string) => ({
+          id: "om-cust-1",
+          key,
+          usageAttribution: { subjectKeys: [] },
+        }),
+        update: async (_id: string, input: { usageAttribution: { subjectKeys: string[] } }) => {
+          updatedSubjectKeys = input.usageAttribution.subjectKeys;
+          return { id: "om-cust-1", key: "app_1:user-1" };
+        },
+        create: async () => {
+          throw new Error("should not create");
+        },
       },
-      create: async () => {
-        throw new Error("should not create");
-      },
-    },
-  };
+    };
 
-  const identity = await ensureOpenMeterCustomer(
-    openMeterTestClient(client),
-    "app_1:user-1",
-    "User One",
-  );
-  assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
-  assert.deepEqual(updatedSubjectKeys, ["app_1:user-1"]);
+    const identity = await ensureOpenMeterCustomer(
+      openMeterTestClient(client),
+      "app_1:user-1",
+      "User One",
+    );
+    assert.deepEqual(identity, { id: "om-cust-1", key: "app_1:user-1" });
+    assert.deepEqual(updatedSubjectKeys, ["app_1:user-1"]);
+  });
 });
 
 test("ensureOpenMeterCustomer creates customer when missing", async () => {
-  const client = {
-    customers: {
-      get: async () => {
-        throw new Error("not found");
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    const client = {
+      customers: {
+        get: async () => {
+          throw new Error("not found");
+        },
+        create: async (input: { key: string; name: string }) => ({
+          id: "om-new",
+          key: input.key,
+        }),
       },
-      create: async (input: { key: string; name: string }) => ({
-        id: "om-new",
-        key: input.key,
-      }),
-    },
-  };
+    };
 
-  const identity = await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-2");
-  assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
+    const identity = await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-2");
+    assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
+  });
 });
 
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
@@ -437,116 +458,125 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
 });
 
 test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included allowance", async () => {
-  const omPlan = await mapPymthousePlanToOpenMeterCreate({
-    clientId: "app_1",
-    plan: {
-      id: "plan-1",
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    const omPlan = await mapPymthousePlanToOpenMeterCreate({
       clientId: "app_1",
-      name: "Pro",
-      type: "subscription",
-      priceAmount: "29.00",
-      priceCurrency: "USD",
-      status: "active",
-      includedUsdMicros: "5000000",
-      overageRateUsd: "0.0000015",
-      includedUnits: null,
-      billingCycle: "monthly",
-      discoveryProfileId: null,
-      isNetworkDefault: false,
-      isStarterDefault: false,
-      discoveryExcludedCapabilities: null,
-      openmeterPlanId: null,
-      openmeterPlanVersion: null,
-      lastSyncedAt: null,
-      syncError: null,
-      createdAt: "",
-      updatedAt: "",
-    },
-    capabilities: [],
-    client: {
-      features: {
-        list: async () => [],
-        create: async () => ({}),
+      plan: {
+        id: "plan-1",
+        clientId: "app_1",
+        name: "Pro",
+        type: "subscription",
+        priceAmount: "29.00",
+        priceCurrency: "USD",
+        status: "active",
+        includedUsdMicros: "5000000",
+        overageRateUsd: "0.0000015",
+        includedUnits: null,
+        billingCycle: "monthly",
+        discoveryProfileId: null,
+        isNetworkDefault: false,
+        isStarterDefault: false,
+        discoveryExcludedCapabilities: null,
+        openmeterPlanId: null,
+        openmeterPlanVersion: null,
+        lastSyncedAt: null,
+        syncError: null,
+        createdAt: "",
+        updatedAt: "",
       },
-    } as never,
-  });
+      capabilities: [],
+      client: {
+        features: {
+          list: async () => [],
+          create: async () => ({}),
+        },
+      } as never,
+    });
 
-  assert.ok(omPlan);
-  const { buildOpenMeterPlanKey } = await import("./plans-sync");
-  const phase = omPlan.phases[0];
-  assert.ok(phase);
-  assert.equal(omPlan.key, buildOpenMeterPlanKey("app_1", "plan-1"));
-  const phaseCards = rateCardsFromPlanPhase(phase);
-  assert.equal(phaseCards.length, 2);
-  const flatFee = phaseCards[0];
-  const usage = phaseCards[1];
-  assert.ok(flatFee && usage);
-  assert.equal(flatFee.type, "flat_fee");
-  assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
-  assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
+    assert.ok(omPlan);
+    const { buildOpenMeterPlanKey } = await import("./plans-sync");
+    const phase = omPlan.phases[0];
+    assert.ok(phase);
+    assert.equal(omPlan.key, buildOpenMeterPlanKey("app_1", "plan-1"));
+    const phaseCards = rateCardsFromPlanPhase(phase);
+    assert.equal(phaseCards.length, 2);
+    const flatFee = phaseCards[0];
+    const usage = phaseCards[1];
+    assert.ok(flatFee && usage);
+    assert.equal(flatFee.type, "flat_fee");
+    assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
+    assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
+    assert.equal(
+      (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
+        ?.issueAfterReset,
+      5_000_000,
+    );
+  });
 });
 
 test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", async () => {
-  const createdFeatures: string[] = [];
-  const omPlan = await mapPymthousePlanToOpenMeterCreate({
-    clientId: "app_1",
-    plan: {
-      id: "plan-2",
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    const createdFeatures: string[] = [];
+    const omPlan = await mapPymthousePlanToOpenMeterCreate({
       clientId: "app_1",
-      name: "Usage",
-      type: "usage",
-      priceAmount: "0",
-      priceCurrency: "USD",
-      status: "active",
-      includedUsdMicros: null,
-      overageRateUsd: "0.000001",
-      includedUnits: null,
-      billingCycle: "monthly",
-      discoveryProfileId: null,
-      isNetworkDefault: false,
-      isStarterDefault: false,
-      discoveryExcludedCapabilities: null,
-      openmeterPlanId: null,
-      openmeterPlanVersion: null,
-      lastSyncedAt: null,
-      syncError: null,
-      createdAt: "",
-      updatedAt: "",
-    },
-    capabilities: [
-      {
-        id: "cap-1",
-        planId: "plan-2",
+      plan: {
+        id: "plan-2",
         clientId: "app_1",
-        pipeline: "text-to-image",
-        modelId: "stabilityai/sdxl",
-        slaTargetP95Ms: null,
-        maxPricePerUnit: null,
-        retailRateUsd: "0.000002",
-        openmeterFeatureKey: null,
+        name: "Usage",
+        type: "usage",
+        priceAmount: "0",
+        priceCurrency: "USD",
+        status: "active",
+        includedUsdMicros: null,
+        overageRateUsd: "0.000001",
+        includedUnits: null,
+        billingCycle: "monthly",
+        discoveryProfileId: null,
+        isNetworkDefault: false,
+        isStarterDefault: false,
+        discoveryExcludedCapabilities: null,
+        openmeterPlanId: null,
+        openmeterPlanVersion: null,
+        lastSyncedAt: null,
+        syncError: null,
         createdAt: "",
+        updatedAt: "",
       },
-    ],
-    client: {
-      features: {
-        list: async () => [],
-        create: async (input: { key: string }) => {
-          createdFeatures.push(input.key);
-          return { key: input.key };
+      capabilities: [
+        {
+          id: "cap-1",
+          planId: "plan-2",
+          clientId: "app_1",
+          pipeline: "text-to-image",
+          modelId: "stabilityai/sdxl",
+          slaTargetP95Ms: null,
+          maxPricePerUnit: null,
+          retailRateUsd: "0.000002",
+          openmeterFeatureKey: null,
+          createdAt: "",
         },
-      },
-    } as never,
-  });
+      ],
+      client: {
+        features: {
+          list: async () => [],
+          create: async (input: { key: string }) => {
+            createdFeatures.push(input.key);
+            return { key: input.key };
+          },
+        },
+      } as never,
+    });
 
-  assert.ok(omPlan);
-  const phase = omPlan.phases[0];
-  assert.ok(phase);
-  const capabilityCards = rateCardsFromPlanPhase(phase);
-  assert.equal(capabilityCards.length, 1);
-  assert.equal(createdFeatures.length, 1);
-  const usage = capabilityCards[0];
-  assert.ok(usage);
-  assert.equal((usage as { price: { amount: string } }).price.amount, "0.000002");
+    assert.ok(omPlan);
+    const phase = omPlan.phases[0];
+    assert.ok(phase);
+    const capabilityCards = rateCardsFromPlanPhase(phase);
+    assert.equal(capabilityCards.length, 1);
+    assert.equal(createdFeatures.length, 1);
+    const usage = capabilityCards[0];
+    assert.ok(usage);
+    assert.equal((usage as { price: { amount: string } }).price.amount, "0.000002");
+  });
 });
 
 test("isOpenMeterPlanNotFoundError detects stale plan id failures", async () => {
@@ -617,54 +647,107 @@ test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () =
 });
 
 test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend entitlement", async () => {
-  const omPlan = await mapPymthousePlanToOpenMeterCreate({
-    clientId: "app_1",
-    plan: {
-      id: "starter-1",
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    const omPlan = await mapPymthousePlanToOpenMeterCreate({
       clientId: "app_1",
-      name: "__pymthouse_starter__",
-      type: "usage",
-      priceAmount: "0",
-      priceCurrency: "USD",
-      status: "active",
-      includedUsdMicros: "5000000",
-      overageRateUsd: null,
-      includedUnits: null,
-      billingCycle: "monthly",
-      discoveryProfileId: null,
-      isNetworkDefault: false,
-      isStarterDefault: true,
-      discoveryExcludedCapabilities: null,
-      openmeterPlanId: null,
-      openmeterPlanVersion: null,
-      lastSyncedAt: null,
-      syncError: null,
-      createdAt: "",
-      updatedAt: "",
-    },
-    capabilities: [],
-    client: {
-      features: {
-        list: async () => [],
-        create: async () => ({}),
+      plan: {
+        id: "starter-1",
+        clientId: "app_1",
+        name: "__pymthouse_starter__",
+        type: "usage",
+        priceAmount: "0",
+        priceCurrency: "USD",
+        status: "active",
+        includedUsdMicros: "5000000",
+        overageRateUsd: null,
+        includedUnits: null,
+        billingCycle: "monthly",
+        discoveryProfileId: null,
+        isNetworkDefault: false,
+        isStarterDefault: true,
+        discoveryExcludedCapabilities: null,
+        openmeterPlanId: null,
+        openmeterPlanVersion: null,
+        lastSyncedAt: null,
+        syncError: null,
+        createdAt: "",
+        updatedAt: "",
       },
-    } as never,
-  });
+      capabilities: [],
+      client: {
+        features: {
+          list: async () => [],
+          create: async () => ({}),
+        },
+      } as never,
+    });
 
-  assert.ok(omPlan);
-  const phase = omPlan.phases[0];
-  assert.ok(phase);
-  const starterCards = rateCardsFromPlanPhase(phase);
-  assert.equal(starterCards.length, 1);
-  const usage = starterCards[0];
-  assert.ok(usage);
-  assert.equal(usage.key, "network_spend");
-  assert.equal(usage.featureKey, "network_spend");
-  assert.equal(
-    (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
-      ?.issueAfterReset,
-    5_000_000,
-  );
+    assert.ok(omPlan);
+    const phase = omPlan.phases[0];
+    assert.ok(phase);
+    const starterCards = rateCardsFromPlanPhase(phase);
+    assert.equal(starterCards.length, 1);
+    const usage = starterCards[0];
+    assert.ok(usage);
+    assert.equal(usage.key, "network_spend");
+    assert.equal(usage.featureKey, "network_spend");
+    assert.equal(
+      (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
+        ?.issueAfterReset,
+      5_000_000,
+    );
+  });
+});
+
+test("mapPymthousePlanToOpenMeterCreate maps subscription included usage entitlement", async () => {
+  await withSelfHostedOpenMeterRouteMode(async () => {
+    const omPlan = await mapPymthousePlanToOpenMeterCreate({
+      clientId: "app_1",
+      plan: {
+        id: "sub-1",
+        clientId: "app_1",
+        name: "Pro",
+        type: "subscription",
+        priceAmount: "29.00",
+        priceCurrency: "USD",
+        status: "active",
+        includedUsdMicros: "10000000",
+        overageRateUsd: "0.000001",
+        includedUnits: null,
+        billingCycle: "monthly",
+        discoveryProfileId: null,
+        isNetworkDefault: false,
+        isStarterDefault: false,
+        discoveryExcludedCapabilities: null,
+        openmeterPlanId: null,
+        openmeterPlanVersion: null,
+        lastSyncedAt: null,
+        syncError: null,
+        createdAt: "",
+        updatedAt: "",
+      },
+      capabilities: [],
+      client: {
+        features: {
+          list: async () => [],
+          create: async () => ({}),
+        },
+      } as never,
+    });
+
+    assert.ok(omPlan);
+    const phase = omPlan.phases[0];
+    assert.ok(phase);
+    const cards = rateCardsFromPlanPhase(phase);
+    assert.ok(cards.length >= 1);
+    const usage = cards.find((card) => card.key === "network_spend");
+    assert.ok(usage);
+    assert.equal(
+      (usage.entitlementTemplate as { issueAfterReset?: number } | undefined)
+        ?.issueAfterReset,
+      10_000_000,
+    );
+  });
 });
 
 test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {

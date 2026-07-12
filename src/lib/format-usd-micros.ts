@@ -102,3 +102,68 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
     return "$0.00";
   }
 }
+
+/**
+ * Convert USD micros to a dollar amount string for inputs (no `$`).
+ * Up to 6 fractional digits (micro precision); trailing zeros trimmed.
+ */
+export function usdMicrosToDollarAmount(
+  microsStr: string | null | undefined,
+): string {
+  const amount = parseUsdMicrosString(microsStr);
+  if (amount == null || amount < 0n) return "";
+  const whole = amount / USD_MICROS_PER_DOLLAR;
+  const frac = amount % USD_MICROS_PER_DOLLAR;
+  if (frac === 0n) {
+    return whole.toString();
+  }
+  const fracStr = trimFracDigitZeros(frac.toString().padStart(6, "0"));
+  return `${whole.toString()}.${fracStr}`;
+}
+
+/**
+ * Format USD micros as a dollar string with `$` prefix (micro precision).
+ * Zero → `$0`; invalid → empty string.
+ */
+export function formatUsdMicrosAsDollars(
+  microsStr: string | null | undefined,
+): string {
+  const amount = usdMicrosToDollarAmount(microsStr);
+  if (amount === "") return "";
+  return `$${amount}`;
+}
+
+/**
+ * Parse a dollar amount input (optional leading `$`, commas ignored) into
+ * integer USD micros. Supports up to 6 fractional digits; extra digits are
+ * truncated toward zero. Returns null for empty/invalid/negative values.
+ */
+export function dollarAmountToUsdMicros(raw: string): string | null {
+  const cleaned = raw.trim().replace(/,/g, "").replace(/^\$/, "").trim();
+  if (!cleaned || cleaned === ".") return null;
+  if (!/^\d+(\.\d*)?$/.test(cleaned) && !/^\.\d+$/.test(cleaned)) return null;
+  const [wholePart, fracPart = ""] = cleaned.split(".");
+  try {
+    const whole = BigInt(wholePart || "0");
+    const fracDigits = (fracPart + "000000").slice(0, 6);
+    const frac = BigInt(fracDigits);
+    return (whole * USD_MICROS_PER_DOLLAR + frac).toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Allow partial dollar typing in controlled inputs (e.g. `5.`, `.5`, `$1.2`). */
+export function sanitizeDollarAmountInput(raw: string): string {
+  let s = raw.replace(/,/g, "");
+  const hasDollar = s.includes("$");
+  s = s.replace(/\$/g, "");
+  s = s.replace(/[^\d.]/g, "");
+  const firstDot = s.indexOf(".");
+  if (firstDot !== -1) {
+    const whole = s.slice(0, firstDot).replace(/\./g, "");
+    const frac = s.slice(firstDot + 1).replace(/\./g, "").slice(0, 6);
+    s = `${whole}.${frac}`;
+  }
+  return hasDollar ? `$${s}` : s;
+}

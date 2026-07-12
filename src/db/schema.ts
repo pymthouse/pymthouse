@@ -381,7 +381,10 @@ export const plans = pgTable(
     includedUnits: bigint("included_units", { mode: "bigint" }),
     /** Retail USD per network USD-micro for plan-level usage (decimal string). */
     overageRateUsd: text("overage_rate_usd"),
-    /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
+    /**
+     * Monthly included usage for this plan, in USD micros (1 USD = 1 000 000).
+     * Applies to Starter (free) and paid subscription plans alike; resets each billing cycle.
+     */
     includedUsdMicros: text("included_usd_micros"),
     /** Billing period length; currently only "monthly" is supported. */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
@@ -390,7 +393,9 @@ export const plans = pgTable(
     }),
     /** Exactly one per client: catalog-wide network pricing + integrator discovery exclusions. */
     isNetworkDefault: boolean("is_network_default").notNull().default(false),
-    /** Exactly one per client: free-tier OpenMeter subscription with included usage allowance. */
+    /**
+     * Exactly one per client: free OpenMeter plan with monthly included usage at pass-through rates.
+     */
     isStarterDefault: boolean("is_starter_default").notNull().default(false),
     /**
      * Pipelines/models excluded from integrator discovery (NaaP). Only used when

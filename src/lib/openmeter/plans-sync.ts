@@ -137,13 +137,13 @@ async function appendDefaultTrialUsageRateCard(input: {
 }): Promise<void> {
   if (input.useKonnectBody) {
     const featureId = await resolveOpenMeterFeatureId(input.omClient, DEFAULT_TRIAL_FEATURE_KEY);
-    // Konnect trial allowance is prepaid via /credits/grants, not plan discounts.usage.
     input.rateCards.push(
       buildKonnectUsageRateCard({
         key: DEFAULT_TRIAL_FEATURE_KEY,
         name: "Network usage",
         featureId,
         unitAmount: input.planRetail,
+        includedMicros: input.includedMicros,
       }),
     );
     return;
@@ -191,7 +191,6 @@ async function appendCapabilityRateCards(input: {
     });
     if (input.useKonnectBody) {
       const featureId = await resolveOpenMeterFeatureId(input.omClient, featureKey);
-      // Konnect trial allowance is prepaid via /credits/grants, not plan discounts.usage.
       input.rateCards.push(
         buildKonnectUsageRateCard({
           key: featureKey,
@@ -201,6 +200,7 @@ async function appendCapabilityRateCards(input: {
           }),
           featureId,
           unitAmount: retail,
+          includedMicros: entitlementAssigned ? undefined : input.includedMicros,
         }),
       );
     } else {
