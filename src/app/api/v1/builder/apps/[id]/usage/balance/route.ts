@@ -5,7 +5,7 @@ import {
   resolveAppForUsageAccess,
 } from "@/lib/usage/app-usage-handlers";
 
-/** Legacy alias of Builder usage balance — M2M Basic only (provider session removed). */
+/** Builder API: M2M Basic only (no provider session). */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

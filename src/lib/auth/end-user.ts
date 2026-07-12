@@ -1,6 +1,9 @@
 import { and, eq } from "drizzle-orm";
 
-import { splitCompositeApiKey } from "@/lib/app-api-keys";
+import {
+  resolveActiveAppApiKeyFromBearer,
+  splitCompositeApiKey,
+} from "@/lib/app-api-keys";
 import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients } from "@/db/schema";
 import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
@@ -121,7 +124,7 @@ async function resolveSignerJwtEndUser(
 
 /**
  * Authenticate an end-user Bearer credential for `/api/v1/user/*`.
- * Accepts programmatic user JWTs and signer JWTs (subject forced from the token).
+ * Accepts composite/bare app API keys, programmatic user JWTs, and signer JWTs.
  */
 export async function authenticateEndUser(
   request: Request,
@@ -131,12 +134,21 @@ export async function authenticateEndUser(
     return null;
   }
 
-  // Reject obvious API-key shapes here — full key resolution lives on feat/api-refactor.
-  // Dashboard + Builder mint paths use JWTs.
+  // Prefer API-key shape when composite or clearly a stored key (not a JWT).
   const looksLikeJwt = token.split(".").length === 3;
   const composite = splitCompositeApiKey(token);
-  if (composite || !looksLikeJwt) {
-    return null;
+  if (composite || (!looksLikeJwt && (token.startsWith("pmth_") || /^[a-f0-9]+$/i.test(token)))) {
+    const resolved = await resolveActiveAppApiKeyFromBearer(token);
+    if (resolved) {
+      return {
+        publicClientId: resolved.publicClientId,
+        developerAppId: resolved.developerAppId,
+        externalUserId: resolved.externalUserId,
+      };
+    }
+    if (composite || !looksLikeJwt) {
+      return null;
+    }
   }
 
   const payload = await verifyAccessToken(token);
@@ -145,6 +157,7 @@ export async function authenticateEndUser(
   }
   const rec = payload as Record<string, unknown>;
 
+  // Signer JWTs carry external_user_id / user_type=external_user with sub=external id.
   const signerResolved = await resolveSignerJwtEndUser(rec);
   if (signerResolved) {
     return signerResolved;
