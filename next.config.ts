@@ -7,6 +7,42 @@ const turnkeyAuthComponent = path.join(
 );
 
 const nextConfig: NextConfig = {
+  /**
+   * Phase-1 API surface aliases (filesystem routes take precedence where they exist,
+   * e.g. Builder M2M-only usage under /api/v1/builder/apps/.../usage).
+   */
+  async rewrites() {
+    return [
+      {
+        source: "/api/v1/builder/apps/:path*",
+        destination: "/api/v1/apps/:path*",
+      },
+      {
+        source: "/api/v1/internal/admin/:path*",
+        destination: "/api/v1/admin/:path*",
+      },
+      {
+        source: "/api/v1/internal/signer/:path*",
+        destination: "/api/v1/signer/:path*",
+      },
+      {
+        source: "/api/v1/internal/apps",
+        destination: "/api/v1/apps",
+      },
+      {
+        source: "/api/v1/internal/apps/:path*",
+        destination: "/api/v1/apps/:path*",
+      },
+      {
+        source: "/api/v1/internal/billing",
+        destination: "/api/v1/billing",
+      },
+      {
+        source: "/api/v1/internal/billing/:path*",
+        destination: "/api/v1/billing/:path*",
+      },
+    ];
+  },
   serverExternalPackages: [
     "better-sqlite3",
     "oidc-provider",

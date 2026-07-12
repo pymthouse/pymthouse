@@ -101,36 +101,6 @@ function rehydrateStoredApiKey(secret: string): string | null {
   return `pmth_${trimmed}`;
 }
 
-export async function resolveActiveAppApiKey(
-  bearerToken: string,
-  publicClientId: string,
-): Promise<ResolvedAppApiKey | null> {
-  const token = normalizeAppApiKeySubjectToken(bearerToken, publicClientId);
-  if (!token) {
-    return null;
-  }
-  return resolveActiveAppApiKeyByStoredToken(token, publicClientId);
-}
-
-/**
- * Resolve a Bearer API key without a path `clientId`.
- * Supports composite `app_*_*` (client id from the token) and bare `pmth_*` keys.
- */
-export async function resolveActiveAppApiKeyFromBearer(
-  bearerToken: string,
-): Promise<ResolvedAppApiKey | null> {
-  const trimmed = bearerToken.trim();
-  const composite = splitCompositeApiKey(trimmed);
-  if (composite) {
-    return resolveActiveAppApiKey(trimmed, composite.publicClientId);
-  }
-  const stored = rehydrateStoredApiKey(trimmed);
-  if (!stored) {
-    return null;
-  }
-  return resolveActiveAppApiKeyByStoredToken(stored);
-}
-
 async function resolveActiveAppApiKeyByStoredToken(
   storedToken: string,
   expectedPublicClientId?: string | null,
@@ -189,6 +159,36 @@ async function resolveActiveAppApiKeyByStoredToken(
     externalUserId: binding.externalUserId,
     label: row.label,
   };
+}
+
+export async function resolveActiveAppApiKey(
+  bearerToken: string,
+  publicClientId: string,
+): Promise<ResolvedAppApiKey | null> {
+  const token = normalizeAppApiKeySubjectToken(bearerToken, publicClientId);
+  if (!token) {
+    return null;
+  }
+  return resolveActiveAppApiKeyByStoredToken(token, publicClientId);
+}
+
+/**
+ * Resolve a Bearer API key without a path `clientId`.
+ * Supports composite `app_*_*` (client id from the token) and bare `pmth_*` keys.
+ */
+export async function resolveActiveAppApiKeyFromBearer(
+  bearerToken: string,
+): Promise<ResolvedAppApiKey | null> {
+  const trimmed = bearerToken.trim();
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    return resolveActiveAppApiKey(trimmed, composite.publicClientId);
+  }
+  const stored = rehydrateStoredApiKey(trimmed);
+  if (!stored) {
+    return null;
+  }
+  return resolveActiveAppApiKeyByStoredToken(stored);
 }
 
 export async function listAppUserApiKeys(input: {
