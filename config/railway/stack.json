@@ -10,6 +10,9 @@
     "openmeter-collector",
     "pymthouse"
   ],
+  "previewOnlyServices": [
+    "pymthouse-signer-test"
+  ],
   "services": {
     "kafka": { "kind": "image" },
     "openmeter-collector": { "kind": "image" },
@@ -17,6 +20,13 @@
       "kind": "repo",
       "manifest": "deploy/pymthouse/railway.json",
       "description": "Remote signer DMZ (Apache JWT + go-livepeer). Service name is pymthouse for historical reasons."
+    },
+    "pymthouse-signer-test": {
+      "kind": "repo",
+      "manifest": "deploy/pymthouse-signer-test/railway.json",
+      "environments": ["preview"],
+      "description": "Preview-only A/B remote signer DMZ. Do not deploy to production. Same webhook/OIDC/Kafka as pymthouse preview; LIVEPEER_IMAGE pins a different go-livepeer build.",
+      "livepeerImage": "livepeer/go-livepeer:sha-716dc1c75db713b6b13020ab9d1eb1f329409caa"
     }
   }
 }

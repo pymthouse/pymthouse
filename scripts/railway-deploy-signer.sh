@@ -8,6 +8,11 @@ cd "$ROOT"
 SERVICE="${1:-pymthouse}"
 ENV="${2:-${RAILWAY_ENVIRONMENT:-production}}"
 
+if [[ "$SERVICE" == "pymthouse-signer-test" && "$ENV" == "production" ]]; then
+  echo "refusing: pymthouse-signer-test is preview-only (not deployed to production)" >&2
+  exit 1
+fi
+
 # shellcheck source=lib/railway-auth.sh
 source "$ROOT/scripts/lib/railway-auth.sh"
 PE_FLAGS="$(railway_pe_flags "$ENV")"
