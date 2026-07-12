@@ -51,14 +51,26 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
-| `pmth_<hex>` | Per-app-user **API key** (stored / hashed form) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
-| `app_<clientId>.pmth_<hex>` | **Presented** API key (issuance + remote-signer Bearer) | Same as bare `pmth_*`; prefix is public routing for the app-scoped exchange URL |
-| `pmth_cs_<hex>` | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
+| Stored API key (`<prefix><hex>`) | Per-app-user **API key** (hashed at rest) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
+| `app_<24hex>_<secret>` | **Presented** API key (issuance + remote-signer Bearer) | Same secret material as the stored key; `app_*` segment routes the app-scoped exchange URL |
+| Client secret (`*_cs_*`) | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
 
-Newly issued keys are returned as `app_<clientId>.pmth_<hex>` (RFC 6750-safe `.` separator). The remote-signer identity webhook accepts that composite Bearer, parses the `app_*` prefix, and performs RFC 8693 exchange at `/api/v1/apps/{clientId}/oidc/token`. Bare `pmth_*` remains valid as `subject_token` when the path already supplies `{clientId}`.
+Newly issued keys are returned as `app_<24hex>_<secret>` (RFC 6750 `token68` characters; underscore separator for copy/select UX). The remote-signer identity webhook accepts that composite Bearer, parses the `app_*` client id, and performs RFC 8693 token exchange ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) at `/api/v1/apps/{clientId}/oidc/token`. The exchange `subject_token` is the opaque hex secret (or the stored bare key when the path already supplies `{clientId}`).
 
-Do not pass `pmth_cs_*` as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
+**Design notes**
+
+- The presented form embeds the public client id so a single `Authorization: Bearer` header can route the exchange without a second header.
+- Underscore is preferred over `.` so double-click / word selection does not split the credential; `.` also collides visually with JWT segments.
+- The presented form is `{clientId}_{bareApiKey}`; any operator storage prefix on the bare key is preserved in the secret segment.
+
+Do not pass M2M client secrets as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
+
+### Implementation tasks
+
+- [x] Issue only `app_*_*` from key creation APIs (`formatCompositeApiKey`).
+- [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.1`).
+- [ ] Update integrator docs / dashboard curl snippets when the package is deployed.
 
 ## Authentication
 

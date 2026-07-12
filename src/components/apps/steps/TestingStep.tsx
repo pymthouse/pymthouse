@@ -115,7 +115,7 @@ function buildSignerTokenExchangeCurl(origin: string, publicClientId: string): s
   return String.raw`curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
-  -d "subject_token=${publicClientId}.pmth_YOUR_API_KEY" \
+  -d "subject_token=${publicClientId}_YOUR_BARE_API_KEY" \
   -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
 }
 
@@ -136,7 +136,7 @@ function buildDevicePollCurl(origin: string, publicClientId: string): string {
 
 function buildBearerUsageCurl(publicClientId: string): string {
   return String.raw`curl -sS https://your-signer.example/path \
-  -H "Authorization: Bearer ${publicClientId}.pmth_YOUR_API_KEY"`;
+  -H "Authorization: Bearer ${publicClientId}_YOUR_BARE_API_KEY"`;
 }
 
 type CurlSnippet = Readonly<{

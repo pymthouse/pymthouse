@@ -14,7 +14,7 @@ import {
 } from "./app-scoped-signer-token-exchange";
 import { signerJwtAudience } from "./mint-user-signer-token";
 
-const PUBLIC_ID = "app_testpublic";
+const PUBLIC_ID = "app_3b386c81a1db1169fd2c3986";
 
 test("validateRequestedTokenType accepts omitted or access_token", () => {
   assert.doesNotThrow(() => validateRequestedTokenType(""));
@@ -101,9 +101,9 @@ test("resolveAppScopedSubjectToken rejects pmth_cs_* client secrets as subject_t
   );
 });
 
-test("resolveAppScopedSubjectToken accepts composite app_*.pmth_* via resolveActiveAppApiKey", async () => {
-  const bare = "pmth_compositesubject";
-  const composite = `${PUBLIC_ID}.${bare}`;
+test("resolveAppScopedSubjectToken accepts composite app_*_* via resolveActiveAppApiKey", async () => {
+  const secret = "a".repeat(64);
+  const composite = `${PUBLIC_ID}_${secret}`;
   const resolved = await resolveAppScopedSubjectToken(composite, PUBLIC_ID, {
     resolveActiveAppApiKey: async (token, publicClientId) => {
       assert.equal(token, composite);
@@ -126,7 +126,7 @@ test("resolveAppScopedSubjectToken rejects composite with mismatched app_ prefix
   await assert.rejects(
     () =>
       resolveAppScopedSubjectToken(
-        "app_otherclientid000.pmth_compositesubject",
+        `app_aaaaaaaaaaaaaaaaaaaaaaaa_${"b".repeat(64)}`,
         PUBLIC_ID,
         {
           resolveActiveAppApiKey: async () => null,
