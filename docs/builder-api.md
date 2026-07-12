@@ -16,15 +16,23 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 ## Identity model
 
 - `client_id` is the canonical app identifier in Builder API URLs.
-- Builder API paths use `/api/v1/apps/{clientId}/...`.
+- **API surfaces:**
+  - **Builder (M2M):** `/api/v1/builder/…` + integrator `/api/v1/apps/{clientId}/…` (users, tokens, usage, billing reads)
+  - **End-user:** `/api/v1/user/…` — composite API key or end-user/signer JWT
+  - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` — not published in public OpenAPI/docs
+- OIDC issuer stays at `/api/v1/oidc/*`. Public catalog/health stay under `/api/v1/*` without a product prefix.
 - Internal database IDs are implementation details and are not part of the public API contract.
 
 ## OpenAPI
 
 Machine-readable contract and interactive reference:
 
-- `GET /api/v1/openapi.json` — OpenAPI 3.1 document (generated from scanned route handlers + per-route metadata).
-- `GET /api/v1/docs` — Scalar API reference UI.
+| Surface | Spec | Docs UI |
+| --- | --- | --- |
+| **Public (Builder + End-user)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` |
+| Aliases | `/api/v1/builder/openapi.json`, `/api/v1/user/openapi.json` | `/api/v1/builder/docs`, `/api/v1/user/docs` → `/docs` |
+
+The public document includes M2M integrator routes and `/api/v1/user/usage*`. Dashboard/admin (Internal) is omitted from the published docs UI.
 
 Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
 
@@ -366,9 +374,46 @@ Aggregated request and fee usage for a developer application — read-only, tena
 
 Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
-### Session request history (Usage dashboard)
+### End-user Usage API
 
-**Endpoint:** `GET /api/v1/me/usage/requests`
+End users can read **their own** usage with the credential they already hold (no M2M Basic):
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/v1/user/usage` | Aggregates for the authenticated subject (`groupBy`, `startDate`, `endDate` as on Builder usage) |
+| `GET /api/v1/user/usage/balance` | Prepaid credit balance for that subject |
+| `GET /api/v1/user/usage/requests` | Signed-ticket CloudEvent history (newest first; `cursor` / `limit`) |
+
+**Auth:** `Authorization: Bearer` with a composite `app_<24hex>_<secret>` API key, a bare `pmth_*` app-user key, a programmatic user JWT, or a signer JWT (`external_user_id` + `client_id`). Identity is taken **only** from the token — do **not** pass `externalUserId` (rejected with 400).
+
+```bash
+curl -sS -H "Authorization: Bearer ${COMPOSITE_API_KEY}" \
+  "${BASE_URL}/api/v1/user/usage?groupBy=pipeline_model"
+
+curl -sS -H "Authorization: Bearer ${COMPOSITE_API_KEY}" \
+  "${BASE_URL}/api/v1/user/usage/balance"
+
+curl -sS -H "Authorization: Bearer ${COMPOSITE_API_KEY}" \
+  "${BASE_URL}/api/v1/user/usage/requests?limit=25"
+```
+
+### Builder Usage API (M2M)
+
+Canonical Builder paths (**M2M Basic only**):
+
+- `GET /api/v1/builder/apps/{clientId}/usage`
+- `GET /api/v1/builder/apps/{clientId}/usage/balance?externalUserId=…`
+
+**Deprecated legacy aliases** (same M2M-only auth; prefer `/builder/…`):
+
+- `GET /api/v1/apps/{clientId}/usage`
+- `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=…`
+
+Provider-session usage for the dashboard uses Internal routes (`/api/v1/internal/dashboard/usage`, `/api/v1/internal/me/usage/requests`; legacy `/api/v1/dashboard/usage` and `/api/v1/me/usage/requests` still work).
+
+### Session request history (Internal / Usage dashboard)
+
+**Endpoint:** `GET /api/v1/me/usage/requests` (alias: `GET /api/v1/internal/me/usage/requests`)
 
 Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents for the **signed-in viewer’s own usage subject(s)** only — newest first. This is not a Builder/M2M API for listing all end users of an app.
 
@@ -380,7 +425,7 @@ Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEv
 
 Do **not** pass `externalUserId` — the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, and `openMeterConfigured`.
 
-**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
+**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` (or `/api/v1/builder/apps/...`) returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
 
 **Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.
 

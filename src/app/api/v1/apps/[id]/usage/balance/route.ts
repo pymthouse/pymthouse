@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateAppClient } from "@/lib/auth";
-import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 
+import {
+  handleAppUsageBalanceGet,
+  resolveAppForUsageAccess,
+} from "@/lib/usage/app-usage-handlers";
+
+/** Legacy alias of Builder usage balance — M2M Basic only (provider session removed). */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -13,31 +16,14 @@ export async function GET(
     return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
   }
 
-  const clientAuth = await authenticateAppClient(request);
-  let app = clientAuth?.appId === clientId ? await getProviderApp(clientId) : null;
-  if (!app) {
-    try {
-      const providerAuth = await getAuthorizedProviderApp(clientId);
-      app = providerAuth?.app ?? null;
-    } catch {
-      app = null;
-    }
-  }
+  const app = await resolveAppForUsageAccess({
+    request,
+    clientId,
+    m2mOnly: true,
+  });
   if (!app) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const balance = await getTrialCreditBalance({
-    clientId: app.id,
-    externalUserId,
-  });
-  if (!balance) {
-    return NextResponse.json({ error: "OpenMeter not configured" }, { status: 503 });
-  }
-
-  return NextResponse.json({
-    externalUserId,
-    ...balance,
-    remainingUsdMicros: balance.balanceUsdMicros,
-  });
+  return handleAppUsageBalanceGet({ app, externalUserId });
 }
