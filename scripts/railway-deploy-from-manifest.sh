@@ -14,14 +14,14 @@ SERVICE="${1:?service name required}"
 ENV="${2:-${RAILWAY_ENVIRONMENT:-production}}"
 MANIFEST_DIR="${3:?manifest directory required (e.g. deploy/kafka)}"
 
-if [[ "$SERVICE" == "pymthouse-signer-test" && "$ENV" == "production" ]]; then
-  echo "refusing: pymthouse-signer-test is preview-only (not deployed to production)" >&2
-  exit 1
-fi
-
 # shellcheck source=lib/railway-auth.sh
 source "$ROOT/scripts/lib/railway-auth.sh"
 PE_FLAGS="$(railway_pe_flags "$ENV")"
+
+if [[ "$ENV" == "production" ]] && railway_is_preview_only_service "$SERVICE"; then
+  echo "refusing: $SERVICE is preview-only (not deployed to production)" >&2
+  exit 1
+fi
 
 if ! command -v railway >/dev/null 2>&1; then
   echo "Install Railway CLI: npm install -g @railway/cli" >&2
@@ -59,6 +59,8 @@ restore_manifest() {
 trap restore_manifest EXIT
 
 cp "$TMP_MANIFEST" "$ROOT/railway.json"
+
+railway_apply_livepeer_image "$SERVICE" "$PE_FLAGS"
 
 # shellcheck disable=SC2086
 railway_retry railway up -s "$SERVICE" $PE_FLAGS -d -m "deploy $SERVICE ($ENV)"
