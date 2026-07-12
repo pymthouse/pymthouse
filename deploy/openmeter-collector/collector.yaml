@@ -4,7 +4,8 @@
 # sequence blocks until
 # warm succeeds; collector never reads Kafka until cache is populated). Refreshed on
 # PRICE_ORACLE_REFRESH; refresh errors keep the last cached value. Runtime events read
-# from cache only (no static default).
+# from cache only (no static default). Each egress CloudEvent includes data.eth_usd_price
+# (the cached rate used for that event’s Wei → USD micros conversion).
 #
 # Oracle JSON (any one shape):
 #   {"price": 3456.78}
@@ -147,6 +148,7 @@ pipeline:
               "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
               "pixels": $data.pixels.string().or("0"),
               "fee_wei": $data.computed_fee.or("0"),
+              "eth_usd_price": $eth_usd.string(),
               "gateway_request_id": $data.request_id,
             }
           }

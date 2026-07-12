@@ -355,6 +355,7 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
    - `data.client_id` = tenant (developer app OAuth `client_id`)
    - `data.usage_subject` = end user (OIDC `sub` analog)
    - `data.auth_id` retained for compatibility; `data.external_user_id` mirrors `usage_subject` for existing meter `groupBy`
+   - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
