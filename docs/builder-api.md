@@ -366,6 +366,20 @@ Aggregated request and fee usage for a developer application — read-only, tena
 
 Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
+### Session request history (Usage dashboard)
+
+**Endpoint:** `GET /api/v1/me/usage/requests`
+
+Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents for the **signed-in viewer’s own usage subject(s)** only — newest first. This is not a Builder/M2M API for listing all end users of an app.
+
+| Query | Description |
+| --- | --- |
+| `cursor` | Opaque pagination cursor from a prior response |
+| `limit` | Page size (default 25, max 50) |
+| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`) |
+
+Do **not** pass `externalUserId` — the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, and `openMeterConfigured`.
+
 **Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
 
 **Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.

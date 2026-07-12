@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import UsageLineChart from "@/components/UsageLineChart";
+import SignedTicketRequestHistory from "@/components/SignedTicketRequestHistory";
 import {
   AppUsageSection,
   BillingDashboardHeader,
@@ -134,6 +135,10 @@ export default async function BillingUsageDashboard({
           ))}
         </div>
       )}
+
+      <SignedTicketRequestHistory
+        clientId={scope === "single" ? orderedApps[0]?.publicClientId : null}
+      />
     </DashboardLayout>
   );
 }
