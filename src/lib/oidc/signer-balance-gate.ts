@@ -4,7 +4,7 @@ import type {
 } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { createBalanceGate } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 
 const DEFAULT_REAUTH_TTL_SECONDS = 60;
 
@@ -21,19 +21,16 @@ function resolveReauthTtlSeconds(): number {
 }
 
 /**
- * Live credit balance for a verified signer identity, keyed by the same
- * `client_id:usage_subject` customer key the collector meters against (auth_id).
- * Returns the balance micros string, or null when hosted billing cannot confirm
- * a balance (fail-closed → 503 in the gate).
+ * Spendable allowance for a verified signer identity: prepaid credits plus any
+ * remaining plan usage discount for the current cycle.
  */
 async function readIdentityBalanceUsdMicros(
   identity: UsageIdentity,
 ): Promise<string | null> {
-  const balance = await getTrialCreditBalance({
+  return getSpendableUsdMicros({
     clientId: identity.client_id,
     externalUserId: identity.usage_subject,
   });
-  return balance?.balanceUsdMicros ?? null;
 }
 
 /**

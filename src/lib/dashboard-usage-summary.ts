@@ -1,6 +1,7 @@
 import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data";
 import {
-  sumPrepaidCreditBalancesForClientIds,
+  getOwnerPrepaidCreditBalance,
+  getPrepaidCreditBalancesByClientId,
   type CreditAllowanceSummary,
 } from "@/lib/openmeter/credit-allowance-summary";
 
@@ -23,11 +24,20 @@ export type DashboardUsageSummary = {
   appsCount: number;
   appsWithUsage: number;
   /**
-   * Live prepaid credit ledger for end-users under the summary's apps
-   * (same Konnect balance the mint / remote-signer gates use). Null when
-   * hosted credits are unavailable.
+   * Shared owner prepaid wallet (`owner:{users.id}`) when the viewer is known.
+   * Null when hosted credits are unavailable or the viewer has no owner wallet yet.
    */
   creditAllowance: CreditAllowanceSummary | null;
+  /**
+   * Same owner wallet keyed by each owned app's public client id — used when the
+   * Dashboard filter selects exactly one app (credits are per owner, not per app).
+   */
+  creditAllowanceByAppId: Record<string, CreditAllowanceSummary>;
+  /**
+   * End-user prepaid wallet sums per app (excludes owner wallets). Used by
+   * app usage pages / admin views that need tenant end-user totals.
+   */
+  endUserCreditAllowanceByAppId: Record<string, CreditAllowanceSummary>;
 };
 
 /**
@@ -53,6 +63,7 @@ export async function getDashboardUsageSummary(
     orderedApps,
     appsWithUsage,
     appUsage,
+    userId,
   } = result.data;
 
   const feesByAppId: Record<string, string> = {};
@@ -60,11 +71,22 @@ export async function getDashboardUsageSummary(
     feesByAppId[row.app.publicClientId] = row.networkFeeUsdMicros;
   }
 
+  const publicClientIds = orderedApps.map((app) => app.publicClientId);
+
   let creditAllowance: CreditAllowanceSummary | null = null;
+  let creditAllowanceByAppId: Record<string, CreditAllowanceSummary> = {};
+  let endUserCreditAllowanceByAppId: Record<string, CreditAllowanceSummary> = {};
   try {
-    creditAllowance = await sumPrepaidCreditBalancesForClientIds(
-      orderedApps.map((app) => app.publicClientId),
-    );
+    endUserCreditAllowanceByAppId =
+      await getPrepaidCreditBalancesByClientId(publicClientIds);
+    creditAllowance = await getOwnerPrepaidCreditBalance(userId);
+    if (creditAllowance) {
+      for (const app of orderedApps) {
+        if (app.ownerId === userId) {
+          creditAllowanceByAppId[app.publicClientId] = creditAllowance;
+        }
+      }
+    }
   } catch (err) {
     console.warn(
       "dashboard-usage-summary: prepaid credit lookup failed",
@@ -82,5 +104,7 @@ export async function getDashboardUsageSummary(
     appsCount: orderedApps.length,
     appsWithUsage,
     creditAllowance,
+    creditAllowanceByAppId,
+    endUserCreditAllowanceByAppId,
   };
 }

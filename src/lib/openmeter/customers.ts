@@ -1,6 +1,5 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import { getHostedOpenMeterUrl } from "./constants";
-import { buildOpenMeterCustomerKey } from "./customer-key";
 import { isOpenMeterUlid } from "./konnect-routes";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
@@ -89,8 +88,18 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
   externalUserId: string;
   displayName?: string;
 }): Promise<OpenMeterCustomerIdentity> {
-  const key = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
-  return ensureOpenMeterCustomer(input.client, key, input.displayName);
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  return ensureOpenMeterCustomer(
+    input.client,
+    identity.customerKey,
+    input.displayName,
+  );
 }
 
 export async function assignCustomerBillingProfileOverride(input: {
@@ -103,11 +112,11 @@ export async function assignCustomerBillingProfileOverride(input: {
   });
 }
 
-export async function listTenantCustomerIds(
+export async function listTenantCustomers(
   client: OpenMeter,
   clientId: string,
-): Promise<string[]> {
-  const ids: string[] = [];
+): Promise<Array<{ id: string; key: string }>> {
+  const rows: Array<{ id: string; key: string }> = [];
   let page = 1;
   const pageSize = 100;
   const keyPrefix = `${clientId}:`;
@@ -121,7 +130,7 @@ export async function listTenantCustomerIds(
     const items = result?.items ?? [];
     for (const item of items) {
       if (item.id && item.key?.startsWith(keyPrefix)) {
-        ids.push(item.id);
+        rows.push({ id: item.id, key: item.key });
       }
     }
     if (!result || items.length < pageSize) {
@@ -130,5 +139,13 @@ export async function listTenantCustomerIds(
     page += 1;
   }
 
-  return ids;
+  return rows;
+}
+
+export async function listTenantCustomerIds(
+  client: OpenMeter,
+  clientId: string,
+): Promise<string[]> {
+  const rows = await listTenantCustomers(client, clientId);
+  return rows.map((row) => row.id);
 }

@@ -98,14 +98,22 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
   );
   console.log("[openmeter-bootstrap] Konnect tenant catalog ensured (meters + network_spend feature)");
   console.log(
-    "[openmeter-bootstrap] Per-customer trial credits are applied when users are provisioned:",
-  );
-  console.log("  - Starter subscription is created for credit_then_invoice settlement");
-  console.log(
-    "  - ensureTrialAllowanceForAppUser POSTs /customers/{id}/credits/grants (idempotent starter key)",
+    "[openmeter-bootstrap] Discount-then-credit settlement model:",
   );
   console.log(
-    "  - Mint gate reads GET /customers/{id}/credits/balance (live); plan discounts.usage is not used",
+    "  - Each app end-user is a distinct OpenMeter customer (client_id:external_user_id)",
+  );
+  console.log(
+    "  - Starter plans sync with settlement_mode=credit_then_invoice and discounts.usage = included micros",
+  );
+  console.log(
+    "  - Included starter allowance is plan discounts.usage (OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS); no auto credit grants",
+  );
+  console.log(
+    "  - Mint gate: remaining discount + prepaid credits (manual top-ups / overage)",
+  );
+  console.log(
+    "  - network_spend feature must stay meter-backed (no unit_cost / LLM pricing)",
   );
 }
 

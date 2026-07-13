@@ -195,17 +195,32 @@ export async function mintSignerJwtForExternalUser(input: {
     );
   }
 
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.publicClientId,
+    externalUserId,
+  });
+  // App owners mint/sign as owner:{users.id} so auth_id / OpenMeter subject share one wallet.
+  const provisionExternalUserId = identity.isOwner
+    ? (identity.ownerUserId as string)
+    : externalUserId;
+  const jwtExternalUserId = identity.isOwner
+    ? identity.customerKey
+    : externalUserId;
+
   let allowance: TrialCreditBalance | null;
   try {
     if (isHostedAdminClientAvailable()) {
       await ensureAppUserKonnectCustomer({
-        clientId: input.developerAppId,
-        externalUserId,
+        clientId: identity.developerAppId,
+        externalUserId: provisionExternalUserId,
       });
     }
     ({ allowance } = await provisionAppUserBilling({
-      clientId: input.developerAppId,
-      externalUserId,
+      clientId: identity.developerAppId,
+      externalUserId: provisionExternalUserId,
     }));
   } catch (err) {
     if (isHostedAdminClientAvailable()) {
@@ -216,6 +231,23 @@ export async function mintSignerJwtForExternalUser(input: {
       );
     }
     throw err;
+  }
+
+  // Mint gate uses credits + remaining plan discount (discount covers included usage).
+  if (isHostedAdminClientAvailable()) {
+    const { getSpendableUsdMicros } = await import("@/lib/openmeter/spendable-allowance");
+    const spendable = await getSpendableUsdMicros({
+      clientId: identity.publicClientId,
+      externalUserId: provisionExternalUserId,
+    });
+    if (spendable != null) {
+      allowance = {
+        hasAccess: BigInt(spendable) > 0n,
+        balanceUsdMicros: spendable,
+        consumedUsdMicros: allowance?.consumedUsdMicros ?? "0",
+        lifetimeGrantedUsdMicros: allowance?.lifetimeGrantedUsdMicros ?? "0",
+      };
+    }
   }
 
   enforceMintAllowanceGate(allowance);
@@ -229,13 +261,13 @@ export async function mintSignerJwtForExternalUser(input: {
     scope: "sign:job",
     scp: ["sign:job"],
     client_id: input.publicClientId,
-    external_user_id: externalUserId,
-    user_type: "external_user",
+    external_user_id: jwtExternalUserId,
+    user_type: identity.isOwner ? "app_owner" : "external_user",
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)
     .setAudience(audience)
-    .setSubject(externalUserId)
+    .setSubject(jwtExternalUserId)
     .setJti(uuidv4())
     .setIssuedAt(nowSeconds)
     .setNotBefore(nowSeconds)

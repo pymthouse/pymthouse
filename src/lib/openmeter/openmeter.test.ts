@@ -47,6 +47,18 @@ test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
 });
 
+test("owner customer key helpers", async () => {
+  const { buildOwnerCustomerKey, isOwnerCustomerKey, parseOwnerCustomerKey, normalizePlatformUserId } =
+    await import("./customer-key");
+  assert.equal(buildOwnerCustomerKey("uuid-1"), "owner:uuid-1");
+  assert.equal(isOwnerCustomerKey("owner:uuid-1"), true);
+  assert.equal(isOwnerCustomerKey("app_x:uuid-1"), false);
+  assert.equal(parseOwnerCustomerKey("owner:uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("owner:uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("user:uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("uuid-1"), "uuid-1");
+});
+
 test("isMintUserSignerTokenRequest detects mint scope", () => {
   const params = new URLSearchParams({
     grant_type: "client_credentials",
