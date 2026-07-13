@@ -60,9 +60,17 @@ export async function getDashboardUsageSummary(
     feesByAppId[row.app.publicClientId] = row.networkFeeUsdMicros;
   }
 
-  const creditAllowance = await sumPrepaidCreditBalancesForClientIds(
-    orderedApps.map((app) => app.publicClientId),
-  );
+  let creditAllowance: CreditAllowanceSummary | null = null;
+  try {
+    creditAllowance = await sumPrepaidCreditBalancesForClientIds(
+      orderedApps.map((app) => app.publicClientId),
+    );
+  } catch (err) {
+    console.warn(
+      "dashboard-usage-summary: prepaid credit lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 
   return {
     cycle,
