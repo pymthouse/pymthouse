@@ -334,6 +334,7 @@ function UsagePanelBody({
           lifetimeGrantedUsdMicros={summary.creditAllowance.lifetimeGrantedUsdMicros}
           consumedUsdMicros={summary.creditAllowance.consumedUsdMicros}
           requestCount={summary.totalRequests}
+          scopeHint="Platform sum — each app user is a separate Konnect prepaid customer."
         />
       ) : null}
       <UsageMetricsGrid

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
+import AllowanceStrip from "@/components/AllowanceStrip";
 import UsageLineChart from "@/components/UsageLineChart";
 import SignedTicketRequestHistory from "@/components/SignedTicketRequestHistory";
 import {
@@ -45,6 +46,7 @@ export default async function BillingUsageDashboard({
     totalFeeWei,
     totalNetworkFeeUsdMicros,
     appsWithUsage,
+    creditAllowance,
   } = result.data;
 
   const isOpenMeter = usageSource === "openmeter";
@@ -60,6 +62,11 @@ export default async function BillingUsageDashboard({
     viewerRoleDetail = "all applications visible";
   }
 
+  const creditScopeHint =
+    scope === "single"
+      ? "Sum of prepaid wallets for end users of this app (each user is a separate Konnect customer)."
+      : "Sum of prepaid wallets across these apps (each app user is a separate Konnect customer).";
+
   return (
     <DashboardLayout>
       <div className="mb-6 sm:mb-8">
@@ -70,6 +77,16 @@ export default async function BillingUsageDashboard({
           isOpenMeter={isOpenMeter}
         />
       </div>
+
+      {creditAllowance ? (
+        <AllowanceStrip
+          balanceUsdMicros={creditAllowance.balanceUsdMicros}
+          lifetimeGrantedUsdMicros={creditAllowance.lifetimeGrantedUsdMicros}
+          consumedUsdMicros={creditAllowance.consumedUsdMicros}
+          requestCount={totalRequests}
+          scopeHint={creditScopeHint}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-6 sm:mb-8">
         <div className="border border-zinc-800 rounded-xl p-4 sm:p-5 bg-zinc-900/30 min-w-0">

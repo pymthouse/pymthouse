@@ -5,6 +5,10 @@ import { db } from "@/db/index";
 import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import {
+  sumPrepaidCreditBalancesForClientIds,
+  type CreditAllowanceSummary,
+} from "@/lib/openmeter/credit-allowance-summary";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { queryOpenMeterAppDashboardUsage } from "@/lib/usage/query-openmeter";
 
@@ -131,6 +135,12 @@ export type BillingUsageDashboardPayload = {
   totalFeeWei: bigint;
   totalNetworkFeeUsdMicros: bigint;
   appsWithUsage: number;
+  /**
+   * Sum of Konnect prepaid credit balances for end-user customers under the
+   * apps in this payload (one Konnect customer per app user). Null when
+   * hosted credits are unavailable.
+   */
+  creditAllowance: CreditAllowanceSummary | null;
 };
 
 export type BillingUsageDashboardResult =
@@ -411,6 +421,18 @@ async function buildOpenMeterBillingDashboard(input: {
       return a.jobType.localeCompare(b.jobType);
     });
 
+  let creditAllowance: CreditAllowanceSummary | null = null;
+  try {
+    creditAllowance = await sumPrepaidCreditBalancesForClientIds(
+      input.orderedApps.map((app) => app.publicClientId),
+    );
+  } catch (err) {
+    console.warn(
+      "billing-usage-dashboard: prepaid credit lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
   return {
     ok: true,
     data: {
@@ -428,6 +450,7 @@ async function buildOpenMeterBillingDashboard(input: {
       totalFeeWei: 0n,
       totalNetworkFeeUsdMicros,
       appsWithUsage,
+      creditAllowance,
     },
   };
 }

@@ -14,6 +14,12 @@ export const SIGNED_TICKET_EVENT_SOURCE = "go-livepeer-remote-signer";
 export const DEFAULT_TRIAL_FEATURE_KEY =
   process.env.OPENMETER_TRIAL_FEATURE_KEY?.trim() || "network_spend";
 
+/**
+ * Konnect Starter / usage settlement: burn prepaid credits first, then invoice
+ * overage. Do not use plan rate-card `discounts.usage` for trial allowance.
+ */
+export const KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE = "credit_then_invoice";
+
 export type OpenMeterBackendMode =
   | "pymthouse_hosted"
   | "byo_openmeter_cloud"

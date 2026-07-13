@@ -22,6 +22,7 @@
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
     "openmeter:ensure-customer": "npx tsx scripts/openmeter-ensure-customer.ts",
+    "openmeter:migrate-starter-prepaid": "npx tsx scripts/openmeter-migrate-starter-prepaid.ts",
     "turnkey:create-webhook": "npx tsx scripts/turnkey-create-webhook.ts",
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
     "railway:stack:env": "bash scripts/railway-apply-stack-env.sh",

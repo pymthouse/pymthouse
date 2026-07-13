@@ -2,7 +2,12 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
-import { getHostedOpenMeterUrl, DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER } from "./constants";
+import {
+  getHostedOpenMeterUrl,
+  DEFAULT_TRIAL_FEATURE_KEY,
+  KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "./constants";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
@@ -301,6 +306,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
       name: planName,
       currency,
       billing_cadence: "P1M",
+      settlement_mode: KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
       phases: [
         {
           key: "default",
