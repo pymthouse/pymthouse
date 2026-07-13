@@ -60,46 +60,26 @@ type KonnectSubscription = {
   settlement_mode?: string;
 };
 
-function parseArgs(argv: string[]): Args {
-  const args: Args = {
-    apply: false,
-    timing: "immediate",
-  };
+type StarterRow = {
+  id: string;
+  clientId: string;
+  openmeterPlanId: string | null;
+  openmeterPlanVersion: number | null;
+};
 
-  for (let i = 0; i < argv.length; i += 1) {
-    const token = argv[i];
-    if (token === "--apply") {
-      args.apply = true;
-      continue;
-    }
-    if (token === "--dry-run") {
-      args.apply = false;
-      continue;
-    }
-    if (token === "--client-id") {
-      args.clientId = argv[++i]?.trim();
-      if (!args.clientId) {
-        throw new Error("--client-id requires a value");
-      }
-      continue;
-    }
-    if (token === "--timing") {
-      const value = argv[++i]?.trim();
-      if (value !== "immediate" && value !== "next_billing_cycle") {
-        throw new Error("--timing must be immediate or next_billing_cycle");
-      }
-      args.timing = value;
-      continue;
-    }
-    if (token === "--help" || token === "-h") {
-      console.log(usage());
-      process.exit(0);
-    }
-    throw new Error(`Unknown argument: ${token}\n\n${usage()}`);
-  }
+type PlanEnsureStats = {
+  published: number;
+  alreadyOk: number;
+  dbUpdated: number;
+};
 
-  return args;
-}
+type SubMigrateStats = {
+  changed: number;
+  skipped: number;
+  wouldChange: number;
+  errors: number;
+  plansPublished: number;
+};
 
 function usage(): string {
   return [
@@ -115,6 +95,52 @@ function usage(): string {
     "  --timing immediate|next_billing_cycle",
     "                            Subscription change timing (default: immediate)",
   ].join("\n");
+}
+
+function takeValue(argv: string[], index: number, flag: string): string {
+  const value = argv[index + 1]?.trim();
+  if (!value) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function parseArgs(argv: string[]): Args {
+  const args: Args = { apply: false, timing: "immediate" };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    switch (token) {
+      case "--apply":
+        args.apply = true;
+        break;
+      case "--dry-run":
+        args.apply = false;
+        break;
+      case "--client-id":
+        args.clientId = takeValue(argv, i, token);
+        i += 1;
+        break;
+      case "--timing": {
+        const value = takeValue(argv, i, token);
+        if (value !== "immediate" && value !== "next_billing_cycle") {
+          throw new Error("--timing must be immediate or next_billing_cycle");
+        }
+        args.timing = value;
+        i += 1;
+        break;
+      }
+      case "--help":
+      case "-h":
+        console.log(usage());
+        process.exit(0);
+        break;
+      default:
+        throw new Error(`Unknown argument: ${token}\n\n${usage()}`);
+    }
+  }
+
+  return args;
 }
 
 function requireKonnectConfig(): { baseUrl: string; apiKey: string } {
@@ -198,13 +224,14 @@ function stripUsageDiscountsFromPhases(
 }
 
 function planNeedsPrepaidRepublish(plan: KonnectPlan): boolean {
-  if (rateCardsHaveUsageDiscount(plan)) {
-    return true;
-  }
-  if (plan.settlement_mode !== KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE) {
-    return true;
-  }
-  return false;
+  return (
+    rateCardsHaveUsageDiscount(plan) ||
+    plan.settlement_mode !== KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE
+  );
+}
+
+function isUsablePrepaidPlan(plan: KonnectPlan): boolean {
+  return plan.status === "active" && !planNeedsPrepaidRepublish(plan);
 }
 
 async function listActiveSubscriptions(
@@ -271,14 +298,20 @@ async function changeSubscription(input: {
   planId: string;
   timing: Args["timing"];
 }): Promise<{ current: KonnectSubscription; next: KonnectSubscription }> {
-  return konnectFetch(input.baseUrl, input.apiKey, "POST", `/subscriptions/${input.subscriptionId}/change`, {
-    customer: { id: input.customerId },
-    plan: { id: input.planId },
-    timing: input.timing,
-  });
+  return konnectFetch(
+    input.baseUrl,
+    input.apiKey,
+    "POST",
+    `/subscriptions/${input.subscriptionId}/change`,
+    {
+      customer: { id: input.customerId },
+      plan: { id: input.planId },
+      timing: input.timing,
+    },
+  );
 }
 
-async function loadStarterRows(clientId?: string) {
+async function loadStarterRows(clientId?: string): Promise<StarterRow[]> {
   const conditions = [
     eq(plans.isStarterDefault, true),
     eq(plans.status, "active"),
@@ -297,6 +330,279 @@ async function loadStarterRows(clientId?: string) {
     .where(and(...conditions));
 }
 
+async function readStoredPlan(
+  baseUrl: string,
+  apiKey: string,
+  row: StarterRow,
+): Promise<KonnectPlan | null> {
+  const targetId = row.openmeterPlanId?.trim() || null;
+  if (!targetId) {
+    return null;
+  }
+  try {
+    return await getPlan(baseUrl, apiKey, targetId);
+  } catch (err) {
+    console.warn(
+      `[warn] ${row.clientId}: stored openmeterPlanId=${targetId} not readable: ${
+        err instanceof Error ? err.message : err
+      }`,
+    );
+    return null;
+  }
+}
+
+async function updateStarterOpenMeterPlan(
+  rowId: string,
+  published: KonnectPlan,
+): Promise<void> {
+  await db
+    .update(plans)
+    .set({
+      openmeterPlanId: published.id,
+      openmeterPlanVersion: published.version ?? null,
+      lastSyncedAt: new Date().toISOString(),
+      syncError: null,
+    })
+    .where(eq(plans.id, rowId));
+}
+
+async function ensurePrepaidStarterPlan(input: {
+  baseUrl: string;
+  apiKey: string;
+  row: StarterRow;
+  apply: boolean;
+  targetPlanIdByKey: Map<string, string>;
+  stats: PlanEnsureStats;
+}): Promise<void> {
+  const { baseUrl, apiKey, row, apply, targetPlanIdByKey, stats } = input;
+  const planKey = buildOpenMeterPlanKey(row.clientId, row.id);
+  const targetPlan = await readStoredPlan(baseUrl, apiKey, row);
+
+  if (targetPlan && isUsablePrepaidPlan(targetPlan)) {
+    targetPlanIdByKey.set(planKey, targetPlan.id);
+    stats.alreadyOk += 1;
+    console.log(
+      `[plan-ok] ${row.clientId} key=${planKey} plan=${targetPlan.id} v${targetPlan.version ?? "?"}`,
+    );
+    return;
+  }
+
+  if (!apply) {
+    console.log(
+      `[dry-run] would sync+publish prepaid Starter for ${row.clientId} key=${planKey}` +
+        (targetPlan
+          ? ` (current=${targetPlan.id} hasDiscount=${rateCardsHaveUsageDiscount(targetPlan)})`
+          : ""),
+    );
+    if (row.openmeterPlanId?.trim()) {
+      targetPlanIdByKey.set(planKey, `pending:${planKey}`);
+    }
+    return;
+  }
+
+  const sync = await syncPlanToOpenMeter(row.id);
+  if (!sync.ok || !sync.openmeterPlanId) {
+    throw new Error(
+      `syncPlanToOpenMeter failed for ${row.clientId}/${row.id}: ${sync.error ?? "no plan id"}`,
+    );
+  }
+
+  let published = await getPlan(baseUrl, apiKey, sync.openmeterPlanId);
+  if (!isUsablePrepaidPlan(published)) {
+    published = await publishPrepaidPlanVersion(baseUrl, apiKey, published);
+  }
+  if (row.openmeterPlanId !== published.id || !isUsablePrepaidPlan(published)) {
+    await updateStarterOpenMeterPlan(row.id, published);
+    stats.dbUpdated += 1;
+  }
+
+  targetPlanIdByKey.set(planKey, published.id);
+  stats.published += 1;
+  console.log(
+    `[plan] ${row.clientId} -> ${published.id} v${published.version ?? "?"} key=${planKey} discounts=${rateCardsHaveUsageDiscount(published)}`,
+  );
+}
+
+function shouldConsiderSubscription(input: {
+  clientId?: string;
+  knownStarterKey: boolean;
+  hasDiscount: boolean;
+  wrongSettlement: boolean;
+  starterNamed: boolean;
+}): boolean {
+  if (input.clientId) {
+    return input.knownStarterKey;
+  }
+  return (
+    input.knownStarterKey ||
+    input.hasDiscount ||
+    input.wrongSettlement ||
+    input.starterNamed
+  );
+}
+
+async function resolveTargetPlanId(input: {
+  baseUrl: string;
+  apiKey: string;
+  apply: boolean;
+  plan: KonnectPlan;
+  sub: KonnectSubscription;
+  knownStarterKey: boolean;
+  targetPlanIdByKey: Map<string, string>;
+  planCache: Map<string, KonnectPlan>;
+  stats: SubMigrateStats;
+}): Promise<string | null> {
+  const {
+    baseUrl,
+    apiKey,
+    apply,
+    plan,
+    sub,
+    knownStarterKey,
+    targetPlanIdByKey,
+    planCache,
+    stats,
+  } = input;
+
+  let targetPlanId = targetPlanIdByKey.get(plan.key);
+  if (targetPlanId && !targetPlanId.startsWith("pending:")) {
+    return targetPlanId;
+  }
+
+  const needsPublish =
+    rateCardsHaveUsageDiscount(plan) ||
+    plan.settlement_mode !== KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE ||
+    plan.status !== "active";
+
+  if (!apply) {
+    if (needsPublish || knownStarterKey) {
+      stats.wouldChange += 1;
+      console.log(
+        `[dry-run] would ${needsPublish ? "publish prepaid" : "ensure prepaid"} ${plan.key} and change sub ${sub.id} ` +
+          `(customer=${sub.customer_id}, from=${sub.plan_id})`,
+      );
+    } else {
+      stats.skipped += 1;
+    }
+    return null;
+  }
+
+  if (needsPublish) {
+    const published = await publishPrepaidPlanVersion(baseUrl, apiKey, plan);
+    targetPlanId = published.id;
+    targetPlanIdByKey.set(plan.key, published.id);
+    planCache.set(published.id, published);
+    stats.plansPublished += 1;
+    console.log(`[plan] key=${plan.key} -> ${published.id} v${published.version ?? "?"}`);
+    return targetPlanId;
+  }
+
+  targetPlanIdByKey.set(plan.key, plan.id);
+  return plan.id;
+}
+
+async function migrateOneSubscription(input: {
+  baseUrl: string;
+  apiKey: string;
+  args: Args;
+  sub: KonnectSubscription;
+  clientStarterKeys: Set<string>;
+  targetPlanIdByKey: Map<string, string>;
+  planCache: Map<string, KonnectPlan>;
+  stats: SubMigrateStats;
+}): Promise<void> {
+  const {
+    baseUrl,
+    apiKey,
+    args,
+    sub,
+    clientStarterKeys,
+    targetPlanIdByKey,
+    planCache,
+    stats,
+  } = input;
+
+  if (!sub.plan_id) {
+    stats.skipped += 1;
+    return;
+  }
+
+  let plan = planCache.get(sub.plan_id);
+  if (!plan) {
+    plan = await getPlan(baseUrl, apiKey, sub.plan_id);
+    planCache.set(sub.plan_id, plan);
+  }
+
+  const knownStarterKey = clientStarterKeys.has(plan.key);
+  const starterNamed = (plan.name ?? "").toLowerCase().includes("starter");
+  const hasDiscount = rateCardsHaveUsageDiscount(plan);
+  const wrongSettlement =
+    plan.settlement_mode !== KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE;
+
+  if (
+    !shouldConsiderSubscription({
+      clientId: args.clientId,
+      knownStarterKey,
+      hasDiscount,
+      wrongSettlement,
+      starterNamed,
+    })
+  ) {
+    stats.skipped += 1;
+    return;
+  }
+
+  const targetPlanId = await resolveTargetPlanId({
+    baseUrl,
+    apiKey,
+    apply: args.apply,
+    plan,
+    sub,
+    knownStarterKey,
+    targetPlanIdByKey,
+    planCache,
+    stats,
+  });
+
+  if (!targetPlanId || targetPlanId.startsWith("pending:") || sub.plan_id === targetPlanId) {
+    if (targetPlanId && sub.plan_id === targetPlanId) {
+      stats.skipped += 1;
+    }
+    return;
+  }
+
+  if (!args.apply) {
+    stats.wouldChange += 1;
+    console.log(
+      `[dry-run] would change sub ${sub.id} customer=${sub.customer_id} ` +
+        `${sub.plan_id} -> ${targetPlanId} (key=${plan.key})`,
+    );
+    return;
+  }
+
+  try {
+    const result = await changeSubscription({
+      baseUrl,
+      apiKey,
+      subscriptionId: sub.id,
+      customerId: sub.customer_id,
+      planId: targetPlanId,
+      timing: args.timing,
+    });
+    stats.changed += 1;
+    console.log(
+      `[changed] ${sub.id} -> ${result.next.id} plan=${result.next.plan_id} customer=${sub.customer_id}`,
+    );
+  } catch (err) {
+    stats.errors += 1;
+    console.error(
+      `[fail] sub ${sub.id} customer=${sub.customer_id}: ${
+        err instanceof Error ? err.message : err
+      }`,
+    );
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const { baseUrl, apiKey } = requireKonnectConfig();
@@ -310,222 +616,60 @@ async function main() {
   const starterRows = await loadStarterRows(args.clientId);
   console.log(`[migrate-starter-prepaid] starter plans in DB: ${starterRows.length}`);
 
-  /** planKey -> target prepaid plan id */
   const targetPlanIdByKey = new Map<string, string>();
-  let plansPublished = 0;
-  let plansAlreadyOk = 0;
-  let dbUpdated = 0;
-
+  const planStats: PlanEnsureStats = { published: 0, alreadyOk: 0, dbUpdated: 0 };
   for (const row of starterRows) {
-    const planKey = buildOpenMeterPlanKey(row.clientId, row.id);
-    let targetId = row.openmeterPlanId?.trim() || null;
-    let targetPlan: KonnectPlan | null = null;
-
-    if (targetId) {
-      try {
-        targetPlan = await getPlan(baseUrl, apiKey, targetId);
-      } catch (err) {
-        console.warn(
-          `[warn] ${row.clientId}: stored openmeterPlanId=${targetId} not readable: ${
-            err instanceof Error ? err.message : err
-          }`,
-        );
-        targetId = null;
-        targetPlan = null;
-      }
-    }
-
-    if (targetPlan && !planNeedsPrepaidRepublish(targetPlan) && targetPlan.status === "active") {
-      targetPlanIdByKey.set(planKey, targetPlan.id);
-      plansAlreadyOk += 1;
-      console.log(
-        `[plan-ok] ${row.clientId} key=${planKey} plan=${targetPlan.id} v${targetPlan.version ?? "?"}`,
-      );
-      continue;
-    }
-
-    if (!args.apply) {
-      console.log(
-        `[dry-run] would sync+publish prepaid Starter for ${row.clientId} key=${planKey}` +
-          (targetPlan ? ` (current=${targetPlan.id} hasDiscount=${rateCardsHaveUsageDiscount(targetPlan)})` : ""),
-      );
-      // Still record intended key so subscription dry-run can mention it.
-      if (targetId) {
-        targetPlanIdByKey.set(planKey, `pending:${planKey}`);
-      }
-      continue;
-    }
-
-    const sync = await syncPlanToOpenMeter(row.id);
-    if (!sync.ok || !sync.openmeterPlanId) {
-      throw new Error(
-        `syncPlanToOpenMeter failed for ${row.clientId}/${row.id}: ${sync.error ?? "no plan id"}`,
-      );
-    }
-
-    let published = await getPlan(baseUrl, apiKey, sync.openmeterPlanId);
-    if (planNeedsPrepaidRepublish(published) || published.status !== "active") {
-      // sync may have updated an old draft path; force a clean prepaid version.
-      published = await publishPrepaidPlanVersion(baseUrl, apiKey, published);
-      await db
-        .update(plans)
-        .set({
-          openmeterPlanId: published.id,
-          openmeterPlanVersion: published.version ?? null,
-          lastSyncedAt: new Date().toISOString(),
-          syncError: null,
-        })
-        .where(eq(plans.id, row.id));
-      dbUpdated += 1;
-    } else if (row.openmeterPlanId !== published.id) {
-      await db
-        .update(plans)
-        .set({
-          openmeterPlanId: published.id,
-          openmeterPlanVersion: published.version ?? null,
-          lastSyncedAt: new Date().toISOString(),
-          syncError: null,
-        })
-        .where(eq(plans.id, row.id));
-      dbUpdated += 1;
-    }
-
-    targetPlanIdByKey.set(planKey, published.id);
-    plansPublished += 1;
-    console.log(
-      `[plan] ${row.clientId} -> ${published.id} v${published.version ?? "?"} key=${planKey} discounts=${rateCardsHaveUsageDiscount(published)}`,
-    );
+    await ensurePrepaidStarterPlan({
+      baseUrl,
+      apiKey,
+      row,
+      apply: args.apply,
+      targetPlanIdByKey,
+      stats: planStats,
+    });
   }
 
   const subscriptions = await listActiveSubscriptions(baseUrl, apiKey);
   const clientStarterKeys = new Set(
     starterRows.map((row) => buildOpenMeterPlanKey(row.clientId, row.id)),
   );
-
   console.log(
     `[migrate-starter-prepaid] active/scheduled subscriptions: ${subscriptions.length}`,
   );
 
   const planCache = new Map<string, KonnectPlan>();
-  let changed = 0;
-  let skipped = 0;
-  let wouldChange = 0;
-  let errors = 0;
+  const subStats: SubMigrateStats = {
+    changed: 0,
+    skipped: 0,
+    wouldChange: 0,
+    errors: 0,
+    plansPublished: 0,
+  };
 
   for (const sub of subscriptions) {
-    if (!sub.plan_id) {
-      skipped += 1;
-      continue;
-    }
-
-    let plan = planCache.get(sub.plan_id);
-    if (!plan) {
-      plan = await getPlan(baseUrl, apiKey, sub.plan_id);
-      planCache.set(sub.plan_id, plan);
-    }
-
-    const knownStarterKey = clientStarterKeys.has(plan.key);
-    const starterNamed = (plan.name ?? "").toLowerCase().includes("starter");
-    const hasDiscount = rateCardsHaveUsageDiscount(plan);
-    const wrongSettlement =
-      plan.settlement_mode !== KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE;
-
-    // With --client-id, only touch that app's known Starter plan key(s).
-    if (args.clientId && !knownStarterKey) {
-      skipped += 1;
-      continue;
-    }
-
-    // Without --client-id, migrate known starters + any discounted / mis-settled starter-like plans.
-    if (!knownStarterKey && !hasDiscount && !wrongSettlement && !starterNamed) {
-      skipped += 1;
-      continue;
-    }
-
-    let targetPlanId = targetPlanIdByKey.get(plan.key);
-
-    if (!targetPlanId || targetPlanId.startsWith("pending:")) {
-      if (!args.apply) {
-        if (hasDiscount || wrongSettlement || plan.status !== "active") {
-          wouldChange += 1;
-          console.log(
-            `[dry-run] would publish prepaid ${plan.key} and change sub ${sub.id} ` +
-              `(customer=${sub.customer_id}, from=${sub.plan_id})`,
-          );
-        } else if (knownStarterKey) {
-          // Target will be the synced plan after --apply; still report if on stale id.
-          wouldChange += 1;
-          console.log(
-            `[dry-run] would ensure prepaid ${plan.key} and change sub ${sub.id} ` +
-              `(customer=${sub.customer_id}, from=${sub.plan_id})`,
-          );
-        } else {
-          skipped += 1;
-        }
-        continue;
-      }
-
-      if (hasDiscount || wrongSettlement || plan.status !== "active") {
-        const published = await publishPrepaidPlanVersion(baseUrl, apiKey, plan);
-        targetPlanId = published.id;
-        targetPlanIdByKey.set(plan.key, published.id);
-        planCache.set(published.id, published);
-        plansPublished += 1;
-        console.log(
-          `[plan] key=${plan.key} -> ${published.id} v${published.version ?? "?"}`,
-        );
-      } else {
-        targetPlanId = plan.id;
-        targetPlanIdByKey.set(plan.key, plan.id);
-      }
-    }
-
-    if (!targetPlanId || targetPlanId.startsWith("pending:") || sub.plan_id === targetPlanId) {
-      skipped += 1;
-      continue;
-    }
-
-    if (!args.apply) {
-      wouldChange += 1;
-      console.log(
-        `[dry-run] would change sub ${sub.id} customer=${sub.customer_id} ` +
-          `${sub.plan_id} -> ${targetPlanId} (key=${plan.key})`,
-      );
-      continue;
-    }
-
-    try {
-      const result = await changeSubscription({
-        baseUrl,
-        apiKey,
-        subscriptionId: sub.id,
-        customerId: sub.customer_id,
-        planId: targetPlanId,
-        timing: args.timing,
-      });
-      changed += 1;
-      console.log(
-        `[changed] ${sub.id} -> ${result.next.id} plan=${result.next.plan_id} customer=${sub.customer_id}`,
-      );
-    } catch (err) {
-      errors += 1;
-      console.error(
-        `[fail] sub ${sub.id} customer=${sub.customer_id}: ${
-          err instanceof Error ? err.message : err
-        }`,
-      );
-    }
+    await migrateOneSubscription({
+      baseUrl,
+      apiKey,
+      args,
+      sub,
+      clientStarterKeys,
+      targetPlanIdByKey,
+      planCache,
+      stats: subStats,
+    });
   }
 
   console.log(
-    `[migrate-starter-prepaid] done plansPublished=${plansPublished} plansAlreadyOk=${plansAlreadyOk} ` +
-      `dbUpdated=${dbUpdated} changed=${changed} wouldChange=${wouldChange} skipped=${skipped} errors=${errors}`,
+    `[migrate-starter-prepaid] done plansPublished=${planStats.published + subStats.plansPublished} ` +
+      `plansAlreadyOk=${planStats.alreadyOk} dbUpdated=${planStats.dbUpdated} ` +
+      `changed=${subStats.changed} wouldChange=${subStats.wouldChange} ` +
+      `skipped=${subStats.skipped} errors=${subStats.errors}`,
   );
 
   if (!args.apply) {
     console.log("[migrate-starter-prepaid] re-run with --apply to execute");
   }
-  if (errors > 0) {
+  if (subStats.errors > 0) {
     process.exit(1);
   }
 }
