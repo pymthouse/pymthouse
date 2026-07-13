@@ -1,4 +1,8 @@
 import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data";
+import {
+  sumPrepaidCreditBalancesForClientIds,
+  type CreditAllowanceSummary,
+} from "@/lib/openmeter/credit-allowance-summary";
 
 export type DashboardUsageChartSeries = {
   appId: string;
@@ -18,6 +22,12 @@ export type DashboardUsageSummary = {
   feesByAppId: Record<string, string>;
   appsCount: number;
   appsWithUsage: number;
+  /**
+   * Live prepaid credit ledger for end-users under the summary's apps
+   * (same Konnect balance the mint / remote-signer gates use). Null when
+   * hosted credits are unavailable.
+   */
+  creditAllowance: CreditAllowanceSummary | null;
 };
 
 /**
@@ -50,6 +60,18 @@ export async function getDashboardUsageSummary(
     feesByAppId[row.app.publicClientId] = row.networkFeeUsdMicros;
   }
 
+  let creditAllowance: CreditAllowanceSummary | null = null;
+  try {
+    creditAllowance = await sumPrepaidCreditBalancesForClientIds(
+      orderedApps.map((app) => app.publicClientId),
+    );
+  } catch (err) {
+    console.warn(
+      "dashboard-usage-summary: prepaid credit lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
   return {
     cycle,
     chartData,
@@ -59,5 +81,6 @@ export async function getDashboardUsageSummary(
     feesByAppId,
     appsCount: orderedApps.length,
     appsWithUsage,
+    creditAllowance,
   };
 }
