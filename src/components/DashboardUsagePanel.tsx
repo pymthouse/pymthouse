@@ -96,7 +96,6 @@ export default async function DashboardUsagePanel({
           lifetimeGrantedUsdMicros={creditAllowance.lifetimeGrantedUsdMicros}
           consumedUsdMicros={creditAllowance.consumedUsdMicros}
           requestCount={totalRequests}
-          scopeHint="Sum across your apps — each end user is a separate prepaid wallet."
         />
       ) : null}
 

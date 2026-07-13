@@ -12,11 +12,6 @@ type AllowanceStripProps = Readonly<{
   consumedUsdMicros: string;
   /** Signed / metered request count this period (usage context only). */
   requestCount: number;
-  /**
-   * Clarifies Konnect customer scope (credits are per end-user customer;
-   * UI may sum many wallets).
-   */
-  scopeHint?: string;
 }>;
 
 /**
@@ -28,7 +23,6 @@ export default function AllowanceStrip({
   lifetimeGrantedUsdMicros,
   consumedUsdMicros,
   requestCount,
-  scopeHint,
 }: AllowanceStripProps) {
   const granted = parseNonNegativeMicros(lifetimeGrantedUsdMicros);
   const remaining = parseNonNegativeMicros(balanceUsdMicros);
@@ -72,10 +66,6 @@ export default function AllowanceStrip({
           </span>
         )}
       </div>
-
-      {scopeHint ? (
-        <p className="text-[11px] leading-snug text-zinc-600">{scopeHint}</p>
-      ) : null}
 
       <div className="flex flex-wrap items-baseline gap-3">
         <span className="font-mono text-[15px] tabular-nums leading-none text-zinc-400">
