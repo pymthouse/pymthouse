@@ -50,9 +50,8 @@ export function OAuthCallbackClient() {
     if (clientState !== ClientState.Ready) return;
 
     bridging.current = true;
-    setError(null);
 
-    void (async () => {
+    (async () => {
       try {
         const result = await bridgeTurnkeySessionToNextAuth({
           getSession: () => getSession(),
@@ -71,7 +70,9 @@ export function OAuthCallbackClient() {
         setError(err instanceof Error ? err.message : "Authentication failed");
         bridging.current = false;
       }
-    })();
+    })().catch(() => {
+      bridging.current = false;
+    });
   }, [
     authState,
     clientState,

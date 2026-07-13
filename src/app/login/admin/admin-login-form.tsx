@@ -22,11 +22,13 @@ export function AdminLoginForm() {
   const accessDenied =
     authError === "AccessDenied" ||
     (typeof authError === "string" && authError.includes("AccessDenied"));
-  const oauthCallbackMessage = accessDenied
-    ? "OAuth sign-in was denied. Admin accounts must use a bearer token from npm run bootstrap."
-    : authError
-      ? "Sign-in failed. Please try again."
-      : null;
+  let oauthCallbackMessage: string | null = null;
+  if (accessDenied) {
+    oauthCallbackMessage =
+      "OAuth sign-in was denied. Admin accounts must use a bearer token from npm run bootstrap.";
+  } else if (authError) {
+    oauthCallbackMessage = "Sign-in failed. Please try again.";
+  }
 
   useEffect(() => {
     if (status === "authenticated" && session) {

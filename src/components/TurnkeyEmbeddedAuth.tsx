@@ -7,7 +7,9 @@ import {
 } from "@turnkey/react-wallet-kit";
 // AuthComponent is not in the package public exports; render it inline so auth
 // lives on the page instead of behind handleLogin()'s dismissible modal.
-import { AuthComponent } from "../../node_modules/@turnkey/react-wallet-kit/dist/components/auth/index.mjs";
+// Import the CJS build path (with adjacent .d.ts) — importing `.mjs` fails
+// Next.js typecheck because TS does not associate that file with index.d.ts.
+import { AuthComponent } from "../../node_modules/@turnkey/react-wallet-kit/dist/components/auth/index.js";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
@@ -79,7 +81,7 @@ function TurnkeyEmbeddedAuthInner({
   const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
 
   const [bridging, setBridging] = useState(false);
-  const [bridgeRequested, setBridgeRequested] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [failed, setFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // True once Turnkey has been Unauthenticated on this page — a later
@@ -87,6 +89,7 @@ function TurnkeyEmbeddedAuthInner({
   const sawUnauthenticated = useRef(false);
   // Only inspect the initial Turnkey session once (avoid logging out mid-bridge).
   const initialSessionHandled = useRef(false);
+  const bridgeInFlight = useRef(false);
 
   // undefined → default pymthouse mark; null/"" → no interior logo (exterior branding).
   const authLogo =
@@ -118,7 +121,7 @@ function TurnkeyEmbeddedAuthInner({
       nextAuthStatus === "unauthenticated" &&
       authState === AuthState.Authenticated
     ) {
-      void logout().catch(() => {
+      logout().catch(() => {
         // Ignore — AuthComponent can still proceed after a failed clear.
       });
       return;
@@ -134,21 +137,10 @@ function TurnkeyEmbeddedAuthInner({
     if (authState !== AuthState.Authenticated) return;
     if (nextAuthStatus !== "unauthenticated") return;
     if (!sawUnauthenticated.current) return;
-    setFailed(false);
-    setError(null);
-    setBridgeRequested(true);
-  }, [authState, nextAuthStatus]);
+    if (clientState !== ClientState.Ready) return;
+    if (failed || bridgeInFlight.current) return;
 
-  useEffect(() => {
-    if (
-      !bridgeRequested ||
-      authState !== AuthState.Authenticated ||
-      clientState !== ClientState.Ready ||
-      bridging ||
-      failed
-    ) {
-      return;
-    }
+    bridgeInFlight.current = true;
 
     (async () => {
       setBridging(true);
@@ -165,28 +157,31 @@ function TurnkeyEmbeddedAuthInner({
         if (!result.ok) {
           setError(result.error);
           setFailed(true);
-          setBridgeRequested(false);
           setBridging(false);
+          bridgeInFlight.current = false;
           return;
         }
 
-        setBridgeRequested(false);
         router.push(callbackUrl);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Authentication failed";
         setError(message);
         setFailed(true);
-        setBridgeRequested(false);
         setBridging(false);
+        bridgeInFlight.current = false;
       }
-    })();
+    })().catch(() => {
+      setFailed(true);
+      setBridging(false);
+      bridgeInFlight.current = false;
+    });
   }, [
-    bridgeRequested,
     authState,
+    nextAuthStatus,
     clientState,
-    bridging,
     failed,
+    retryNonce,
     getSession,
     refreshUser,
     refreshWallets,
@@ -254,8 +249,8 @@ function TurnkeyEmbeddedAuthInner({
           className="font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
         >
           Terms of Service
-        </a>{" "}
-        &{" "}
+        </a>
+        {" & "}
         <a
           href={privacyUrl}
           target="_blank"
@@ -277,7 +272,8 @@ function TurnkeyEmbeddedAuthInner({
               onClick={() => {
                 setFailed(false);
                 setError(null);
-                setBridgeRequested(true);
+                bridgeInFlight.current = false;
+                setRetryNonce((n) => n + 1);
               }}
               className="w-full text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
             >
