@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { SignedTicketRequestRow } from "@/lib/openmeter/signed-ticket-events";
@@ -35,11 +35,27 @@ function shortenId(value: string, keep = 10): string {
   return `${value.slice(0, keep)}…${value.slice(-6)}`;
 }
 
+function normalizeClientIds(
+  clientId?: string | null,
+  clientIds?: string[] | null,
+): string[] {
+  return [
+    ...new Set(
+      [...(clientIds ?? []), ...(clientId ? [clientId] : [])]
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0),
+    ),
+  ].sort();
+}
+
 export default function SignedTicketRequestHistory({
   clientId,
+  clientIds,
 }: Readonly<{
   /** Public OIDC client_id when scoped to a single app. */
   clientId?: string | null;
+  /** Public OIDC client_ids when scoped to a subset of apps. */
+  clientIds?: string[] | null;
 }>) {
   const [items, setItems] = useState<SignedTicketRequestRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -48,6 +64,12 @@ export default function SignedTicketRequestHistory({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const resolvedClientIds = useMemo(
+    () => normalizeClientIds(clientId, clientIds),
+    [clientId, clientIds],
+  );
+  const clientIdsKey = resolvedClientIds.join(",");
+
   const fetchPage = useCallback(
     async (cursor: string | null, append: boolean) => {
       const params = new URLSearchParams();
@@ -55,8 +77,8 @@ export default function SignedTicketRequestHistory({
       if (cursor) {
         params.set("cursor", cursor);
       }
-      if (clientId?.trim()) {
-        params.set("clientId", clientId.trim());
+      for (const id of resolvedClientIds) {
+        params.append("clientId", id);
       }
 
       const res = await fetch(`/api/v1/me/usage/requests?${params.toString()}`, {
@@ -75,7 +97,7 @@ export default function SignedTicketRequestHistory({
       setNextCursor(body.nextCursor);
       setItems((prev) => (append ? [...prev, ...body.items] : body.items));
     },
-    [clientId],
+    [resolvedClientIds],
   );
 
   useEffect(() => {
@@ -100,7 +122,7 @@ export default function SignedTicketRequestHistory({
     return () => {
       cancelled = true;
     };
-  }, [fetchPage]);
+  }, [fetchPage, clientIdsKey]);
 
   async function onLoadMore() {
     if (!nextCursor || loadingMore) {

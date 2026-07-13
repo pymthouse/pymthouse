@@ -8,9 +8,8 @@ import { signerConfig, transactions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { listUserAccessibleApps } from "@/lib/user-apps";
 import { getDashboardUsageSummary } from "@/lib/dashboard-usage-summary";
-import MyAppsSection from "@/components/apps/MyAppsSection";
 import AdminDashboardOverview, { type AdminStatCard } from "@/components/AdminDashboardOverview";
-import DashboardUsagePanel from "@/components/DashboardUsagePanel";
+import DeveloperDashboardUsage from "@/components/DeveloperDashboardUsage";
 import { syncSignerStatus } from "@/lib/signer-proxy";
 
 function formatWei(wei: string): string {
@@ -107,9 +106,13 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
     userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
     getDashboardUsageSummary(true),
   ]);
-  // Keep Apps above Usage until there is something to chart — creating an empty
-  // app should not rearrange the page.
-  const usageFirst = (usage?.appsWithUsage ?? 0) > 0;
+
+  const appOptions = apps
+    .filter((app) => Boolean(app.clientId))
+    .map((app) => ({
+      publicClientId: app.clientId as string,
+      name: app.name,
+    }));
 
   return (
     <>
@@ -118,20 +121,14 @@ async function DeveloperDashboard({ userId }: Readonly<{ userId: string }>) {
         <p className="text-zinc-500 mt-1">Developer overview</p>
       </div>
 
-      {usageFirst ? (
-        <>
-          <DashboardUsagePanel summary={usage} />
-          <div className="mt-6">
-            <MyAppsSection apps={apps} />
-          </div>
-        </>
+      {usage ? (
+        <DeveloperDashboardUsage summary={usage} apps={appOptions} />
       ) : (
-        <>
-          <MyAppsSection apps={apps} />
-          <div className="mt-6">
-            <DashboardUsagePanel summary={usage} />
-          </div>
-        </>
+        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
+          <p className="text-sm text-zinc-500">
+            Usage data is unavailable right now. Create an app or check back later.
+          </p>
+        </div>
       )}
 
       <div className="mt-6">

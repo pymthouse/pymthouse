@@ -94,6 +94,18 @@ test("eventMatchesViewerSubjects enforces clientId filter", () => {
   );
 });
 
+test("eventMatchesViewerSubjects enforces clientId set filter", () => {
+  const subjects = new Set(["user-123"]);
+  assert.equal(
+    eventMatchesViewerSubjects(sampleEvent(), subjects, new Set(["app_abc", "app_other"])),
+    true,
+  );
+  assert.equal(
+    eventMatchesViewerSubjects(sampleEvent(), subjects, new Set(["app_other"])),
+    false,
+  );
+});
+
 test("eventMatchesViewerSubjects rejects non signed-ticket types", () => {
   assert.equal(
     eventMatchesViewerSubjects(

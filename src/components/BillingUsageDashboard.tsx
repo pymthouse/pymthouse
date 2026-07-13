@@ -64,8 +64,8 @@ export default async function BillingUsageDashboard({
 
   const creditScopeHint =
     scope === "single"
-      ? "Sum of prepaid wallets for end users of this app (each user is a separate Konnect customer)."
-      : "Sum of prepaid wallets across these apps (each app user is a separate Konnect customer).";
+      ? "Prepaid credits for this application only (sum of end-user wallets; each user is a separate customer)."
+      : "Sum of prepaid wallets across these apps (credits are per application — each app user is a separate customer).";
 
   return (
     <DashboardLayout>

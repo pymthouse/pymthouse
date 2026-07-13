@@ -13,7 +13,12 @@ export async function GET(request: NextRequest) {
   }
 
   const params = request.nextUrl.searchParams;
-  const clientId = params.get("clientId")?.trim() || undefined;
+  const clientIds = [
+    ...params.getAll("clientId").map((id) => id.trim()).filter(Boolean),
+    ...(params.get("clientIds")?.split(",").map((id) => id.trim()).filter(Boolean) ??
+      []),
+  ];
+  const uniqueClientIds = [...new Set(clientIds)];
   const cursor = params.get("cursor")?.trim() || undefined;
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
@@ -28,7 +33,7 @@ export async function GET(request: NextRequest) {
 
   const result = await listViewerSignedTicketRequests({
     userId,
-    clientId,
+    clientIds: uniqueClientIds.length > 0 ? uniqueClientIds : undefined,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
   });

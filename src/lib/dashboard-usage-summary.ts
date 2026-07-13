@@ -1,6 +1,6 @@
 import { getBillingUsageDashboardData } from "@/lib/billing-usage-dashboard-data";
 import {
-  sumPrepaidCreditBalancesForClientIds,
+  getPrepaidCreditBalancesByClientId,
   type CreditAllowanceSummary,
 } from "@/lib/openmeter/credit-allowance-summary";
 
@@ -28,6 +28,11 @@ export type DashboardUsageSummary = {
    * hosted credits are unavailable.
    */
   creditAllowance: CreditAllowanceSummary | null;
+  /**
+   * Per-application prepaid credits keyed by public OIDC client_id.
+   * Used when the Dashboard filter selects exactly one app.
+   */
+  creditAllowanceByAppId: Record<string, CreditAllowanceSummary>;
 };
 
 /**
@@ -60,11 +65,29 @@ export async function getDashboardUsageSummary(
     feesByAppId[row.app.publicClientId] = row.networkFeeUsdMicros;
   }
 
+  const publicClientIds = orderedApps.map((app) => app.publicClientId);
+
   let creditAllowance: CreditAllowanceSummary | null = null;
+  let creditAllowanceByAppId: Record<string, CreditAllowanceSummary> = {};
   try {
-    creditAllowance = await sumPrepaidCreditBalancesForClientIds(
-      orderedApps.map((app) => app.publicClientId),
-    );
+    creditAllowanceByAppId = await getPrepaidCreditBalancesByClientId(publicClientIds);
+    const entries = Object.values(creditAllowanceByAppId);
+    if (entries.length > 0) {
+      let balanceUsdMicros = 0n;
+      let lifetimeGrantedUsdMicros = 0n;
+      let consumedUsdMicros = 0n;
+      for (const row of entries) {
+        balanceUsdMicros += BigInt(row.balanceUsdMicros);
+        lifetimeGrantedUsdMicros += BigInt(row.lifetimeGrantedUsdMicros);
+        consumedUsdMicros += BigInt(row.consumedUsdMicros);
+      }
+      creditAllowance = {
+        hasAccess: balanceUsdMicros > 0n,
+        balanceUsdMicros: balanceUsdMicros.toString(),
+        lifetimeGrantedUsdMicros: lifetimeGrantedUsdMicros.toString(),
+        consumedUsdMicros: consumedUsdMicros.toString(),
+      };
+    }
   } catch (err) {
     console.warn(
       "dashboard-usage-summary: prepaid credit lookup failed",
@@ -82,5 +105,6 @@ export async function getDashboardUsageSummary(
     appsCount: orderedApps.length,
     appsWithUsage,
     creditAllowance,
+    creditAllowanceByAppId,
   };
 }

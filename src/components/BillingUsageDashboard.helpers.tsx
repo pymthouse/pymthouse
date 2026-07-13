@@ -73,8 +73,8 @@ export function BillingDashboardHeader({
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 mt-1">
             Usage and per-identity breakdown for this application in the current billing
-            cycle. Prepaid credits below are the sum of end-user wallets for this app
-            (Konnect customer = app user).
+            cycle. Prepaid credits below apply to this application only (customer =
+            app user).
           </p>
           {cycleLine}
         </div>
