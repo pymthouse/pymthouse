@@ -65,6 +65,7 @@ export default async function DashboardUsagePanel({
     totalNetworkFeeUsdMicros,
     appsCount,
     appsWithUsage,
+    creditAllowance,
   } = summary;
 
   const totalFeesLabel = formatUsdMicrosString(totalNetworkFeeUsdMicros, 4) ?? "$0";
@@ -89,10 +90,14 @@ export default async function DashboardUsagePanel({
         </Link>
       </div>
 
-      <AllowanceStrip
-        consumedUsdMicros={totalNetworkFeeUsdMicros}
-        requestCount={totalRequests}
-      />
+      {creditAllowance ? (
+        <AllowanceStrip
+          balanceUsdMicros={creditAllowance.balanceUsdMicros}
+          lifetimeGrantedUsdMicros={creditAllowance.lifetimeGrantedUsdMicros}
+          consumedUsdMicros={creditAllowance.consumedUsdMicros}
+          requestCount={totalRequests}
+        />
+      ) : null}
 
       <div className="mb-5 grid grid-cols-3 gap-4 rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
         <UsageMetricCell

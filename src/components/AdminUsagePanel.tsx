@@ -328,9 +328,11 @@ function UsagePanelBody({
 
   return (
     <>
-      {showAllowance ? (
+      {showAllowance && summary?.creditAllowance ? (
         <AllowanceStrip
-          consumedUsdMicros={summary.totalNetworkFeeUsdMicros}
+          balanceUsdMicros={summary.creditAllowance.balanceUsdMicros}
+          lifetimeGrantedUsdMicros={summary.creditAllowance.lifetimeGrantedUsdMicros}
+          consumedUsdMicros={summary.creditAllowance.consumedUsdMicros}
           requestCount={summary.totalRequests}
         />
       ) : null}
