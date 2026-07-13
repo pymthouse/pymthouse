@@ -25,6 +25,7 @@ import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
   validateCustomPlanName,
 } from "@/lib/openmeter/plan-naming";
+import { PLAN_TEMPLATES } from "@/lib/plan-templates";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ interface PlanRow {
   openmeterPlanVersion?: number | null;
   lastSyncedAt?: string | null;
   syncError?: string | null;
+  trialPhaseDuration?: string | null;
   sync?: {
     status: "not_applicable" | "pending" | "synced" | "error";
     syncedAt: string | null;
@@ -87,8 +89,10 @@ interface PlanDraft {
   priceCurrency: string;
   includedUsdDisplay: string;
   defaultMarkupPct: string;
+  trialPhaseDuration: string;
   capabilityKeys: string[];
   capabilityMarkupByKey: Record<string, string>;
+  capabilityMaxPriceByKey: Record<string, string>;
 }
 
 const USD_MICROS = 1_000_000;
@@ -209,6 +213,17 @@ function syncCapabilityMarkups(
   return out;
 }
 
+function syncCapabilityMaxPrices(
+  prev: Record<string, string>,
+  keys: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of keys) {
+    out[k] = prev[k] ?? "";
+  }
+  return out;
+}
+
 function capabilitiesToMarkupByKey(
   capabilities: PlanRow["capabilities"],
 ): Record<string, string> {
@@ -220,20 +235,39 @@ function capabilitiesToMarkupByKey(
   return out;
 }
 
+function capabilitiesToMaxPriceByKey(
+  capabilities: PlanRow["capabilities"],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const cap of capabilities) {
+    const key = cap.modelId === "*" ? cap.pipeline : `${cap.pipeline}|${cap.modelId}`;
+    out[key] = cap.maxPricePerUnit ?? "";
+  }
+  return out;
+}
+
 function pickerKeysToCapabilities(
   keys: string[],
   markupByKey: Record<string, string>,
-): Array<{ pipeline: string; modelId: string; retailRateUsd: string | null }> {
+  maxPriceByKey: Record<string, string> = {},
+): Array<{
+  pipeline: string;
+  modelId: string;
+  retailRateUsd: string | null;
+  maxPricePerUnit: string | null;
+}> {
   return keys.map((key) => {
     const sep = key.indexOf("|");
     const isWildcard = sep === -1;
     const markupRaw = markupByKey[key]?.trim() ?? "";
     const markup = parseMarkupPercentInput(markupRaw);
+    const maxRaw = maxPriceByKey[key]?.trim() ?? "";
     return {
       pipeline: isWildcard ? key : key.slice(0, sep),
       modelId: isWildcard ? "*" : key.slice(sep + 1),
       retailRateUsd:
         markup != null && markup > 0 ? markupPercentToRetailRateUsd(markup) : null,
+      maxPricePerUnit: maxRaw || null,
     };
   });
 }
@@ -248,8 +282,10 @@ function planToDraft(plan: PlanRow): PlanDraft {
     priceCurrency: plan.priceCurrency,
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
     defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
+    trialPhaseDuration: plan.trialPhaseDuration ?? "",
     capabilityKeys,
     capabilityMarkupByKey: capabilitiesToMarkupByKey(caps),
+    capabilityMaxPriceByKey: capabilitiesToMaxPriceByKey(caps),
   };
 }
 
@@ -261,8 +297,10 @@ function emptyDraft(): PlanDraft {
     priceCurrency: "USD",
     includedUsdDisplay: "",
     defaultMarkupPct: "",
+    trialPhaseDuration: "",
     capabilityKeys: [],
     capabilityMarkupByKey: {},
+    capabilityMaxPriceByKey: {},
   };
 }
 
@@ -383,17 +421,21 @@ function CapabilityPricingRow({
   capKey,
   label,
   markupPct,
+  maxPrice,
   canEdit,
   idPrefix,
   onMarkupChange,
+  onMaxPriceChange,
   onRemove,
 }: {
   capKey: string;
   label: string;
   markupPct: string;
+  maxPrice: string;
   canEdit: boolean;
   idPrefix: string;
   onMarkupChange: (pct: string) => void;
+  onMaxPriceChange: (value: string) => void;
   onRemove: () => void;
 }) {
   const [markupFocused, setMarkupFocused] = useState(false);
@@ -463,6 +505,24 @@ function CapabilityPricingRow({
             <span className="text-xs text-zinc-500">%</span>
           </label>
 
+          <label className="flex items-center gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-800/40 px-2 py-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+              Max $
+            </span>
+            <input
+              id={`${idPrefix}-max-${capKey.replace(/[|]/g, "-")}`}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={maxPrice}
+              onChange={(e) => onMaxPriceChange(e.target.value)}
+              placeholder="—"
+              disabled={!canEdit}
+              aria-label={`Max price per unit for ${label}`}
+              className="w-16 bg-transparent text-right text-sm tabular-nums text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 focus:outline-none"
+            />
+          </label>
+
           {canEdit && markupFocused && (
             <div
               className="flex flex-wrap justify-end gap-1"
@@ -501,18 +561,22 @@ function CapabilityPricingRow({
 function CapabilityPricingRules({
   keys,
   markupByKey,
+  maxPriceByKey,
   catalog,
   canEdit,
   idPrefix,
   onMarkupChange,
+  onMaxPriceChange,
   onRemove,
 }: {
   keys: string[];
   markupByKey: Record<string, string>;
+  maxPriceByKey: Record<string, string>;
   catalog: PipelineCatalogEntry[];
   canEdit: boolean;
   idPrefix: string;
   onMarkupChange: (key: string, pct: string) => void;
+  onMaxPriceChange: (key: string, value: string) => void;
   onRemove: (key: string) => void;
 }) {
   const sorted = sortedCapabilityKeys(keys, catalog);
@@ -530,9 +594,11 @@ function CapabilityPricingRules({
             capKey={key}
             label={capabilityKeyLabel(key, catalog)}
             markupPct={markupByKey[key] ?? ""}
+            maxPrice={maxPriceByKey[key] ?? ""}
             canEdit={canEdit}
             idPrefix={idPrefix}
             onMarkupChange={(pct) => onMarkupChange(key, pct)}
+            onMaxPriceChange={(value) => onMaxPriceChange(key, value)}
             onRemove={() => onRemove(key)}
           />
         ))
@@ -640,34 +706,50 @@ function PlanDraftForm({
       )}
 
       {draft.type === "subscription" && (
+        <div>
+          <label htmlFor={`${idPrefix}-price`} className="block text-xs text-zinc-500 mb-1">
+            Monthly price ({draft.priceCurrency})
+          </label>
+          <input
+            id={`${idPrefix}-price`}
+            value={draft.priceAmount}
+            onChange={(e) => onChange({ ...draft, priceAmount: e.target.value })}
+            disabled={!canEdit}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+          />
+        </div>
+      )}
+
+      {(draft.type === "subscription" || draft.type === "usage") && (
         <>
           <div>
-            <label htmlFor={`${idPrefix}-price`} className="block text-xs text-zinc-500 mb-1">
-              Monthly price ({draft.priceCurrency})
+            <label htmlFor={`${idPrefix}-included`} className="block text-xs text-zinc-500 mb-1">
+              Included usage allowance (USD)
             </label>
             <input
-              id={`${idPrefix}-price`}
-              value={draft.priceAmount}
-              onChange={(e) => onChange({ ...draft, priceAmount: e.target.value })}
+              id={`${idPrefix}-included`}
+              type="number"
+              min="0"
+              step="0.01"
+              value={draft.includedUsdDisplay}
+              onChange={(e) => onChange({ ...draft, includedUsdDisplay: e.target.value })}
+              placeholder="e.g. 10.00"
               disabled={!canEdit}
               className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
             />
           </div>
           <div>
-          <label htmlFor={`${idPrefix}-included`} className="block text-xs text-zinc-500 mb-1">
-            Included usage allowance (USD)
-          </label>
-          <input
-            id={`${idPrefix}-included`}
-            type="number"
-            min="0"
-            step="0.01"
-            value={draft.includedUsdDisplay}
-            onChange={(e) => onChange({ ...draft, includedUsdDisplay: e.target.value })}
-            placeholder="e.g. 10.00"
-            disabled={!canEdit}
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-          />
+            <label htmlFor={`${idPrefix}-trial`} className="block text-xs text-zinc-500 mb-1">
+              Trial phase duration (ISO-8601, optional)
+            </label>
+            <input
+              id={`${idPrefix}-trial`}
+              value={draft.trialPhaseDuration}
+              onChange={(e) => onChange({ ...draft, trialPhaseDuration: e.target.value })}
+              placeholder="e.g. P14D"
+              disabled={!canEdit}
+              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+            />
           </div>
         </>
       )}
@@ -697,6 +779,10 @@ function PlanDraftForm({
                         draft.capabilityMarkupByKey,
                         keys,
                       ),
+                      capabilityMaxPriceByKey: syncCapabilityMaxPrices(
+                        draft.capabilityMaxPriceByKey,
+                        keys,
+                      ),
                     });
                   }}
                   className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
@@ -711,6 +797,7 @@ function PlanDraftForm({
                       ...draft,
                       capabilityKeys: [],
                       capabilityMarkupByKey: {},
+                      capabilityMaxPriceByKey: {},
                     })
                   }
                   className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
@@ -730,6 +817,10 @@ function PlanDraftForm({
                     draft.capabilityMarkupByKey,
                     keys,
                   ),
+                  capabilityMaxPriceByKey: syncCapabilityMaxPrices(
+                    draft.capabilityMaxPriceByKey,
+                    keys,
+                  ),
                 })
               }
               disabled={!canEdit}
@@ -740,6 +831,7 @@ function PlanDraftForm({
             <CapabilityPricingRules
               keys={draft.capabilityKeys}
               markupByKey={draft.capabilityMarkupByKey}
+              maxPriceByKey={draft.capabilityMaxPriceByKey}
               catalog={catalog}
               canEdit={canEdit}
               idPrefix={idPrefix}
@@ -752,6 +844,15 @@ function PlanDraftForm({
                   },
                 })
               }
+              onMaxPriceChange={(key, value) =>
+                onChange({
+                  ...draft,
+                  capabilityMaxPriceByKey: {
+                    ...draft.capabilityMaxPriceByKey,
+                    [key]: value,
+                  },
+                })
+              }
               onRemove={(key) => {
                 const keys = draft.capabilityKeys.filter((k) => k !== key);
                 onChange({
@@ -759,6 +860,10 @@ function PlanDraftForm({
                   capabilityKeys: keys,
                   capabilityMarkupByKey: syncCapabilityMarkups(
                     draft.capabilityMarkupByKey,
+                    keys,
+                  ),
+                  capabilityMaxPriceByKey: syncCapabilityMaxPrices(
+                    draft.capabilityMaxPriceByKey,
                     keys,
                   ),
                 });
@@ -782,13 +887,14 @@ function buildPlanPayload(
   _existing: PlanRow | null,
 ): Record<string, unknown> {
   const includedUsdMicros =
-    draft.type === "subscription" && draft.includedUsdDisplay
+    (draft.type === "subscription" || draft.type === "usage") && draft.includedUsdDisplay
       ? displayToUsdMicros(draft.includedUsdDisplay)
       : null;
 
   const capabilities = pickerKeysToCapabilities(
     draft.capabilityKeys,
     draft.capabilityMarkupByKey,
+    draft.capabilityMaxPriceByKey,
   );
 
   const overageRateUsd = resolvePlanOverageRateUsd(draft.type, draft.defaultMarkupPct);
@@ -802,6 +908,7 @@ function buildPlanPayload(
     capabilities,
     includedUsdMicros,
     overageRateUsd,
+    trialPhaseDuration: draft.trialPhaseDuration.trim() || null,
   };
 
   if (planId) payload.id = planId;
@@ -820,6 +927,7 @@ function openMeterCapabilityValidationError(
   const capabilities = pickerKeysToCapabilities(
     draft.capabilityKeys,
     draft.capabilityMarkupByKey,
+    draft.capabilityMaxPriceByKey,
   );
   if (capabilities.length === 0) {
     return null;
@@ -1085,7 +1193,7 @@ function NetworkPricePlanCard({
               <label className="block text-xs text-zinc-500">
                 Pipelines &amp; models discoverable to integrators
                 <span className="block text-zinc-600 mt-0.5">
-                  Per-capability price limits coming soon.
+                  Per-capability max price (USD) can be set below for each selected row.
                 </span>
               </label>
               <PipelineModelPicker
@@ -1326,15 +1434,53 @@ function CustomPlanCard({
 }) {
   const [draft, setDraft] = useState<PlanDraft>(() => planToDraft(plan));
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const syncFailure = planSyncFailureMessage(plan);
 
   useEffect(() => {
     if (isEditing) {
       setDraft(planToDraft(plan));
       setError(null);
+      setSyncNotice(null);
     }
   }, [isEditing, plan]);
+
+  const resync = async () => {
+    if (!canEdit) return;
+    setSyncing(true);
+    setError(null);
+    setSyncNotice(null);
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/plans/${plan.id}/sync`, {
+        method: "POST",
+      });
+      const data = await readFetchJson(res);
+      if (!data.ok) {
+        setError(
+          typeof data.body.error === "string"
+            ? data.body.error
+            : `Sync failed (${res.status})`,
+        );
+        return;
+      }
+      if (data.body.republished) {
+        setSyncNotice(
+          typeof data.body.message === "string"
+            ? data.body.message
+            : "Published a new OpenMeter plan version. Migrate active subscriptions to apply it.",
+        );
+      } else {
+        setSyncNotice("Synced to OpenMeter.");
+      }
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const save = async () => {
     if (!canEdit || !draft.name.trim()) return;
@@ -1416,12 +1562,32 @@ function CustomPlanCard({
           {plan.type !== "free" && !plan.isNetworkDefault && syncFailure && (
             <p className="text-xs mt-1 text-red-400">{syncFailure}</p>
           )}
+          {syncNotice && (
+            <p className="text-xs mt-1 text-emerald-400">{syncNotice}</p>
+          )}
+          {plan.type !== "free" && !plan.isNetworkDefault && (
+            <p className="text-[11px] text-zinc-500 mt-1">
+              OpenMeter v{plan.openmeterPlanVersion ?? "—"} · last sync{" "}
+              {plan.lastSyncedAt ?? "—"}
+            </p>
+          )}
           {!isEditing && (
             <CapabilityChips capabilities={plan.capabilities} catalog={catalog} />
           )}
         </div>
         {collapsedEditable && (
-          <div className="flex shrink-0 gap-3 pointer-events-auto">
+          <div className="flex shrink-0 gap-3 pointer-events-auto items-center">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void resync();
+              }}
+              disabled={syncing || plan.type === "free"}
+              className="text-sm text-zinc-400 hover:text-emerald-400 disabled:opacity-50"
+            >
+              {syncing ? "Syncing…" : "Sync"}
+            </button>
             <span className="text-sm font-medium text-emerald-400">Edit</span>
             <button
               type="button"
@@ -1462,6 +1628,14 @@ function CustomPlanCard({
               className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-500 disabled:opacity-50"
             >
               {saveButtonLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => void resync()}
+              disabled={syncing || saving || plan.type === "free"}
+              className="px-4 py-2 rounded-lg border border-zinc-600 text-zinc-200 text-sm hover:bg-zinc-800 disabled:opacity-50"
+            >
+              {syncing ? "Syncing…" : "Sync to OpenMeter"}
             </button>
             <button
               type="button"
@@ -1573,6 +1747,30 @@ function AddPlanPanel({
       ) : (
         <div className="space-y-4">
           <h3 className="text-base font-semibold text-zinc-100">New custom plan</h3>
+          <div className="flex flex-wrap gap-2">
+            {PLAN_TEMPLATES.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => {
+                  setDraft({
+                    ...emptyDraft(),
+                    type: template.type,
+                    priceAmount: template.priceAmount ?? "0",
+                    includedUsdDisplay: template.includedUsdDisplay ?? "",
+                    defaultMarkupPct: template.defaultMarkupPct ?? "",
+                    trialPhaseDuration: template.trialPhaseDuration ?? "",
+                    name: template.id === "blank" ? "" : template.label,
+                  });
+                  setError(null);
+                }}
+                className="text-xs px-2.5 py-1 rounded-md border border-zinc-600 text-zinc-300 hover:bg-zinc-800"
+                title={template.description}
+              >
+                {template.label}
+              </button>
+            ))}
+          </div>
           {error && (
             <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
               {error}

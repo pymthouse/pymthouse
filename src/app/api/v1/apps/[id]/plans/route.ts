@@ -400,6 +400,10 @@ export async function POST(
         status: coerceJsonScalarString(body.status, "active"),
         overageRateUsd: overageRate.value,
         includedUsdMicros,
+        trialPhaseDuration:
+          typeof body.trialPhaseDuration === "string" && body.trialPhaseDuration.trim()
+            ? body.trialPhaseDuration.trim().toUpperCase()
+            : null,
         billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
         discoveryProfileId,
         isNetworkDefault: false,
@@ -638,6 +642,16 @@ export async function PUT(
           body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
         overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
+        ...(body.trialPhaseDuration === undefined
+          ? {}
+          : {
+              trialPhaseDuration:
+                body.trialPhaseDuration === null ||
+                (typeof body.trialPhaseDuration === "string" &&
+                  !body.trialPhaseDuration.trim())
+                  ? null
+                  : coerceJsonScalarString(body.trialPhaseDuration).trim().toUpperCase(),
+            }),
         ...(body.billingCycle === undefined
           ? {}
           : { billingCycle: coerceJsonScalarString(body.billingCycle) }),

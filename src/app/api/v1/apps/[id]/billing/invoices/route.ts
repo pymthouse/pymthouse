@@ -16,6 +16,8 @@ export async function GET(
   const url = new URL(request.url);
   const page = Number(url.searchParams.get("page") || "1");
   const pageSize = Number(url.searchParams.get("pageSize") || "20");
+  const include = url.searchParams.get("include") || "";
+  const includeLines = include.split(",").includes("lines") || url.searchParams.get("includeLines") === "1";
 
   try {
     const client = getHostedAdminClient();
@@ -24,6 +26,7 @@ export async function GET(
       clientId: auth.app.id,
       page: Number.isFinite(page) ? page : 1,
       pageSize: Number.isFinite(pageSize) ? pageSize : 20,
+      includeLines,
     });
     return NextResponse.json(result);
   } catch (err) {

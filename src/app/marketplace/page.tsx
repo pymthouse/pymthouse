@@ -68,11 +68,12 @@ export default function MarketplacePage() {
           <h1 className="text-3xl font-bold text-zinc-100">Marketplace</h1>
           <p className="text-zinc-500 mt-2 max-w-xl">
             Discover apps built by developers on the Livepeer network.
-            All apps are free to use during the beta period.
+            Usage is metered through OpenMeter; paid plans and starter credits
+            are available per app.
           </p>
         </div>
 
-        {/* Free usage banner */}
+        {/* Billing banner */}
         <div className="mb-8 flex items-start gap-3 p-4 rounded-xl border border-teal-500/20 bg-teal-500/5">
           <svg
             className="w-5 h-5 text-teal-400 mt-0.5 shrink-0"
@@ -89,11 +90,12 @@ export default function MarketplacePage() {
           </svg>
           <div>
             <p className="text-sm font-medium text-teal-300">
-              Free for a limited time
+              Usage billing via OpenMeter
             </p>
             <p className="text-xs text-zinc-400 mt-0.5">
-              All apps on the marketplace are currently free to use. Usage is
-              tracked and billing will be introduced in a future update.
+              Apps can offer starter credits, subscriptions, and usage-based
+              retail pricing. Check each app for plan details, balance, and
+              checkout.
             </p>
           </div>
         </div>

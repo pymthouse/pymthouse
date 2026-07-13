@@ -131,6 +131,9 @@ export async function getStripeConnectStatus(clientId: string) {
     openmeterStripeAppId: config?.openmeterStripeAppId ?? null,
     openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
     defaultCurrency: config?.defaultCurrency ?? "USD",
+    checkoutSuccessUrl: config?.checkoutSuccessUrl ?? null,
+    checkoutCancelUrl: config?.checkoutCancelUrl ?? null,
+    taxBehavior: config?.taxBehavior ?? null,
     connectedAt: config?.connectedAt ?? null,
   };
 }

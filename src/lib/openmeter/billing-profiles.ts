@@ -108,6 +108,14 @@ export async function ensureTenantBillingProfile(input: {
     workflow: {
       invoicing: { autoAdvance: true, draftPeriod: "P0D" },
       payment: { collectionMethod: "charge_automatically" },
+      ...(existing?.taxBehavior === "inclusive" || existing?.taxBehavior === "exclusive"
+        ? {
+            tax: {
+              // OpenMeter billing profile tax behavior (Stripe Tax).
+              enabled: true,
+            },
+          }
+        : {}),
     },
     apps: {
       tax: input.openmeterStripeAppId,

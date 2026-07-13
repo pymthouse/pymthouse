@@ -3,6 +3,7 @@ import { authenticateAppClient } from "@/lib/auth";
 import {
   estimateEndUserBillableMicros,
   loadActiveRetailRatesForApp,
+  loadRetailRatesForAppUser,
   resolveRetailRateForUsage,
 } from "@/lib/billing/retail-usage";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
@@ -114,7 +115,12 @@ export async function GET(
     { endUserBillableUsdMicros: string; retailRateUsd: string }
   > | undefined;
   if (includeRetail) {
-    const lookup = await loadActiveRetailRatesForApp(app.id);
+    const lookup = filterUserId?.trim()
+      ? await loadRetailRatesForAppUser({
+          clientId: app.id,
+          externalUserId: filterUserId.trim(),
+        })
+      : await loadActiveRetailRatesForApp(app.id);
     retailByPipelineModel = new Map();
     const rowsForRetail = pipelineRows ?? [];
     if (rowsForRetail.length === 0 && omRows.length > 0) {

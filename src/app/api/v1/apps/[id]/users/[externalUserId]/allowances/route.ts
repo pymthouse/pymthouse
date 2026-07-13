@@ -65,6 +65,10 @@ export async function POST(
     typeof body.featureKey === "string" && body.featureKey.trim()
       ? body.featureKey.trim()
       : undefined;
+  const expiresAfter =
+    typeof body.expiresAfter === "string" && body.expiresAfter.trim()
+      ? body.expiresAfter.trim()
+      : undefined;
 
   try {
     const result = await grantAllowanceUsdMicros({
@@ -73,6 +77,7 @@ export async function POST(
       amountUsdMicros,
       source,
       featureKey,
+      expiresAfter,
     });
 
     const response: Record<string, unknown> = {

@@ -8,6 +8,8 @@ export type PlanSyncCommandResult = {
   ok: boolean;
   sync: BillingSyncState;
   openmeterPlanId?: string;
+  republished?: boolean;
+  message?: string;
 };
 
 function syncStateFromDbPlan(
@@ -74,5 +76,7 @@ export async function syncBillingProduct(planId: string): Promise<PlanSyncComman
     ok: sync.ok,
     sync: syncStateFromDbPlan(resolved.plan, sync),
     openmeterPlanId: sync.openmeterPlanId,
+    republished: sync.republished,
+    message: sync.message,
   };
 }

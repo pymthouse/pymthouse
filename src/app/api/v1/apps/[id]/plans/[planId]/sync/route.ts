@@ -71,5 +71,7 @@ export async function POST(
     ok: true,
     sync: result.sync,
     openmeterPlanId: result.openmeterPlanId ?? null,
+    republished: result.republished ?? false,
+    message: result.message ?? null,
   });
 }

@@ -24,6 +24,8 @@ export async function grantAllowanceUsdMicros(input: {
   amountUsdMicros: bigint;
   source: GrantSource;
   featureKey?: string;
+  /** ISO-8601 duration for Konnect grant expiry (e.g. P90D). */
+  expiresAfter?: string;
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -63,6 +65,7 @@ export async function grantAllowanceUsdMicros(input: {
       description: `Pymthouse allowance grant source=${input.source}`,
       featureKey,
       idempotencyKey: `manual:${customer.id}:${input.source}:${randomUUID()}`,
+      expiresAfter: input.expiresAfter?.trim() || undefined,
       apiKey: omApiKey,
     });
   } else {

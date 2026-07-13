@@ -18,7 +18,7 @@ import {
   parseRetailRateUsd,
 } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
+import { getBillingClientForApp, getHostedAdminClient, isBillingClientAvailableForApp } from "./admin-client";
 import { ensureCapabilityOpenMeterFeature } from "./capability-features";
 import {
   isOpenMeterPlanImmutableError,
@@ -137,13 +137,19 @@ async function appendDefaultTrialUsageRateCard(input: {
 }): Promise<void> {
   if (input.useKonnectBody) {
     const featureId = await resolveOpenMeterFeatureId(input.omClient, DEFAULT_TRIAL_FEATURE_KEY);
-    // Konnect trial allowance is prepaid via /credits/grants, not plan discounts.usage.
+    // Starter trial credits are prepaid via /credits/grants. Paid plans use
+    // rate-card discounts.usage so included allowance is part of the catalog.
+    const includeUsageDiscount =
+      !input.plan.isStarterDefault &&
+      input.includedMicros != null &&
+      input.includedMicros > 0;
     input.rateCards.push(
       buildKonnectUsageRateCard({
         key: DEFAULT_TRIAL_FEATURE_KEY,
         name: "Network usage",
         featureId,
         unitAmount: input.planRetail,
+        includedMicros: includeUsageDiscount ? input.includedMicros : undefined,
       }),
     );
     return;
@@ -191,7 +197,13 @@ async function appendCapabilityRateCards(input: {
     });
     if (input.useKonnectBody) {
       const featureId = await resolveOpenMeterFeatureId(input.omClient, featureKey);
-      // Konnect trial allowance is prepaid via /credits/grants, not plan discounts.usage.
+      // Starter trial credits are prepaid via /credits/grants. Paid plans attach
+      // includedMicros as discounts.usage on the first capability rate card.
+      const includeUsageDiscount =
+        !input.plan.isStarterDefault &&
+        !entitlementAssigned &&
+        input.includedMicros != null &&
+        input.includedMicros > 0;
       input.rateCards.push(
         buildKonnectUsageRateCard({
           key: featureKey,
@@ -201,6 +213,7 @@ async function appendCapabilityRateCards(input: {
           }),
           featureId,
           unitAmount: retail,
+          includedMicros: includeUsageDiscount ? input.includedMicros : undefined,
         }),
       );
     } else {
@@ -226,14 +239,14 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
   clientId: string;
   plan: typeof plans.$inferSelect;
   capabilities: Array<typeof planCapabilityBundles.$inferSelect>;
-  client?: ReturnType<typeof getHostedAdminClient>;
+  client?: Awaited<ReturnType<typeof getBillingClientForApp>>;
 }) {
   const { plan } = input;
   if (plan.type === "free" || plan.isNetworkDefault) {
     return null;
   }
 
-  const omClient = input.client ?? getHostedAdminClient();
+  const omClient = input.client ?? (await getBillingClientForApp(input.clientId));
   const rateCards: Array<Record<string, unknown>> = [];
   const includedMicros = resolvePlanIncludedMicros(plan);
   const planRetail = resolvePlanRetailRateUsd(plan);
@@ -294,20 +307,39 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
   const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
   const planName = toOpenMeterDisplayName(plan.name);
   const currency = (plan.priceCurrency || "USD").toUpperCase() as "USD";
+  const trialDuration =
+    typeof plan.trialPhaseDuration === "string" && /^P\d+[DWMY]$/i.test(plan.trialPhaseDuration.trim())
+      ? plan.trialPhaseDuration.trim().toUpperCase()
+      : null;
 
   if (useKonnectBody) {
+    const phases: Array<Record<string, unknown>> = [];
+    if (trialDuration) {
+      phases.push({
+        key: "trial",
+        name: "Trial",
+        duration: trialDuration,
+        rate_cards: rateCards.map((card) => ({
+          ...card,
+          // Trial phase: keep usage features but zero out flat subscription fees.
+          price:
+            card.key === "subscription_fee"
+              ? { type: "flat", amount: "0" }
+              : card.price,
+        })),
+      });
+    }
+    phases.push({
+      key: "default",
+      name: "Default",
+      rate_cards: rateCards,
+    });
     return {
       key: planKey,
       name: planName,
       currency,
       billing_cadence: "P1M",
-      phases: [
-        {
-          key: "default",
-          name: "Default",
-          rate_cards: rateCards,
-        },
-      ],
+      phases,
       metadata: {
         pymthouse_client_id: input.clientId,
         pymthouse_plan_id: plan.id,
@@ -316,19 +348,39 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
     };
   }
 
+  const phases: Array<Record<string, unknown>> = [];
+  if (trialDuration) {
+    phases.push({
+      key: "trial",
+      name: "Trial",
+      duration: trialDuration,
+      rateCards: rateCards.map((card) =>
+        card.type === "flat_fee"
+          ? {
+              ...card,
+              price: {
+                type: "flat",
+                amount: "0",
+                paymentTerm: "in_advance",
+              },
+            }
+          : card,
+      ),
+    });
+  }
+  phases.push({
+    key: "default",
+    name: "Default",
+    duration: null,
+    rateCards,
+  });
+
   return {
     key: planKey,
     name: planName,
     currency,
     billingCadence: "P1M",
-    phases: [
-      {
-        key: "default",
-        name: "Default",
-        duration: null,
-        rateCards,
-      },
-    ],
+    phases,
     metadata: {
       pymthouse_client_id: input.clientId,
       pymthouse_plan_id: plan.id,
@@ -373,7 +425,10 @@ export async function verifyOpenMeterPlanId(
 export async function syncPlanToOpenMeter(planId: string): Promise<{
   ok: boolean;
   openmeterPlanId?: string;
+  openmeterPlanVersion?: number | null;
+  republished?: boolean;
   error?: string;
+  message?: string;
 }> {
   const planRows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
   const plan = planRows[0];
@@ -381,14 +436,14 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
     return { ok: false, error: "Plan not active" };
   }
 
-  if (!isHostedAdminClientAvailable()) {
+  if (!(await isBillingClientAvailableForApp(plan.clientId))) {
     return {
       ok: false,
       error: "OpenMeter is not configured (set OPENMETER_URL; OPENMETER_API_KEY only for secured deployments)",
     };
   }
 
-  const client = getHostedAdminClient();
+  const client = await getBillingClientForApp(plan.clientId);
   const capabilityRows = await db
     .select()
     .from(planCapabilityBundles)
@@ -417,6 +472,7 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
   }
 
   const now = new Date().toISOString();
+  let republished = false;
 
   try {
     let openmeterPlanId = plan.openmeterPlanId ?? undefined;
@@ -431,14 +487,17 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
         openmeterPlanId = updated?.id ?? openmeterPlanId;
         version = updated?.version ?? version;
       } catch (updateErr) {
-        if (
-          !isOpenMeterPlanNotFoundError(updateErr) &&
-          !isOpenMeterPlanImmutableError(updateErr)
-        ) {
+        if (isOpenMeterPlanImmutableError(updateErr)) {
+          // Published plans are immutable: create a new version under the same key.
+          republished = true;
+          openmeterPlanId = undefined;
+          version = undefined;
+        } else if (isOpenMeterPlanNotFoundError(updateErr)) {
+          openmeterPlanId = undefined;
+          version = undefined;
+        } else {
           throw updateErr;
         }
-        openmeterPlanId = undefined;
-        version = undefined;
       }
     }
 
@@ -448,6 +507,9 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
       );
       openmeterPlanId = created?.id;
       version = created?.version;
+      if (republished) {
+        // Keep republished=true so callers can migrate subscriptions to the new version.
+      }
     }
 
     if (!openmeterPlanId) {
@@ -467,7 +529,15 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
       })
       .where(eq(plans.id, planId));
 
-    return { ok: true, openmeterPlanId };
+    return {
+      ok: true,
+      openmeterPlanId,
+      openmeterPlanVersion: version ?? null,
+      republished,
+      message: republished
+        ? "Published plan was immutable; created and published a new OpenMeter plan version. Migrate active subscriptions to pick up the new version."
+        : undefined,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db

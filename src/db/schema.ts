@@ -383,6 +383,11 @@ export const plans = pgTable(
     overageRateUsd: text("overage_rate_usd"),
     /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
     includedUsdMicros: text("included_usd_micros"),
+    /**
+     * Optional ISO-8601 duration for an initial trial phase before the default paid phase
+     * (e.g. "P14D"). Null = single default phase.
+     */
+    trialPhaseDuration: text("trial_phase_duration"),
     /** Billing period length; currently only "monthly" is supported. */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
@@ -537,6 +542,8 @@ export const appBillingConfig = pgTable(
     defaultCurrency: text("default_currency").notNull().default("USD"),
     checkoutSuccessUrl: text("checkout_success_url"),
     checkoutCancelUrl: text("checkout_cancel_url"),
+    /** Stripe Tax behavior preference: inclusive | exclusive | null (provider default). */
+    taxBehavior: text("tax_behavior"),
     connectedAt: text("connected_at"),
     createdAt: text("created_at")
       .notNull()
@@ -565,6 +572,70 @@ export const appBillingOauthStates = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [index("idx_app_billing_oauth_states_expires").on(t.expiresAt)],
+);
+
+/**
+ * Merchant-defined add-on packs (credit top-ups / extra capacity) synced to OpenMeter add-ons.
+ * Catalog source of truth; OpenMeter remains the billing authority after sync.
+ */
+export const billingAddons = pgTable(
+  "billing_addons",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** Credit grant amount in USD micros when purchased. */
+    creditUsdMicros: text("credit_usd_micros").notNull(),
+    priceAmount: text("price_amount").notNull().default("0"),
+    priceCurrency: text("price_currency").notNull().default("USD"),
+    status: text("status").notNull().default("active"),
+    openmeterAddonId: text("openmeter_addon_id"),
+    lastSyncedAt: text("last_synced_at"),
+    syncError: text("sync_error"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_billing_addons_client_name").on(t.clientId, t.name),
+  ],
+);
+
+/**
+ * Per-customer enterprise pricing overrides (custom plan assignment).
+ * When set, checkout/change prefer this plan for the external user.
+ */
+export const customerPlanOverrides = pgTable(
+  "customer_plan_overrides",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    externalUserId: text("external_user_id").notNull(),
+    planId: text("plan_id")
+      .notNull()
+      .references(() => plans.id),
+    notes: text("notes"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_customer_plan_overrides_client_user").on(
+      t.clientId,
+      t.externalUserId,
+    ),
+  ],
 );
 
 /** Idempotency audit for OpenMeter signed-ticket ingest (not balance source). */
@@ -761,3 +832,5 @@ export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
 export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;
 export type UsageIngestReceipt = typeof usageIngestReceipts.$inferSelect;
+export type BillingAddon = typeof billingAddons.$inferSelect;
+export type CustomerPlanOverride = typeof customerPlanOverrides.$inferSelect;

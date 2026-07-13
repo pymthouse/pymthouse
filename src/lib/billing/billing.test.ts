@@ -45,6 +45,7 @@ test("deriveSyncState maps pending when active plan has no OM id", () => {
     priceAmount: "0",
     priceCurrency: "USD",
     includedUsdMicros: null,
+    trialPhaseDuration: null,
     overageRateUsd: null,
     includedUnits: null,
     billingCycle: "monthly",

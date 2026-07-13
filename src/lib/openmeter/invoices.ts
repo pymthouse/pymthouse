@@ -12,6 +12,12 @@ export type TenantInvoiceDto = {
   issuedAt?: string;
   periodStart?: string;
   periodEnd?: string;
+  lines?: Array<{
+    id?: string;
+    name?: string;
+    total?: string;
+    quantity?: string;
+  }>;
 };
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -27,6 +33,7 @@ export async function listTenantInvoices(input: {
   clientId: string;
   page?: number;
   pageSize?: number;
+  includeLines?: boolean;
 }): Promise<{ items: TenantInvoiceDto[]; page: number; pageSize: number; totalCount: number }> {
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 20;
@@ -38,14 +45,34 @@ export async function listTenantInvoices(input: {
 
   const allItems: TenantInvoiceDto[] = [];
   for (const idChunk of chunk(customerIds, 50)) {
-    const result = await input.client.billing.invoices.list({
-      customers: idChunk,
-      page: 1,
-      pageSize: 100,
-      order: "DESC",
-      orderBy: "createdAt",
-    });
+    let result;
+    try {
+      result = await input.client.billing.invoices.list({
+        customers: idChunk,
+        page: 1,
+        pageSize: 100,
+        order: "DESC",
+        orderBy: "createdAt",
+        expand: input.includeLines ? ["lines"] : undefined,
+      });
+    } catch {
+      result = await input.client.billing.invoices.list({
+        customers: idChunk,
+        page: 1,
+        pageSize: 100,
+        order: "DESC",
+        orderBy: "createdAt",
+      });
+    }
     for (const inv of result?.items ?? []) {
+      const lines = Array.isArray((inv as { lines?: unknown }).lines)
+        ? ((inv as { lines: Array<Record<string, unknown>> }).lines).map((line) => ({
+            id: typeof line.id === "string" ? line.id : undefined,
+            name: typeof line.name === "string" ? line.name : undefined,
+            total: line.total != null ? String(line.total) : undefined,
+            quantity: line.quantity != null ? String(line.quantity) : undefined,
+          }))
+        : undefined;
       allItems.push({
         id: inv.id,
         number: inv.number ?? undefined,
@@ -57,6 +84,7 @@ export async function listTenantInvoices(input: {
         issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
         periodStart: inv.period?.from?.toISOString?.() ?? undefined,
         periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
+        lines,
       });
     }
   }

@@ -383,7 +383,7 @@ Do **not** pass `externalUserId` — the server derives subjects from the sessio
 
 **Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. **Paid** plans (subscription/usage, non-starter) sync included allowance as Konnect `discounts.usage` on usage rate cards (and as metered entitlements on self-hosted OpenMeter). New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.
 
 **Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`.
 
@@ -627,7 +627,13 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `GET` | `/api/v1/apps/{clientId}/plans?apiVersion=2` | Returns `products[]` (`BillingProduct` DTOs with `sync`, `capabilities[].effectiveRetailRateUsd`) |
 | `POST` | `/api/v1/apps/{clientId}/plans/{planId}/sync` | Explicit OpenMeter sync command |
 | `GET` | `/api/v1/apps/{clientId}/signer/routing` | Direct DMZ signing + webhook routing config |
-| `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Unified grants (source: `trial`, `manual`, `promo`, `plan_adjustment`) |
+| `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Unified grants (source: `trial`, `manual`, `promo`, `plan_adjustment`; optional `expiresAfter` ISO-8601 duration) |
+| `GET`/`PATCH`/`DELETE` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | Read primary subscription; `PATCH` change/migrate plan; `DELETE` cancel |
+| `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Create paid subscription + Stripe Checkout session |
+| `POST` | `/api/v1/apps/{clientId}/billing/portal` | Stripe Customer Portal session for an end user |
+| `GET`/`POST`/`DELETE` | `/api/v1/apps/{clientId}/billing/addons` | Credit top-up add-ons (create / purchase / delete) |
+| `GET`/`PUT`/`DELETE` | `/api/v1/apps/{clientId}/billing/overrides` | Per-customer enterprise plan overrides |
+| `POST` | `/api/v1/webhooks/openmeter/entitlements` | Entitlement exhaustion webhook → `enforce: deny_signing` when balance is depleted |
 | `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | End-user subscription read model |
 
 **Retail validation:** `GET .../usage?include=retail&groupBy=pipeline_model` estimates `endUserBillableUsdMicros` from active plan retail rates (network meter × configured retail $/micro). Authoritative invoicing remains OpenMeter after plan sync.

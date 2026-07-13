@@ -169,11 +169,12 @@ export default function MarketplaceAppDetailPage() {
         </svg>
         <div>
           <p className="text-sm font-medium text-teal-300">
-            Free for a limited time
+            Usage billing via OpenMeter
           </p>
           <p className="text-xs text-zinc-400 mt-0.5">
-            This app is currently free to use. Usage is tracked and billing will
-            be introduced in a future update.
+            This app may offer starter credits, subscriptions, or usage-based
+            retail pricing. Integrators can check balance, plans, and checkout
+            through the Builder billing APIs.
           </p>
         </div>
       </div>
