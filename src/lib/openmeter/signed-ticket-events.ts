@@ -12,6 +12,8 @@ import {
 import { getHostedOpenMeterClient } from "@/lib/openmeter/client";
 import {
   buildOpenMeterCustomerKey,
+  buildOwnerCustomerKey,
+  isOwnerCustomerKey,
   parseOpenMeterCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
@@ -140,6 +142,8 @@ export async function resolveViewerUsageSubjects(userId: string): Promise<Set<st
     return subjects;
   }
   subjects.add(trimmedUserId);
+  subjects.add(buildOwnerCustomerKey(trimmedUserId));
+  subjects.add(`user:${trimmedUserId}`);
 
   const userRows = await db
     .select({ email: users.email })
@@ -384,6 +388,11 @@ function buildSubjectQueries(
 ): string[] {
   const queries: string[] = [];
   for (const subject of subjects) {
+    if (isOwnerCustomerKey(subject)) {
+      // Owner wallet events use subject = owner:{users.id} (not compound).
+      queries.push(subject);
+      continue;
+    }
     if (clientIds && clientIds.size > 0) {
       for (const clientId of clientIds) {
         queries.push(buildOpenMeterCustomerKey(clientId, subject));

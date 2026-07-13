@@ -1,43 +1,114 @@
-"use client";
+export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from "react";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/next-auth-options";
+import { redirect } from "next/navigation";
+import Link from "next/link";
+import { db } from "@/db/index";
+import { signerConfig } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppsListSection from "@/components/apps/AppsListSection";
-import type { UserAppSummary } from "@/lib/user-apps";
+import AdminAppsHome from "@/components/apps/AdminAppsHome";
+import { listUserAccessibleApps } from "@/lib/user-apps";
+import { syncSignerStatus } from "@/lib/signer-proxy";
+import NetworkLiveIndicator from "@/components/NetworkLiveIndicator";
 
-function myAppsSummaryText(count: number, loading: boolean): string {
-  if (loading) return "Loading your apps…";
+function myAppsSummaryText(count: number): string {
   if (count === 0) return "No apps yet — create one to get started.";
   if (count === 1) return "1 app — open settings or usage from the icons.";
   return `${count} apps — open settings or usage from the icons.`;
 }
 
-export default function AppsPage() {
-  const [apps, setApps] = useState<UserAppSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+export default async function AppsPage() {
+  const session = await getServerSession(authOptions);
+  if (!session) redirect("/login");
 
-  useEffect(() => {
-    fetch("/api/v1/apps")
-      .then((r) => r.json())
-      .then((data: { apps?: UserAppSummary[] }) => setApps(data.apps || []))
-      .finally(() => setLoading(false));
-  }, []);
+  const role = (session.user as Record<string, unknown>)?.role as string;
+  const userId = (session.user as Record<string, unknown>)?.id as string;
+
+  if (role === "admin" || role === "operator") {
+    return (
+      <DashboardLayout>
+        <AdminMyApps userId={userId} />
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-zinc-100">My Apps</h1>
-        <p className="mt-1 text-sm text-zinc-500">Manage your provider applications</p>
+      <DeveloperMyApps userId={userId} />
+    </DashboardLayout>
+  );
+}
+
+async function DeveloperMyApps({ userId }: Readonly<{ userId: string }>) {
+  const apps = userId ? await listUserAccessibleApps(userId) : [];
+
+  return (
+    <>
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-zinc-100">My Apps</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            Manage your provider applications
+          </p>
+        </div>
+        <Link
+          href="/usage"
+          className="shrink-0 text-sm font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+        >
+          Open Usage →
+        </Link>
       </div>
 
       <AppsListSection
         apps={apps}
-        loading={loading}
         title=""
-        summaryText={myAppsSummaryText(apps.length, loading)}
+        summaryText={myAppsSummaryText(apps.length)}
         emptyStateTitle="No apps yet."
         emptyStateBody="Create your first provider app to configure identity, plans, user management, and signer access."
       />
-    </DashboardLayout>
+    </>
+  );
+}
+
+async function AdminMyApps({ userId }: Readonly<{ userId: string }>) {
+  await syncSignerStatus();
+
+  const [myApps, signerRows] = await Promise.all([
+    userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
+    db.select().from(signerConfig).where(eq(signerConfig.id, "default")).limit(1),
+  ]);
+
+  const signer = signerRows[0];
+  const signerOnline = signer?.status === "running";
+  let signerDetail = "no address";
+  if (signer?.ethAddress) {
+    signerDetail = `${signer.ethAddress.slice(0, 6)}...${signer.ethAddress.slice(-4)}`;
+  } else if (signerOnline) {
+    signerDetail = "connected";
+  } else if (signer?.status) {
+    signerDetail = signer.status;
+  }
+
+  return (
+    <>
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-zinc-100">My Apps</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            Manage provider applications
+          </p>
+        </div>
+        <NetworkLiveIndicator
+          online={signerOnline}
+          detail={signerDetail}
+          statusLabel={signer?.status || "offline"}
+        />
+      </div>
+
+      <AdminAppsHome myApps={myApps} />
+    </>
   );
 }

@@ -140,7 +140,7 @@ export default function SignedTicketRequestHistory({
   }
 
   return (
-    <section className="mt-8 sm:mt-10 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
       <div className="mb-4">
         <h2 className="text-sm font-semibold text-zinc-200">Your signed ticket requests</h2>
         <p className="text-xs text-zinc-500 mt-1">

@@ -51,9 +51,8 @@ function normalizeKonnectPlanPhases(phases: unknown): unknown {
         const rateCard = { ...(card as Record<string, unknown>) };
         delete rateCard.type;
         delete rateCard.entitlement_template;
-        // Prepaid credits are the only Konnect allowance path — never sync
-        // plan-level usage discounts (they dual-account against the credit ledger).
-        delete rateCard.discounts;
+        // Keep intentional discounts.usage (included plan allowance). Do not
+        // invent discounts here — callers must set them explicitly.
 
         if (
           rateCard.feature == null &&
@@ -100,8 +99,10 @@ export function buildKonnectUsageRateCard(input: {
   featureId: string;
   unitAmount: string;
   billingCadence?: string;
+  /** Included usage allowance in USD micros (plan discounts.usage). */
+  includedUsdMicros?: number;
 }): Record<string, unknown> {
-  return {
+  const card: Record<string, unknown> = {
     key: input.key,
     name: input.name,
     feature: { id: input.featureId },
@@ -111,6 +112,16 @@ export function buildKonnectUsageRateCard(input: {
       amount: input.unitAmount,
     },
   };
+  if (
+    input.includedUsdMicros != null &&
+    Number.isFinite(input.includedUsdMicros) &&
+    input.includedUsdMicros > 0
+  ) {
+    card.discounts = {
+      usage: String(Math.floor(input.includedUsdMicros)),
+    };
+  }
+  return card;
 }
 
 export function buildKonnectFlatFeeRateCard(input: {

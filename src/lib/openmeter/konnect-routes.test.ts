@@ -191,7 +191,20 @@ test("normalizeKonnectSubscriptionRecord maps plan_id to plan.id", () => {
   assert.equal(normalized.plan_id, undefined);
 });
 
-test("buildKonnectUsageRateCard never includes usage discounts", () => {
+test("buildKonnectUsageRateCard includes usage discounts when provided", () => {
+  const card = buildKonnectUsageRateCard({
+    key: "network_spend",
+    name: "Network usage",
+    featureId: "01G65Z755AFWAKHE12NY0CQ9FH",
+    unitAmount: "0.000001",
+    includedUsdMicros: 5_000_000,
+  });
+  assert.deepEqual(card.discounts, { usage: "5000000" });
+  assert.deepEqual(card.feature, { id: "01G65Z755AFWAKHE12NY0CQ9FH" });
+  assert.deepEqual(card.price, { type: "unit", amount: "0.000001" });
+});
+
+test("buildKonnectUsageRateCard omits discounts when included amount is absent", () => {
   const card = buildKonnectUsageRateCard({
     key: "network_spend",
     name: "Network usage",
@@ -199,11 +212,9 @@ test("buildKonnectUsageRateCard never includes usage discounts", () => {
     unitAmount: "0.000001",
   });
   assert.equal(card.discounts, undefined);
-  assert.deepEqual(card.feature, { id: "01G65Z755AFWAKHE12NY0CQ9FH" });
-  assert.deepEqual(card.price, { type: "unit", amount: "0.000001" });
 });
 
-test("rewriteKonnectPlanRequestBody strips rate card discounts", () => {
+test("rewriteKonnectPlanRequestBody preserves rate card discounts", () => {
   const rewritten = rewriteKonnectPlanRequestBody({
     key: "starter",
     billingCadence: "P1M",
@@ -228,7 +239,7 @@ test("rewriteKonnectPlanRequestBody strips rate card discounts", () => {
     phases: Array<{ rate_cards: Array<Record<string, unknown>> }>;
   };
 
-  assert.equal(rewritten.phases[0]?.rate_cards[0]?.discounts, undefined);
+  assert.deepEqual(rewritten.phases[0]?.rate_cards[0]?.discounts, { usage: "5000000" });
 });
 
 test("isKonnectMeterQueryGet detects SDK meter query GETs", () => {

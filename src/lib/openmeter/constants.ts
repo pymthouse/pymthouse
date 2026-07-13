@@ -16,7 +16,8 @@ export const DEFAULT_TRIAL_FEATURE_KEY =
 
 /**
  * Konnect Starter / usage settlement: burn prepaid credits first, then invoice
- * overage. Do not use plan rate-card `discounts.usage` for trial allowance.
+ * overage. Plan rate-card `discounts.usage` is the included cycle allowance;
+ * prepaid credits cover spend after the discount is exhausted.
  */
 export const KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE = "credit_then_invoice";
 

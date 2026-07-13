@@ -17,11 +17,11 @@ const metadataBase = (() => {
 })();
 
 export const metadata: Metadata = {
-  title: "pymthouse - Identity & Payment Infrastructure",
+  title: "pymthouse - Platform Builder API for Livepeer Applications",
   description: siteDescription,
   metadataBase,
   openGraph: {
-    title: "pymthouse - Identity & Payment Infrastructure",
+    title: "pymthouse - Platform Builder API for Livepeer Applications",
     description: siteDescription,
     siteName: "pymthouse",
     type: "website",
@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "pymthouse - Identity & Payment Infrastructure",
+    title: "pymthouse - Platform Builder API for Livepeer Applications",
     description: siteDescription,
   },
 };

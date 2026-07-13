@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
 import type {
   BillingAppUsageSummary,
@@ -73,13 +76,12 @@ export function BillingDashboardHeader({
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 mt-1">
             Usage and per-identity breakdown for this application in the current billing
-            cycle. Prepaid credits below apply to this application only (customer =
-            app user).
+            cycle.
           </p>
           {cycleLine}
         </div>
         <Link
-          href="/billing"
+          href="/usage"
           className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
         >
           ← All applications
@@ -106,45 +108,74 @@ export function AppUsageSection({
   isAdmin,
   isOpenMeter,
   userId,
+  defaultExpanded = false,
 }: Readonly<{
   entry: AppUsageEntry;
   scope: BillingUsageDashboardPayload["scope"];
   isAdmin: boolean;
   isOpenMeter: boolean;
   userId: string;
+  /** When false (default), identity table stays collapsed until expanded. */
+  defaultExpanded?: boolean;
 }>) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
   return (
     <section
       key={entry.app.id}
       className="rounded-xl border border-zinc-800 bg-zinc-900/30 overflow-hidden"
     >
-      <div className="px-4 py-4 sm:px-5 border-b border-zinc-800">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="w-full text-left px-4 py-4 sm:px-5 hover:bg-white/[0.02] transition-colors"
+      >
         <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
-          <div className="min-w-0">
-            {scope === "all" ? (
-              <h2 className="font-semibold text-zinc-100 break-words">
-                <Link
-                  href={`/apps/${entry.app.id}/usage`}
-                  className="hover:text-emerald-400 transition-colors"
-                >
-                  {entry.app.name}
-                </Link>
-              </h2>
-            ) : (
-              <h2 className="font-semibold text-zinc-100 break-words">{entry.app.name}</h2>
-            )}
-            <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{entry.app.id}</p>
-            {isAdmin && (
-              <p className="text-xs text-zinc-500 mt-1 break-words">
-                Owner:{" "}
-                <span className="text-zinc-300">
-                  {entry.app.ownerName || entry.app.ownerEmail || entry.app.ownerId}
-                </span>
-                {entry.app.ownerId === userId ? " (you)" : ""}
-              </p>
-            )}
+          <div className="min-w-0 flex items-start gap-2">
+            <svg
+              className={`mt-1 h-4 w-4 shrink-0 text-zinc-500 transition-transform ${
+                expanded ? "rotate-180" : ""
+              }`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
+            <div className="min-w-0">
+              {scope === "all" ? (
+                <h2 className="font-semibold text-zinc-100 break-words">
+                  <Link
+                    href={`/apps/${entry.app.id}/usage`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="hover:text-emerald-400 transition-colors"
+                  >
+                    {entry.app.name}
+                  </Link>
+                </h2>
+              ) : (
+                <h2 className="font-semibold text-zinc-100 break-words">{entry.app.name}</h2>
+              )}
+              <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{entry.app.id}</p>
+              {isAdmin && (
+                <p className="text-xs text-zinc-500 mt-1 break-words">
+                  Owner:{" "}
+                  <span className="text-zinc-300">
+                    {entry.app.ownerName || entry.app.ownerEmail || entry.app.ownerId}
+                  </span>
+                  {entry.app.ownerId === userId ? " (you)" : ""}
+                </p>
+              )}
+            </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-right shrink-0 w-full min-w-0 sm:w-auto sm:max-w-full">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 text-right shrink-0 w-full min-w-0 sm:w-auto sm:max-w-full pl-6 sm:pl-0">
             <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-wider text-zinc-500">Requests</p>
               <p className="text-sm font-semibold text-zinc-200 tabular-nums">
@@ -177,31 +208,36 @@ export function AppUsageSection({
               </p>
             </div>
           </div>
-          {entry.byPipelineModel.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-2">
+        </div>
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-zinc-800">
+          {entry.byPipelineModel.length > 0 ? (
+            <div className="flex flex-wrap gap-2 px-4 sm:px-5 py-3 border-b border-zinc-800/60">
               {entry.byPipelineModel.map((pm) => (
                 <span
                   key={`${pm.pipeline}|${pm.modelId}`}
                   className="text-xs bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded"
                   title={`${pm.requestCount} requests · ${formatUsdMicrosString(pm.networkFeeUsdMicros, 6) ?? "—"}`}
                 >
-                  {pm.pipeline} / {pm.modelId.length > 20 ? `${pm.modelId.slice(0, 18)}…` : pm.modelId}
+                  {pm.pipeline} /{" "}
+                  {pm.modelId.length > 20 ? `${pm.modelId.slice(0, 18)}…` : pm.modelId}
                 </span>
               ))}
             </div>
+          ) : null}
+          {entry.byUser.length > 0 ? (
+            <AppUsageUserTable entry={entry} isOpenMeter={isOpenMeter} />
+          ) : (
+            <div className="p-5 text-center">
+              <p className="text-sm text-zinc-500">
+                No usage for this application in the current cycle yet.
+              </p>
+            </div>
           )}
         </div>
-      </div>
-
-      {entry.byUser.length > 0 ? (
-        <AppUsageUserTable entry={entry} isOpenMeter={isOpenMeter} />
-      ) : (
-        <div className="p-5 text-center">
-          <p className="text-sm text-zinc-500">
-            No usage for this application in the current cycle yet.
-          </p>
-        </div>
-      )}
+      ) : null}
     </section>
   );
 }

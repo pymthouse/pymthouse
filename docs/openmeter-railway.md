@@ -126,8 +126,16 @@ This runs [`scripts/openmeter-bootstrap.ts`](../scripts/openmeter-bootstrap.ts) 
 Bootstrap does **not** create per-app plans or grant credits. Those happen at runtime:
 
 1. **Plan sync** (`syncPlanToOpenMeter`) publishes Starter with `settlement_mode=credit_then_invoice` and a bare `network_spend` unit price (`0.000001` per USD micro). Rate cards must **not** include `discounts.usage`.
-2. **Customer key** is `client_id:external_user_id` — each app login subject is a distinct OpenMeter customer.
-3. **Trial / top-up allowance** is `POST /customers/{id}/credits/grants` only (`OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). Prepaid burn-down is driven by billing charges under `credit_then_invoice`.
+2. **Customer keys:**
+   - **M2M end-users:** `client_id:external_user_id` — one Konnect customer per (app, user).
+   - **App owners:** `owner:{users.id}` — one shared Konnect customer across all apps they own. Owner mint JWTs use `external_user_id` / `sub` = `owner:{users.id}`; the collector sets CloudEvent `subject` to that owner key while keeping `data.client_id` for per-app analytics.
+3. **Trial / top-up allowance** is `POST /customers/{id}/credits/grants` only (`OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). Owners are granted once on the shared wallet; end-users once per app customer. Prepaid burn-down is driven by billing charges under `credit_then_invoice`.
+
+Migrate existing per-app owner wallets with:
+
+```bash
+npx tsx scripts/openmeter-migrate-owner-customers.ts --provision --transfer-balances
+```
 
 **Design note:** Plan usage discounts and prepaid credits both reduce effective spend. Using both double-counts “free” usage against the credit ledger. Prefer prepaid credits only; strip any `discounts` on Konnect plan rewrite as a safety net.
 

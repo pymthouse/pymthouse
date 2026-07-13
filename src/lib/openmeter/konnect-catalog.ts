@@ -183,8 +183,8 @@ export async function ensureKonnectTenantCatalog(
     );
   } else if (!existingFeature) {
     // Plain meter-backed feature only — do not set unit_cost (LLM pricing).
-    // Trial allowance is prepaid via /credits/grants, not feature entitlements
-    // or plan discounts.usage.
+    // Included starter allowance is plan rate-card discounts.usage; prepaid
+    // credits are for manual top-ups / overage after the discount is exhausted.
     await konnectAdminFetch<KonnectFeature>("/features", {
       method: "POST",
       body: JSON.stringify({

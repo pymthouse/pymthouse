@@ -1,7 +1,12 @@
+import { eq, inArray } from "drizzle-orm";
+
+import { db } from "@/db/index";
+import { developerApps, oidcClients } from "@/db/schema";
 import { isHostedAdminClientAvailable, getHostedAdminClient } from "@/lib/openmeter/admin-client";
-import { listTenantCustomerIds } from "@/lib/openmeter/customers";
+import { listTenantCustomers, ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
 import { getKonnectCreditBalance } from "@/lib/openmeter/konnect-credits";
 import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
+import { buildOwnerCustomerKey, isOwnerCustomerKey } from "@/lib/openmeter/customer-key";
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 
@@ -39,9 +44,48 @@ function toCreditAllowanceSummary(
   };
 }
 
+async function ownerIdsByPublicClientId(
+  publicClientIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (publicClientIds.length === 0) {
+    return map;
+  }
+  const rows = await db
+    .select({
+      publicClientId: oidcClients.clientId,
+      ownerId: developerApps.ownerId,
+    })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(inArray(oidcClients.clientId, publicClientIds));
+  for (const row of rows) {
+    const id = row.publicClientId?.trim();
+    if (id && row.ownerId) {
+      map.set(id, row.ownerId);
+    }
+  }
+  return map;
+}
+
+function isLegacyOwnerAppCustomerKey(
+  customerKey: string,
+  publicClientId: string,
+  ownerId: string | undefined,
+): boolean {
+  if (isOwnerCustomerKey(customerKey)) {
+    return true;
+  }
+  if (!ownerId) {
+    return false;
+  }
+  return customerKey === `${publicClientId}:${ownerId}`;
+}
+
 /**
  * Prepaid credit ledgers keyed by public OIDC client_id (`app_…`).
- * Returns an empty object when hosted billing is unavailable.
+ * Sums end-user wallets only — excludes shared `owner:{users.id}` customers and
+ * legacy per-app owner keys (`app_…:ownerId`).
  */
 export async function getPrepaidCreditBalancesByClientId(
   publicClientIds: string[],
@@ -67,19 +111,24 @@ export async function getPrepaidCreditBalancesByClientId(
   }
 
   const client = getHostedAdminClient();
+  const owners = await ownerIdsByPublicClientId(uniqueIds);
   const listed = await Promise.all(
     uniqueIds.map(async (publicClientId) => {
-      const customerIds = await listTenantCustomerIds(client, publicClientId).catch(
+      const customers = await listTenantCustomers(client, publicClientId).catch(
         (err) => {
           console.warn(
             "credit-allowance-summary: tenant customer list failed",
             publicClientId,
             err instanceof Error ? err.message : String(err),
           );
-          return [] as string[];
+          return [] as Array<{ id: string; key: string }>;
         },
       );
-      return { publicClientId, customerIds };
+      const ownerId = owners.get(publicClientId);
+      const filtered = customers.filter(
+        (row) => !isLegacyOwnerAppCustomerKey(row.key, publicClientId, ownerId),
+      );
+      return { publicClientId, customers: filtered };
     }),
   );
 
@@ -89,9 +138,9 @@ export async function getPrepaidCreditBalancesByClientId(
   }
 
   const customerToClient = new Map<string, string>();
-  for (const { publicClientId, customerIds } of listed) {
-    for (const customerId of customerIds) {
-      customerToClient.set(customerId, publicClientId);
+  for (const { publicClientId, customers } of listed) {
+    for (const row of customers) {
+      customerToClient.set(row.id, publicClientId);
     }
   }
 
@@ -138,10 +187,54 @@ export async function getPrepaidCreditBalancesByClientId(
 }
 
 /**
- * Sum prepaid credit ledgers for the given OpenMeter customer key prefixes
- * (`publicClientId:`), matching the remote-signer balance gate / auth_id tenants.
- * Returns null when hosted billing is unavailable, no customers exist, or every
- * balance lookup fails (so the UI does not show a false EXHAUSTED state).
+ * Single shared prepaid wallet for an app owner (`owner:{users.id}`).
+ */
+export async function getOwnerPrepaidCreditBalance(
+  ownerUserId: string,
+): Promise<CreditAllowanceSummary | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const trimmed = ownerUserId.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  if (!shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
+    return null;
+  }
+
+  const client = getHostedAdminClient();
+  const customerKey = buildOwnerCustomerKey(trimmed);
+  try {
+    const customer = await ensureOpenMeterCustomer(client, customerKey);
+    const balance = await getKonnectCreditBalance({
+      customerId: customer.id,
+      apiKey,
+    });
+    if (!balance) {
+      return null;
+    }
+    return {
+      hasAccess: balance.balanceUsdMicros > 0n,
+      balanceUsdMicros: balance.balanceUsdMicros.toString(),
+      lifetimeGrantedUsdMicros: balance.lifetimeGrantedUsdMicros.toString(),
+      consumedUsdMicros: balance.consumedUsdMicros.toString(),
+    };
+  } catch (err) {
+    console.warn(
+      "credit-allowance-summary: owner balance lookup failed",
+      trimmed,
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+/**
+ * Sum prepaid credit ledgers for end-users under the given apps
+ * (excludes shared owner wallets). Returns null when unavailable.
  */
 export async function sumPrepaidCreditBalancesForClientIds(
   publicClientIds: string[],

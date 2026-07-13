@@ -6,9 +6,9 @@ import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import {
-  sumPrepaidCreditBalancesForClientIds,
-  type CreditAllowanceSummary,
-} from "@/lib/openmeter/credit-allowance-summary";
+  listOwnerActiveSubscriptions,
+  type OwnerBillingSubscriptionRow,
+} from "@/lib/owner-billing-data";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { queryOpenMeterAppDashboardUsage } from "@/lib/usage/query-openmeter";
 
@@ -135,12 +135,8 @@ export type BillingUsageDashboardPayload = {
   totalFeeWei: bigint;
   totalNetworkFeeUsdMicros: bigint;
   appsWithUsage: number;
-  /**
-   * Sum of Konnect prepaid credit balances for end-user customers under the
-   * apps in this payload (one Konnect customer per app user). Null when
-   * hosted credits are unavailable.
-   */
-  creditAllowance: CreditAllowanceSummary | null;
+  /** Viewer's active subscriptions (discount progress); empty when none / unavailable. */
+  activeSubscriptions: OwnerBillingSubscriptionRow[];
 };
 
 export type BillingUsageDashboardResult =
@@ -256,15 +252,24 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const omResults = await Promise.all(
-    input.orderedApps.map((app) =>
-      queryOpenMeterAppDashboardUsage({
-        clientId: app.id,
-        startDate: input.cycle.start,
-        endDate: input.cycle.end,
-      }),
+  const [omResults, activeSubscriptions] = await Promise.all([
+    Promise.all(
+      input.orderedApps.map((app) =>
+        queryOpenMeterAppDashboardUsage({
+          clientId: app.id,
+          startDate: input.cycle.start,
+          endDate: input.cycle.end,
+        }),
+      ),
     ),
-  );
+    listOwnerActiveSubscriptions(input.userId).catch((err) => {
+      console.warn(
+        "billing-usage-dashboard: subscription summary failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return [] as OwnerBillingSubscriptionRow[];
+    }),
+  ]);
 
   const requestsByDay = new Map<string, number>();
   /** appId|pipeline|modelId → day → count */
@@ -421,18 +426,6 @@ async function buildOpenMeterBillingDashboard(input: {
       return a.jobType.localeCompare(b.jobType);
     });
 
-  let creditAllowance: CreditAllowanceSummary | null = null;
-  try {
-    creditAllowance = await sumPrepaidCreditBalancesForClientIds(
-      input.orderedApps.map((app) => app.publicClientId),
-    );
-  } catch (err) {
-    console.warn(
-      "billing-usage-dashboard: prepaid credit lookup failed",
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
   return {
     ok: true,
     data: {
@@ -450,7 +443,7 @@ async function buildOpenMeterBillingDashboard(input: {
       totalFeeWei: 0n,
       totalNetworkFeeUsdMicros,
       appsWithUsage,
-      creditAllowance,
+      activeSubscriptions,
     },
   };
 }
