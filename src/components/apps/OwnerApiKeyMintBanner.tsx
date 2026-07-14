@@ -79,9 +79,9 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-medium text-sky-200">
-            API key for {mintState.app.name}
+            API Key
           </p>
-          <p className="text-[11px] text-sky-300/80 mt-0.5">
+          <p className="text-[11px] text-amber-300 mt-0.5">
             Store this securely — it will not be shown again.
           </p>
         </div>
