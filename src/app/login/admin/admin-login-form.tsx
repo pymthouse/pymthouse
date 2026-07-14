@@ -38,13 +38,21 @@ export function AdminLoginForm() {
 
   async function handleTokenLogin(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!token.trim()) return;
+    // Prefer FormData so browser autofill (which often skips React onChange)
+    // still submits the value painted in the password field.
+    const formToken =
+      String(new FormData(e.currentTarget).get("token") ?? "").trim() ||
+      token.trim();
+    if (!formToken) {
+      setError("Enter a bearer token to sign in.");
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     const result = await signIn("token", {
-      token: token.trim(),
+      token: formToken,
       redirect: false,
     });
 
@@ -93,10 +101,16 @@ export function AdminLoginForm() {
           <form onSubmit={handleTokenLogin} className="space-y-3">
             <input
               type="password"
+              name="token"
+              autoComplete="current-password"
               value={token}
               onChange={(e) => {
                 setToken(e.target.value);
                 setError(null);
+              }}
+              onInput={(e) => {
+                // Some browsers surface autofill via input without a change event.
+                setToken(e.currentTarget.value);
               }}
               placeholder="pmth_..."
               className="w-full px-3 py-2.5 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-emerald-500/50 font-mono placeholder:font-sans placeholder:text-zinc-600"
@@ -113,7 +127,7 @@ export function AdminLoginForm() {
             )}
             <button
               type="submit"
-              disabled={loading || !token.trim()}
+              disabled={loading}
               className="w-full px-4 py-2.5 bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium hover:bg-zinc-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "Signing in..." : "Sign in with Token"}
