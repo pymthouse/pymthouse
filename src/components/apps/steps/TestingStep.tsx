@@ -469,6 +469,65 @@ function buildAuthorizeTestUrl(
   }).toString()}`;
 }
 
+async function executeOwnerTokenTest(input: {
+  useBearerSigning: boolean;
+  publicClientId: string;
+  ownerExternalUserId: string;
+}): Promise<{
+  result: string;
+  rawAccessToken: string | null;
+  sdkToken: string | null;
+  tokenKind: TokenTestKind;
+}> {
+  // Remote signing needs no client secret: mint the composite key with the
+  // signed-in session (same as the Get API Key easy flow), then either return
+  // it as a Bearer key or exchange it once for a signer JWT.
+  const minted = await mintOwnerApiKey({
+    clientId: input.publicClientId,
+    ownerExternalUserId: input.ownerExternalUserId,
+  });
+  const compositeKey = readTrimmedString(minted.apiKey);
+  if (!compositeKey) {
+    throw new Error("API key mint response missing apiKey.");
+  }
+  const sdkToken = readTrimmedString(minted.sdkToken);
+  if (input.useBearerSigning) {
+    return {
+      result: formatTokenTestResult(minted),
+      rawAccessToken: compositeKey,
+      sdkToken,
+      tokenKind: "api_key",
+    };
+  }
+  const exchanged = await postAppScopedSignerExchange({
+    publicClientId: input.publicClientId,
+    subjectToken: compositeKey,
+  });
+  return {
+    result: formatTokenTestResult(exchanged),
+    rawAccessToken: extractAccessToken(exchanged),
+    sdkToken: null,
+    tokenKind: "jwt",
+  };
+}
+
+function readTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function resolveAdminOrSignJobScope(
+  activeKind: M2mTokenTestKind,
+  adminScopes: string,
+): string {
+  if (activeKind !== "admin") return "sign:job";
+  if (!adminScopes) {
+    throw new Error("No administrative scopes are configured.");
+  }
+  return adminScopes;
+}
+
 async function executeM2mTokenTest(input: {
   activeKind: M2mTokenTestKind;
   useBearerSigning: boolean;
@@ -484,57 +543,25 @@ async function executeM2mTokenTest(input: {
   tokenKind: TokenTestKind;
 }> {
   if (input.activeKind === "owner") {
-    // Remote signing needs no client secret: mint the composite key with the
-    // signed-in session (same as the Get API Key easy flow), then either return
-    // it as a Bearer key or exchange it once for a signer JWT.
-    if (!input.publicClientId?.trim()) {
+    const publicClientId = input.publicClientId?.trim();
+    if (!publicClientId) {
       throw new Error("Public client_id is required for remote signing.");
     }
     const ownerExternalUserId = input.ownerExternalUserId?.trim();
     if (!ownerExternalUserId) {
       throw new Error("App owner identity is unavailable. Refresh the page and retry.");
     }
-    const minted = await mintOwnerApiKey({
-      clientId: input.publicClientId,
+    return executeOwnerTokenTest({
+      useBearerSigning: input.useBearerSigning,
+      publicClientId,
       ownerExternalUserId,
     });
-    const compositeKey =
-      typeof minted.apiKey === "string" && minted.apiKey.trim() ? minted.apiKey.trim() : null;
-    if (!compositeKey) {
-      throw new Error("API key mint response missing apiKey.");
-    }
-    const sdkToken =
-      typeof minted.sdkToken === "string" && minted.sdkToken.trim()
-        ? minted.sdkToken.trim()
-        : null;
-    if (input.useBearerSigning) {
-      return {
-        result: formatTokenTestResult(minted),
-        rawAccessToken: compositeKey,
-        sdkToken,
-        tokenKind: "api_key",
-      };
-    }
-    const exchanged = await postAppScopedSignerExchange({
-      publicClientId: input.publicClientId,
-      subjectToken: compositeKey,
-    });
-    return {
-      result: formatTokenTestResult(exchanged),
-      rawAccessToken: extractAccessToken(exchanged),
-      sdkToken: null,
-      tokenKind: "jwt",
-    };
   }
 
-  const scope =
-    input.activeKind === "admin"
-      ? input.adminScopes || (() => { throw new Error("No administrative scopes are configured."); })()
-      : "sign:job";
   const data = await postM2mClientCredentials({
     clientId: input.m2mClientId,
     clientSecret: input.effectiveSecret,
-    scope,
+    scope: resolveAdminOrSignJobScope(input.activeKind, input.adminScopes),
   });
   return {
     result: formatTokenTestResult(data),
@@ -683,6 +710,46 @@ function M2mSingleFlowHint({
   return null;
 }
 
+function M2mTokenCredentialValue({
+  rawAccessToken,
+  sdkToken,
+  tokenKind,
+  onCopy,
+  copiedLabel,
+  tokenCopyLabel,
+}: Readonly<{
+  rawAccessToken: string | null;
+  sdkToken: string | null;
+  tokenKind: TokenTestKind | null;
+  onCopy: (text: string, label: string) => void;
+  copiedLabel: string | null;
+  tokenCopyLabel: string;
+}>): ReactNode {
+  if (!rawAccessToken) return null;
+  if (tokenKind === "api_key") {
+    return (
+      <ApiKeyCredentialSwitcher
+        apiKey={rawAccessToken}
+        sdkToken={sdkToken}
+      />
+    );
+  }
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-sky-500/20 bg-black/30 p-2.5">
+      <code className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100 leading-relaxed">
+        {rawAccessToken}
+      </code>
+      <button
+        type="button"
+        onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
+        className="shrink-0 rounded-md border border-sky-500/50 bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 transition-colors"
+      >
+        {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 function M2mTokenTestResult({
   error,
   result,
@@ -759,27 +826,14 @@ function M2mTokenTestResult({
         </button>
       </div>
 
-      {rawAccessToken ? (
-        tokenKind === "api_key" ? (
-          <ApiKeyCredentialSwitcher
-            apiKey={rawAccessToken}
-            sdkToken={sdkToken}
-          />
-        ) : (
-          <div className="flex items-start gap-2 rounded-md border border-sky-500/20 bg-black/30 p-2.5">
-            <code className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100 leading-relaxed">
-              {rawAccessToken}
-            </code>
-            <button
-              type="button"
-              onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
-              className="shrink-0 rounded-md border border-sky-500/50 bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 transition-colors"
-            >
-              {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
-            </button>
-          </div>
-        )
-      ) : null}
+      <M2mTokenCredentialValue
+        rawAccessToken={rawAccessToken}
+        sdkToken={sdkToken}
+        tokenKind={tokenKind}
+        onCopy={onCopy}
+        copiedLabel={copiedLabel}
+        tokenCopyLabel={tokenCopyLabel}
+      />
 
       {tokenKind === "api_key" ? (
         <p className="text-[11px] text-sky-300/70">
