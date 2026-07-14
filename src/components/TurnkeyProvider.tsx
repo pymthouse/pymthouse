@@ -35,6 +35,46 @@ const BENIGN_TURNKEY_CODES = new Set([
   "INVALID_OTP_CODE",
 ]);
 
+function trimEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+/**
+ * Optional OAuth overrides for Wallet Kit social logins.
+ * Prefer Auth Proxy dashboard toggles; set these when local/prod need different
+ * client IDs or redirect URIs than the dashboard defaults.
+ */
+function buildOauthConfig(): TurnkeyProviderConfig["auth"] | undefined {
+  const oauthRedirectUri =
+    trimEnv(process.env.NEXT_PUBLIC_TURNKEY_OAUTH_REDIRECT_URI) ||
+    trimEnv(process.env.NEXT_PUBLIC_OAUTH_REDIRECT_URI);
+  const googleClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID);
+  const appleClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_APPLE_CLIENT_ID);
+  const discordClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_DISCORD_CLIENT_ID);
+  const xClientId = trimEnv(process.env.NEXT_PUBLIC_TURNKEY_X_CLIENT_ID);
+
+  if (
+    !oauthRedirectUri &&
+    !googleClientId &&
+    !appleClientId &&
+    !discordClientId &&
+    !xClientId
+  ) {
+    return undefined;
+  }
+
+  return {
+    oauthConfig: {
+      ...(oauthRedirectUri ? { oauthRedirectUri } : {}),
+      ...(googleClientId ? { google: { primaryClientId: googleClientId } } : {}),
+      ...(appleClientId ? { apple: { primaryClientId: appleClientId } } : {}),
+      ...(discordClientId ? { discord: { primaryClientId: discordClientId } } : {}),
+      ...(xClientId ? { x: { primaryClientId: xClientId } } : {}),
+    },
+  };
+}
+
 /** Kit OTP UI catches, shows a friendly message, then rethrows → unhandledRejection. */
 function rejectionMessage(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
@@ -107,19 +147,11 @@ export default function TurnkeyProviderWrapper({
     return <>{children}</>;
   }
 
-  const oauthRedirectUri =
-    process.env.NEXT_PUBLIC_OAUTH_REDIRECT_URI?.trim() || undefined;
-
+  const auth = buildOauthConfig();
   const turnkeyConfig: TurnkeyProviderConfig = {
     organizationId,
     authProxyConfigId,
-    auth: oauthRedirectUri
-      ? {
-          oauthConfig: {
-            oauthRedirectUri,
-          },
-        }
-      : undefined,
+    ...(auth ? { auth } : {}),
     ui: {
       darkMode: true,
       logoDark: "/pymthouse-mark.svg",

@@ -1,8 +1,10 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
 import DashboardLayout from "@/components/DashboardLayout";
+import InfoTooltip from "@/components/InfoTooltip";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
@@ -41,10 +43,22 @@ function SubscriptionCard({
               {row.status}
             </span>
           </div>
-          <p className="mt-1 text-xs text-zinc-500">
-            {row.appName
-              ? `${row.appName} · per-app billing wallet`
-              : "Shared owner wallet (all apps you own)"}
+          <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+            {row.appName ? (
+              <>
+                {row.appName}
+                <span className="text-zinc-600">·</span>
+                <span>App billing</span>
+              </>
+            ) : (
+              <>
+                Your account
+                <InfoTooltip
+                  label="Prepaid credits and plan usage for your account — usable across all apps you own."
+                  wide
+                />
+              </>
+            )}
           </p>
         </div>
         <div className="text-right">
@@ -88,8 +102,14 @@ function SubscriptionCard({
 
 export default function OwnerBillingView({
   data,
+  fundPanel,
+  fundingAvailable = false,
 }: Readonly<{
   data: OwnerBillingPayload;
+  /** MoonPay on-ramp (credits prepaid balance for your account). */
+  fundPanel?: ReactNode;
+  /** True when Turnkey is configured and an owned app can host on-ramp APIs. */
+  fundingAvailable?: boolean;
 }>) {
   return (
     <DashboardLayout>
@@ -122,11 +142,13 @@ export default function OwnerBillingView({
       {!data.openMeterConfigured ? null : (
         <>
           <section className="mb-8">
-            <h2 className="mb-3 text-sm font-semibold text-zinc-200">Prepaid credits</h2>
-            <p className="mb-3 text-xs text-zinc-600">
-              Lifetime wallet shared across apps you own. Separate from per-cycle plan
-              allowances below.
-            </p>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-zinc-200">Prepaid credits</h2>
+              <InfoTooltip
+                label="Credits for your account — usable across all apps you own. Separate from per-cycle plan allowances."
+                wide
+              />
+            </div>
             {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
               <AllowanceStrip
                 balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
@@ -136,12 +158,35 @@ export default function OwnerBillingView({
                   (sum, row) => sum + row.requestCount,
                   0,
                 )}
-                scopeHint="Prepaid credits for your account (shared across apps you own)."
+                actions={fundPanel}
               />
             ) : (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                No prepaid credit balance. Starter included usage comes from your plan
-                allowance; credits appear here after a payment is received.
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1 text-sm text-zinc-500">
+                    <p>
+                      No prepaid credit balance yet. Starter included usage comes from your
+                      plan allowance; this balance stays empty until you top up.
+                    </p>
+                    <p className="mt-2">
+                      {fundingAvailable ? (
+                        <>
+                          Use <span className="text-zinc-300">Fund with MoonPay</span> to add
+                          sandbox prepaid credits — they cover pay-per-use plans with no
+                          allowance, and burn after any plan allowance is exhausted.
+                        </>
+                      ) : (
+                        <>
+                          Prepaid credits appear here after a top-up. MoonPay funding requires
+                          Turnkey Wallet Kit configuration and at least one owned app.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  {fundPanel ? (
+                    <div className="shrink-0 sm:pt-0.5">{fundPanel}</div>
+                  ) : null}
+                </div>
               </div>
             )}
           </section>

@@ -24,6 +24,8 @@ export async function grantAllowanceUsdMicros(input: {
   amountUsdMicros: bigint;
   source: GrantSource;
   featureKey?: string;
+  /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
+  idempotencyKey?: string;
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -65,14 +67,22 @@ export async function grantAllowanceUsdMicros(input: {
 
   const omApiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);
+  // Kong Konnect does not expose OpenMeter SDK entitlement grants
+  // (/customers/.../entitlements/{feature}/grants → 404). Use prepaid
+  // credit grants instead: POST /customers/{ulid}/credits/grants.
+  // MoonPay on-ramp / manual / promo top-ups land on this prepaid ledger
+  // (pay-per-use plans with no included allowance spend from here).
+  const idempotencyKey =
+    input.idempotencyKey?.trim() ||
+    `manual:${customer.id}:${input.source}:${randomUUID()}`;
   if (useKonnect) {
     await createKonnectCreditGrant({
       customerId: customer.id,
       amountUsdMicros: input.amountUsdMicros,
-      name: `Manual allowance (${input.source})`,
-      description: `Pymthouse allowance grant source=${input.source}`,
+      name: `pymthouse ${input.source}`,
+      description: `Pymthouse prepaid credit grant source=${input.source}`,
       featureKey,
-      idempotencyKey: `manual:${customer.id}:${input.source}:${randomUUID()}`,
+      idempotencyKey,
       apiKey: omApiKey,
     });
   } else {

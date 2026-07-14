@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
@@ -455,8 +455,11 @@ function BillingUsageBody({
  */
 export default function BillingUsageDashboard({
   filterAppId,
+  fundPanel,
 }: Readonly<{
   filterAppId?: string | null;
+  /** Optional MoonPay / prepaid top-up panel (app owners on pay-per-use). */
+  fundPanel?: ReactNode;
 }>) {
   const { data: session } = useSession();
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
@@ -522,6 +525,7 @@ export default function BillingUsageDashboard({
 
   return (
     <DashboardLayout>
+      {fundPanel}
       {state.status === "loading" ? (
         <>
           {showTabs ? (
