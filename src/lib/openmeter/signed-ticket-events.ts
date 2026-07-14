@@ -13,7 +13,9 @@ import { getHostedOpenMeterClient } from "@/lib/openmeter/client";
 import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
+  buildOwnerMeterSubjects,
   isOwnerCustomerKey,
+  normalizePlatformUserId,
   parseOpenMeterCustomerKey,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
@@ -177,18 +179,47 @@ export function eventUsageSubject(event: IngestedEventLike): string | null {
   if (fromData) {
     return fromData;
   }
-  const parsed = parseOpenMeterCustomerKey(event.event?.subject?.trim() || "");
+  const subject = event.event?.subject?.trim() || "";
+  if (isOwnerCustomerKey(subject)) {
+    return subject;
+  }
+  const parsed = parseOpenMeterCustomerKey(subject);
   return parsed?.externalUserId ?? null;
 }
 
 export function eventClientId(event: IngestedEventLike): string | null {
   const data = event.event?.data ?? {};
   const fromData = stringField(data, "client_id");
-  if (fromData) {
+  if (fromData && fromData !== "owner") {
     return fromData;
   }
-  const parsed = parseOpenMeterCustomerKey(event.event?.subject?.trim() || "");
-  return parsed?.clientId ?? null;
+  const subject = event.event?.subject?.trim() || "";
+  // Owner wallet events use CE subject owner:{id}; client lives in data only.
+  if (isOwnerCustomerKey(subject)) {
+    return null;
+  }
+  const parsed = parseOpenMeterCustomerKey(subject);
+  if (!parsed || parsed.clientId === "owner") {
+    return null;
+  }
+  return parsed.clientId;
+}
+
+/** Expand bare / owner: / user: forms so list filters match subscription meters. */
+export function expandViewerSubjectMatchKeys(
+  subjects: ReadonlySet<string>,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const raw of subjects) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    keys.add(trimmed);
+    const normalized = normalizePlatformUserId(trimmed);
+    keys.add(normalized);
+    keys.add(buildOwnerCustomerKey(normalized));
+    keys.add(`user:${normalized}`);
+  }
+  return keys;
 }
 
 export function eventMatchesViewerSubjects(
@@ -202,8 +233,17 @@ export function eventMatchesViewerSubjects(
   if (event.event.type && event.event.type !== CREATE_SIGNED_TICKET_EVENT_TYPE) {
     return false;
   }
+  const matchKeys = expandViewerSubjectMatchKeys(subjects);
   const usageSubject = eventUsageSubject(event);
-  if (!usageSubject || !subjects.has(usageSubject)) {
+  const ceSubject = event.event.subject?.trim() || "";
+  const candidates = [usageSubject, ceSubject].filter(
+    (value): value is string => Boolean(value),
+  );
+  const subjectMatched = candidates.some(
+    (value) =>
+      matchKeys.has(value) || matchKeys.has(normalizePlatformUserId(value)),
+  );
+  if (!subjectMatched) {
     return false;
   }
   if (clientIdOrIds == null) {
@@ -400,20 +440,49 @@ function buildSubjectQueries(
   subjects: ReadonlySet<string>,
   clientIds: ReadonlySet<string> | null,
 ): string[] {
-  const queries: string[] = [];
+  const queries = new Set<string>();
+  const clientIdList =
+    clientIds && clientIds.size > 0 ? [...clientIds] : ([] as string[]);
+
   for (const subject of subjects) {
-    if (isOwnerCustomerKey(subject)) {
-      const ownerUserId = parseOwnerCustomerKey(subject);
-      // Primary: compound wire subjects. Legacy: bare owner:{id} events.
-      if (ownerUserId) {
-        queries.push(...compoundQueriesForSubject(ownerUserId, clientIds));
+    const trimmed = subject.trim();
+    if (!trimmed) continue;
+    // Always include the raw key (owner:{id} is the live CE subject for owners).
+    queries.add(trimmed);
+
+    if (isOwnerCustomerKey(trimmed)) {
+      const ownerUserId = parseOwnerCustomerKey(trimmed);
+      if (ownerUserId && clientIdList.length > 0) {
+        for (const key of buildOwnerMeterSubjects(ownerUserId, clientIdList)) {
+          queries.add(key);
+        }
+      } else if (ownerUserId) {
+        queries.add(ownerUserId);
+        for (const key of compoundQueriesForSubject(ownerUserId, clientIds)) {
+          queries.add(key);
+        }
       }
-      queries.push(subject);
       continue;
     }
-    queries.push(...compoundQueriesForSubject(subject, clientIds));
+
+    const normalized = normalizePlatformUserId(trimmed);
+    queries.add(normalized);
+    queries.add(buildOwnerCustomerKey(normalized));
+    if (clientIdList.length > 0) {
+      for (const key of buildOwnerMeterSubjects(normalized, clientIdList)) {
+        queries.add(key);
+      }
+      for (const clientId of clientIdList) {
+        queries.add(buildOpenMeterCustomerKey(clientId, trimmed));
+      }
+    } else {
+      for (const key of compoundQueriesForSubject(trimmed, null)) {
+        queries.add(key);
+      }
+    }
   }
-  return queries;
+
+  return [...queries];
 }
 
 async function loadAppNames(clientIds: string[]): Promise<Map<string, string>> {

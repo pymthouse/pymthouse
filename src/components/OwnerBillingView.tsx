@@ -5,7 +5,21 @@ import AllowanceStrip from "@/components/AllowanceStrip";
 import DashboardLayout from "@/components/DashboardLayout";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
+import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
+
+function hasDisplayablePrepaidCredit(
+  allowance: CreditAllowanceSummary | null | undefined,
+): boolean {
+  if (!allowance) return false;
+  try {
+    const remaining = BigInt(allowance.balanceUsdMicros || "0");
+    const granted = BigInt(allowance.lifetimeGrantedUsdMicros || "0");
+    return remaining > 0n || granted > 0n;
+  } catch {
+    return false;
+  }
+}
 
 function SubscriptionCard({
   row,
@@ -113,7 +127,7 @@ export default function OwnerBillingView({
               Lifetime wallet shared across apps you own. Separate from per-cycle plan
               allowances below.
             </p>
-            {data.creditAllowance ? (
+            {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
               <AllowanceStrip
                 balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
                 lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}

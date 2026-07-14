@@ -23,6 +23,7 @@
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
     "openmeter:ensure-customer": "npx tsx scripts/openmeter-ensure-customer.ts",
     "openmeter:migrate-starter-prepaid": "npx tsx scripts/openmeter-migrate-starter-prepaid.ts",
+    "openmeter:fix-starter-allowance": "npx tsx scripts/openmeter-fix-starter-allowance.ts",
     "openmeter:dedupe-owner-subscriptions": "npx tsx scripts/openmeter-dedupe-owner-subscriptions.ts",
     "turnkey:create-webhook": "npx tsx scripts/turnkey-create-webhook.ts",
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",

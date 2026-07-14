@@ -242,6 +242,11 @@ export async function getOwnerPrepaidCreditBalance(
     if (!balance) {
       return null;
     }
+    // Treat an all-zero ledger as "no prepaid wallet" so UI empty-states render
+    // instead of a blank AllowanceStrip (which hides when granted+remaining are 0).
+    if (balance.balanceUsdMicros <= 0n && balance.lifetimeGrantedUsdMicros <= 0n) {
+      return null;
+    }
     return {
       hasAccess: balance.balanceUsdMicros > 0n,
       balanceUsdMicros: balance.balanceUsdMicros.toString(),

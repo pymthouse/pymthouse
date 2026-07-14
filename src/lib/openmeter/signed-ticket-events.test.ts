@@ -82,6 +82,54 @@ test("eventMatchesViewerSubjects keeps only viewer subjects", () => {
   );
 });
 
+test("eventMatchesViewerSubjects matches owner wallet CE subjects", () => {
+  const ownerId = "2e51154b-d296-4015-990c-02d5f16ecf1e";
+  const subjects = new Set([ownerId, `owner:${ownerId}`]);
+  const ownerEvent = {
+    event: {
+      id: "evt-owner-1",
+      type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+      subject: `owner:${ownerId}`,
+      time: "2026-07-11T12:00:00.000Z",
+      data: {
+        client_id: "app_abc",
+        external_user_id: `owner:${ownerId}`,
+        usage_subject: `owner:${ownerId}`,
+        gateway_request_id: "req-owner-1",
+        pipeline: "text-to-image",
+        model_id: "sdxl",
+        network_fee_usd_micros: "1500",
+      },
+    },
+  };
+  assert.equal(eventMatchesViewerSubjects(ownerEvent, subjects), true);
+  assert.equal(
+    eventMatchesViewerSubjects(ownerEvent, subjects, "app_abc"),
+    true,
+  );
+  assert.equal(
+    eventMatchesViewerSubjects(ownerEvent, new Set(["someone-else"])),
+    false,
+  );
+  assert.equal(eventClientId(ownerEvent), "app_abc");
+  assert.equal(eventUsageSubject(ownerEvent), `owner:${ownerId}`);
+});
+
+test("eventClientId ignores owner: CloudEvent subject prefix", () => {
+  const ownerId = "uuid-owner-1";
+  const bare = {
+    event: {
+      id: "evt-3",
+      type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+      subject: `owner:${ownerId}`,
+      time: "2026-07-11T12:00:00.000Z",
+      data: {},
+    },
+  };
+  assert.equal(eventClientId(bare), null);
+  assert.equal(eventUsageSubject(bare), `owner:${ownerId}`);
+});
+
 test("eventMatchesViewerSubjects enforces clientId filter", () => {
   const subjects = new Set(["user-123"]);
   assert.equal(

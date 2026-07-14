@@ -108,6 +108,9 @@ Renaming UI to “allowance” already matches how we talk about the current mod
 - Grants / entitlement reads: `src/lib/openmeter/entitlements.ts`, `konnect-credits.ts`
 - UI allowance meter: `src/components/AllowanceProgressBar.tsx`
 - Owner wallet cleanup: `scripts/openmeter-dedupe-owner-subscriptions.ts`
+- Restore Starter included usage (`discounts.usage`) + resubscribe:
+  `scripts/openmeter-fix-starter-allowance.ts`
+  (`npm run openmeter:fix-starter-allowance -- --owner-id <users.id> --apply`)
 
 ## Success criteria
 
