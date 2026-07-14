@@ -52,8 +52,6 @@ function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifie
   };
 }
 
-type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
-
 function trimEnv(env: EnvSource, name: string): string {
   const value = env[name];
   return typeof value === "string" ? value.trim() : "";
