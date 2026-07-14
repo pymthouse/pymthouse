@@ -23,6 +23,14 @@ type OpenMeterCustomerRecord = {
   usageAttribution?: { subjectKeys?: string[] };
 };
 
+function isActiveSubscriptionSubjectKeyError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /cannot change subject keys/i.test(message) &&
+    /active subscriptions/i.test(message)
+  );
+}
+
 async function ensureCustomerUsageAttribution(
   client: OpenMeter,
   customer: OpenMeterCustomerRecord,
@@ -35,15 +43,30 @@ async function ensureCustomerUsageAttribution(
   }
 
   const nextKeys = [...new Set([...subjectKeys, ...requiredSubjectKeys])];
-  await client.customers.update(customer.id, {
-    name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
-    usageAttribution: { subjectKeys: nextKeys },
-  });
+  try {
+    await client.customers.update(customer.id, {
+      name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
+      usageAttribution: { subjectKeys: nextKeys },
+    });
+  } catch (err) {
+    // Konnect rejects subject-key changes while a subscription is active.
+    // Owner settlement uses CloudEvent subject = owner:{id} (customer key),
+    // so mint/provision must not fail closed on this.
+    if (isActiveSubscriptionSubjectKeyError(err)) {
+      console.warn(
+        "openmeter: skip subject key update (active subscription)",
+        customer.key ?? customer.id,
+        missing.join(","),
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
- * Link compound wire subjects (`app_…:{ownerUserId}`) onto the shared owner
- * Konnect customer so prepaid/credit_then_invoice settles against owner:{id}.
+ * Ensure the shared owner Konnect customer exists. Compound wire subjects are
+ * best-effort — Konnect blocks subject-key changes with active subscriptions.
  */
 export async function ensureOwnerCustomerWireSubjects(
   client: OpenMeter,

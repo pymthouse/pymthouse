@@ -441,6 +441,33 @@ test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer",
   );
 });
 
+test("ensureOpenMeterCustomer soft-fails subject update when subscription is active", async () => {
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-owner-1",
+        key,
+        name: key,
+        usageAttribution: { subjectKeys: [] },
+      }),
+      update: async () => {
+        throw new Error(
+          "Request failed (https://us.api.konghq.com/v3/openmeter/customers/x) [400]: validation error: cannot change subject keys for customer with active subscriptions",
+        );
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOpenMeterCustomer(
+    openMeterTestClient(client),
+    "owner:uuid-1",
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
+});
+
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
   const listedCustomers: string[][] = [];
   const client = {
