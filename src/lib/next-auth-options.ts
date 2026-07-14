@@ -1,11 +1,8 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import GoogleProvider from "next-auth/providers/google";
-import GitHubProvider from "next-auth/providers/github";
 import { db } from "@/db/index";
 import { users } from "@/db/schema";
-import { eq, and, sql } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
+import { eq, and } from "drizzle-orm";
 import { validateBearerToken, hasScope } from "@/lib/auth";
 import {
   findOrCreateDeveloperUser,
@@ -92,93 +89,15 @@ export const authOptions: NextAuthOptions = {
         };
       },
     }),
-
-    ...(process.env.GOOGLE_CLIENT_ID
-      ? [
-          GoogleProvider({
-            clientId: process.env.GOOGLE_CLIENT_ID!,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-          }),
-        ]
-      : []),
-    ...(process.env.GITHUB_CLIENT_ID
-      ? [
-          GitHubProvider({
-            clientId: process.env.GITHUB_CLIENT_ID!,
-            clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-          }),
-        ]
-      : []),
   ],
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ account }) {
       if (!account) return false;
 
       if (account.provider === "token") return true;
-
       if (account.provider === "turnkey-wallet") return true;
 
-      if (!user.email) return false;
-
-      const provider = account.provider;
-      const subject = account.providerAccountId;
-
-      const existingRows = await db
-        .select()
-        .from(users)
-        .where(
-          and(
-            eq(users.oauthProvider, provider),
-            eq(users.oauthSubject, subject),
-          ),
-        )
-        .limit(1);
-      const existing = existingRows[0];
-
-      if (provider === "google" || provider === "github") {
-        if (existing && existing.role === "admin") {
-          return false;
-        }
-        if (existing) {
-          return true;
-        }
-        const normalizedEmail = user.email.trim().toLowerCase();
-        const adminByEmailRows = await db
-          .select()
-          .from(users)
-          .where(
-            and(
-              eq(users.role, "admin"),
-              sql`lower(${users.email}) = ${normalizedEmail}`,
-            ),
-          )
-          .limit(1);
-        if (adminByEmailRows[0]) {
-          return false;
-        }
-        await db.insert(users).values({
-          id: uuidv4(),
-          email: user.email,
-          name: user.name || null,
-          oauthProvider: provider,
-          oauthSubject: subject,
-          role: "developer",
-        });
-        return true;
-      }
-
-      if (!existing) {
-        await db.insert(users).values({
-          id: uuidv4(),
-          email: user.email,
-          name: user.name || null,
-          oauthProvider: provider,
-          oauthSubject: subject,
-          role: "developer",
-        });
-      }
-
-      return true;
+      return false;
     },
     async session({ session, token }) {
       if (session.user) {

@@ -25,6 +25,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@turnkey/react-wallet-kit/auth-component": [
+        "./node_modules/@turnkey/react-wallet-kit/dist/components/auth/index.mjs"
       ]
     }
   },
