@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 
+import FundAccountOnRampPanel from "@/components/apps/FundAccountOnRampPanel";
 import OwnerBillingView from "@/components/OwnerBillingView";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
@@ -19,10 +20,20 @@ export default async function BillingPage() {
           creditAllowance: null,
           subscriptions: [],
           openMeterConfigured: false,
+          fundingClientId: null,
         }}
       />
     );
   }
 
-  return <OwnerBillingView data={result.data} />;
+  const { data } = result;
+  const fundPanel =
+    data.fundingClientId && data.userId ? (
+      <FundAccountOnRampPanel
+        clientId={data.fundingClientId}
+        ownerExternalUserId={data.userId}
+      />
+    ) : null;
+
+  return <OwnerBillingView data={data} fundPanel={fundPanel} />;
 }

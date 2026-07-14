@@ -65,6 +65,11 @@ export type OwnerBillingPayload = {
   creditAllowance: CreditAllowanceSummary | null;
   subscriptions: OwnerBillingSubscriptionRow[];
   openMeterConfigured: boolean;
+  /**
+   * First owned app id for app-scoped on-ramp APIs. Credits still settle on the
+   * shared owner prepaid wallet via billing identity.
+   */
+  fundingClientId: string | null;
 };
 
 export type OwnerBillingResult =
@@ -527,7 +532,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     return { ok: false, reason: "openmeter_unconfigured" };
   }
 
-  const [creditAllowance, subscriptions] = await Promise.all([
+  const [creditAllowance, subscriptions, ownedApps] = await Promise.all([
     getOwnerPrepaidCreditBalance(userId).catch((err) => {
       console.warn(
         "owner-billing: credit lookup failed",
@@ -536,6 +541,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       return null;
     }),
     listOwnerActiveSubscriptions(userId),
+    listOwnedApps(userId),
   ]);
 
   return {
@@ -546,6 +552,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       creditAllowance,
       subscriptions,
       openMeterConfigured: true,
+      fundingClientId: ownedApps[0]?.developerAppId ?? null,
     },
   };
 }

@@ -11,7 +11,7 @@ import {
   FiatOnRampCurrency,
   FiatOnRampProvider,
 } from "@turnkey/sdk-types";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 type FundAccountOnRampPanelProps = Readonly<{
@@ -23,6 +23,8 @@ type BalanceState = {
   balanceUsdMicros: string;
   hasAccess: boolean;
 };
+
+type FundPhase = "idle" | "funding" | "settling" | "done" | "error";
 
 function firstEvmWalletAddress(
   wallets: { accounts: { address: string }[] }[],
@@ -85,14 +87,20 @@ export default function FundAccountOnRampPanel({
     getSession,
   } = useTurnkey();
 
+  const titleId = useId();
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [fiatAmount, setFiatAmount] = useState(DEFAULT_FIAT_AMOUNT);
   const [balance, setBalance] = useState<BalanceState | null>(null);
   const [depositWallet, setDepositWallet] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"idle" | "funding" | "settling" | "done" | "error">("idle");
+  const [phase, setPhase] = useState<FundPhase>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastGrantedUsdMicros, setLastGrantedUsdMicros] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+
+  const busy = phase === "funding" || phase === "settling";
 
   const loadBalance = useCallback(async () => {
     const params = new URLSearchParams({ externalUserId: ownerExternalUserId });
@@ -112,15 +120,27 @@ export default function FundAccountOnRampPanel({
   }, [loadBalance]);
 
   useEffect(() => {
-    const address = firstEvmWalletAddress(wallets);
-    setDepositWallet(address);
+    setDepositWallet(firstEvmWalletAddress(wallets));
   }, [wallets]);
 
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (confirmOpen) {
+      if (!dialog.open) dialog.showModal();
+      amountInputRef.current?.focus();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [confirmOpen]);
+
+  const closeConfirm = () => {
+    if (busy) return;
+    setConfirmOpen(false);
+  };
+
   const pollUntilTerminal = useCallback(
-    async (
-      transactionId: string,
-      organizationId: string,
-    ): Promise<string> => {
+    async (transactionId: string, organizationId: string): Promise<string> => {
       if (!httpClient) {
         throw new Error("Turnkey client is not ready.");
       }
@@ -139,6 +159,17 @@ export default function FundAccountOnRampPanel({
     },
     [httpClient],
   );
+
+  const openConfirm = () => {
+    setError(null);
+    setStatusMessage(null);
+    setCheckoutUrl(null);
+    if (phase === "done" || phase === "error") {
+      setPhase("idle");
+      setLastGrantedUsdMicros(null);
+    }
+    setConfirmOpen(true);
+  };
 
   const handleFund = async () => {
     setError(null);
@@ -188,9 +219,6 @@ export default function FundAccountOnRampPanel({
     setStatusMessage("Preparing MoonPay sandbox checkout...");
 
     try {
-      // Prefer the address already loaded into Wallet Kit state. refreshWallets()
-      // can return wallets with empty accounts even when the hook's `wallets`
-      // (and the UI deposit address) are populated from the active session.
       let walletAddress = depositWallet ?? firstEvmWalletAddress(wallets);
       if (!walletAddress) {
         try {
@@ -203,6 +231,7 @@ export default function FundAccountOnRampPanel({
       if (!walletAddress) {
         throw new Error("No Turnkey EVM wallet found. Complete Wallet Kit onboarding first.");
       }
+      setDepositWallet(walletAddress);
 
       const session = await getSession();
       const organizationId = session?.organizationId;
@@ -210,8 +239,6 @@ export default function FundAccountOnRampPanel({
         throw new Error("Turnkey session is missing organization context.");
       }
 
-      // Wallet Kit exposes initFiatOnRamp on httpClient, not on useTurnkey() itself.
-      // Prefer this over handleOnRamp so we can register the transaction id before settle.
       const initResult = await httpClient.initFiatOnRamp({
         organizationId,
         onrampProvider: FiatOnRampProvider.MOONPAY,
@@ -285,7 +312,7 @@ export default function FundAccountOnRampPanel({
       }
 
       setPhase("settling");
-      setStatusMessage("Purchase completed. Crediting OpenMeter allowance...");
+      setStatusMessage("Purchase completed. Crediting prepaid balance...");
 
       const settleResponse = await fetch(
         `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions/${encodeURIComponent(sessionId)}/settle`,
@@ -307,7 +334,7 @@ export default function FundAccountOnRampPanel({
           : null;
       setLastGrantedUsdMicros(granted);
       setPhase("done");
-      setStatusMessage("Allowance credited successfully.");
+      setStatusMessage("Prepaid credits added successfully.");
       setCheckoutUrl(null);
       await loadBalance();
     } catch (fundError) {
@@ -332,86 +359,141 @@ export default function FundAccountOnRampPanel({
   const grantedLabel = formatUsdMicrosString(lastGrantedUsdMicros, 4);
 
   return (
-    <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-amber-200/90">
-            Fund account (demo)
-          </p>
-          <p className="mt-1 text-sm text-zinc-400">
-            MoonPay sandbox purchase credits OpenMeter allowance for your app owner identity.
-          </p>
-        </div>
-        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200">
+    <>
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
           Sandbox
         </span>
+        <button
+          type="button"
+          onClick={openConfirm}
+          disabled={busy}
+          className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? "Processing…" : "Fund with MoonPay"}
+        </button>
+        {statusMessage && !confirmOpen ? (
+          <p className="text-sm text-amber-100/90">{statusMessage}</p>
+        ) : null}
+        {grantedLabel && !confirmOpen ? (
+          <p className="text-sm text-emerald-300">Credited {grantedLabel}</p>
+        ) : null}
+        {error && !confirmOpen ? (
+          <p className="text-sm text-red-400">{error}</p>
+        ) : null}
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-          <p className="text-[11px] uppercase tracking-wider text-zinc-500">Deposit wallet</p>
-          <p className="mt-1 font-mono text-sm text-zinc-200">
-            {depositWallet ? truncateAddress(depositWallet) : "—"}
-          </p>
+      <dialog
+        ref={dialogRef}
+        aria-labelledby={titleId}
+        className="w-full max-w-md rounded-xl border border-amber-500/30 bg-zinc-950 p-5 text-zinc-100 shadow-xl backdrop:bg-black/70 open:fixed open:inset-0 open:m-auto"
+        onCancel={(event) => {
+          if (busy) {
+            event.preventDefault();
+            return;
+          }
+          setConfirmOpen(false);
+        }}
+        onClose={() => setConfirmOpen(false)}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 id={titleId} className="text-base font-semibold text-zinc-100">
+              Confirm MoonPay top-up
+            </h3>
+            <p className="mt-1 text-sm text-zinc-400">
+              Credits land on your shared owner prepaid wallet after checkout completes.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-200">
+            Sandbox
+          </span>
         </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-          <p className="text-[11px] uppercase tracking-wider text-zinc-500">Allowance balance</p>
-          <p className="mt-1 text-sm font-semibold text-zinc-100 tabular-nums">{balanceLabel}</p>
-        </div>
-      </div>
 
-      <div className="mt-4 flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1">
+        <dl className="mt-4 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-sm">
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-[11px] uppercase tracking-wider text-zinc-500">
+              Prepaid balance
+            </dt>
+            <dd className="font-mono tabular-nums text-zinc-100">{balanceLabel}</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-[11px] uppercase tracking-wider text-zinc-500">
+              Deposit wallet
+            </dt>
+            <dd className="font-mono text-zinc-200">
+              {depositWallet ? truncateAddress(depositWallet) : "—"}
+            </dd>
+          </div>
+        </dl>
+
+        <label className="mt-4 flex flex-col gap-1">
           <span className="text-[11px] uppercase tracking-wider text-zinc-500">USD amount</span>
           <input
+            ref={amountInputRef}
             type="number"
             min={21}
             step="1"
             value={fiatAmount}
             onChange={(event) => setFiatAmount(event.target.value)}
-            disabled={phase === "funding" || phase === "settling"}
-            className="w-28 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            disabled={busy}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           />
+          <span className="text-[11px] text-zinc-600">
+            MoonPay sandbox requires more than $20.
+          </span>
         </label>
-        <button
-          type="button"
-          onClick={() => void handleFund()}
-          disabled={phase === "funding" || phase === "settling"}
-          className="rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {phase === "funding" || phase === "settling"
-            ? "Processing..."
-            : "Fund with MoonPay"}
-        </button>
-      </div>
 
-      {statusMessage ? (
-        <p className="mt-3 text-sm text-amber-100/90">{statusMessage}</p>
-      ) : null}
-      {checkoutUrl && phase === "funding" ? (
-        <p className="mt-2 text-sm text-zinc-300">
-          <a
-            href={checkoutUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200"
+        {statusMessage ? (
+          <p className="mt-3 text-sm text-amber-100/90">{statusMessage}</p>
+        ) : null}
+        {checkoutUrl && phase === "funding" ? (
+          <p className="mt-2 text-sm text-zinc-300">
+            <a
+              href={checkoutUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-amber-300 underline underline-offset-2 hover:text-amber-200"
+            >
+              Open MoonPay checkout
+            </a>
+            {" · "}waiting for purchase confirmation.
+          </p>
+        ) : null}
+        {grantedLabel ? (
+          <p className="mt-2 text-sm text-emerald-300">
+            Credited {grantedLabel} to your prepaid wallet.
+          </p>
+        ) : null}
+        {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
+
+        <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+          Owner identity:{" "}
+          <span className="font-mono text-zinc-400">{ownerExternalUserId}</span>. ETH lands
+          in your Turnkey wallet on Ethereum; TicketBroker sweeps are phase 2.
+        </p>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={closeConfirm}
+            disabled={busy}
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition-colors hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Open MoonPay checkout
-          </a>
-          {" · "}waiting for Turnkey status COMPLETED, then allowance credit.
-        </p>
-      ) : null}
-      {grantedLabel ? (
-        <p className="mt-2 text-sm text-emerald-300">
-          Credited {grantedLabel} to <span className="font-mono">{ownerExternalUserId}</span>.
-        </p>
-      ) : null}
-      {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
-
-      <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
-        Owner identity: <span className="font-mono text-zinc-400">{ownerExternalUserId}</span>.
-        ETH lands in your Turnkey wallet on Ethereum; TicketBroker sweeps are phase 2.
-      </p>
-    </div>
+            {phase === "done" ? "Close" : "Cancel"}
+          </button>
+          {phase !== "done" ? (
+            <button
+              type="button"
+              onClick={() => void handleFund()}
+              disabled={busy}
+              className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? "Processing…" : "Continue to MoonPay"}
+            </button>
+          ) : null}
+        </div>
+      </dialog>
+    </>
   );
 }

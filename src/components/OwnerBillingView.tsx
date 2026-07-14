@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
@@ -88,8 +89,11 @@ function SubscriptionCard({
 
 export default function OwnerBillingView({
   data,
+  fundPanel,
 }: Readonly<{
   data: OwnerBillingPayload;
+  /** MoonPay on-ramp (credits the shared owner prepaid wallet). */
+  fundPanel?: ReactNode;
 }>) {
   return (
     <DashboardLayout>
@@ -128,20 +132,39 @@ export default function OwnerBillingView({
               allowances below.
             </p>
             {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
-              <AllowanceStrip
-                balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
-                lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
-                consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
-                requestCount={data.subscriptions.reduce(
-                  (sum, row) => sum + row.requestCount,
-                  0,
-                )}
-                scopeHint="Prepaid credits for your account (shared across apps you own)."
-              />
+              <>
+                {fundPanel ? (
+                  <div className="mb-3 flex justify-end">{fundPanel}</div>
+                ) : null}
+                <AllowanceStrip
+                  balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
+                  lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
+                  consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
+                  requestCount={data.subscriptions.reduce(
+                    (sum, row) => sum + row.requestCount,
+                    0,
+                  )}
+                  scopeHint="Prepaid credits for your account (shared across apps you own)."
+                />
+              </>
             ) : (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                No prepaid credit balance. Starter included usage comes from your plan
-                allowance; credits appear here after a payment is received.
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1 text-sm text-zinc-500">
+                    <p>
+                      No prepaid credit balance yet. Starter included usage comes from your
+                      plan allowance; this wallet stays empty until you top up.
+                    </p>
+                    <p className="mt-2">
+                      Use <span className="text-zinc-300">Fund with MoonPay</span> to add
+                      sandbox prepaid credits — they cover pay-per-use plans with no
+                      allowance, and burn after any plan allowance is exhausted.
+                    </p>
+                  </div>
+                  {fundPanel ? (
+                    <div className="shrink-0 sm:pt-0.5">{fundPanel}</div>
+                  ) : null}
+                </div>
               </div>
             )}
           </section>
