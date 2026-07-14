@@ -66,12 +66,12 @@ function FormatSlider({
   return (
     <fieldset
       aria-label="Credential format"
-      className="relative inline-grid grid-cols-2 w-[8.5rem] rounded-md bg-zinc-950/80 border border-amber-500/25 p-px m-0 min-w-0"
+      className="relative inline-grid grid-cols-2 w-[8.5rem] rounded-md bg-zinc-950 border border-emerald-500/50 p-px m-0 min-w-0"
     >
       <div
         className={[
           "pointer-events-none absolute top-px bottom-px w-[calc(50%-1px)] rounded-[5px]",
-          "bg-amber-500/25 shadow-sm",
+          "bg-emerald-600 shadow-sm shadow-emerald-900/40",
           "transition-[left] duration-200 ease-out motion-reduce:transition-none",
           value === "bearer" ? "left-px" : "left-[calc(50%)]",
         ].join(" ")}
@@ -89,7 +89,7 @@ function FormatSlider({
             className={[
               "relative z-10 py-0.5 text-[10px] font-mono font-medium uppercase tracking-wide",
               "transition-colors duration-200 motion-reduce:transition-none",
-              selected ? "text-amber-100" : "text-amber-300/50 hover:text-amber-200/80",
+              selected ? "text-white" : "text-zinc-400 hover:text-zinc-200",
             ].join(" ")}
           >
             {option === "bearer" ? "Bearer" : "Token"}
@@ -135,7 +135,7 @@ export default function ApiKeyCredentialSwitcher({
         </code>
         <CopyValueButton
           value={value}
-          className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
+          className="shrink-0 rounded-md border border-emerald-500/50 bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
         />
       </div>
     </div>
