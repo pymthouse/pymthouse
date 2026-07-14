@@ -26,7 +26,7 @@ import {
 } from "@/lib/oidc/grants";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 import { mintOwnerApiKey } from "../mint-owner-api-key";
-import SdkTokenReveal from "@/components/apps/SdkTokenReveal";
+import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 
 const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
 
@@ -760,22 +760,25 @@ function M2mTokenTestResult({
       </div>
 
       {rawAccessToken ? (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
-          <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
-            {rawAccessToken}
-          </code>
-          <button
-            type="button"
-            onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
-            className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
-          >
-            {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
-          </button>
-        </div>
-      ) : null}
-
-      {tokenKind === "api_key" && sdkToken ? (
-        <SdkTokenReveal sdkToken={sdkToken} />
+        tokenKind === "api_key" ? (
+          <ApiKeyCredentialSwitcher
+            apiKey={rawAccessToken}
+            sdkToken={sdkToken}
+          />
+        ) : (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
+            <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
+              {rawAccessToken}
+            </code>
+            <button
+              type="button"
+              onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
+              className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
+            >
+              {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
+            </button>
+          </div>
+        )
       ) : null}
 
       {tokenKind === "api_key" ? (

@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import SdkTokenReveal from "@/components/apps/SdkTokenReveal";
+import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 import type { OwnerApiKeyMintState } from "@/components/apps/use-owner-api-key-mint";
 
 type BannerApp = {
@@ -24,59 +23,6 @@ type OwnerApiKeyMintBannerProps<TApp extends BannerApp> = Readonly<{
 function maskApiKey(apiKey: unknown): unknown {
   if (typeof apiKey !== "string" || apiKey.length <= 24) return apiKey;
   return `${apiKey.slice(0, 12)}…${apiKey.slice(-8)}`;
-}
-
-function CopyApiKeyButton({ apiKey }: Readonly<{ apiKey: string }>) {
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current);
-    };
-  }, []);
-
-  const copy = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) {
-      setCopyFailed(true);
-      timeoutRef.current = setTimeout(() => {
-        timeoutRef.current = null;
-        setCopyFailed(false);
-      }, 2000);
-      return;
-    }
-    void navigator.clipboard.writeText(apiKey).then(
-      () => {
-        setCopied(true);
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null;
-          setCopied(false);
-        }, 2000);
-      },
-      () => {
-        setCopyFailed(true);
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null;
-          setCopyFailed(false);
-        }, 2000);
-      },
-    );
-  }, [apiKey]);
-
-  let buttonLabel = "Copy";
-  if (copied) buttonLabel = "Copied";
-  else if (copyFailed) buttonLabel = "Copy failed";
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
-    >
-      {buttonLabel}
-    </button>
-  );
 }
 
 /**
@@ -152,14 +98,10 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
         </button>
       </div>
 
-      <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
-        <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
-          {mintState.apiKey}
-        </code>
-        <CopyApiKeyButton apiKey={mintState.apiKey} />
-      </div>
-
-      {mintState.sdkToken ? <SdkTokenReveal sdkToken={mintState.sdkToken} /> : null}
+      <ApiKeyCredentialSwitcher
+        apiKey={mintState.apiKey}
+        sdkToken={mintState.sdkToken}
+      />
 
       <details className="text-[11px] text-amber-300/70">
         <summary className="cursor-pointer hover:text-amber-200">Show more details</summary>
