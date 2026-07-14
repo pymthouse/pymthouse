@@ -15,7 +15,7 @@ type AuthComponentProps = {
  * TurnkeyProvider".
  */
 // @ts-expect-error -- deep .mjs path has no TS resolution via package exports
-import { AuthComponent as AuthComponentUntyped } from "../../node_modules/@turnkey/react-wallet-kit/dist/components/auth/index.mjs";
+import { AuthComponent as AuthComponentUntyped } from "../../node_modules/@turnkey/react-wallet-kit/dist/components/auth/index.mjs"; // NOSONAR
 
 export const AuthComponent =
   AuthComponentUntyped as ComponentType<AuthComponentProps>;

@@ -41,9 +41,9 @@ export function AdminLoginForm() {
     e.preventDefault();
     // Prefer FormData so browser autofill (which often skips React onChange)
     // still submits the value painted in the password field.
+    const rawToken = new FormData(e.currentTarget).get("token");
     const formToken =
-      String(new FormData(e.currentTarget).get("token") ?? "").trim() ||
-      token.trim();
+      (typeof rawToken === "string" ? rawToken : "").trim() || token.trim();
     if (!formToken) {
       setError("Enter a bearer token to sign in.");
       return;

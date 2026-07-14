@@ -255,7 +255,7 @@ function TurnkeyEmbeddedAuthInner({
         >
           Privacy Policy
         </a>
-        .
+        {"."}
       </p>
       {error && (
         <div className="mt-3 space-y-2">
