@@ -15,6 +15,7 @@ import {
   resolveKonnectMeterId,
   unwrapOpenMeterListResult,
 } from "../src/lib/openmeter/konnect-catalog";
+import { resolveKonnectStripeAppId } from "../src/lib/openmeter/konnect-billing-profiles";
 import { defaultStarterIncludedUsdMicros } from "../src/lib/starter-default-plan-display";
 
 const DEFAULT_LOCAL_OPENMETER_URL = "http://127.0.0.1:48888";
@@ -115,6 +116,14 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
   console.log(
     "  - network_spend feature must stay meter-backed (no unit_cost / LLM pricing)",
   );
+  try {
+    await resolveKonnectStripeAppId();
+    console.log("[openmeter-bootstrap] Konnect Stripe app is ready");
+  } catch {
+    console.warn(
+      "[openmeter-bootstrap] Konnect Stripe app not ready — install Stripe in Konnect → Metering & Billing → Settings → Stripe",
+    );
+  }
 }
 
 async function ensureSelfHostedMeters(
@@ -179,6 +188,37 @@ async function ensureSelfHostedFeature(
   }
 }
 
+async function probeStripeOAuth(
+  baseUrl: string,
+  apiKey: string | undefined,
+  appsBaseUrl: string,
+): Promise<void> {
+  try {
+    const installResp = await fetchWithTimeout(
+      `${baseUrl}/api/v1/marketplace/listings/stripe/install/oauth2`,
+      {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      },
+    );
+    if (installResp.status === 501) {
+      console.warn(
+        "[openmeter-bootstrap] Stripe Connect unavailable (501). Set apps.baseURL on OpenMeter " +
+          `(OPENMETER_APPS_BASE_URL=${appsBaseUrl}) and redeploy.`,
+      );
+      return;
+    }
+    if (!installResp.ok) {
+      console.warn(
+        `[openmeter-bootstrap] Stripe install probe returned ${installResp.status} (apps.baseURL should be ${appsBaseUrl})`,
+      );
+      return;
+    }
+    console.log("[openmeter-bootstrap] Stripe marketplace OAuth is available");
+  } catch (err) {
+    console.warn("[openmeter-bootstrap] Stripe install probe skipped:", err);
+  }
+}
+
 async function bootstrapSelfHosted(
   baseUrl: string,
   apiKey: string | undefined,
@@ -191,6 +231,8 @@ async function bootstrapSelfHosted(
   console.log(
     "[openmeter-bootstrap] Per-customer trial grants are created at user provision time via customers.entitlements.createGrant (self-hosted)",
   );
+  const appsBaseUrl = process.env.OPENMETER_APPS_BASE_URL?.trim() || baseUrl;
+  await probeStripeOAuth(baseUrl, apiKey, appsBaseUrl);
 }
 
 function requireBootstrapTarget(): { rawBaseUrl: string; apiKey: string | undefined } {

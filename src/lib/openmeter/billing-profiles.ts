@@ -5,6 +5,22 @@ import { appBillingConfig } from "@/db/schema";
 import type { OpenMeter } from "@openmeter/sdk";
 import { getHostedAdminClient } from "./admin-client";
 import { assignCustomerBillingProfileOverride } from "./customers";
+import { createKonnectBillingProfile } from "./konnect-billing-profiles";
+import { getHostedOpenMeterUrl } from "./constants";
+import { shouldUseKonnectRoutes } from "./route-mode";
+
+/** ISO 3166-1 alpha-2; required on billing profile supplier for OpenMeter invoicing. */
+function billingSupplierCountryCode(): string {
+  const raw = process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY?.trim() || "US";
+  return raw.toUpperCase();
+}
+
+export function buildBillingProfileSupplier(displayName: string) {
+  return {
+    name: displayName,
+    addresses: [{ country: billingSupplierCountryCode() }],
+  };
+}
 
 const FREE_BILLING_PROFILE_NAME = "pymthouse-free";
 
@@ -99,24 +115,37 @@ export async function ensureTenantBillingProfile(input: {
     return existing.openmeterBillingProfileId;
   }
 
-  const profile = await client.billing.profiles.create({
-    name: input.name || `pymthouse-${input.clientId}`,
-    default: false,
-    supplier: {
-      name: input.name || `Tenant ${input.clientId}`,
-    },
-    workflow: {
-      invoicing: { autoAdvance: true, draftPeriod: "P0D" },
-      payment: { collectionMethod: "charge_automatically" },
-    },
-    apps: {
-      tax: input.openmeterStripeAppId,
-      invoicing: input.openmeterStripeAppId,
-      payment: input.openmeterStripeAppId,
-    },
-  });
+  const profileName = input.name || `pymthouse-${input.clientId}`;
+  const supplierName = input.name || `Tenant ${input.clientId}`;
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
 
-  if (!profile?.id) {
+  const profileId = useKonnect
+    ? await createKonnectBillingProfile({
+        clientId: input.clientId,
+        openmeterStripeAppId: input.openmeterStripeAppId,
+        name: profileName,
+      })
+    : (
+        await client.billing.profiles.create({
+          name: profileName,
+          default: false,
+          supplier: buildBillingProfileSupplier(supplierName),
+          workflow: {
+            invoicing: { autoAdvance: true, draftPeriod: "P0D" },
+            payment: { collectionMethod: "charge_automatically" },
+          },
+          apps: {
+            tax: input.openmeterStripeAppId,
+            invoicing: input.openmeterStripeAppId,
+            payment: input.openmeterStripeAppId,
+          },
+        })
+      )?.id;
+
+  if (!profileId) {
     throw new Error("Failed to create OpenMeter billing profile");
   }
 
@@ -125,13 +154,13 @@ export async function ensureTenantBillingProfile(input: {
     await db
       .update(appBillingConfig)
       .set({
-        openmeterBillingProfileId: profile.id,
+        openmeterBillingProfileId: profileId,
         updatedAt: now,
       })
       .where(eq(appBillingConfig.clientId, input.clientId));
   }
 
-  return profile.id;
+  return profileId;
 }
 
 /**

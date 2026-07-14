@@ -78,8 +78,11 @@ On the **openmeter** project (or per-service), set:
 | `OPENMETER_POSTGRES_PASSWORD` | postgres + openmeter + both workers | `openssl rand -hex 24` |
 | `OPENMETER_CLICKHOUSE_SECRET` | openmeter-clickhouse | `openssl rand -hex 24` |
 | `OPENMETER_API_KEY` | optional; set on OM if you enable auth | random secret |
+| `OPENMETER_APPS_BASE_URL` | openmeter + both workers | Same as the **public** OpenMeter domain from step 4 (no trailing slash) |
 
 Use the **same** `OPENMETER_POSTGRES_PASSWORD` on `openmeter-postgres`, `openmeter`, `openmeter-sink-worker`, and `openmeter-balance-worker`.
+
+`OPENMETER_APPS_BASE_URL` is required for **Stripe Connect** (per-app merchant billing in PymtHouse). Without it, `GET …/marketplace/listings/stripe/install/oauth2` returns **501 Unimplemented**. Set it to the OpenMeter API origin (e.g. `https://openmeter-production-xxxx.up.railway.app`), not the PymtHouse URL. If unset, use the same value as `OPENMETER_URL` on `openmeter` and both workers.
 
 ## 4. Public URL for the API
 
@@ -154,6 +157,30 @@ In the **Vercel** project → Environment Variables:
 Redeploy Vercel. Usage, balance, and allowances return **503** without `OPENMETER_URL`.
 
 Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMeter directly.
+
+### Stripe Connect (per developer app)
+
+PymtHouse **Payments** tab → **Connect Stripe** calls Builder API `POST /api/v1/apps/{clientId}/billing/stripe/connect`, which stores a per-app billing profile in `app_billing_config`.
+
+**Konnect (production):**
+
+1. Install Stripe once in [Konnect → Metering & Billing → Settings → Stripe](https://developer.konghq.com/metering-and-billing/stripe-integration/) (API key + billing profile wizard).
+2. Set `OPENMETER_URL` (e.g. `https://{region}.api.konghq.com/v3/openmeter`) and `OPENMETER_API_KEY` on Vercel.
+3. Bootstrap should log `Konnect Stripe app is ready` (not a missing-app warning).
+4. In PymtHouse, app owner opens **Settings → Payments → Connect Stripe** — no OAuth redirect; PymtHouse links the app to the org Stripe app and creates a billing profile.
+5. Optional: `OPENMETER_STRIPE_APP_ID` when multiple Stripe apps exist in the org.
+
+**Self-hosted (Railway/OSS):**
+
+1. Ensure `OPENMETER_APPS_BASE_URL` is set on Railway OpenMeter (see §3) and redeploy **openmeter**.
+2. Bootstrap should log `Stripe marketplace OAuth is available` (not a 501 warning).
+3. In PymtHouse, app owner opens **Settings → Payments → Connect Stripe**.
+   - **OpenMeter Cloud:** OAuth redirect flow.
+   - **Self-hosted (Railway/OSS):** OAuth returns `501`; PymtHouse falls back to **restricted Stripe secret key** install via `POST …/billing/stripe/connect` with `{ "stripeSecretKey": "sk_…" }` (key is stored in OpenMeter only, not in PymtHouse Postgres).
+4. After connect, status becomes `connected` and invoices/checkout use the per-app OpenMeter billing profile.
+5. Publish paid plans (OpenMeter plan sync) and use checkout via `POST …/billing/checkout` for end users.
+
+Stripe redirect URI for each app: `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/callback`.
 
 ## 8. Signer (`pymthouse` Railway service)
 
