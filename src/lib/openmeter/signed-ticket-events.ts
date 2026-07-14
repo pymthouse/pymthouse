@@ -436,52 +436,61 @@ function compoundQueriesForSubject(
   return [subject];
 }
 
+function addQueries(target: Set<string>, keys: Iterable<string>): void {
+  for (const key of keys) {
+    target.add(key);
+  }
+}
+
+function addOwnerSubjectQueries(
+  queries: Set<string>,
+  ownerKey: string,
+  clientIds: ReadonlySet<string> | null,
+): void {
+  const ownerUserId = parseOwnerCustomerKey(ownerKey);
+  if (!ownerUserId) return;
+  queries.add(ownerKey);
+  queries.add(ownerUserId);
+  if (clientIds && clientIds.size > 0) {
+    addQueries(queries, buildOwnerMeterSubjects(ownerUserId, [...clientIds]));
+    return;
+  }
+  addQueries(queries, compoundQueriesForSubject(ownerUserId, null));
+}
+
+function addPlatformSubjectQueries(
+  queries: Set<string>,
+  subject: string,
+  clientIds: ReadonlySet<string> | null,
+): void {
+  const normalized = normalizePlatformUserId(subject);
+  queries.add(subject);
+  queries.add(normalized);
+  queries.add(buildOwnerCustomerKey(normalized));
+  if (clientIds && clientIds.size > 0) {
+    addQueries(queries, buildOwnerMeterSubjects(normalized, [...clientIds]));
+    for (const clientId of clientIds) {
+      queries.add(buildOpenMeterCustomerKey(clientId, subject));
+    }
+    return;
+  }
+  addQueries(queries, compoundQueriesForSubject(subject, null));
+}
+
 function buildSubjectQueries(
   subjects: ReadonlySet<string>,
   clientIds: ReadonlySet<string> | null,
 ): string[] {
   const queries = new Set<string>();
-  const clientIdList =
-    clientIds && clientIds.size > 0 ? [...clientIds] : ([] as string[]);
-
   for (const subject of subjects) {
     const trimmed = subject.trim();
     if (!trimmed) continue;
-    // Always include the raw key (owner:{id} is the live CE subject for owners).
-    queries.add(trimmed);
-
     if (isOwnerCustomerKey(trimmed)) {
-      const ownerUserId = parseOwnerCustomerKey(trimmed);
-      if (ownerUserId && clientIdList.length > 0) {
-        for (const key of buildOwnerMeterSubjects(ownerUserId, clientIdList)) {
-          queries.add(key);
-        }
-      } else if (ownerUserId) {
-        queries.add(ownerUserId);
-        for (const key of compoundQueriesForSubject(ownerUserId, clientIds)) {
-          queries.add(key);
-        }
-      }
+      addOwnerSubjectQueries(queries, trimmed, clientIds);
       continue;
     }
-
-    const normalized = normalizePlatformUserId(trimmed);
-    queries.add(normalized);
-    queries.add(buildOwnerCustomerKey(normalized));
-    if (clientIdList.length > 0) {
-      for (const key of buildOwnerMeterSubjects(normalized, clientIdList)) {
-        queries.add(key);
-      }
-      for (const clientId of clientIdList) {
-        queries.add(buildOpenMeterCustomerKey(clientId, trimmed));
-      }
-    } else {
-      for (const key of compoundQueriesForSubject(trimmed, null)) {
-        queries.add(key);
-      }
-    }
+    addPlatformSubjectQueries(queries, trimmed, clientIds);
   }
-
   return [...queries];
 }
 

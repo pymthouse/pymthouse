@@ -21,43 +21,27 @@ import "./load-env-first";
 import { and, eq } from "drizzle-orm";
 import { closeDb, db } from "../src/db/index";
 import { plans } from "../src/db/schema";
-import {
-  getHostedOpenMeterUrl,
-  isKonnectMeteringUrl,
-  KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
-  normalizeKonnectMeteringUrl,
-} from "../src/lib/openmeter/constants";
+import { KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE } from "../src/lib/openmeter/constants";
 import { buildOpenMeterPlanKey } from "../src/lib/openmeter/plan-naming";
 import { syncPlanToOpenMeter } from "../src/lib/openmeter/plans-sync";
+import {
+  changeKonnectSubscription,
+  getKonnectPlan,
+  konnectFetch,
+  listActiveKonnectSubscriptions,
+  parseSubscriptionTiming,
+  rateCardsHaveUsageDiscount,
+  requireKonnectConfig,
+  takeArgValue,
+  type KonnectPlan,
+  type KonnectSubscription,
+  type SubscriptionChangeTiming,
+} from "./lib/openmeter-konnect-migrate";
 
 type Args = {
   apply: boolean;
   clientId?: string;
-  timing: "immediate" | "next_billing_cycle";
-};
-
-type KonnectPlan = {
-  id: string;
-  key: string;
-  name?: string;
-  status?: string;
-  version?: number;
-  settlement_mode?: string;
-  currency?: string;
-  billing_cadence?: string;
-  phases?: Array<{
-    key?: string;
-    name?: string;
-    rate_cards?: Array<Record<string, unknown>>;
-  }>;
-};
-
-type KonnectSubscription = {
-  id: string;
-  status: string;
-  customer_id: string;
-  plan_id?: string;
-  settlement_mode?: string;
+  timing: SubscriptionChangeTiming;
 };
 
 type StarterRow = {
@@ -97,14 +81,6 @@ function usage(): string {
   ].join("\n");
 }
 
-function takeValue(argv: string[], index: number, flag: string): string {
-  const value = argv[index + 1]?.trim();
-  if (!value) {
-    throw new Error(`${flag} requires a value`);
-  }
-  return value;
-}
-
 function parseArgs(argv: string[]): Args {
   const args: Args = { apply: false, timing: "immediate" };
 
@@ -118,18 +94,13 @@ function parseArgs(argv: string[]): Args {
         args.apply = false;
         break;
       case "--client-id":
-        args.clientId = takeValue(argv, i, token);
+        args.clientId = takeArgValue(argv, i, token);
         i += 1;
         break;
-      case "--timing": {
-        const value = takeValue(argv, i, token);
-        if (value !== "immediate" && value !== "next_billing_cycle") {
-          throw new Error("--timing must be immediate or next_billing_cycle");
-        }
-        args.timing = value;
+      case "--timing":
+        args.timing = parseSubscriptionTiming(takeArgValue(argv, i, token));
         i += 1;
         break;
-      }
       case "--help":
       case "-h":
         console.log(usage());
@@ -141,72 +112,6 @@ function parseArgs(argv: string[]): Args {
   }
 
   return args;
-}
-
-function requireKonnectConfig(): { baseUrl: string; apiKey: string } {
-  const rawUrl = getHostedOpenMeterUrl();
-  const apiKey = process.env.OPENMETER_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error("OPENMETER_API_KEY is required");
-  }
-  if (!isKonnectMeteringUrl(rawUrl, apiKey)) {
-    throw new Error(
-      `This migration targets Konnect only (got OPENMETER_URL=${rawUrl})`,
-    );
-  }
-  return {
-    baseUrl: normalizeKonnectMeteringUrl(rawUrl),
-    apiKey,
-  };
-}
-
-async function konnectFetch<T>(
-  baseUrl: string,
-  apiKey: string,
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await response.text();
-  let parsed: unknown = null;
-  if (text) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
-    }
-  }
-  if (!response.ok) {
-    throw new Error(
-      `Konnect ${method} ${path} failed [${response.status}]: ${text.slice(0, 800)}`,
-    );
-  }
-  return parsed as T;
-}
-
-function rateCardsHaveUsageDiscount(plan: KonnectPlan): boolean {
-  for (const phase of plan.phases ?? []) {
-    for (const card of phase.rate_cards ?? []) {
-      const discounts = card.discounts;
-      if (
-        discounts &&
-        typeof discounts === "object" &&
-        (discounts as { usage?: unknown }).usage != null
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 function stripUsageDiscountsFromPhases(
@@ -234,39 +139,12 @@ function isUsablePrepaidPlan(plan: KonnectPlan): boolean {
   return plan.status === "active" && !planNeedsPrepaidRepublish(plan);
 }
 
-async function listActiveSubscriptions(
-  baseUrl: string,
-  apiKey: string,
-): Promise<KonnectSubscription[]> {
-  const out: KonnectSubscription[] = [];
-  let page = 1;
-  for (;;) {
-    const body = await konnectFetch<{ data?: KonnectSubscription[] }>(
-      baseUrl,
-      apiKey,
-      "GET",
-      `/subscriptions?page=${page}&pageSize=100`,
-    );
-    const items = body.data ?? [];
-    for (const item of items) {
-      if (item.status === "active" || item.status === "scheduled") {
-        out.push(item);
-      }
-    }
-    if (items.length < 100) {
-      break;
-    }
-    page += 1;
-  }
-  return out;
-}
-
 async function getPlan(
   baseUrl: string,
   apiKey: string,
   planId: string,
 ): Promise<KonnectPlan> {
-  return konnectFetch<KonnectPlan>(baseUrl, apiKey, "GET", `/plans/${planId}`);
+  return getKonnectPlan(baseUrl, apiKey, planId);
 }
 
 async function publishPrepaidPlanVersion(
@@ -297,18 +175,8 @@ async function changeSubscription(input: {
   customerId: string;
   planId: string;
   timing: Args["timing"];
-}): Promise<{ current: KonnectSubscription; next: KonnectSubscription }> {
-  return konnectFetch(
-    input.baseUrl,
-    input.apiKey,
-    "POST",
-    `/subscriptions/${input.subscriptionId}/change`,
-    {
-      customer: { id: input.customerId },
-      plan: { id: input.planId },
-      timing: input.timing,
-    },
-  );
+}): Promise<{ current?: KonnectSubscription; next?: KonnectSubscription }> {
+  return changeKonnectSubscription(input);
 }
 
 async function loadStarterRows(clientId?: string): Promise<StarterRow[]> {
@@ -591,7 +459,7 @@ async function migrateOneSubscription(input: {
     });
     stats.changed += 1;
     console.log(
-      `[changed] ${sub.id} -> ${result.next.id} plan=${result.next.plan_id} customer=${sub.customer_id}`,
+      `[changed] ${sub.id} -> ${result.next?.id ?? targetPlanId} plan=${result.next?.plan_id ?? targetPlanId} customer=${sub.customer_id}`,
     );
   } catch (err) {
     stats.errors += 1;
@@ -629,7 +497,7 @@ async function main() {
     });
   }
 
-  const subscriptions = await listActiveSubscriptions(baseUrl, apiKey);
+  const subscriptions = await listActiveKonnectSubscriptions(baseUrl, apiKey);
   const clientStarterKeys = new Set(
     starterRows.map((row) => buildOpenMeterPlanKey(row.clientId, row.id)),
   );
