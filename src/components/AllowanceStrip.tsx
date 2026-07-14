@@ -1,3 +1,6 @@
+import type { ReactNode } from "react";
+
+import InfoTooltip from "@/components/InfoTooltip";
 import {
   formatUsdMicrosDisplay,
   hasPositiveUsdMicrosBalance,
@@ -12,12 +15,12 @@ type AllowanceStripProps = Readonly<{
   consumedUsdMicros: string;
   /** Signed / metered request count this period (usage context only). */
   requestCount: number;
-  /**
-   * Clarifies Konnect customer scope (credits are per end-user customer;
-   * UI may sum many wallets).
-   */
-  scopeHint?: string;
+  /** Optional actions (e.g. Fund with MoonPay), aligned to the top-right. */
+  actions?: ReactNode;
 }>;
+
+const ACCOUNT_SCOPE_TIP =
+  "Prepaid credits for your account — usable across all apps you own.";
 
 /**
  * Prepaid credit strip backed by the live Konnect/OpenMeter credit ledger
@@ -28,7 +31,7 @@ export default function AllowanceStrip({
   lifetimeGrantedUsdMicros,
   consumedUsdMicros,
   requestCount,
-  scopeHint,
+  actions,
 }: AllowanceStripProps) {
   const granted = parseNonNegativeMicros(lifetimeGrantedUsdMicros);
   const remaining = parseNonNegativeMicros(balanceUsdMicros);
@@ -62,20 +65,20 @@ export default function AllowanceStrip({
 
   return (
     <div className="mb-5 flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
-          Prepaid credits
-        </p>
-        {!hasAccess && (
-          <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-amber-400">
-            Exhausted
-          </span>
-        )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
+            Prepaid credits
+          </p>
+          <InfoTooltip label={ACCOUNT_SCOPE_TIP} wide />
+          {!hasAccess && (
+            <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-amber-400">
+              Exhausted
+            </span>
+          )}
+        </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
-
-      {scopeHint ? (
-        <p className="text-[11px] leading-snug text-zinc-600">{scopeHint}</p>
-      ) : null}
 
       <div className="flex flex-wrap items-baseline gap-3">
         <span className="font-mono text-[15px] tabular-nums leading-none text-zinc-400">
