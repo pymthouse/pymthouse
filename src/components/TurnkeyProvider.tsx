@@ -47,16 +47,25 @@ function rejectionMessage(reason: unknown): string {
   }
 }
 
+/** Kit wrappers sometimes prefix the same failures ("Error completing OTP: …"). */
+const OTP_REJECTION_SUBSTRINGS = [
+  "Error completing OTP",
+  "Error resending OTP",
+  "Error initializing OTP",
+] as const;
+
 function isExpectedTurnkeyOtpRejection(reason: unknown): boolean {
   const message = rejectionMessage(reason);
-  return (
-    message.includes("Error completing OTP") ||
-    message.includes("Error resending OTP") ||
-    message.includes("Error initializing OTP") ||
-    message.includes("Failed to verify OTP") ||
-    message.includes("Failed to complete OTP") ||
-    message.includes("Failed to initialize OTP")
-  );
+  if (!message) return false;
+  if (EXPECTED_USER_TURNKEY_MESSAGES.has(message)) return true;
+  if (BENIGN_TURNKEY_MESSAGES.has(message)) return true;
+  for (const expected of EXPECTED_USER_TURNKEY_MESSAGES) {
+    if (message.includes(expected)) return true;
+  }
+  for (const benign of BENIGN_TURNKEY_MESSAGES) {
+    if (message.includes(benign)) return true;
+  }
+  return OTP_REJECTION_SUBSTRINGS.some((s) => message.includes(s));
 }
 
 function isQuietTurnkeyError(error: unknown): boolean {
