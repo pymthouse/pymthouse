@@ -102,3 +102,55 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
     return "$0.00";
   }
 }
+
+/** 1 cent = 10_000 USD micros. */
+const USD_MICROS_PER_CENT = 10_000n;
+
+/**
+ * Sanitize typed USD amount input to non-negative dollars with at most 2
+ * fraction digits (cents). Strips currency symbols and extra punctuation.
+ */
+export function sanitizeUsdCentsInput(raw: string): string {
+  let s = raw.replace(/[^\d.]/g, "");
+  const dot = s.indexOf(".");
+  if (dot !== -1) {
+    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replace(/\./g, "").slice(0, 2)}`;
+  }
+  return s;
+}
+
+/**
+ * Convert USD micros to a cents-limited amount string for dollar inputs
+ * (e.g. `"5000000"` → `"5.00"`). Truncates sub-cent remainders.
+ */
+export function usdMicrosToCentsDisplay(microsStr: string | null | undefined): string {
+  return formatUsdMicrosDisplay(microsStr).replace("$", "");
+}
+
+/**
+ * Parse a cents-limited dollar amount (`"5"`, `"5.5"`, `"5.00"`) to an integer
+ * USD micros string. Returns null for empty/invalid input. Storage stays in
+ * micros; the UI never exposes more than cents.
+ */
+export function usdCentsDisplayToMicros(display: string): string | null {
+  const t = display.trim().replace(/\.$/, "");
+  if (!t || !/^\d+(\.\d{1,2})?$/.test(t)) return null;
+  try {
+    const [wholePart, fracPart = ""] = t.split(".");
+    const whole = BigInt(wholePart);
+    const cents = BigInt((fracPart + "00").slice(0, 2));
+    return (whole * USD_MICROS_PER_DOLLAR + cents * USD_MICROS_PER_CENT).toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalize a typed dollar amount to fixed cents (`"5"` → `"5.00"`).
+ * Returns the original trimmed string when it is not yet a complete amount.
+ */
+export function normalizeUsdCentsDisplay(display: string): string {
+  const micros = usdCentsDisplayToMicros(display);
+  if (micros == null) return display.trim();
+  return usdMicrosToCentsDisplay(micros);
+}

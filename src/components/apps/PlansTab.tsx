@@ -25,6 +25,13 @@ import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
   validateCustomPlanName,
 } from "@/lib/openmeter/plan-naming";
+import {
+  formatUsdMicrosDisplay,
+  normalizeUsdCentsDisplay,
+  sanitizeUsdCentsInput,
+  usdCentsDisplayToMicros,
+  usdMicrosToCentsDisplay,
+} from "@/lib/format-usd-micros";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -91,8 +98,6 @@ interface PlanDraft {
   capabilityMarkupByKey: Record<string, string>;
 }
 
-const USD_MICROS = 1_000_000;
-
 const PLAN_TYPES = [
   { value: "free", label: "Free" },
   { value: "subscription", label: "Subscription" },
@@ -122,15 +127,55 @@ async function readFetchJson(res: Response): Promise<{
 
 function usdMicrosToDisplay(micros: string | null | undefined): string {
   if (!micros) return "";
-  const n = parseInt(micros, 10);
-  if (isNaN(n)) return "";
-  return (n / USD_MICROS).toFixed(2);
+  return usdMicrosToCentsDisplay(micros);
 }
 
 function displayToUsdMicros(display: string): string | null {
-  const n = parseFloat(display);
-  if (!isFinite(n) || n < 0) return null;
-  return Math.round(n * USD_MICROS).toString();
+  return usdCentsDisplayToMicros(display);
+}
+
+function DollarCentsInput({
+  id,
+  value,
+  onChange,
+  disabled,
+  placeholder = "5.00",
+  "aria-label": ariaLabel,
+}: Readonly<{
+  id?: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  "aria-label"?: string;
+}>) {
+  return (
+    <div
+      className={`flex items-center rounded-lg border border-zinc-700 bg-zinc-800/50 focus-within:border-sky-500/40 focus-within:ring-1 focus-within:ring-sky-500/20 ${
+        disabled ? "opacity-50" : ""
+      }`}
+    >
+      <span className="pl-3 text-sm text-zinc-500 select-none" aria-hidden="true">
+        $
+      </span>
+      <input
+        id={id}
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        value={value}
+        onChange={(e) => onChange(sanitizeUsdCentsInput(e.target.value))}
+        onBlur={() => {
+          if (value.trim() === "") return;
+          onChange(normalizeUsdCentsDisplay(value));
+        }}
+        placeholder={placeholder}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        className="w-full bg-transparent px-2 py-2 text-sm tabular-nums text-zinc-100 placeholder:text-zinc-600 focus:outline-none disabled:cursor-not-allowed"
+      />
+    </div>
+  );
 }
 
 function catalogLiteFrom(catalog: PipelineCatalogEntry[]): CatalogLite[] {
@@ -655,18 +700,15 @@ function PlanDraftForm({
           </div>
           <div>
           <label htmlFor={`${idPrefix}-included`} className="block text-xs text-zinc-500 mb-1">
-            Included usage allowance (USD)
+            Included usage allowance
           </label>
-          <input
+          <DollarCentsInput
             id={`${idPrefix}-included`}
-            type="number"
-            min="0"
-            step="0.01"
             value={draft.includedUsdDisplay}
-            onChange={(e) => onChange({ ...draft, includedUsdDisplay: e.target.value })}
-            placeholder="e.g. 10.00"
+            onChange={(includedUsdDisplay) => onChange({ ...draft, includedUsdDisplay })}
+            placeholder="10.00"
             disabled={!canEdit}
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+            aria-label="Included usage allowance in dollars"
           />
           </div>
         </>
@@ -1149,23 +1191,25 @@ function StarterPlanCard({
   onSaved: () => void | Promise<void>;
 }>) {
   const [expanded, setExpanded] = useState(false);
-  const [includedUsdMicros, setIncludedUsdMicros] = useState(plan.includedUsdMicros ?? "5000000");
+  const [includedUsdDisplay, setIncludedUsdDisplay] = useState(() =>
+    usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "5000000"),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const syncFailure = planSyncFailureMessage(plan);
 
   useEffect(() => {
     if (expanded) {
-      setIncludedUsdMicros(plan.includedUsdMicros ?? "5000000");
+      setIncludedUsdDisplay(usdMicrosToCentsDisplay(plan.includedUsdMicros ?? "5000000"));
       setError(null);
     }
   }, [expanded, plan.includedUsdMicros]);
 
   const save = async () => {
     if (!canEdit) return;
-    const trimmed = includedUsdMicros.trim();
-    if (!/^\d+$/.test(trimmed)) {
-      setError("Allowance must be a non-negative whole number (USD micros)");
+    const micros = usdCentsDisplayToMicros(includedUsdDisplay);
+    if (micros == null) {
+      setError("Allowance must be a valid dollar amount (e.g. 5.00)");
       return;
     }
     setSaving(true);
@@ -1174,7 +1218,7 @@ function StarterPlanCard({
       const res = await fetch(`/api/v1/apps/${appId}/starter-plan`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ includedUsdMicros: trimmed }),
+        body: JSON.stringify({ includedUsdMicros: micros }),
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
@@ -1234,7 +1278,7 @@ function StarterPlanCard({
           </p>
           {!expanded && plan.includedUsdMicros && (
             <p className="text-sm text-sky-300/90 mt-2">
-              ${usdMicrosToDisplay(plan.includedUsdMicros)} USD included per billing period
+              {formatUsdMicrosDisplay(plan.includedUsdMicros)} included per billing period
             </p>
           )}
           {syncFailure && (
@@ -1256,20 +1300,18 @@ function StarterPlanCard({
 
       {expanded && (
         <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
-          <label className="block text-sm text-zinc-300">
-            Included usage allowance (USD micros){" "}
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={includedUsdMicros}
-              onChange={(e) => setIncludedUsdMicros(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          <div>
+            <label htmlFor="starter-included-usd" className="block text-sm text-zinc-300 mb-1">
+              Included usage allowance
+            </label>
+            <DollarCentsInput
+              id="starter-included-usd"
+              value={includedUsdDisplay}
+              onChange={setIncludedUsdDisplay}
+              disabled={!canEdit}
+              aria-label="Included usage allowance in dollars"
             />
-          </label>
-          <p className="text-xs text-zinc-500">
-            Display: ${usdMicrosToDisplay(includedUsdMicros || "0")} USD · 1,000,000 micros = $1
-          </p>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -1410,7 +1452,7 @@ function CustomPlanCard({
           )}
           {plan.includedUsdMicros && (
             <p className="text-xs text-emerald-400/80 mt-1">
-              Includes ${usdMicrosToDisplay(plan.includedUsdMicros)} USD usage
+              Includes {formatUsdMicrosDisplay(plan.includedUsdMicros)} usage
             </p>
           )}
           {plan.type !== "free" && !plan.isNetworkDefault && syncFailure && (
