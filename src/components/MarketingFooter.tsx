@@ -52,6 +52,22 @@ export function MarketingFooter({ className = "" }: { className?: string }) {
               GitHub
             </a>
             <a
+              href="https://docs.pymthouse.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Docs
+            </a>
+            <a
+              href="https://github.com/livepeer/livepeer-python-gateway"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Python SDK
+            </a>
+            <a
               href="mailto:john@eliteencoder.net"
               className="block text-zinc-400 hover:text-zinc-200 transition-colors"
             >
