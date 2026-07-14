@@ -75,20 +75,20 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
   }
 
   return (
-    <output className="block rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+    <output className="block rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-amber-200">
+          <p className="text-xs font-medium text-sky-200">
             API key for {mintState.app.name}
           </p>
-          <p className="text-[11px] text-amber-300/80 mt-0.5">
+          <p className="text-[11px] text-sky-300/80 mt-0.5">
             Store this securely — it will not be shown again.
           </p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-100 hover:bg-amber-500/20 transition-colors"
+          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-xs font-medium text-sky-100 hover:bg-sky-500/20 transition-colors"
           aria-label="Clear API key from screen"
         >
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -103,15 +103,15 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
         sdkToken={mintState.sdkToken}
       />
 
-      <details className="text-[11px] text-amber-300/70">
-        <summary className="cursor-pointer hover:text-amber-200">Show more details</summary>
-        <p className="mt-1.5 text-amber-300/60">
+      <details className="text-[11px] text-sky-300/70">
+        <summary className="cursor-pointer hover:text-sky-200">Show more details</summary>
+        <p className="mt-1.5 text-sky-300/60">
           Bound to owner identity:{" "}
-          <span className="font-mono text-amber-200/80">
+          <span className="font-mono text-sky-200/80">
             {mintState.app.ownerExternalUserId ?? "—"}
           </span>
         </p>
-        <pre className="mt-2 overflow-x-auto rounded-md border border-amber-500/15 bg-black/30 p-2 font-mono text-[10px] text-amber-200/70">
+        <pre className="mt-2 overflow-x-auto rounded-md border border-sky-500/15 bg-black/30 p-2 font-mono text-[10px] text-sky-200/70">
           {JSON.stringify(
             {
               ...mintState.response,

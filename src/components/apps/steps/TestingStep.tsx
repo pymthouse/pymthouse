@@ -734,13 +734,13 @@ function M2mTokenTestResult({
   if (!result) return null;
 
   return (
-    <output className="block rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+    <output className="block rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-amber-200">
+          <p className="text-xs font-medium text-sky-200">
             {tokenTestResultTitle(tokenKind)}
           </p>
-          <p className="text-[11px] text-amber-300/80 mt-0.5">
+          <p className="text-[11px] text-sky-300/80 mt-0.5">
             {tokenKind === "api_key"
               ? "Store this securely — it will not be shown again."
               : "Copy the token now for use in your client."}
@@ -749,7 +749,7 @@ function M2mTokenTestResult({
         <button
           type="button"
           onClick={onDismiss}
-          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-100 hover:bg-amber-500/20 transition-colors"
+          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-xs font-medium text-sky-100 hover:bg-sky-500/20 transition-colors"
           aria-label="Clear token result from screen"
         >
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -766,14 +766,14 @@ function M2mTokenTestResult({
             sdkToken={sdkToken}
           />
         ) : (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
-            <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
+          <div className="flex items-start gap-2 rounded-md border border-sky-500/20 bg-black/30 p-2.5">
+            <code className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100 leading-relaxed">
               {rawAccessToken}
             </code>
             <button
               type="button"
               onClick={() => onCopy(rawAccessToken, tokenCopyLabel)}
-              className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
+              className="shrink-0 rounded-md border border-sky-500/50 bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 transition-colors"
             >
               {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
             </button>
@@ -782,24 +782,24 @@ function M2mTokenTestResult({
       ) : null}
 
       {tokenKind === "api_key" ? (
-        <p className="text-[11px] text-amber-300/70">
-          Use as <span className="font-mono text-amber-200/80">Authorization: Bearer</span> on the
-          remote signer, or as <span className="font-mono text-amber-200/80">subject_token</span> at{" "}
-          <span className="font-mono text-amber-200/80">
+        <p className="text-[11px] text-sky-300/70">
+          Use as <span className="font-mono text-sky-200/80">Authorization: Bearer</span> on the
+          remote signer, or as <span className="font-mono text-sky-200/80">subject_token</span> at{" "}
+          <span className="font-mono text-sky-200/80">
             POST /api/v1/apps/{`{clientId}`}/oidc/token
           </span>
           .
         </p>
       ) : null}
       {tokenKind === "signer_session" ? (
-        <p className="text-[11px] text-amber-300/70">
+        <p className="text-[11px] text-sky-300/70">
           Opaque signer-session token from RFC 8693 exchange — not a per-user API key.
         </p>
       ) : null}
 
-      <details className="text-[11px] text-amber-300/70">
-        <summary className="cursor-pointer hover:text-amber-200">Show full response body</summary>
-        <pre className="mt-2 overflow-x-auto rounded-md border border-amber-500/15 bg-black/30 p-2 font-mono text-[10px] text-amber-200/70 whitespace-pre-wrap">
+      <details className="text-[11px] text-sky-300/70">
+        <summary className="cursor-pointer hover:text-sky-200">Show full response body</summary>
+        <pre className="mt-2 overflow-x-auto rounded-md border border-sky-500/15 bg-black/30 p-2 font-mono text-[10px] text-sky-200/70 whitespace-pre-wrap">
           {result}
         </pre>
       </details>

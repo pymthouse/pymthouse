@@ -66,12 +66,12 @@ function FormatSlider({
   return (
     <fieldset
       aria-label="Credential format"
-      className="relative inline-grid grid-cols-2 w-[8.5rem] rounded-md bg-zinc-950 border border-emerald-500/50 p-px m-0 min-w-0"
+      className="relative inline-grid grid-cols-2 w-[8.5rem] rounded-md bg-zinc-950 border border-sky-500/50 p-px m-0 min-w-0"
     >
       <div
         className={[
           "pointer-events-none absolute top-px bottom-px w-[calc(50%-1px)] rounded-[5px]",
-          "bg-emerald-600 shadow-sm shadow-emerald-900/40",
+          "bg-sky-600 shadow-sm shadow-sky-900/40",
           "transition-[left] duration-200 ease-out motion-reduce:transition-none",
           value === "bearer" ? "left-px" : "left-[calc(50%)]",
         ].join(" ")}
@@ -120,7 +120,7 @@ export default function ApiKeyCredentialSwitcher({
     <div className="space-y-2">
       {hasToken ? (
         <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] text-amber-300/70">
+          <p className="text-[11px] text-sky-300/70">
             {showToken
               ? "Python SDK --token (base64)"
               : "Authorization: Bearer key"}
@@ -129,13 +129,13 @@ export default function ApiKeyCredentialSwitcher({
         </div>
       ) : null}
 
-      <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
-        <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
+      <div className="flex items-start gap-2 rounded-md border border-sky-500/20 bg-black/30 p-2.5">
+        <code className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100 leading-relaxed">
           {value}
         </code>
         <CopyValueButton
           value={value}
-          className="shrink-0 rounded-md border border-emerald-500/50 bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
+          className="shrink-0 rounded-md border border-sky-500/50 bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 transition-colors"
         />
       </div>
     </div>
