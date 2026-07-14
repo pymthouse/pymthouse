@@ -6,6 +6,13 @@ import FundAccountOnRampPanel from "@/components/apps/FundAccountOnRampPanel";
 import OwnerBillingView from "@/components/OwnerBillingView";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
+function isTurnkeyFundingConfigured(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
+      process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim(),
+  );
+}
+
 export default async function BillingPage() {
   const result = await getOwnerBillingData();
   if (!result.ok) {
@@ -27,13 +34,23 @@ export default async function BillingPage() {
   }
 
   const { data } = result;
+  const fundingClientId = data.fundingClientId?.trim() || null;
+  const fundingAvailable = Boolean(
+    isTurnkeyFundingConfigured() && fundingClientId && data.userId,
+  );
   const fundPanel =
-    data.fundingClientId && data.userId ? (
+    fundingAvailable && fundingClientId ? (
       <FundAccountOnRampPanel
-        clientId={data.fundingClientId}
+        clientId={fundingClientId}
         ownerExternalUserId={data.userId}
       />
     ) : null;
 
-  return <OwnerBillingView data={data} fundPanel={fundPanel} />;
+  return (
+    <OwnerBillingView
+      data={data}
+      fundPanel={fundPanel}
+      fundingAvailable={fundingAvailable}
+    />
+  );
 }

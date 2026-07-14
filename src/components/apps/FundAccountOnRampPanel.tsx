@@ -12,7 +12,7 @@ import {
   FiatOnRampProvider,
 } from "@turnkey/sdk-types";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 
 type FundAccountOnRampPanelProps = Readonly<{
@@ -85,13 +85,13 @@ function openMoonPayCheckoutWindow(): Window | null {
     `height=${height}`,
     `left=${left}`,
     `top=${top}`,
-    "noopener=no",
-    "noreferrer=no",
   ].join(",");
   // Named window reuses the same popup; open about:blank first so the click
   // gesture is not lost while we await Turnkey init.
   const checkoutWindow = window.open("about:blank", "pymthouse_moonpay", features);
   if (checkoutWindow) {
+    // Sever opener while still same-origin so MoonPay cannot reach the parent.
+    checkoutWindow.opener = null;
     writeCheckoutPlaceholder(checkoutWindow);
   }
   return checkoutWindow;
@@ -187,8 +187,28 @@ async function settleOnRampPurchase(input: {
 }
 
 const POLL_INTERVAL_MS = 3000;
+/** Stop waiting for a stuck Turnkey status after this long. */
+const POLL_DEADLINE_MS = 15 * 60 * 1000;
 /** MoonPay sandbox rejects ≤ $20; default past that floor. */
 const DEFAULT_FIAT_AMOUNT = "25";
+
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Polling aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Polling aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 export default function FundAccountOnRampPanel({
   clientId,
@@ -213,16 +233,31 @@ export default function FundAccountOnRampPanel({
   const [error, setError] = useState<string | null>(null);
   const [lastGrantedUsdMicros, setLastGrantedUsdMicros] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
 
   const busy = phase === "funding" || phase === "settling";
+
+  useEffect(() => {
+    return () => {
+      pollAbortRef.current?.abort();
+    };
+  }, []);
 
   const pollUntilTerminal = useCallback(
     async (
       client: TurnkeyHttpClient,
       transactionId: string,
       organizationId: string,
+      signal: AbortSignal,
     ): Promise<string> => {
+      const deadline = Date.now() + POLL_DEADLINE_MS;
       for (;;) {
+        if (signal.aborted) {
+          throw new DOMException("Polling aborted", "AbortError");
+        }
+        if (Date.now() > deadline) {
+          throw new Error("Timed out waiting for MoonPay purchase status.");
+        }
         const response = await client.getOnRampTransactionStatus({
           organizationId,
           transactionId,
@@ -232,7 +267,7 @@ export default function FundAccountOnRampPanel({
         if (["COMPLETED", "FAILED", "CANCELLED"].includes(status)) {
           return status;
         }
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        await delay(POLL_INTERVAL_MS, signal);
       }
     },
     [],
@@ -259,6 +294,10 @@ export default function FundAccountOnRampPanel({
       setPhase("error");
       return;
     }
+
+    pollAbortRef.current?.abort();
+    const pollAbort = new AbortController();
+    pollAbortRef.current = pollAbort;
 
     const amount = DEFAULT_FIAT_AMOUNT;
     const checkoutWindow = openMoonPayCheckoutWindow();
@@ -312,6 +351,7 @@ export default function FundAccountOnRampPanel({
         httpClient,
         initResult.onRampTransactionId,
         organizationId,
+        pollAbort.signal,
       );
       closeCheckoutWindow(checkoutWindow);
       if (terminalStatus !== "COMPLETED") {
@@ -328,9 +368,17 @@ export default function FundAccountOnRampPanel({
       router.refresh();
     } catch (fundError) {
       closeCheckoutWindow(checkoutWindow);
-      setError(fundError instanceof Error ? fundError.message : "On-ramp funding failed");
+      if (fundError instanceof DOMException && fundError.name === "AbortError") {
+        setError("Funding cancelled.");
+      } else {
+        setError(fundError instanceof Error ? fundError.message : "On-ramp funding failed");
+      }
       setPhase("error");
       setStatusMessage(null);
+    } finally {
+      if (pollAbortRef.current === pollAbort) {
+        pollAbortRef.current = null;
+      }
     }
   };
 

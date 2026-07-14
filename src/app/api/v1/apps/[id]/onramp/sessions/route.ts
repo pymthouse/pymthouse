@@ -59,6 +59,13 @@ export async function POST(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create on-ramp session";
     console.error("[onramp/sessions] create failed:", error);
-    return NextResponse.json({ error: message }, { status: 400 });
+    if (
+      message.includes("required") ||
+      message.includes("must be a valid EVM address") ||
+      message.includes("belongs to another app")
+    ) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

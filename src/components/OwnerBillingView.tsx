@@ -103,10 +103,13 @@ function SubscriptionCard({
 export default function OwnerBillingView({
   data,
   fundPanel,
+  fundingAvailable = false,
 }: Readonly<{
   data: OwnerBillingPayload;
   /** MoonPay on-ramp (credits prepaid balance for your account). */
   fundPanel?: ReactNode;
+  /** True when Turnkey is configured and an owned app can host on-ramp APIs. */
+  fundingAvailable?: boolean;
 }>) {
   return (
     <DashboardLayout>
@@ -166,9 +169,18 @@ export default function OwnerBillingView({
                       plan allowance; this balance stays empty until you top up.
                     </p>
                     <p className="mt-2">
-                      Use <span className="text-zinc-300">Fund with MoonPay</span> to add
-                      sandbox prepaid credits — they cover pay-per-use plans with no
-                      allowance, and burn after any plan allowance is exhausted.
+                      {fundingAvailable ? (
+                        <>
+                          Use <span className="text-zinc-300">Fund with MoonPay</span> to add
+                          sandbox prepaid credits — they cover pay-per-use plans with no
+                          allowance, and burn after any plan allowance is exhausted.
+                        </>
+                      ) : (
+                        <>
+                          Prepaid credits appear here after a top-up. MoonPay funding requires
+                          Turnkey Wallet Kit configuration and at least one owned app.
+                        </>
+                      )}
                     </p>
                   </div>
                   {fundPanel ? (

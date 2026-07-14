@@ -56,10 +56,14 @@ export async function getViewerAllowanceSummary(): Promise<ViewerAllowanceSummar
         return;
       }
       try {
-        remaining += BigInt(balance.balanceUsdMicros || "0");
-        granted += BigInt(balance.lifetimeGrantedUsdMicros || "0");
-        consumed += BigInt(balance.consumedUsdMicros || "0");
-        if (BigInt(balance.lifetimeGrantedUsdMicros || "0") > starter) {
+        const appRemaining = BigInt(balance.balanceUsdMicros || "0");
+        const appGranted = BigInt(balance.lifetimeGrantedUsdMicros || "0");
+        const appConsumed = BigInt(balance.consumedUsdMicros || "0");
+
+        remaining += appRemaining;
+        granted += appGranted;
+        consumed += appConsumed;
+        if (appGranted > starter) {
           hasPrepaidCredits = true;
         }
       } catch {
