@@ -17,6 +17,7 @@ import {
 } from "./plans-sync";
 import {
   findOpenMeterSubscriptionByPlanKey,
+  listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
   verifyOpenMeterSubscriptionId,
 } from "./subscription-read";
@@ -291,13 +292,15 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     }
     // Also accept any active subscription on the owner customer (from another app).
     try {
-      const listed = await client.subscriptions.list({
-        customerId: customer.id,
-        page: 1,
-        pageSize: 10,
-      });
-      const active = listed?.items?.find(
-        (s) => s.status === "active" || s.status === "trialing" || !s.status,
+      const listed = await listOpenMeterSubscriptionsForCustomer(
+        client,
+        customer.id,
+      );
+      const active = listed.find(
+        (s) =>
+          s.status === "active" ||
+          s.status === "trialing" ||
+          !s.status,
       );
       if (active?.id) {
         return {

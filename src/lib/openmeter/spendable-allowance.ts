@@ -54,7 +54,7 @@ async function querySubjectUsedUsdMicros(
       windowSize: "MONTH",
       from: new Date(start),
       to: new Date(end),
-      subject,
+      subject: [subject],
     });
     let used = 0n;
     for (const row of result.data || []) {

@@ -45,7 +45,7 @@ function normalizeClientIds(
         .map((id) => id.trim())
         .filter((id) => id.length > 0),
     ),
-  ].sort();
+  ].sort((a, b) => a.localeCompare(b));
 }
 
 export default function SignedTicketRequestHistory({

@@ -177,7 +177,7 @@ async function querySubjectCycleUsage(input: {
     windowSize: "MONTH" as const,
     from: new Date(input.start),
     to: new Date(input.end),
-    subject: input.subject,
+    subject: [input.subject],
   };
 
   try {

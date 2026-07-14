@@ -244,11 +244,14 @@ function BillingUsageBody({
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>(() =>
     allPublicClientIds,
   );
+  const [prevAllIdsKey, setPrevAllIdsKey] = useState(allIdsKey);
 
   // Reset selection when the loaded app set changes (tab switch / reload).
-  useEffect(() => {
+  // Adjust during render — avoids setState-in-effect cascading renders.
+  if (prevAllIdsKey !== allIdsKey) {
+    setPrevAllIdsKey(allIdsKey);
     setSelectedAppIds(allIdsKey.length > 0 ? allIdsKey.split("\0") : []);
-  }, [allIdsKey]);
+  }
 
   const derived = deriveFilteredView(data, selectedAppIds);
 
@@ -407,25 +410,27 @@ export default function BillingUsageDashboard({
 
   useEffect(() => {
     let cancelled = false;
-    setState({ status: "loading" });
 
-    const params = new URLSearchParams();
-    if (filterAppId) {
-      params.set("appId", filterAppId);
-    } else if (showTabs && activeTab === "all") {
-      params.set("scope", "all");
-    } else {
-      params.set("scope", "own");
-    }
-    const qs = params.toString();
-    const url = `/api/v1/billing/dashboard?${qs}`;
+    void (async () => {
+      setState({ status: "loading" });
 
-    fetch(url)
-      .then(async (r) => {
+      const params = new URLSearchParams();
+      if (filterAppId) {
+        params.set("appId", filterAppId);
+      } else if (showTabs && activeTab === "all") {
+        params.set("scope", "all");
+      } else {
+        params.set("scope", "own");
+      }
+      const url = `/api/v1/billing/dashboard?${params.toString()}`;
+
+      try {
+        const r = await fetch(url);
         if (r.status === 401) {
-          throw Object.assign(new Error("Please sign in to view billing and usage."), {
-            code: 401,
-          });
+          throw Object.assign(
+            new Error("Please sign in to view billing and usage."),
+            { code: 401 },
+          );
         }
         if (r.status === 403 || r.status === 404) {
           throw Object.assign(new Error("Usage not found."), { code: r.status });
@@ -435,20 +440,19 @@ export default function BillingUsageDashboard({
             code: r.status,
           });
         }
-        return r.json() as Promise<BillingUsageDashboardClientPayload>;
-      })
-      .then((data) => {
+        const data = (await r.json()) as BillingUsageDashboardClientPayload;
         if (!cancelled) setState({ status: "ready", data });
-      })
-      .catch((err: Error & { code?: number }) => {
+      } catch (err) {
         if (!cancelled) {
+          const e = err as Error & { code?: number };
           setState({
             status: "error",
-            message: err.message || "Usage unavailable",
-            code: err.code,
+            message: e.message || "Usage unavailable",
+            code: e.code,
           });
         }
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
