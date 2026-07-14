@@ -147,7 +147,7 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
     ARGS="$ARGS -kafkaBootstrapServers=${KAFKA_BROKERS}"
     ARGS="$ARGS -kafkaGatewayTopic=${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
   fi
-  if [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "1" ] || [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "true" ]; then
+  if [ "${SIGNER_REMOTE_DISCOVERY:-1}" = "1" ] || [ "${SIGNER_REMOTE_DISCOVERY:-1}" = "true" ]; then
     ARGS="$ARGS -remoteDiscovery=true"
     [ -n "${ORCH_WEBHOOK_URL:-}" ] && ARGS="$ARGS -orchWebhookUrl=${ORCH_WEBHOOK_URL}"
     [ -n "${LIVE_AI_CAP_REPORT_INTERVAL:-}" ] && ARGS="$ARGS -liveAICapReportInterval=${LIVE_AI_CAP_REPORT_INTERVAL}"

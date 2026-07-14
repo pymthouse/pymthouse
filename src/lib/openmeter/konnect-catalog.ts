@@ -21,6 +21,9 @@ type KonnectMeter = {
 type KonnectFeature = {
   id: string;
   key: string;
+  meter?: { id?: string; key?: string };
+  /** Present when misconfigured as LLM unit pricing — breaks usage→charge settlement. */
+  unit_cost?: unknown;
 };
 
 const KONNECT_METER_DEFINITIONS = [
@@ -136,7 +139,20 @@ export async function ensureKonnectTenantCatalog(
 
   const features = await catalogFetch<KonnectPage<KonnectFeature>>("/features");
   const featureKey = trialFeatureKey.trim() || DEFAULT_TRIAL_FEATURE_KEY;
-  if (!(features.data ?? []).some((feature) => feature.key === featureKey)) {
+  const existingFeature = (features.data ?? []).find((feature) => feature.key === featureKey);
+  const meterMatches =
+    existingFeature?.meter?.id === networkFeeMeter.id ||
+    existingFeature?.meter?.key === NETWORK_FEE_USD_MICROS_METER;
+
+  if (existingFeature && !meterMatches) {
+    console.warn(
+      `[openmeter] Konnect feature ${featureKey} meter does not match ` +
+        `${NETWORK_FEE_USD_MICROS_METER}; manually recreate or repoint the feature`,
+    );
+  } else if (!existingFeature) {
+    // Plain meter-backed feature only — do not set unit_cost (LLM pricing).
+    // Included starter allowance is plan rate-card discounts.usage; prepaid
+    // credits are for manual top-ups / overage after the discount is exhausted.
     await catalogFetch<KonnectFeature>("/features", {
       method: "POST",
       body: JSON.stringify({
@@ -145,6 +161,13 @@ export async function ensureKonnectTenantCatalog(
         meter: { id: networkFeeMeter.id },
       }),
     });
+  }
+
+  if (existingFeature?.unit_cost != null) {
+    console.warn(
+      `[openmeter] Konnect feature ${featureKey} has unit_cost set; remove it in ` +
+        `Konnect so network_fee_usd_micros unit pricing can settle prepaid credits`,
+    );
   }
 
   konnectCatalogEnsured = true;

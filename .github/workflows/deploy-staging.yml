@@ -2,7 +2,8 @@ name: Deploy staging
 
 # Auto-deploys on push to any branch except `main`, or manually deploys a chosen branch.
 # Vercel (pymthouse project, Preview environment): every feature branch push creates a
-# prebuilt Preview deployment and re-aliases staging.pymthouse.com onto it.
+# prebuilt Preview deployment, assigns staging.pymthouse.com to that branch, and
+# re-aliases the domain onto the new deployment.
 # Railway preview stack: only on push to `staging` (or manual dispatch with branch=staging).
 #
 # Git-triggered Vercel builds are disabled repo-wide (`vercel.json` deploymentEnabled=false)
@@ -102,10 +103,12 @@ jobs:
       - name: Build
         run: vercel build --token="$VERCEL_TOKEN"
 
-      - name: Deploy and alias staging
+      - name: Deploy, assign branch, and alias staging
         run: |
           set -euo pipefail
           url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          STAGING_GIT_BRANCH="$DEPLOY_BRANCH" bash scripts/assign-staging-domain-branch.sh
           vercel alias set "$url" staging.pymthouse.com --token="$VERCEL_TOKEN"
           echo "Deployment URL: $url"
+          echo "Staging branch: $DEPLOY_BRANCH"
           echo "Staging alias: https://staging.pymthouse.com"

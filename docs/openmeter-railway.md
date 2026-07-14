@@ -110,11 +110,39 @@ From your machine (or CI):
 ```bash
 cd pymthouse
 export OPENMETER_URL=https://YOUR-OPENMETER.up.railway.app
-export OPENMETER_API_KEY=...   # if configured
+# Konnect:
+# export OPENMETER_URL=https://us.api.konghq.com/v3/openmeter
+export OPENMETER_API_KEY=...   # required for Konnect (kpat_/spat_)
 npm run openmeter:railway:bootstrap
 ```
 
-This runs [`scripts/openmeter-bootstrap.ts`](../scripts/openmeter-bootstrap.ts) after the health check.
+This runs [`scripts/openmeter-bootstrap.ts`](../scripts/openmeter-bootstrap.ts) after the health check (Railway self-hosted) or via `npm run openmeter:bootstrap` for Konnect.
+
+### What bootstrap provisions
+
+| Resource | Purpose |
+|----------|---------|
+| `network_fee_usd_micros` meter | Sum of signed-ticket USD micros (`$.network_fee_usd_micros`) |
+| `signed_ticket_count` meter | Request count |
+| `network_spend` feature | Meter-backed feature for Starter rate cards (**no** LLM `unit_cost`) |
+
+Bootstrap does **not** create per-app plans or grant credits. Those happen at runtime:
+
+1. **Plan sync** (`syncPlanToOpenMeter`) publishes Starter with `settlement_mode=credit_then_invoice` and a bare `network_spend` unit price (`0.000001` per USD micro). Rate cards must **not** include `discounts.usage`.
+2. **Customer keys:**
+   - **M2M end-users:** `client_id:external_user_id` — one Konnect customer per (app, user). CloudEvent `subject` matches this compound key.
+   - **App owners:** billing wallet `owner:{users.id}` — one shared Konnect customer across all apps they own. JWT `sub` / `external_user_id` stay bare `{users.id}`; the remote-signer webhook maps owners to `usage_subject` = `owner:{users.id}` so CloudEvent `subject` is the customer key (required for Konnect settlement — multi-subject `usageAttribution` is cleared when a subscription is created).
+3. **Trial / top-up allowance** is `POST /customers/{id}/credits/grants` only (`OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). Owners are granted once on the shared wallet; end-users once per app customer. Prepaid burn-down is driven by billing charges under `credit_then_invoice`.
+
+Migrate existing per-app owner wallets with:
+
+```bash
+npx tsx scripts/openmeter-migrate-owner-customers.ts --provision --transfer-balances
+```
+
+**Design note:** Plan usage discounts and prepaid credits both reduce effective spend. Using both double-counts “free” usage against the credit ledger. Prefer prepaid credits only; strip any `discounts` on Konnect plan rewrite as a safety net.
+
+**Ops check:** If `network_spend` has `unit_cost` (LLM pricing) in Konnect, usage will meter in the dashboard but charges/credits will not settle. Remove `unit_cost` and keep the feature meter-backed.
 
 ## 7. Wire Vercel (PymtHouse)
 

@@ -1,12 +1,5 @@
-import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { handleAuthorize } from "@pymthouse/clearinghouse-identity-webhook/protocol";
-import { createLegacyWebhookConfigFromEnv } from "@pymthouse/clearinghouse-identity-webhook/legacy-env";
-
-function buildWebhookConfig() {
-  return createLegacyWebhookConfigFromEnv(process.env, {
-    jwtIssuer: process.env.JWT_ISSUER?.trim() || getIssuer(),
-  });
-}
+import { buildRemoteSignerWebhookConfig } from "@/lib/oidc/remote-signer-webhook-config";
 
 export async function POST(request: Request): Promise<Response> {
   const webhookSecret = process.env.WEBHOOK_SECRET?.trim() || "";
@@ -17,5 +10,5 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  return handleAuthorize(request, buildWebhookConfig());
+  return handleAuthorize(request, buildRemoteSignerWebhookConfig());
 }

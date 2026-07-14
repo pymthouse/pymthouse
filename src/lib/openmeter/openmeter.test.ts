@@ -5,7 +5,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
 import { buildBillingProfileSupplier } from "./billing-profiles";
 import { buildStripeConnectInstallUrl, parseStripeAccountIdFromConflict } from "./stripe-connect";
-import { ensureOpenMeterCustomer } from "./customers";
+import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects } from "./customers";
 import { listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
@@ -24,6 +24,8 @@ import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
+import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
+import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -75,6 +77,18 @@ test("buildStripeConnectInstallUrl adds state and pymthouse callback redirect_ur
     parsed.searchParams.get("redirect_uri"),
     "http://localhost:3001/api/v1/apps/app_test/billing/stripe/callback",
   );
+});
+
+test("owner customer key helpers", async () => {
+  const { buildOwnerCustomerKey, isOwnerCustomerKey, parseOwnerCustomerKey, normalizePlatformUserId } =
+    await import("./customer-key");
+  assert.equal(buildOwnerCustomerKey("uuid-1"), "owner:uuid-1");
+  assert.equal(isOwnerCustomerKey("owner:uuid-1"), true);
+  assert.equal(isOwnerCustomerKey("app_x:uuid-1"), false);
+  assert.equal(parseOwnerCustomerKey("owner:uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("owner:uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("user:uuid-1"), "uuid-1");
+  assert.equal(normalizePlatformUserId("uuid-1"), "uuid-1");
 });
 
 test("isMintUserSignerTokenRequest detects mint scope", () => {
@@ -134,6 +148,48 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {
+  const rows = aggregatePipelineModelRows({
+    clientId: "app_1",
+    feeRows: [
+      {
+        value: "34",
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+      {
+        value: 34,
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: "2",
+        windowStart: new Date("2026-07-11"),
+        groupBy: {
+          client_id: "app_1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.ok(row);
+  assert.equal(row.requestCount, 2);
+  assert.equal(row.networkFeeUsdMicros, "68");
 });
 
 test("aggregateUserPipelineModelRows sums fee and count by user/pipeline/model", () => {
@@ -379,6 +435,69 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
 
   const identity = await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-2");
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
+});
+
+test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer", async () => {
+  let updatedSubjectKeys: string[] | undefined;
+  const ownerKey = "owner:uuid-1";
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-owner-1",
+        key,
+        name: key,
+        usageAttribution: { subjectKeys: [ownerKey] },
+      }),
+      update: async (
+        _id: string,
+        input: { usageAttribution: { subjectKeys: string[] } },
+      ) => {
+        updatedSubjectKeys = input.usageAttribution.subjectKeys;
+        return { id: "om-owner-1", key: ownerKey };
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOwnerCustomerWireSubjects(
+    openMeterTestClient(client),
+    "uuid-1",
+    ["app_aaa", "app_bbb"],
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
+  assert.deepEqual(
+    [...(updatedSubjectKeys ?? [])].sort(),
+    ["app_aaa:uuid-1", "app_bbb:uuid-1", ownerKey].sort(),
+  );
+});
+
+test("ensureOpenMeterCustomer soft-fails subject update when subscription is active", async () => {
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-owner-1",
+        key,
+        name: key,
+        usageAttribution: { subjectKeys: [] },
+      }),
+      update: async () => {
+        throw new Error(
+          "Request failed (https://us.api.konghq.com/v3/openmeter/customers/x) [400]: validation error: cannot change subject keys for customer with active subscriptions",
+        );
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOpenMeterCustomer(
+    openMeterTestClient(client),
+    "owner:uuid-1",
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
 });
 
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
@@ -747,4 +866,15 @@ test("verifyOpenMeterPlanId returns null when remote plan missing", async () => 
 
   const view = await verifyOpenMeterPlanId(openMeterTestClient(client), "missing");
   assert.equal(view, null);
+});
+
+test("resolveNetworkFeeMeterSlug trims and remaps nanos onto micros", () => {
+  assert.equal(resolveNetworkFeeMeterSlug(null), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("  "), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(
+    resolveNetworkFeeMeterSlug(" network_fee_usd_micros "),
+    NETWORK_FEE_USD_MICROS_METER,
+  );
+  assert.equal(resolveNetworkFeeMeterSlug("network_fee_usd_nanos"), NETWORK_FEE_USD_MICROS_METER);
+  assert.equal(resolveNetworkFeeMeterSlug("custom_meter"), "custom_meter");
 });

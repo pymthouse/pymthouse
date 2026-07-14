@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
+import CopyIdButton from "@/components/apps/CopyIdButton";
+import SidebarCreditPreview from "@/components/SidebarCreditPreview";
 
 interface NavItem {
   label: string;
@@ -18,11 +20,6 @@ const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
 const DOCS_URL = "https://docs.pymthouse.com";
 
 const allNavItems: NavItem[] = [
-  {
-    label: "Dashboard",
-    href: "/dashboard",
-    icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6",
-  },
   {
     label: "My Apps",
     href: "/apps",
@@ -57,8 +54,13 @@ const allNavItems: NavItem[] = [
   },
   {
     label: "Usage",
-    href: "/billing",
+    href: "/usage",
     icon: "M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z",
+  },
+  {
+    label: "Billing",
+    href: "/billing",
+    icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
   },
   {
     label: "Docs",
@@ -109,7 +111,10 @@ export default function DashboardLayout({
     });
   };
 
-  const userRole = (session?.user as Record<string, unknown> | undefined)?.role as string | undefined;
+  const sessionUser = session?.user as Record<string, unknown> | undefined;
+  const userRole = sessionUser?.role as string | undefined;
+  const userId =
+    typeof sessionUser?.id === "string" ? sessionUser.id.trim() : "";
 
   const navItems = useMemo(
     () =>
@@ -288,10 +293,7 @@ export default function DashboardLayout({
             return (
               <>
                 {otherItems.map((item) => {
-                  const isActive =
-                    item.href === "/dashboard"
-                      ? pathname === "/dashboard"
-                      : pathname.startsWith(item.href);
+                  const isActive = pathname.startsWith(item.href);
                   return renderNavLink(item, isActive);
                 })}
                 {adminItems.length > 0 && (
@@ -333,10 +335,26 @@ export default function DashboardLayout({
                 <p className="text-sm font-medium truncate">
                   {session.user.name}
                 </p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <p className="text-xs text-zinc-500 truncate">
+                {session.user.email ? (
+                  <p className="mt-0.5 text-xs text-zinc-500 truncate">
                     {session.user.email}
                   </p>
+                ) : null}
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  {userId ? (
+                    <>
+                      <p
+                        className="min-w-0 truncate font-mono text-[11px] text-zinc-500"
+                        title={userId}
+                      >
+                        {userId}
+                      </p>
+                      <CopyIdButton
+                        value={userId}
+                        label="Copy user id"
+                      />
+                    </>
+                  ) : null}
                   {userRole && (
                     <span
                       className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${roleBadgeClassName(userRole)}`}
@@ -344,6 +362,9 @@ export default function DashboardLayout({
                       {userRole}
                     </span>
                   )}
+                </div>
+                <div className="mt-1">
+                  <SidebarCreditPreview />
                 </div>
               </div>
             </div>

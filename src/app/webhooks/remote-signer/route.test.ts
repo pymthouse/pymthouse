@@ -1,31 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { handleAuthorize } from "@pymthouse/clearinghouse-identity-webhook/protocol";
-import { createLegacyWebhookConfigFromEnv } from "@pymthouse/clearinghouse-identity-webhook/legacy-env";
+import { createOidcVerifier } from "@pymthouse/clearinghouse-identity-webhook/verifiers";
+import { buildRemoteSignerWebhookConfig } from "@/lib/oidc/remote-signer-webhook-config";
 
 const WEBHOOK_SECRET = "test-webhook-secret";
-const JWT_ISSUER = "https://pymthouse.com/api/v1/oidc";
+const OIDC_ISSUER = "https://pymthouse.com/api/v1/oidc";
 
-function buildWebhookConfig(env) {
-  return createLegacyWebhookConfigFromEnv(env, {
-    jwtIssuer: env.JWT_ISSUER?.trim() || JWT_ISSUER,
+/** Minimal env — claim/issuer defaults come from resolveIdentityWebhookEnv. */
+const CANONICAL_OIDC_ENV = {
+  NEXTAUTH_URL: "https://pymthouse.com",
+} as const;
+
+function buildWebhookConfig(env: Record<string, string | undefined> = {}) {
+  return buildRemoteSignerWebhookConfig({
+    ...CANONICAL_OIDC_ENV,
+    ...env,
   });
 }
 
-test("remote-signer webhook config requires WEBHOOK_SECRET", () => {
-  assert.throws(
-    () =>
-      buildWebhookConfig({
-        JWT_ISSUER: JWT_ISSUER,
-      }),
-    /WEBHOOK_SECRET is required/,
-  );
+test("remote-signer webhook config leaves WEBHOOK_SECRET empty when unset", () => {
+  const config = buildWebhookConfig();
+  assert.equal(config.webhookSecret, "");
+  assert.equal(config.endUserAuth.kind, "oidc");
 });
 
 test("remote-signer webhook rejects unauthorized caller", async () => {
   const config = buildWebhookConfig({
     WEBHOOK_SECRET,
-    JWT_ISSUER,
   });
 
   const request = new Request("http://localhost/webhooks/remote-signer", {
@@ -49,7 +52,6 @@ test("remote-signer webhook rejects unauthorized caller", async () => {
 test("remote-signer webhook rejects invalid request json", async () => {
   const config = buildWebhookConfig({
     WEBHOOK_SECRET,
-    JWT_ISSUER,
   });
 
   const request = new Request("http://localhost/webhooks/remote-signer", {
@@ -68,32 +70,27 @@ test("remote-signer webhook rejects invalid request json", async () => {
   assert.equal(body.reason, "invalid request json");
 });
 
-test("remote-signer webhook authorizes composite app_*.pmth_* via mocked exchange", async () => {
-  const { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } = await import("jose");
-  const { createOidcVerifier } = await import(
-    "@pymthouse/clearinghouse-identity-webhook/verifiers"
-  );
-
+test("remote-signer webhook authorizes composite app_*_* via mocked exchange", async () => {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const jwk = await exportJWK(publicKey);
   jwk.kid = "pymthouse-test";
   jwk.alg = "RS256";
   jwk.use = "sig";
   const jwks = createLocalJWKSet({ keys: [jwk] });
-  const clientId = "app_abc123";
+  const clientId = "app_3b386c81a1db1169fd2c3986";
   const minted = await new SignJWT({
     client_id: clientId,
     external_user_id: "user-456",
     scope: "sign:job",
   })
     .setProtectedHeader({ alg: "RS256", kid: "pymthouse-test" })
-    .setIssuer(JWT_ISSUER)
-    .setAudience(JWT_ISSUER)
+    .setIssuer(OIDC_ISSUER)
+    .setAudience(OIDC_ISSUER)
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(privateKey);
 
-  const fetchImpl = async (input) => {
+  const fetchImpl: typeof fetch = async (input) => {
     const url = String(input);
     assert.ok(url.includes(`/api/v1/apps/${clientId}/oidc/token`));
     return Response.json({ access_token: minted, expires_in: 300 });
@@ -102,9 +99,9 @@ test("remote-signer webhook authorizes composite app_*.pmth_* via mocked exchang
   const config = {
     webhookSecret: WEBHOOK_SECRET,
     endUserAuth: createOidcVerifier({
-      jwtIssuer: JWT_ISSUER,
-      jwtAudience: JWT_ISSUER,
-      issuer: JWT_ISSUER,
+      jwtIssuer: OIDC_ISSUER,
+      jwtAudience: OIDC_ISSUER,
+      issuer: OIDC_ISSUER,
       jwks,
       clientClaim: "client_id",
       subjectClaim: "external_user_id",
@@ -122,7 +119,7 @@ test("remote-signer webhook authorizes composite app_*.pmth_* via mocked exchang
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      headers: { Authorization: [`Bearer ${clientId}.pmth_deadbeef`] },
+      headers: { Authorization: [`Bearer ${clientId}_deadbeef`] },
     }),
   });
 
@@ -130,5 +127,5 @@ test("remote-signer webhook authorizes composite app_*.pmth_* via mocked exchang
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.status, 200);
-  assert.equal(body.auth_id, "app_abc123:user-456");
+  assert.equal(body.auth_id, "app_3b386c81a1db1169fd2c3986:user-456");
 });

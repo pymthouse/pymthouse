@@ -29,7 +29,6 @@ if [[ -z "${PREVIEW_GIT_BRANCH:-}" ]]; then
     PREVIEW_GIT_BRANCH="$_git_branch"
   fi
 fi
-OIDC_ISSUER_VAL="${STAGING_URL}/api/v1/oidc"
 
 if [[ -z "${OPENMETER_URL:-}" ]]; then
   echo "OPENMETER_URL is required (source .env.local or export Konnect URL)" >&2
@@ -56,7 +55,7 @@ vercel link --project pymthouse --yes >/dev/null
 echo "Applying Preview env for branch: $PREVIEW_GIT_BRANCH"
 
 add_preview_env NEXTAUTH_URL "$STAGING_URL"
-add_preview_env OIDC_ISSUER "$OIDC_ISSUER_VAL"
+# Issuer / claims / exchange base default from NEXTAUTH_URL in-app.
 add_preview_env PLATFORM_JWKS_URL "${STAGING_URL}/api/v1/oidc/jwks"
 add_preview_env SIGNER_INTERNAL_URL "$SIGNER_BASE"
 add_preview_env SIGNER_CLI_URL "${SIGNER_BASE}/__signer_cli"

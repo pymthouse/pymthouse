@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="48" viewBox="0 0 280 48" fill="none" role="img" aria-label="pymthouse">
+  <text
+    x="0"
+    y="34"
+    font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif"
+    font-size="32"
+    font-weight="700"
+    letter-spacing="-0.04em"
+  >
+    <tspan fill="#34d399">pymt</tspan><tspan fill="#fafafa">house</tspan>
+  </text>
+</svg>

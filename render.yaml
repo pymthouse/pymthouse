@@ -22,7 +22,7 @@ services:
       - key: SIGNER_ETH_ADDR
         sync: false # Set this in Render dashboard (optional)
       - key: SIGNER_REMOTE_DISCOVERY
-        value: 0
+        value: 1
     disk:
       name: livepeer-data
       mountPath: /data
