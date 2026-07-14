@@ -92,6 +92,26 @@ function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   }
 }
 
+function parseUsageDiscountValue(usage: unknown): bigint | null {
+  if (typeof usage === "number") {
+    return parsePositiveMicros(String(Math.trunc(usage)));
+  }
+  if (typeof usage === "string") {
+    return parsePositiveMicros(usage);
+  }
+  return null;
+}
+
+function readUsageDiscountFromRateCard(card: unknown): bigint | null {
+  if (!card || typeof card !== "object") return null;
+  const discounts = (card as { discounts?: unknown }).discounts;
+  if (!discounts || typeof discounts !== "object") return null;
+  const usage =
+    (discounts as { usage?: unknown }).usage ??
+    (discounts as { Usage?: unknown }).Usage;
+  return parseUsageDiscountValue(usage);
+}
+
 function readUsageDiscountFromPlanBody(plan: unknown): bigint | null {
   if (!plan || typeof plan !== "object") return null;
   const phases = (plan as { phases?: unknown }).phases;
@@ -105,18 +125,7 @@ function readUsageDiscountFromPlanBody(plan: unknown): bigint | null {
       (phase as { rateCards?: unknown }).rateCards;
     if (!Array.isArray(rateCards)) continue;
     for (const card of rateCards) {
-      if (!card || typeof card !== "object") continue;
-      const discounts = (card as { discounts?: unknown }).discounts;
-      if (!discounts || typeof discounts !== "object") continue;
-      const usage =
-        (discounts as { usage?: unknown }).usage ??
-        (discounts as { Usage?: unknown }).Usage;
-      const parsed =
-        typeof usage === "number"
-          ? parsePositiveMicros(String(Math.trunc(usage)))
-          : typeof usage === "string"
-            ? parsePositiveMicros(usage)
-            : null;
+      const parsed = readUsageDiscountFromRateCard(card);
       if (parsed == null) continue;
       if (maxDiscount == null || parsed > maxDiscount) {
         maxDiscount = parsed;
@@ -234,33 +243,28 @@ function buildCustomerCandidates(
   ownerUserId: string,
   ownedApps: OwnedApp[],
 ): CustomerCandidate[] {
-  const candidates: CustomerCandidate[] = [
+  const ownerKey = buildOwnerCustomerKey(ownerUserId);
+  const appCandidates = ownedApps.flatMap((app) => [
     {
-      customerKey: buildOwnerCustomerKey(ownerUserId),
-      appPublicClientId: null,
-      appName: null,
-    },
-  ];
-
-  for (const app of ownedApps) {
-    // Legacy / current preview path: bare platform user id as external_user_id.
-    candidates.push({
       customerKey: buildOpenMeterCustomerKey(app.publicClientId, ownerUserId),
       appPublicClientId: app.publicClientId,
       appName: app.name,
-    });
-    // Canonical owner mint subject also attributed under the app customer key.
-    candidates.push({
-      customerKey: buildOpenMeterCustomerKey(
-        app.publicClientId,
-        buildOwnerCustomerKey(ownerUserId),
-      ),
+    },
+    {
+      customerKey: buildOpenMeterCustomerKey(app.publicClientId, ownerKey),
       appPublicClientId: app.publicClientId,
       appName: app.name,
-    });
-  }
+    },
+  ]);
 
-  return candidates;
+  return [
+    {
+      customerKey: ownerKey,
+      appPublicClientId: null,
+      appName: null,
+    },
+    ...appCandidates,
+  ];
 }
 
 async function resolvePlanName(input: {
@@ -372,6 +376,54 @@ async function mapSubscriptionRow(input: {
   };
 }
 
+async function resolveCustomerIdForCandidate(input: {
+  client: OpenMeter;
+  candidate: CustomerCandidate;
+}): Promise<string | null> {
+  try {
+    const isSharedOwnerWallet = input.candidate.appPublicClientId == null;
+    if (isSharedOwnerWallet) {
+      const customer = await ensureOpenMeterCustomer(
+        input.client,
+        input.candidate.customerKey,
+      );
+      return customer.id;
+    }
+    const listed = await input.client.customers.list({
+      key: input.candidate.customerKey,
+      page: 1,
+      pageSize: 20,
+    });
+    const match = (listed?.items ?? []).find(
+      (item) => item.key === input.candidate.customerKey,
+    );
+    return match?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function listActiveSubscriptionsForCustomer(input: {
+  client: OpenMeter;
+  customerId: string;
+  customerKey: string;
+}): Promise<OpenMeterSubscriptionView[]> {
+  try {
+    const listed = await listOpenMeterSubscriptionsForCustomer(
+      input.client,
+      input.customerId,
+    );
+    return listed.filter((item) => isOpenMeterSubscriptionActive(item.status));
+  } catch (err) {
+    console.warn(
+      "owner-billing: subscription list failed",
+      input.customerKey,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
 /**
  * Active subscriptions for an owner with cycle usage toward plan discounts.
  * Used by Billing and the Usage dashboard summary.
@@ -397,51 +449,26 @@ export async function listOwnerActiveSubscriptions(
   const subscriptions: OwnerBillingSubscriptionRow[] = [];
 
   for (const candidate of candidates) {
-    let customerId: string | null = null;
-    try {
-      const isSharedOwnerWallet = candidate.appPublicClientId == null;
-      if (isSharedOwnerWallet) {
-        const customer = await ensureOpenMeterCustomer(client, candidate.customerKey);
-        customerId = customer.id;
-      } else {
-        const listed = await client.customers.list({
-          key: candidate.customerKey,
-          page: 1,
-          pageSize: 20,
-        });
-        const match = (listed?.items ?? []).find(
-          (item) => item.key === candidate.customerKey,
-        );
-        customerId = match?.id ?? null;
-      }
-    } catch {
-      continue;
-    }
+    const customerId = await resolveCustomerIdForCandidate({ client, candidate });
     if (!customerId) continue;
 
-    let active: OpenMeterSubscriptionView[] = [];
-    try {
-      const listed = await listOpenMeterSubscriptionsForCustomer(client, customerId);
-      active = listed.filter((item) => isOpenMeterSubscriptionActive(item.status));
-    } catch (err) {
-      console.warn(
-        "owner-billing: subscription list failed",
-        candidate.customerKey,
-        err instanceof Error ? err.message : String(err),
-      );
-      continue;
-    }
+    const active = await listActiveSubscriptionsForCustomer({
+      client,
+      customerId,
+      customerKey: candidate.customerKey,
+    });
 
     for (const subscription of active) {
       if (seenSubscriptionIds.has(subscription.id)) continue;
       seenSubscriptionIds.add(subscription.id);
-      const row = await mapSubscriptionRow({
-        client,
-        subscription,
-        candidate,
-        cycle,
-      });
-      subscriptions.push(row);
+      subscriptions.push(
+        await mapSubscriptionRow({
+          client,
+          subscription,
+          candidate,
+          cycle,
+        }),
+      );
     }
   }
 

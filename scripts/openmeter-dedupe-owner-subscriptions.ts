@@ -29,7 +29,7 @@
 import "./load-env-first";
 import { and, eq, inArray } from "drizzle-orm";
 
-import { db, postgresClient } from "../src/db/index";
+import { closeDb, db } from "../src/db/index";
 import { developerApps, oidcClients, plans } from "../src/db/schema";
 import {
   getHostedAdminClient,
@@ -161,12 +161,11 @@ async function listOwners(filterOwnerId?: string): Promise<
     byOwner.set(row.ownerId, list);
   }
 
-  return [...byOwner.entries()]
-    .map(([ownerId, apps]) => ({
-      ownerId,
-      apps: apps.sort((a, b) => a.name.localeCompare(b.name)),
-    }))
-    .sort((a, b) => a.ownerId.localeCompare(b.ownerId));
+  const owners = [...byOwner.entries()].map(([ownerId, apps]) => ({
+    ownerId,
+    apps: apps.toSorted((a, b) => a.name.localeCompare(b.name)),
+  }));
+  return owners.toSorted((a, b) => a.ownerId.localeCompare(b.ownerId));
 }
 
 async function loadStarterRefs(developerAppIds: string[]): Promise<StarterRef[]> {
@@ -239,12 +238,10 @@ async function listActiveSubs(
 
 function legacyCustomerKeys(ownerId: string, apps: OwnedApp[]): string[] {
   const ownerKey = buildOwnerCustomerKey(ownerId);
-  const keys: string[] = [];
-  for (const app of apps) {
-    keys.push(buildOpenMeterCustomerKey(app.publicClientId, ownerId));
-    keys.push(buildOpenMeterCustomerKey(app.publicClientId, ownerKey));
-  }
-  return keys;
+  return apps.flatMap((app) => [
+    buildOpenMeterCustomerKey(app.publicClientId, ownerId),
+    buildOpenMeterCustomerKey(app.publicClientId, ownerKey),
+  ]);
 }
 
 async function cancelSubscription(input: {
@@ -262,6 +259,133 @@ async function cancelSubscription(input: {
     timing: input.timing,
   });
   console.log(`  [cancel] ${input.subscriptionId} (${input.label})`);
+}
+
+async function resolveOwnerCustomerId(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  ownerId: string;
+  ownerKey: string;
+  dryRun: boolean;
+}): Promise<string | null> {
+  if (input.dryRun) {
+    const existing = await findCustomerIdByKey(input.client, input.ownerKey);
+    if (!existing) {
+      console.log(
+        `  [dry-run] owner customer ${input.ownerKey} missing; would create + Starter`,
+      );
+    }
+    return existing;
+  }
+  const customer = await ensureOpenMeterCustomer(
+    input.client,
+    input.ownerKey,
+    `Owner ${input.ownerId}`,
+  );
+  console.log(`  [ok] owner customer id=${customer.id}`);
+  return customer.id;
+}
+
+async function cancelOwnerWalletExtras(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  ownerActive: OpenMeterSubscriptionView[];
+  starters: StarterRef[];
+  timing: Timing;
+  dryRun: boolean;
+}): Promise<number> {
+  let cancels = 0;
+  const ownerStarters = input.ownerActive.filter((s) =>
+    isStarterSubscription(s, input.starters),
+  );
+  const ownerNonStarters = input.ownerActive.filter(
+    (s) => !isStarterSubscription(s, input.starters),
+  );
+
+  for (const sub of ownerNonStarters) {
+    await cancelSubscription({
+      client: input.client,
+      subscriptionId: sub.id,
+      timing: input.timing,
+      dryRun: input.dryRun,
+      label: `owner non-starter planKey=${sub.planKey ?? "?"}`,
+    });
+    cancels += 1;
+  }
+
+  const keepStarterId = ownerStarters[0]?.id ?? null;
+  for (const sub of ownerStarters.slice(1)) {
+    await cancelSubscription({
+      client: input.client,
+      subscriptionId: sub.id,
+      timing: input.timing,
+      dryRun: input.dryRun,
+      label: `duplicate owner Starter (keeping ${keepStarterId})`,
+    });
+    cancels += 1;
+  }
+  return cancels;
+}
+
+async function ensureOwnerStarter(input: {
+  ownerId: string;
+  ownerKey: string;
+  firstApp: OwnedApp | undefined;
+  hasStarter: boolean;
+  keepStarterId: string | null;
+  dryRun: boolean;
+}): Promise<boolean> {
+  if (input.hasStarter) {
+    console.log(`  [ok] owner already has Starter ${input.keepStarterId}`);
+    return false;
+  }
+  if (!input.firstApp) {
+    console.log(`  [skip] no apps to provision Starter from`);
+    return false;
+  }
+  if (input.dryRun) {
+    console.log(
+      `  [dry-run] would ensure Starter on ${input.ownerKey} via app ${input.firstApp.publicClientId}`,
+    );
+    return true;
+  }
+  const result = await ensureStarterSubscriptionForAppUser({
+    clientId: input.firstApp.developerAppId,
+    externalUserId: input.ownerId,
+  });
+  console.log(
+    `  [ok] starter ensured sub=${result.openmeterSubscriptionId} created=${result.created}`,
+  );
+  return true;
+}
+
+async function collectLegacyCancelTargets(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  ownerId: string;
+  apps: OwnedApp[];
+}): Promise<CancelTarget[]> {
+  const cancelTargets: CancelTarget[] = [];
+  for (const customerKey of legacyCustomerKeys(input.ownerId, input.apps)) {
+    const customerId = await findCustomerIdByKey(input.client, customerKey);
+    if (!customerId) {
+      console.log(`  [skip] no legacy customer ${customerKey}`);
+      continue;
+    }
+    const active = await listActiveSubs(input.client, customerId);
+    if (active.length === 0) {
+      console.log(`  [skip] no active legacy subs ${customerKey}`);
+      continue;
+    }
+    cancelTargets.push(
+      ...active.map((sub) => ({
+        customerKey,
+        customerId,
+        subscriptionId: sub.id,
+        planKey: sub.planKey,
+        status: sub.status,
+        reason: "legacy per-app owner wallet",
+      })),
+    );
+  }
+  return cancelTargets;
 }
 
 async function processOwner(input: {
@@ -287,28 +411,12 @@ async function processOwner(input: {
     console.log(`  app ${app.publicClientId} (${app.name})`);
   }
 
-  const stats = {
-    legacyCancels: 0,
-    ownerNonStarterCancels: 0,
-    ensuredStarter: false,
-  };
-
-  // --- Owner wallet ---
-  let ownerCustomerId: string | null = null;
-  if (dryRun) {
-    ownerCustomerId = await findCustomerIdByKey(client, ownerKey);
-    if (!ownerCustomerId) {
-      console.log(`  [dry-run] owner customer ${ownerKey} missing; would create + Starter`);
-    }
-  } else {
-    const customer = await ensureOpenMeterCustomer(
-      client,
-      ownerKey,
-      `Owner ${input.ownerId}`,
-    );
-    ownerCustomerId = customer.id;
-    console.log(`  [ok] owner customer id=${ownerCustomerId}`);
-  }
+  const ownerCustomerId = await resolveOwnerCustomerId({
+    client,
+    ownerId: input.ownerId,
+    ownerKey,
+    dryRun,
+  });
 
   const ownerActive: OpenMeterSubscriptionView[] = ownerCustomerId
     ? await listActiveSubs(client, ownerCustomerId)
@@ -321,80 +429,31 @@ async function processOwner(input: {
     );
   }
 
-  const ownerStarters = ownerActive.filter((s) => isStarterSubscription(s, starters));
-  const ownerNonStarters = ownerActive.filter((s) => !isStarterSubscription(s, starters));
+  const ownerStarters = ownerActive.filter((s) =>
+    isStarterSubscription(s, starters),
+  );
+  const ownerNonStarterCancels = await cancelOwnerWalletExtras({
+    client,
+    ownerActive,
+    starters,
+    timing: input.timing,
+    dryRun,
+  });
 
-  // Cancel non-Starter actives on the owner wallet so ensureStarter can provision.
-  for (const sub of ownerNonStarters) {
-    await cancelSubscription({
-      client,
-      subscriptionId: sub.id,
-      timing: input.timing,
-      dryRun,
-      label: `owner non-starter planKey=${sub.planKey ?? "?"}`,
-    });
-    stats.ownerNonStarterCancels += 1;
-  }
+  const ensuredStarter = await ensureOwnerStarter({
+    ownerId: input.ownerId,
+    ownerKey,
+    firstApp,
+    hasStarter: ownerStarters.length > 0,
+    keepStarterId: ownerStarters[0]?.id ?? null,
+    dryRun,
+  });
 
-  // Keep one Starter; cancel extras if any.
-  const keepStarterId = ownerStarters[0]?.id ?? null;
-  for (const sub of ownerStarters.slice(1)) {
-    await cancelSubscription({
-      client,
-      subscriptionId: sub.id,
-      timing: input.timing,
-      dryRun,
-      label: `duplicate owner Starter (keeping ${keepStarterId})`,
-    });
-    stats.ownerNonStarterCancels += 1;
-  }
-
-  if (ownerStarters.length === 0 && firstApp) {
-    if (dryRun) {
-      console.log(
-        `  [dry-run] would ensure Starter on ${ownerKey} via app ${firstApp.publicClientId}`,
-      );
-      stats.ensuredStarter = true;
-    } else {
-      const result = await ensureStarterSubscriptionForAppUser({
-        clientId: firstApp.developerAppId,
-        externalUserId: input.ownerId,
-      });
-      console.log(
-        `  [ok] starter ensured sub=${result.openmeterSubscriptionId} created=${result.created}`,
-      );
-      stats.ensuredStarter = true;
-    }
-  } else if (ownerStarters.length > 0) {
-    console.log(`  [ok] owner already has Starter ${keepStarterId}`);
-  } else if (!firstApp) {
-    console.log(`  [skip] no apps to provision Starter from`);
-  }
-
-  // --- Legacy per-app owner wallets ---
-  const cancelTargets: CancelTarget[] = [];
-  for (const customerKey of legacyCustomerKeys(input.ownerId, input.apps)) {
-    const customerId = await findCustomerIdByKey(client, customerKey);
-    if (!customerId) {
-      console.log(`  [skip] no legacy customer ${customerKey}`);
-      continue;
-    }
-    const active = await listActiveSubs(client, customerId);
-    if (active.length === 0) {
-      console.log(`  [skip] no active legacy subs ${customerKey}`);
-      continue;
-    }
-    for (const sub of active) {
-      cancelTargets.push({
-        customerKey,
-        customerId,
-        subscriptionId: sub.id,
-        planKey: sub.planKey,
-        status: sub.status,
-        reason: "legacy per-app owner wallet",
-      });
-    }
-  }
+  const cancelTargets = await collectLegacyCancelTargets({
+    client,
+    ownerId: input.ownerId,
+    apps: input.apps,
+  });
 
   for (const target of cancelTargets) {
     console.log(
@@ -407,10 +466,13 @@ async function processOwner(input: {
       dryRun,
       label: `${target.reason} ${target.customerKey}`,
     });
-    stats.legacyCancels += 1;
   }
 
-  return stats;
+  return {
+    legacyCancels: cancelTargets.length,
+    ownerNonStarterCancels,
+    ensuredStarter,
+  };
 }
 
 async function main() {
@@ -461,5 +523,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await postgresClient.end({ timeout: 5 }).catch(() => undefined);
+    await closeDb({ timeout: 5 }).catch(() => undefined);
   });

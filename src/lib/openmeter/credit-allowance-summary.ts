@@ -82,6 +82,63 @@ function isLegacyOwnerAppCustomerKey(
   return customerKey === `${publicClientId}:${ownerId}`;
 }
 
+async function listEndUserCustomersForClient(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  publicClientId: string;
+  ownerId: string | undefined;
+}): Promise<Array<{ id: string; key: string }>> {
+  const customers = await listTenantCustomers(
+    input.client,
+    input.publicClientId,
+  ).catch((err) => {
+    console.warn(
+      "credit-allowance-summary: tenant customer list failed",
+      input.publicClientId,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [] as Array<{ id: string; key: string }>;
+  });
+  return customers.filter(
+    (row) =>
+      !isLegacyOwnerAppCustomerKey(row.key, input.publicClientId, input.ownerId),
+  );
+}
+
+async function applyBalanceChunk(input: {
+  customerIds: string[];
+  customerToClient: Map<string, string>;
+  byClient: Map<string, PerClientCreditTotals>;
+  apiKey: string | undefined;
+}): Promise<void> {
+  const rows = await Promise.all(
+    input.customerIds.map(async (customerId) => {
+      const balance = await getKonnectCreditBalance({
+        customerId,
+        apiKey: input.apiKey,
+      }).catch((err) => {
+        console.warn(
+          "credit-allowance-summary: balance lookup failed",
+          customerId,
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      });
+      return { customerId, balance };
+    }),
+  );
+  for (const { customerId, balance } of rows) {
+    if (!balance) continue;
+    const publicClientId = input.customerToClient.get(customerId);
+    if (!publicClientId) continue;
+    const totals = input.byClient.get(publicClientId) ?? emptyPerClientTotals();
+    totals.succeededLookups += 1;
+    totals.balanceUsdMicros += balance.balanceUsdMicros;
+    totals.lifetimeGrantedUsdMicros += balance.lifetimeGrantedUsdMicros;
+    totals.consumedUsdMicros += balance.consumedUsdMicros;
+    input.byClient.set(publicClientId, totals);
+  }
+}
+
 /**
  * Prepaid credit ledgers keyed by public OIDC client_id (`app_…`).
  * Sums end-user wallets only — excludes shared `owner:{users.id}` customers and
@@ -113,23 +170,14 @@ export async function getPrepaidCreditBalancesByClientId(
   const client = getHostedAdminClient();
   const owners = await ownerIdsByPublicClientId(uniqueIds);
   const listed = await Promise.all(
-    uniqueIds.map(async (publicClientId) => {
-      const customers = await listTenantCustomers(client, publicClientId).catch(
-        (err) => {
-          console.warn(
-            "credit-allowance-summary: tenant customer list failed",
-            publicClientId,
-            err instanceof Error ? err.message : String(err),
-          );
-          return [] as Array<{ id: string; key: string }>;
-        },
-      );
-      const ownerId = owners.get(publicClientId);
-      const filtered = customers.filter(
-        (row) => !isLegacyOwnerAppCustomerKey(row.key, publicClientId, ownerId),
-      );
-      return { publicClientId, customers: filtered };
-    }),
+    uniqueIds.map(async (publicClientId) => ({
+      publicClientId,
+      customers: await listEndUserCustomersForClient({
+        client,
+        publicClientId,
+        ownerId: owners.get(publicClientId),
+      }),
+    })),
   );
 
   const byClient = new Map<string, PerClientCreditTotals>();
@@ -146,34 +194,12 @@ export async function getPrepaidCreditBalancesByClientId(
 
   const allCustomerIds = [...customerToClient.keys()];
   for (let i = 0; i < allCustomerIds.length; i += CREDIT_LOOKUP_CONCURRENCY) {
-    const chunk = allCustomerIds.slice(i, i + CREDIT_LOOKUP_CONCURRENCY);
-    const rows = await Promise.all(
-      chunk.map(async (customerId) => {
-        const balance = await getKonnectCreditBalance({
-          customerId,
-          apiKey,
-        }).catch((err) => {
-          console.warn(
-            "credit-allowance-summary: balance lookup failed",
-            customerId,
-            err instanceof Error ? err.message : String(err),
-          );
-          return null;
-        });
-        return { customerId, balance };
-      }),
-    );
-    for (const { customerId, balance } of rows) {
-      if (!balance) continue;
-      const publicClientId = customerToClient.get(customerId);
-      if (!publicClientId) continue;
-      const totals = byClient.get(publicClientId) ?? emptyPerClientTotals();
-      totals.succeededLookups += 1;
-      totals.balanceUsdMicros += balance.balanceUsdMicros;
-      totals.lifetimeGrantedUsdMicros += balance.lifetimeGrantedUsdMicros;
-      totals.consumedUsdMicros += balance.consumedUsdMicros;
-      byClient.set(publicClientId, totals);
-    }
+    await applyBalanceChunk({
+      customerIds: allCustomerIds.slice(i, i + CREDIT_LOOKUP_CONCURRENCY),
+      customerToClient,
+      byClient,
+      apiKey,
+    });
   }
 
   const result: Record<string, CreditAllowanceSummary> = {};

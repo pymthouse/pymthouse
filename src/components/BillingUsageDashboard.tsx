@@ -202,6 +202,109 @@ function ActiveSubscriptionSummary({
   );
 }
 
+function emptyAppsMessage(
+  selectedCount: number,
+  isAdmin: boolean,
+): string {
+  if (selectedCount === 0) {
+    return "Select at least one application.";
+  }
+  if (isAdmin) {
+    return "No apps with usage this cycle.";
+  }
+  return "No apps with usage this cycle. Create an app or wait for traffic.";
+}
+
+function chartEmptyMessage(selectedCount: number): string {
+  if (selectedCount === 0) {
+    return "Select at least one application to view the chart.";
+  }
+  return "No usage in the current billing period yet.";
+}
+
+function SignedTicketsBlock({
+  show,
+  needsSelection,
+  scope,
+  orderedApps,
+  historyClientIds,
+}: Readonly<{
+  show: boolean;
+  needsSelection: boolean;
+  scope: "all" | "single";
+  orderedApps: BillingAppRow[];
+  historyClientIds: string[];
+}>) {
+  if (!show) return null;
+  if (needsSelection) {
+    return (
+      <section className="mb-6 sm:mb-8 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
+        <h2 className="text-sm font-semibold text-zinc-200">Your signed ticket requests</h2>
+        <p className="text-sm text-zinc-500 py-6 text-center">
+          Select at least one application to view request history.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <div className="mb-6 sm:mb-8">
+      <SignedTicketRequestHistory
+        clientId={scope === "single" ? orderedApps[0]?.publicClientId : null}
+        clientIds={scope === "single" ? null : historyClientIds}
+      />
+    </div>
+  );
+}
+
+function AppUsageList({
+  entries,
+  scope,
+  isAdmin,
+  isOpenMeter,
+  userId,
+  emptyMessage,
+}: Readonly<{
+  entries: BillingAppUsageSummary[];
+  scope: "all" | "single";
+  isAdmin: boolean;
+  isOpenMeter: boolean;
+  userId: string;
+  emptyMessage: string;
+}>) {
+  if (entries.length === 0) {
+    return (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
+        <p className="text-zinc-300 font-medium">No applications to show</p>
+        <p className="text-zinc-500 text-sm mt-1">{emptyMessage}</p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="mb-3">
+        <h2 className="text-sm font-semibold text-zinc-200">
+          Per-application breakdown
+        </h2>
+        <p className="text-xs text-zinc-500 mt-1">
+          Summary rows stay collapsed; expand an app for identity detail.
+        </p>
+      </div>
+      <div className="space-y-3">
+        {entries.map((entry) => (
+          <AppUsageSection
+            key={entry.app.id}
+            entry={entry}
+            scope={scope}
+            isAdmin={isAdmin}
+            isOpenMeter={isOpenMeter}
+            userId={userId}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BillingUsageBody({
   data,
   showTabs,
@@ -254,8 +357,11 @@ function BillingUsageBody({
   }
 
   const derived = deriveFilteredView(data, selectedAppIds);
-
   const showSignedTickets = !showTabs || activeTab === "mine";
+  const periodCopy =
+    activeTab === "all" && showTabs
+      ? "Platform-wide usage for the current cycle."
+      : "Usage for apps you own or administer.";
 
   return (
     <>
@@ -282,11 +388,7 @@ function BillingUsageBody({
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="font-semibold text-zinc-100">This billing period</h3>
-            <p className="text-xs text-zinc-500 mt-1">
-              {activeTab === "all" && showTabs
-                ? "Platform-wide usage for the current cycle."
-                : "Usage for apps you own or administer."}
-            </p>
+            <p className="text-xs text-zinc-500 mt-1">{periodCopy}</p>
           </div>
           {isMultiApp && filterOptions.length > 0 ? (
             <AppFilterDropdown
@@ -314,9 +416,7 @@ function BillingUsageBody({
           </p>
           {derived.filteredSeries.length === 0 ? (
             <p className="text-sm text-zinc-500">
-              {selectedAppIds.length === 0
-                ? "Select at least one application to view the chart."
-                : "No usage in the current billing period yet."}
+              {chartEmptyMessage(selectedAppIds.length)}
             </p>
           ) : (
             <UsageBreakdownChart
@@ -329,61 +429,22 @@ function BillingUsageBody({
         </div>
       </div>
 
-      {showSignedTickets ? (
-        selectedAppIds.length === 0 && isMultiApp ? (
-          <section className="mb-6 sm:mb-8 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
-            <h2 className="text-sm font-semibold text-zinc-200">Your signed ticket requests</h2>
-            <p className="text-sm text-zinc-500 py-6 text-center">
-              Select at least one application to view request history.
-            </p>
-          </section>
-        ) : (
-          <div className="mb-6 sm:mb-8">
-            <SignedTicketRequestHistory
-              clientId={
-                scope === "single" ? orderedApps[0]?.publicClientId : null
-              }
-              clientIds={scope === "single" ? null : derived.historyClientIds}
-            />
-          </div>
-        )
-      ) : null}
+      <SignedTicketsBlock
+        show={showSignedTickets}
+        needsSelection={selectedAppIds.length === 0 && isMultiApp}
+        scope={scope}
+        orderedApps={orderedApps}
+        historyClientIds={derived.historyClientIds}
+      />
 
-      {derived.filteredAppUsage.length === 0 ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
-          <p className="text-zinc-300 font-medium">No applications to show</p>
-          <p className="text-zinc-500 text-sm mt-1">
-            {selectedAppIds.length === 0
-              ? "Select at least one application."
-              : isAdmin
-                ? "No apps with usage this cycle."
-                : "No apps with usage this cycle. Create an app or wait for traffic."}
-          </p>
-        </div>
-      ) : (
-        <div>
-          <div className="mb-3">
-            <h2 className="text-sm font-semibold text-zinc-200">
-              Per-application breakdown
-            </h2>
-            <p className="text-xs text-zinc-500 mt-1">
-              Summary rows stay collapsed; expand an app for identity detail.
-            </p>
-          </div>
-          <div className="space-y-3">
-            {derived.filteredAppUsage.map((entry) => (
-              <AppUsageSection
-                key={entry.app.id}
-                entry={entry}
-                scope={scope}
-                isAdmin={isAdmin}
-                isOpenMeter={isOpenMeter}
-                userId={userId}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <AppUsageList
+        entries={derived.filteredAppUsage}
+        scope={scope}
+        isAdmin={isAdmin}
+        isOpenMeter={isOpenMeter}
+        userId={userId}
+        emptyMessage={emptyAppsMessage(selectedAppIds.length, isAdmin)}
+      />
     </>
   );
 }
@@ -394,9 +455,9 @@ function BillingUsageBody({
  */
 export default function BillingUsageDashboard({
   filterAppId,
-}: {
+}: Readonly<{
   filterAppId?: string | null;
-}) {
+}>) {
   const { data: session } = useSession();
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
     | string

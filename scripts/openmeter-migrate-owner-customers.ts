@@ -15,7 +15,7 @@
 import "./load-env-first";
 import { eq } from "drizzle-orm";
 
-import { db, postgresClient } from "../src/db/index";
+import { closeDb, db } from "../src/db/index";
 import { developerApps, oidcClients } from "../src/db/schema";
 import {
   getHostedAdminClient,
@@ -111,6 +111,78 @@ async function listOwners(filterOwnerId?: string): Promise<
   return [...byOwner.entries()].map(([ownerId, apps]) => ({ ownerId, apps }));
 }
 
+async function provisionOwnerStarter(input: {
+  ownerId: string;
+  firstApp: { developerAppId: string; publicClientId: string } | undefined;
+  dryRun: boolean;
+}): Promise<void> {
+  if (!input.firstApp) return;
+  if (input.dryRun) {
+    console.log(
+      `  [dry-run] would provision starter/trial via app ${input.firstApp.publicClientId}`,
+    );
+    return;
+  }
+  await ensureStarterSubscriptionForAppUser({
+    clientId: input.firstApp.developerAppId,
+    externalUserId: input.ownerId,
+  });
+  await ensureTrialAllowanceForAppUser({
+    clientId: input.firstApp.developerAppId,
+    externalUserId: input.ownerId,
+  });
+  console.log(`  [ok] starter/trial ensured via ${input.firstApp.publicClientId}`);
+}
+
+async function transferLegacyAppBalance(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  ownerId: string;
+  customerKey: string;
+  app: { developerAppId: string; publicClientId: string };
+  apiKey: string | undefined;
+  dryRun: boolean;
+}): Promise<bigint> {
+  const legacyKey = `${input.app.publicClientId}:${input.ownerId}`;
+  const tenants = await listTenantCustomers(input.client, input.app.publicClientId);
+  const legacy = tenants.find((row) => row.key === legacyKey);
+  if (!legacy) {
+    console.log(`  [skip] no legacy wallet ${legacyKey}`);
+    return 0n;
+  }
+  const balance = await getKonnectCreditBalance({
+    customerId: legacy.id,
+    apiKey: input.apiKey,
+  });
+  if (!balance || balance.balanceUsdMicros <= 0n) {
+    console.log(`  [skip] empty legacy wallet ${legacyKey}`);
+    return 0n;
+  }
+  console.log(
+    `  [legacy] ${legacyKey} balance=${balance.balanceUsdMicros.toString()} micros`,
+  );
+  if (input.dryRun) {
+    return balance.balanceUsdMicros;
+  }
+  const ownerCustomer = await ensureOpenMeterCustomer(
+    input.client,
+    input.customerKey,
+  );
+  const featureKey = await getTrialFeatureKeyForApp(input.app.developerAppId);
+  await createKonnectCreditGrant({
+    customerId: ownerCustomer.id,
+    amountUsdMicros: balance.balanceUsdMicros,
+    name: "Migrated owner prepaid balance",
+    description: `Transferred from legacy ${legacyKey}`,
+    featureKey,
+    idempotencyKey: `migrate-owner:${ownerCustomer.id}:${legacy.id}`,
+    apiKey: input.apiKey,
+  });
+  console.log(
+    `  [ok] granted ${balance.balanceUsdMicros.toString()} onto ${input.customerKey}`,
+  );
+  return balance.balanceUsdMicros;
+}
+
 async function migrateOwner(input: {
   ownerId: string;
   apps: Array<{ developerAppId: string; publicClientId: string }>;
@@ -133,27 +205,20 @@ async function migrateOwner(input: {
   if (input.dryRun) {
     console.log(`  [dry-run] would ensure customer ${customerKey}`);
   } else {
-    const customer = await ensureOpenMeterCustomer(client, customerKey, `Owner ${input.ownerId}`);
+    const customer = await ensureOpenMeterCustomer(
+      client,
+      customerKey,
+      `Owner ${input.ownerId}`,
+    );
     console.log(`  [ok] customer id=${customer.id}`);
   }
 
-  const firstApp = input.apps[0];
-  if (input.provision && firstApp) {
-    if (input.dryRun) {
-      console.log(
-        `  [dry-run] would provision starter/trial via app ${firstApp.publicClientId}`,
-      );
-    } else {
-      await ensureStarterSubscriptionForAppUser({
-        clientId: firstApp.developerAppId,
-        externalUserId: input.ownerId,
-      });
-      await ensureTrialAllowanceForAppUser({
-        clientId: firstApp.developerAppId,
-        externalUserId: input.ownerId,
-      });
-      console.log(`  [ok] starter/trial ensured via ${firstApp.publicClientId}`);
-    }
+  if (input.provision) {
+    await provisionOwnerStarter({
+      ownerId: input.ownerId,
+      firstApp: input.apps[0],
+      dryRun: input.dryRun,
+    });
   }
 
   if (!input.transferBalances) {
@@ -162,40 +227,14 @@ async function migrateOwner(input: {
 
   let transferMicros = 0n;
   for (const app of input.apps) {
-    const legacyKey = `${app.publicClientId}:${input.ownerId}`;
-    const tenants = await listTenantCustomers(client, app.publicClientId);
-    const legacy = tenants.find((row) => row.key === legacyKey);
-    if (!legacy) {
-      console.log(`  [skip] no legacy wallet ${legacyKey}`);
-      continue;
-    }
-    const balance = await getKonnectCreditBalance({
-      customerId: legacy.id,
+    transferMicros += await transferLegacyAppBalance({
+      client,
+      ownerId: input.ownerId,
+      customerKey,
+      app,
       apiKey,
+      dryRun: input.dryRun,
     });
-    if (!balance || balance.balanceUsdMicros <= 0n) {
-      console.log(`  [skip] empty legacy wallet ${legacyKey}`);
-      continue;
-    }
-    transferMicros += balance.balanceUsdMicros;
-    console.log(
-      `  [legacy] ${legacyKey} balance=${balance.balanceUsdMicros.toString()} micros`,
-    );
-    if (input.dryRun) {
-      continue;
-    }
-    const ownerCustomer = await ensureOpenMeterCustomer(client, customerKey);
-    const featureKey = await getTrialFeatureKeyForApp(app.developerAppId);
-    await createKonnectCreditGrant({
-      customerId: ownerCustomer.id,
-      amountUsdMicros: balance.balanceUsdMicros,
-      name: "Migrated owner prepaid balance",
-      description: `Transferred from legacy ${legacyKey}`,
-      featureKey,
-      idempotencyKey: `migrate-owner:${ownerCustomer.id}:${legacy.id}`,
-      apiKey,
-    });
-    console.log(`  [ok] granted ${balance.balanceUsdMicros.toString()} onto ${customerKey}`);
   }
 
   if (transferMicros > 0n) {
@@ -236,5 +275,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await postgresClient.end({ timeout: 5 }).catch(() => undefined);
+    await closeDb({ timeout: 5 }).catch(() => undefined);
   });

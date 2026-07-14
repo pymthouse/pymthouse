@@ -75,7 +75,6 @@ export default function AppFilterDropdown({
     <div ref={containerRef} className="relative shrink-0">
       <button
         type="button"
-        aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((v) => !v)}
@@ -97,8 +96,6 @@ export default function AppFilterDropdown({
       {open ? (
         <div
           id={listId}
-          role="listbox"
-          aria-multiselectable="true"
           className="absolute right-0 z-50 mt-1 w-64 max-h-72 overflow-auto rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-lg"
         >
           <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
@@ -123,30 +120,31 @@ export default function AppFilterDropdown({
           {options.length === 0 ? (
             <p className="px-3 py-3 text-sm text-zinc-500">No applications</p>
           ) : (
-            options.map((opt) => {
-              const selected = selectedSet.has(opt.value);
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => toggleValue(opt.value)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
-                >
-                  <span
-                    className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border text-[9px] font-bold ${
-                      selected
-                        ? "border-emerald-600 bg-emerald-600 text-white"
-                        : "border-zinc-600"
-                    }`}
+            <fieldset className="relative m-0 border-0 p-0">
+              <legend className="absolute h-px w-px overflow-hidden whitespace-nowrap p-0 [clip:rect(0,0,0,0)]">
+                Filter by application
+              </legend>
+              {options.map((opt) => {
+                const selected = selectedSet.has(opt.value);
+                const checkboxId = `${listId}-${opt.value}`;
+                return (
+                  <label
+                    key={opt.value}
+                    htmlFor={checkboxId}
+                    className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
                   >
-                    {selected ? "✓" : null}
-                  </span>
-                  <span className="truncate">{opt.label}</span>
-                </button>
-              );
-            })
+                    <input
+                      id={checkboxId}
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleValue(opt.value)}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-zinc-600 bg-zinc-900 text-emerald-600 focus:ring-emerald-500/40"
+                    />
+                    <span className="truncate">{opt.label}</span>
+                  </label>
+                );
+              })}
+            </fieldset>
           )}
         </div>
       ) : null}
