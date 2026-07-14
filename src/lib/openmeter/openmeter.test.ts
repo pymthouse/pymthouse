@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
-import { ensureOpenMeterCustomer } from "./customers";
+import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects } from "./customers";
 import { listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
@@ -403,6 +403,42 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
 
   const identity = await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-2");
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
+});
+
+test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer", async () => {
+  let updatedSubjectKeys: string[] | undefined;
+  const ownerKey = "owner:uuid-1";
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-owner-1",
+        key,
+        name: key,
+        usageAttribution: { subjectKeys: [ownerKey] },
+      }),
+      update: async (
+        _id: string,
+        input: { usageAttribution: { subjectKeys: string[] } },
+      ) => {
+        updatedSubjectKeys = input.usageAttribution.subjectKeys;
+        return { id: "om-owner-1", key: ownerKey };
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOwnerCustomerWireSubjects(
+    openMeterTestClient(client),
+    "uuid-1",
+    ["app_aaa", "app_bbb"],
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
+  assert.deepEqual(
+    [...(updatedSubjectKeys ?? [])].sort(),
+    ["app_aaa:uuid-1", "app_bbb:uuid-1", ownerKey].sort(),
+  );
 });
 
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {

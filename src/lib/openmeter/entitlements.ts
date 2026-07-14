@@ -172,12 +172,14 @@ export async function ingestSignedTicketEvent(input: {
     clientId: input.event.clientId,
     externalUserId: usageSubject,
   });
-  // Owners: subject = owner:{users.id} (shared wallet). End-users: app_…:external_id.
-  // Wire auth_id for go-livepeer stays compound; OpenMeter subject follows customer key.
-  const subject = identity.customerKey;
-  const legacyAuthId = buildOpenMeterCustomerKey(
+  // Wire subject is always compound app_…:platformUserId. Billing wallet key
+  // (owner:{id} for app owners) is metadata only via openmeter_customer_key.
+  const platformUserId = identity.isOwner
+    ? (identity.ownerUserId as string)
+    : usageSubject;
+  const wireSubject = buildOpenMeterCustomerKey(
     identity.publicClientId,
-    usageSubject,
+    platformUserId,
   );
 
   await input.client.events.ingest({
@@ -185,12 +187,12 @@ export async function ingestSignedTicketEvent(input: {
     type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     id: input.event.requestId,
     source: SIGNED_TICKET_EVENT_SOURCE,
-    subject,
+    subject: wireSubject,
     data: {
       client_id: identity.publicClientId,
-      usage_subject: usageSubject,
+      usage_subject: platformUserId,
       usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
-      external_user_id: usageSubject,
+      external_user_id: platformUserId,
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: input.event.feeWei,
       pixels: input.event.pixels,
@@ -200,8 +202,8 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
-      auth_id: legacyAuthId,
-      openmeter_customer_key: subject,
+      auth_id: wireSubject,
+      openmeter_customer_key: identity.customerKey,
     },
   });
 }

@@ -15,6 +15,7 @@ import {
   buildOwnerCustomerKey,
   isOwnerCustomerKey,
   parseOpenMeterCustomerKey,
+  parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -382,6 +383,19 @@ function normalizeClientIdFilter(
   return new Set(ids);
 }
 
+function compoundQueriesForSubject(
+  subject: string,
+  clientIds: ReadonlySet<string> | null,
+): string[] {
+  if (clientIds && clientIds.size > 0) {
+    return [...clientIds].map((clientId) =>
+      buildOpenMeterCustomerKey(clientId, subject),
+    );
+  }
+  // Partial subject match: compound auth_id ends with :external_user_id
+  return [subject];
+}
+
 function buildSubjectQueries(
   subjects: ReadonlySet<string>,
   clientIds: ReadonlySet<string> | null,
@@ -389,18 +403,15 @@ function buildSubjectQueries(
   const queries: string[] = [];
   for (const subject of subjects) {
     if (isOwnerCustomerKey(subject)) {
-      // Owner wallet events use subject = owner:{users.id} (not compound).
+      const ownerUserId = parseOwnerCustomerKey(subject);
+      // Primary: compound wire subjects. Legacy: bare owner:{id} events.
+      if (ownerUserId) {
+        queries.push(...compoundQueriesForSubject(ownerUserId, clientIds));
+      }
       queries.push(subject);
       continue;
     }
-    if (clientIds && clientIds.size > 0) {
-      for (const clientId of clientIds) {
-        queries.push(buildOpenMeterCustomerKey(clientId, subject));
-      }
-    } else {
-      // Partial subject match: compound auth_id ends with :external_user_id
-      queries.push(subject);
-    }
+    queries.push(...compoundQueriesForSubject(subject, clientIds));
   }
   return queries;
 }

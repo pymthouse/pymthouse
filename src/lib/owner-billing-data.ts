@@ -178,15 +178,20 @@ async function resolveDiscountUsdMicros(input: {
 
 async function querySubjectCycleUsage(input: {
   client: OpenMeter;
-  subject: string;
+  subjects: string[];
   start: string;
   end: string;
 }): Promise<{ usedUsdMicros: bigint; requestCount: number }> {
+  const subjects = [...new Set(input.subjects.map((s) => s.trim()).filter(Boolean))];
+  if (subjects.length === 0) {
+    return { usedUsdMicros: 0n, requestCount: 0 };
+  }
+
   const baseQuery = {
     windowSize: "MONTH" as const,
     from: new Date(input.start),
     to: new Date(input.end),
-    subject: [input.subject],
+    subject: subjects,
   };
 
   try {
@@ -212,11 +217,27 @@ async function querySubjectCycleUsage(input: {
   } catch (err) {
     console.warn(
       "owner-billing: meter query failed",
-      input.subject,
+      subjects.join(","),
       err instanceof Error ? err.message : String(err),
     );
     return { usedUsdMicros: 0n, requestCount: 0 };
   }
+}
+
+/** Wire + transitional subjects for shared-owner subscription usage. */
+function buildOwnerWalletUsageSubjects(
+  ownerUserId: string,
+  ownedApps: OwnedApp[],
+): string[] {
+  const ownerKey = buildOwnerCustomerKey(ownerUserId);
+  const subjects = [ownerKey];
+  for (const app of ownedApps) {
+    subjects.push(
+      buildOpenMeterCustomerKey(app.publicClientId, ownerUserId),
+      buildOpenMeterCustomerKey(app.publicClientId, ownerKey),
+    );
+  }
+  return [...new Set(subjects)];
 }
 
 async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
@@ -305,6 +326,8 @@ async function mapSubscriptionRow(input: {
   subscription: OpenMeterSubscriptionView;
   candidate: CustomerCandidate;
   cycle: { start: string; end: string };
+  ownerUserId: string;
+  ownedApps: OwnedApp[];
 }): Promise<OwnerBillingSubscriptionRow> {
   const localPlanId = input.candidate.appPublicClientId
     ? await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -342,9 +365,14 @@ async function mapSubscriptionRow(input: {
     isStarterDefault,
   });
 
+  const isSharedOwnerWallet = input.candidate.appPublicClientId == null;
+  const usageSubjects = isSharedOwnerWallet
+    ? buildOwnerWalletUsageSubjects(input.ownerUserId, input.ownedApps)
+    : [input.candidate.customerKey];
+
   const usage = await querySubjectCycleUsage({
     client: input.client,
-    subject: input.candidate.customerKey,
+    subjects: usageSubjects,
     start: input.cycle.start,
     end: input.cycle.end,
   });
@@ -467,6 +495,8 @@ export async function listOwnerActiveSubscriptions(
           subscription,
           candidate,
           cycle,
+          ownerUserId: trimmed,
+          ownedApps,
         }),
       );
     }

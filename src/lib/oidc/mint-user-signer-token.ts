@@ -202,13 +202,12 @@ export async function mintSignerJwtForExternalUser(input: {
     clientId: input.publicClientId,
     externalUserId,
   });
-  // App owners mint/sign as owner:{users.id} so auth_id / OpenMeter subject share one wallet.
+  // Wire JWT/sub stays the bare platform user id. Owner billing wallet is
+  // owner:{users.id} via resolveOpenMeterBillingIdentity / Konnect attribution.
   const provisionExternalUserId = identity.isOwner
     ? (identity.ownerUserId as string)
     : externalUserId;
-  const jwtExternalUserId = identity.isOwner
-    ? identity.customerKey
-    : externalUserId;
+  const jwtExternalUserId = provisionExternalUserId;
 
   let allowance: TrialCreditBalance | null;
   try {

@@ -5,7 +5,7 @@ import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import { ensureOpenMeterCustomer } from "./customers";
+import { ensureOpenMeterCustomer, ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
   isOpenMeterConflictError,
   isOpenMeterPlanNotFoundError,
@@ -264,10 +264,13 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   }
 
   const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomer(
-    client,
-    identity.customerKey,
-  );
+  const customer = identity.isOwner
+    ? await ensureOpenMeterCustomerForAppUser({
+        client,
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+      })
+    : await ensureOpenMeterCustomer(client, identity.customerKey);
   // Starter trial subscriptions always use the sandbox billing profile so Konnect
   // does not require Stripe customer data, even when the app has Stripe Connect.
   await applyFreeBillingProfileToCustomer({

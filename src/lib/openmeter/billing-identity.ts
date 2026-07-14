@@ -11,7 +11,11 @@ import {
 } from "@/lib/openmeter/customer-key";
 
 export type ResolvedBillingIdentity = {
-  /** OpenMeter customer key / preferred CloudEvent subject for credits. */
+  /**
+   * Konnect customer key for credits/Starter (`owner:{users.id}` for owners;
+   * compound `app_…:externalUserId` for end-users). Metering wire subject is
+   * always compound — linked via usageAttribution.subjectKeys for owners.
+   */
   customerKey: string;
   isOwner: boolean;
   /** Platform users.id when isOwner. */

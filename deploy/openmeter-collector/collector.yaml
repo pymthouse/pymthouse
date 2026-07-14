@@ -14,9 +14,10 @@
 #
 # Identity (go-livepeer Kafka wire -> normalized CloudEvent egress):
 # - Upstream auth_id stays client_id:usage_subject (webhook -> go-livepeer state -> Kafka).
-# - Collector parses auth_id once (first-colon split).
-# - App owners mint with usage_subject = owner:{users.id}; OpenMeter subject is that
-#   owner key (shared wallet). End-users keep subject = compound auth_id.
+# - Collector parses auth_id once (first-colon split) for data.client_id / data.usage_subject.
+# - CloudEvent subject is always the full compound auth_id (app_…:platformUserId).
+# - App-owner prepaid/Starter wallet is Konnect customer owner:{users.id}, linked via
+#   usageAttribution.subjectKeys (not by rewriting CloudEvent subject).
 # - data.client_id / data.usage_subject always retain the parsed tenant + subject.
 
 
@@ -118,11 +119,12 @@ pipeline:
         let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
         let client_id = if $is_compound { $auth_id.slice(0, $colon) } else { $auth_id }
         let usage_subject_parsed = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
-        # Shared owner wallet: subject = owner:{users.id} (not compound auth_id).
-        # Derive type from subject shape — do not trust Kafka usage_subject_type.
+        # Metering subject is always the full compound auth_id. Owner prepaid wallets
+        # are linked via Konnect usageAttribution.subjectKeys, not subject rewrite.
         let is_owner_subject = $usage_subject_parsed.index_of("owner:") == 0
         let usage_subject_type = if $is_owner_subject { "app_owner" } else { "external_user_id" }
-        let openmeter_subject = if $is_owner_subject { $usage_subject_parsed } else { $auth_id }
+        let openmeter_subject = $auth_id
+        let openmeter_customer_key = if $is_owner_subject { $usage_subject_parsed } else { $auth_id }
 
         let eth_usd = meta("eth_usd_price").number()
         root = if $eth_usd == null { throw("eth_usd price cache miss") }
@@ -154,7 +156,7 @@ pipeline:
               "pixels": $data.pixels.string().or("0"),
               "fee_wei": $data.computed_fee.or("0"),
               "auth_id": $auth_id,
-              "openmeter_customer_key": $openmeter_subject,
+              "openmeter_customer_key": $openmeter_customer_key,
               "eth_usd_price": $eth_usd.string(),
               "gateway_request_id": $data.request_id,
             }

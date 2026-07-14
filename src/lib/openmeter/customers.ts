@@ -1,4 +1,12 @@
+import { eq } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
+
+import { db } from "@/db/index";
+import { developerApps, oidcClients } from "@/db/schema";
+import {
+  buildOpenMeterCustomerKey,
+  buildOwnerCustomerKey,
+} from "@/lib/openmeter/customer-key";
 import { getHostedOpenMeterUrl } from "./constants";
 import { isOpenMeterUlid } from "./konnect-routes";
 import { shouldUseKonnectRoutes } from "./route-mode";
@@ -18,18 +26,63 @@ type OpenMeterCustomerRecord = {
 async function ensureCustomerUsageAttribution(
   client: OpenMeter,
   customer: OpenMeterCustomerRecord,
-  customerKey: string,
+  requiredSubjectKeys: string[],
 ): Promise<void> {
   const subjectKeys = customer.usageAttribution?.subjectKeys ?? [];
-  if (subjectKeys.includes(customerKey)) {
+  const missing = requiredSubjectKeys.filter((key) => !subjectKeys.includes(key));
+  if (missing.length === 0) {
     return;
   }
 
-  const nextKeys = [...new Set([...subjectKeys, customerKey])];
+  const nextKeys = [...new Set([...subjectKeys, ...requiredSubjectKeys])];
   await client.customers.update(customer.id, {
-    name: customer.name?.trim() || customerKey,
+    name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
     usageAttribution: { subjectKeys: nextKeys },
   });
+}
+
+/**
+ * Link compound wire subjects (`app_…:{ownerUserId}`) onto the shared owner
+ * Konnect customer so prepaid/credit_then_invoice settles against owner:{id}.
+ */
+export async function ensureOwnerCustomerWireSubjects(
+  client: OpenMeter,
+  ownerUserId: string,
+  publicClientIds: string[],
+): Promise<OpenMeterCustomerIdentity> {
+  const trimmedOwnerId = ownerUserId.trim();
+  const ownerKey = buildOwnerCustomerKey(trimmedOwnerId);
+  const wireKeys = publicClientIds
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+    .map((clientId) => buildOpenMeterCustomerKey(clientId, trimmedOwnerId));
+  const requiredKeys = [...new Set([ownerKey, ...wireKeys])];
+
+  const customer = await ensureOpenMeterCustomer(client, ownerKey);
+  const existing = await findOpenMeterCustomerByKey(client, ownerKey);
+  if (existing?.id) {
+    await ensureCustomerUsageAttribution(client, existing, requiredKeys);
+  }
+  return customer;
+}
+
+async function listOwnedPublicClientIds(ownerUserId: string): Promise<string[]> {
+  const rows = await db
+    .select({
+      publicClientId: oidcClients.clientId,
+      developerAppId: developerApps.id,
+    })
+    .from(developerApps)
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(developerApps.ownerId, ownerUserId.trim()));
+
+  return [
+    ...new Set(
+      rows
+        .map((row) => row.publicClientId?.trim() || row.developerAppId)
+        .filter((id): id is string => Boolean(id?.trim())),
+    ),
+  ];
 }
 
 async function findOpenMeterCustomerByKey(
@@ -58,7 +111,7 @@ export async function ensureOpenMeterCustomer(
 ): Promise<OpenMeterCustomerIdentity> {
   const existing = await findOpenMeterCustomerByKey(client, customerKey);
   if (existing?.id) {
-    await ensureCustomerUsageAttribution(client, existing, customerKey);
+    await ensureCustomerUsageAttribution(client, existing, [customerKey]);
     return { id: existing.id, key: customerKey };
   }
 
@@ -75,7 +128,7 @@ export async function ensureOpenMeterCustomer(
   } catch (err) {
     const raced = await findOpenMeterCustomerByKey(client, customerKey);
     if (raced?.id) {
-      await ensureCustomerUsageAttribution(client, raced, customerKey);
+      await ensureCustomerUsageAttribution(client, raced, [customerKey]);
       return { id: raced.id, key: customerKey };
     }
     throw err;
@@ -95,6 +148,17 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
+  if (identity.isOwner && identity.ownerUserId) {
+    const ownedClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+    const publicClientIds = [
+      ...new Set([identity.publicClientId, ...ownedClientIds]),
+    ];
+    return ensureOwnerCustomerWireSubjects(
+      input.client,
+      identity.ownerUserId,
+      publicClientIds,
+    );
+  }
   return ensureOpenMeterCustomer(
     input.client,
     identity.customerKey,

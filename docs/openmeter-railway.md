@@ -127,8 +127,8 @@ Bootstrap does **not** create per-app plans or grant credits. Those happen at ru
 
 1. **Plan sync** (`syncPlanToOpenMeter`) publishes Starter with `settlement_mode=credit_then_invoice` and a bare `network_spend` unit price (`0.000001` per USD micro). Rate cards must **not** include `discounts.usage`.
 2. **Customer keys:**
-   - **M2M end-users:** `client_id:external_user_id` — one Konnect customer per (app, user).
-   - **App owners:** `owner:{users.id}` — one shared Konnect customer across all apps they own. Owner mint JWTs use `external_user_id` / `sub` = `owner:{users.id}`; the collector sets CloudEvent `subject` to that owner key while keeping `data.client_id` for per-app analytics.
+   - **M2M end-users:** `client_id:external_user_id` — one Konnect customer per (app, user). CloudEvent `subject` matches this compound key.
+   - **App owners:** billing wallet `owner:{users.id}` — one shared Konnect customer across all apps they own. Wire identity stays simple: JWT `sub` / `external_user_id` = bare `{users.id}`, and CloudEvent `subject` = compound `app_…:{users.id}`. The owner customer’s `usageAttribution.subjectKeys` includes those compound keys so prepaid credits settle on the shared wallet without rewriting the meter subject.
 3. **Trial / top-up allowance** is `POST /customers/{id}/credits/grants` only (`OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). Owners are granted once on the shared wallet; end-users once per app customer. Prepaid burn-down is driven by billing charges under `credit_then_invoice`.
 
 Migrate existing per-app owner wallets with:
