@@ -206,7 +206,7 @@ const STATS = [
 
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
-  if (session) redirect("/dashboard");
+  if (session) redirect("/apps");
 
   const docsUrl = getDocsBaseUrl();
 
