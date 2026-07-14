@@ -39,9 +39,27 @@ export function firstEvmAddressFromWallets(
   return undefined;
 }
 
+async function bestEffort<T>(
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.debug(`Turnkey bridge: ${label} failed (continuing):`, message);
+    return undefined;
+  }
+}
+
 /**
  * Exchange an authenticated Turnkey session for a NextAuth `turnkey-wallet` session.
  * Callers must ensure Turnkey is Authenticated and the client is Ready.
+ *
+ * The session JWT alone is enough for NextAuth (`user_id` in claims).
+ * `refreshUser` / `refreshWallets` are best-effort enrichment — they often throw
+ * "Failed to fetch user" right after OTP/OAuth on staging, and a SESSION_EXPIRED
+ * path can logout mid-bridge if we refresh before capturing the token.
  */
 export async function bridgeTurnkeySessionToNextAuth(
   deps: TurnkeyNextAuthBridgeDeps,
@@ -54,12 +72,16 @@ export async function bridgeTurnkeySessionToNextAuth(
     user,
   } = deps;
 
-  await refreshUser();
-  const refreshedWallets = await refreshWallets();
   const session = await getSession();
-  if (!session?.token) {
+  const sessionToken = session?.token?.trim();
+  if (!sessionToken) {
     return { ok: false, error: "Could not get session token" };
   }
+
+  await bestEffort("refreshUser", () => refreshUser());
+  const refreshedWallets = await bestEffort("refreshWallets", () =>
+    refreshWallets(),
+  );
 
   const walletAddress = firstEvmAddressFromWallets(
     refreshedWallets?.length ? refreshedWallets : wallets,
@@ -68,7 +90,7 @@ export async function bridgeTurnkeySessionToNextAuth(
   const name = user?.userName?.trim() || undefined;
 
   const result = await signIn("turnkey-wallet", {
-    turnkeySessionJwt: session.token,
+    turnkeySessionJwt: sessionToken,
     walletAddress: walletAddress || "",
     email: email || "",
     name: name || "",
