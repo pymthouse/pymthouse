@@ -5,14 +5,10 @@ import {
   ClientState,
   useTurnkey,
 } from "@turnkey/react-wallet-kit";
-// AuthComponent is not in the package public exports; render it inline so auth
-// lives on the page instead of behind handleLogin()'s dismissible modal.
-// Import the CJS build path (with adjacent .d.ts) — importing `.mjs` fails
-// Next.js typecheck because TS does not associate that file with index.d.ts.
-import { AuthComponent } from "../../node_modules/@turnkey/react-wallet-kit/dist/components/auth/index.js";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { AuthComponent } from "@/lib/turnkey-auth-component";
 import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
