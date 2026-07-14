@@ -121,9 +121,24 @@ export default function ApiKeyCredentialSwitcher({
       {hasToken ? (
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] text-sky-300/70">
-            {showToken
-              ? "Python SDK --token (base64)"
-              : "Authorization: Bearer key"}
+            {showToken ? (
+              <>
+                <a
+                  href="https://github.com/livepeer/livepeer-python-gateway"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-sky-200 underline decoration-sky-500/50 underline-offset-2 hover:text-white hover:decoration-sky-300"
+                >
+                  Python SDK
+                </a>{" "}
+                <code className="rounded bg-black/40 px-1 py-0.5 font-mono text-[10px] text-sky-100">
+                  --token
+                </code>{" "}
+                (base64)
+              </>
+            ) : (
+              "Authorization: Bearer key"
+            )}
           </p>
           <FormatSlider value={format} onChange={setFormat} />
         </div>
