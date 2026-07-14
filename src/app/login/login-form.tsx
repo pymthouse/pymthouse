@@ -64,10 +64,9 @@ export function LoginForm() {
   const logoUrl = toSafeLogoUrl(branding?.logoUrl ?? null);
   // Always brand outside the kit. AuthComponent logos are capped at max-w-32 /
   // max-h-16 and Firefox often collapses the SVG <img> to a near-invisible box.
+  // Brand outside the kit (AuthComponent only shows its title when a logo is set).
   const authLogoUrl = null;
-  const authTitle = isWhiteLabel
-    ? branding?.displayName || "Sign in"
-    : "Log in or sign up";
+  const authTitle = "Log in or sign up";
 
   useEffect(() => {
     if (status === "authenticated" && session) {
@@ -122,16 +121,14 @@ export function LoginForm() {
               <h1 className="text-3xl font-bold tracking-tight text-zinc-100">
                 {branding.displayName}
               </h1>
-              <p className="text-zinc-500 mt-2 text-sm">Sign in to continue</p>
+              <p className="text-zinc-500 mt-2 text-sm">Log in or sign up</p>
             </>
           ) : (
             <>
               <h1 className="text-3xl font-bold tracking-tight">
                 <span className="text-emerald-400">pymt</span>house
               </h1>
-              <p className="text-zinc-500 mt-2 text-sm">
-                Platform Builder API for Livepeer Applications
-              </p>
+              <p className="text-zinc-500 mt-2 text-sm">Log in or sign up</p>
             </>
           )}
         </div>
