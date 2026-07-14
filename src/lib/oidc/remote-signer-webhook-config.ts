@@ -7,7 +7,50 @@ import {
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
+import { buildOwnerCustomerKey } from "@/lib/openmeter/customer-key";
 import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
+
+type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
+
+type EndUserVerifier = RemoteSignerWebhookConfig["endUserAuth"];
+
+/**
+ * Map owner JWTs (bare platform user id + user_type=app_owner) onto webhook
+ * usage_subject owner:{id} so go-livepeer auth_id / CloudEvent settlement use
+ * the shared Konnect customer key. JWT claims stay bare for clients.
+ */
+function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifier {
+  return {
+    ...verifier,
+    verify: async (input) => {
+      const result = await verifier.verify(input);
+      const raw = result.raw as Record<string, unknown> | undefined;
+      const userType =
+        typeof raw?.user_type === "string" ? raw.user_type.trim() : "";
+      if (userType !== "app_owner") {
+        return result;
+      }
+      const bareId = result.identity.usage_subject.trim();
+      if (!bareId || bareId.startsWith("owner:")) {
+        return {
+          ...result,
+          identity: {
+            ...result.identity,
+            usage_subject_type: "app_owner",
+          },
+        };
+      }
+      return {
+        ...result,
+        identity: {
+          ...result.identity,
+          usage_subject: buildOwnerCustomerKey(bareId),
+          usage_subject_type: "app_owner",
+        },
+      };
+    },
+  };
+}
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
@@ -84,7 +127,7 @@ export function buildRemoteSignerWebhookConfig(
   const source = resolveIdentityWebhookEnv(env ?? process.env);
   const config: RemoteSignerWebhookConfig = {
     webhookSecret: source.WEBHOOK_SECRET?.trim() || "",
-    endUserAuth: createEndUserVerifierFromEnv(source),
+    endUserAuth: withOwnerBillingUsageSubject(createEndUserVerifierFromEnv(source)),
   };
 
   const checkBalance = buildSignerBalanceCheck();

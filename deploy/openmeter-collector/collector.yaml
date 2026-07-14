@@ -14,10 +14,11 @@
 #
 # Identity (go-livepeer Kafka wire -> normalized CloudEvent egress):
 # - Upstream auth_id stays client_id:usage_subject (webhook -> go-livepeer state -> Kafka).
-# - Collector parses auth_id once (first-colon split) for data.client_id / data.usage_subject.
-# - CloudEvent subject is always the full compound auth_id (app_…:platformUserId).
-# - App-owner prepaid/Starter wallet is Konnect customer owner:{users.id}, linked via
-#   usageAttribution.subjectKeys (not by rewriting CloudEvent subject).
+# - For app owners, webhook maps JWT sub (bare user id) to usage_subject owner:{users.id}
+#   so auth_id is app_…:owner:{id}; CloudEvent subject is that owner key (Konnect customer
+#   key) so prepaid/credit_then_invoice settles. Compound subjects cannot be multi-attributed
+#   onto an owner customer while a subscription is active (Konnect billing beta).
+# - End-users keep CloudEvent subject = full compound auth_id.
 # - data.client_id / data.usage_subject always retain the parsed tenant + subject.
 
 
@@ -119,12 +120,12 @@ pipeline:
         let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
         let client_id = if $is_compound { $auth_id.slice(0, $colon) } else { $auth_id }
         let usage_subject_parsed = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
-        # Metering subject is always the full compound auth_id. Owner prepaid wallets
-        # are linked via Konnect usageAttribution.subjectKeys, not subject rewrite.
+        # Owner wallet: meter subject = owner:{users.id} (Konnect customer key).
+        # End-users: meter subject = full compound auth_id.
         let is_owner_subject = $usage_subject_parsed.index_of("owner:") == 0
         let usage_subject_type = if $is_owner_subject { "app_owner" } else { "external_user_id" }
-        let openmeter_subject = $auth_id
-        let openmeter_customer_key = if $is_owner_subject { $usage_subject_parsed } else { $auth_id }
+        let openmeter_subject = if $is_owner_subject { $usage_subject_parsed } else { $auth_id }
+        let openmeter_customer_key = $openmeter_subject
 
         let eth_usd = meta("eth_usd_price").number()
         root = if $eth_usd == null { throw("eth_usd price cache miss") }

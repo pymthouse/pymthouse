@@ -345,20 +345,20 @@ For RFC 8693 exchange after minting a user JWT, use `POST /api/v1/apps/{clientId
 
 Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
-**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence — this wire format is unchanged. App-owner JWTs use bare `usage_subject` / `external_user_id` / JWT `sub` = `{users.id}` (same shape as end-users), with `user_type: "app_owner"` as metadata only. Wire `auth_id` is therefore `app_…:{users.id}`.
+**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence. App-owner JWTs keep bare `sub` / `external_user_id` = `{users.id}` with `user_type: "app_owner"`; the webhook maps that to `usage_subject` = `owner:{users.id}` so `auth_id` is `app_…:owner:{users.id}` for metering settlement.
 
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
 2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros` via `ceil(fee_wei * eth_usd / 1e12)` so sub-micro fees still count as at least 1 micro, and writes normalized CloudEvents to OpenMeter/Konnect:
-   - `subject` = full compound `auth_id` (`app_…:platformUserId`) for owners and end-users
+   - `subject` = compound `auth_id` for M2M end-users; **`owner:{users.id}`** when `usage_subject` starts with `owner:` (shared owner wallet / Konnect customer key)
    - `data.client_id` = tenant (developer app OAuth `client_id`)
-   - `data.usage_subject` = bare platform user id (or end-user external id)
+   - `data.usage_subject` = end user or `owner:{users.id}`
    - `data.auth_id` retained for compatibility; `data.external_user_id` mirrors `usage_subject` for existing meter `groupBy`
-   - `data.openmeter_customer_key` = billing wallet key (`owner:{users.id}` for owners; compound for end-users)
+   - `data.openmeter_customer_key` = billing wallet key
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
 
-**Prepaid credits:** App owners share one Konnect customer (`owner:{users.id}`) across all owned apps. That customer’s `usageAttribution.subjectKeys` includes each owned-app compound key (`app_…:{ownerUserId}`) so prepaid/`credit_then_invoice` settles against the shared wallet when CloudEvents use compound subjects. M2M end-users remain `app_…:external_user_id` (per app). Dashboard owner prepaid strip reads the shared owner wallet; subscription/spendable usage aggregates compound subjects (with legacy `owner:` / `app_…:owner:…` dual-read during transition). Per-app usage pages sum end-user wallets only.
+**Prepaid credits:** App owners share one Konnect customer (`owner:{users.id}`) across all owned apps. Konnect billing beta clears multi-subject `usageAttribution` when a subscription is active, so owner CloudEvents must use `subject = owner:{id}` (customer key auto-attribution) rather than compound subjects alone. M2M end-users remain `app_…:external_user_id` (per app). Dashboard owner prepaid strip reads the shared owner wallet; subscription/spendable usage dual-reads compound and `owner:` subjects during transition. Per-app usage pages sum end-user wallets only.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 

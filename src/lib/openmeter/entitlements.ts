@@ -172,22 +172,25 @@ export async function ingestSignedTicketEvent(input: {
     clientId: input.event.clientId,
     externalUserId: usageSubject,
   });
-  // Wire subject is always compound app_…:platformUserId. Billing wallet key
-  // (owner:{id} for app owners) is metadata only via openmeter_customer_key.
+  // Wire auth_id stays compound app_…:platformUserId for analytics.
+  // CloudEvent subject must be the Konnect customer key for owners
+  // (owner:{id}) — Konnect billing beta clears multi-subject attribution
+  // when a subscription is created, so compound subjects cannot settle.
   const platformUserId = identity.isOwner
     ? (identity.ownerUserId as string)
     : usageSubject;
-  const wireSubject = buildOpenMeterCustomerKey(
+  const wireAuthId = buildOpenMeterCustomerKey(
     identity.publicClientId,
     platformUserId,
   );
+  const meterSubject = identity.customerKey;
 
   await input.client.events.ingest({
     specversion: "1.0",
     type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     id: input.event.requestId,
     source: SIGNED_TICKET_EVENT_SOURCE,
-    subject: wireSubject,
+    subject: meterSubject,
     data: {
       client_id: identity.publicClientId,
       usage_subject: platformUserId,
@@ -202,7 +205,7 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
-      auth_id: wireSubject,
+      auth_id: wireAuthId,
       openmeter_customer_key: identity.customerKey,
     },
   });

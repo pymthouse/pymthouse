@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
+import CopyIdButton from "@/components/apps/CopyIdButton";
 import SidebarCreditPreview from "@/components/SidebarCreditPreview";
 
 interface NavItem {
@@ -110,7 +111,10 @@ export default function DashboardLayout({
     });
   };
 
-  const userRole = (session?.user as Record<string, unknown> | undefined)?.role as string | undefined;
+  const sessionUser = session?.user as Record<string, unknown> | undefined;
+  const userRole = sessionUser?.role as string | undefined;
+  const userId =
+    typeof sessionUser?.id === "string" ? sessionUser.id.trim() : "";
 
   const navItems = useMemo(
     () =>
@@ -331,10 +335,26 @@ export default function DashboardLayout({
                 <p className="text-sm font-medium truncate">
                   {session.user.name}
                 </p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <p className="text-xs text-zinc-500 truncate">
+                {session.user.email ? (
+                  <p className="mt-0.5 text-xs text-zinc-500 truncate">
                     {session.user.email}
                   </p>
+                ) : null}
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  {userId ? (
+                    <>
+                      <p
+                        className="min-w-0 truncate font-mono text-[11px] text-zinc-500"
+                        title={userId}
+                      >
+                        {userId}
+                      </p>
+                      <CopyIdButton
+                        value={userId}
+                        label="Copy user id"
+                      />
+                    </>
+                  ) : null}
                   {userRole && (
                     <span
                       className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${roleBadgeClassName(userRole)}`}

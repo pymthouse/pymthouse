@@ -145,6 +145,23 @@ test("rewriteKonnectRequestBody rewrites plan PUT bodies", () => {
   assert.ok(Array.isArray(rewritten.phases[0]?.rate_cards));
 });
 
+test("rewriteKonnectRequestBody maps customer usageAttribution to snake_case", () => {
+  const rewritten = rewriteKonnectRequestBody(
+    "/v3/openmeter/api/v1/customers/cust_1",
+    "PUT",
+    {
+      name: "owner:uuid-1",
+      usageAttribution: { subjectKeys: ["owner:uuid-1", "app_1:uuid-1"] },
+    },
+  );
+  assert.deepEqual(rewritten, {
+    name: "owner:uuid-1",
+    usage_attribution: {
+      subject_keys: ["owner:uuid-1", "app_1:uuid-1"],
+    },
+  });
+});
+
 test("rewriteKonnectRequestBody maps customerId to nested customer for subscription create", () => {
   const rewritten = rewriteKonnectRequestBody(
     "/v3/openmeter/api/v1/subscriptions",
