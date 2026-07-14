@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients, plans } from "@/db/schema";
+import { plans } from "@/db/schema";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   getHostedAdminClient,
@@ -9,13 +9,11 @@ import {
 } from "@/lib/openmeter/admin-client";
 import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
-import {
-  buildOpenMeterCustomerKey,
-  buildOwnerCustomerKey,
-} from "@/lib/openmeter/customer-key";
+import { buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
 import {
   ensureOpenMeterCustomer,
   ensureOpenMeterCustomerForAppUser,
+  listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
@@ -75,41 +73,6 @@ async function querySubjectsUsedUsdMicros(
   } catch {
     return 0n;
   }
-}
-
-async function listOwnedPublicClientIds(ownerUserId: string): Promise<string[]> {
-  const rows = await db
-    .select({
-      publicClientId: oidcClients.clientId,
-      developerAppId: developerApps.id,
-    })
-    .from(developerApps)
-    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(eq(developerApps.ownerId, ownerUserId.trim()));
-
-  return [
-    ...new Set(
-      rows
-        .map((row) => row.publicClientId?.trim() || row.developerAppId)
-        .filter((id): id is string => Boolean(id?.trim())),
-    ),
-  ];
-}
-
-/** Compound wire subjects (+ transitional) for owner discount burn measurement. */
-function buildOwnerUsageSubjects(
-  ownerUserId: string,
-  publicClientIds: string[],
-): string[] {
-  const ownerKey = buildOwnerCustomerKey(ownerUserId);
-  const subjects = [ownerKey];
-  for (const clientId of publicClientIds) {
-    subjects.push(
-      buildOpenMeterCustomerKey(clientId, ownerUserId),
-      buildOpenMeterCustomerKey(clientId, ownerKey),
-    );
-  }
-  return [...new Set(subjects)];
 }
 
 /**
@@ -177,7 +140,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
   const cycle = calendarMonthBoundsUtc(new Date());
   const usageSubjects =
     identity.isOwner && identity.ownerUserId
-      ? buildOwnerUsageSubjects(
+      ? buildOwnerMeterSubjects(
           identity.ownerUserId,
           [
             identity.publicClientId,

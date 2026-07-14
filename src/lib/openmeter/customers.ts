@@ -66,7 +66,7 @@ export async function ensureOwnerCustomerWireSubjects(
   return customer;
 }
 
-async function listOwnedPublicClientIds(ownerUserId: string): Promise<string[]> {
+export async function listOwnedPublicClientIds(ownerUserId: string): Promise<string[]> {
   const rows = await db
     .select({
       publicClientId: oidcClients.clientId,

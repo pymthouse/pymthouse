@@ -43,6 +43,28 @@ export function parseOwnerCustomerKey(key: string): string | null {
 }
 
 /**
+ * Meter subjects for shared-owner usage reads: compound wire keys plus
+ * transitional owner: / app_…:owner:… subjects.
+ */
+export function buildOwnerMeterSubjects(
+  ownerUserId: string,
+  publicClientIds: string[],
+): string[] {
+  const trimmedOwnerId = ownerUserId.trim();
+  const ownerKey = buildOwnerCustomerKey(trimmedOwnerId);
+  const subjects = [ownerKey];
+  for (const clientId of publicClientIds) {
+    const trimmedClientId = clientId.trim();
+    if (!trimmedClientId) continue;
+    subjects.push(
+      buildOpenMeterCustomerKey(trimmedClientId, trimmedOwnerId),
+      buildOpenMeterCustomerKey(trimmedClientId, ownerKey),
+    );
+  }
+  return [...new Set(subjects)];
+}
+
+/**
  * Normalize platform user ids from mint/device subjects:
  * `owner:{id}`, `user:{id}`, or bare `{id}` → `{id}`.
  */

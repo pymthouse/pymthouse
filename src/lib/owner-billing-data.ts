@@ -22,6 +22,7 @@ import {
 import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
+  buildOwnerMeterSubjects,
 } from "@/lib/openmeter/customer-key";
 import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
 import {
@@ -229,15 +230,10 @@ function buildOwnerWalletUsageSubjects(
   ownerUserId: string,
   ownedApps: OwnedApp[],
 ): string[] {
-  const ownerKey = buildOwnerCustomerKey(ownerUserId);
-  const subjects = [ownerKey];
-  for (const app of ownedApps) {
-    subjects.push(
-      buildOpenMeterCustomerKey(app.publicClientId, ownerUserId),
-      buildOpenMeterCustomerKey(app.publicClientId, ownerKey),
-    );
-  }
-  return [...new Set(subjects)];
+  return buildOwnerMeterSubjects(
+    ownerUserId,
+    ownedApps.map((app) => app.publicClientId),
+  );
 }
 
 async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
