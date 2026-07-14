@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import SdkTokenReveal from "@/components/apps/SdkTokenReveal";
 import type { OwnerApiKeyMintState } from "@/components/apps/use-owner-api-key-mint";
 
 type BannerApp = {
@@ -158,6 +159,8 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
         <CopyApiKeyButton apiKey={mintState.apiKey} />
       </div>
 
+      {mintState.sdkToken ? <SdkTokenReveal sdkToken={mintState.sdkToken} /> : null}
+
       <details className="text-[11px] text-amber-300/70">
         <summary className="cursor-pointer hover:text-amber-200">Show more details</summary>
         <p className="mt-1.5 text-amber-300/60">
@@ -171,6 +174,9 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
             {
               ...mintState.response,
               apiKey: maskApiKey(mintState.response.apiKey),
+              ...(typeof mintState.response.sdkToken === "string"
+                ? { sdkToken: maskApiKey(mintState.response.sdkToken) }
+                : {}),
             },
             null,
             2,

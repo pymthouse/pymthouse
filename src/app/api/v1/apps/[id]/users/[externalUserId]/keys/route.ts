@@ -15,6 +15,7 @@ import {
   listAppUserApiKeys,
   revokeAppUserApiKey,
 } from "@/lib/app-api-keys";
+import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
 
 async function canAccessUserKeys(request: NextRequest, clientId: string) {
   const app = await getProviderApp(clientId);
@@ -130,18 +131,21 @@ export async function POST(
     },
   });
 
+  const sdkToken = createLivepeerPythonSdkToken({ apiKey: created.apiKey });
+
   return NextResponse.json(
     {
       clientId,
       externalUserId,
       apiKey: created.apiKey,
+      sdkToken,
       id: created.id,
       prefix: created.prefix,
       suffix: created.suffix,
       label: created.label,
       createdAt: created.createdAt,
       message:
-        "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer.",
+        "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer, or use sdkToken as --token with livepeer-python-sdk.",
       correlation_id: correlationId,
     },
     { status: 201 },

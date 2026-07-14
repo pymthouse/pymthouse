@@ -26,6 +26,7 @@ import {
 } from "@/lib/oidc/grants";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
 import { mintOwnerApiKey } from "../mint-owner-api-key";
+import SdkTokenReveal from "@/components/apps/SdkTokenReveal";
 
 const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
 
@@ -479,6 +480,7 @@ async function executeM2mTokenTest(input: {
 }): Promise<{
   result: string;
   rawAccessToken: string | null;
+  sdkToken: string | null;
   tokenKind: TokenTestKind;
 }> {
   if (input.activeKind === "owner") {
@@ -501,10 +503,15 @@ async function executeM2mTokenTest(input: {
     if (!compositeKey) {
       throw new Error("API key mint response missing apiKey.");
     }
+    const sdkToken =
+      typeof minted.sdkToken === "string" && minted.sdkToken.trim()
+        ? minted.sdkToken.trim()
+        : null;
     if (input.useBearerSigning) {
       return {
         result: formatTokenTestResult(minted),
         rawAccessToken: compositeKey,
+        sdkToken,
         tokenKind: "api_key",
       };
     }
@@ -515,6 +522,7 @@ async function executeM2mTokenTest(input: {
     return {
       result: formatTokenTestResult(exchanged),
       rawAccessToken: extractAccessToken(exchanged),
+      sdkToken: null,
       tokenKind: "jwt",
     };
   }
@@ -531,6 +539,7 @@ async function executeM2mTokenTest(input: {
   return {
     result: formatTokenTestResult(data),
     rawAccessToken: extractAccessToken(data),
+    sdkToken: null,
     tokenKind: "jwt",
   };
 }
@@ -678,6 +687,7 @@ function M2mTokenTestResult({
   error,
   result,
   rawAccessToken,
+  sdkToken,
   tokenKind,
   onCopy,
   copiedLabel,
@@ -687,6 +697,7 @@ function M2mTokenTestResult({
   error: string | null;
   result: string | null;
   rawAccessToken: string | null;
+  sdkToken: string | null;
   tokenKind: TokenTestKind | null;
   onCopy: (text: string, label: string) => void;
   copiedLabel: string | null;
@@ -761,6 +772,10 @@ function M2mTokenTestResult({
             {copiedLabel === tokenCopyLabel ? "Copied" : "Copy"}
           </button>
         </div>
+      ) : null}
+
+      {tokenKind === "api_key" && sdkToken ? (
+        <SdkTokenReveal sdkToken={sdkToken} />
       ) : null}
 
       {tokenKind === "api_key" ? (
@@ -998,6 +1013,7 @@ function M2mTokenTestPanel({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [rawAccessToken, setRawAccessToken] = useState<string | null>(null);
+  const [sdkToken, setSdkToken] = useState<string | null>(null);
   const [resultTokenKind, setResultTokenKind] = useState<TokenTestKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clientSecretInput, setClientSecretInput] = useState("");
@@ -1099,6 +1115,7 @@ function M2mTokenTestPanel({
     setError(null);
     setResult(null);
     setRawAccessToken(null);
+    setSdkToken(null);
     setResultTokenKind(null);
     try {
       const exchange = await executeM2mTokenTest({
@@ -1112,6 +1129,7 @@ function M2mTokenTestPanel({
       });
       setResult(exchange.result);
       setRawAccessToken(exchange.rawAccessToken);
+      setSdkToken(exchange.sdkToken);
       setResultTokenKind(exchange.tokenKind);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Token request failed.");
@@ -1206,6 +1224,7 @@ function M2mTokenTestPanel({
         error={error}
         result={result}
         rawAccessToken={rawAccessToken}
+        sdkToken={sdkToken}
         tokenKind={resultTokenKind}
         onCopy={onCopy}
         copiedLabel={copiedLabel}
@@ -1214,6 +1233,7 @@ function M2mTokenTestPanel({
           setError(null);
           setResult(null);
           setRawAccessToken(null);
+          setSdkToken(null);
           setResultTokenKind(null);
         }}
       />

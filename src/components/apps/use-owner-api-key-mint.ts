@@ -11,7 +11,13 @@ type MintableApp = {
 
 export type OwnerApiKeyMintState<TApp extends MintableApp> =
   | { phase: "minting"; appId: string }
-  | { phase: "success"; app: TApp; apiKey: string; response: Record<string, unknown> }
+  | {
+      phase: "success";
+      app: TApp;
+      apiKey: string;
+      sdkToken: string | null;
+      response: Record<string, unknown>;
+    }
   | { phase: "error"; app: TApp; message: string };
 
 export function useOwnerApiKeyMint<TApp extends MintableApp>() {
@@ -35,7 +41,11 @@ export function useOwnerApiKeyMint<TApp extends MintableApp>() {
             ? data.apiKey.trim()
             : null;
         if (!apiKey) throw new Error("API key mint response missing apiKey.");
-        setMintState({ phase: "success", app, apiKey, response: data });
+        const sdkToken =
+          typeof data.sdkToken === "string" && data.sdkToken.trim()
+            ? data.sdkToken.trim()
+            : null;
+        setMintState({ phase: "success", app, apiKey, sdkToken, response: data });
       })
       .catch((err) => {
         const message =
