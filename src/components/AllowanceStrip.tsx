@@ -1,67 +1,55 @@
-import { formatUsdMicrosDisplay } from "@/lib/format-usd-micros";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import {
+  formatUsdMicrosDisplay,
+  hasPositiveUsdMicrosBalance,
+} from "@/lib/format-usd-micros";
 
 type AllowanceStripProps = Readonly<{
-  /** Network fees consumed this billing period (USD micros). */
+  /** Live prepaid credit remaining (USD micros) — same ledger as the mint/balance gates. */
+  balanceUsdMicros: string;
+  /** Lifetime prepaid grants (USD micros). */
+  lifetimeGrantedUsdMicros: string;
+  /** Lifetime grants minus live balance (USD micros). */
   consumedUsdMicros: string;
-  /** Signed / metered request count this period. */
+  /** Signed / metered request count this period (usage context only). */
   requestCount: number;
   /**
-   * Total granted balance (Starter included + prepaid credits), USD micros.
-   * Defaults to Starter included only when omitted.
+   * Clarifies Konnect customer scope (credits are per end-user customer;
+   * UI may sum many wallets).
    */
-  grantedUsdMicros?: string;
-  /**
-   * Remaining spendable balance. When omitted, derived as granted − consumed
-   * (Starter-only math). Pass explicitly when prepaid credits are included.
-   */
-  remainingUsdMicros?: string;
-  /** When true, label as Allowance (includes top-ups) instead of Starter. */
-  hasPrepaidCredits?: boolean;
+  scopeHint?: string;
 }>;
 
 /**
- * Allowance / credit-remaining strip with usage meter.
- * Period / reset details live on the parent panel's info tooltip.
+ * Prepaid credit strip backed by the live Konnect/OpenMeter credit ledger
+ * (not period network fees vs a fixed $5 Starter estimate).
  */
 export default function AllowanceStrip({
+  balanceUsdMicros,
+  lifetimeGrantedUsdMicros,
   consumedUsdMicros,
   requestCount,
-  grantedUsdMicros,
-  remainingUsdMicros,
-  hasPrepaidCredits = false,
+  scopeHint,
 }: AllowanceStripProps) {
-  const grantedRaw = grantedUsdMicros ?? defaultStarterIncludedUsdMicros();
-  const granted = BigInt(grantedRaw || "0");
-  if (granted <= 0n) {
+  const granted = parseNonNegativeMicros(lifetimeGrantedUsdMicros);
+  const remaining = parseNonNegativeMicros(balanceUsdMicros);
+  const consumed = parseNonNegativeMicros(consumedUsdMicros);
+  if (granted == null || remaining == null || consumed == null) {
     return null;
   }
 
-  let consumed = 0n;
-  try {
-    consumed = BigInt(consumedUsdMicros || "0");
-  } catch {
-    consumed = 0n;
+  // Nothing to show until at least one grant exists (or residual live balance).
+  if (granted <= 0n && remaining <= 0n) {
+    return null;
   }
-  if (consumed < 0n) consumed = 0n;
 
-  let remaining: bigint;
-  if (remainingUsdMicros != null && remainingUsdMicros !== "") {
-    try {
-      remaining = BigInt(remainingUsdMicros);
-    } catch {
-      remaining = consumed >= granted ? 0n : granted - consumed;
-    }
-  } else {
-    remaining = consumed >= granted ? 0n : granted - consumed;
+  const hasAccess = hasPositiveUsdMicrosBalance(remaining.toString());
+  const denom = granted > 0n ? granted : remaining + consumed;
+  let usedPct = 0;
+  if (denom > 0n) {
+    usedPct = Number((consumed * 10000n) / denom) / 100;
   }
-  if (remaining < 0n) remaining = 0n;
-
-  const hasAccess = remaining > 0n;
-  const usedPct = Number((consumed * 10000n) / granted) / 100;
-  const pct = Math.min(100, usedPct);
-  const nearExhausted = pct >= 90;
-  const label = hasPrepaidCredits ? "Allowance" : "Starter allowance";
+  const pct = Math.min(100, Math.max(0, usedPct));
+  const nearExhausted = hasAccess && pct >= 90;
 
   let barClass = "bg-gradient-to-r from-emerald-600 to-emerald-400";
   if (!hasAccess) {
@@ -70,23 +58,24 @@ export default function AllowanceStrip({
     barClass = "bg-gradient-to-r from-amber-600 to-amber-400";
   }
 
+  const grantedDisplay = granted > 0n ? granted : remaining;
+
   return (
     <div className="mb-5 flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3.5">
       <div className="flex flex-wrap items-center gap-2">
         <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
-          {label}
+          Prepaid credits
         </p>
-        {hasPrepaidCredits ? (
-          <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-emerald-400">
-            Includes top-ups
-          </span>
-        ) : null}
         {!hasAccess && (
           <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-amber-400">
             Exhausted
           </span>
         )}
       </div>
+
+      {scopeHint ? (
+        <p className="text-[11px] leading-snug text-zinc-600">{scopeHint}</p>
+      ) : null}
 
       <div className="flex flex-wrap items-baseline gap-3">
         <span className="font-mono text-[15px] tabular-nums leading-none text-zinc-400">
@@ -95,7 +84,7 @@ export default function AllowanceStrip({
           </b>
           <span className="text-zinc-500">
             {" "}
-            / {formatUsdMicrosDisplay(granted.toString())} remaining
+            / {formatUsdMicrosDisplay(grantedDisplay.toString())} remaining
           </span>
         </span>
       </div>
@@ -106,7 +95,7 @@ export default function AllowanceStrip({
           min={0}
           max={100}
           value={pct}
-          aria-label={`${label} used`}
+          aria-label="Prepaid credits used"
         />
         <div
           className={`pointer-events-none absolute inset-y-0 left-0 rounded-[3px] ${barClass}`}
@@ -123,7 +112,7 @@ export default function AllowanceStrip({
           <b className="font-medium text-zinc-300">
             {formatUsdMicrosDisplay(consumed.toString())}
           </b>{" "}
-          consumed
+          credits consumed
         </span>
         <span className="font-mono text-[11.5px] text-zinc-600">
           {pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}% used
@@ -131,4 +120,13 @@ export default function AllowanceStrip({
       </div>
     </div>
   );
+}
+
+function parseNonNegativeMicros(raw: string): bigint | null {
+  try {
+    const value = BigInt(raw || "0");
+    return value < 0n ? 0n : value;
+  } catch {
+    return null;
+  }
 }

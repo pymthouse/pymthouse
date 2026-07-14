@@ -51,6 +51,8 @@ function normalizeKonnectPlanPhases(phases: unknown): unknown {
         const rateCard = { ...(card as Record<string, unknown>) };
         delete rateCard.type;
         delete rateCard.entitlement_template;
+        // Keep intentional discounts.usage (included plan allowance). Do not
+        // invent discounts here — callers must set them explicitly.
 
         if (
           rateCard.feature == null &&
@@ -97,8 +99,8 @@ export function buildKonnectUsageRateCard(input: {
   featureId: string;
   unitAmount: string;
   billingCadence?: string;
-  /** Free usage units (USD micros for network_spend) before billing starts. */
-  includedMicros?: number;
+  /** Included usage allowance in USD micros (plan discounts.usage). */
+  includedUsdMicros?: number;
 }): Record<string, unknown> {
   const card: Record<string, unknown> = {
     key: input.key,
@@ -110,13 +112,15 @@ export function buildKonnectUsageRateCard(input: {
       amount: input.unitAmount,
     },
   };
-
-  if (input.includedMicros != null && input.includedMicros > 0) {
+  if (
+    input.includedUsdMicros != null &&
+    Number.isFinite(input.includedUsdMicros) &&
+    input.includedUsdMicros > 0
+  ) {
     card.discounts = {
-      usage: String(input.includedMicros),
+      usage: String(Math.floor(input.includedUsdMicros)),
     };
   }
-
   return card;
 }
 

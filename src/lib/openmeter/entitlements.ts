@@ -12,15 +12,8 @@ import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "./client-factory";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
-import { getKonnectEntitlementHasAccess } from "./konnect-entitlements";
-import { getKonnectCreditBalanceUsdMicros } from "./konnect-credit-grants";
+import { getKonnectCreditBalance } from "./konnect-credits";
 import { shouldUseKonnectRoutes } from "./route-mode";
-import {
-  getPrimaryOpenMeterSubscriptionForAppUser,
-  isOpenMeterSubscriptionActive,
-} from "./subscription-read";
-import { queryOpenMeterUsage } from "./usage-read";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
 export { ensureOpenMeterCustomer } from "./customers";
@@ -50,103 +43,24 @@ export async function grantTrialCredits(input: {
   );
 }
 
-/**
- * Konnect's entitlement-access endpoint only reports a boolean; it never
- * surfaces the consumed amount. Derive consumption from the signer-backed
- * network-fee meter (the same meter the usage dashboard reads) so the trial
- * allowance actually draws down. The trial grant is a one-year credit, so a
- * 365-day lookback safely bounds the meter query when the subscription start
- * is unknown.
- */
-async function sumKonnectNetworkFeeUsdMicros(input: {
-  clientId: string;
-  externalUserId: string;
-  startDate?: string | null;
-}): Promise<bigint> {
-  const startDate =
-    input.startDate ||
-    new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
-  const rows = await queryOpenMeterUsage({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-    startDate,
-    endDate: new Date().toISOString(),
-  });
-  let total = 0n;
-  for (const row of rows) {
-    total += BigInt(row.networkFeeUsdMicros || "0");
-  }
-  return total;
-}
-
+/** Konnect prepaid credits ledger (GET /credits/balance + grants list). */
 async function getKonnectTrialCreditBalance(input: {
-  clientId: string;
-  externalUserId: string;
   customerId: string;
-  featureKey: string;
   apiKey?: string;
 }): Promise<TrialCreditBalance | null> {
-  let hasAccess = await getKonnectEntitlementHasAccess({
+  const credits = await getKonnectCreditBalance({
     customerId: input.customerId,
-    featureKey: input.featureKey,
     apiKey: input.apiKey,
   });
-  if (hasAccess === null) {
+  if (!credits) {
     return null;
   }
 
-  let periodStart: string | null = null;
-  if (!hasAccess) {
-    const starterSubscription = await getPrimaryOpenMeterSubscriptionForAppUser({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
-    });
-    if (starterSubscription && isOpenMeterSubscriptionActive(starterSubscription.status)) {
-      // Konnect plan rate_cards.discounts.usage does not always surface in
-      // entitlement-access; an active starter subscription implies included trial usage.
-      //
-      // Known limitation: this assumes subscription existence implies provisioned
-      // trial credits. If a subscription exists but credits were never granted
-      // (e.g. plan sync or discount misconfiguration), the grant below is assumed
-      // present. Monitor until Konnect surfaces the discount in entitlement-access.
-      hasAccess = true;
-      periodStart = starterSubscription.activeFrom;
-    }
-  }
-
-  const defaultGrant = defaultStarterIncludedUsdMicros();
-  if (!hasAccess) {
-    return {
-      hasAccess: false,
-      balanceUsdMicros: "0",
-      consumedUsdMicros: "0",
-      lifetimeGrantedUsdMicros: "0",
-    };
-  }
-
-  const grant = BigInt(defaultGrant);
-  const consumed = await sumKonnectNetworkFeeUsdMicros({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-    startDate: periodStart,
-  });
-  const trialBalance = consumed >= grant ? 0n : grant - consumed;
-  const prepaidCredits =
-    (await getKonnectCreditBalanceUsdMicros({
-      customerId: input.customerId,
-      apiKey: input.apiKey,
-    })) ?? 0n;
-  // Prepaid credit grants (MoonPay on-ramp / manual top-ups) sit in the
-  // Konnect credits wallet; trial included usage is still derived from the
-  // starter subscription + network_fee meter.
-  const balance = trialBalance + prepaidCredits;
-  const lifetimeGranted = grant + prepaidCredits;
-
   return {
-    hasAccess: balance > 0n,
-    balanceUsdMicros: balance.toString(),
-    consumedUsdMicros: consumed.toString(),
-    lifetimeGrantedUsdMicros: lifetimeGranted.toString(),
+    hasAccess: credits.balanceUsdMicros > 0n,
+    balanceUsdMicros: credits.balanceUsdMicros.toString(),
+    consumedUsdMicros: credits.consumedUsdMicros.toString(),
+    lifetimeGrantedUsdMicros: credits.lifetimeGrantedUsdMicros.toString(),
   };
 }
 
@@ -160,18 +74,23 @@ export async function getTrialCreditBalance(input: {
     return null;
   }
 
-  const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
-  const featureKey = input.featureKey || (await getTrialFeatureKeyForApp(input.clientId));
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const customerKey = identity.customerKey;
+  const featureKey =
+    input.featureKey || (await getTrialFeatureKeyForApp(identity.developerAppId));
 
   const customer = await ensureOpenMeterCustomer(client, customerKey);
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
 
   if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
     return getKonnectTrialCreditBalance({
-      clientId: input.clientId,
-      externalUserId: input.externalUserId,
       customerId: customer.id,
-      featureKey,
       apiKey,
     });
   }
@@ -186,19 +105,44 @@ export async function getTrialCreditBalance(input: {
     };
   }
 
-  const balance = Math.max(0, Math.floor(value.balance ?? 0));
-  const usage = Math.max(0, Math.floor(value.usage ?? 0));
-  const granted = Math.max(
-    0,
-    Math.floor(value.totalAvailableGrantAmount ?? balance + usage),
-  );
+  // Keep integer micros (including 1–99) so the mint gate matches Konnect/collector.
+  const balance = entitlementAmountToMicros(value.balance);
+  const usage = entitlementAmountToMicros(value.usage);
+  const grantedRaw = value.totalAvailableGrantAmount;
+  const granted =
+    grantedRaw == null ? balance + usage : entitlementAmountToMicros(grantedRaw);
 
   return {
-    hasAccess: Boolean(value.hasAccess) && balance > 0,
-    balanceUsdMicros: String(balance),
-    consumedUsdMicros: String(usage),
-    lifetimeGrantedUsdMicros: String(granted),
+    hasAccess: balance > 0n,
+    balanceUsdMicros: balance.toString(),
+    consumedUsdMicros: usage.toString(),
+    lifetimeGrantedUsdMicros: granted.toString(),
   };
+}
+
+/** Parse self-hosted OpenMeter entitlement amounts into non-negative USD micros. */
+function entitlementAmountToMicros(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === "bigint") return value > 0n ? value : 0n;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return 0n;
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0n;
+    if (/^\d+$/.test(t)) {
+      try {
+        return BigInt(t);
+      } catch {
+        return 0n;
+      }
+    }
+    const parsed = Number(t);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0n;
+    return BigInt(Math.trunc(parsed));
+  }
+  return 0n;
 }
 
 export type SignedTicketOpenMeterEvent = {
@@ -221,19 +165,37 @@ export async function ingestSignedTicketEvent(input: {
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
   const usageSubject = input.event.externalUserId.trim();
-  const subject = buildOpenMeterCustomerKey(input.event.clientId, usageSubject);
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.event.clientId,
+    externalUserId: usageSubject,
+  });
+  // Wire auth_id stays compound app_…:platformUserId for analytics.
+  // CloudEvent subject must be the Konnect customer key for owners
+  // (owner:{id}) — Konnect billing beta clears multi-subject attribution
+  // when a subscription is created, so compound subjects cannot settle.
+  const platformUserId = identity.isOwner
+    ? (identity.ownerUserId as string)
+    : usageSubject;
+  const wireAuthId = buildOpenMeterCustomerKey(
+    identity.publicClientId,
+    platformUserId,
+  );
+  const meterSubject = identity.customerKey;
 
   await input.client.events.ingest({
     specversion: "1.0",
     type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     id: input.event.requestId,
     source: SIGNED_TICKET_EVENT_SOURCE,
-    subject,
+    subject: meterSubject,
     data: {
-      client_id: input.event.clientId,
-      usage_subject: usageSubject,
-      usage_subject_type: "external_user_id",
-      external_user_id: usageSubject,
+      client_id: identity.publicClientId,
+      usage_subject: platformUserId,
+      usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
+      external_user_id: platformUserId,
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: input.event.feeWei,
       pixels: input.event.pixels,
@@ -243,7 +205,8 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
-      auth_id: subject,
+      auth_id: wireAuthId,
+      openmeter_customer_key: identity.customerKey,
     },
   });
 }

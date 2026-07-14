@@ -402,8 +402,8 @@ export default function AppsListSection({
     <section className="rounded-xl border border-emerald-500/15 bg-white/[0.02] backdrop-blur-sm shadow-[inset_0_1px_0_rgba(52,211,153,0.06)]">
       <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="font-semibold text-zinc-100">{title}</h3>
-          <p className="text-sm text-zinc-500 mt-0.5">{summaryText}</p>
+          {title ? <h3 className="font-semibold text-zinc-100">{title}</h3> : null}
+          <p className={`text-sm text-zinc-500 ${title ? "mt-0.5" : ""}`}>{summaryText}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           {headerRight}

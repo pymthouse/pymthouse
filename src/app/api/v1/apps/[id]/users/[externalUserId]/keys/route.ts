@@ -141,7 +141,7 @@ export async function POST(
       label: created.label,
       createdAt: created.createdAt,
       message:
-        "Store this API key securely. It will not be shown again. Use the full app_<clientId>.pmth_<key> value as Authorization: Bearer <token> for the remote signer.",
+        "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer.",
       correlation_id: correlationId,
     },
     { status: 201 },

@@ -59,3 +59,14 @@ export const postgresClient = new Proxy({} as ReturnType<typeof postgres>, {
     return value;
   },
 });
+
+/** Close the lazy postgres pool (CLI scripts). No-op if never opened. */
+export async function closeDb(options?: { timeout?: number }): Promise<void> {
+  const client = globalForDb.pymthousePostgres;
+  if (!client) {
+    return;
+  }
+  await client.end({ timeout: options?.timeout ?? 5 });
+  globalForDb.pymthousePostgres = undefined;
+  globalForDb.pymthouseDb = undefined;
+}

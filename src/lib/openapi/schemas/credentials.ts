@@ -81,7 +81,8 @@ export const TokenExchangeRequestSchema = z
       .literal("urn:ietf:params:oauth:grant-type:token-exchange")
       .openapi({ description: "RFC 8693 token exchange grant type." }),
     subject_token: z.string().openapi({
-      description: "User access JWT or per-app-user API key (`pmth_*`).",
+      description:
+        "User access JWT, opaque API-key secret, or composite `app_<24hex>_<secret>`.",
     }),
     subject_token_type: z
       .literal("urn:ietf:params:oauth:token-type:access_token")

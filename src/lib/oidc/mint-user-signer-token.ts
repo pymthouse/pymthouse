@@ -11,6 +11,7 @@ import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
@@ -163,7 +164,9 @@ export function mintAllowanceGateDecision(
       message: "Billing allowance could not be confirmed",
     };
   }
-  if (!allowance.hasAccess) {
+  // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
+  // remainders still authorize after collector ceil-to-micro billing.
+  if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
     return {
       code: "trial_credits_exhausted",
       message: "Starter allowance exhausted",
@@ -192,17 +195,31 @@ export async function mintSignerJwtForExternalUser(input: {
     );
   }
 
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.publicClientId,
+    externalUserId,
+  });
+  // Wire JWT/sub stays the bare platform user id. Owner billing wallet is
+  // owner:{users.id} via resolveOpenMeterBillingIdentity / Konnect attribution.
+  const provisionExternalUserId = identity.isOwner
+    ? (identity.ownerUserId as string)
+    : externalUserId;
+  const jwtExternalUserId = provisionExternalUserId;
+
   let allowance: TrialCreditBalance | null;
   try {
     if (isHostedAdminClientAvailable()) {
       await ensureAppUserKonnectCustomer({
-        clientId: input.developerAppId,
-        externalUserId,
+        clientId: identity.developerAppId,
+        externalUserId: provisionExternalUserId,
       });
     }
     ({ allowance } = await provisionAppUserBilling({
-      clientId: input.developerAppId,
-      externalUserId,
+      clientId: identity.developerAppId,
+      externalUserId: provisionExternalUserId,
     }));
   } catch (err) {
     if (isHostedAdminClientAvailable()) {
@@ -213,6 +230,23 @@ export async function mintSignerJwtForExternalUser(input: {
       );
     }
     throw err;
+  }
+
+  // Mint gate uses credits + remaining plan discount (discount covers included usage).
+  if (isHostedAdminClientAvailable()) {
+    const { getSpendableUsdMicros } = await import("@/lib/openmeter/spendable-allowance");
+    const spendable = await getSpendableUsdMicros({
+      clientId: identity.publicClientId,
+      externalUserId: provisionExternalUserId,
+    });
+    if (spendable != null) {
+      allowance = {
+        hasAccess: BigInt(spendable) > 0n,
+        balanceUsdMicros: spendable,
+        consumedUsdMicros: allowance?.consumedUsdMicros ?? "0",
+        lifetimeGrantedUsdMicros: allowance?.lifetimeGrantedUsdMicros ?? "0",
+      };
+    }
   }
 
   enforceMintAllowanceGate(allowance);
@@ -226,13 +260,13 @@ export async function mintSignerJwtForExternalUser(input: {
     scope: "sign:job",
     scp: ["sign:job"],
     client_id: input.publicClientId,
-    external_user_id: externalUserId,
-    user_type: "external_user",
+    external_user_id: jwtExternalUserId,
+    user_type: identity.isOwner ? "app_owner" : "external_user",
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)
     .setAudience(audience)
-    .setSubject(externalUserId)
+    .setSubject(jwtExternalUserId)
     .setJti(uuidv4())
     .setIssuedAt(nowSeconds)
     .setNotBefore(nowSeconds)

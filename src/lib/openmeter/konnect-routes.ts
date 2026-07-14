@@ -1,4 +1,4 @@
-import { rewriteKonnectPlanRequestBody } from "./konnect-plan-body";
+import { deepCamelToSnake, rewriteKonnectPlanRequestBody } from "./konnect-plan-body";
 
 /**
  * Maps @openmeter/sdk paths (self-hosted /api/v1|v2) to Konnect Metering & Billing v3 paths.
@@ -281,6 +281,36 @@ function rewriteKonnectSubscriptionCreateBody(body: unknown): unknown {
   return next;
 }
 
+function isKonnectCustomerMutation(pathname: string, method: string): boolean {
+  const normalizedPath = rewriteKonnectPathname(pathname, method);
+  const verb = method.toUpperCase();
+  if (verb !== "POST" && verb !== "PUT" && verb !== "PATCH") {
+    return false;
+  }
+  // /customers or /customers/{id} — not nested entitlement/credit routes.
+  return /\/customers(?:\/[^/]+)?$/.test(normalizedPath);
+}
+
+function normalizeKonnectCustomerRecord(record: unknown): unknown {
+  if (!record || typeof record !== "object") {
+    return record;
+  }
+  const item = { ...(record as Record<string, unknown>) };
+  const attribution =
+    item.usage_attribution ?? item.usageAttribution;
+  if (attribution && typeof attribution === "object") {
+    const attr = attribution as Record<string, unknown>;
+    const subjectKeys = attr.subject_keys ?? attr.subjectKeys;
+    item.usageAttribution = {
+      subjectKeys: Array.isArray(subjectKeys)
+        ? subjectKeys.filter((key): key is string => typeof key === "string")
+        : [],
+    };
+    delete item.usage_attribution;
+  }
+  return item;
+}
+
 /** Normalize SDK JSON bodies to Konnect v3 request shapes. */
 export function rewriteKonnectRequestBody(
   pathname: string,
@@ -292,6 +322,10 @@ export function rewriteKonnectRequestBody(
 
   if (isKonnectPlanMutation(pathname, method)) {
     return rewriteKonnectPlanRequestBody(body);
+  }
+
+  if (isKonnectCustomerMutation(pathname, method)) {
+    return deepCamelToSnake(body);
   }
 
   if (verb === "POST" && normalizedPath.endsWith("/subscriptions")) {
@@ -328,7 +362,7 @@ export function normalizeKonnectListResponse(body: unknown): unknown {
     !("items" in body)
   ) {
     const data = ((body as Record<string, unknown>).data as unknown[]).map(
-      normalizeKonnectSubscriptionRecord,
+      (item) => normalizeKonnectCustomerRecord(normalizeKonnectSubscriptionRecord(item)),
     );
     return { ...(body as Record<string, unknown>), items: data, data };
   }
@@ -346,6 +380,14 @@ export function normalizeKonnectResponseBody(body: unknown): unknown {
     ("plan_id" in listed || "planId" in listed || "plan" in listed)
   ) {
     return normalizeKonnectSubscriptionRecord(listed);
+  }
+  if (
+    listed &&
+    typeof listed === "object" &&
+    "id" in listed &&
+    ("key" in listed || "usage_attribution" in listed || "usageAttribution" in listed)
+  ) {
+    return normalizeKonnectCustomerRecord(listed);
   }
   return listed;
 }
