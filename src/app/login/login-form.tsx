@@ -2,6 +2,7 @@
 
 import { sanitizeUrl } from "@braintree/sanitize-url";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { MarketingFooter } from "@/components/MarketingFooter";
@@ -126,7 +127,12 @@ export function LoginForm() {
           ) : (
             <>
               <h1 className="text-3xl font-bold tracking-tight">
-                <span className="text-emerald-400">pymt</span>house
+                <Link
+                  href="/"
+                  className="inline-block hover:opacity-90 transition-opacity"
+                >
+                  <span className="text-emerald-400">pymt</span>house
+                </Link>
               </h1>
               <p className="text-zinc-500 mt-2 text-sm">Log in or sign up</p>
             </>
