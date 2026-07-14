@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthorizedProviderApp } from "@/lib/provider-apps";
+import {
+  canManageMerchantBilling,
+  getAuthorizedProviderApp,
+} from "@/lib/provider-apps";
 import { createOnRampSession } from "@/lib/onramp/sessions";
+import { SANDBOX_ONRAMP_USD_AMOUNT } from "@/lib/onramp/amount";
 
 export async function POST(
   request: NextRequest,
@@ -11,15 +15,16 @@ export async function POST(
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!(await canManageMerchantBilling(access))) {
+    return NextResponse.json(
+      { error: "Only the app owner or platform admin can fund prepaid credits." },
+      { status: 403 },
+    );
+  }
 
   const body = await request.json().catch(() => ({}));
-  const externalUserId = String(body.externalUserId || "").trim();
   const depositWalletAddress = String(body.depositWalletAddress || "").trim();
   const onRampTransactionId = String(body.onRampTransactionId || "").trim();
-  const fiatCurrencyCode =
-    typeof body.fiatCurrencyCode === "string" ? body.fiatCurrencyCode.trim() : undefined;
-  const fiatAmount =
-    typeof body.fiatAmount === "string" ? body.fiatAmount.trim() : undefined;
   const onrampProvider =
     typeof body.onrampProvider === "string" ? body.onrampProvider.trim() : undefined;
   const turnkeyOrganizationId =
@@ -27,11 +32,16 @@ export async function POST(
       ? body.turnkeyOrganizationId.trim()
       : undefined;
 
-  if (!externalUserId || !depositWalletAddress || !onRampTransactionId) {
+  // Owner-funding only: credit the signed-in owner, never a client-chosen subject.
+  const externalUserId = access.userId;
+  // Amount is fixed server-side for the sandbox demo (Turnkey status API has no amount).
+  const fiatCurrencyCode = "USD";
+  const fiatAmount = SANDBOX_ONRAMP_USD_AMOUNT;
+
+  if (!depositWalletAddress || !onRampTransactionId) {
     return NextResponse.json(
       {
-        error:
-          "externalUserId, depositWalletAddress, and onRampTransactionId are required",
+        error: "depositWalletAddress and onRampTransactionId are required",
       },
       { status: 400 },
     );
@@ -55,6 +65,8 @@ export async function POST(
       onRampTransactionId: session.onRampTransactionId,
       externalUserId,
       depositWalletAddress,
+      fiatCurrencyCode,
+      fiatAmount,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create on-ramp session";

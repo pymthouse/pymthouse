@@ -3,6 +3,9 @@
 const MICROS_PER_DOLLAR = 1_000_000n;
 const MAX_FRACTION_DIGITS = 6;
 
+/** Fixed MoonPay sandbox demo amount (must be > $20). */
+export const SANDBOX_ONRAMP_USD_AMOUNT = "25";
+
 /**
  * Strict decimal → USD micros. Rejects malformed strings, non-USD, and
  * amounts that would grant 0 micros (avoids parseFloat / float rounding).

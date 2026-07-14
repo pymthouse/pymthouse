@@ -1,9 +1,9 @@
 # MoonPay fiat on-ramp local demo
 
 Short local demonstration of Turnkey Wallet Kit + MoonPay sandbox funding an app
-owner's OpenMeter allowance in pymthouse.
+owner's prepaid OpenMeter credits in pymthouse.
 
-Phase 1 credits **USD allowance** via OpenMeter after MoonPay clears. Moving ETH
+Phase 1 credits **prepaid USD** via Konnect after MoonPay clears. Moving ETH
 to the Arbitrum remote signer / TicketBroker deposit is **phase 2** (chain +
 sweep work).
 
@@ -63,17 +63,18 @@ No Railway deploy is required for this demo.
 ## Demo flow
 
 1. Sign in at `/login` with **Turnkey Wallet Kit** (not Google/GitHub only).
-2. Open your app → **Usage** tab (`/apps/{clientId}/usage`).
-3. In **Fund account (demo)**, enter a USD amount **> 20** (MoonPay minimum).
-4. Click **Fund with MoonPay** and complete the sandbox purchase in the popup.
+2. Open **Billing** (`/billing`).
+3. Click **Fund with MoonPay** (sandbox demo uses a fixed **$25** amount).
+4. Complete the sandbox purchase in the MoonPay popup window.
 5. pymthouse:
-   - registers `onramp_sessions` with your deposit wallet + `externalUserId`
+   - registers `onramp_sessions` for your owner identity + deposit wallet
    - verifies Turnkey `getOnRampTransactionStatus === COMPLETED`
-   - grants OpenMeter allowance (`source: onramp`)
-6. Confirm balance increased in the panel and via:
+   - grants Konnect prepaid credits (`source: onramp`, idempotent on session id)
+   - refreshes the prepaid strip on Billing
+6. Confirm balance increased on Billing and via:
 
 ```bash
-curl -s "http://localhost:3001/api/v1/apps/{clientId}/usage/balance?externalUserId={ownerUserId}" \
+curl -s "http://localhost:3001/api/v1/me/credits" \
   -H "Cookie: ..." | jq
 ```
 
@@ -93,15 +94,14 @@ LIMIT 5;
 | `POST` | `/api/v1/apps/{clientId}/onramp/sessions` | App owner session |
 | `POST` | `/api/v1/apps/{clientId}/onramp/sessions/{sessionId}/settle` | App owner session |
 
-Create session body:
+Create session body (owner identity and sandbox amount are set **server-side**):
 
 ```json
 {
-  "externalUserId": "<platform-user-id>",
   "depositWalletAddress": "0x...",
   "onRampTransactionId": "<turnkey-on-ramp-tx-id>",
-  "fiatCurrencyCode": "USD",
-  "fiatAmount": "25"
+  "turnkeyOrganizationId": "<turnkey-sub-org-id>",
+  "onrampProvider": "moonpay"
 }
 ```
 

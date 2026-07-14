@@ -14,6 +14,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { SANDBOX_ONRAMP_USD_AMOUNT } from "@/lib/onramp/amount";
 
 type FundAccountOnRampPanelProps = Readonly<{
   clientId: string;
@@ -189,8 +190,6 @@ async function settleOnRampPurchase(input: {
 const POLL_INTERVAL_MS = 3000;
 /** Stop waiting for a stuck Turnkey status after this long. */
 const POLL_DEADLINE_MS = 15 * 60 * 1000;
-/** MoonPay sandbox rejects ≤ $20; default past that floor. */
-const DEFAULT_FIAT_AMOUNT = "25";
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -299,7 +298,7 @@ export default function FundAccountOnRampPanel({
     const pollAbort = new AbortController();
     pollAbortRef.current = pollAbort;
 
-    const amount = DEFAULT_FIAT_AMOUNT;
+    const amount = SANDBOX_ONRAMP_USD_AMOUNT;
     const checkoutWindow = openMoonPayCheckoutWindow();
     setPhase("funding");
     setStatusMessage("Preparing MoonPay checkout…");

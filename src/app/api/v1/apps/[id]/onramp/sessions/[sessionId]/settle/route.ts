@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthorizedProviderApp } from "@/lib/provider-apps";
+import {
+  canManageMerchantBilling,
+  getAuthorizedProviderApp,
+} from "@/lib/provider-apps";
 import { settleOnRampSession } from "@/lib/onramp/sessions";
 
 export async function POST(
@@ -10,6 +13,12 @@ export async function POST(
   const access = await getAuthorizedProviderApp(clientId, request);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!(await canManageMerchantBilling(access))) {
+    return NextResponse.json(
+      { error: "Only the app owner or platform admin can settle prepaid credits." },
+      { status: 403 },
+    );
   }
 
   try {

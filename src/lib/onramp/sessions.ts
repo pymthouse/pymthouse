@@ -11,6 +11,20 @@ export type OnrampSessionStatus = "pending" | "completed" | "failed" | "cancelle
 
 const TERMINAL_FAILURE_STATUSES = new Set(["FAILED", "CANCELLED"]);
 
+function isUniqueConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code =
+    typeof err === "object" && err !== null && "code" in err
+      ? (err as Record<string, unknown>).code
+      : undefined;
+  return (
+    msg.toLowerCase().includes("unique") ||
+    msg.toLowerCase().includes("duplicate") ||
+    code === "23505" ||
+    code === 23505
+  );
+}
+
 async function resolveExistingOnRampSession(input: {
   clientId: string;
   onRampTransactionId: string;
@@ -111,8 +125,7 @@ export async function createOnRampSession(input: {
       updatedAt: now,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.toLowerCase().includes("unique")) {
+    if (!isUniqueConstraintError(error)) {
       throw error;
     }
     return resolveExistingOnRampSession({
