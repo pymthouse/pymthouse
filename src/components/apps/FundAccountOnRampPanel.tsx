@@ -22,6 +22,10 @@ type FundAccountOnRampPanelProps = Readonly<{
 
 type FundPhase = "idle" | "funding" | "settling" | "done" | "error";
 
+type TurnkeyHttpClient = NonNullable<
+  ReturnType<typeof useTurnkey>["httpClient"]
+>;
+
 function firstEvmWalletAddress(
   wallets: { accounts: { address: string }[] }[],
 ): string | null {
@@ -59,6 +63,16 @@ function assertSafeOnRampUrl(url: string): string {
   return parsed.toString();
 }
 
+function writeCheckoutPlaceholder(checkoutWindow: Window): void {
+  try {
+    checkoutWindow.document.open();
+    checkoutWindow.document.close();
+    checkoutWindow.document.body.textContent = "Preparing MoonPay checkout…";
+  } catch {
+    // Cross-origin / restricted document access is fine.
+  }
+}
+
 /** Centered popup window (not a full browser tab). */
 function openMoonPayCheckoutWindow(): Window | null {
   const width = 480;
@@ -78,13 +92,98 @@ function openMoonPayCheckoutWindow(): Window | null {
   // gesture is not lost while we await Turnkey init.
   const checkoutWindow = window.open("about:blank", "pymthouse_moonpay", features);
   if (checkoutWindow) {
-    try {
-      checkoutWindow.document.write("Preparing MoonPay checkout…");
-    } catch {
-      // Cross-origin / restricted document access is fine.
-    }
+    writeCheckoutPlaceholder(checkoutWindow);
   }
   return checkoutWindow;
+}
+
+function closeCheckoutWindow(checkoutWindow: Window | null): void {
+  try {
+    checkoutWindow?.close();
+  } catch {
+    // Best-effort close.
+  }
+}
+
+async function resolveDepositWallet(input: {
+  wallets: { accounts: { address: string }[] }[];
+  refreshWallets: () => Promise<{ accounts: { address: string }[] }[]>;
+}): Promise<string> {
+  let walletAddress = firstEvmWalletAddress(input.wallets);
+  if (!walletAddress) {
+    try {
+      walletAddress = firstEvmWalletAddress(await input.refreshWallets());
+    } catch {
+      // Keep going with whatever we already have from session state.
+    }
+  }
+  if (!walletAddress) {
+    throw new Error("No Turnkey EVM wallet found. Complete Wallet Kit onboarding first.");
+  }
+  return walletAddress;
+}
+
+async function registerOnRampSession(input: {
+  clientId: string;
+  ownerExternalUserId: string;
+  walletAddress: string;
+  onRampTransactionId: string;
+  organizationId: string;
+  amount: string;
+}): Promise<string> {
+  const sessionResponse = await fetch(
+    `/api/v1/apps/${encodeURIComponent(input.clientId)}/onramp/sessions`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        externalUserId: input.ownerExternalUserId,
+        depositWalletAddress: input.walletAddress,
+        onRampTransactionId: input.onRampTransactionId,
+        turnkeyOrganizationId: input.organizationId,
+        onrampProvider: "moonpay",
+        fiatCurrencyCode: "USD",
+        fiatAmount: input.amount,
+      }),
+    },
+  );
+  const sessionBody = await sessionResponse.json().catch(() => ({}));
+  if (!sessionResponse.ok) {
+    throw new Error(
+      typeof sessionBody.error === "string"
+        ? sessionBody.error
+        : "Failed to register on-ramp session",
+    );
+  }
+  const sessionId =
+    typeof sessionBody.sessionId === "string" ? sessionBody.sessionId : null;
+  if (!sessionId) {
+    throw new Error("On-ramp session response missing sessionId.");
+  }
+  return sessionId;
+}
+
+async function settleOnRampPurchase(input: {
+  clientId: string;
+  sessionId: string;
+}): Promise<string | null> {
+  const settleResponse = await fetch(
+    `/api/v1/apps/${encodeURIComponent(input.clientId)}/onramp/sessions/${encodeURIComponent(input.sessionId)}/settle`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+  const settleBody = await settleResponse.json().catch(() => ({}));
+  if (!settleResponse.ok) {
+    throw new Error(
+      typeof settleBody.error === "string" ? settleBody.error : "Settlement failed",
+    );
+  }
+  return typeof settleBody.grantedUsdMicros === "string"
+    ? settleBody.grantedUsdMicros
+    : null;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -118,12 +217,13 @@ export default function FundAccountOnRampPanel({
   const busy = phase === "funding" || phase === "settling";
 
   const pollUntilTerminal = useCallback(
-    async (transactionId: string, organizationId: string): Promise<string> => {
-      if (!httpClient) {
-        throw new Error("Turnkey client is not ready.");
-      }
+    async (
+      client: TurnkeyHttpClient,
+      transactionId: string,
+      organizationId: string,
+    ): Promise<string> => {
       for (;;) {
-        const response = await httpClient.getOnRampTransactionStatus({
+        const response = await client.getOnRampTransactionStatus({
           organizationId,
           transactionId,
           refresh: true,
@@ -135,7 +235,7 @@ export default function FundAccountOnRampPanel({
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       }
     },
-    [httpClient],
+    [],
   );
 
   const handleFund = async () => {
@@ -149,13 +249,11 @@ export default function FundAccountOnRampPanel({
       setPhase("error");
       return;
     }
-
     if (authState !== AuthState.Authenticated || clientState !== ClientState.Ready) {
       setError("Sign in with Turnkey Wallet Kit to fund your account.");
       setPhase("error");
       return;
     }
-
     if (!httpClient) {
       setError("Turnkey client is not ready. Refresh and try again.");
       setPhase("error");
@@ -164,24 +262,11 @@ export default function FundAccountOnRampPanel({
 
     const amount = DEFAULT_FIAT_AMOUNT;
     const checkoutWindow = openMoonPayCheckoutWindow();
-
     setPhase("funding");
     setStatusMessage("Preparing MoonPay checkout…");
 
     try {
-      let walletAddress = firstEvmWalletAddress(wallets);
-      if (!walletAddress) {
-        try {
-          const latestWallets = await refreshWallets();
-          walletAddress = firstEvmWalletAddress(latestWallets);
-        } catch {
-          // Keep going with whatever we already have from session state.
-        }
-      }
-      if (!walletAddress) {
-        throw new Error("No Turnkey EVM wallet found. Complete Wallet Kit onboarding first.");
-      }
-
+      const walletAddress = await resolveDepositWallet({ wallets, refreshWallets });
       const session = await getSession();
       const organizationId = session?.organizationId;
       if (!organizationId) {
@@ -198,44 +283,21 @@ export default function FundAccountOnRampPanel({
         fiatCurrencyAmount: amount,
         sandboxMode: true,
       });
-
       if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
         throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
       }
+
       const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
       setCheckoutUrl(onRampUrl);
 
-      const sessionResponse = await fetch(
-        `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            externalUserId: ownerExternalUserId,
-            depositWalletAddress: walletAddress,
-            onRampTransactionId: initResult.onRampTransactionId,
-            turnkeyOrganizationId: organizationId,
-            onrampProvider: "moonpay",
-            fiatCurrencyCode: "USD",
-            fiatAmount: amount,
-          }),
-        },
-      );
-      const sessionBody = await sessionResponse.json().catch(() => ({}));
-      if (!sessionResponse.ok) {
-        throw new Error(
-          typeof sessionBody.error === "string"
-            ? sessionBody.error
-            : "Failed to register on-ramp session",
-        );
-      }
-
-      const sessionId =
-        typeof sessionBody.sessionId === "string" ? sessionBody.sessionId : null;
-      if (!sessionId) {
-        throw new Error("On-ramp session response missing sessionId.");
-      }
+      const sessionId = await registerOnRampSession({
+        clientId,
+        ownerExternalUserId,
+        walletAddress,
+        onRampTransactionId: initResult.onRampTransactionId,
+        organizationId,
+        amount,
+      });
 
       if (checkoutWindow && !checkoutWindow.closed) {
         checkoutWindow.location.href = onRampUrl;
@@ -247,55 +309,26 @@ export default function FundAccountOnRampPanel({
       }
 
       const terminalStatus = await pollUntilTerminal(
+        httpClient,
         initResult.onRampTransactionId,
         organizationId,
       );
-      try {
-        checkoutWindow?.close();
-      } catch {
-        // Best-effort close after terminal status.
-      }
-
+      closeCheckoutWindow(checkoutWindow);
       if (terminalStatus !== "COMPLETED") {
         throw new Error(`MoonPay purchase ${terminalStatus.toLowerCase()}.`);
       }
 
       setPhase("settling");
       setStatusMessage("Purchase completed. Crediting your account…");
-
-      const settleResponse = await fetch(
-        `/api/v1/apps/${encodeURIComponent(clientId)}/onramp/sessions/${encodeURIComponent(sessionId)}/settle`,
-        {
-          method: "POST",
-          credentials: "include",
-        },
-      );
-      const settleBody = await settleResponse.json().catch(() => ({}));
-      if (!settleResponse.ok) {
-        throw new Error(
-          typeof settleBody.error === "string" ? settleBody.error : "Settlement failed",
-        );
-      }
-
-      const granted =
-        typeof settleBody.grantedUsdMicros === "string"
-          ? settleBody.grantedUsdMicros
-          : null;
+      const granted = await settleOnRampPurchase({ clientId, sessionId });
       setLastGrantedUsdMicros(granted);
       setPhase("done");
       setStatusMessage("Prepaid credits updated.");
       setCheckoutUrl(null);
-      // Refresh Billing server components (AllowanceStrip / empty state).
       router.refresh();
     } catch (fundError) {
-      try {
-        checkoutWindow?.close();
-      } catch {
-        // ignore
-      }
-      const message =
-        fundError instanceof Error ? fundError.message : "On-ramp funding failed";
-      setError(message);
+      closeCheckoutWindow(checkoutWindow);
+      setError(fundError instanceof Error ? fundError.message : "On-ramp funding failed");
       setPhase("error");
       setStatusMessage(null);
     }

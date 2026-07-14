@@ -11,6 +11,43 @@ export type OnrampSessionStatus = "pending" | "completed" | "failed" | "cancelle
 
 const TERMINAL_FAILURE_STATUSES = new Set(["FAILED", "CANCELLED"]);
 
+async function resolveExistingOnRampSession(input: {
+  clientId: string;
+  onRampTransactionId: string;
+  turnkeyOrganizationId: string | null;
+  now: string;
+}): Promise<{
+  id: string;
+  status: OnrampSessionStatus;
+  onRampTransactionId: string;
+}> {
+  const existingRows = await db
+    .select()
+    .from(onrampSessions)
+    .where(eq(onrampSessions.onrampTransactionId, input.onRampTransactionId))
+    .limit(1);
+  const existing = existingRows[0];
+  if (!existing) {
+    throw new Error("on-ramp transaction id conflict without existing row");
+  }
+  if (existing.clientId !== input.clientId) {
+    throw new Error("on-ramp transaction id belongs to another app");
+  }
+
+  if (input.turnkeyOrganizationId && !existing.turnkeyOrganizationId) {
+    await db
+      .update(onrampSessions)
+      .set({ turnkeyOrganizationId: input.turnkeyOrganizationId, updatedAt: input.now })
+      .where(eq(onrampSessions.id, existing.id));
+  }
+
+  return {
+    id: existing.id,
+    status: existing.status as OnrampSessionStatus,
+    onRampTransactionId: existing.onrampTransactionId,
+  };
+}
+
 export async function createOnRampSession(input: {
   clientId: string;
   externalUserId: string;
@@ -78,32 +115,12 @@ export async function createOnRampSession(input: {
     if (!message.toLowerCase().includes("unique")) {
       throw error;
     }
-
-    const existingRows = await db
-      .select()
-      .from(onrampSessions)
-      .where(eq(onrampSessions.onrampTransactionId, onRampTransactionId))
-      .limit(1);
-    const existing = existingRows[0];
-    if (!existing) {
-      throw new Error("on-ramp transaction id conflict without existing row");
-    }
-    if (existing.clientId !== clientId) {
-      throw new Error("on-ramp transaction id belongs to another app");
-    }
-
-    if (turnkeyOrganizationId && !existing.turnkeyOrganizationId) {
-      await db
-        .update(onrampSessions)
-        .set({ turnkeyOrganizationId, updatedAt: now })
-        .where(eq(onrampSessions.id, existing.id));
-    }
-
-    return {
-      id: existing.id,
-      status: existing.status as OnrampSessionStatus,
-      onRampTransactionId: existing.onrampTransactionId,
-    };
+    return resolveExistingOnRampSession({
+      clientId,
+      onRampTransactionId,
+      turnkeyOrganizationId,
+      now,
+    });
   }
 
   return {
