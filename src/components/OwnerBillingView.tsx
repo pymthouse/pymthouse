@@ -141,7 +141,7 @@ export default function OwnerBillingView({
             ) : (
               <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
                 No prepaid credit balance. Starter included usage comes from your plan
-                allowance; credits appear here after a manual top-up or overage settlement.
+                allowance; credits appear here after a payment is received.
               </div>
             )}
           </section>
