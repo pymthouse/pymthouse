@@ -12,6 +12,8 @@ import {
 import { getHostedOpenMeterClient } from "@/lib/openmeter/client";
 import {
   buildOpenMeterCustomerKey,
+  buildOwnerCustomerKey,
+  isOwnerCustomerKey,
   parseOpenMeterCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
@@ -35,8 +37,12 @@ export type SignedTicketRequestRow = {
 
 export type ListViewerSignedTicketRequestsInput = {
   userId: string;
-  /** Public OIDC client_id (app_…), not developer_apps.id. */
+  /**
+   * Public OIDC client_id(s) (app_…), not developer_apps.id.
+   * Prefer `clientIds`; `clientId` is kept for single-app callers.
+   */
   clientId?: string | null;
+  clientIds?: string[] | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -136,6 +142,8 @@ export async function resolveViewerUsageSubjects(userId: string): Promise<Set<st
     return subjects;
   }
   subjects.add(trimmedUserId);
+  subjects.add(buildOwnerCustomerKey(trimmedUserId));
+  subjects.add(`user:${trimmedUserId}`);
 
   const userRows = await db
     .select({ email: users.email })
@@ -185,7 +193,7 @@ export function eventClientId(event: IngestedEventLike): string | null {
 export function eventMatchesViewerSubjects(
   event: IngestedEventLike,
   subjects: ReadonlySet<string>,
-  clientId?: string | null,
+  clientIdOrIds?: string | ReadonlySet<string> | null,
 ): boolean {
   if (!event?.event) {
     return false;
@@ -197,13 +205,21 @@ export function eventMatchesViewerSubjects(
   if (!usageSubject || !subjects.has(usageSubject)) {
     return false;
   }
-  if (clientId?.trim()) {
-    const eventClient = eventClientId(event);
-    if (!eventClient || eventClient !== clientId.trim()) {
-      return false;
-    }
+  if (clientIdOrIds == null) {
+    return true;
   }
-  return true;
+  const eventClient = eventClientId(event);
+  if (!eventClient) {
+    return false;
+  }
+  if (typeof clientIdOrIds === "string") {
+    const trimmed = clientIdOrIds.trim();
+    return trimmed.length === 0 || eventClient === trimmed;
+  }
+  if (clientIdOrIds.size === 0) {
+    return true;
+  }
+  return clientIdOrIds.has(eventClient);
 }
 
 export function normalizeSignedTicketEvent(
@@ -262,12 +278,12 @@ export async function listViewerSignedTicketRequests(
   const to = input.to?.trim() || cycle.end;
   const limit = clampLimit(input.limit);
   const offset = decodeOffsetCursor(input.cursor);
-  const clientIdFilter = input.clientId?.trim() || null;
+  const clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
 
   const rawEvents = await fetchSignedTicketEvents({
     client,
     subjects,
-    clientId: clientIdFilter,
+    clientIds: clientIdFilter,
     from,
     to,
   });
@@ -315,11 +331,11 @@ export async function listViewerSignedTicketRequests(
 async function fetchSignedTicketEvents(input: {
   client: OpenMeter;
   subjects: ReadonlySet<string>;
-  clientId: string | null;
+  clientIds: ReadonlySet<string> | null;
   from: string;
   to: string;
 }): Promise<IngestedEventLike[]> {
-  const subjectQueries = buildSubjectQueries(input.subjects, input.clientId);
+  const subjectQueries = buildSubjectQueries(input.subjects, input.clientIds);
   const batches = await Promise.all(
     subjectQueries.map(async (subject) => {
       try {
@@ -350,14 +366,37 @@ async function fetchSignedTicketEvents(input: {
   return batches.flat();
 }
 
+function normalizeClientIdFilter(
+  clientId?: string | null,
+  clientIds?: string[] | null,
+): ReadonlySet<string> | null {
+  const ids = [
+    ...(clientIds ?? []),
+    ...(clientId ? [clientId] : []),
+  ]
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  if (ids.length === 0) {
+    return null;
+  }
+  return new Set(ids);
+}
+
 function buildSubjectQueries(
   subjects: ReadonlySet<string>,
-  clientId: string | null,
+  clientIds: ReadonlySet<string> | null,
 ): string[] {
   const queries: string[] = [];
   for (const subject of subjects) {
-    if (clientId) {
-      queries.push(buildOpenMeterCustomerKey(clientId, subject));
+    if (isOwnerCustomerKey(subject)) {
+      // Owner wallet events use subject = owner:{users.id} (not compound).
+      queries.push(subject);
+      continue;
+    }
+    if (clientIds && clientIds.size > 0) {
+      for (const clientId of clientIds) {
+        queries.push(buildOpenMeterCustomerKey(clientId, subject));
+      }
     } else {
       // Partial subject match: compound auth_id ends with :external_user_id
       queries.push(subject);

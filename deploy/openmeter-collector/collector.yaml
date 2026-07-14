@@ -14,10 +14,11 @@
 #
 # Identity (go-livepeer Kafka wire -> normalized CloudEvent egress):
 # - Upstream auth_id stays client_id:usage_subject (webhook -> go-livepeer state -> Kafka).
-# - Collector parses auth_id once (first-colon split), then emits:
-#   subject = usage_subject (end user), data.client_id = tenant, data.usage_subject = end user.
-# - data.external_user_id kept for compatibility (meters group by external_user_id).
-#   The compound auth_id is still carried in the CloudEvent subject for traceability.
+# - Collector parses auth_id once (first-colon split).
+# - App owners mint with usage_subject = owner:{users.id}; OpenMeter subject is that
+#   owner key (shared wallet). End-users keep subject = compound auth_id.
+# - data.client_id / data.usage_subject always retain the parsed tenant + subject.
+
 
 cache_resources:
   - label: eth_usd
@@ -117,7 +118,11 @@ pipeline:
         let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
         let client_id = if $is_compound { $auth_id.slice(0, $colon) } else { $auth_id }
         let usage_subject_parsed = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
-        let usage_subject_type = $data.usage_subject_type.or("external_user_id").string().trim()
+        # Shared owner wallet: subject = owner:{users.id} (not compound auth_id).
+        # Derive type from subject shape — do not trust Kafka usage_subject_type.
+        let is_owner_subject = $usage_subject_parsed.index_of("owner:") == 0
+        let usage_subject_type = if $is_owner_subject { "app_owner" } else { "external_user_id" }
+        let openmeter_subject = if $is_owner_subject { $usage_subject_parsed } else { $auth_id }
 
         let eth_usd = meta("eth_usd_price").number()
         root = if $eth_usd == null { throw("eth_usd price cache miss") }
@@ -136,7 +141,7 @@ pipeline:
             "type": "create_signed_ticket",
             "id": $data.request_id.or(uuid_v4()),
             "source": "go-livepeer-remote-signer",
-            "subject": $auth_id,
+            "subject": $openmeter_subject,
             "time": $data.current_time.or(now()),
             "data": {
               "client_id": $client_id,
@@ -148,6 +153,8 @@ pipeline:
               "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
               "pixels": $data.pixels.string().or("0"),
               "fee_wei": $data.computed_fee.or("0"),
+              "auth_id": $auth_id,
+              "openmeter_customer_key": $openmeter_subject,
               "eth_usd_price": $eth_usd.string(),
               "gateway_request_id": $data.request_id,
             }

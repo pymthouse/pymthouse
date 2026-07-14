@@ -345,17 +345,19 @@ For RFC 8693 exchange after minting a user JWT, use `POST /api/v1/apps/{clientId
 
 Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
-**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence — this wire format is unchanged.
+**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence — this wire format is unchanged. App-owner JWTs use `usage_subject` / `external_user_id` = `owner:{users.id}` so `auth_id` looks like `app_…:owner:{users.id}`.
 
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
 2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros` via `ceil(fee_wei * eth_usd / 1e12)` so sub-micro fees still count as at least 1 micro, and writes normalized CloudEvents to OpenMeter/Konnect:
-   - `subject` = compound `auth_id` (`client_id:usage_subject`) — matches OpenMeter customer `subject_key`
+   - `subject` = compound `auth_id` for M2M end-users; **`owner:{users.id}`** when `usage_subject` starts with `owner:` (shared owner wallet)
    - `data.client_id` = tenant (developer app OAuth `client_id`)
-   - `data.usage_subject` = end user (OIDC `sub` analog)
+   - `data.usage_subject` = end user or `owner:{users.id}`
    - `data.auth_id` retained for compatibility; `data.external_user_id` mirrors `usage_subject` for existing meter `groupBy`
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
+
+**Prepaid credits:** App owners share one Konnect customer (`owner:{users.id}`) across all owned apps. M2M end-users remain `app_…:external_user_id` (per app). Dashboard owner prepaid strip reads the shared owner wallet; per-app usage pages sum end-user wallets only.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 

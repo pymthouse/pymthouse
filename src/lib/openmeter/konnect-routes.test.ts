@@ -191,18 +191,20 @@ test("normalizeKonnectSubscriptionRecord maps plan_id to plan.id", () => {
   assert.equal(normalized.plan_id, undefined);
 });
 
-test("buildKonnectUsageRateCard applies included usage discounts", () => {
+test("buildKonnectUsageRateCard includes usage discounts when provided", () => {
   const card = buildKonnectUsageRateCard({
     key: "network_spend",
     name: "Network usage",
     featureId: "01G65Z755AFWAKHE12NY0CQ9FH",
     unitAmount: "0.000001",
-    includedMicros: 5_000_000,
+    includedUsdMicros: 5_000_000,
   });
   assert.deepEqual(card.discounts, { usage: "5000000" });
+  assert.deepEqual(card.feature, { id: "01G65Z755AFWAKHE12NY0CQ9FH" });
+  assert.deepEqual(card.price, { type: "unit", amount: "0.000001" });
 });
 
-test("buildKonnectUsageRateCard omits discounts when includedMicros is absent", () => {
+test("buildKonnectUsageRateCard omits discounts when included amount is absent", () => {
   const card = buildKonnectUsageRateCard({
     key: "network_spend",
     name: "Network usage",
@@ -210,6 +212,34 @@ test("buildKonnectUsageRateCard omits discounts when includedMicros is absent", 
     unitAmount: "0.000001",
   });
   assert.equal(card.discounts, undefined);
+});
+
+test("rewriteKonnectPlanRequestBody preserves rate card discounts", () => {
+  const rewritten = rewriteKonnectPlanRequestBody({
+    key: "starter",
+    billingCadence: "P1M",
+    phases: [
+      {
+        key: "default",
+        name: "Default",
+        rateCards: [
+          {
+            type: "usage_based",
+            key: "network_spend",
+            name: "Network usage",
+            featureKey: "network_spend",
+            billingCadence: "P1M",
+            discounts: { usage: "5000000" },
+            price: { type: "unit", amount: "0.000001" },
+          },
+        ],
+      },
+    ],
+  }) as {
+    phases: Array<{ rate_cards: Array<Record<string, unknown>> }>;
+  };
+
+  assert.deepEqual(rewritten.phases[0]?.rate_cards[0]?.discounts, { usage: "5000000" });
 });
 
 test("isKonnectMeterQueryGet detects SDK meter query GETs", () => {

@@ -74,8 +74,16 @@ export async function getTrialCreditBalance(input: {
     return null;
   }
 
-  const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
-  const featureKey = input.featureKey || (await getTrialFeatureKeyForApp(input.clientId));
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const customerKey = identity.customerKey;
+  const featureKey =
+    input.featureKey || (await getTrialFeatureKeyForApp(identity.developerAppId));
 
   const customer = await ensureOpenMeterCustomer(client, customerKey);
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
@@ -157,7 +165,20 @@ export async function ingestSignedTicketEvent(input: {
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
   const usageSubject = input.event.externalUserId.trim();
-  const subject = buildOpenMeterCustomerKey(input.event.clientId, usageSubject);
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.event.clientId,
+    externalUserId: usageSubject,
+  });
+  // Owners: subject = owner:{users.id} (shared wallet). End-users: app_…:external_id.
+  // Wire auth_id for go-livepeer stays compound; OpenMeter subject follows customer key.
+  const subject = identity.customerKey;
+  const legacyAuthId = buildOpenMeterCustomerKey(
+    identity.publicClientId,
+    usageSubject,
+  );
 
   await input.client.events.ingest({
     specversion: "1.0",
@@ -166,9 +187,9 @@ export async function ingestSignedTicketEvent(input: {
     source: SIGNED_TICKET_EVENT_SOURCE,
     subject,
     data: {
-      client_id: input.event.clientId,
+      client_id: identity.publicClientId,
       usage_subject: usageSubject,
-      usage_subject_type: "external_user_id",
+      usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
       external_user_id: usageSubject,
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: input.event.feeWei,
@@ -179,7 +200,8 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
-      auth_id: subject,
+      auth_id: legacyAuthId,
+      openmeter_customer_key: subject,
     },
   });
 }
