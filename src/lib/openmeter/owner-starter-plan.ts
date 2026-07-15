@@ -309,11 +309,16 @@ export async function ensureOwnerStarterSubscription(input: {
     // fall through to create
   }
 
-  const planRef = { id: plan.openmeterPlanId } as PlanReferenceInput;
+  // SDK PlanReferenceInput is keyed by plan key; Konnect also accepts { id }.
+  // Prefer key (typed) and fall back to id via the same cast pattern as
+  // starter-subscription.ts when only the OpenMeter plan id is known.
+  const planRef: PlanReferenceInput | { id: string } = plan.openmeterPlanId
+    ? { id: plan.openmeterPlanId }
+    : { key: plan.key };
   try {
     const createdSub = await client.subscriptions.create({
       customerId: customer.id,
-      plan: planRef,
+      plan: planRef as PlanReferenceInput,
     });
     if (!createdSub?.id) {
       throw new Error("Failed to create Owner Starter subscription");
@@ -327,9 +332,12 @@ export async function ensureOwnerStarterSubscription(input: {
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
       const resynced = await ensureOwnerStarterPlanSynced();
+      const retryRef: PlanReferenceInput | { id: string } = resynced.openmeterPlanId
+        ? { id: resynced.openmeterPlanId }
+        : { key: resynced.key };
       const createdSub = await client.subscriptions.create({
         customerId: customer.id,
-        plan: { id: resynced.openmeterPlanId } as PlanReferenceInput,
+        plan: retryRef as PlanReferenceInput,
       });
       if (!createdSub?.id) {
         throw new Error("Failed to create Owner Starter subscription after plan sync");
