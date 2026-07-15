@@ -146,6 +146,7 @@ export async function resolveViewerUsageSubjects(userId: string): Promise<Set<st
   }
   subjects.add(trimmedUserId);
   subjects.add(buildOwnerCustomerKey(trimmedUserId));
+  subjects.add(`owner:${trimmedUserId}`);
   subjects.add(`user:${trimmedUserId}`);
 
   const userRows = await db
@@ -194,7 +195,8 @@ export function eventClientId(event: IngestedEventLike): string | null {
     return fromData;
   }
   const subject = event.event?.subject?.trim() || "";
-  // Owner wallet events use CE subject owner:{id}; client lives in data only.
+  // Owner wallet events use CE subject = bare {users.id} (or legacy owner:{id});
+  // client lives in data only.
   if (isOwnerCustomerKey(subject)) {
     return null;
   }
@@ -217,6 +219,7 @@ export function expandViewerSubjectMatchKeys(
     const normalized = normalizePlatformUserId(trimmed);
     keys.add(normalized);
     keys.add(buildOwnerCustomerKey(normalized));
+    keys.add(`owner:${normalized}`);
     keys.add(`user:${normalized}`);
   }
   return keys;

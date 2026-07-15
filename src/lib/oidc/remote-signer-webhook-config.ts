@@ -12,7 +12,7 @@ import {
 import { createLocalSignerJwksResolver } from "@/lib/oidc/local-signer-jwks";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
-import { buildOwnerCustomerKey } from "@/lib/openmeter/customer-key";
+import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -21,8 +21,9 @@ type EndUserVerifier = RemoteSignerWebhookConfig["endUserAuth"];
 
 /**
  * Map owner JWTs (bare platform user id + user_type=app_owner) onto webhook
- * usage_subject owner:{id} so go-livepeer auth_id / CloudEvent settlement use
- * the shared Konnect customer key. JWT claims stay bare for clients.
+ * usage_subject owner:{id} so go-livepeer auth_id carries a transport marker.
+ * The collector strips `owner:` before writing the CloudEvent subject / Konnect
+ * customer key (bare `{users.id}`). JWT claims stay bare for clients.
  */
 function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifier {
   return {
@@ -49,7 +50,7 @@ function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifie
         ...result,
         identity: {
           ...result.identity,
-          usage_subject: buildOwnerCustomerKey(bareId),
+          usage_subject: buildOwnerWireSubject(bareId),
           usage_subject_type: "app_owner",
         },
       };

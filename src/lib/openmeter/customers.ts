@@ -4,8 +4,8 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import {
-  buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
+  buildOwnerMeterSubjects,
 } from "@/lib/openmeter/customer-key";
 import { getHostedOpenMeterUrl } from "./constants";
 import { isOpenMeterUlid } from "./konnect-routes";
@@ -20,6 +20,7 @@ type OpenMeterCustomerRecord = {
   id: string;
   key?: string;
   name?: string;
+  metadata?: Record<string, string> | null;
   usageAttribution?: { subjectKeys?: string[] };
 };
 
@@ -31,32 +32,55 @@ function isActiveSubscriptionSubjectKeyError(err: unknown): boolean {
   );
 }
 
+function isSubjectKeyConflictError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /subject keys?/i.test(message) &&
+    (/already associated/i.test(message) || /conflict/i.test(message))
+  );
+}
+
 async function ensureCustomerUsageAttribution(
   client: OpenMeter,
   customer: OpenMeterCustomerRecord,
   requiredSubjectKeys: string[],
+  metadata?: Record<string, string>,
 ): Promise<void> {
   const subjectKeys = customer.usageAttribution?.subjectKeys ?? [];
   const missing = requiredSubjectKeys.filter((key) => !subjectKeys.includes(key));
-  if (missing.length === 0) {
+  const nextKeys = [...new Set([...subjectKeys, ...requiredSubjectKeys])];
+  const nextMetadata = {
+    ...(customer.metadata ?? {}),
+    ...(metadata ?? {}),
+  };
+  const metadataChanged =
+    metadata != null &&
+    Object.entries(metadata).some(
+      ([k, v]) => (customer.metadata?.[k] ?? "") !== v,
+    );
+
+  if (missing.length === 0 && !metadataChanged) {
     return;
   }
 
-  const nextKeys = [...new Set([...subjectKeys, ...requiredSubjectKeys])];
   try {
     await client.customers.update(customer.id, {
       name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
       usageAttribution: { subjectKeys: nextKeys },
+      ...(Object.keys(nextMetadata).length > 0 ? { metadata: nextMetadata } : {}),
     });
   } catch (err) {
-    // Konnect rejects subject-key changes while a subscription is active.
-    // Owner settlement uses CloudEvent subject = owner:{id} (customer key),
-    // so mint/provision must not fail closed on this.
-    if (isActiveSubscriptionSubjectKeyError(err)) {
+    // Konnect rejects subject-key changes while a subscription is active, or
+    // when keys are still owned by another customer (legacy owner: wallet).
+    if (
+      isActiveSubscriptionSubjectKeyError(err) ||
+      isSubjectKeyConflictError(err)
+    ) {
       console.warn(
-        "openmeter: skip subject key update (active subscription)",
+        "openmeter: skip subject key update",
         customer.key ?? customer.id,
         missing.join(","),
+        err instanceof Error ? err.message : String(err),
       );
       return;
     }
@@ -65,28 +89,76 @@ async function ensureCustomerUsageAttribution(
 }
 
 /**
- * Ensure the shared owner Konnect customer exists. Compound wire subjects are
- * best-effort — Konnect blocks subject-key changes with active subscriptions.
+ * Ensure the shared owner Konnect customer exists with bare `{users.id}` key.
+ * Attaches transitional subjectKeys (owner: + compound wire forms) at creation
+ * time when possible, and stores owned public client ids in metadata.
+ *
+ * @deprecated Prefer {@link ensureOwnerCustomer}. Kept as an alias for callers.
  */
 export async function ensureOwnerCustomerWireSubjects(
   client: OpenMeter,
   ownerUserId: string,
   publicClientIds: string[],
 ): Promise<OpenMeterCustomerIdentity> {
+  return ensureOwnerCustomer(client, ownerUserId, publicClientIds);
+}
+
+/**
+ * Ensure the shared owner Konnect customer (canonical key = bare users.id).
+ * Created with subjectKeys = [bareId] so it does not conflict with a legacy
+ * `owner:{id}` customer. Transitional wire/compound subjects are attached
+ * best-effort afterward (skipped while another customer still owns them).
+ */
+export async function ensureOwnerCustomer(
+  client: OpenMeter,
+  ownerUserId: string,
+  publicClientIds: string[],
+): Promise<OpenMeterCustomerIdentity> {
   const trimmedOwnerId = ownerUserId.trim();
   const ownerKey = buildOwnerCustomerKey(trimmedOwnerId);
-  const wireKeys = publicClientIds
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0)
-    .map((clientId) => buildOpenMeterCustomerKey(clientId, trimmedOwnerId));
-  const requiredKeys = [...new Set([ownerKey, ...wireKeys])];
+  const uniqueClientIds = [
+    ...new Set(
+      publicClientIds.map((id) => id.trim()).filter((id) => id.length > 0),
+    ),
+  ];
+  // Prefer full transitional attribution, but never block create on conflicts.
+  const preferredKeys = buildOwnerMeterSubjects(trimmedOwnerId, uniqueClientIds);
+  const metadata: Record<string, string> = {
+    pymthouse_owner_user_id: trimmedOwnerId,
+    pymthouse_owned_client_ids: uniqueClientIds.join(","),
+  };
 
-  const customer = await ensureOpenMeterCustomer(client, ownerKey);
   const existing = await findOpenMeterCustomerByKey(client, ownerKey);
   if (existing?.id) {
-    await ensureCustomerUsageAttribution(client, existing, requiredKeys);
+    await ensureCustomerUsageAttribution(client, existing, preferredKeys, metadata);
+    return { id: existing.id, key: ownerKey };
   }
-  return customer;
+
+  // Create with bare key only — legacy owner:{id} customers already claim wire subjects.
+  try {
+    const created = await client.customers.create({
+      key: ownerKey,
+      name: `Owner ${trimmedOwnerId}`,
+      usageAttribution: { subjectKeys: [ownerKey] },
+      metadata,
+    });
+    if (!created?.id) {
+      throw new Error(`OpenMeter customer create failed for key ${ownerKey}`);
+    }
+    // Best-effort: attach transitional subjects if Konnect allows.
+    const fresh = await findOpenMeterCustomerByKey(client, ownerKey);
+    if (fresh?.id) {
+      await ensureCustomerUsageAttribution(client, fresh, preferredKeys, metadata);
+    }
+    return { id: created.id, key: ownerKey };
+  } catch (err) {
+    const raced = await findOpenMeterCustomerByKey(client, ownerKey);
+    if (raced?.id) {
+      await ensureCustomerUsageAttribution(client, raced, preferredKeys, metadata);
+      return { id: raced.id, key: ownerKey };
+    }
+    throw err;
+  }
 }
 
 export async function listOwnedPublicClientIds(ownerUserId: string): Promise<string[]> {
@@ -176,7 +248,7 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
     const publicClientIds = [
       ...new Set([identity.publicClientId, ...ownedClientIds]),
     ];
-    return ensureOwnerCustomerWireSubjects(
+    return ensureOwnerCustomer(
       input.client,
       identity.ownerUserId,
       publicClientIds,

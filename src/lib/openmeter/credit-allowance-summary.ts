@@ -79,7 +79,10 @@ function isLegacyOwnerAppCustomerKey(
   if (!ownerId) {
     return false;
   }
-  return customerKey === `${publicClientId}:${ownerId}`;
+  return (
+    customerKey === `${publicClientId}:${ownerId}` ||
+    customerKey === `${publicClientId}:owner:${ownerId}`
+  );
 }
 
 async function listEndUserCustomersForClient(input: {

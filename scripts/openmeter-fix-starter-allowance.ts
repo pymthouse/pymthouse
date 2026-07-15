@@ -72,7 +72,7 @@ function usage(): string {
     "  --dry-run                 Preview only (default)",
     "  --apply                   Write DB + Konnect changes",
     "  --owner-id <users.id>     Fix owner:{id} wallet (cancel + recreate)",
-    "  --client-id <app_id>      Limit to one app's Starter plan",
+    "  --client-id <app_id>      Limit sync / prefer this app when ensuring owner Starter",
     "  --timing immediate|next_billing_cycle",
   ].join("\n");
 }
@@ -149,6 +149,30 @@ async function listOwnedApps(ownerId: string): Promise<OwnedApp[]> {
       publicClientId: row.publicClientId?.trim() || row.developerAppId,
     }))
     .filter((row) => row.publicClientId.length > 0);
+}
+
+async function listOwnerIdsForFix(clientId?: string): Promise<string[]> {
+  if (clientId?.trim()) {
+    const id = clientId.trim();
+    const byPublic = await db
+      .select({ ownerId: developerApps.ownerId })
+      .from(developerApps)
+      .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+      .where(eq(oidcClients.clientId, id))
+      .limit(1);
+    if (byPublic[0]?.ownerId) return [byPublic[0].ownerId];
+    const byAppId = await db
+      .select({ ownerId: developerApps.ownerId })
+      .from(developerApps)
+      .where(eq(developerApps.id, id))
+      .limit(1);
+    return byAppId[0]?.ownerId ? [byAppId[0].ownerId] : [];
+  }
+
+  const rows = await db
+    .selectDistinct({ ownerId: developerApps.ownerId })
+    .from(developerApps);
+  return rows.map((r) => r.ownerId).filter(Boolean);
 }
 
 async function ensureIncludedUsdMicros(
@@ -288,6 +312,8 @@ async function fixOwnerWallet(input: {
   ownerId: string;
   apply: boolean;
   timing: SubscriptionChangeTiming;
+  /** Prefer this app when recreating the owner Starter subscription. */
+  preferredClientId?: string;
 }): Promise<void> {
   const apps = await listOwnedApps(input.ownerId);
   if (apps.length === 0) {
@@ -295,8 +321,19 @@ async function fixOwnerWallet(input: {
     return;
   }
 
+  const preferred = input.preferredClientId?.trim();
+  const ensureApp =
+    (preferred &&
+      apps.find(
+        (a) => a.publicClientId === preferred || a.developerAppId === preferred,
+      )) ||
+    apps[0];
+
   const ownerKey = buildOwnerCustomerKey(input.ownerId);
-  console.log(`\n[owner] ${input.ownerId} key=${ownerKey} apps=${apps.length}`);
+  console.log(
+    `\n[owner] ${input.ownerId} key=${ownerKey} apps=${apps.length} ` +
+      `ensureVia=${ensureApp.publicClientId}`,
+  );
 
   const starters = await loadStarterRows(apps.map((a) => a.developerAppId));
   for (const row of starters) {
@@ -328,17 +365,18 @@ async function fixOwnerWallet(input: {
 
   if (!input.apply) {
     console.log(
-      `  [dry-run] would cancel ${cancelCount} sub(s) then ensure Starter via ${apps[0].publicClientId}`,
+      `  [dry-run] would cancel ${cancelCount} sub(s) then ensure Starter via ${ensureApp.publicClientId}`,
     );
     return;
   }
 
   const ensured = await ensureStarterSubscriptionForAppUser({
-    clientId: apps[0].developerAppId,
+    clientId: ensureApp.developerAppId,
     externalUserId: input.ownerId,
   });
   console.log(
-    `  [ok] starter ensured created=${ensured.created} planId=${ensured.planId}`,
+    `  [ok] starter ensured created=${ensured.created} planId=${ensured.planId} ` +
+      `via=${ensureApp.publicClientId}`,
   );
   await verifyEnsuredStarter({
     baseUrl: input.baseUrl,
@@ -530,6 +568,7 @@ async function main(): Promise<void> {
       ownerId: args.ownerId.trim(),
       apply: args.apply,
       timing: args.timing,
+      preferredClientId: args.clientId,
     });
     if (!args.apply) {
       console.log("\n[fix-starter-allowance] re-run with --apply to execute");
@@ -556,6 +595,29 @@ async function main(): Promise<void> {
     targetPlanIdByKey,
     starterKeys,
   });
+
+  // Konnect's global /subscriptions index often omits active rows (GET-by-id
+  // still works). Fall back to per-owner cancel+ensure when the list path
+  // finds nothing to migrate.
+  if (subStats.changed === 0 && subStats.errors === 0) {
+    console.log(
+      "\n[fix-starter-allowance] global subscription list found no active " +
+        "Starter rows to change — falling back to owner-wallet migration",
+    );
+    const ownerIds = await listOwnerIdsForFix(args.clientId);
+    console.log(
+      `[fix-starter-allowance] owner wallets to fix: ${ownerIds.length}`,
+    );
+    for (const ownerId of ownerIds) {
+      await fixOwnerWallet({
+        baseUrl,
+        apiKey,
+        ownerId,
+        apply: args.apply,
+        timing: args.timing,
+      });
+    }
+  }
 
   console.log(
     `\n[fix-starter-allowance] done changed=${subStats.changed} ` +

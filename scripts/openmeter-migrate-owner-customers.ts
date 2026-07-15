@@ -1,10 +1,13 @@
 /**
- * Migrate app owners onto a shared OpenMeter/Konnect customer `owner:{users.id}`.
+ * Migrate app owners onto a shared OpenMeter/Konnect customer keyed by bare
+ * `{users.id}`, subscribed to the platform Owner Starter plan.
  *
- * - Ensures the owner customer exists (usageAttribution subjectKeys = [owner key])
- * - Optionally provisions Starter + trial once on the owner customer
- * - Optionally grants remaining balance from legacy `app_…:ownerId` wallets onto
- *   the shared owner customer (best-effort; does not delete legacy customers)
+ * - Ensures the bare-key owner customer exists with transitional subjectKeys
+ * - Syncs / publishes the platform Owner Starter plan
+ * - Optionally provisions Owner Starter on the bare customer
+ * - Optionally transfers prepaid balances from legacy `owner:{id}` and
+ *   `app_…:ownerId` / `app_…:owner:{id}` wallets
+ * - Cancels active subscriptions on legacy customers
  *
  * Usage:
  *   npx tsx scripts/openmeter-migrate-owner-customers.ts
@@ -21,26 +24,49 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "../src/lib/openmeter/admin-client";
-import { buildOwnerCustomerKey } from "../src/lib/openmeter/customer-key";
-import { ensureOpenMeterCustomer, listTenantCustomers } from "../src/lib/openmeter/customers";
-import { createKonnectCreditGrant, getKonnectCreditBalance } from "../src/lib/openmeter/konnect-credits";
 import { getHostedOpenMeterUrl } from "../src/lib/openmeter/constants";
+import {
+  buildOpenMeterCustomerKey,
+  buildOwnerCustomerKey,
+  buildOwnerWireSubject,
+} from "../src/lib/openmeter/customer-key";
+import {
+  ensureOwnerCustomer,
+} from "../src/lib/openmeter/customers";
+import {
+  createKonnectCreditGrant,
+  getKonnectCreditBalance,
+} from "../src/lib/openmeter/konnect-credits";
+import {
+  ensureOwnerStarterPlanSynced,
+  ensureOwnerStarterSubscription,
+  OWNER_STARTER_PLAN_KEY,
+} from "../src/lib/openmeter/owner-starter-plan";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
-import { ensureStarterSubscriptionForAppUser } from "../src/lib/openmeter/starter-subscription";
-import { ensureTrialAllowanceForAppUser } from "../src/lib/openmeter/trial-allowance";
+import {
+  isOpenMeterSubscriptionActive,
+  listOpenMeterSubscriptionsForCustomer,
+} from "../src/lib/openmeter/subscription-read";
 import { getTrialFeatureKeyForApp } from "../src/lib/openmeter/client-factory";
 
 type Args = {
   ownerId?: string;
   provision: boolean;
   transferBalances: boolean;
+  cancelLegacy: boolean;
   dryRun: boolean;
+};
+
+type OwnedApp = {
+  developerAppId: string;
+  publicClientId: string;
 };
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     provision: false,
     transferBalances: false,
+    cancelLegacy: false,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -57,9 +83,17 @@ function parseArgs(argv: string[]): Args {
       args.transferBalances = true;
       continue;
     }
+    if (token === "--cancel-legacy") {
+      args.cancelLegacy = true;
+      continue;
+    }
     if (token === "--dry-run") {
       args.dryRun = true;
       continue;
+    }
+    if (token === "--help" || token === "-h") {
+      console.log(usage());
+      process.exit(0);
     }
     throw new Error(`Unknown argument: ${token}`);
   }
@@ -70,16 +104,20 @@ function usage(): string {
   return [
     "openmeter-migrate-owner-customers",
     "",
+    "Migrate owners to bare {users.id} Konnect customers + platform Owner Starter.",
+    "",
     "  (no args)              Migrate all distinct developerApps.ownerId values",
     "  --owner-id <users.id>  Migrate a single owner",
-    "  --provision            Ensure Starter subscription + trial on owner customer",
-    "  --transfer-balances    Grant remaining legacy app_*:ownerId balances onto owner customer",
-    "  --dry-run              Print actions without calling OpenMeter mutations",
+    "  --provision            Ensure Owner Starter subscription on bare customer",
+    "  --transfer-balances    Grant remaining balances from legacy wallets",
+    "  --cancel-legacy        Cancel active subscriptions on legacy customers",
+    "  --dry-run              Print actions without OpenMeter mutations",
+    "  --help",
   ].join("\n");
 }
 
 async function listOwners(filterOwnerId?: string): Promise<
-  Array<{ ownerId: string; apps: Array<{ developerAppId: string; publicClientId: string }> }>
+  Array<{ ownerId: string; apps: OwnedApp[] }>
 > {
   const baseQuery = db
     .select({
@@ -94,10 +132,7 @@ async function listOwners(filterOwnerId?: string): Promise<
     ? await baseQuery.where(eq(developerApps.ownerId, filterOwnerId))
     : await baseQuery;
 
-  const byOwner = new Map<
-    string,
-    Array<{ developerAppId: string; publicClientId: string }>
-  >();
+  const byOwner = new Map<string, OwnedApp[]>();
   for (const row of rows) {
     if (!row.ownerId || !row.publicClientId) continue;
     const list = byOwner.get(row.ownerId) ?? [];
@@ -111,87 +146,143 @@ async function listOwners(filterOwnerId?: string): Promise<
   return [...byOwner.entries()].map(([ownerId, apps]) => ({ ownerId, apps }));
 }
 
-async function provisionOwnerStarter(input: {
-  ownerId: string;
-  firstApp: { developerAppId: string; publicClientId: string } | undefined;
-  dryRun: boolean;
-}): Promise<void> {
-  if (!input.firstApp) return;
-  if (input.dryRun) {
-    console.log(
-      `  [dry-run] would provision starter/trial via app ${input.firstApp.publicClientId}`,
-    );
-    return;
+async function findCustomerIdByKey(
+  client: ReturnType<typeof getHostedAdminClient>,
+  customerKey: string,
+): Promise<string | null> {
+  try {
+    const listed = await client.customers.list({
+      key: customerKey,
+      page: 1,
+      pageSize: 50,
+    });
+    const match = (listed?.items ?? []).find((item) => item.key === customerKey);
+    return match?.id ?? null;
+  } catch {
+    return null;
   }
-  await ensureStarterSubscriptionForAppUser({
-    clientId: input.firstApp.developerAppId,
-    externalUserId: input.ownerId,
-  });
-  await ensureTrialAllowanceForAppUser({
-    clientId: input.firstApp.developerAppId,
-    externalUserId: input.ownerId,
-  });
-  console.log(`  [ok] starter/trial ensured via ${input.firstApp.publicClientId}`);
 }
 
-async function transferLegacyAppBalance(input: {
+async function transferBalanceFromLegacyCustomer(input: {
   client: ReturnType<typeof getHostedAdminClient>;
-  ownerId: string;
-  customerKey: string;
-  app: { developerAppId: string; publicClientId: string };
+  legacyCustomerId: string;
+  legacyKey: string;
+  ownerCustomerId: string;
+  ownerKey: string;
+  featureKey: string;
   apiKey: string | undefined;
   dryRun: boolean;
 }): Promise<bigint> {
-  const legacyKey = `${input.app.publicClientId}:${input.ownerId}`;
-  const tenants = await listTenantCustomers(input.client, input.app.publicClientId);
-  const legacy = tenants.find((row) => row.key === legacyKey);
-  if (!legacy) {
-    console.log(`  [skip] no legacy wallet ${legacyKey}`);
-    return 0n;
-  }
   const balance = await getKonnectCreditBalance({
-    customerId: legacy.id,
+    customerId: input.legacyCustomerId,
     apiKey: input.apiKey,
   });
   if (!balance || balance.balanceUsdMicros <= 0n) {
-    console.log(`  [skip] empty legacy wallet ${legacyKey}`);
+    console.log(`  [skip] empty legacy wallet ${input.legacyKey}`);
     return 0n;
   }
   console.log(
-    `  [legacy] ${legacyKey} balance=${balance.balanceUsdMicros.toString()} micros`,
+    `  [legacy] ${input.legacyKey} balance=${balance.balanceUsdMicros.toString()} micros`,
   );
   if (input.dryRun) {
     return balance.balanceUsdMicros;
   }
-  const ownerCustomer = await ensureOpenMeterCustomer(
-    input.client,
-    input.customerKey,
-  );
-  const featureKey = await getTrialFeatureKeyForApp(input.app.developerAppId);
   await createKonnectCreditGrant({
-    customerId: ownerCustomer.id,
+    customerId: input.ownerCustomerId,
     amountUsdMicros: balance.balanceUsdMicros,
     name: "Migrated owner prepaid balance",
-    description: `Transferred from legacy ${legacyKey}`,
-    featureKey,
-    idempotencyKey: `migrate-owner:${ownerCustomer.id}:${legacy.id}`,
+    description: `Transferred from legacy ${input.legacyKey}`,
+    featureKey: input.featureKey,
+    idempotencyKey: `migrate-owner-bare:${input.ownerCustomerId}:${input.legacyCustomerId}`,
     apiKey: input.apiKey,
   });
   console.log(
-    `  [ok] granted ${balance.balanceUsdMicros.toString()} onto ${input.customerKey}`,
+    `  [ok] granted ${balance.balanceUsdMicros.toString()} onto ${input.ownerKey}`,
   );
   return balance.balanceUsdMicros;
 }
 
+function legacyCustomerKeys(ownerId: string, apps: OwnedApp[]): string[] {
+  const wire = buildOwnerWireSubject(ownerId);
+  const keys = [wire];
+  for (const app of apps) {
+    keys.push(
+      buildOpenMeterCustomerKey(app.publicClientId, ownerId),
+      buildOpenMeterCustomerKey(app.publicClientId, wire),
+    );
+  }
+  return [...new Set(keys)];
+}
+
+async function releaseLegacySubjectKeys(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  customerId: string;
+  customerKey: string;
+  dryRun: boolean;
+}): Promise<void> {
+  if (input.dryRun) {
+    console.log(
+      `  [dry-run] would clear subjectKeys on legacy ${input.customerKey}`,
+    );
+    return;
+  }
+  // Free wire subjects for the bare owner customer. Use a deprecated subject
+  // so Konnect still has at least one key, including when the legacy customer
+  // key itself is owner:{id}.
+  const retiredKey = `deprecated:${input.customerKey}`;
+  try {
+    await input.client.customers.update(input.customerId, {
+      name: `Legacy ${input.customerKey}`,
+      usageAttribution: { subjectKeys: [retiredKey] },
+    });
+    console.log(`  [ok] released subjectKeys on ${input.customerKey} → ${retiredKey}`);
+  } catch (err) {
+    console.warn(
+      `  [warn] could not release subjectKeys on ${input.customerKey}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+async function cancelLegacySubscriptions(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  customerId: string;
+  customerKey: string;
+  dryRun: boolean;
+}): Promise<number> {
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    input.client,
+    input.customerId,
+  );
+  const active = listed.filter((s) => isOpenMeterSubscriptionActive(s.status));
+  let cancels = 0;
+  for (const sub of active) {
+    if (input.dryRun) {
+      console.log(
+        `  [dry-run] would cancel ${sub.id} on legacy ${input.customerKey}`,
+      );
+    } else {
+      await input.client.subscriptions.cancel(sub.id, { timing: "immediate" });
+      console.log(`  [cancel] ${sub.id} on legacy ${input.customerKey}`);
+    }
+    cancels += 1;
+  }
+  return cancels;
+}
+
 async function migrateOwner(input: {
   ownerId: string;
-  apps: Array<{ developerAppId: string; publicClientId: string }>;
+  apps: OwnedApp[];
   provision: boolean;
   transferBalances: boolean;
+  cancelLegacy: boolean;
   dryRun: boolean;
 }) {
   const customerKey = buildOwnerCustomerKey(input.ownerId);
-  console.log(`\n[owner] ${input.ownerId} apps=${input.apps.length} key=${customerKey}`);
+  const publicClientIds = input.apps.map((a) => a.publicClientId);
+  console.log(
+    `\n[owner] ${input.ownerId} apps=${input.apps.length} key=${customerKey}`,
+  );
 
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
@@ -202,43 +293,96 @@ async function migrateOwner(input: {
   }
 
   const client = getHostedAdminClient();
+
   if (input.dryRun) {
-    console.log(`  [dry-run] would ensure customer ${customerKey}`);
-  } else {
-    const customer = await ensureOpenMeterCustomer(
-      client,
-      customerKey,
-      `Owner ${input.ownerId}`,
+    console.log(
+      `  [dry-run] would ensure customer ${customerKey} with subjects for ${publicClientIds.length} apps`,
     );
-    console.log(`  [ok] customer id=${customer.id}`);
+  } else {
+    const customer = await ensureOwnerCustomer(
+      client,
+      input.ownerId,
+      publicClientIds,
+    );
+    console.log(`  [ok] customer id=${customer.id} key=${customer.key}`);
   }
 
-  if (input.provision) {
-    await provisionOwnerStarter({
-      ownerId: input.ownerId,
-      firstApp: input.apps[0],
-      dryRun: input.dryRun,
-    });
+  const ownerCustomerId = input.dryRun
+    ? await findCustomerIdByKey(client, customerKey)
+    : (await ensureOwnerCustomer(client, input.ownerId, publicClientIds)).id;
+
+  if (!ownerCustomerId && !input.dryRun) {
+    throw new Error(`Failed to resolve bare owner customer ${customerKey}`);
   }
 
-  if (!input.transferBalances) {
-    return;
-  }
+  const featureKey = input.apps[0]
+    ? await getTrialFeatureKeyForApp(input.apps[0].developerAppId)
+    : "network_spend";
 
   let transferMicros = 0n;
-  for (const app of input.apps) {
-    transferMicros += await transferLegacyAppBalance({
-      client,
-      ownerId: input.ownerId,
-      customerKey,
-      app,
-      apiKey,
-      dryRun: input.dryRun,
-    });
+  if (input.transferBalances || input.cancelLegacy) {
+    for (const legacyKey of legacyCustomerKeys(input.ownerId, input.apps)) {
+      if (legacyKey === customerKey) continue;
+      const legacyId = await findCustomerIdByKey(client, legacyKey);
+      if (!legacyId) {
+        console.log(`  [skip] no legacy wallet ${legacyKey}`);
+        continue;
+      }
+
+      if (input.transferBalances && ownerCustomerId) {
+        transferMicros += await transferBalanceFromLegacyCustomer({
+          client,
+          legacyCustomerId: legacyId,
+          legacyKey,
+          ownerCustomerId,
+          ownerKey: customerKey,
+          featureKey,
+          apiKey,
+          dryRun: input.dryRun,
+        });
+      }
+
+      if (input.cancelLegacy) {
+        await cancelLegacySubscriptions({
+          client,
+          customerId: legacyId,
+          customerKey: legacyKey,
+          dryRun: input.dryRun,
+        });
+        await releaseLegacySubjectKeys({
+          client,
+          customerId: legacyId,
+          customerKey: legacyKey,
+          dryRun: input.dryRun,
+        });
+      }
+    }
   }
 
   if (transferMicros > 0n) {
     console.log(`  [done] total transferred micros=${transferMicros.toString()}`);
+  }
+
+  // Re-ensure after releasing legacy subjects so wire keys can move onto bare.
+  if (!input.dryRun && input.cancelLegacy) {
+    await ensureOwnerCustomer(client, input.ownerId, publicClientIds);
+  }
+
+  if (input.provision) {
+    if (input.dryRun) {
+      console.log(
+        `  [dry-run] would ensure Owner Starter (${OWNER_STARTER_PLAN_KEY})`,
+      );
+    } else {
+      const ensured = await ensureOwnerStarterSubscription({
+        ownerUserId: input.ownerId,
+        publicClientIds,
+      });
+      console.log(
+        `  [ok] Owner Starter sub=${ensured.openmeterSubscriptionId} ` +
+          `plan=${ensured.planKey} created=${ensured.created}`,
+      );
+    }
   }
 }
 
@@ -248,6 +392,20 @@ async function main() {
     throw new Error(`Invalid --owner-id\n\n${usage()}`);
   }
 
+  if (!isHostedAdminClientAvailable()) {
+    throw new Error("OpenMeter is not configured");
+  }
+
+  if (args.dryRun) {
+    console.log(`[dry-run] would ensure Owner Starter plan ${OWNER_STARTER_PLAN_KEY}`);
+  } else {
+    const plan = await ensureOwnerStarterPlanSynced();
+    console.log(
+      `[ok] Owner Starter plan id=${plan.openmeterPlanId} key=${plan.key} ` +
+        `included=${plan.includedUsdMicros}`,
+    );
+  }
+
   const owners = await listOwners(args.ownerId);
   if (owners.length === 0) {
     console.log("No owners found.");
@@ -255,7 +413,9 @@ async function main() {
   }
 
   console.log(
-    `Migrating ${owners.length} owner(s) provision=${args.provision} transfer=${args.transferBalances} dryRun=${args.dryRun}`,
+    `Migrating ${owners.length} owner(s) provision=${args.provision} ` +
+      `transfer=${args.transferBalances} cancelLegacy=${args.cancelLegacy} ` +
+      `dryRun=${args.dryRun}`,
   );
 
   for (const owner of owners) {
@@ -264,6 +424,7 @@ async function main() {
       apps: owner.apps,
       provision: args.provision,
       transferBalances: args.transferBalances,
+      cancelLegacy: args.cancelLegacy,
       dryRun: args.dryRun,
     });
   }
