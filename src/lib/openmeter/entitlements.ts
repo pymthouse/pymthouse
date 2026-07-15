@@ -1,4 +1,5 @@
 import type { OpenMeter } from "@openmeter/sdk";
+import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   getHostedOpenMeterUrl,
@@ -68,6 +69,8 @@ export async function getTrialCreditBalance(input: {
   clientId: string;
   externalUserId: string;
   featureKey?: string;
+  /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
+  identity?: ResolvedBillingIdentity;
 }): Promise<TrialCreditBalance | null> {
   const client = getHostedTrialOpenMeterClient();
   if (!client) {
@@ -77,10 +80,12 @@ export async function getTrialCreditBalance(input: {
   const { resolveOpenMeterBillingIdentity } = await import(
     "@/lib/openmeter/billing-identity"
   );
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity =
+    input.identity ??
+    (await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }));
   const customerKey = identity.customerKey;
   const featureKey =
     input.featureKey || (await getTrialFeatureKeyForApp(identity.developerAppId));
