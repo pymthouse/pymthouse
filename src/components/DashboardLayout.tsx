@@ -16,7 +16,7 @@ interface NavItem {
   external?: boolean; // if set, opens in a new tab
 }
 
-const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+const API_REFERENCE_URL = "/api/v1/docs";
 const DOCS_URL = "https://docs.pymthouse.com";
 
 const allNavItems: NavItem[] = [
