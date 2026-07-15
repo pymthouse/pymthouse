@@ -125,7 +125,7 @@ export function buildPublicOpenApiDocument(): OpenApiDoc {
   doc.paths = filterOperations(doc.paths, PUBLIC_AUDIENCES);
   doc.info = {
     ...doc.info,
-    title: "PymtHouse API",
+    title: "PymtHouse Builder API",
     description: BUILDER_INFO_DESCRIPTION,
   };
   doc.tags = BUILDER_TAG_DEFINITIONS;

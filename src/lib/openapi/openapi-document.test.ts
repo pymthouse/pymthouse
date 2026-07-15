@@ -11,7 +11,7 @@ import "@/lib/openapi/routes";
 test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal", () => {
   const doc = buildPublicOpenApiDocument();
   assert.equal(doc.openapi, "3.1.0");
-  assert.equal(doc.info.title, "PymtHouse API");
+  assert.equal(doc.info.title, "PymtHouse Builder API");
   assert.ok(doc.info.description?.includes("Builder (M2M)"));
   assert.ok(doc.info.description?.includes("End-user"));
 
