@@ -111,10 +111,10 @@ const USD_MICROS_PER_CENT = 10_000n;
  * fraction digits (cents). Strips currency symbols and extra punctuation.
  */
 export function sanitizeUsdCentsInput(raw: string): string {
-  let s = raw.replace(/[^\d.]/g, "");
+  let s = raw.replaceAll(/[^\d.]/g, "");
   const dot = s.indexOf(".");
   if (dot !== -1) {
-    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replace(/\./g, "").slice(0, 2)}`;
+    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replaceAll(/\./g, "").slice(0, 2)}`;
   }
   return s;
 }
@@ -124,7 +124,7 @@ export function sanitizeUsdCentsInput(raw: string): string {
  * (e.g. `"5000000"` → `"5.00"`). Truncates sub-cent remainders.
  */
 export function usdMicrosToCentsDisplay(microsStr: string | null | undefined): string {
-  return formatUsdMicrosDisplay(microsStr).replace("$", "");
+  return formatUsdMicrosDisplay(microsStr).replaceAll("$", "");
 }
 
 /**
