@@ -2,13 +2,19 @@ import { db } from "@/db/index";
 import {
   apiKeys,
   appAllowedDomains,
+  appBillingConfig,
+  appBillingOauthStates,
+  appBillingOracleConfig,
+  appOpenMeterConfig,
   appUsers,
   authAuditLog,
   developerApps,
+  discoveryProfileBundles,
   discoveryProfiles,
   endUsers,
   oidcClients,
   oidcPayloads,
+  onrampSessions,
   planCapabilityBundles,
   plans,
   providerAdmins,
@@ -17,6 +23,7 @@ import {
   streamSessions,
   subscriptions,
   transactions,
+  usageIngestReceipts,
 } from "@/db/schema";
 import { eq, inArray, or, sql } from "drizzle-orm";
 
@@ -103,10 +110,37 @@ export async function deleteDeveloperAppAndRelatedData(
     await tx.delete(sessions).where(eq(sessions.appId, appInternalId));
     await tx.delete(signerConfig).where(eq(signerConfig.clientId, appInternalId));
 
+    await tx.delete(usageIngestReceipts).where(eq(usageIngestReceipts.clientId, appInternalId));
+    await tx.delete(appOpenMeterConfig).where(eq(appOpenMeterConfig.clientId, appInternalId));
+    await tx.delete(appBillingConfig).where(eq(appBillingConfig.clientId, appInternalId));
+    await tx.delete(appBillingOauthStates).where(eq(appBillingOauthStates.clientId, appInternalId));
+    await tx.delete(appBillingOracleConfig).where(eq(appBillingOracleConfig.clientId, appInternalId));
+    await tx.delete(discoveryProfileBundles).where(eq(discoveryProfileBundles.clientId, appInternalId));
+    await tx.delete(onrampSessions).where(eq(onrampSessions.clientId, appInternalId));
+
+    // Legacy ledger tables dropped by 0021; still present on some DBs that skipped it.
+    await dropLegacyUsageRowsIfPresent(tx, appInternalId);
+
     await tx.delete(developerApps).where(eq(developerApps.id, appInternalId));
 
     for (const pk of oidcPkList) {
       await tx.delete(oidcClients).where(eq(oidcClients.id, pk));
     }
   });
+}
+
+async function dropLegacyUsageRowsIfPresent(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  appInternalId: string,
+): Promise<void> {
+  for (const table of ["usage_billing_events", "usage_records"] as const) {
+    const existsRows = await tx.execute<{ exists: boolean }>(
+      sql`SELECT to_regclass(${`public.${table}`}) IS NOT NULL AS exists`,
+    );
+    const row = existsRows[0] as { exists: boolean } | undefined;
+    if (!row?.exists) continue;
+    await tx.execute(
+      sql`DELETE FROM ${sql.identifier(table)} WHERE client_id = ${appInternalId}`,
+    );
+  }
 }
