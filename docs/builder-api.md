@@ -30,7 +30,6 @@ Machine-readable contract and interactive reference:
 | Surface | Spec | Docs UI |
 | --- | --- | --- |
 | **Public (Builder + End-user)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` |
-| Aliases | `/api/v1/builder/openapi.json`, `/api/v1/user/openapi.json` | `/api/v1/builder/docs`, `/api/v1/user/docs` → `/docs` |
 
 The public document includes M2M integrator routes and `/api/v1/user/usage*`. Dashboard/admin (Internal) is omitted from the published docs UI.
 

@@ -7,16 +7,9 @@ const turnkeyAuthComponent = path.join(
 );
 
 const nextConfig: NextConfig = {
-  /**
-   * Phase-1 API surface aliases (filesystem routes take precedence where they exist,
-   * e.g. Builder M2M-only usage under /api/v1/builder/apps/.../usage).
-   */
+  /** Canonical Internal API paths backed by the existing route handlers. */
   async rewrites() {
     return [
-      {
-        source: "/api/v1/builder/apps/:path*",
-        destination: "/api/v1/apps/:path*",
-      },
       {
         source: "/api/v1/internal/admin/:path*",
         destination: "/api/v1/admin/:path*",

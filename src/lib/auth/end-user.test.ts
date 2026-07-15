@@ -20,9 +20,6 @@ import {
 } from "@/lib/auth/end-user";
 import { hashToken } from "@/lib/token-hash";
 
-
-import { endUserSubjectOverrideError } from "@/lib/auth/end-user";
-
 test("endUserSubjectOverrideError rejects userId and externalUserId", () => {
   for (const key of ["userId", "externalUserId", "external_user_id"]) {
     const params = new URLSearchParams({ [key]: "someone-else" });

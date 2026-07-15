@@ -13,7 +13,11 @@ import {
   __testSetOpenMeterUsageRows,
 } from "@/lib/openmeter/usage-read";
 
+<<<<<<< HEAD
 test("usage API requires matching M2M client (provider session rejected)", async (t) => {
+=======
+run("usage API requires a matching client or authorized session", async (t) => {
+>>>>>>> 529f97e (Fix API contract validation failures)
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));

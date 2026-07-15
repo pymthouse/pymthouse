@@ -2,8 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildBuilderOpenApiDocument,
-  buildEndUserOpenApiDocument,
   buildInternalOpenApiDocument,
   buildOpenApiDocument,
   buildPublicOpenApiDocument,
@@ -44,14 +42,6 @@ test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal"
   assert.ok(!tagGroups?.some((group) => group.name === "Dashboard"));
 });
 
-test("buildBuilderOpenApiDocument and buildEndUserOpenApiDocument alias public", () => {
-  const publicDoc = buildPublicOpenApiDocument();
-  assert.equal(buildBuilderOpenApiDocument().info.title, publicDoc.info.title);
-  assert.equal(buildEndUserOpenApiDocument().info.title, publicDoc.info.title);
-  assert.ok(buildEndUserOpenApiDocument().paths["/api/v1/user/usage"]);
-  assert.ok(buildEndUserOpenApiDocument().paths["/api/v1/builder/apps/{clientId}/usage"]);
-});
-
 test("buildInternalOpenApiDocument documents /internal paths and session auth", () => {
   const doc = buildInternalOpenApiDocument();
   assert.equal(doc.info.title, "PymtHouse Internal API");
@@ -67,6 +57,7 @@ test("buildInternalOpenApiDocument documents /internal paths and session auth", 
   assert.equal(doc.paths["/api/v1/apps/{clientId}/users"], undefined);
 
   assert.ok(doc.components?.securitySchemes?.adminSession);
+  assert.equal(doc.components?.securitySchemes?.adminBearer, undefined);
   assert.equal(doc.components?.securitySchemes?.m2mBasic, undefined);
   const tagGroups = doc["x-tagGroups"];
   assert.ok(tagGroups?.some((group) => group.name === "Dashboard"));

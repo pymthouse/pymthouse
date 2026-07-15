@@ -24,10 +24,6 @@ export const OPENAPI_EXCLUDED_PREFIXES = [
 export const OPENAPI_EXCLUDED_FILES = new Set([
   "openapi.json/route.ts",
   "docs/route.ts",
-  "builder/openapi.json/route.ts",
-  "builder/docs/route.ts",
-  "user/openapi.json/route.ts",
-  "user/docs/route.ts",
   "internal/openapi.json/route.ts",
   "internal/docs/route.ts",
   // Legacy billing path — Internal documents `/api/v1/internal/billing`

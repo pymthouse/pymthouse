@@ -227,15 +227,6 @@ export const BUILDER_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }>
   },
 ];
 
-/** @deprecated End-user ops live in the main (Builder) document. */
-export const END_USER_TAG_DEFINITIONS = BUILDER_TAG_DEFINITIONS.filter(
-  (tag) => tag.name === OPENAPI_TAGS.endUserUsage,
-);
-/** @deprecated End-user ops live in the main (Builder) document. */
-export const END_USER_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }> = [
-  { name: "End-user", tags: [OPENAPI_TAGS.endUserUsage] },
-];
-
 export const INTERNAL_TAG_DEFINITIONS: Array<{
   name: OpenApiTagName;
   description: string;
@@ -308,21 +299,11 @@ Canonical Builder usage: \`GET /api/v1/builder/apps/{clientId}/usage*\`.
 Canonical End-user usage: \`GET /api/v1/user/usage*\`.
 `;
 
-/** @deprecated End-user lives in the main public document (`BUILDER_INFO_DESCRIPTION`). */
-export const END_USER_INFO_DESCRIPTION = BUILDER_INFO_DESCRIPTION;
-
 export const INTERNAL_INFO_DESCRIPTION = `PymtHouse **Internal API** — dashboard, admin, and platform ops for the PymtHouse application (not linked from public docs).
 
-Authenticate with a NextAuth session cookie and/or admin-scoped Bearer token.
+Authenticate with a NextAuth session cookie.
 
 Canonical paths use the \`/api/v1/internal/…\` prefix. Many app-admin routes rewrite to legacy \`/api/v1/apps/…\` handlers (same auth). Prefer the \`/internal\` paths in new code.
 
 Public integrator docs: \`/api/v1/docs\`.
 `;
-
-/** @deprecated Use BUILDER_TAG_DEFINITIONS. */
-export const OPENAPI_TAG_DEFINITIONS = BUILDER_TAG_DEFINITIONS;
-/** @deprecated Use BUILDER_TAG_GROUPS. */
-export const OPENAPI_TAG_GROUPS = BUILDER_TAG_GROUPS;
-/** @deprecated Use BUILDER_INFO_DESCRIPTION. */
-export const OPENAPI_INFO_DESCRIPTION = BUILDER_INFO_DESCRIPTION;

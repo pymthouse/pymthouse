@@ -108,23 +108,14 @@ function internalSecuritySchemes() {
     adminSession: {
       type: "apiKey" as const,
       in: "cookie" as const,
-      name: "authjs.session-token",
+      name: "next-auth.session-token",
       description:
-        "NextAuth session cookie for the signed-in PymtHouse user (dashboard / admin).",
-    },
-    adminBearer: {
-      type: "http" as const,
-      scheme: "bearer",
-      bearerFormat: "JWT",
-      description: "Optional admin-scoped Bearer token where session cookie is unavailable.",
+        "NextAuth session cookie for the signed-in PymtHouse user. Secure deployments use the `__Secure-next-auth.session-token` variant.",
     },
   };
 }
 
-/**
- * Public OpenAPI — Builder (M2M) + End-user usage.
- * Served at `/api/v1/openapi.json`, `/api/v1/builder/openapi.json`, and `/api/v1/user/openapi.json`.
- */
+/** Public OpenAPI — Builder (M2M) + End-user usage. */
 export function buildPublicOpenApiDocument(): OpenApiDoc {
   const doc = generateOpenApiDocument() as OpenApiDoc;
   const serverUrl = resolveApiServerUrl();
@@ -146,16 +137,6 @@ export function buildPublicOpenApiDocument(): OpenApiDoc {
     url: `${oidcIssuer}/.well-known/openid-configuration`,
   };
   return doc;
-}
-
-/** @deprecated Prefer `buildPublicOpenApiDocument`. */
-export function buildBuilderOpenApiDocument(): OpenApiDoc {
-  return buildPublicOpenApiDocument();
-}
-
-/** @deprecated Prefer `buildPublicOpenApiDocument` — End-user is in the main doc. */
-export function buildEndUserOpenApiDocument(): OpenApiDoc {
-  return buildPublicOpenApiDocument();
 }
 
 /** Internal OpenAPI — dashboard / admin / platform ops (unpublished). */
