@@ -133,6 +133,38 @@ test("spendable balance cache stays bounded when every entry is inflight", async
   assert.equal(calls, callsAfterBurst + 1);
 });
 
+test("spendable balance cache repeats a lookup evicted while inflight", async () => {
+  let calls = 0;
+  const waiters: Array<() => void> = [];
+  const cached = createSpendableBalanceCache({
+    ttlSeconds: 60,
+    maxEntries: 1,
+    getBalance: async (id) => {
+      calls += 1;
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve);
+      });
+      return id.usage_subject;
+    },
+  });
+
+  const first = cached(identity("user-1"));
+  const second = cached(identity("user-2"));
+  const repeatedFirst = cached(identity("user-1"));
+
+  assert.equal(calls, 3);
+  assert.equal(waiters.length, 3);
+
+  for (const release of waiters) {
+    release();
+  }
+  assert.deepEqual(await Promise.all([first, second, repeatedFirst]), [
+    "user-1",
+    "user-2",
+    "user-1",
+  ]);
+});
+
 test("spendable balance cache evicts oldest resolved entries at capacity", async () => {
   let calls = 0;
   const cached = createSpendableBalanceCache({
