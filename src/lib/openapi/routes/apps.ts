@@ -29,6 +29,30 @@ function userPath(suffix: string) {
 const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }, { bearerUserJwt: [] }];
 const m2mOnlySecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
+type MetadataRoute = [
+  method: "get" | "post" | "put" | "delete",
+  path: string,
+  tag: string,
+  summary: string,
+  includeExternalUserId?: boolean,
+];
+
+function registerMetadataRoutes(routes: MetadataRoute[]): void {
+  for (const [method, path, tag, summary, includeExternalUserId] of routes) {
+    defineRouteMetadata(method, path, {
+      tags: [tag],
+      summary,
+      security: m2mSecurity,
+      request: {
+        params: includeExternalUserId
+          ? z.object({ clientId, externalUserId })
+          : z.object({ clientId }),
+      },
+      responses: { 200: jsonSuccess, ...builderErrorResponses },
+    });
+  }
+}
+
 /**
  * Builder (M2M) OpenAPI metadata only.
  * Dashboard/Internal app CRUD (admins, domains, settings, create/delete app, …)
@@ -47,79 +71,18 @@ defineRouteMetadata("get", appPath(""), {
   },
 });
 
-// Users
-defineRouteMetadata("get", appPath("/users"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "List provisioned users",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("post", appPath("/users"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Upsert provisioned user",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("put", appPath("/users"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Update provisioned user",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("delete", appPath("/users"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Deactivate provisioned user",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-
-defineRouteMetadata("get", userPath("/keys"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "List user API keys",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId, externalUserId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("post", userPath("/keys"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Create user API key",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId, externalUserId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("delete", userPath("/keys"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Revoke user API key",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId, externalUserId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-
-defineRouteMetadata("get", userPath("/allowances"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "List user allowances",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId, externalUserId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("post", userPath("/allowances"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Grant user allowance",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId, externalUserId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("get", userPath("/subscription"), {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Get user subscription",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId, externalUserId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
+registerMetadataRoutes([
+  ["get", appPath("/users"), OPENAPI_TAGS.users, "List provisioned users"],
+  ["post", appPath("/users"), OPENAPI_TAGS.users, "Upsert provisioned user"],
+  ["put", appPath("/users"), OPENAPI_TAGS.users, "Update provisioned user"],
+  ["delete", appPath("/users"), OPENAPI_TAGS.users, "Deactivate provisioned user"],
+  ["get", userPath("/keys"), OPENAPI_TAGS.users, "List user API keys", true],
+  ["post", userPath("/keys"), OPENAPI_TAGS.users, "Create user API key", true],
+  ["delete", userPath("/keys"), OPENAPI_TAGS.users, "Revoke user API key", true],
+  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", true],
+  ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", true],
+  ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", true],
+]);
 
 // Usage (canonical Builder mount)
 defineRouteMetadata("get", builderAppPath("/usage"), {
@@ -139,36 +102,13 @@ defineRouteMetadata("get", builderAppPath("/usage/balance"), {
   responses: { 200: jsonSuccess, ...builderErrorResponses },
 });
 
-// Billing / discovery reads
-defineRouteMetadata("get", appPath("/billing"), {
-  tags: [OPENAPI_TAGS.billing],
-  summary: "Billing profile",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("post", appPath("/billing/checkout"), {
-  tags: [OPENAPI_TAGS.billing],
-  summary: "Create billing checkout",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
-defineRouteMetadata("get", appPath("/plans"), {
-  tags: [OPENAPI_TAGS.billing],
-  summary: "List plans",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
+registerMetadataRoutes([
+  ["get", appPath("/billing"), OPENAPI_TAGS.billing, "Billing profile"],
+  ["post", appPath("/billing/checkout"), OPENAPI_TAGS.billing, "Create billing checkout"],
+  ["get", appPath("/plans"), OPENAPI_TAGS.billing, "List plans"],
+  ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],
+]);
 
-defineRouteMetadata("get", appPath("/discovery-profiles"), {
-  tags: [OPENAPI_TAGS.discovery],
-  summary: "List discovery profiles",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
 defineRouteMetadata("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {
   tags: [OPENAPI_TAGS.discovery],
   summary: "Get discovery profile",
@@ -184,10 +124,7 @@ defineRouteMetadata("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileI
     404: { description: "Not found" },
   },
 });
-defineRouteMetadata("get", appPath("/manifest"), {
-  tags: [OPENAPI_TAGS.discovery],
-  summary: "App manifest",
-  security: m2mSecurity,
-  request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
-});
+
+registerMetadataRoutes([
+  ["get", appPath("/manifest"), OPENAPI_TAGS.discovery, "App manifest"],
+]);

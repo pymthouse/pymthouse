@@ -14,10 +14,7 @@ import { OPENAPI_TAGS } from "@/lib/openapi/tags";
 import { z } from "@/lib/openapi/zod";
 
 const clientId = PublicClientIdPathParamSchema;
-const sessionSecurity: Array<Record<string, string[]>> = [
-  { adminSession: [] },
-  { adminBearer: [] },
-];
+const sessionSecurity: Array<Record<string, string[]>> = [{ adminSession: [] }];
 
 const rewriteNote =
   "Canonical Internal path. Rewrites to the legacy `/api/v1/apps/…` (or `/admin`/`/signer`/`/billing`) handler with the same auth.";
@@ -60,281 +57,72 @@ function meta(
   });
 }
 
-// --- Real Internal routes ---
-meta("get", "/api/v1/internal/me/usage/requests", {
-  tags: [OPENAPI_TAGS.viewerUsage],
-  summary: "List signed-ticket request history for the session user",
-});
-meta("get", "/api/v1/internal/dashboard/usage", {
-  tags: [OPENAPI_TAGS.viewerUsage],
-  summary: "Dashboard usage summary for the session user",
-});
+type MetadataRoute = [
+  method: "get" | "post" | "put" | "patch" | "delete",
+  path: string,
+  tag: string,
+  summary: string,
+  flags?: string,
+];
 
-// --- Apps list / CRUD (rewrite → /api/v1/apps) ---
-meta("get", "/api/v1/internal/apps", {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "List apps for the signed-in provider",
-  virtual: true,
-});
-meta("post", "/api/v1/internal/apps", {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Create app",
-  virtual: true,
-});
-meta("get", internalApp(""), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Get app (dashboard view)",
-  params: true,
-  virtual: true,
-});
-meta("put", internalApp(""), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Update app",
-  params: true,
-  virtual: true,
-});
-meta("delete", internalApp(""), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Delete app",
-  params: true,
-  virtual: true,
-});
-meta("put", internalApp("/settings"), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Update app settings",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/credentials"), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Rotate / issue app credentials",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/publish"), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Publish app to marketplace",
-  params: true,
-  virtual: true,
-});
+function registerMetadataRoutes(routes: MetadataRoute[]): void {
+  for (const [method, path, tag, summary, flags = ""] of routes) {
+    meta(method, path, {
+      tags: [tag],
+      summary,
+      params: flags.includes("c"),
+      planId: flags.includes("p"),
+      profileId: flags.includes("d"),
+      virtual: flags.includes("v"),
+    });
+  }
+}
 
-// --- Team ---
-meta("get", internalApp("/admins"), {
-  tags: [OPENAPI_TAGS.team],
-  summary: "List app admins",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/admins"), {
-  tags: [OPENAPI_TAGS.team],
-  summary: "Add app admin",
-  params: true,
-  virtual: true,
-});
-meta("delete", internalApp("/admins"), {
-  tags: [OPENAPI_TAGS.team],
-  summary: "Remove app admin",
-  params: true,
-  virtual: true,
-});
-meta("get", internalApp("/domains"), {
-  tags: [OPENAPI_TAGS.team],
-  summary: "List custom domains",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/domains"), {
-  tags: [OPENAPI_TAGS.team],
-  summary: "Add custom domain",
-  params: true,
-  virtual: true,
-});
-meta("delete", internalApp("/domains"), {
-  tags: [OPENAPI_TAGS.team],
-  summary: "Remove custom domain",
-  params: true,
-  virtual: true,
-});
-
-// --- Plans / OpenMeter ---
-meta("get", internalApp("/openmeter"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Get OpenMeter linkage",
-  params: true,
-  virtual: true,
-});
-meta("put", internalApp("/openmeter"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Update OpenMeter linkage",
-  params: true,
-  virtual: true,
-});
-meta("get", internalApp("/starter-plan"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Get starter plan",
-  params: true,
-  virtual: true,
-});
-meta("put", internalApp("/starter-plan"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Update starter plan",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/plans"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Create plan",
-  params: true,
-  virtual: true,
-});
-meta("put", internalApp("/plans"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Update plan",
-  params: true,
-  virtual: true,
-});
-meta("delete", internalApp("/plans"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Delete plan",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/plans/{planId}/sync"), {
-  tags: [OPENAPI_TAGS.plans],
-  summary: "Sync plan to OpenMeter",
-  params: true,
-  planId: true,
-  virtual: true,
-});
-meta("get", internalApp("/signer/routing"), {
-  tags: [OPENAPI_TAGS.appsAdmin],
-  summary: "Get signer DMZ routing for the app",
-  params: true,
-  virtual: true,
-});
-
-// --- Discovery mutations ---
-meta("post", internalApp("/discovery-profiles"), {
-  tags: [OPENAPI_TAGS.appDiscovery],
-  summary: "Create discovery profile",
-  params: true,
-  virtual: true,
-});
-meta("put", internalApp("/discovery-profiles/{profileId}"), {
-  tags: [OPENAPI_TAGS.appDiscovery],
-  summary: "Update discovery profile",
-  params: true,
-  profileId: true,
-  virtual: true,
-});
-meta("delete", internalApp("/discovery-profiles/{profileId}"), {
-  tags: [OPENAPI_TAGS.appDiscovery],
-  summary: "Delete discovery profile",
-  params: true,
-  profileId: true,
-  virtual: true,
-});
-meta("put", internalApp("/manifest"), {
-  tags: [OPENAPI_TAGS.appDiscovery],
-  summary: "Update app manifest",
-  params: true,
-  virtual: true,
-});
-
-// --- Merchant billing / Stripe ---
-meta("get", internalApp("/billing/stripe"), {
-  tags: [OPENAPI_TAGS.merchantBilling],
-  summary: "Get Stripe Connect status",
-  params: true,
-  virtual: true,
-});
-meta("delete", internalApp("/billing/stripe"), {
-  tags: [OPENAPI_TAGS.merchantBilling],
-  summary: "Disconnect Stripe",
-  params: true,
-  virtual: true,
-});
-meta("post", internalApp("/billing/stripe/connect"), {
-  tags: [OPENAPI_TAGS.merchantBilling],
-  summary: "Start Stripe Connect",
-  params: true,
-  virtual: true,
-});
-meta("get", internalApp("/billing/stripe/callback"), {
-  tags: [OPENAPI_TAGS.merchantBilling],
-  summary: "Stripe Connect OAuth callback",
-  params: true,
-  virtual: true,
-});
-meta("get", internalApp("/billing/invoices"), {
-  tags: [OPENAPI_TAGS.merchantBilling],
-  summary: "List merchant invoices",
-  params: true,
-  virtual: true,
-});
-
-// --- Platform admin (rewrite → /api/v1/admin) ---
-meta("get", "/api/v1/internal/admin/apps", {
-  tags: [OPENAPI_TAGS.admin],
-  summary: "List all apps (platform admin)",
-  virtual: true,
-});
-meta("get", "/api/v1/internal/admin/oidc-clients", {
-  tags: [OPENAPI_TAGS.admin],
-  summary: "List OIDC clients (platform admin)",
-  virtual: true,
-});
-meta("patch", "/api/v1/internal/admin/oidc-clients", {
-  tags: [OPENAPI_TAGS.admin],
-  summary: "Update OIDC client (platform admin)",
-  virtual: true,
-});
-meta("patch", "/api/v1/internal/admin/apps/{clientId}/marketplace-featured", {
-  tags: [OPENAPI_TAGS.admin],
-  summary: "Set marketplace featured flag",
-  params: true,
-  virtual: true,
-});
-
-// --- Signer (rewrite → /api/v1/signer) ---
-meta("get", "/api/v1/internal/signer", {
-  tags: [OPENAPI_TAGS.signer],
-  summary: "Get platform signer config",
-  virtual: true,
-});
-meta("patch", "/api/v1/internal/signer", {
-  tags: [OPENAPI_TAGS.signer],
-  summary: "Update platform signer config",
-  virtual: true,
-});
-meta("get", "/api/v1/internal/signer/cli-status", {
-  tags: [OPENAPI_TAGS.signer],
-  summary: "Signer CLI status",
-  virtual: true,
-});
-meta("get", "/api/v1/internal/signer/logs", {
-  tags: [OPENAPI_TAGS.signer],
-  summary: "Signer logs",
-  virtual: true,
-});
-meta("post", "/api/v1/internal/signer/control", {
-  tags: [OPENAPI_TAGS.signer],
-  summary: "Signer control action",
-  virtual: true,
-});
-
-meta("get", "/api/v1/internal/billing", {
-  tags: [OPENAPI_TAGS.merchantBilling],
-  summary: "Platform billing overview for the session user",
-  virtual: true,
-});
-
-// --- Turnkey / end-users (actual path; no /internal rewrite) ---
-meta("get", "/api/v1/end-users", {
-  tags: [OPENAPI_TAGS.users],
-  summary: "List Turnkey end-users for the session",
-});
-meta("post", "/api/v1/end-users", {
-  tags: [OPENAPI_TAGS.users],
-  summary: "Register Turnkey end-user",
-});
+registerMetadataRoutes([
+  ["get", "/api/v1/internal/me/usage/requests", OPENAPI_TAGS.viewerUsage, "List signed-ticket request history for the session user"],
+  ["get", "/api/v1/internal/dashboard/usage", OPENAPI_TAGS.viewerUsage, "Dashboard usage summary for the session user"],
+  ["get", "/api/v1/internal/apps", OPENAPI_TAGS.appsAdmin, "List apps for the signed-in provider", "v"],
+  ["post", "/api/v1/internal/apps", OPENAPI_TAGS.appsAdmin, "Create app", "v"],
+  ["get", internalApp(""), OPENAPI_TAGS.appsAdmin, "Get app (dashboard view)", "cv"],
+  ["put", internalApp(""), OPENAPI_TAGS.appsAdmin, "Update app", "cv"],
+  ["delete", internalApp(""), OPENAPI_TAGS.appsAdmin, "Delete app", "cv"],
+  ["put", internalApp("/settings"), OPENAPI_TAGS.appsAdmin, "Update app settings", "cv"],
+  ["post", internalApp("/credentials"), OPENAPI_TAGS.appsAdmin, "Rotate / issue app credentials", "cv"],
+  ["post", internalApp("/publish"), OPENAPI_TAGS.appsAdmin, "Publish app to marketplace", "cv"],
+  ["get", internalApp("/admins"), OPENAPI_TAGS.team, "List app admins", "cv"],
+  ["post", internalApp("/admins"), OPENAPI_TAGS.team, "Add app admin", "cv"],
+  ["delete", internalApp("/admins"), OPENAPI_TAGS.team, "Remove app admin", "cv"],
+  ["get", internalApp("/domains"), OPENAPI_TAGS.team, "List custom domains", "cv"],
+  ["post", internalApp("/domains"), OPENAPI_TAGS.team, "Add custom domain", "cv"],
+  ["delete", internalApp("/domains"), OPENAPI_TAGS.team, "Remove custom domain", "cv"],
+  ["get", internalApp("/openmeter"), OPENAPI_TAGS.plans, "Get OpenMeter linkage", "cv"],
+  ["put", internalApp("/openmeter"), OPENAPI_TAGS.plans, "Update OpenMeter linkage", "cv"],
+  ["get", internalApp("/starter-plan"), OPENAPI_TAGS.plans, "Get starter plan", "cv"],
+  ["put", internalApp("/starter-plan"), OPENAPI_TAGS.plans, "Update starter plan", "cv"],
+  ["post", internalApp("/plans"), OPENAPI_TAGS.plans, "Create plan", "cv"],
+  ["put", internalApp("/plans"), OPENAPI_TAGS.plans, "Update plan", "cv"],
+  ["delete", internalApp("/plans"), OPENAPI_TAGS.plans, "Delete plan", "cv"],
+  ["post", internalApp("/plans/{planId}/sync"), OPENAPI_TAGS.plans, "Sync plan to OpenMeter", "cpv"],
+  ["get", internalApp("/signer/routing"), OPENAPI_TAGS.appsAdmin, "Get signer DMZ routing for the app", "cv"],
+  ["post", internalApp("/discovery-profiles"), OPENAPI_TAGS.appDiscovery, "Create discovery profile", "cv"],
+  ["put", internalApp("/discovery-profiles/{profileId}"), OPENAPI_TAGS.appDiscovery, "Update discovery profile", "cdv"],
+  ["delete", internalApp("/discovery-profiles/{profileId}"), OPENAPI_TAGS.appDiscovery, "Delete discovery profile", "cdv"],
+  ["put", internalApp("/manifest"), OPENAPI_TAGS.appDiscovery, "Update app manifest", "cv"],
+  ["get", internalApp("/billing/stripe"), OPENAPI_TAGS.merchantBilling, "Get Stripe Connect status", "cv"],
+  ["delete", internalApp("/billing/stripe"), OPENAPI_TAGS.merchantBilling, "Disconnect Stripe", "cv"],
+  ["post", internalApp("/billing/stripe/connect"), OPENAPI_TAGS.merchantBilling, "Start Stripe Connect", "cv"],
+  ["get", internalApp("/billing/stripe/callback"), OPENAPI_TAGS.merchantBilling, "Stripe Connect OAuth callback", "cv"],
+  ["get", internalApp("/billing/invoices"), OPENAPI_TAGS.merchantBilling, "List merchant invoices", "cv"],
+  ["get", "/api/v1/internal/admin/apps", OPENAPI_TAGS.admin, "List all apps (platform admin)", "v"],
+  ["get", "/api/v1/internal/admin/oidc-clients", OPENAPI_TAGS.admin, "List OIDC clients (platform admin)", "v"],
+  ["patch", "/api/v1/internal/admin/oidc-clients", OPENAPI_TAGS.admin, "Update OIDC client (platform admin)", "v"],
+  ["patch", "/api/v1/internal/admin/apps/{clientId}/marketplace-featured", OPENAPI_TAGS.admin, "Set marketplace featured flag", "cv"],
+  ["get", "/api/v1/internal/signer", OPENAPI_TAGS.signer, "Get platform signer config", "v"],
+  ["patch", "/api/v1/internal/signer", OPENAPI_TAGS.signer, "Update platform signer config", "v"],
+  ["get", "/api/v1/internal/signer/cli-status", OPENAPI_TAGS.signer, "Signer CLI status", "v"],
+  ["get", "/api/v1/internal/signer/logs", OPENAPI_TAGS.signer, "Signer logs", "v"],
+  ["post", "/api/v1/internal/signer/control", OPENAPI_TAGS.signer, "Signer control action", "v"],
+  ["get", "/api/v1/internal/billing", OPENAPI_TAGS.merchantBilling, "Platform billing overview for the session user", "v"],
+  ["get", "/api/v1/end-users", OPENAPI_TAGS.users, "List Turnkey end-users for the session"],
+  ["post", "/api/v1/end-users", OPENAPI_TAGS.users, "Register Turnkey end-user"],
+]);

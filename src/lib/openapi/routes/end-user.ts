@@ -17,8 +17,6 @@ defineRouteMetadata("get", "/api/v1/user/usage", {
   security: endUserSecurity,
   responses: {
     200: jsonSuccess,
-    400: { description: "Disallowed cross-user filter" },
-    401: { description: "Missing or invalid end-user credential" },
     503: { description: "OpenMeter not configured" },
     ...builderErrorResponses,
   },
