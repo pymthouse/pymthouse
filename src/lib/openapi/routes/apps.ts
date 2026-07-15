@@ -34,21 +34,36 @@ type MetadataRoute = [
   path: string,
   tag: string,
   summary: string,
-  includeExternalUserId?: boolean,
+  options?: {
+    includeExternalUserId?: boolean;
+    /** Also document 201 Created (upsert/create handlers). */
+    created?: boolean;
+  },
 ];
 
 function registerMetadataRoutes(routes: MetadataRoute[]): void {
-  for (const [method, path, tag, summary, includeExternalUserId] of routes) {
+  for (const [method, path, tag, summary, options] of routes) {
     defineRouteMetadata(method, path, {
       tags: [tag],
       summary,
       security: m2mSecurity,
       request: {
-        params: includeExternalUserId
+        params: options?.includeExternalUserId
           ? z.object({ clientId, externalUserId })
           : z.object({ clientId }),
       },
-      responses: { 200: jsonSuccess, ...builderErrorResponses },
+      responses: {
+        200: jsonSuccess,
+        ...(options?.created
+          ? {
+              201: {
+                description: "Created",
+                content: jsonSuccess.content,
+              },
+            }
+          : {}),
+        ...builderErrorResponses,
+      },
     });
   }
 }
@@ -73,15 +88,21 @@ defineRouteMetadata("get", appPath(""), {
 
 registerMetadataRoutes([
   ["get", appPath("/users"), OPENAPI_TAGS.users, "List provisioned users"],
-  ["post", appPath("/users"), OPENAPI_TAGS.users, "Upsert provisioned user"],
+  ["post", appPath("/users"), OPENAPI_TAGS.users, "Upsert provisioned user", { created: true }],
   ["put", appPath("/users"), OPENAPI_TAGS.users, "Update provisioned user"],
   ["delete", appPath("/users"), OPENAPI_TAGS.users, "Deactivate provisioned user"],
-  ["get", userPath("/keys"), OPENAPI_TAGS.users, "List user API keys", true],
-  ["post", userPath("/keys"), OPENAPI_TAGS.users, "Create user API key", true],
-  ["delete", userPath("/keys"), OPENAPI_TAGS.users, "Revoke user API key", true],
-  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", true],
-  ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", true],
-  ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", true],
+  ["get", userPath("/keys"), OPENAPI_TAGS.users, "List user API keys", { includeExternalUserId: true }],
+  [
+    "post",
+    userPath("/keys"),
+    OPENAPI_TAGS.users,
+    "Create user API key",
+    { includeExternalUserId: true, created: true },
+  ],
+  ["delete", userPath("/keys"), OPENAPI_TAGS.users, "Revoke user API key", { includeExternalUserId: true }],
+  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", { includeExternalUserId: true }],
+  ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", { includeExternalUserId: true }],
+  ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
 ]);
 
 // Usage (canonical Builder mount)
@@ -96,9 +117,20 @@ defineRouteMetadata("get", builderAppPath("/usage"), {
 defineRouteMetadata("get", builderAppPath("/usage/balance"), {
   tags: [OPENAPI_TAGS.usage],
   summary: "Usage balance",
-  description: "M2M Basic only. Query `externalUserId` for one end user.",
+  description: "M2M Basic only. Requires `externalUserId` for one end user.",
   security: m2mOnlySecurity,
-  request: { params: z.object({ clientId }) },
+  request: {
+    params: z.object({ clientId }),
+    query: z.object({
+      externalUserId: z
+        .string()
+        .min(1)
+        .openapi({
+          param: { name: "externalUserId", in: "query" },
+          description: "Integrator-defined stable user id.",
+        }),
+    }),
+  },
   responses: { 200: jsonSuccess, ...builderErrorResponses },
 });
 
