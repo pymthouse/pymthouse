@@ -116,29 +116,60 @@ export function rewriteKonnectSearchParams(
   return params;
 }
 
-function rewriteKonnectEventsListParams(params: URLSearchParams): void {
-  const subjects = params
-    .getAll("subject")
+function takeTrimmedParamValues(
+  params: URLSearchParams,
+  key: string,
+): string[] {
+  const values = params
+    .getAll(key)
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-  params.delete("subject");
-  if (subjects.length === 1) {
-    params.set("filter[subject][eq]", subjects[0]);
-  } else if (subjects.length > 1) {
-    // Konnect supports comma-delimited exact match via oeq.
-    params.set("filter[subject][oeq]", subjects.join(","));
-  }
+  params.delete(key);
+  return values;
+}
 
-  const customerIds = params
-    .getAll("customerId")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-  params.delete("customerId");
-  if (customerIds.length === 1) {
-    params.set("filter[customer_id][eq]", customerIds[0]);
-  } else if (customerIds.length > 1) {
-    params.set("filter[customer_id][oeq]", customerIds.join(","));
+/** Map multi-value SDK params to Konnect filter[field][eq|oeq]. */
+function setKonnectEqOrOeqFilter(
+  params: URLSearchParams,
+  filterField: string,
+  values: string[],
+): void {
+  if (values.length === 1) {
+    params.set(`filter[${filterField}][eq]`, values[0]);
+    return;
   }
+  if (values.length > 1) {
+    // Konnect supports comma-delimited exact match via oeq.
+    params.set(`filter[${filterField}][oeq]`, values.join(","));
+  }
+}
+
+function moveParamToKonnectFilter(
+  params: URLSearchParams,
+  sourceKey: string,
+  filterKey: string,
+): void {
+  if (!params.has(sourceKey)) {
+    return;
+  }
+  const value = params.get(sourceKey)?.trim();
+  params.delete(sourceKey);
+  if (value) {
+    params.set(filterKey, value);
+  }
+}
+
+function rewriteKonnectEventsListParams(params: URLSearchParams): void {
+  setKonnectEqOrOeqFilter(
+    params,
+    "subject",
+    takeTrimmedParamValues(params, "subject"),
+  );
+  setKonnectEqOrOeqFilter(
+    params,
+    "customer_id",
+    takeTrimmedParamValues(params, "customerId"),
+  );
 
   if (params.has("limit")) {
     const limit = params.get("limit");
@@ -148,35 +179,10 @@ function rewriteKonnectEventsListParams(params: URLSearchParams): void {
     }
   }
 
-  if (params.has("from")) {
-    const from = params.get("from");
-    params.delete("from");
-    if (from?.trim()) {
-      params.set("filter[time][gte]", from.trim());
-    }
-  }
-  if (params.has("to")) {
-    const to = params.get("to");
-    params.delete("to");
-    if (to?.trim()) {
-      params.set("filter[time][lte]", to.trim());
-    }
-  }
-
-  if (params.has("ingestedAtFrom")) {
-    const from = params.get("ingestedAtFrom");
-    params.delete("ingestedAtFrom");
-    if (from?.trim()) {
-      params.set("filter[ingested_at][gte]", from.trim());
-    }
-  }
-  if (params.has("ingestedAtTo")) {
-    const to = params.get("ingestedAtTo");
-    params.delete("ingestedAtTo");
-    if (to?.trim()) {
-      params.set("filter[ingested_at][lte]", to.trim());
-    }
-  }
+  moveParamToKonnectFilter(params, "from", "filter[time][gte]");
+  moveParamToKonnectFilter(params, "to", "filter[time][lte]");
+  moveParamToKonnectFilter(params, "ingestedAtFrom", "filter[ingested_at][gte]");
+  moveParamToKonnectFilter(params, "ingestedAtTo", "filter[ingested_at][lte]");
 }
 
 export function rewriteKonnectRequestUrl(url: URL, method: string): URL {
