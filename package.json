@@ -44,7 +44,7 @@
     "@braintree/sanitize-url": "^7.1.2",
     "@openmeter/sdk": "^1.0.0-beta.228",
     "@pymthouse/builder-sdk": "^0.5.0",
-    "@pymthouse/clearinghouse-identity-webhook": "^0.4.1",
+    "@pymthouse/clearinghouse-identity-webhook": "^0.4.2",
     "@tailwindcss/postcss": "^4.1.18",
     "@turnkey/crypto": "^2.10.0",
     "@turnkey/react-wallet-kit": "^1.11.1",

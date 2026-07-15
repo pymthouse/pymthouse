@@ -69,7 +69,7 @@ Do not pass M2M client secrets as `subject_token` on the signer session exchange
 ### Implementation tasks
 
 - [x] Issue only `app_*_*` from key creation APIs (`formatCompositeApiKey`).
-- [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.1`).
+- [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
 - [ ] Update integrator docs / dashboard curl snippets when the package is deployed.
 
 ## Authentication
