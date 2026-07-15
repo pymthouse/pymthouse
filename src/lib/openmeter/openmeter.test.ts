@@ -510,6 +510,77 @@ test("ensureOpenMeterCustomer soft-fails subject update when subscription is act
   assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
 });
 
+test("buildUsageMeterSubjects dual-reads bare owner and compound forms", async () => {
+  const { buildUsageMeterSubjects, buildExternalUserIdMatchKeys } = await import(
+    "./usage-read"
+  );
+  const subjects = buildUsageMeterSubjects("app_aaa", "uuid-1").sort();
+  assert.deepEqual(
+    subjects,
+    [
+      "app_aaa:owner:uuid-1",
+      "app_aaa:uuid-1",
+      "owner:uuid-1",
+      "uuid-1",
+    ].sort(),
+  );
+  const keys = buildExternalUserIdMatchKeys("owner:uuid-1");
+  assert.equal(keys.has("uuid-1"), true);
+  assert.equal(keys.has("owner:uuid-1"), true);
+});
+
+test("aggregateUserRows merges transitional owner groupBy external_user_id values", async () => {
+  const { aggregateUserPipelineModelRows } = await import("./usage-read");
+  const rows = aggregateUserPipelineModelRows({
+    clientId: "app_1",
+    filterExternalUserId: "uuid-owner",
+    feeRows: [
+      {
+        value: "100",
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: "50",
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "owner:uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 2,
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: 1,
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "owner:uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.externalUserId, "uuid-owner");
+  assert.equal(rows[0]?.requestCount, 3);
+  assert.equal(rows[0]?.networkFeeUsdMicros, "150");
+});
+
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
   const listedCustomers: string[][] = [];
   const client = {
