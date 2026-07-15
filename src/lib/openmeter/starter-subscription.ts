@@ -5,7 +5,7 @@ import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import { ensureOpenMeterCustomer, ensureOpenMeterCustomerForAppUser } from "./customers";
+import { ensureOpenMeterCustomer } from "./customers";
 import {
   isOpenMeterConflictError,
   isOpenMeterPlanNotFoundError,
@@ -17,7 +17,6 @@ import {
 } from "./plans-sync";
 import {
   findOpenMeterSubscriptionByPlanKey,
-  listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
   verifyOpenMeterSubscriptionId,
 } from "./subscription-read";
@@ -258,64 +257,42 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     externalUserId: input.externalUserId,
   });
 
+  // Owners share one platform Owner Starter plan (not a per-app Neon plans row).
+  // Return the requesting app's local Starter id for callers that cache planId.
+  if (identity.isOwner && identity.ownerUserId) {
+    const { ensureOwnerStarterSubscription } = await import(
+      "@/lib/openmeter/owner-starter-plan"
+    );
+    const { listOwnedPublicClientIds } = await import("./customers");
+    const ownedClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+    const ensured = await ensureOwnerStarterSubscription({
+      ownerUserId: identity.ownerUserId,
+      publicClientIds: [
+        ...new Set([identity.publicClientId, ...ownedClientIds]),
+      ],
+      hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
+    });
+    const starter = await getOrCreateStarterPlan(identity.developerAppId);
+    return {
+      openmeterSubscriptionId: ensured.openmeterSubscriptionId,
+      planId: starter.id,
+      created: ensured.created,
+    };
+  }
+
   const starter = await ensureStarterPlanSynced(identity.developerAppId);
   if (!starter.openmeterPlanId) {
     throw new Error("Starter plan is not synced to OpenMeter");
   }
 
   const client = getHostedAdminClient();
-  const customer = identity.isOwner
-    ? await ensureOpenMeterCustomerForAppUser({
-        client,
-        clientId: input.clientId,
-        externalUserId: input.externalUserId,
-      })
-    : await ensureOpenMeterCustomer(client, identity.customerKey);
+  const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
   // Starter trial subscriptions always use the sandbox billing profile so Konnect
   // does not require Stripe customer data, even when the app has Stripe Connect.
   await applyFreeBillingProfileToCustomer({
     client,
     customerId: customer.id,
   });
-
-  // Owners already subscribed (any plan) skip creating another Starter on a second app.
-  if (identity.isOwner) {
-    const existingAny = await findOpenMeterSubscriptionByPlanKey(
-      client,
-      customer.id,
-      buildOpenMeterPlanKey(identity.developerAppId, starter.id),
-      { openmeterPlanId: starter.openmeterPlanId },
-    );
-    if (existingAny?.id) {
-      return {
-        openmeterSubscriptionId: existingAny.id,
-        planId: starter.id,
-        created: false,
-      };
-    }
-    // Also accept any active subscription on the owner customer (from another app).
-    try {
-      const listed = await listOpenMeterSubscriptionsForCustomer(
-        client,
-        customer.id,
-      );
-      const active = listed.find(
-        (s) =>
-          s.status === "active" ||
-          s.status === "trialing" ||
-          !s.status,
-      );
-      if (active?.id) {
-        return {
-          openmeterSubscriptionId: active.id,
-          planId: starter.id,
-          created: false,
-        };
-      }
-    } catch {
-      // fall through to create
-    }
-  }
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
 

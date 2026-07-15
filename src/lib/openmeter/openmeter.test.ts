@@ -47,16 +47,33 @@ test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
 });
 
-test("owner customer key helpers", async () => {
-  const { buildOwnerCustomerKey, isOwnerCustomerKey, parseOwnerCustomerKey, normalizePlatformUserId } =
-    await import("./customer-key");
-  assert.equal(buildOwnerCustomerKey("uuid-1"), "owner:uuid-1");
+test("owner customer key helpers use bare user id", async () => {
+  const {
+    buildOwnerCustomerKey,
+    buildOwnerWireSubject,
+    isOwnerCustomerKey,
+    isOwnerWireSubject,
+    parseOwnerCustomerKey,
+    normalizePlatformUserId,
+    buildOwnerMeterSubjects,
+  } = await import("./customer-key");
+  assert.equal(buildOwnerCustomerKey("uuid-1"), "uuid-1");
+  assert.equal(buildOwnerCustomerKey("owner:uuid-1"), "uuid-1");
+  assert.equal(buildOwnerWireSubject("uuid-1"), "owner:uuid-1");
+  assert.equal(isOwnerCustomerKey("uuid-1"), true);
   assert.equal(isOwnerCustomerKey("owner:uuid-1"), true);
   assert.equal(isOwnerCustomerKey("app_x:uuid-1"), false);
+  assert.equal(isOwnerWireSubject("owner:uuid-1"), true);
+  assert.equal(isOwnerWireSubject("uuid-1"), false);
   assert.equal(parseOwnerCustomerKey("owner:uuid-1"), "uuid-1");
+  assert.equal(parseOwnerCustomerKey("uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("owner:uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("user:uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("uuid-1"), "uuid-1");
+  assert.deepEqual(
+    buildOwnerMeterSubjects("uuid-1", ["app_aaa"]).sort(),
+    ["app_aaa:owner:uuid-1", "app_aaa:uuid-1", "owner:uuid-1", "uuid-1"].sort(),
+  );
 });
 
 test("isMintUserSignerTokenRequest detects mint scope", () => {
@@ -407,24 +424,40 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
 
 test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer", async () => {
   let updatedSubjectKeys: string[] | undefined;
-  const ownerKey = "owner:uuid-1";
+  let createdBody: {
+    key?: string;
+    usageAttribution?: { subjectKeys?: string[] };
+  } | undefined;
+  const ownerKey = "uuid-1";
+  const customerRecord = {
+    id: "om-owner-1",
+    key: ownerKey,
+    name: ownerKey,
+    usageAttribution: { subjectKeys: [ownerKey] },
+  };
+  let exists = false;
   const client = {
     customers: {
-      get: async (key: string) => ({
-        id: "om-owner-1",
-        key,
-        name: key,
-        usageAttribution: { subjectKeys: [ownerKey] },
-      }),
+      get: async () => {
+        if (!exists) throw new Error("not found");
+        return customerRecord;
+      },
+      list: async () => ({ items: exists ? [customerRecord] : [] }),
       update: async (
         _id: string,
         input: { usageAttribution: { subjectKeys: string[] } },
       ) => {
         updatedSubjectKeys = input.usageAttribution.subjectKeys;
-        return { id: "om-owner-1", key: ownerKey };
+        customerRecord.usageAttribution = { subjectKeys: updatedSubjectKeys };
+        return customerRecord;
       },
-      create: async () => {
-        throw new Error("should not create");
+      create: async (input: {
+        key: string;
+        usageAttribution: { subjectKeys: string[] };
+      }) => {
+        createdBody = input;
+        exists = true;
+        return { id: "om-owner-1", key: input.key };
       },
     },
   };
@@ -435,9 +468,18 @@ test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer",
     ["app_aaa", "app_bbb"],
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
+  assert.equal(createdBody?.key, ownerKey);
+  assert.deepEqual(createdBody?.usageAttribution?.subjectKeys, [ownerKey]);
   assert.deepEqual(
     [...(updatedSubjectKeys ?? [])].sort(),
-    ["app_aaa:uuid-1", "app_bbb:uuid-1", ownerKey].sort(),
+    [
+      "app_aaa:owner:uuid-1",
+      "app_aaa:uuid-1",
+      "app_bbb:owner:uuid-1",
+      "app_bbb:uuid-1",
+      "owner:uuid-1",
+      "uuid-1",
+    ].sort(),
   );
 });
 
@@ -466,6 +508,77 @@ test("ensureOpenMeterCustomer soft-fails subject update when subscription is act
     "owner:uuid-1",
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
+});
+
+test("buildUsageMeterSubjects dual-reads bare owner and compound forms", async () => {
+  const { buildUsageMeterSubjects, buildExternalUserIdMatchKeys } = await import(
+    "./usage-read"
+  );
+  const subjects = buildUsageMeterSubjects("app_aaa", "uuid-1").sort();
+  assert.deepEqual(
+    subjects,
+    [
+      "app_aaa:owner:uuid-1",
+      "app_aaa:uuid-1",
+      "owner:uuid-1",
+      "uuid-1",
+    ].sort(),
+  );
+  const keys = buildExternalUserIdMatchKeys("owner:uuid-1");
+  assert.equal(keys.has("uuid-1"), true);
+  assert.equal(keys.has("owner:uuid-1"), true);
+});
+
+test("aggregateUserRows merges transitional owner groupBy external_user_id values", async () => {
+  const { aggregateUserPipelineModelRows } = await import("./usage-read");
+  const rows = aggregateUserPipelineModelRows({
+    clientId: "app_1",
+    filterExternalUserId: "uuid-owner",
+    feeRows: [
+      {
+        value: "100",
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: "50",
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "owner:uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 2,
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: 1,
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "owner:uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.externalUserId, "uuid-owner");
+  assert.equal(rows[0]?.requestCount, 3);
+  assert.equal(rows[0]?.networkFeeUsdMicros, "150");
 });
 
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
