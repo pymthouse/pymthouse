@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   return docsHtmlResponse(
     scalarDocsHtml({
-      title: "PymtHouse API",
+      title: "PymtHouse Builder API",
       openApiUrl: "/api/v1/openapi.json",
     }),
   );
