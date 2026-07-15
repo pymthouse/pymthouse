@@ -268,6 +268,61 @@ async function cancelLegacySubscriptions(input: {
   return cancels;
 }
 
+async function processLegacyWallets(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  ownerId: string;
+  apps: OwnedApp[];
+  customerKey: string;
+  ownerCustomerId: string | null;
+  transferBalances: boolean;
+  cancelLegacy: boolean;
+  dryRun: boolean;
+  apiKey: string | undefined;
+}): Promise<bigint> {
+  let transferMicros = 0n;
+  if (!input.transferBalances && !input.cancelLegacy) {
+    return transferMicros;
+  }
+
+  for (const legacyKey of legacyCustomerKeys(input.ownerId, input.apps)) {
+    if (legacyKey === input.customerKey) continue;
+    const legacyId = await findCustomerIdByKey(input.client, legacyKey);
+    if (!legacyId) {
+      console.log(`  [skip] no legacy wallet ${legacyKey}`);
+      continue;
+    }
+
+    if (input.transferBalances && input.ownerCustomerId) {
+      transferMicros += await transferBalanceFromLegacyCustomer({
+        client: input.client,
+        legacyCustomerId: legacyId,
+        legacyKey,
+        ownerCustomerId: input.ownerCustomerId,
+        ownerKey: input.customerKey,
+        featureKey: DEFAULT_TRIAL_FEATURE_KEY,
+        apiKey: input.apiKey,
+        dryRun: input.dryRun,
+      });
+    }
+
+    if (input.cancelLegacy) {
+      await cancelLegacySubscriptions({
+        client: input.client,
+        customerId: legacyId,
+        customerKey: legacyKey,
+        dryRun: input.dryRun,
+      });
+      await releaseLegacySubjectKeys({
+        client: input.client,
+        customerId: legacyId,
+        customerKey: legacyKey,
+        dryRun: input.dryRun,
+      });
+    }
+  }
+  return transferMicros;
+}
+
 async function migrateOwner(input: {
   ownerId: string;
   apps: OwnedApp[];
@@ -313,48 +368,17 @@ async function migrateOwner(input: {
     throw new Error(`Failed to resolve bare owner customer ${customerKey}`);
   }
 
-  // Shared owner wallet credits must not be scoped to a single app's feature.
-  const featureKey = DEFAULT_TRIAL_FEATURE_KEY;
-
-  let transferMicros = 0n;
-  if (input.transferBalances || input.cancelLegacy) {
-    for (const legacyKey of legacyCustomerKeys(input.ownerId, input.apps)) {
-      if (legacyKey === customerKey) continue;
-      const legacyId = await findCustomerIdByKey(client, legacyKey);
-      if (!legacyId) {
-        console.log(`  [skip] no legacy wallet ${legacyKey}`);
-        continue;
-      }
-
-      if (input.transferBalances && ownerCustomerId) {
-        transferMicros += await transferBalanceFromLegacyCustomer({
-          client,
-          legacyCustomerId: legacyId,
-          legacyKey,
-          ownerCustomerId,
-          ownerKey: customerKey,
-          featureKey,
-          apiKey,
-          dryRun: input.dryRun,
-        });
-      }
-
-      if (input.cancelLegacy) {
-        await cancelLegacySubscriptions({
-          client,
-          customerId: legacyId,
-          customerKey: legacyKey,
-          dryRun: input.dryRun,
-        });
-        await releaseLegacySubjectKeys({
-          client,
-          customerId: legacyId,
-          customerKey: legacyKey,
-          dryRun: input.dryRun,
-        });
-      }
-    }
-  }
+  const transferMicros = await processLegacyWallets({
+    client,
+    ownerId: input.ownerId,
+    apps: input.apps,
+    customerKey,
+    ownerCustomerId,
+    transferBalances: input.transferBalances,
+    cancelLegacy: input.cancelLegacy,
+    dryRun: input.dryRun,
+    apiKey,
+  });
 
   if (transferMicros > 0n) {
     console.log(`  [done] total transferred micros=${transferMicros.toString()}`);
@@ -365,22 +389,23 @@ async function migrateOwner(input: {
     await ensureOwnerCustomer(client, input.ownerId, publicClientIds);
   }
 
-  if (input.provision) {
-    if (input.dryRun) {
-      console.log(
-        `  [dry-run] would ensure Owner Starter (${OWNER_STARTER_PLAN_KEY})`,
-      );
-    } else {
-      const ensured = await ensureOwnerStarterSubscription({
-        ownerUserId: input.ownerId,
-        publicClientIds,
-      });
-      console.log(
-        `  [ok] Owner Starter sub=${ensured.openmeterSubscriptionId} ` +
-          `plan=${ensured.planKey} created=${ensured.created}`,
-      );
-    }
+  if (!input.provision) {
+    return;
   }
+  if (input.dryRun) {
+    console.log(
+      `  [dry-run] would ensure Owner Starter (${OWNER_STARTER_PLAN_KEY})`,
+    );
+    return;
+  }
+  const ensured = await ensureOwnerStarterSubscription({
+    ownerUserId: input.ownerId,
+    publicClientIds,
+  });
+  console.log(
+    `  [ok] Owner Starter sub=${ensured.openmeterSubscriptionId} ` +
+      `plan=${ensured.planKey} created=${ensured.created}`,
+  );
 }
 
 async function main() {

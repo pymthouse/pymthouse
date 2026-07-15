@@ -126,6 +126,38 @@ async function resolveOwnerLocalPlanId(input: {
   return null;
 }
 
+async function resolveSubscriptionWithPlanKey(subscription: {
+  planKey: string | null;
+  planId: string | null;
+  id: string;
+  status: string;
+  activeFrom: string | null;
+  activeTo: string | null;
+}) {
+  let planKey = subscription.planKey;
+  if (!planKey && subscription.planId && isHostedAdminClientAvailable()) {
+    try {
+      const remote = await getHostedAdminClient().plans.get(subscription.planId);
+      planKey = remote?.key?.trim() || null;
+    } catch {
+      planKey = null;
+    }
+  }
+  return planKey ? { ...subscription, planKey } : subscription;
+}
+
+async function discountForLocalPlanId(localPlanId: string): Promise<bigint | null> {
+  const rows = await db
+    .select({
+      includedUsdMicros: plans.includedUsdMicros,
+      isStarterDefault: plans.isStarterDefault,
+    })
+    .from(plans)
+    .where(eq(plans.id, localPlanId))
+    .limit(1);
+  return rows[0] ? includedDiscountUsdMicrosForPlan(rows[0]) : null;
+}
+
 /**
  * Remaining plan usage discount for the current calendar month, for the
  * customer's primary active subscription. Zero when no discount or exhausted.
@@ -155,20 +187,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
     return 0n;
   }
 
-  // Konnect subscription views often omit planKey; resolve it from the plan
-  // so stale-version / starter fallbacks can match local plan keys.
-  let planKey = subscription.planKey;
-  if (!planKey && subscription.planId && isHostedAdminClientAvailable()) {
-    try {
-      const remote = await getHostedAdminClient().plans.get(subscription.planId);
-      planKey = remote?.key?.trim() || null;
-    } catch {
-      planKey = null;
-    }
-  }
-  const subscriptionForLookup = planKey
-    ? { ...subscription, planKey }
-    : subscription;
+  const subscriptionForLookup = await resolveSubscriptionWithPlanKey(subscription);
 
   // Platform Owner Starter — discount is env/config, not a Neon plans row.
   if (
@@ -179,11 +198,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
     if (discount == null || discount <= 0n) {
       return 0n;
     }
-    return remainingDiscountAfterUsage({
-      identity,
-      input,
-      discount,
-    });
+    return remainingDiscountAfterUsage({ identity, input, discount });
   }
 
   let localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -202,17 +217,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
 
   let discount: bigint | null = null;
   if (localPlanId) {
-    const rows = await db
-      .select({
-        includedUsdMicros: plans.includedUsdMicros,
-        isStarterDefault: plans.isStarterDefault,
-      })
-      .from(plans)
-      .where(eq(plans.id, localPlanId))
-      .limit(1);
-    if (rows[0]) {
-      discount = includedDiscountUsdMicrosForPlan(rows[0]);
-    }
+    discount = await discountForLocalPlanId(localPlanId);
   } else if (subscriptionForLookup.planKey?.toLowerCase().includes("starter")) {
     // Fail closed for unmapped non-Starter keys (including other pymthouse_* plans).
     discount = parsePositiveMicros(defaultStarterIncludedUsdMicros());
@@ -222,11 +227,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
     return 0n;
   }
 
-  return remainingDiscountAfterUsage({
-    identity,
-    input,
-    discount,
-  });
+  return remainingDiscountAfterUsage({ identity, input, discount });
 }
 
 async function remainingDiscountAfterUsage(input: {

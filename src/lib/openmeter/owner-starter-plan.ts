@@ -30,7 +30,6 @@ import {
   OWNER_STARTER_PLAN_KEY,
   OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
-  ownerStarterIncludedUsdMicros,
 } from "./owner-starter-key";
 
 export {
@@ -38,7 +37,7 @@ export {
   OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
   ownerStarterIncludedUsdMicros,
-};
+} from "./owner-starter-key";
 
 export type OwnerStarterPlanRef = {
   key: string;
