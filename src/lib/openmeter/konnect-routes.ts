@@ -105,7 +105,78 @@ export function rewriteKonnectSearchParams(
     }
   }
 
+  // OpenMeter SDK events.list uses subject/limit/from/to; Konnect expects
+  // filter[subject][eq], page[size], and filter[time][gte|lte]. Without this,
+  // subject is ignored and the latest global events are returned — drowning out
+  // the viewer's own signed-ticket history under busy platform traffic.
+  if (method.toUpperCase() === "GET" && /\/events\/?$/.test(normalizedPath)) {
+    rewriteKonnectEventsListParams(params);
+  }
+
   return params;
+}
+
+function rewriteKonnectEventsListParams(params: URLSearchParams): void {
+  const subjects = params
+    .getAll("subject")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  params.delete("subject");
+  if (subjects.length === 1) {
+    params.set("filter[subject][eq]", subjects[0]);
+  } else if (subjects.length > 1) {
+    // Konnect supports comma-delimited exact match via oeq.
+    params.set("filter[subject][oeq]", subjects.join(","));
+  }
+
+  const customerIds = params
+    .getAll("customerId")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  params.delete("customerId");
+  if (customerIds.length === 1) {
+    params.set("filter[customer_id][eq]", customerIds[0]);
+  } else if (customerIds.length > 1) {
+    params.set("filter[customer_id][oeq]", customerIds.join(","));
+  }
+
+  if (params.has("limit")) {
+    const limit = params.get("limit");
+    params.delete("limit");
+    if (limit && !params.has("page[size]")) {
+      params.set("page[size]", limit);
+    }
+  }
+
+  if (params.has("from")) {
+    const from = params.get("from");
+    params.delete("from");
+    if (from?.trim()) {
+      params.set("filter[time][gte]", from.trim());
+    }
+  }
+  if (params.has("to")) {
+    const to = params.get("to");
+    params.delete("to");
+    if (to?.trim()) {
+      params.set("filter[time][lte]", to.trim());
+    }
+  }
+
+  if (params.has("ingestedAtFrom")) {
+    const from = params.get("ingestedAtFrom");
+    params.delete("ingestedAtFrom");
+    if (from?.trim()) {
+      params.set("filter[ingested_at][gte]", from.trim());
+    }
+  }
+  if (params.has("ingestedAtTo")) {
+    const to = params.get("ingestedAtTo");
+    params.delete("ingestedAtTo");
+    if (to?.trim()) {
+      params.set("filter[ingested_at][lte]", to.trim());
+    }
+  }
 }
 
 export function rewriteKonnectRequestUrl(url: URL, method: string): URL {
