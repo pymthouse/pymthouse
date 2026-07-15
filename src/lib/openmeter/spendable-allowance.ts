@@ -7,7 +7,10 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
-import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  resolveOpenMeterBillingIdentity,
+  type ResolvedBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
 import { buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
 import {
@@ -82,15 +85,19 @@ async function querySubjectsUsedUsdMicros(
 export async function getRemainingPlanDiscountUsdMicros(input: {
   clientId: string;
   externalUserId: string;
+  /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
+  identity?: ResolvedBillingIdentity;
 }): Promise<bigint> {
   if (!isHostedAdminClientAvailable()) {
     return 0n;
   }
 
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity =
+    input.identity ??
+    (await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }));
 
   const subscription = await getPrimaryOpenMeterSubscriptionForAppUser({
     clientId: identity.publicClientId,
@@ -170,12 +177,20 @@ export async function getSpendableUsdMicros(input: {
     return null;
   }
 
+  // Resolve the billing identity once and share it across both lookups so the
+  // webhook balance gate performs a single Neon identity round-trip (#248).
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+
   const [credits, discountRemaining] = await Promise.all([
     getTrialCreditBalance({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
+      identity,
     }),
-    getRemainingPlanDiscountUsdMicros(input),
+    getRemainingPlanDiscountUsdMicros({ ...input, identity }),
   ]);
 
   const creditMicros = BigInt(credits?.balanceUsdMicros ?? "0");
