@@ -7,8 +7,13 @@ name: Deploy production (Vercel)
 # Enable with repository variable:
 #   VERCEL_PRODUCTION_AUTO_DEPLOY=true
 #
-# Required secret:
-#   VERCEL_TOKEN
+# Required secrets:
+#   VERCEL_TOKEN (repository)
+#   DATABASE_URL (environment `vercel / production`) — Neon production Postgres URL
+#   NEXTAUTH_SECRET, AUTH_TOKEN_PEPPER (environment `vercel / production`)
+#
+# DB migrations run in this workflow before the Vercel build. Vercel itself still
+# skips `db:prepare` when VERCEL=1 (see package.json prebuild).
 #
 # Recommended: disable native Git auto-builds on the pymthouse Vercel project
 # (Settings → Git → Ignored Build Step: exit 1) so only this workflow deploys prod.
@@ -63,6 +68,16 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply production DB migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "DATABASE_URL is required on GitHub environment 'vercel / production'." >&2
+            exit 1
+          fi
+          npm run db:migrate
 
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
