@@ -3,6 +3,8 @@ import * as jose from "jose";
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 /** Floor between forced refreshes on unknown `kid`, so bad tokens cannot hammer the DB. */
 const MIN_REFRESH_INTERVAL_MS = 10 * 1000;
+/** Bound DB JWKS loads so a hung Neon query fails the verify path instead of stalling it. */
+const DEFAULT_LOAD_TIMEOUT_MS = 5_000;
 
 export type LocalJwksResolverOptions = {
   /** JWKS loader; defaults to the DB-backed {@link import("./jwks").getPublicJWKS}. */
@@ -13,9 +15,33 @@ export type LocalJwksResolverOptions = {
   now?: () => number;
 };
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function loadPublicJwksFromDb(): Promise<jose.JSONWebKeySet> {
   const { getPublicJWKS } = await import("@/lib/oidc/jwks");
-  return getPublicJWKS();
+  return withTimeout(
+    getPublicJWKS(),
+    DEFAULT_LOAD_TIMEOUT_MS,
+    "local JWKS load timed out",
+  );
 }
 
 /**

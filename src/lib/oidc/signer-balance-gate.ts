@@ -46,9 +46,12 @@ export function createSpendableBalanceCache(options: {
   ttlSeconds: number;
   getBalance: (identity: UsageIdentity) => Promise<string | null>;
   now?: () => number;
+  /** Override for tests; production uses {@link BALANCE_CACHE_MAX_ENTRIES}. */
+  maxEntries?: number;
 }): (identity: UsageIdentity) => Promise<string | null> {
   const { ttlSeconds, getBalance } = options;
   const now = options.now ?? Date.now;
+  const maxEntries = options.maxEntries ?? BALANCE_CACHE_MAX_ENTRIES;
 
   if (ttlSeconds <= 0) {
     return getBalance;
@@ -56,18 +59,19 @@ export function createSpendableBalanceCache(options: {
 
   const entries = new Map<string, BalanceCacheEntry>();
 
-  function evictIfFull(): void {
-    if (entries.size < BALANCE_CACHE_MAX_ENTRIES) {
-      return;
+  /** Insert/update while keeping `entries.size <= maxEntries` (evicts oldest first). */
+  function setBounded(key: string, entry: BalanceCacheEntry): void {
+    if (entries.has(key)) {
+      entries.delete(key);
     }
-    for (const [key, entry] of entries) {
-      if (entries.size < BALANCE_CACHE_MAX_ENTRIES) {
+    while (entries.size >= maxEntries) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) {
         break;
       }
-      if (!entry.inflight) {
-        entries.delete(key);
-      }
+      entries.delete(oldestKey);
     }
+    entries.set(key, entry);
   }
 
   return (identity) => {
@@ -85,7 +89,7 @@ export function createSpendableBalanceCache(options: {
 
     const inflight = getBalance(identity).then(
       (value) => {
-        entries.set(key, { expiresAtMs: now() + ttlSeconds * 1000, value });
+        setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, value });
         return value;
       },
       (err) => {
@@ -94,8 +98,7 @@ export function createSpendableBalanceCache(options: {
       },
     );
 
-    evictIfFull();
-    entries.set(key, { expiresAtMs: now() + ttlSeconds * 1000, inflight });
+    setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, inflight });
     return inflight;
   };
 }

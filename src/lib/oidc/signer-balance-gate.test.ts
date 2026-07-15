@@ -87,3 +87,70 @@ test("spendable balance cache is disabled when ttl is zero", async () => {
   assert.equal(await cached(identity("user-1")), "7");
   assert.equal(calls, 2);
 });
+
+test("spendable balance cache stays bounded when every entry is inflight", async () => {
+  const maxEntries = 3;
+  let calls = 0;
+  let blockLookups = true;
+  const waiters: Array<() => void> = [];
+  const cached = createSpendableBalanceCache({
+    ttlSeconds: 60,
+    maxEntries,
+    getBalance: async (id) => {
+      calls += 1;
+      if (blockLookups) {
+        await new Promise<void>((resolve) => {
+          waiters.push(resolve);
+        });
+      }
+      return id.usage_subject;
+    },
+  });
+
+  const pending = [
+    cached(identity("user-0")),
+    cached(identity("user-1")),
+    cached(identity("user-2")),
+    cached(identity("user-3")),
+  ];
+  assert.equal(calls, 4);
+  assert.equal(waiters.length, 4);
+
+  for (const release of waiters) {
+    release();
+  }
+  await Promise.all(pending);
+
+  // Completions re-insert via setBounded; size stays at maxEntries, so the
+  // oldest identity from the burst is no longer cached.
+  blockLookups = false;
+  const callsAfterBurst = calls;
+  assert.equal(await cached(identity("user-1")), "user-1");
+  assert.equal(await cached(identity("user-2")), "user-2");
+  assert.equal(await cached(identity("user-3")), "user-3");
+  assert.equal(calls, callsAfterBurst);
+  assert.equal(await cached(identity("user-0")), "user-0");
+  assert.equal(calls, callsAfterBurst + 1);
+});
+
+test("spendable balance cache evicts oldest resolved entries at capacity", async () => {
+  let calls = 0;
+  const cached = createSpendableBalanceCache({
+    ttlSeconds: 60,
+    maxEntries: 2,
+    getBalance: async (id) => {
+      calls += 1;
+      return id.usage_subject;
+    },
+  });
+
+  assert.equal(await cached(identity("x")), "x");
+  assert.equal(await cached(identity("y")), "y");
+  assert.equal(await cached(identity("z")), "z"); // evicts x
+  assert.equal(calls, 3);
+  assert.equal(await cached(identity("y")), "y");
+  assert.equal(await cached(identity("z")), "z");
+  assert.equal(calls, 3);
+  assert.equal(await cached(identity("x")), "x");
+  assert.equal(calls, 4);
+});
