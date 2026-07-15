@@ -16,7 +16,7 @@ import {
 } from "@/lib/openmeter/admin-client";
 import { buildOwnerCustomerKey, buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
 import {
-  ensureOpenMeterCustomer,
+  findOpenMeterCustomerByKey,
   listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
@@ -70,12 +70,13 @@ export type RemotePlanSnapshot = {
   usageDiscountUsdMicros: string | null;
 };
 
+/** Remediation is always a separate ops script — never in-app migration. */
 const FIX_STARTER =
-  "npm run openmeter:migrate-owner-customers -- --owner-id <users.id> --provision --transfer-balances";
+  "npm run openmeter:fix-starter-allowance -- --owner-id <users.id> --apply";
 const FIX_DEDUPE =
   "npm run openmeter:dedupe-owner-subscriptions -- --owner-id <users.id> --apply";
 const FIX_MIGRATE =
-  "npm run openmeter:migrate-owner-customers -- --owner-id <users.id> --provision --transfer-balances";
+  "npm run openmeter:migrate-owner-customers -- --owner-id <users.id> --provision --transfer-balances --cancel-legacy";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -260,10 +261,9 @@ export function classifyOwnerSubscriptionMapping(input: {
 
   // Canonical: platform Owner Starter plan.
   if (isOwnerStarterPlanKey(planKey)) {
-    if (
-      remotePlan?.usageDiscountUsdMicros == null ||
-      remotePlan.usageDiscountUsdMicros === ""
-    ) {
+    const expected = parsePositiveMicros(ownerStarterIncludedUsdMicros());
+    const remoteMicros = remotePlan?.usageDiscountUsdMicros?.trim() || null;
+    if (remoteMicros == null || remoteMicros === "") {
       findings.push({
         code: "owner_starter_missing_usage_discount",
         severity: "error",
@@ -273,6 +273,22 @@ export function classifyOwnerSubscriptionMapping(input: {
           subscriptionId: subscription.id,
           planKey: OWNER_STARTER_PLAN_KEY,
           expectedIncludedUsdMicros: ownerStarterIncludedUsdMicros(),
+        },
+        remediation: FIX_MIGRATE,
+      });
+    } else if (expected != null && BigInt(remoteMicros) !== expected) {
+      findings.push({
+        code: "owner_starter_usage_discount_mismatch",
+        severity: "warn",
+        ownerId,
+        message:
+          `Owner Starter discounts.usage=${remoteMicros} ≠ ` +
+          `canonical ${expected}`,
+        details: {
+          subscriptionId: subscription.id,
+          planKey: OWNER_STARTER_PLAN_KEY,
+          remoteUsageDiscountUsdMicros: remoteMicros,
+          expectedIncludedUsdMicros: expected.toString(),
         },
         remediation: FIX_MIGRATE,
       });
@@ -400,7 +416,6 @@ export function classifySpendableGateConsistency(input: {
   }
 
   if (
-    discountRemainingUsdMicros > 0n &&
     creditBalanceUsdMicros + discountRemainingUsdMicros !== spendableUsdMicros
   ) {
     findings.push({
@@ -623,7 +638,19 @@ async function auditOwnerSubscriptions(
 
   let customerId: string;
   try {
-    const customer = await ensureOpenMeterCustomer(client, customerKey);
+    const customer = await findOpenMeterCustomerByKey(client, customerKey);
+    if (!customer?.id) {
+      return [
+        {
+          code: "owner_customer_missing",
+          severity: "error",
+          ownerId,
+          message: `No Konnect customer for bare key ${customerKey}`,
+          details: { customerKey },
+          remediation: FIX_MIGRATE,
+        },
+      ];
+    }
     customerId = customer.id;
   } catch (err) {
     return [
@@ -632,7 +659,7 @@ async function auditOwnerSubscriptions(
         severity: "error",
         ownerId,
         message:
-          err instanceof Error ? err.message : "Failed to ensure owner customer",
+          err instanceof Error ? err.message : "Failed to look up owner customer",
         details: { customerKey },
       },
     ];
@@ -696,10 +723,13 @@ async function auditOwnerSpendableGates(input: {
     if (!matchesClientFilter(probe, options.clientId)) continue;
 
     const expectedIncluded =
+      parsePositiveMicros(ownerStarterIncludedUsdMicros()) ??
       includedDiscountUsdMicrosForPlan({
         includedUsdMicros: probe.includedUsdMicros,
         isStarterDefault: true,
-      }) ?? parsePositiveMicros(defaultStarterIncludedUsdMicros()) ?? 0n;
+      }) ??
+      parsePositiveMicros(defaultStarterIncludedUsdMicros()) ??
+      0n;
 
     const [credits, discountRemaining, spendable] = await Promise.all([
       getTrialCreditBalance({
@@ -764,11 +794,15 @@ export async function auditBillingConsistency(
         ownerId,
         message: "Owner has no active local Starter plans",
       });
-      continue;
+    } else {
+      findings.push(
+        ...(await auditOwnerStarterPlans(client, starters, options.clientId)),
+      );
     }
 
+    // Owner Starter is platform-wide — still audit subscriptions when local
+    // per-app Starter rows are missing.
     findings.push(
-      ...(await auditOwnerStarterPlans(client, starters, options.clientId)),
       ...(await auditOwnerSubscriptions(client, ownerId, starters)),
       ...(await auditOwnerSpendableGates({ ownerId, starters, options })),
     );

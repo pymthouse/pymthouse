@@ -187,7 +187,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
   }
 
   let localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
-    identity.publicClientId,
+    identity.developerAppId,
     subscriptionForLookup,
   );
 
@@ -213,10 +213,8 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
     if (rows[0]) {
       discount = includedDiscountUsdMicrosForPlan(rows[0]);
     }
-  } else if (
-    subscriptionForLookup.planKey?.toLowerCase().includes("starter") ||
-    subscriptionForLookup.planKey?.toLowerCase().includes("pymthouse")
-  ) {
+  } else if (subscriptionForLookup.planKey?.toLowerCase().includes("starter")) {
+    // Fail closed for unmapped non-Starter keys (including other pymthouse_* plans).
     discount = parsePositiveMicros(defaultStarterIncludedUsdMicros());
   }
 

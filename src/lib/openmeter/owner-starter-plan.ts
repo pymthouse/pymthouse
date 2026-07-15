@@ -1,4 +1,4 @@
-import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
+import type { OpenMeter } from "@openmeter/sdk";
 
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
@@ -123,6 +123,24 @@ async function findPlanByKey(
   return null;
 }
 
+async function publishOwnerStarterPlanBestEffort(
+  client: OpenMeter,
+  planId: string,
+): Promise<string> {
+  try {
+    const published = await client.plans.publish(planId);
+    return published?.id ?? planId;
+  } catch (err) {
+    if (!isOpenMeterConflictError(err)) {
+      console.warn(
+        "openmeter: owner starter plan publish",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    return planId;
+  }
+}
+
 /**
  * Ensure the platform Owner Starter plan exists and is published in Konnect.
  * Not a Neon `plans` row — owners share one Konnect plan across all apps.
@@ -149,12 +167,7 @@ export async function ensureOwnerStarterPlanSynced(): Promise<OwnerStarterPlanRe
 
   const existing = await findPlanByKey(client, OWNER_STARTER_PLAN_KEY);
   if (existing?.id) {
-    // Publish latest draft if needed; ignore errors when already active.
-    try {
-      await client.plans.publish(existing.id);
-    } catch {
-      // already published or immutable
-    }
+    await publishOwnerStarterPlanBestEffort(client, existing.id);
     return {
       key: OWNER_STARTER_PLAN_KEY,
       openmeterPlanId: existing.id,
@@ -178,36 +191,92 @@ export async function ensureOwnerStarterPlanSynced(): Promise<OwnerStarterPlanRe
     }
     openmeterPlanId = created.id;
   } catch (err) {
-    if (isOpenMeterConflictError(err)) {
-      const raced = await findPlanByKey(client, OWNER_STARTER_PLAN_KEY);
-      if (raced?.id) {
-        openmeterPlanId = raced.id;
-      } else {
-        throw err;
-      }
-    } else {
+    if (!isOpenMeterConflictError(err)) {
       throw err;
     }
+    const raced = await findPlanByKey(client, OWNER_STARTER_PLAN_KEY);
+    if (!raced?.id) {
+      throw err;
+    }
+    openmeterPlanId = raced.id;
   }
 
-  try {
-    const published = await client.plans.publish(openmeterPlanId);
-    openmeterPlanId = published?.id ?? openmeterPlanId;
-  } catch (err) {
-    if (!isOpenMeterConflictError(err)) {
-      // Plan may already be published.
-      console.warn(
-        "openmeter: owner starter plan publish",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }
+  openmeterPlanId = await publishOwnerStarterPlanBestEffort(client, openmeterPlanId);
 
   return {
     key: OWNER_STARTER_PLAN_KEY,
     openmeterPlanId,
     includedUsdMicros,
   };
+}
+
+async function findExistingOwnerWalletSubscription(input: {
+  client: OpenMeter;
+  customerId: string;
+  planKey: string;
+  openmeterPlanId: string;
+  hintOpenMeterSubscriptionId?: string | null;
+}): Promise<{ id: string; planKey: string; openmeterPlanId: string } | null> {
+  if (input.hintOpenMeterSubscriptionId) {
+    const verified = await verifyOpenMeterSubscriptionId(
+      input.client,
+      input.hintOpenMeterSubscriptionId,
+    );
+    if (verified?.id) {
+      return {
+        id: verified.id,
+        planKey: input.planKey,
+        openmeterPlanId: input.openmeterPlanId,
+      };
+    }
+  }
+
+  const existing = await findOpenMeterSubscriptionByPlanKey(
+    input.client,
+    input.customerId,
+    input.planKey,
+    { openmeterPlanId: input.openmeterPlanId },
+  );
+  if (existing?.id) {
+    return {
+      id: existing.id,
+      planKey: input.planKey,
+      openmeterPlanId: input.openmeterPlanId,
+    };
+  }
+
+  try {
+    const listed = await listOpenMeterSubscriptionsForCustomer(
+      input.client,
+      input.customerId,
+    );
+    const active = listed.find(
+      (s) =>
+        s.status === "active" ||
+        s.status === "trialing" ||
+        s.status === "scheduled" ||
+        s.status === "pending" ||
+        !s.status,
+    );
+    if (!active?.id) {
+      return null;
+    }
+    if (isOwnerStarterPlanKey(active.planKey)) {
+      return {
+        id: active.id,
+        planKey: input.planKey,
+        openmeterPlanId: input.openmeterPlanId,
+      };
+    }
+    // Legacy per-app Starter — migration cancels and resubscribes.
+    return {
+      id: active.id,
+      planKey: active.planKey ?? input.planKey,
+      openmeterPlanId: active.planId ?? input.openmeterPlanId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -246,79 +315,27 @@ export async function ensureOwnerStarterSubscription(input: {
     customerId: customer.id,
   });
 
-  if (input.hintOpenMeterSubscriptionId) {
-    const verified = await verifyOpenMeterSubscriptionId(
-      client,
-      input.hintOpenMeterSubscriptionId,
-    );
-    if (verified?.id) {
-      return {
-        openmeterSubscriptionId: verified.id,
-        planKey: plan.key,
-        openmeterPlanId: plan.openmeterPlanId,
-        created: false,
-      };
-    }
-  }
-
-  const existing = await findOpenMeterSubscriptionByPlanKey(
+  const existing = await findExistingOwnerWalletSubscription({
     client,
-    customer.id,
-    plan.key,
-    { openmeterPlanId: plan.openmeterPlanId },
-  );
-  if (existing?.id) {
+    customerId: customer.id,
+    planKey: plan.key,
+    openmeterPlanId: plan.openmeterPlanId,
+    hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
+  });
+  if (existing) {
     return {
       openmeterSubscriptionId: existing.id,
-      planKey: plan.key,
-      openmeterPlanId: plan.openmeterPlanId,
+      planKey: existing.planKey,
+      openmeterPlanId: existing.openmeterPlanId,
       created: false,
     };
   }
 
-  // Any active subscription on the owner wallet — prefer not to stack Starters.
-  try {
-    const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
-    const active = listed.find(
-      (s) =>
-        s.status === "active" ||
-        s.status === "trialing" ||
-        s.status === "scheduled" ||
-        s.status === "pending" ||
-        !s.status,
-    );
-    if (active?.id && isOwnerStarterPlanKey(active.planKey)) {
-      return {
-        openmeterSubscriptionId: active.id,
-        planKey: plan.key,
-        openmeterPlanId: plan.openmeterPlanId,
-        created: false,
-      };
-    }
-    // Non-owner-starter active sub (legacy per-app Starter) — still return it;
-    // migration cancels and resubscribes onto the platform plan.
-    if (active?.id) {
-      return {
-        openmeterSubscriptionId: active.id,
-        planKey: active.planKey ?? plan.key,
-        openmeterPlanId: active.planId ?? plan.openmeterPlanId,
-        created: false,
-      };
-    }
-  } catch {
-    // fall through to create
-  }
-
-  // SDK PlanReferenceInput is keyed by plan key; Konnect also accepts { id }.
-  // Prefer key (typed) and fall back to id via the same cast pattern as
-  // starter-subscription.ts when only the OpenMeter plan id is known.
-  const planRef: PlanReferenceInput | { id: string } = plan.openmeterPlanId
-    ? { id: plan.openmeterPlanId }
-    : { key: plan.key };
+  // Plan key is the SDK PlanReferenceInput contract.
   try {
     const createdSub = await client.subscriptions.create({
       customerId: customer.id,
-      plan: planRef as PlanReferenceInput,
+      plan: { key: plan.key },
     });
     if (!createdSub?.id) {
       throw new Error("Failed to create Owner Starter subscription");
@@ -332,12 +349,9 @@ export async function ensureOwnerStarterSubscription(input: {
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
       const resynced = await ensureOwnerStarterPlanSynced();
-      const retryRef: PlanReferenceInput | { id: string } = resynced.openmeterPlanId
-        ? { id: resynced.openmeterPlanId }
-        : { key: resynced.key };
       const createdSub = await client.subscriptions.create({
         customerId: customer.id,
-        plan: retryRef as PlanReferenceInput,
+        plan: { key: resynced.key },
       });
       if (!createdSub?.id) {
         throw new Error("Failed to create Owner Starter subscription after plan sync");

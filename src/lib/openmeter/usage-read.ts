@@ -259,11 +259,10 @@ function aggregateUserRows(input: {
   const matchKeys = input.filterExternalUserId
     ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
     : undefined;
-  const countByUser = new Map<string, number>();
-  for (const row of input.countRows) {
-    const group = (row.groupBy || {}) as Record<string, unknown>;
+
+  const acceptRow = (group: Record<string, unknown>): string | null => {
     const rawExternalUserId = groupByString(group, "external_user_id", "");
-    if (!rawExternalUserId) continue;
+    if (!rawExternalUserId) return null;
     if (
       !matchesExternalUserFilter(
         rawExternalUserId,
@@ -271,14 +270,20 @@ function aggregateUserRows(input: {
         matchKeys,
       )
     ) {
-      continue;
+      return null;
     }
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-    const externalUserId = canonicalizeFilteredExternalUserId(
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) return null;
+    return canonicalizeFilteredExternalUserId(
       rawExternalUserId,
       input.filterExternalUserId,
       matchKeys,
     );
+  };
+
+  const countByUser = new Map<string, number>();
+  for (const row of input.countRows) {
+    const externalUserId = acceptRow((row.groupBy || {}) as Record<string, unknown>);
+    if (!externalUserId) continue;
     countByUser.set(
       externalUserId,
       (countByUser.get(externalUserId) ?? 0) + meterRowValueToCount(row.value),
@@ -287,24 +292,8 @@ function aggregateUserRows(input: {
 
   const feeByUser = new Map<string, bigint>();
   for (const row of input.feeRows) {
-    const group = (row.groupBy || {}) as Record<string, unknown>;
-    const rawExternalUserId = groupByString(group, "external_user_id", "");
-    if (!rawExternalUserId) continue;
-    if (
-      !matchesExternalUserFilter(
-        rawExternalUserId,
-        input.filterExternalUserId,
-        matchKeys,
-      )
-    ) {
-      continue;
-    }
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-    const externalUserId = canonicalizeFilteredExternalUserId(
-      rawExternalUserId,
-      input.filterExternalUserId,
-      matchKeys,
-    );
+    const externalUserId = acceptRow((row.groupBy || {}) as Record<string, unknown>);
+    if (!externalUserId) continue;
     feeByUser.set(
       externalUserId,
       (feeByUser.get(externalUserId) ?? 0n) + meterRowValueToBigInt(row.value),

@@ -18,7 +18,10 @@ import {
   isHostedAdminClientAvailable,
 } from "../src/lib/openmeter/admin-client";
 import { buildOwnerCustomerKey } from "../src/lib/openmeter/customer-key";
-import { ensureOpenMeterCustomer } from "../src/lib/openmeter/customers";
+import {
+  ensureOpenMeterCustomer,
+  findOpenMeterCustomerByKey,
+} from "../src/lib/openmeter/customers";
 import { buildOpenMeterPlanKey } from "../src/lib/openmeter/plan-naming";
 import { syncPlanToOpenMeter } from "../src/lib/openmeter/plans-sync";
 import { ensureStarterSubscriptionForAppUser } from "../src/lib/openmeter/starter-subscription";
@@ -350,6 +353,15 @@ async function fixOwnerWallet(input: {
   }
 
   const client = getHostedAdminClient();
+  if (!input.apply) {
+    const existing = await findOpenMeterCustomerByKey(client, ownerKey);
+    console.log(
+      `  [dry-run] customer=${existing?.id ?? "missing"} would cancel active ` +
+        `subs then ensure Starter via ${ensureApp.publicClientId}`,
+    );
+    return;
+  }
+
   const customer = await ensureOpenMeterCustomer(
     client,
     ownerKey,
@@ -363,20 +375,13 @@ async function fixOwnerWallet(input: {
     customerId: customer.id,
   });
 
-  if (!input.apply) {
-    console.log(
-      `  [dry-run] would cancel ${cancelCount} sub(s) then ensure Starter via ${ensureApp.publicClientId}`,
-    );
-    return;
-  }
-
   const ensured = await ensureStarterSubscriptionForAppUser({
     clientId: ensureApp.developerAppId,
     externalUserId: input.ownerId,
   });
   console.log(
     `  [ok] starter ensured created=${ensured.created} planId=${ensured.planId} ` +
-      `via=${ensureApp.publicClientId}`,
+      `via=${ensureApp.publicClientId} cancelled=${cancelCount}`,
   );
   await verifyEnsuredStarter({
     baseUrl: input.baseUrl,
@@ -461,8 +466,8 @@ async function changeSubsOntoAllowancePlans(input: {
   timing: SubscriptionChangeTiming;
   targetPlanIdByKey: Map<string, string>;
   starterKeys: Set<string>;
-}): Promise<{ changed: number; skipped: number; errors: number }> {
-  const stats = { changed: 0, skipped: 0, errors: 0 };
+}): Promise<{ changed: number; skipped: number; errors: number; eligible: number }> {
+  const stats = { changed: 0, skipped: 0, errors: 0, eligible: 0 };
   const planCache = new Map<string, KonnectPlan>();
   const subscriptions = await listActiveKonnectSubscriptions(
     input.baseUrl,
@@ -492,6 +497,7 @@ async function changeSubsOntoAllowancePlans(input: {
       stats.skipped += 1;
       continue;
     }
+    stats.eligible += 1;
     const result = await changeOneSub({
       baseUrl: input.baseUrl,
       apiKey: input.apiKey,
@@ -597,9 +603,9 @@ async function main(): Promise<void> {
   });
 
   // Konnect's global /subscriptions index often omits active rows (GET-by-id
-  // still works). Fall back to per-owner cancel+ensure when the list path
-  // finds nothing to migrate.
-  if (subStats.changed === 0 && subStats.errors === 0) {
+  // still works). Fall back to per-owner cancel+ensure only when the list path
+  // found no eligible Starter subscriptions at all.
+  if (subStats.eligible === 0 && subStats.errors === 0) {
     console.log(
       "\n[fix-starter-allowance] global subscription list found no active " +
         "Starter rows to change — falling back to owner-wallet migration",
@@ -615,6 +621,7 @@ async function main(): Promise<void> {
         ownerId,
         apply: args.apply,
         timing: args.timing,
+        preferredClientId: args.clientId,
       });
     }
   }

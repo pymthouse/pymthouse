@@ -60,6 +60,13 @@ test("includedDiscountUsdMicrosForPlan uses plan micros then starter default", (
     }),
     null,
   );
+  assert.equal(
+    includedDiscountUsdMicrosForPlan({
+      includedUsdMicros: null,
+      isStarterDefault: true,
+    }),
+    5_000_000n,
+  );
 });
 
 test("classifyStarterPlanRemoteConsistency flags missing remote discount", () => {
@@ -197,6 +204,20 @@ test("classifySpendableGateConsistency quiet when spendable covers unused allowa
     spendableUsdMicros: 4_861_618n,
   });
   assert.deepEqual(findings, []);
+});
+
+test("classifySpendableGateConsistency flags sum mismatch with zero discount", () => {
+  const findings = classifySpendableGateConsistency({
+    ownerId: "owner-1",
+    clientId: "app_aaaaaaaaaaaaaaaaaaaaaaaa",
+    expectedIncludedUsdMicros: 5_000_000n,
+    usedUsdMicros: 5_000_000n,
+    creditBalanceUsdMicros: 1_000_000n,
+    discountRemainingUsdMicros: 0n,
+    spendableUsdMicros: 0n,
+  });
+  assert.equal(findings[0]?.code, "spendable_sum_mismatch");
+  assert.equal(findings[0]?.severity, "warn");
 });
 
 test("mintAllowanceGateDecision rejects zero spendable like the live 483 path", () => {

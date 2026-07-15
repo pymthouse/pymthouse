@@ -24,7 +24,10 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "../src/lib/openmeter/admin-client";
-import { getHostedOpenMeterUrl } from "../src/lib/openmeter/constants";
+import {
+  getHostedOpenMeterUrl,
+  DEFAULT_TRIAL_FEATURE_KEY,
+} from "../src/lib/openmeter/constants";
 import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
@@ -47,7 +50,6 @@ import {
   isOpenMeterSubscriptionActive,
   listOpenMeterSubscriptionsForCustomer,
 } from "../src/lib/openmeter/subscription-read";
-import { getTrialFeatureKeyForApp } from "../src/lib/openmeter/client-factory";
 
 type Args = {
   ownerId?: string;
@@ -150,17 +152,13 @@ async function findCustomerIdByKey(
   client: ReturnType<typeof getHostedAdminClient>,
   customerKey: string,
 ): Promise<string | null> {
-  try {
-    const listed = await client.customers.list({
-      key: customerKey,
-      page: 1,
-      pageSize: 50,
-    });
-    const match = (listed?.items ?? []).find((item) => item.key === customerKey);
-    return match?.id ?? null;
-  } catch {
-    return null;
-  }
+  const listed = await client.customers.list({
+    key: customerKey,
+    page: 1,
+    pageSize: 50,
+  });
+  const match = (listed?.items ?? []).find((item) => item.key === customerKey);
+  return match?.id ?? null;
 }
 
 async function transferBalanceFromLegacyCustomer(input: {
@@ -315,9 +313,8 @@ async function migrateOwner(input: {
     throw new Error(`Failed to resolve bare owner customer ${customerKey}`);
   }
 
-  const featureKey = input.apps[0]
-    ? await getTrialFeatureKeyForApp(input.apps[0].developerAppId)
-    : "network_spend";
+  // Shared owner wallet credits must not be scoped to a single app's feature.
+  const featureKey = DEFAULT_TRIAL_FEATURE_KEY;
 
   let transferMicros = 0n;
   if (input.transferBalances || input.cancelLegacy) {

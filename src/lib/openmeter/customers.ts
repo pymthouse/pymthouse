@@ -50,8 +50,8 @@ async function ensureCustomerUsageAttribution(
   const missing = requiredSubjectKeys.filter((key) => !subjectKeys.includes(key));
   const nextKeys = [...new Set([...subjectKeys, ...requiredSubjectKeys])];
   const nextMetadata = {
-    ...(customer.metadata ?? {}),
-    ...(metadata ?? {}),
+    ...customer.metadata,
+    ...metadata,
   };
   const metadataChanged =
     metadata != null &&
@@ -180,7 +180,8 @@ export async function listOwnedPublicClientIds(ownerUserId: string): Promise<str
   ];
 }
 
-async function findOpenMeterCustomerByKey(
+/** Lookup-only (never creates). Exact key match on Konnect; get() elsewhere. */
+export async function findOpenMeterCustomerByKey(
   client: OpenMeter,
   customerKey: string,
 ) {
