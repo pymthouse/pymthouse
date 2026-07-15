@@ -52,7 +52,18 @@ function meta(
     description: input.description ?? (input.virtual ? rewriteNote : undefined),
     security: sessionSecurity,
     request: Object.keys(params).length > 0 ? { params: z.object(params) } : undefined,
-    responses: { 200: jsonSuccess, ...builderErrorResponses },
+    responses: {
+      200: jsonSuccess,
+      ...(method === "post"
+        ? {
+            201: {
+              description: "Created",
+              content: jsonSuccess.content,
+            },
+          }
+        : {}),
+      ...builderErrorResponses,
+    },
     virtual: input.virtual,
   });
 }
