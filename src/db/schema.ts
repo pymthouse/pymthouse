@@ -219,6 +219,8 @@ export const oidcClients = pgTable("oidc_clients", {
   policyUri: text("policy_uri"),
   tosUri: text("tos_uri"),
   clientUri: text("client_uri"),
+  /** Deposit address for M2M / confidential clients when x402 is enabled. */
+  depositWalletAddress: text("deposit_wallet_address"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -278,6 +280,16 @@ export const developerApps = pgTable("developer_apps", {
   publishedAt: text("published_at"),
   /** 1 = show on homepage featured strip (admin-curated); 0 = not featured */
   marketplaceFeatured: integer("marketplace_featured").notNull().default(0),
+  /** 1 = accept x402 payments (on-chain USDC deposits via facilitator). */
+  x402Enabled: integer("x402_enabled").notNull().default(0),
+  /** 1 = offer Wallet Kit fiat on-ramp for this app. */
+  onrampEnabled: integer("onramp_enabled").notNull().default(1),
+  /** Destination address for x402 exact-scheme USDC settlements (payTo). */
+  x402PayToAddress: text("x402_pay_to_address"),
+  /** Turnkey sub-org that owns the app deposit wallet (optional). */
+  turnkeySubOrgId: text("turnkey_sub_org_id"),
+  /** Turnkey wallet id within the sub-org (optional). */
+  turnkeyWalletId: text("turnkey_wallet_id"),
 });
 
 // Provider-managed application users for the MVP runtime path.
@@ -628,6 +640,74 @@ export const turnkeyFundingEvents = pgTable(
   ],
 );
 
+/** Spec-compliant x402 payment ledger (verify + settle). */
+export const x402Payments = pgTable(
+  "x402_payments",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull(),
+    scheme: text("scheme").notNull().default("exact"),
+    network: text("network").notNull(),
+    asset: text("asset").notNull(),
+    fromAddress: text("from_address").notNull(),
+    payTo: text("pay_to").notNull(),
+    valueAtomic: text("value_atomic").notNull(),
+    nonce: text("nonce").notNull(),
+    /** verified | settled | failed */
+    status: text("status").notNull().default("verified"),
+    txHash: text("tx_hash"),
+    externalUserId: text("external_user_id"),
+    grantedUsdMicros: text("granted_usd_micros"),
+    errorMessage: text("error_message"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    settledAt: text("settled_at"),
+  },
+  (t) => [
+    uniqueIndex("idx_x402_payments_asset_from_nonce").on(
+      t.asset,
+      t.fromAddress,
+      t.nonce,
+    ),
+    index("idx_x402_payments_client_id").on(t.clientId),
+  ],
+);
+
+/**
+ * Device-code-style payment approval codes for agents without local wallets.
+ * Human sponsor signs EIP-3009 on /x402/approve; agent polls for the payload.
+ */
+export const x402PaymentCodes = pgTable(
+  "x402_payment_codes",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull(),
+    userCode: text("user_code").notNull().unique(),
+    deviceCode: text("device_code").notNull().unique(),
+    /** pending | approved | denied | expired | consumed */
+    status: text("status").notNull().default("pending"),
+    paymentRequirements: text("payment_requirements").notNull(),
+    paymentPayload: text("payment_payload"),
+    externalUserId: text("external_user_id"),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    approvedAt: text("approved_at"),
+  },
+  (t) => [
+    index("idx_x402_payment_codes_client_id").on(t.clientId),
+    index("idx_x402_payment_codes_status").on(t.status),
+  ],
+);
+
 /** Fiat on-ramp session ledger for MoonPay / Turnkey attribution and settlement. */
 export const onrampSessions = pgTable(
   "onramp_sessions",
@@ -791,6 +871,10 @@ export type TurnkeyFundingEvent = typeof turnkeyFundingEvents.$inferSelect;
 export type NewTurnkeyFundingEvent = typeof turnkeyFundingEvents.$inferInsert;
 export type OnrampSession = typeof onrampSessions.$inferSelect;
 export type NewOnrampSession = typeof onrampSessions.$inferInsert;
+export type X402Payment = typeof x402Payments.$inferSelect;
+export type NewX402Payment = typeof x402Payments.$inferInsert;
+export type X402PaymentCode = typeof x402PaymentCodes.$inferSelect;
+export type NewX402PaymentCode = typeof x402PaymentCodes.$inferInsert;
 export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
 export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;

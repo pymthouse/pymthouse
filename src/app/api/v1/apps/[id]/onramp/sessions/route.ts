@@ -21,6 +21,12 @@ export async function POST(
       { status: 403 },
     );
   }
+  if (access.app.onrampEnabled === 0) {
+    return NextResponse.json(
+      { error: "Fiat on-ramp is disabled for this app" },
+      { status: 403 },
+    );
+  }
 
   const body = await request.json().catch(() => ({}));
   const depositWalletAddress = String(body.depositWalletAddress || "").trim();

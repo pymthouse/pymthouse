@@ -28,6 +28,12 @@ export interface AppFormData {
   initiateLoginUri: string;
   /** Whether to redirect unauthenticated device verification to initiateLoginUri. */
   deviceThirdPartyInitiateLogin: boolean;
+  /** Accept x402 USDC payments via the PymtHouse facilitator. */
+  x402Enabled: boolean;
+  /** Offer Wallet Kit fiat on-ramp for this app. */
+  onrampEnabled: boolean;
+  /** Optional deposit address (payTo) for x402 settlements. */
+  x402PayToAddress: string;
 }
 
 export interface AppState {
@@ -57,6 +63,9 @@ export const defaultAppFormData: AppFormData = {
   backendDeviceHelper: true,
   initiateLoginUri: "",
   deviceThirdPartyInitiateLogin: false,
+  x402Enabled: false,
+  onrampEnabled: true,
+  x402PayToAddress: "",
 };
 
 interface Props {

@@ -57,6 +57,9 @@ function mergeFormData(
     initiateLoginUri: initial.initiateLoginUri ?? initialInitiateLoginUri ?? "",
     deviceThirdPartyInitiateLogin:
       initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
+    x402Enabled: initial.x402Enabled ?? false,
+    onrampEnabled: initial.onrampEnabled ?? true,
+    x402PayToAddress: initial.x402PayToAddress ?? "",
   };
 }
 

@@ -23,11 +23,19 @@ const SIGNER_JWT_TTL_SECONDS = 300;
 export class MintUserSignerTokenError extends Error {
   code: string;
   status: number;
+  /** Base64 payment-required payload for x402 clients (optional). */
+  paymentRequired?: string;
 
-  constructor(code: string, message: string, status = 400) {
+  constructor(
+    code: string,
+    message: string,
+    status = 400,
+    paymentRequired?: string,
+  ) {
     super(message);
     this.code = code;
     this.status = status;
+    this.paymentRequired = paymentRequired;
   }
 }
 
@@ -175,10 +183,18 @@ export function mintAllowanceGateDecision(
   return null;
 }
 
-export function enforceMintAllowanceGate(allowance: TrialCreditBalance | null): void {
+export function enforceMintAllowanceGate(
+  allowance: TrialCreditBalance | null,
+  paymentRequired?: string,
+): void {
   const decision = mintAllowanceGateDecision(allowance, isHostedAdminClientAvailable());
   if (decision) {
-    throw new MintUserSignerTokenError(decision.code, decision.message, 402);
+    throw new MintUserSignerTokenError(
+      decision.code,
+      decision.message,
+      402,
+      paymentRequired,
+    );
   }
 }
 
@@ -249,7 +265,26 @@ export async function mintSignerJwtForExternalUser(input: {
     }
   }
 
-  enforceMintAllowanceGate(allowance);
+  let paymentRequired: string | undefined;
+  try {
+    const {
+      buildMintGatePaymentRequirements,
+      encodePaymentRequiredHeader,
+    } = await import("@/lib/x402/payment-required");
+    const requirements = await buildMintGatePaymentRequirements({
+      appId: input.developerAppId,
+    });
+    if (requirements) {
+      paymentRequired = encodePaymentRequiredHeader(
+        [requirements],
+        "Payment required to mint signer tokens",
+      );
+    }
+  } catch {
+    // Non-fatal: fall back to plain 402 without x402 challenge.
+  }
+
+  enforceMintAllowanceGate(allowance, paymentRequired);
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();
