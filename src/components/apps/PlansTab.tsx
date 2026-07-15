@@ -172,7 +172,7 @@ function DollarCentsInput({
         placeholder={placeholder}
         disabled={disabled}
         aria-label={ariaLabel}
-        className="w-full bg-transparent px-2 py-2 text-sm tabular-nums text-zinc-100 placeholder:text-zinc-600 focus:outline-none disabled:cursor-not-allowed"
+        className="w-full bg-transparent px-2 py-2 text-sm tabular-nums text-zinc-100 placeholder:text-zinc-600 focus:outline-hidden disabled:cursor-not-allowed"
       />
     </div>
   );

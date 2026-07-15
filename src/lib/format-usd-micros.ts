@@ -114,7 +114,7 @@ export function sanitizeUsdCentsInput(raw: string): string {
   let s = raw.replaceAll(/[^\d.]/g, "");
   const dot = s.indexOf(".");
   if (dot !== -1) {
-    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replaceAll(/\./g, "").slice(0, 2)}`;
+    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replaceAll(".", "").slice(0, 2)}`;
   }
   return s;
 }
