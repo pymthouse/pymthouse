@@ -30,7 +30,7 @@ import DomainAllowlistBlock from "./DomainAllowlistBlock";
 import { mintOwnerApiKey } from "../mint-owner-api-key";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 
-const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+const API_REFERENCE_URL = "/api/v1/docs";
 
 export { API_REFERENCE_URL };
 
