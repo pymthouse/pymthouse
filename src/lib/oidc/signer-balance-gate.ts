@@ -4,36 +4,116 @@ import type {
 } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { createBalanceGate } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 
 const DEFAULT_REAUTH_TTL_SECONDS = 60;
+const DEFAULT_BALANCE_CACHE_TTL_SECONDS = 20;
+const BALANCE_CACHE_MAX_ENTRIES = 1000;
 
-function resolveReauthTtlSeconds(): number {
-  const raw = process.env.SIGNER_BALANCE_REAUTH_TTL_SECONDS?.trim();
+function resolvePositiveSecondsEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
   if (!raw) {
-    return DEFAULT_REAUTH_TTL_SECONDS;
+    return fallback;
   }
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_REAUTH_TTL_SECONDS;
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
   }
   return parsed;
 }
 
+function resolveReauthTtlSeconds(): number {
+  const ttl = resolvePositiveSecondsEnv(
+    "SIGNER_BALANCE_REAUTH_TTL_SECONDS",
+    DEFAULT_REAUTH_TTL_SECONDS,
+  );
+  return ttl > 0 ? ttl : DEFAULT_REAUTH_TTL_SECONDS;
+}
+
+type BalanceCacheEntry = {
+  expiresAtMs: number;
+  value?: string | null;
+  inflight?: Promise<string | null>;
+};
+
 /**
- * Live credit balance for a verified signer identity, keyed by the same
- * `client_id:usage_subject` customer key the collector meters against (auth_id).
- * Returns the balance micros string, or null when hosted billing cannot confirm
- * a balance (fail-closed → 503 in the gate).
+ * Short-lived keyed cache with singleflight for spendable-balance lookups
+ * (issue #248). Concurrent webhook calls for the same identity share one
+ * OpenMeter/Neon fan-out, and repeat calls within the TTL are served from
+ * memory. Failed lookups are never cached, so transient errors retry.
+ */
+export function createSpendableBalanceCache(options: {
+  ttlSeconds: number;
+  getBalance: (identity: UsageIdentity) => Promise<string | null>;
+  now?: () => number;
+  /** Override for tests; production uses {@link BALANCE_CACHE_MAX_ENTRIES}. */
+  maxEntries?: number;
+}): (identity: UsageIdentity) => Promise<string | null> {
+  const { ttlSeconds, getBalance } = options;
+  const now = options.now ?? Date.now;
+  const maxEntries = options.maxEntries ?? BALANCE_CACHE_MAX_ENTRIES;
+
+  if (ttlSeconds <= 0) {
+    return getBalance;
+  }
+
+  const entries = new Map<string, BalanceCacheEntry>();
+
+  /** Insert/update while keeping `entries.size <= maxEntries` (evicts oldest first). */
+  function setBounded(key: string, entry: BalanceCacheEntry): void {
+    if (entries.has(key)) {
+      entries.delete(key);
+    }
+    while (entries.size >= maxEntries) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      entries.delete(oldestKey);
+    }
+    entries.set(key, entry);
+  }
+
+  return (identity) => {
+    const key = `${identity.client_id}\u0000${identity.usage_subject}`;
+    const existing = entries.get(key);
+    if (existing) {
+      if (existing.inflight) {
+        return existing.inflight;
+      }
+      if (existing.expiresAtMs > now()) {
+        return Promise.resolve(existing.value ?? null);
+      }
+      entries.delete(key);
+    }
+
+    const inflight = getBalance(identity).then(
+      (value) => {
+        setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, value });
+        return value;
+      },
+      (err) => {
+        entries.delete(key);
+        throw err;
+      },
+    );
+
+    setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, inflight });
+    return inflight;
+  };
+}
+
+/**
+ * Spendable allowance for a verified signer identity: prepaid credits plus any
+ * remaining plan usage discount for the current cycle.
  */
 async function readIdentityBalanceUsdMicros(
   identity: UsageIdentity,
 ): Promise<string | null> {
-  const balance = await getTrialCreditBalance({
+  return getSpendableUsdMicros({
     clientId: identity.client_id,
     externalUserId: identity.usage_subject,
   });
-  return balance?.balanceUsdMicros ?? null;
 }
 
 /**
@@ -45,8 +125,15 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
   if (!isHostedAdminClientAvailable()) {
     return undefined;
   }
+  const cachedBalance = createSpendableBalanceCache({
+    ttlSeconds: resolvePositiveSecondsEnv(
+      "SIGNER_BALANCE_CACHE_TTL_SECONDS",
+      DEFAULT_BALANCE_CACHE_TTL_SECONDS,
+    ),
+    getBalance: readIdentityBalanceUsdMicros,
+  });
   return createBalanceGate({
-    getBalanceUsdMicros: (identity) => readIdentityBalanceUsdMicros(identity),
+    getBalanceUsdMicros: (identity) => cachedBalance(identity),
     reauthTtlSeconds: resolveReauthTtlSeconds(),
     failClosed: true,
     onError: (err) => {

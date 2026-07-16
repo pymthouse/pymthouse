@@ -1,4 +1,5 @@
 import type { OpenMeter } from "@openmeter/sdk";
+import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   getHostedOpenMeterUrl,
@@ -68,14 +69,26 @@ export async function getTrialCreditBalance(input: {
   clientId: string;
   externalUserId: string;
   featureKey?: string;
+  /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
+  identity?: ResolvedBillingIdentity;
 }): Promise<TrialCreditBalance | null> {
   const client = getHostedTrialOpenMeterClient();
   if (!client) {
     return null;
   }
 
-  const customerKey = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
-  const featureKey = input.featureKey || (await getTrialFeatureKeyForApp(input.clientId));
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity =
+    input.identity ??
+    (await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }));
+  const customerKey = identity.customerKey;
+  const featureKey =
+    input.featureKey || (await getTrialFeatureKeyForApp(identity.developerAppId));
 
   const customer = await ensureOpenMeterCustomer(client, customerKey);
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
@@ -157,19 +170,37 @@ export async function ingestSignedTicketEvent(input: {
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
   const usageSubject = input.event.externalUserId.trim();
-  const subject = buildOpenMeterCustomerKey(input.event.clientId, usageSubject);
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.event.clientId,
+    externalUserId: usageSubject,
+  });
+  // Wire auth_id stays compound app_…:platformUserId for analytics.
+  // CloudEvent subject must be the Konnect customer key for owners
+  // (owner:{id}) — Konnect billing beta clears multi-subject attribution
+  // when a subscription is created, so compound subjects cannot settle.
+  const platformUserId = identity.isOwner
+    ? (identity.ownerUserId as string)
+    : usageSubject;
+  const wireAuthId = buildOpenMeterCustomerKey(
+    identity.publicClientId,
+    platformUserId,
+  );
+  const meterSubject = identity.customerKey;
 
   await input.client.events.ingest({
     specversion: "1.0",
     type: CREATE_SIGNED_TICKET_EVENT_TYPE,
     id: input.event.requestId,
     source: SIGNED_TICKET_EVENT_SOURCE,
-    subject,
+    subject: meterSubject,
     data: {
-      client_id: input.event.clientId,
-      usage_subject: usageSubject,
-      usage_subject_type: "external_user_id",
-      external_user_id: usageSubject,
+      client_id: identity.publicClientId,
+      usage_subject: platformUserId,
+      usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
+      external_user_id: platformUserId,
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: input.event.feeWei,
       pixels: input.event.pixels,
@@ -179,7 +210,8 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
-      auth_id: subject,
+      auth_id: wireAuthId,
+      openmeter_customer_key: identity.customerKey,
     },
   });
 }

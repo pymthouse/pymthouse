@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { GrantSource } from "@/lib/billing/types";
+import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
 import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
 import {
@@ -7,7 +8,6 @@ import {
   grantTrialCredits,
   type TrialCreditBalance,
 } from "@/lib/openmeter/entitlements";
-import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
@@ -24,6 +24,8 @@ export async function grantAllowanceUsdMicros(input: {
   amountUsdMicros: bigint;
   source: GrantSource;
   featureKey?: string;
+  /** Stable key for Konnect credit-grant idempotency (e.g. onramp session id). */
+  idempotencyKey?: string;
 }): Promise<{
   externalUserId: string;
   source: GrantSource;
@@ -37,51 +39,69 @@ export async function grantAllowanceUsdMicros(input: {
   }
 
   const externalUserId = input.externalUserId.trim();
-  await resolveOrCreateAppUser({ clientId: input.clientId, externalUserId });
-  await ensureStarterSubscriptionForAppUser({
+  const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId,
+  });
+  const provisionExternalUserId = identity.isOwner
+    ? (identity.ownerUserId as string)
+    : externalUserId;
+
+  await resolveOrCreateAppUser({
+    clientId: identity.developerAppId,
+    externalUserId: provisionExternalUserId,
+  });
+  await ensureStarterSubscriptionForAppUser({
+    clientId: identity.developerAppId,
+    externalUserId: provisionExternalUserId,
   });
   await ensureTrialAllowanceForAppUser({
-    clientId: input.clientId,
-    externalUserId,
+    clientId: identity.developerAppId,
+    externalUserId: provisionExternalUserId,
   });
 
-  const customerKey = buildOpenMeterCustomerKey(input.clientId, externalUserId);
   const featureKey =
-    input.featureKey?.trim() || (await getTrialFeatureKeyForApp(input.clientId));
+    input.featureKey?.trim() || (await getTrialFeatureKeyForApp(identity.developerAppId));
 
-  const customer = await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
 
   const omApiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), omApiKey);
+  // Kong Konnect does not expose OpenMeter SDK entitlement grants
+  // (/customers/.../entitlements/{feature}/grants → 404). Use prepaid
+  // credit grants instead: POST /customers/{ulid}/credits/grants.
+  // MoonPay on-ramp / manual / promo top-ups land on this prepaid ledger
+  // (pay-per-use plans with no included allowance spend from here).
+  const idempotencyKey =
+    input.idempotencyKey?.trim() ||
+    `manual:${customer.id}:${input.source}:${randomUUID()}`;
   if (useKonnect) {
     await createKonnectCreditGrant({
       customerId: customer.id,
       amountUsdMicros: input.amountUsdMicros,
-      name: `Manual allowance (${input.source})`,
-      description: `Pymthouse allowance grant source=${input.source}`,
+      name: `pymthouse ${input.source}`,
+      description: `Pymthouse prepaid credit grant source=${input.source}`,
       featureKey,
-      idempotencyKey: `manual:${customer.id}:${input.source}:${randomUUID()}`,
+      idempotencyKey,
       apiKey: omApiKey,
     });
   } else {
     await grantTrialCredits({
       client,
-      customerKey,
+      customerKey: identity.customerKey,
       featureKey,
       amountUsdMicros: input.amountUsdMicros,
     });
   }
 
   const balance = await getTrialCreditBalance({
-    clientId: input.clientId,
-    externalUserId,
+    clientId: identity.publicClientId,
+    externalUserId: provisionExternalUserId,
     featureKey,
   });
 
   return {
-    externalUserId,
+    externalUserId: provisionExternalUserId,
     source: input.source,
     grantedUsdMicros: input.amountUsdMicros.toString(),
     featureKey,

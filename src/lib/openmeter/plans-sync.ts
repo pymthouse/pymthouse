@@ -2,7 +2,12 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { planCapabilityBundles, plans } from "@/db/schema";
-import { getHostedOpenMeterUrl, DEFAULT_TRIAL_FEATURE_KEY, NETWORK_FEE_USD_MICROS_METER } from "./constants";
+import {
+  getHostedOpenMeterUrl,
+  DEFAULT_TRIAL_FEATURE_KEY,
+  KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "./constants";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
@@ -137,13 +142,14 @@ async function appendDefaultTrialUsageRateCard(input: {
 }): Promise<void> {
   if (input.useKonnectBody) {
     const featureId = await resolveOpenMeterFeatureId(input.omClient, DEFAULT_TRIAL_FEATURE_KEY);
-    // Konnect trial allowance is prepaid via /credits/grants, not plan discounts.usage.
+    // Included allowance syncs as discounts.usage; prepaid credits cover overage only.
     input.rateCards.push(
       buildKonnectUsageRateCard({
         key: DEFAULT_TRIAL_FEATURE_KEY,
         name: "Network usage",
         featureId,
         unitAmount: input.planRetail,
+        includedUsdMicros: input.includedMicros,
       }),
     );
     return;
@@ -191,7 +197,7 @@ async function appendCapabilityRateCards(input: {
     });
     if (input.useKonnectBody) {
       const featureId = await resolveOpenMeterFeatureId(input.omClient, featureKey);
-      // Konnect trial allowance is prepaid via /credits/grants, not plan discounts.usage.
+      // First capability card carries the plan included allowance as discounts.usage.
       input.rateCards.push(
         buildKonnectUsageRateCard({
           key: featureKey,
@@ -201,6 +207,7 @@ async function appendCapabilityRateCards(input: {
           }),
           featureId,
           unitAmount: retail,
+          includedUsdMicros: entitlementAssigned ? undefined : input.includedMicros,
         }),
       );
     } else {
@@ -301,6 +308,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
       name: planName,
       currency,
       billing_cadence: "P1M",
+      settlement_mode: KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
       phases: [
         {
           key: "default",

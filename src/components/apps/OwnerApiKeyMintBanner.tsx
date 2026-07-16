@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 import type { OwnerApiKeyMintState } from "@/components/apps/use-owner-api-key-mint";
 
 type BannerApp = {
@@ -23,59 +23,6 @@ type OwnerApiKeyMintBannerProps<TApp extends BannerApp> = Readonly<{
 function maskApiKey(apiKey: unknown): unknown {
   if (typeof apiKey !== "string" || apiKey.length <= 24) return apiKey;
   return `${apiKey.slice(0, 12)}…${apiKey.slice(-8)}`;
-}
-
-function CopyApiKeyButton({ apiKey }: Readonly<{ apiKey: string }>) {
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current);
-    };
-  }, []);
-
-  const copy = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) {
-      setCopyFailed(true);
-      timeoutRef.current = setTimeout(() => {
-        timeoutRef.current = null;
-        setCopyFailed(false);
-      }, 2000);
-      return;
-    }
-    void navigator.clipboard.writeText(apiKey).then(
-      () => {
-        setCopied(true);
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null;
-          setCopied(false);
-        }, 2000);
-      },
-      () => {
-        setCopyFailed(true);
-        timeoutRef.current = setTimeout(() => {
-          timeoutRef.current = null;
-          setCopyFailed(false);
-        }, 2000);
-      },
-    );
-  }, [apiKey]);
-
-  let buttonLabel = "Copy";
-  if (copied) buttonLabel = "Copied";
-  else if (copyFailed) buttonLabel = "Copy failed";
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/20 transition-colors"
-    >
-      {buttonLabel}
-    </button>
-  );
 }
 
 /**
@@ -128,20 +75,20 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
   }
 
   return (
-    <output className="block rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+    <output className="block rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-amber-200">
-            API key for {mintState.app.name}
+          <p className="text-xs font-medium text-sky-200">
+            API Key
           </p>
-          <p className="text-[11px] text-amber-300/80 mt-0.5">
+          <p className="text-[11px] text-amber-300 mt-0.5">
             Store this securely — it will not be shown again.
           </p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-100 hover:bg-amber-500/20 transition-colors"
+          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-xs font-medium text-sky-100 hover:bg-sky-500/20 transition-colors"
           aria-label="Clear API key from screen"
         >
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -151,26 +98,27 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
         </button>
       </div>
 
-      <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-black/30 p-2.5">
-        <code className="min-w-0 flex-1 break-all font-mono text-xs text-amber-100 leading-relaxed">
-          {mintState.apiKey}
-        </code>
-        <CopyApiKeyButton apiKey={mintState.apiKey} />
-      </div>
+      <ApiKeyCredentialSwitcher
+        apiKey={mintState.apiKey}
+        sdkToken={mintState.sdkToken}
+      />
 
-      <details className="text-[11px] text-amber-300/70">
-        <summary className="cursor-pointer hover:text-amber-200">Show more details</summary>
-        <p className="mt-1.5 text-amber-300/60">
+      <details className="text-[11px] text-sky-300/70">
+        <summary className="cursor-pointer hover:text-sky-200">Show more details</summary>
+        <p className="mt-1.5 text-sky-300/60">
           Bound to owner identity:{" "}
-          <span className="font-mono text-amber-200/80">
+          <span className="font-mono text-sky-200/80">
             {mintState.app.ownerExternalUserId ?? "—"}
           </span>
         </p>
-        <pre className="mt-2 overflow-x-auto rounded-md border border-amber-500/15 bg-black/30 p-2 font-mono text-[10px] text-amber-200/70">
+        <pre className="mt-2 overflow-x-auto rounded-md border border-sky-500/15 bg-black/30 p-2 font-mono text-[10px] text-sky-200/70">
           {JSON.stringify(
             {
               ...mintState.response,
               apiKey: maskApiKey(mintState.response.apiKey),
+              ...(typeof mintState.response.sdkToken === "string"
+                ? { sdkToken: maskApiKey(mintState.response.sdkToken) }
+                : {}),
             },
             null,
             2,

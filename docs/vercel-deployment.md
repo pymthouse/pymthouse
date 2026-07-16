@@ -297,8 +297,17 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 |--------------|-------|---------|
 | `NEXT_PUBLIC_ORGANIZATION_ID` | From Turnkey dashboard (Wallet Kit) | Embedded wallet auth (public) |
 | `NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID` | From Turnkey dashboard (Auth Proxy) | Embedded wallet auth (public) |
+| `NEXT_PUBLIC_TURNKEY_OAUTH_REDIRECT_URI` | App origin (e.g. `https://your-domain`) | Optional Wallet Kit OAuth redirect override |
+| `NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID` | Google OAuth Web client ID | Optional; usually set in Auth Proxy dashboard |
 | `TURNKEY_ALLOWED_ORGANIZATION_IDS` | Optional comma-separated org UUIDs | Restrict which orgs’ session JWTs are accepted |
 | `OIDC_DEBUG_LOGS` | `1` to enable | Debug OIDC flows |
+
+**Turnkey social logins (wallets for all funders):** enable Google (etc.) under
+Embedded Wallets → Configuration → Social logins. Redirect URL and Google’s
+authorized redirect URI must match. GitHub is not a native Auth Proxy provider;
+use Google via Turnkey, or Auth0→GitHub / BYO-auth if you need GitHub specifically.
+NextAuth `GOOGLE_*` / `GITHUB_*` vars are separate (dashboard session without a
+Turnkey wallet).
 
 **Important**: Make sure to set these for all environments (Production, Preview, Development) or at minimum for Production.
 

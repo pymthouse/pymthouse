@@ -36,6 +36,23 @@ http_status="$(curl -sS -o "$response_file" -w '%{http_code}' -X PATCH "$api_url
   -H "Content-Type: application/json" \
   -d "$body")"
 response="$(<"$response_file")"
+
+if [[ "$http_status" == "404" ]] &&
+  jq -e '.error.code == "not_found" and .error.message == "Project Domain not found."' \
+    <<<"$response" >/dev/null 2>&1; then
+  echo "${STAGING_DOMAIN} is not a project domain yet; adding it with the branch assignment"
+  body="$(jq -n \
+    --arg name "$STAGING_DOMAIN" \
+    --arg branch "$STAGING_GIT_BRANCH" \
+    '{name: $name, gitBranch: $branch}')"
+  api_url="https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/domains?teamId=${VERCEL_ORG_ID}"
+  http_status="$(curl -sS -o "$response_file" -w '%{http_code}' -X POST "$api_url" \
+    -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "$body")"
+  response="$(<"$response_file")"
+fi
+
 rm -f "$response_file"
 
 if (( http_status < 200 || http_status >= 300 )); then

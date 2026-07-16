@@ -1,15 +1,62 @@
 import type { RemoteSignerWebhookConfig } from "@pymthouse/clearinghouse-identity-webhook/protocol";
-import { createEndUserVerifierFromEnv } from "@pymthouse/clearinghouse-identity-webhook/verifiers";
+import {
+  createEndUserVerifierFromEnv,
+  createOidcVerifier,
+} from "@pymthouse/clearinghouse-identity-webhook/verifiers";
 import {
   OIDC_MOUNT_PATH,
   ensureHttpsForProduction,
   getIssuer,
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
+import { createLocalSignerJwksResolver } from "@/lib/oidc/local-signer-jwks";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
+import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
+import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
+
+type EndUserVerifier = RemoteSignerWebhookConfig["endUserAuth"];
+
+/**
+ * Map owner JWTs (bare platform user id + user_type=app_owner) onto webhook
+ * usage_subject owner:{id} so go-livepeer auth_id carries a transport marker.
+ * The collector strips `owner:` before writing the CloudEvent subject / Konnect
+ * customer key (bare `{users.id}`). JWT claims stay bare for clients.
+ */
+function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifier {
+  return {
+    ...verifier,
+    verify: async (input) => {
+      const result = await verifier.verify(input);
+      const raw = result.raw as Record<string, unknown> | undefined;
+      const userType =
+        typeof raw?.user_type === "string" ? raw.user_type.trim() : "";
+      if (userType !== "app_owner") {
+        return result;
+      }
+      const bareId = result.identity.usage_subject.trim();
+      if (!bareId || bareId.startsWith("owner:")) {
+        return {
+          ...result,
+          identity: {
+            ...result.identity,
+            usage_subject_type: "app_owner",
+          },
+        };
+      }
+      return {
+        ...result,
+        identity: {
+          ...result.identity,
+          usage_subject: buildOwnerWireSubject(bareId),
+          usage_subject_type: "app_owner",
+        },
+      };
+    },
+  };
+}
 
 function trimEnv(env: EnvSource, name: string): string {
   const value = env[name];
@@ -73,6 +120,90 @@ export function resolveIdentityWebhookEnv(env: EnvSource): Record<string, string
   return next;
 }
 
+/** App origin serving this webhook, matching the env source used for issuer resolution. */
+function resolveAppOrigin(source: EnvSource, original: EnvSource): string {
+  const fromEnv = trimEnv(source, "NEXTAUTH_URL");
+  if (fromEnv) {
+    return trimTrailingSlashes(ensureHttpsForProduction(fromEnv));
+  }
+  return original === process.env ? getPublicOrigin() : "";
+}
+
+/** True when the JWT issuer is served by this deployment (self-issued tokens). */
+function isSelfIssuedJwtIssuer(jwtIssuer: string, appOrigin: string): boolean {
+  if (!jwtIssuer || !appOrigin) {
+    return false;
+  }
+  try {
+    return new URL(jwtIssuer).origin === new URL(appOrigin).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** fetch wrapper that logs composite token-exchange latency per request. */
+function createTimedExchangeFetch(): typeof fetch {
+  return (input, init) =>
+    timeSignerWebhookPhase("token_exchange", () => fetch(input, init));
+}
+
+function parseRequiredScopes(source: EnvSource): string[] {
+  return trimEnv(source, "OIDC_REQUIRED_SCOPES").split(/[\s,]+/).filter(Boolean);
+}
+
+/**
+ * The identity-webhook package bundles its own jose whose JWK type differs
+ * nominally (kty required vs optional) from the app's jose. The resolver is
+ * runtime-compatible, so bridge the two declaration trees with a direct cast.
+ */
+type OidcVerifierJwks = NonNullable<Parameters<typeof createOidcVerifier>[0]["jwks"]>;
+
+/**
+ * Build the end-user verifier. For self-issued OIDC tokens (the normal
+ * PymtHouse deployment) the verifier is constructed directly with a local
+ * DB-backed JWKS resolver, so warm invocations never perform OIDC discovery
+ * or JWKS HTTP requests back to this same host. An explicit OIDC_JWKS_URI or
+ * an external issuer falls back to the package's env-driven verifier.
+ */
+function buildEndUserVerifier(
+  source: Record<string, string | undefined>,
+  original: EnvSource,
+): EndUserVerifier {
+  const jwtIssuer = trimEnv(source, "OIDC_ISSUER");
+  const selfIssued =
+    source.IDENTITY_AUTH_MODE === "oidc" &&
+    !trimEnv(source, "OIDC_JWKS_URI") &&
+    isSelfIssuedJwtIssuer(jwtIssuer, resolveAppOrigin(source, original));
+
+  if (!selfIssued) {
+    return createEndUserVerifierFromEnv(source);
+  }
+
+  return createOidcVerifier({
+    jwtIssuer,
+    jwtAudience: trimEnv(source, "OIDC_AUDIENCE") || jwtIssuer,
+    jwks: createLocalSignerJwksResolver() as OidcVerifierJwks,
+    issuer: trimEnv(source, "IDENTITY_ISSUER") || jwtIssuer,
+    clientClaim: trimEnv(source, "OIDC_CLIENT_CLAIM") || undefined,
+    subjectClaim: trimEnv(source, "OIDC_SUBJECT_CLAIM") || undefined,
+    subjectTypeValue: trimEnv(source, "OIDC_SUBJECT_TYPE") || undefined,
+    requiredScopes: parseRequiredScopes(source),
+    tokenExchangeBaseUrl: trimEnv(source, "OIDC_TOKEN_EXCHANGE_BASE_URL") || undefined,
+    exchangeM2mClientId: trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_ID") || undefined,
+    exchangeM2mClientSecret:
+      trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_SECRET") || undefined,
+    fetchImpl: createTimedExchangeFetch(),
+  });
+}
+
+function withPhaseTiming(verifier: EndUserVerifier): EndUserVerifier {
+  return {
+    ...verifier,
+    verify: (input) =>
+      timeSignerWebhookPhase("end_user_verify", () => verifier.verify(input)),
+  };
+}
+
 /**
  * Build the remote-signer webhook config. Issuer / claim / exchange defaults are
  * applied in {@link resolveIdentityWebhookEnv}; only NEXTAUTH_URL is required
@@ -81,15 +212,19 @@ export function resolveIdentityWebhookEnv(env: EnvSource): Record<string, string
 export function buildRemoteSignerWebhookConfig(
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): RemoteSignerWebhookConfig {
-  const source = resolveIdentityWebhookEnv(env ?? process.env);
+  const original = env ?? process.env;
+  const source = resolveIdentityWebhookEnv(original);
   const config: RemoteSignerWebhookConfig = {
     webhookSecret: source.WEBHOOK_SECRET?.trim() || "",
-    endUserAuth: createEndUserVerifierFromEnv(source),
+    endUserAuth: withPhaseTiming(
+      withOwnerBillingUsageSubject(buildEndUserVerifier(source, original)),
+    ),
   };
 
   const checkBalance = buildSignerBalanceCheck();
   if (checkBalance) {
-    config.checkBalance = checkBalance;
+    config.checkBalance = (ctx) =>
+      timeSignerWebhookPhase("balance_check", async () => checkBalance(ctx));
   }
   return config;
 }

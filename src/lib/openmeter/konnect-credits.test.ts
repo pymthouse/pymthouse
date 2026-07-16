@@ -124,11 +124,15 @@ test("createKonnectCreditGrant posts decimal dollars and treats 409 as idempoten
       idempotencyKey: "starter:01KW2BBAK6V8K9B2K83SX1MW03:network_spend",
     });
     assert.deepEqual(created, { created: true, conflict: false });
-    assert.equal(postedBody?.amount, "5");
-    assert.equal(postedBody?.funding_method, "none");
-    assert.equal(postedBody?.currency, "USD");
-    assert.equal(postedBody?.key, "starter:01KW2BBAK6V8K9B2K83SX1MW03:network_spend");
-    assert.deepEqual(postedBody?.filters, { features: ["network_spend"] });
+    assert.ok(postedBody);
+    assert.equal(postedBody["amount"], "5");
+    assert.equal(postedBody["funding_method"], "none");
+    assert.equal(postedBody["currency"], "USD");
+    assert.equal(
+      postedBody["key"],
+      "starter:01KW2BBAK6V8K9B2K83SX1MW03:network_spend",
+    );
+    assert.deepEqual(postedBody["filters"], { features: ["network_spend"] });
 
     status = 409;
     const conflict = await createKonnectCreditGrant({
