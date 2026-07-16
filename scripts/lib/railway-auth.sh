@@ -52,6 +52,7 @@ railway_stack_json() {
   local here
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   echo "${RAILWAY_STACK_JSON:-$here/config/railway/stack.json}"
+  return 0
 }
 
 # True when service is listed in stack.json previewOnlyServices.
