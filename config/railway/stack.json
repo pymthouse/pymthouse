@@ -26,7 +26,7 @@
       "manifest": "deploy/pymthouse-signer-test/railway.json",
       "environments": ["preview"],
       "description": "Preview-only A/B remote signer DMZ. Do not deploy to production. Same webhook/OIDC/Kafka as pymthouse preview; LIVEPEER_IMAGE pins a different go-livepeer build.",
-      "livepeerImage": "livepeer/go-livepeer:sha-716dc1c75db713b6b13020ab9d1eb1f329409caa"
+      "livepeerImage": "livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5"
     }
   }
 }

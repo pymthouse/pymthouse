@@ -42,5 +42,8 @@ CMD /bin/sh -c ' \
     [ -n "$ORCH_WEBHOOK_URL" ] && ARGS="$ARGS -orchWebhookUrl=$ORCH_WEBHOOK_URL"; \
     [ -n "$LIVE_AI_CAP_REPORT_INTERVAL" ] && ARGS="$ARGS -liveAICapReportInterval=$LIVE_AI_CAP_REPORT_INTERVAL"; \
   fi; \
+  if [ "${BYOC_PER_CAP_PRICING:-0}" = "1" ] || [ "${BYOC_PER_CAP_PRICING:-0}" = "true" ]; then \
+    ARGS="$ARGS -byocPerCapPricing=true"; \
+  fi; \
   exec /usr/local/bin/livepeer $ARGS \
 '

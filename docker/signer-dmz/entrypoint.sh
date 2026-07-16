@@ -152,6 +152,13 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
     [ -n "${ORCH_WEBHOOK_URL:-}" ] && ARGS="$ARGS -orchWebhookUrl=${ORCH_WEBHOOK_URL}"
     [ -n "${LIVE_AI_CAP_REPORT_INTERVAL:-}" ] && ARGS="$ARGS -liveAICapReportInterval=${LIVE_AI_CAP_REPORT_INTERVAL}"
   fi
+  if [ "${BYOC_PER_CAP_PRICING:-0}" = "1" ] || [ "${BYOC_PER_CAP_PRICING:-0}" = "true" ]; then
+    if /usr/local/bin/livepeer -help 2>&1 | grep -q 'byocPerCapPricing'; then
+      ARGS="$ARGS -byocPerCapPricing=true"
+    else
+      echo "entrypoint: livepeer lacks -byocPerCapPricing; ignoring BYOC_PER_CAP_PRICING" >&2
+    fi
+  fi
   /usr/local/bin/livepeer $ARGS &
   LIVEPEER_PID=$!
   i=0
