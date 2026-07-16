@@ -15,7 +15,7 @@ const TOUCHED = [
   "SIGNER_PUBLIC_URL",
   "SIGNER_INTERNAL_URL",
   "PYMTHOUSE_TEST_SIGNER_URL",
-  "PYMTHOUSE_SIGNER_LATEST_URL",
+  "SIGNER_LATEST_URL",
   "LATEST_SIGNER_APPS",
 ] as const;
 
@@ -62,26 +62,26 @@ test("isLatestSignerApp only matches listed ids", () => {
 
 test("getClientSignerApiUrl with no app id returns the stable signer", () => {
   process.env.LATEST_SIGNER_APPS = "app_123";
-  process.env.PYMTHOUSE_SIGNER_LATEST_URL = "https://latest.example";
+  process.env.SIGNER_LATEST_URL = "https://latest.example";
   assert.match(getClientSignerApiUrl(), /stable\.example/);
 });
 
 test("listed app with a configured latest URL is routed to the latest signer", () => {
   process.env.LATEST_SIGNER_APPS = "app_123,app_234";
-  process.env.PYMTHOUSE_SIGNER_LATEST_URL = "https://latest.example";
+  process.env.SIGNER_LATEST_URL = "https://latest.example";
   assert.match(getClientSignerApiUrl("app_123"), /latest\.example/);
   assert.equal(getSignerVersionForApp("app_123"), "latest");
 });
 
 test("unlisted app stays on the stable signer even when latest URL is set", () => {
   process.env.LATEST_SIGNER_APPS = "app_123";
-  process.env.PYMTHOUSE_SIGNER_LATEST_URL = "https://latest.example";
+  process.env.SIGNER_LATEST_URL = "https://latest.example";
   assert.match(getClientSignerApiUrl("app_999"), /stable\.example/);
   assert.equal(getSignerVersionForApp("app_999"), "stable");
 });
 
 test("listed app falls back to stable when no latest URL is configured", () => {
   process.env.LATEST_SIGNER_APPS = "app_123";
-  // PYMTHOUSE_SIGNER_LATEST_URL intentionally unset.
+  // SIGNER_LATEST_URL intentionally unset.
   assert.match(getClientSignerApiUrl("app_123"), /stable\.example/);
 });

@@ -107,7 +107,7 @@ function getStableSignerApiUrl(): string {
  * when unconfigured — in which case opted-in apps safely fall back to stable.
  */
 function getLatestSignerApiUrl(): string {
-  const explicit = process.env.PYMTHOUSE_SIGNER_LATEST_URL?.trim();
+  const explicit = process.env.SIGNER_LATEST_URL?.trim();
   return explicit ? normalizeSignerBaseUrl(explicit) : "";
 }
 
@@ -116,7 +116,7 @@ function getLatestSignerApiUrl(): string {
  * Signing goes directly to the DMZ — not through PymtHouse /api/signer/*.
  *
  * Apps in LATEST_SIGNER_APPS are routed to the "latest" signer DMZ
- * (PYMTHOUSE_SIGNER_LATEST_URL) when it is configured; all other apps — and any
+ * (SIGNER_LATEST_URL) when it is configured; all other apps — and any
  * call without an app client id — get the stable production signer.
  */
 export function getClientSignerApiUrl(appClientId?: string | null): string {
