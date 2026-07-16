@@ -1,28 +1,8 @@
-import { getIssuer } from "@/lib/oidc/issuer-urls";
-import { createFirstMatchEndUserVerifier } from "@/lib/signer/first-match-verifier";
-import { createOpaqueSessionEndUserVerifier } from "@/lib/signer/opaque-session-verifier";
+import { buildRemoteSignerWebhookConfig } from "@/lib/signer/remote-signer-webhook-config";
 import { handleAuthorize } from "@pymthouse/clearinghouse-identity-webhook/protocol";
-import {
-  createLegacyOidcVerifierFromEnv,
-  createLegacyWebhookConfigFromEnv,
-} from "@pymthouse/clearinghouse-identity-webhook/legacy-env";
-import type { RemoteSignerWebhookConfig } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 
-function buildWebhookConfig(): RemoteSignerWebhookConfig {
-  const jwtIssuer = process.env.JWT_ISSUER?.trim() || getIssuer();
-  const base = createLegacyWebhookConfigFromEnv(process.env, { jwtIssuer });
-
-  const opaqueSessionVerifier = createOpaqueSessionEndUserVerifier({
-    issuer: jwtIssuer,
-  });
-
-  return {
-    webhookSecret: base.webhookSecret,
-    endUserAuth: createFirstMatchEndUserVerifier([
-      opaqueSessionVerifier,
-      createLegacyOidcVerifierFromEnv(process.env, { jwtIssuer }),
-    ]),
-  };
+function buildWebhookConfig() {
+  return buildRemoteSignerWebhookConfig();
 }
 
 export async function POST(request: Request): Promise<Response> {
