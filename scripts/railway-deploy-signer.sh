@@ -26,7 +26,11 @@ railway_export_auth || exit 1
 
 SIGNER_MANIFEST="$ROOT/deploy/pymthouse/railway.json"
 _stack_manifest="$(railway_service_manifest "$SERVICE")"
-if [[ -n "$_stack_manifest" && -f "$ROOT/$_stack_manifest" ]]; then
+if [[ -n "$_stack_manifest" ]]; then
+  if [[ ! -f "$ROOT/$_stack_manifest" ]]; then
+    echo "error: configured manifest $_stack_manifest for $SERVICE not found" >&2
+    exit 1
+  fi
   SIGNER_MANIFEST="$ROOT/$_stack_manifest"
 fi
 

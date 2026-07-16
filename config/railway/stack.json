@@ -25,8 +25,9 @@
       "kind": "repo",
       "manifest": "deploy/pymthouse-signer-test/railway.json",
       "environments": ["preview"],
-      "description": "Preview-only A/B remote signer DMZ. Do not deploy to production. Same webhook/OIDC/Kafka as pymthouse preview; LIVEPEER_IMAGE pins a different go-livepeer build.",
-      "livepeerImage": "livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5"
+      "description": "Preview-only A/B remote signer DMZ. Do not deploy to production. Same webhook/OIDC/Kafka as pymthouse preview; LIVEPEER_IMAGE pins a different go-livepeer build. Entrypoint defaults BYOC_PER_CAP_PRICING=on for this service name.",
+      "livepeerImage": "livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5",
+      "byocPerCapPricing": true
     }
   }
 }
