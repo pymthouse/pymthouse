@@ -8,11 +8,10 @@
   "deployOrder": [
     "kafka",
     "openmeter-collector",
-    "pymthouse"
-  ],
-  "previewOnlyServices": [
+    "pymthouse",
     "pymthouse-signer-test"
   ],
+  "previewOnlyServices": [],
   "services": {
     "kafka": { "kind": "image" },
     "openmeter-collector": { "kind": "image" },
@@ -24,8 +23,8 @@
     "pymthouse-signer-test": {
       "kind": "repo",
       "manifest": "deploy/pymthouse-signer-test/railway.json",
-      "environments": ["preview"],
-      "description": "Preview-only A/B remote signer DMZ. Do not deploy to production. Same webhook/OIDC/Kafka as pymthouse preview; LIVEPEER_IMAGE pins a different go-livepeer build. Entrypoint defaults BYOC_PER_CAP_PRICING=on for this service name.",
+      "environments": ["preview", "production"],
+      "description": "A/B 'latest' remote signer DMZ, deployed in both preview and production. Same webhook/OIDC/Kafka and signing identity as pymthouse (the 'stable' signer); LIVEPEER_IMAGE pins a newer go-livepeer build. Entrypoint defaults BYOC_PER_CAP_PRICING=on for this service name. Apps opt in via LATEST_SIGNER_APPS on the Next app.",
       "livepeerImage": "livepeer/go-livepeer:sha-4214202f4458cda90bd030a0bbdddf7b3a1f52a5",
       "byocPerCapPricing": true
     }

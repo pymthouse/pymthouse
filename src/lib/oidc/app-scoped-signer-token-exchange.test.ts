@@ -164,6 +164,7 @@ test("handleAppScopedSignerTokenExchange rejects wrong grant_type", async () => 
 });
 
 test("handleAppScopedSignerTokenExchange mints signer session from API key subject", async () => {
+  let signerUrlAppId: string | undefined;
   const session = await handleAppScopedSignerTokenExchange(
     {
       publicClientId: PUBLIC_ID,
@@ -194,7 +195,10 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
         balanceUsdMicros: "1000000",
         lifetimeGrantedUsdMicros: "5000000",
       }),
-      getClientSignerApiUrl: () => "https://signer.example",
+      getClientSignerApiUrl: (appClientId) => {
+        signerUrlAppId = appClientId ?? undefined;
+        return "https://signer.example";
+      },
       getSignerDiscoveryUrl: () => "https://discovery.example/v1/discovery",
     },
   );
@@ -205,6 +209,9 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
   assert.equal(session.balanceUsdMicros, "1000000");
   assert.equal(session.signer_url, "https://signer.example");
   assert.equal(session.discovery_url, "https://discovery.example/v1/discovery");
+  // Signer version is selected per app: the subject's public client id must flow
+  // into getClientSignerApiUrl so LATEST_SIGNER_APPS routing applies.
+  assert.equal(signerUrlAppId, PUBLIC_ID);
 });
 
 test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope", async () => {

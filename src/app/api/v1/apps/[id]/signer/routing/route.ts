@@ -16,7 +16,7 @@ export async function GET(
 
   const issuer = getIssuer();
   const origin = getPublicOrigin();
-  const signerApiUrl = getClientSignerApiUrl();
+  const signerApiUrl = getClientSignerApiUrl(clientId);
   const remoteDmzUrl = signerApiUrl;
   const identityMode = "webhook";
   const meteringMode: SignerRoutingConfig["meteringMode"] = "platform_ingest";

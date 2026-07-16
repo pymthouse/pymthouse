@@ -358,7 +358,7 @@ export async function handleAppScopedSignerTokenExchange(
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-    signer_url: deps.getClientSignerApiUrl(),
+    signer_url: deps.getClientSignerApiUrl(subject.publicClientId),
     discovery_url: deps.getSignerDiscoveryUrl(),
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     correlation_id: input.correlationId,

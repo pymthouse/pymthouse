@@ -16,6 +16,7 @@ import {
   revokeAppUserApiKey,
 } from "@/lib/app-api-keys";
 import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
+import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 async function canAccessUserKeys(request: NextRequest, clientId: string) {
   const app = await getProviderApp(clientId);
@@ -131,7 +132,10 @@ export async function POST(
     },
   });
 
-  const sdkToken = createLivepeerPythonSdkToken({ apiKey: created.apiKey });
+  const sdkToken = createLivepeerPythonSdkToken({
+    apiKey: created.apiKey,
+    signer: getClientSignerApiUrl(clientId),
+  });
 
   return NextResponse.json(
     {

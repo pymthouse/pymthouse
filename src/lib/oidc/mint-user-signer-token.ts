@@ -108,6 +108,7 @@ async function loadPublicSignJobClient(appId: string) {
 
 function signerSessionFromMint(
   minted: Awaited<ReturnType<typeof mintSignerJwtForExternalUser>>,
+  publicClientId: string,
 ) {
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,
@@ -115,7 +116,7 @@ function signerSessionFromMint(
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-    signer_url: getClientSignerApiUrl(),
+    signer_url: getClientSignerApiUrl(publicClientId),
     issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
   });
 }
@@ -314,7 +315,7 @@ export async function handleMintUserSignerToken(input: {
     developerAppId: row.appId,
     externalUserId,
   });
-  return signerSessionFromMint(minted);
+  return signerSessionFromMint(minted, publicClient.clientId);
 }
 
 export async function handleM2mOwnerSignJob(input: {
@@ -338,5 +339,5 @@ export async function handleM2mOwnerSignJob(input: {
     developerAppId: row.appId,
     externalUserId: row.ownerId,
   });
-  return signerSessionFromMint(minted);
+  return signerSessionFromMint(minted, publicClient.clientId);
 }
