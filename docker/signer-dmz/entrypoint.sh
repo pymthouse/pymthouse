@@ -142,6 +142,9 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   # X-Api-Key has no spaces — Authorization:Bearer ${WEBHOOK_SECRET} breaks when
   # /usr/local/bin/livepeer $ARGS word-splits the secret into a stray argv token.
   ARGS="$ARGS -remoteSignerWebhookHeaders=X-Api-Key:${WEBHOOK_SECRET}"
+  # Raise per-ticket EV cap so large BYOC/batch fees can use fewer, bigger tickets
+  # (go-livepeer default is 3000000000000 / 3000 gwei).
+  ARGS="$ARGS -maxTicketEV=${MAX_TICKET_EV:-100000000000000}"
   if [ -n "${KAFKA_BROKERS:-}" ]; then
     ARGS="$ARGS -monitor"
     ARGS="$ARGS -kafkaBootstrapServers=${KAFKA_BROKERS}"

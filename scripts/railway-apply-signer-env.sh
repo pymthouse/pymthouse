@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Push signer DMZ + Turnkey env to Railway (pymthouse service only).
+# Push signer DMZ + Turnkey env to Railway (pymthouse + pymthouse-signer-test A/B).
 #
 #   cp config/railway/signer.env.example config/railway/signer.env
 #   $EDITOR config/railway/signer.env
@@ -45,13 +45,21 @@ set -a
 source "$ENV_FILE"
 set +a
 
-echo "Applying signer env from $(basename "$ENV_FILE") → Railway service pymthouse ($ENV_NAME, project $PROJECT_ID)"
+echo "Applying signer env from $(basename "$ENV_FILE") → Railway ($ENV_NAME, project $PROJECT_ID)"
 railway_apply_signer_env pymthouse "$PE_FLAGS"
+if railway_service_in_environment pymthouse-signer-test "$ENV_NAME"; then
+  railway_apply_signer_env pymthouse-signer-test "$PE_FLAGS"
+fi
 
 if [[ "$DEPLOY" -eq 1 ]]; then
-  echo "Deploying signer DMZ..."
+  echo "Deploying signer DMZ (stable)..."
   bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse "$ENV_NAME"
+  if railway_service_in_environment pymthouse-signer-test "$ENV_NAME"; then
+    echo "Deploying signer DMZ (A/B latest)..."
+    bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse-signer-test "$ENV_NAME"
+  fi
 else
   echo "Done. Redeploy with: bash scripts/railway-apply-signer-env.sh $ENV_NAME --deploy"
   echo "  or: bash scripts/railway-deploy-signer.sh pymthouse $ENV_NAME"
+  echo "      bash scripts/railway-deploy-signer.sh pymthouse-signer-test $ENV_NAME"
 fi
