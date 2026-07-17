@@ -223,14 +223,12 @@ function chartEmptyMessage(selectedCount: number): string {
 }
 
 function SignedTicketsBlock({
-  show,
   needsSelection,
   scope,
   historyScope,
   orderedApps,
   historyClientIds,
 }: Readonly<{
-  show: boolean;
   needsSelection: boolean;
   scope: "all" | "single";
   /** Viewer-own vs platform-wide admin history. */
@@ -238,7 +236,6 @@ function SignedTicketsBlock({
   orderedApps: BillingAppRow[];
   historyClientIds: string[];
 }>) {
-  if (!show) return null;
   const isPlatform = historyScope === "all";
   const title = isPlatform
     ? "Signed ticket requests"
@@ -439,7 +436,6 @@ function BillingUsageBody({
       </div>
 
       <SignedTicketsBlock
-        show
         needsSelection={selectedAppIds.length === 0 && isMultiApp}
         scope={scope}
         historyScope={historyScope}
