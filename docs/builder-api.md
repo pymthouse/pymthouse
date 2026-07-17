@@ -51,11 +51,26 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
-| `pmth_<hex>` | Per-app-user **API key** | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
-| `pmth_cs_<hex>` | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
+| Stored API key (`<prefix><hex>`) | Per-app-user **API key** (hashed at rest) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
+| `app_<24hex>_<secret>` | **Presented** API key (issuance + remote-signer Bearer) | Same secret material as the stored key; `app_*` segment routes the app-scoped exchange URL |
+| Client secret (`*_cs_*`) | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
 
-Do not pass `pmth_cs_*` as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
+Newly issued keys are returned as `app_<24hex>_<secret>` (RFC 6750 `token68` characters; underscore separator for copy/select UX). The remote-signer identity webhook accepts that composite Bearer, parses the `app_*` client id, and performs RFC 8693 token exchange ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) at `/api/v1/apps/{clientId}/oidc/token`. The exchange `subject_token` is the opaque hex secret (or the stored bare key when the path already supplies `{clientId}`).
+
+**Design notes**
+
+- The presented form embeds the public client id so a single `Authorization: Bearer` header can route the exchange without a second header.
+- Underscore is preferred over `.` so double-click / word selection does not split the credential; `.` also collides visually with JWT segments.
+- The presented form is `{clientId}_{bareApiKey}`; any operator storage prefix on the bare key is preserved in the secret segment.
+
+Do not pass M2M client secrets as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
+
+### Implementation tasks
+
+- [x] Issue only `app_*_*` from key creation APIs (`formatCompositeApiKey`).
+- [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
+- [ ] Update integrator docs / dashboard curl snippets when the package is deployed.
 
 ## Authentication
 
@@ -330,16 +345,20 @@ For RFC 8693 exchange after minting a user JWT, use `POST /api/v1/apps/{clientId
 
 Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
-**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence — this wire format is unchanged.
+**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence. App-owner JWTs keep bare `sub` / `external_user_id` = `{users.id}` with `user_type: "app_owner"`; the webhook maps that to wire `usage_subject` = `owner:{users.id}` so `auth_id` is `app_…:owner:{users.id}` (transport marker for the collector). The collector strips the `owner:` prefix so CloudEvent `subject` / Konnect customer key = bare `{users.id}`.
 
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
-2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros`, and writes normalized CloudEvents to OpenMeter/Konnect:
-   - `subject` = compound `auth_id` (`client_id:usage_subject`) — matches OpenMeter customer `subject_key`
+2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros` via `ceil(fee_wei * eth_usd / 1e12)` so sub-micro fees still count as at least 1 micro, and writes normalized CloudEvents to OpenMeter/Konnect:
+   - `subject` = compound `auth_id` for M2M end-users; **bare `{users.id}`** when wire `usage_subject` starts with `owner:` (shared owner wallet / Konnect customer key)
    - `data.client_id` = tenant (developer app OAuth `client_id`)
-   - `data.usage_subject` = end user (OIDC `sub` analog)
-   - `data.auth_id` retained for compatibility; `data.external_user_id` mirrors `usage_subject` for existing meter `groupBy`
+   - `data.usage_subject` / `data.external_user_id` = end user id, or bare `{users.id}` for owners
+   - `data.auth_id` retained for compatibility
+   - `data.openmeter_customer_key` = billing wallet key (bare owner id or compound end-user key)
+   - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
+
+**Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
@@ -351,11 +370,25 @@ Aggregated request and fee usage for a developer application — read-only, tena
 
 Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
-**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns OpenMeter entitlement balance (`balanceUsdMicros`, `hasAccess`, etc.) from the user’s active plan subscription (Starter free tier or paid checkout).
+### Session request history (Usage dashboard)
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter with a `network_spend` rate card and included usage from `includedUsdMicros`. Providers edit allowance via `PUT /api/v1/apps/{clientId}/starter-plan` with `{ "includedUsdMicros": "5000000" }` (triggers OpenMeter plan sync). New end users are auto-subscribed to Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest) if they have no existing subscription row.
+**Endpoint:** `GET /api/v1/me/usage/requests`
 
-**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only; additive `createGrant` on top of Starter subscription included usage).
+Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents for the **signed-in viewer’s own usage subject(s)** only — newest first. This is not a Builder/M2M API for listing all end users of an app.
+
+| Query | Description |
+| --- | --- |
+| `cursor` | Opaque pagination cursor from a prior response |
+| `limit` | Page size (default 25, max 50) |
+| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`) |
+
+Do **not** pass `externalUserId` — the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, and `openMeterConfigured`.
+
+**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
+
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** instead share one platform **Owner Starter** plan (`pymthouse_owner_starter`) on their bare `{users.id}` Konnect customer — not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
+
+**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`.
 
 **Endpoint:** `GET /api/v1/apps/{clientId}/usage`
 

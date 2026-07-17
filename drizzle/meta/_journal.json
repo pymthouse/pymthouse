@@ -183,6 +183,34 @@
       "when": 1778000000000,
       "tag": "0024_api_keys_openmeter_subscription_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778100000000,
+      "tag": "0025_auto_approve_developer_apps",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1778600000000,
+      "tag": "0026_auto_approve_developer_apps_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1778700000000,
+      "tag": "0027_onramp_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1778800000000,
+      "tag": "0028_onramp_turnkey_organization",
+      "breakpoints": true
     }
   ]
 }

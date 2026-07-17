@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "pymthouse — Identity & Payment Infrastructure";
+export const alt = "pymthouse - Platform Builder API for Livepeer Applications";
 export const size = {
   width: 1200,
   height: 630,

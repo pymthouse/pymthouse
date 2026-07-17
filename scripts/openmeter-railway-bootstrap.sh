@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Bootstrap meters/features on a Railway-hosted OpenMeter (or any remote URL).
+#
+# For Konnect (OPENMETER_URL + OPENMETER_API_KEY), this ensures meters + the
+# network_spend feature only. Trial allowance is prepaid credits at user
+# provision time — Starter plans must not use rate_cards.discounts.usage.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -86,6 +86,42 @@ test("rewriteKonnectRequestUrl maps customer subscriptions to filtered list", ()
   assert.equal(rewritten.searchParams.get("page[size]"), "100");
 });
 
+test("rewriteKonnectRequestUrl maps events.list subject/limit/from/to to Konnect filters", () => {
+  const url = new URL(
+    "https://us.api.konghq.com/v3/openmeter/api/v1/events?subject=uuid-owner-1&limit=50&from=2026-07-01T00:00:00.000Z&to=2026-07-31T23:59:59.999Z",
+  );
+  const rewritten = rewriteKonnectRequestUrl(url, "GET");
+  assert.equal(rewritten.pathname, "/v3/openmeter/events");
+  assert.equal(rewritten.searchParams.get("filter[subject][eq]"), "uuid-owner-1");
+  assert.equal(rewritten.searchParams.get("page[size]"), "50");
+  assert.equal(
+    rewritten.searchParams.get("filter[time][gte]"),
+    "2026-07-01T00:00:00.000Z",
+  );
+  assert.equal(
+    rewritten.searchParams.get("filter[time][lte]"),
+    "2026-07-31T23:59:59.999Z",
+  );
+  assert.equal(rewritten.searchParams.get("subject"), null);
+  assert.equal(rewritten.searchParams.get("limit"), null);
+  assert.equal(rewritten.searchParams.get("from"), null);
+  assert.equal(rewritten.searchParams.get("to"), null);
+});
+
+test("rewriteKonnectRequestUrl maps multiple event subjects to oeq", () => {
+  const url = new URL("https://us.api.konghq.com/v3/openmeter/api/v1/events");
+  url.searchParams.append("subject", "uuid-1");
+  url.searchParams.append("subject", "owner:uuid-1");
+  url.searchParams.set("limit", "25");
+  const rewritten = rewriteKonnectRequestUrl(url, "GET");
+  assert.equal(
+    rewritten.searchParams.get("filter[subject][oeq]"),
+    "uuid-1,owner:uuid-1",
+  );
+  assert.equal(rewritten.searchParams.get("filter[subject][eq]"), null);
+  assert.equal(rewritten.searchParams.get("page[size]"), "25");
+});
+
 test("unwrapOpenMeterListResult accepts arrays and Konnect page envelopes", () => {
   assert.deepEqual(unwrapOpenMeterListResult([{ id: "1" }]), [{ id: "1" }]);
   assert.deepEqual(unwrapOpenMeterListResult({ data: [{ id: "2" }] }), [{ id: "2" }]);
@@ -145,6 +181,23 @@ test("rewriteKonnectRequestBody rewrites plan PUT bodies", () => {
   assert.ok(Array.isArray(rewritten.phases[0]?.rate_cards));
 });
 
+test("rewriteKonnectRequestBody maps customer usageAttribution to snake_case", () => {
+  const rewritten = rewriteKonnectRequestBody(
+    "/v3/openmeter/api/v1/customers/cust_1",
+    "PUT",
+    {
+      name: "owner:uuid-1",
+      usageAttribution: { subjectKeys: ["owner:uuid-1", "app_1:uuid-1"] },
+    },
+  );
+  assert.deepEqual(rewritten, {
+    name: "owner:uuid-1",
+    usage_attribution: {
+      subject_keys: ["owner:uuid-1", "app_1:uuid-1"],
+    },
+  });
+});
+
 test("rewriteKonnectRequestBody maps customerId to nested customer for subscription create", () => {
   const rewritten = rewriteKonnectRequestBody(
     "/v3/openmeter/api/v1/subscriptions",
@@ -191,15 +244,55 @@ test("normalizeKonnectSubscriptionRecord maps plan_id to plan.id", () => {
   assert.equal(normalized.plan_id, undefined);
 });
 
-test("buildKonnectUsageRateCard applies included usage discounts", () => {
+test("buildKonnectUsageRateCard includes usage discounts when provided", () => {
   const card = buildKonnectUsageRateCard({
     key: "network_spend",
     name: "Network usage",
     featureId: "01G65Z755AFWAKHE12NY0CQ9FH",
     unitAmount: "0.000001",
-    includedMicros: 5_000_000,
+    includedUsdMicros: 5_000_000,
   });
   assert.deepEqual(card.discounts, { usage: "5000000" });
+  assert.deepEqual(card.feature, { id: "01G65Z755AFWAKHE12NY0CQ9FH" });
+  assert.deepEqual(card.price, { type: "unit", amount: "0.000001" });
+});
+
+test("buildKonnectUsageRateCard omits discounts when included amount is absent", () => {
+  const card = buildKonnectUsageRateCard({
+    key: "network_spend",
+    name: "Network usage",
+    featureId: "01G65Z755AFWAKHE12NY0CQ9FH",
+    unitAmount: "0.000001",
+  });
+  assert.equal(card.discounts, undefined);
+});
+
+test("rewriteKonnectPlanRequestBody preserves rate card discounts", () => {
+  const rewritten = rewriteKonnectPlanRequestBody({
+    key: "starter",
+    billingCadence: "P1M",
+    phases: [
+      {
+        key: "default",
+        name: "Default",
+        rateCards: [
+          {
+            type: "usage_based",
+            key: "network_spend",
+            name: "Network usage",
+            featureKey: "network_spend",
+            billingCadence: "P1M",
+            discounts: { usage: "5000000" },
+            price: { type: "unit", amount: "0.000001" },
+          },
+        ],
+      },
+    ],
+  }) as {
+    phases: Array<{ rate_cards: Array<Record<string, unknown>> }>;
+  };
+
+  assert.deepEqual(rewritten.phases[0]?.rate_cards[0]?.discounts, { usage: "5000000" });
 });
 
 test("isKonnectMeterQueryGet detects SDK meter query GETs", () => {

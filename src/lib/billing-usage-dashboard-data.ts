@@ -1,10 +1,14 @@
 import { getServerSession } from "next-auth";
-import { eq } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
-import { developerApps, users } from "@/db/schema";
+import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import {
+  listOwnerActiveSubscriptions,
+  type OwnerBillingSubscriptionRow,
+} from "@/lib/owner-billing-data";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { queryOpenMeterAppDashboardUsage } from "@/lib/usage/query-openmeter";
 
@@ -14,6 +18,12 @@ export type BillingAppRow = {
   ownerId: string;
   ownerName: string | null;
   ownerEmail: string | null;
+  /**
+   * Public OIDC client_id — same value as UserAppSummary.id / apps list selection.
+   * Chart series and client-side filters must use this, not developer_apps.id
+   * (those can differ for legacy apps).
+   */
+  publicClientId: string;
 };
 
 export type BillingUserUsageRow = {
@@ -48,28 +58,7 @@ export type BillingAppUsageSummary = {
   byPipelineModel: BillingPipelineModelSummary[];
 };
 
-export function formatBillingWei(wei: string): string {
-  if (!wei || !/^\d+$/.test(wei)) return "0";
-  const value = BigInt(wei);
-  if (value === 0n) return "0";
-  const divisor = 10n ** 18n;
-  const whole = value / divisor;
-  const remainder = value % divisor;
-  if (whole === 0n && remainder > 0n) return `${value.toString()} wei`;
-  const fracStr = remainder.toString().padStart(18, "0").slice(0, 6);
-  return `${whole}.${fracStr} ETH`;
-}
-
-export function formatBillingPeriod(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
+export { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
 
 function sortAppsForViewer(apps: BillingAppRow[], userId: string, isAdmin: boolean): BillingAppRow[] {
   const byName = (a: BillingAppRow, b: BillingAppRow) => a.name.localeCompare(b.name);
@@ -113,6 +102,24 @@ function sortAppUsageByMostUsed(appUsage: BillingAppUsageSummary[]): BillingAppU
   });
 }
 
+export type BillingChartSeries = {
+  appId: string;
+  appName: string;
+  /** Display label: pipeline capability + model/constraint (e.g. `byoc / transcode/ffmpeg`). */
+  jobType: string;
+  totalRequests: number;
+  points: { date: string; value: number }[];
+};
+
+/** Chart legend label from OpenMeter pipeline + model_id (signer constraint). */
+export function formatUsageJobTypeLabel(pipeline: string, modelId: string): string {
+  const pipe = (pipeline || "unknown").trim() || "unknown";
+  const model = (modelId || "").trim();
+  if (!model || model === "unknown") return pipe;
+  const shortModel = model.length > 40 ? `${model.slice(0, 38)}…` : model;
+  return `${pipe} / ${shortModel}`;
+}
+
 export type BillingUsageDashboardPayload = {
   scope: "all" | "single";
   userId: string;
@@ -123,10 +130,13 @@ export type BillingUsageDashboardPayload = {
   orderedApps: BillingAppRow[];
   appUsage: BillingAppUsageSummary[];
   chartData: { date: string; value: number }[];
+  chartSeries: BillingChartSeries[];
   totalRequests: number;
   totalFeeWei: bigint;
   totalNetworkFeeUsdMicros: bigint;
   appsWithUsage: number;
+  /** Viewer's active subscriptions (discount progress); empty when none / unavailable. */
+  activeSubscriptions: OwnerBillingSubscriptionRow[];
 };
 
 export type BillingUsageDashboardResult =
@@ -137,12 +147,14 @@ export type BillingUsageDashboardResult =
 
 export async function getBillingUsageDashboardData(
   filterAppId?: string | null,
+  options?: { ownAppsOnly?: boolean },
 ): Promise<BillingUsageDashboardResult> {
   const session = await getServerSession(authOptions);
   const sessionUser = session?.user as Record<string, unknown> | undefined;
   const userId = sessionUser?.id as string | undefined;
   const role = sessionUser?.role as string | undefined;
   const isAdmin = role === "admin";
+  const ownAppsOnly = options?.ownAppsOnly === true;
 
   if (!userId) {
     return { ok: false, reason: "no_session" };
@@ -155,12 +167,31 @@ export async function getBillingUsageDashboardData(
       ownerId: developerApps.ownerId,
       ownerName: users.name,
       ownerEmail: users.email,
+      publicClientId: oidcClients.clientId,
     })
     .from(developerApps)
-    .leftJoin(users, eq(developerApps.ownerId, users.id));
+    .leftJoin(users, eq(developerApps.ownerId, users.id))
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id));
 
   let orderedApps: BillingAppRow[];
   let scope: "all" | "single";
+
+  const toBillingApp = (row: {
+    id: string;
+    name: string;
+    ownerId: string;
+    ownerName: string | null;
+    ownerEmail: string | null;
+    publicClientId: string | null;
+  }): BillingAppRow => ({
+    id: row.id,
+    name: row.name,
+    ownerId: row.ownerId,
+    ownerName: row.ownerName,
+    ownerEmail: row.ownerEmail,
+    // Prefer public OIDC client_id; fall back to developer_apps.id when unset.
+    publicClientId: row.publicClientId?.trim() || row.id,
+  });
 
   if (filterAppId) {
     const auth = await getAuthorizedProviderApp(filterAppId);
@@ -172,13 +203,25 @@ export async function getBillingUsageDashboardData(
     if (!row) {
       return { ok: false, reason: "forbidden" };
     }
-    orderedApps = [row as BillingAppRow];
+    orderedApps = [toBillingApp(row)];
     scope = "single";
+  } else if (isAdmin && !ownAppsOnly) {
+    const visibleApps = (await appsQuery).map(toBillingApp);
+    orderedApps = sortAppsForViewer(visibleApps, userId, true);
+    scope = "all";
   } else {
-    const visibleApps = (isAdmin
-      ? await appsQuery
-      : await appsQuery.where(eq(developerApps.ownerId, userId))) as BillingAppRow[];
-    orderedApps = sortAppsForViewer(visibleApps, userId, isAdmin);
+    // Match My Apps / listUserAccessibleApps: owned + administered.
+    const memberships = await db
+      .select({ clientId: providerAdmins.clientId })
+      .from(providerAdmins)
+      .where(eq(providerAdmins.userId, userId));
+    const memberIds = memberships.map((m) => m.clientId);
+    const ownOrAdmin =
+      memberIds.length === 0
+        ? eq(developerApps.ownerId, userId)
+        : or(eq(developerApps.ownerId, userId), inArray(developerApps.id, memberIds));
+    const visibleApps = (await appsQuery.where(ownOrAdmin!)).map(toBillingApp);
+    orderedApps = sortAppsForViewer(visibleApps, userId, false);
     scope = "all";
   }
 
@@ -209,17 +252,29 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const omResults = await Promise.all(
-    input.orderedApps.map((app) =>
-      queryOpenMeterAppDashboardUsage({
-        clientId: app.id,
-        startDate: input.cycle.start,
-        endDate: input.cycle.end,
-      }),
+  const [omResults, activeSubscriptions] = await Promise.all([
+    Promise.all(
+      input.orderedApps.map((app) =>
+        queryOpenMeterAppDashboardUsage({
+          clientId: app.id,
+          startDate: input.cycle.start,
+          endDate: input.cycle.end,
+        }),
+      ),
     ),
-  );
+    listOwnerActiveSubscriptions(input.userId).catch((err) => {
+      console.warn(
+        "billing-usage-dashboard: subscription summary failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return [] as OwnerBillingSubscriptionRow[];
+    }),
+  ]);
 
   const requestsByDay = new Map<string, number>();
+  /** appId|pipeline|modelId → day → count */
+  const seriesDayCounts = new Map<string, Map<string, number>>();
+  const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
 
   const appUsage: BillingAppUsageSummary[] = sortAppUsageByMostUsed(
     input.orderedApps.map((app, index) => {
@@ -239,6 +294,25 @@ async function buildOpenMeterBillingDashboard(input: {
 
       for (const [day, count] of om.requestsByDay) {
         requestsByDay.set(day, (requestsByDay.get(day) ?? 0) + count);
+      }
+
+      for (const row of om.byDailyPipeline ?? []) {
+        const pipeline = row.pipeline || "unknown";
+        const modelId = row.modelId || "unknown";
+        const jobType = formatUsageJobTypeLabel(pipeline, modelId);
+        const chartAppId = app.publicClientId;
+        // Key by both dimensions so distinct constraints do not collapse under one pipeline.
+        const seriesKey = `${chartAppId}|${pipeline}|${modelId}`;
+        if (!seriesMeta.has(seriesKey)) {
+          seriesMeta.set(seriesKey, {
+            appId: chartAppId,
+            appName: app.name,
+            jobType,
+          });
+        }
+        const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
+        dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
+        seriesDayCounts.set(seriesKey, dayMap);
       }
 
       let networkFeeUsdMicros = 0n;
@@ -320,15 +394,37 @@ async function buildOpenMeterBillingDashboard(input: {
   );
   const appsWithUsage = appUsage.filter((app) => app.requestCount > 0).length;
   const todayKeyUtc = new Date().toISOString().slice(0, 10);
-  const chartData: { date: string; value: number }[] = dateKeysInclusiveUtc(
-    input.cycleBounds.start,
-    input.cycleBounds.end,
-  )
-    .filter((date) => date <= todayKeyUtc)
-    .map((date) => ({
-      date,
-      value: requestsByDay.get(date) ?? 0,
-    }));
+  const dateKeys = dateKeysInclusiveUtc(input.cycleBounds.start, input.cycleBounds.end).filter(
+    (date) => date <= todayKeyUtc,
+  );
+  const chartData: { date: string; value: number }[] = dateKeys.map((date) => ({
+    date,
+    value: requestsByDay.get(date) ?? 0,
+  }));
+
+  const chartSeries: BillingChartSeries[] = [...seriesMeta.entries()]
+    .map(([seriesKey, meta]) => {
+      const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
+      const points = dateKeys.map((date) => ({
+        date,
+        value: dayMap.get(date) ?? 0,
+      }));
+      const totalRequests = points.reduce((sum, point) => sum + point.value, 0);
+      return {
+        appId: meta.appId,
+        appName: meta.appName,
+        jobType: meta.jobType,
+        totalRequests,
+        points,
+      };
+    })
+    .filter((series) => series.totalRequests > 0)
+    .sort((a, b) => {
+      if (b.totalRequests !== a.totalRequests) return b.totalRequests - a.totalRequests;
+      const appCmp = a.appName.localeCompare(b.appName);
+      if (appCmp !== 0) return appCmp;
+      return a.jobType.localeCompare(b.jobType);
+    });
 
   return {
     ok: true,
@@ -342,10 +438,12 @@ async function buildOpenMeterBillingDashboard(input: {
       orderedApps: input.orderedApps,
       appUsage,
       chartData,
+      chartSeries,
       totalRequests,
       totalFeeWei: 0n,
       totalNetworkFeeUsdMicros,
       appsWithUsage,
+      activeSubscriptions,
     },
   };
 }

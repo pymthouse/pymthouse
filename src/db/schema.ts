@@ -249,7 +249,7 @@ export const developerApps = pgTable("developer_apps", {
   tosUrl: text("tos_url"),
   demoRecordingUrl: text("demo_recording_url"),
   linksToPurchases: integer("links_to_purchases").notNull().default(0),
-  status: text("status").notNull().default("draft"), // draft | submitted | in_review | approved | rejected
+  status: text("status").notNull().default("approved"), // approved (live on create); legacy: draft | submitted | in_review | rejected
   reviewerNotes: text("reviewer_notes"),
   reviewedBy: text("reviewed_by").references(() => users.id),
   reviewedAt: text("reviewed_at"),
@@ -290,6 +290,7 @@ export const appUsers = pgTable(
       .references(() => developerApps.id),
     externalUserId: text("external_user_id").notNull(),
     email: text("email"),
+    depositWalletAddress: text("deposit_wallet_address"),
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
     createdAt: text("created_at")
@@ -627,6 +628,37 @@ export const turnkeyFundingEvents = pgTable(
   ],
 );
 
+/** Fiat on-ramp session ledger for MoonPay / Turnkey attribution and settlement. */
+export const onrampSessions = pgTable(
+  "onramp_sessions",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull(),
+    externalUserId: text("external_user_id").notNull(),
+    depositWalletAddress: text("deposit_wallet_address").notNull(),
+    onrampTransactionId: text("onramp_transaction_id").notNull(),
+    onrampProvider: text("onramp_provider").notNull().default("moonpay"),
+    /** Turnkey sub-org that owns the on-ramp transaction (Wallet Kit session org). */
+    turnkeyOrganizationId: text("turnkey_organization_id"),
+    fiatCurrencyCode: text("fiat_currency_code"),
+    fiatAmount: text("fiat_amount"),
+    status: text("status").notNull().default("pending"),
+    grantedUsdMicros: text("granted_usd_micros"),
+    openmeterGrantId: text("openmeter_grant_id"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    settledAt: text("settled_at"),
+  },
+  (t) => [
+    uniqueIndex("idx_onramp_sessions_transaction_id").on(t.onrampTransactionId),
+    index("idx_onramp_sessions_client_user").on(t.clientId, t.externalUserId),
+  ],
+);
+
 export const adminInvites = pgTable("admin_invites", {
   id: text("id").primaryKey(),
   code: text("code").notNull().unique(),
@@ -757,6 +789,8 @@ export type ApiKey = typeof apiKeys.$inferSelect;
 export type AuthAuditLog = typeof authAuditLog.$inferSelect;
 export type TurnkeyFundingEvent = typeof turnkeyFundingEvents.$inferSelect;
 export type NewTurnkeyFundingEvent = typeof turnkeyFundingEvents.$inferInsert;
+export type OnrampSession = typeof onrampSessions.$inferSelect;
+export type NewOnrampSession = typeof onrampSessions.$inferInsert;
 export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
 export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;

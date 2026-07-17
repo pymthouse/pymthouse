@@ -147,10 +147,23 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
     ARGS="$ARGS -kafkaBootstrapServers=${KAFKA_BROKERS}"
     ARGS="$ARGS -kafkaGatewayTopic=${KAFKA_GATEWAY_TOPIC:-livepeer-gateway-events}"
   fi
-  if [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "1" ] || [ "${SIGNER_REMOTE_DISCOVERY:-0}" = "true" ]; then
+  if [ "${SIGNER_REMOTE_DISCOVERY:-1}" = "1" ] || [ "${SIGNER_REMOTE_DISCOVERY:-1}" = "true" ]; then
     ARGS="$ARGS -remoteDiscovery=true"
     [ -n "${ORCH_WEBHOOK_URL:-}" ] && ARGS="$ARGS -orchWebhookUrl=${ORCH_WEBHOOK_URL}"
     [ -n "${LIVE_AI_CAP_REPORT_INTERVAL:-}" ] && ARGS="$ARGS -liveAICapReportInterval=${LIVE_AI_CAP_REPORT_INTERVAL}"
+  fi
+  # Default ON for preview A/B signer-test only; OFF elsewhere. Override with BYOC_PER_CAP_PRICING=0|1.
+  _byoc_default=0
+  if [ "${RAILWAY_SERVICE_NAME:-}" = "pymthouse-signer-test" ]; then
+    _byoc_default=1
+  fi
+  _byoc="${BYOC_PER_CAP_PRICING:-$_byoc_default}"
+  if [ "$_byoc" = "1" ] || [ "$_byoc" = "true" ]; then
+    if /usr/local/bin/livepeer -help 2>&1 | grep -q 'byocPerCapPricing'; then
+      ARGS="$ARGS -byocPerCapPricing=true"
+    else
+      echo "entrypoint: livepeer lacks -byocPerCapPricing; ignoring BYOC_PER_CAP_PRICING" >&2
+    fi
   fi
   /usr/local/bin/livepeer $ARGS &
   LIVEPEER_PID=$!

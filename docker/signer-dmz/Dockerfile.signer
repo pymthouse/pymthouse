@@ -2,7 +2,7 @@
 # Copies livepeer + required CUDA NPP libs from the official image — do not wget
 # a bare binary into debian:slim; the binary links libnppig.so and other NPP libs.
 
-FROM livepeer/go-livepeer:sha-33380bc9088cbd26b3797387dc6a783a68a69f84 AS livepeer-src
+FROM livepeer/go-livepeer:sha-469cf754a259b34927f8dc8d634da3b005493076 AS livepeer-src
 
 FROM debian:bookworm-slim
 
@@ -25,7 +25,7 @@ ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081
 ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
-ENV SIGNER_REMOTE_DISCOVERY=0
+ENV SIGNER_REMOTE_DISCOVERY=1
 
 EXPOSE 8081 4935
 
@@ -41,6 +41,12 @@ CMD /bin/sh -c ' \
     ARGS="$ARGS -remoteDiscovery=true"; \
     [ -n "$ORCH_WEBHOOK_URL" ] && ARGS="$ARGS -orchWebhookUrl=$ORCH_WEBHOOK_URL"; \
     [ -n "$LIVE_AI_CAP_REPORT_INTERVAL" ] && ARGS="$ARGS -liveAICapReportInterval=$LIVE_AI_CAP_REPORT_INTERVAL"; \
+  fi; \
+  _byoc_default=0; \
+  if [ "${RAILWAY_SERVICE_NAME:-}" = "pymthouse-signer-test" ]; then _byoc_default=1; fi; \
+  _byoc="${BYOC_PER_CAP_PRICING:-$_byoc_default}"; \
+  if [ "$_byoc" = "1" ] || [ "$_byoc" = "true" ]; then \
+    ARGS="$ARGS -byocPerCapPricing=true"; \
   fi; \
   exec /usr/local/bin/livepeer $ARGS \
 '

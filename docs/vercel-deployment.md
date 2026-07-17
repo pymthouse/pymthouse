@@ -194,8 +194,8 @@ Canonical URLs for the Deployments sidebar (`VERCEL_PRODUCTION_URL`, `VERCEL_PRE
 1. Create the persistent branch: `git branch staging main && git push -u origin staging`.
 2. Vercel project `pymthouse` → Settings → Git: confirm Production Branch is `main` (production deploys remain CLI/tag-driven; `git.deploymentEnabled.main=false` blocks native main builds).
 3. Assign domain to branch: `STAGING_GIT_BRANCH=staging bash scripts/assign-staging-domain-branch.sh`.
-4. Apply branch-scoped Preview env for `staging`: `PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh` (sets `NEXTAUTH_URL`, `OIDC_ISSUER`, `PLATFORM_JWKS_URL` to `staging.pymthouse.com`).
-5. Ensure Production-scoped `OIDC_ISSUER` / `NEXTAUTH_URL` stay on `https://pymthouse.com` and do not leak into Preview.
+4. Apply branch-scoped Preview env for `staging`: `PREVIEW_GIT_BRANCH=staging bash scripts/apply-pymthouse-preview-vercel-env.sh` (sets `NEXTAUTH_URL`, `PLATFORM_JWKS_URL` to `staging.pymthouse.com`; issuer/claims/exchange default from `NEXTAUTH_URL` in-app).
+5. Ensure Production-scoped `NEXTAUTH_URL` stays on `https://pymthouse.com` and does not leak into Preview.
 6. Enable staging auto-deploy: `RAILWAY_PREVIEW_AUTO_DEPLOY=true`, `VERCEL_PREVIEW_AUTO_DEPLOY=true` (via [set-github-preview-deploy-vars.sh](../scripts/set-github-preview-deploy-vars.sh)).
 7. Verify OIDC discovery after redeploy: `curl -sS https://staging.pymthouse.com/api/v1/oidc/.well-known/openid-configuration | jq '{issuer, token_endpoint}'` — both hosts must be `staging.pymthouse.com`.
 
@@ -276,6 +276,8 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 | `NEXTAUTH_SECRET` | Random secret (generate with `openssl rand -base64 32`) | `your-secret-here` |
 | `SIGNER_INTERNAL_URL` | Your deployed signer URL from Step 1 | `https://your-signer.up.railway.app` |
 | `SIGNER_CLI_URL` | Same as SIGNER_INTERNAL_URL (or separate if exposed) | `https://your-signer.up.railway.app` |
+| `SIGNER_LATEST_URL` | Optional; public URL of the `pymthouse-signer-test` (latest) DMZ. Unset ⇒ all apps use the stable signer | `https://your-signer-test.up.railway.app` |
+| `LATEST_SIGNER_APPS` | Optional; comma-separated public client ids (`app_*`) routed to the latest signer. Default: none (all apps use stable) | `app_123,app_234` |
 | `OPENMETER_URL` | Self-hosted OpenMeter on Railway (**separate project**) | `https://openmeter-xxxx.up.railway.app` |
 | `OPENMETER_API_KEY` | Optional; set if OpenMeter auth is enabled | (secret) |
 | `OPENMETER_TRIAL_FEATURE_KEY` | Trial entitlement feature | `network_spend` |
@@ -297,8 +299,17 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 |--------------|-------|---------|
 | `NEXT_PUBLIC_ORGANIZATION_ID` | From Turnkey dashboard (Wallet Kit) | Embedded wallet auth (public) |
 | `NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID` | From Turnkey dashboard (Auth Proxy) | Embedded wallet auth (public) |
+| `NEXT_PUBLIC_TURNKEY_OAUTH_REDIRECT_URI` | App origin (e.g. `https://your-domain`) | Optional Wallet Kit OAuth redirect override |
+| `NEXT_PUBLIC_TURNKEY_GOOGLE_CLIENT_ID` | Google OAuth Web client ID | Optional; usually set in Auth Proxy dashboard |
 | `TURNKEY_ALLOWED_ORGANIZATION_IDS` | Optional comma-separated org UUIDs | Restrict which orgs’ session JWTs are accepted |
 | `OIDC_DEBUG_LOGS` | `1` to enable | Debug OIDC flows |
+
+**Turnkey social logins (wallets for all funders):** enable Google (etc.) under
+Embedded Wallets → Configuration → Social logins. Redirect URL and Google’s
+authorized redirect URI must match. GitHub is not a native Auth Proxy provider;
+use Google via Turnkey, or Auth0→GitHub / BYO-auth if you need GitHub specifically.
+NextAuth `GOOGLE_*` / `GITHUB_*` vars are separate (dashboard session without a
+Turnkey wallet).
 
 **Important**: Make sure to set these for all environments (Production, Preview, Development) or at minimum for Production.
 

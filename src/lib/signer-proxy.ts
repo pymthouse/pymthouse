@@ -59,11 +59,39 @@ export async function isSignerOperational(
   return senderInfo !== null;
 }
 
+/** Signer "version" a client is routed to: the newer A/B DMZ or the stable one. */
+export type SignerVersion = "latest" | "stable";
+
 /**
- * Public remote signer DMZ base URL for clients (gateway, builder-sdk).
- * Signing goes directly to the DMZ — not through PymtHouse /api/signer/*.
+ * Public client ids (`app_*`) that should be routed to the "latest" signer DMZ,
+ * parsed from LATEST_SIGNER_APPS (comma/space separated). Everyone else uses the
+ * stable production signer.
  */
-export function getClientSignerApiUrl(): string {
+export function getLatestSignerApps(): Set<string> {
+  return new Set(
+    (process.env.LATEST_SIGNER_APPS ?? "")
+      .split(/[\s,]+/)
+      .map((id) => id.trim())
+      .filter(Boolean),
+  );
+}
+
+/** True when this app's public client id is opted in to the latest signer. */
+export function isLatestSignerApp(appClientId?: string | null): boolean {
+  const id = appClientId?.trim();
+  if (!id) {
+    return false;
+  }
+  return getLatestSignerApps().has(id);
+}
+
+/** Which signer version an app is routed to (defaults to stable). */
+export function getSignerVersionForApp(appClientId?: string | null): SignerVersion {
+  return isLatestSignerApp(appClientId) ? "latest" : "stable";
+}
+
+/** Stable production signer DMZ base URL (the default for all apps). */
+function getStableSignerApiUrl(): string {
   const explicit =
     process.env.PYMTHOUSE_CLIENT_SIGNER_API_URL?.trim() ||
     process.env.PYMTHOUSE_SIGNER_URL?.trim() ||
@@ -72,6 +100,33 @@ export function getClientSignerApiUrl(): string {
     return normalizeSignerBaseUrl(explicit);
   }
   return getSignerUrl();
+}
+
+/**
+ * "Latest" A/B signer DMZ base URL (the pymthouse-signer-test service), or empty
+ * when unconfigured — in which case opted-in apps safely fall back to stable.
+ */
+function getLatestSignerApiUrl(): string {
+  const explicit = process.env.SIGNER_LATEST_URL?.trim();
+  return explicit ? normalizeSignerBaseUrl(explicit) : "";
+}
+
+/**
+ * Public remote signer DMZ base URL for clients (gateway, builder-sdk).
+ * Signing goes directly to the DMZ — not through PymtHouse /api/signer/*.
+ *
+ * Apps in LATEST_SIGNER_APPS are routed to the "latest" signer DMZ
+ * (SIGNER_LATEST_URL) when it is configured; all other apps — and any
+ * call without an app client id — get the stable production signer.
+ */
+export function getClientSignerApiUrl(appClientId?: string | null): string {
+  if (isLatestSignerApp(appClientId)) {
+    const latest = getLatestSignerApiUrl();
+    if (latest) {
+      return latest;
+    }
+  }
+  return getStableSignerApiUrl();
 }
 
 export type SignerUrlSource = "env" | "saved" | "default";

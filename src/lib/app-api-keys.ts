@@ -30,12 +30,83 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
   return raw.slice(-4);
 }
 
+/** Presented composite: `app_<24hex>_<secret>` (underscore separator for copy UX). */
+const COMPOSITE_API_KEY_RE = /^(app_[a-f0-9]{24})_(.+)$/;
+/** Reject client-secret shaped secret segments. */
+const CLIENT_SECRET_SEGMENT_RE = /(?:^|_)cs_/;
+
+/**
+ * Split a composite credential `app_<24hex>_<secret>` into parts.
+ * Returns null for bare API keys, JWTs, or malformed forms.
+ */
+export function splitCompositeApiKey(
+  token: string,
+): { publicClientId: string; apiKey: string } | null {
+  const trimmed = token.trim();
+  const match = COMPOSITE_API_KEY_RE.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const publicClientId = match[1]!;
+  const apiKey = match[2]!;
+  if (!apiKey || CLIENT_SECRET_SEGMENT_RE.test(apiKey)) {
+    return null;
+  }
+  return { publicClientId, apiKey };
+}
+
+/**
+ * Format the one-time presented API key as `app_<24hex>_<bareApiKey>`.
+ * The bare key is kept as-is (including any operator storage prefix).
+ */
+export function formatCompositeApiKey(
+  publicClientId: string,
+  bareApiKey: string,
+): string {
+  return `${publicClientId.trim()}_${bareApiKey.trim()}`;
+}
+
+/**
+ * Normalize a subject_token that may be a bare stored API key, opaque hex
+ * secret, or composite `app_*_*`. When composite, the client-id segment
+ * must match `publicClientId`.
+ */
+export function normalizeAppApiKeySubjectToken(
+  subjectToken: string,
+  publicClientId: string,
+): string | null {
+  const trimmed = subjectToken.trim();
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    if (composite.publicClientId !== publicClientId.trim()) {
+      return null;
+    }
+    return rehydrateStoredApiKey(composite.apiKey);
+  }
+  return rehydrateStoredApiKey(trimmed);
+}
+
+/** Map a subject secret back to the hashed/stored key value. */
+function rehydrateStoredApiKey(secret: string): string | null {
+  const trimmed = secret.trim();
+  if (!trimmed || CLIENT_SECRET_SEGMENT_RE.test(trimmed)) {
+    return null;
+  }
+  if (trimmed.startsWith("pmth_")) {
+    return trimmed.startsWith("pmth_cs_") ? null : trimmed;
+  }
+  if (!/^[a-f0-9]+$/i.test(trimmed)) {
+    return null;
+  }
+  return `pmth_${trimmed}`;
+}
+
 export async function resolveActiveAppApiKey(
   bearerToken: string,
   publicClientId: string,
 ): Promise<ResolvedAppApiKey | null> {
-  const token = bearerToken.trim();
-  if (!token.startsWith("pmth_")) {
+  const token = normalizeAppApiKeySubjectToken(bearerToken, publicClientId);
+  if (!token) {
     return null;
   }
 
@@ -125,6 +196,8 @@ export async function listAppUserApiKeys(input: {
 export async function createAppUserApiKey(input: {
   developerAppId: string;
   appUserId: string;
+  /** Public OIDC client id (`app_*`); when set, returned `apiKey` is composite. */
+  publicClientId?: string | null;
   label?: string | null;
 }) {
   const apiKeyValue = generateApiKeyValue();
@@ -145,9 +218,14 @@ export async function createAppUserApiKey(input: {
     revokedAt: null,
   });
 
+  const publicClientId = input.publicClientId?.trim() || "";
+  const presented = publicClientId
+    ? formatCompositeApiKey(publicClientId, apiKeyValue)
+    : apiKeyValue;
+
   return {
     id,
-    apiKey: apiKeyValue,
+    apiKey: presented,
     prefix: maskApiKeyPrefix(apiKeyValue.slice(0, 16)),
     suffix: maskApiKeySuffix(apiKeyValue),
     label: input.label?.trim() || null,

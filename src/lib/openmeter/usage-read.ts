@@ -3,7 +3,12 @@ import {
   getMeterSlugForApp,
 } from "@/lib/openmeter/client-factory";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
-import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
+import {
+  buildOpenMeterCustomerKey,
+  buildOwnerMeterSubjects,
+  buildOwnerWireSubject,
+  normalizePlatformUserId,
+} from "@/lib/openmeter/customer-key";
 import {
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
@@ -13,6 +18,39 @@ import type { MeterQueryRow } from "@openmeter/sdk";
 
 function avoidOpenMeterNetworkInTests(): boolean {
   return process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests();
+}
+
+/**
+ * Parse an OpenMeter/Konnect meter row value to integer micros (or counts).
+ * Prefers exact integer strings so small fee aggregates like `"34"` are not lost.
+ */
+export function meterRowValueToBigInt(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return 0n;
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0n;
+    if (/^-?\d+$/.test(t)) {
+      try {
+        return BigInt(t);
+      } catch {
+        return 0n;
+      }
+    }
+    const parsed = Number(t);
+    if (!Number.isFinite(parsed)) return 0n;
+    return BigInt(Math.trunc(parsed));
+  }
+  return 0n;
+}
+
+function meterRowValueToCount(value: unknown): number {
+  const n = Number(meterRowValueToBigInt(value));
+  return Number.isFinite(n) ? n : 0;
 }
 
 export type OpenMeterUsageRow = {
@@ -44,6 +82,7 @@ export type OpenMeterAppDashboardUsage = {
   byUser: OpenMeterUsageRow[];
   byPipelineModel: OpenMeterPipelineModelRow[];
   byUserPipelineModel: OpenMeterUserPipelineModelRow[];
+  byDailyPipeline: OpenMeterDailyPipelineRow[];
   requestsByDay: Map<string, number>;
 };
 
@@ -58,12 +97,106 @@ const METER_GROUP_BY_DETAIL = [
   "model_id",
 ] as const;
 
+/**
+ * CloudEvent subjects to query for a filtered user. Owners dual-read bare /
+ * `owner:` / compound transitional forms; end users keep the compound key
+ * (plus harmless empty transitional subjects).
+ */
+export function buildUsageMeterSubjects(
+  publicClientId: string,
+  externalUserId: string,
+): string[] {
+  const trimmed = externalUserId.trim();
+  if (!trimmed) return [];
+  const clientId = publicClientId.trim();
+  const normalized = normalizePlatformUserId(trimmed);
+  return [
+    ...new Set([
+      ...buildOwnerMeterSubjects(normalized, clientId ? [clientId] : []),
+      buildOpenMeterCustomerKey(clientId, trimmed),
+      trimmed,
+      buildOwnerWireSubject(normalized),
+    ]),
+  ];
+}
+
+/** Values that may appear in meter groupBy.external_user_id for a filter. */
+export function buildExternalUserIdMatchKeys(externalUserId: string): Set<string> {
+  const trimmed = externalUserId.trim();
+  const keys = new Set<string>();
+  if (!trimmed) return keys;
+  const normalized = normalizePlatformUserId(trimmed);
+  keys.add(trimmed);
+  keys.add(normalized);
+  keys.add(buildOwnerWireSubject(normalized));
+  keys.add(`user:${normalized}`);
+  return keys;
+}
+
+function matchesExternalUserFilter(
+  groupExternalUserId: string,
+  filter: string | null | undefined,
+  matchKeys?: Set<string>,
+): boolean {
+  if (!filter?.trim()) return true;
+  if (groupExternalUserId === filter) return true;
+  if (matchKeys?.has(groupExternalUserId)) return true;
+  return (
+    normalizePlatformUserId(groupExternalUserId) === normalizePlatformUserId(filter)
+  );
+}
+
+/**
+ * When filtering to one user, collapse transitional groupBy external_user_id
+ * variants onto the normalized filter id so dual-read rows merge.
+ */
+function canonicalizeFilteredExternalUserId(
+  groupExternalUserId: string,
+  filter: string | null | undefined,
+  matchKeys?: Set<string>,
+): string {
+  if (
+    filter?.trim() &&
+    matchesExternalUserFilter(groupExternalUserId, filter, matchKeys)
+  ) {
+    return normalizePlatformUserId(filter);
+  }
+  return groupExternalUserId;
+}
+
+async function resolveUsageMeterSubjects(input: {
+  clientId: string;
+  externalUserId?: string | null;
+}): Promise<string[] | undefined> {
+  const externalUserId = input.externalUserId?.trim();
+  if (!externalUserId) return undefined;
+
+  try {
+    const { resolveOpenMeterBillingIdentity } = await import(
+      "@/lib/openmeter/billing-identity"
+    );
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId,
+    });
+    if (identity.isOwner && identity.ownerUserId) {
+      return buildOwnerMeterSubjects(identity.ownerUserId, [
+        identity.publicClientId,
+      ]);
+    }
+    return [identity.customerKey];
+  } catch {
+    return buildUsageMeterSubjects(input.clientId, externalUserId);
+  }
+}
+
 function buildMeterQuery(input: {
   startDate?: string | null;
   endDate?: string | null;
   windowSize: MeterWindowSize;
   clientId: string;
-  externalUserId?: string | null;
+  /** Pre-resolved CloudEvent subjects (owner dual-read or compound end-user). */
+  subjects?: string[] | null;
   groupBy: readonly string[];
 }): Record<string, unknown> {
   const query: Record<string, unknown> = {
@@ -76,9 +209,8 @@ function buildMeterQuery(input: {
   if (input.endDate) {
     query.to = new Date(input.endDate);
   }
-  if (input.externalUserId) {
-    // CloudEvent subject is the compound client_id:external_user_id (matches the customer key).
-    query.subject = buildOpenMeterCustomerKey(input.clientId, input.externalUserId);
+  if (input.subjects && input.subjects.length > 0) {
+    query.subject = input.subjects;
   }
   return query;
 }
@@ -124,28 +256,47 @@ function aggregateUserRows(input: {
   countRows: MeterQueryRow[];
   filterExternalUserId?: string | null;
 }): OpenMeterUsageRow[] {
+  const matchKeys = input.filterExternalUserId
+    ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
+    : undefined;
+
+  const acceptRow = (group: Record<string, unknown>): string | null => {
+    const rawExternalUserId = groupByString(group, "external_user_id", "");
+    if (!rawExternalUserId) return null;
+    if (
+      !matchesExternalUserFilter(
+        rawExternalUserId,
+        input.filterExternalUserId,
+        matchKeys,
+      )
+    ) {
+      return null;
+    }
+    if (clientIdFromGroup(group, input.clientId) !== input.clientId) return null;
+    return canonicalizeFilteredExternalUserId(
+      rawExternalUserId,
+      input.filterExternalUserId,
+      matchKeys,
+    );
+  };
+
   const countByUser = new Map<string, number>();
   for (const row of input.countRows) {
-    const group = (row.groupBy || {}) as Record<string, unknown>;
-    const externalUserId = groupByString(group, "external_user_id", "");
+    const externalUserId = acceptRow((row.groupBy || {}) as Record<string, unknown>);
     if (!externalUserId) continue;
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
     countByUser.set(
       externalUserId,
-      (countByUser.get(externalUserId) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (countByUser.get(externalUserId) ?? 0) + meterRowValueToCount(row.value),
     );
   }
 
   const feeByUser = new Map<string, bigint>();
   for (const row of input.feeRows) {
-    const group = (row.groupBy || {}) as Record<string, unknown>;
-    const externalUserId = groupByString(group, "external_user_id", "");
+    const externalUserId = acceptRow((row.groupBy || {}) as Record<string, unknown>);
     if (!externalUserId) continue;
-    if (input.filterExternalUserId && externalUserId !== input.filterExternalUserId) continue;
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
     feeByUser.set(
       externalUserId,
-      (feeByUser.get(externalUserId) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+      (feeByUser.get(externalUserId) ?? 0n) + meterRowValueToBigInt(row.value),
     );
   }
 
@@ -157,9 +308,10 @@ function aggregateUserRows(input: {
   }));
 
   if (rows.length === 0 && input.filterExternalUserId) {
+    const canonical = normalizePlatformUserId(input.filterExternalUserId);
     rows.push({
-      externalUserId: input.filterExternalUserId,
-      requestCount: countByUser.get(input.filterExternalUserId) ?? 0,
+      externalUserId: canonical,
+      requestCount: countByUser.get(canonical) ?? 0,
       networkFeeUsdMicros: "0",
     });
   }
@@ -184,7 +336,7 @@ export function aggregatePipelineModelRows(input: {
     metaByKey.set(key, { pipeline, modelId });
     countByKey.set(
       key,
-      (countByKey.get(key) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (countByKey.get(key) ?? 0) + meterRowValueToCount(row.value),
     );
   }
 
@@ -198,7 +350,7 @@ export function aggregatePipelineModelRows(input: {
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
       key,
-      (feeByKey.get(key) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+      (feeByKey.get(key) ?? 0n) + meterRowValueToBigInt(row.value),
     );
   }
 
@@ -230,12 +382,22 @@ function resolveUserPipelineModelMeta(
   row: MeterQueryRow,
   clientId: string,
   filterExternalUserId?: string | null,
+  matchKeys?: Set<string>,
 ): UserPipelineModelMeta | null {
   const group = (row.groupBy || {}) as Record<string, unknown>;
   if (clientIdFromGroup(group, clientId) !== clientId) return null;
-  const externalUserId = groupByString(group, "external_user_id", "");
-  if (!externalUserId) return null;
-  if (filterExternalUserId && externalUserId !== filterExternalUserId) return null;
+  const rawExternalUserId = groupByString(group, "external_user_id", "");
+  if (!rawExternalUserId) return null;
+  if (
+    !matchesExternalUserFilter(rawExternalUserId, filterExternalUserId, matchKeys)
+  ) {
+    return null;
+  }
+  const externalUserId = canonicalizeFilteredExternalUserId(
+    rawExternalUserId,
+    filterExternalUserId,
+    matchKeys,
+  );
   const pipeline = groupByString(group, "pipeline", "unknown");
   const modelId = groupByString(group, "model_id", "unknown");
   return {
@@ -252,6 +414,9 @@ export function aggregateUserPipelineModelRows(input: {
   countRows: MeterQueryRow[];
   filterExternalUserId?: string | null;
 }): OpenMeterUserPipelineModelRow[] {
+  const matchKeys = input.filterExternalUserId
+    ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
+    : undefined;
   const countByKey = new Map<string, number>();
   const metaByKey = new Map<
     string,
@@ -259,7 +424,12 @@ export function aggregateUserPipelineModelRows(input: {
   >();
 
   for (const row of input.countRows) {
-    const meta = resolveUserPipelineModelMeta(row, input.clientId, input.filterExternalUserId);
+    const meta = resolveUserPipelineModelMeta(
+      row,
+      input.clientId,
+      input.filterExternalUserId,
+      matchKeys,
+    );
     if (!meta) continue;
     metaByKey.set(meta.key, {
       externalUserId: meta.externalUserId,
@@ -268,13 +438,18 @@ export function aggregateUserPipelineModelRows(input: {
     });
     countByKey.set(
       meta.key,
-      (countByKey.get(meta.key) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (countByKey.get(meta.key) ?? 0) + meterRowValueToCount(row.value),
     );
   }
 
   const feeByKey = new Map<string, bigint>();
   for (const row of input.feeRows) {
-    const meta = resolveUserPipelineModelMeta(row, input.clientId, input.filterExternalUserId);
+    const meta = resolveUserPipelineModelMeta(
+      row,
+      input.clientId,
+      input.filterExternalUserId,
+      matchKeys,
+    );
     if (!meta) continue;
     metaByKey.set(meta.key, {
       externalUserId: meta.externalUserId,
@@ -283,7 +458,7 @@ export function aggregateUserPipelineModelRows(input: {
     });
     feeByKey.set(
       meta.key,
-      (feeByKey.get(meta.key) ?? 0n) + BigInt(Math.floor(Number(row.value ?? 0))),
+      (feeByKey.get(meta.key) ?? 0n) + meterRowValueToBigInt(row.value),
     );
   }
 
@@ -336,7 +511,7 @@ export function aggregateDailyPipelineModelRows(input: {
       requestCount: 0,
       networkFeeUsdMicros: 0n,
     };
-    existing.requestCount += Math.floor(Number(row.value ?? 0));
+    existing.requestCount += meterRowValueToCount(row.value);
     byKey.set(key, existing);
   }
 
@@ -355,7 +530,7 @@ export function aggregateDailyPipelineModelRows(input: {
       requestCount: 0,
       networkFeeUsdMicros: 0n,
     };
-    existing.networkFeeUsdMicros += BigInt(Math.floor(Number(row.value ?? 0)));
+    existing.networkFeeUsdMicros += meterRowValueToBigInt(row.value);
     byKey.set(key, existing);
   }
 
@@ -388,7 +563,7 @@ export function aggregateDailyRequestCounts(input: {
     if (!day) continue;
     requestsByDay.set(
       day,
-      (requestsByDay.get(day) ?? 0) + Math.floor(Number(row.value ?? 0)),
+      (requestsByDay.get(day) ?? 0) + meterRowValueToCount(row.value),
     );
   }
   return requestsByDay;
@@ -591,7 +766,10 @@ function filterTestUsageRows(
   if (!input.externalUserId) {
     return rows;
   }
-  return rows.filter((row) => row.externalUserId === input.externalUserId);
+  const matchKeys = buildExternalUserIdMatchKeys(input.externalUserId);
+  return rows.filter((row) =>
+    matchesExternalUserFilter(row.externalUserId, input.externalUserId, matchKeys),
+  );
 }
 
 /** Per-user period totals by pipeline/model (OpenMeter MONTH windows, subject-scoped). */
@@ -626,12 +804,16 @@ export async function queryOpenMeterUserPipelineByModel(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const subjects = await resolveUsageMeterSubjects({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
-    externalUserId: input.externalUserId,
+    subjects,
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
@@ -676,12 +858,16 @@ export async function queryOpenMeterUserDailyByPipeline(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const subjects = await resolveUsageMeterSubjects({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
   const dayQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "DAY",
-    externalUserId: input.externalUserId,
+    subjects,
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
@@ -740,12 +926,16 @@ export async function queryOpenMeterUsage(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const subjects = await resolveUsageMeterSubjects({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
-    externalUserId: input.externalUserId,
+    subjects,
     groupBy: METER_GROUP_BY_USER,
   });
 
@@ -805,14 +995,17 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
-  const [feeResult, countResult, dayCountResult] = await Promise.all([
+  const [feeResult, countResult, dayFeeResult, dayCountResult] = await Promise.all([
     client.meters.query(meterSlug, periodQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
+    client.meters.query(meterSlug, dayQuery),
     client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
   ]);
 
   const feeRows = feeResult.data || [];
   const countRows = countResult.data || [];
+
+  const dayCountRows = dayCountResult.data || [];
 
   return {
     byUser: aggregateUserRows({
@@ -830,9 +1023,14 @@ export async function queryOpenMeterAppDashboardUsage(input: {
       feeRows,
       countRows,
     }),
+    byDailyPipeline: aggregateDailyPipelineModelRows({
+      clientId: meterClientId,
+      feeRows: dayFeeResult.data || [],
+      countRows: dayCountRows,
+    }),
     requestsByDay: aggregateDailyRequestCounts({
       clientId: meterClientId,
-      countRows: dayCountResult.data || [],
+      countRows: dayCountRows,
     }),
   };
 }

@@ -33,10 +33,10 @@ export function MarketingFooter({ className = "" }: { className?: string }) {
           <p className="text-zinc-500 uppercase tracking-wider mb-2">Platform</p>
           <div className="space-y-1.5">
             <Link
-              href="/dashboard"
+              href="/apps"
               className="block text-zinc-400 hover:text-zinc-200 transition-colors"
             >
-              Dashboard
+              My Apps
             </Link>
           </div>
         </div>
@@ -50,6 +50,22 @@ export function MarketingFooter({ className = "" }: { className?: string }) {
               className="block text-zinc-400 hover:text-zinc-200 transition-colors"
             >
               GitHub
+            </a>
+            <a
+              href="https://docs.pymthouse.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Docs
+            </a>
+            <a
+              href="https://github.com/livepeer/livepeer-python-gateway"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Python SDK
             </a>
             <a
               href="mailto:john@eliteencoder.net"

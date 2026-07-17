@@ -1,4 +1,4 @@
-import { rewriteKonnectPlanRequestBody } from "./konnect-plan-body";
+import { deepCamelToSnake, rewriteKonnectPlanRequestBody } from "./konnect-plan-body";
 
 /**
  * Maps @openmeter/sdk paths (self-hosted /api/v1|v2) to Konnect Metering & Billing v3 paths.
@@ -105,7 +105,84 @@ export function rewriteKonnectSearchParams(
     }
   }
 
+  // OpenMeter SDK events.list uses subject/limit/from/to; Konnect expects
+  // filter[subject][eq], page[size], and filter[time][gte|lte]. Without this,
+  // subject is ignored and the latest global events are returned — drowning out
+  // the viewer's own signed-ticket history under busy platform traffic.
+  if (method.toUpperCase() === "GET" && /\/events\/?$/.test(normalizedPath)) {
+    rewriteKonnectEventsListParams(params);
+  }
+
   return params;
+}
+
+function takeTrimmedParamValues(
+  params: URLSearchParams,
+  key: string,
+): string[] {
+  const values = params
+    .getAll(key)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  params.delete(key);
+  return values;
+}
+
+/** Map multi-value SDK params to Konnect filter[field][eq|oeq]. */
+function setKonnectEqOrOeqFilter(
+  params: URLSearchParams,
+  filterField: string,
+  values: string[],
+): void {
+  if (values.length === 1) {
+    params.set(`filter[${filterField}][eq]`, values[0]);
+    return;
+  }
+  if (values.length > 1) {
+    // Konnect supports comma-delimited exact match via oeq.
+    params.set(`filter[${filterField}][oeq]`, values.join(","));
+  }
+}
+
+function moveParamToKonnectFilter(
+  params: URLSearchParams,
+  sourceKey: string,
+  filterKey: string,
+): void {
+  if (!params.has(sourceKey)) {
+    return;
+  }
+  const value = params.get(sourceKey)?.trim();
+  params.delete(sourceKey);
+  if (value) {
+    params.set(filterKey, value);
+  }
+}
+
+function rewriteKonnectEventsListParams(params: URLSearchParams): void {
+  setKonnectEqOrOeqFilter(
+    params,
+    "subject",
+    takeTrimmedParamValues(params, "subject"),
+  );
+  setKonnectEqOrOeqFilter(
+    params,
+    "customer_id",
+    takeTrimmedParamValues(params, "customerId"),
+  );
+
+  if (params.has("limit")) {
+    const limit = params.get("limit");
+    params.delete("limit");
+    if (limit && !params.has("page[size]")) {
+      params.set("page[size]", limit);
+    }
+  }
+
+  moveParamToKonnectFilter(params, "from", "filter[time][gte]");
+  moveParamToKonnectFilter(params, "to", "filter[time][lte]");
+  moveParamToKonnectFilter(params, "ingestedAtFrom", "filter[ingested_at][gte]");
+  moveParamToKonnectFilter(params, "ingestedAtTo", "filter[ingested_at][lte]");
 }
 
 export function rewriteKonnectRequestUrl(url: URL, method: string): URL {
@@ -281,6 +358,36 @@ function rewriteKonnectSubscriptionCreateBody(body: unknown): unknown {
   return next;
 }
 
+function isKonnectCustomerMutation(pathname: string, method: string): boolean {
+  const normalizedPath = rewriteKonnectPathname(pathname, method);
+  const verb = method.toUpperCase();
+  if (verb !== "POST" && verb !== "PUT" && verb !== "PATCH") {
+    return false;
+  }
+  // /customers or /customers/{id} — not nested entitlement/credit routes.
+  return /\/customers(?:\/[^/]+)?$/.test(normalizedPath);
+}
+
+function normalizeKonnectCustomerRecord(record: unknown): unknown {
+  if (!record || typeof record !== "object") {
+    return record;
+  }
+  const item = { ...(record as Record<string, unknown>) };
+  const attribution =
+    item.usage_attribution ?? item.usageAttribution;
+  if (attribution && typeof attribution === "object") {
+    const attr = attribution as Record<string, unknown>;
+    const subjectKeys = attr.subject_keys ?? attr.subjectKeys;
+    item.usageAttribution = {
+      subjectKeys: Array.isArray(subjectKeys)
+        ? subjectKeys.filter((key): key is string => typeof key === "string")
+        : [],
+    };
+    delete item.usage_attribution;
+  }
+  return item;
+}
+
 /** Normalize SDK JSON bodies to Konnect v3 request shapes. */
 export function rewriteKonnectRequestBody(
   pathname: string,
@@ -292,6 +399,10 @@ export function rewriteKonnectRequestBody(
 
   if (isKonnectPlanMutation(pathname, method)) {
     return rewriteKonnectPlanRequestBody(body);
+  }
+
+  if (isKonnectCustomerMutation(pathname, method)) {
+    return deepCamelToSnake(body);
   }
 
   if (verb === "POST" && normalizedPath.endsWith("/subscriptions")) {
@@ -328,7 +439,7 @@ export function normalizeKonnectListResponse(body: unknown): unknown {
     !("items" in body)
   ) {
     const data = ((body as Record<string, unknown>).data as unknown[]).map(
-      normalizeKonnectSubscriptionRecord,
+      (item) => normalizeKonnectCustomerRecord(normalizeKonnectSubscriptionRecord(item)),
     );
     return { ...(body as Record<string, unknown>), items: data, data };
   }
@@ -346,6 +457,14 @@ export function normalizeKonnectResponseBody(body: unknown): unknown {
     ("plan_id" in listed || "planId" in listed || "plan" in listed)
   ) {
     return normalizeKonnectSubscriptionRecord(listed);
+  }
+  if (
+    listed &&
+    typeof listed === "object" &&
+    "id" in listed &&
+    ("key" in listed || "usage_attribution" in listed || "usageAttribution" in listed)
+  ) {
+    return normalizeKonnectCustomerRecord(listed);
   }
   return listed;
 }

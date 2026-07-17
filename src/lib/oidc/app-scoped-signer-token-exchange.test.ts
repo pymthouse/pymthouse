@@ -14,7 +14,7 @@ import {
 } from "./app-scoped-signer-token-exchange";
 import { signerJwtAudience } from "./mint-user-signer-token";
 
-const PUBLIC_ID = "app_testpublic";
+const PUBLIC_ID = "app_3b386c81a1db1169fd2c3986";
 
 test("validateRequestedTokenType accepts omitted or access_token", () => {
   assert.doesNotThrow(() => validateRequestedTokenType(""));
@@ -101,6 +101,45 @@ test("resolveAppScopedSubjectToken rejects pmth_cs_* client secrets as subject_t
   );
 });
 
+test("resolveAppScopedSubjectToken accepts composite app_*_* via resolveActiveAppApiKey", async () => {
+  const secret = "a".repeat(64);
+  const composite = `${PUBLIC_ID}_${secret}`;
+  const resolved = await resolveAppScopedSubjectToken(composite, PUBLIC_ID, {
+    resolveActiveAppApiKey: async (token, publicClientId) => {
+      assert.equal(token, composite);
+      assert.equal(publicClientId, PUBLIC_ID);
+      return {
+        apiKeyId: "key-1",
+        developerAppId: "dev-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      };
+    },
+  });
+  assert.equal(resolved.externalUserId, "ext-1");
+  assert.equal(resolved.publicClientId, PUBLIC_ID);
+});
+
+test("resolveAppScopedSubjectToken rejects composite with mismatched app_ prefix", async () => {
+  await assert.rejects(
+    () =>
+      resolveAppScopedSubjectToken(
+        `app_aaaaaaaaaaaaaaaaaaaaaaaa_${"b".repeat(64)}`,
+        PUBLIC_ID,
+        {
+          resolveActiveAppApiKey: async () => null,
+        },
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "invalid_grant");
+      return true;
+    },
+  );
+});
+
 test("handleAppScopedSignerTokenExchange rejects wrong grant_type", async () => {
   await assert.rejects(
     () =>
@@ -125,6 +164,7 @@ test("handleAppScopedSignerTokenExchange rejects wrong grant_type", async () => 
 });
 
 test("handleAppScopedSignerTokenExchange mints signer session from API key subject", async () => {
+  let signerUrlAppId: string | undefined;
   const session = await handleAppScopedSignerTokenExchange(
     {
       publicClientId: PUBLIC_ID,
@@ -155,7 +195,10 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
         balanceUsdMicros: "1000000",
         lifetimeGrantedUsdMicros: "5000000",
       }),
-      getClientSignerApiUrl: () => "https://signer.example",
+      getClientSignerApiUrl: (appClientId) => {
+        signerUrlAppId = appClientId ?? undefined;
+        return "https://signer.example";
+      },
       getSignerDiscoveryUrl: () => "https://discovery.example/v1/discovery",
     },
   );
@@ -166,6 +209,9 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
   assert.equal(session.balanceUsdMicros, "1000000");
   assert.equal(session.signer_url, "https://signer.example");
   assert.equal(session.discovery_url, "https://discovery.example/v1/discovery");
+  // Signer version is selected per app: the subject's public client id must flow
+  // into getClientSignerApiUrl so LATEST_SIGNER_APPS routing applies.
+  assert.equal(signerUrlAppId, PUBLIC_ID);
 });
 
 test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope", async () => {

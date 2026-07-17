@@ -155,7 +155,7 @@ export async function GET(
     id: canonicalClientId,
     clientId: canonicalClientId,
     canEdit: await canEditProviderApp(auth),
-    canSubmitForReview: auth.app.ownerId === auth.userId,
+    canDeleteApp: auth.app.ownerId === auth.userId,
     canManageBilling: auth.app.ownerId === auth.userId || auth.role === "admin",
     oidcClient: clientInfo
       ? {
@@ -373,13 +373,6 @@ export async function DELETE(
     return NextResponse.json(
       { error: "Only the app owner can delete this app." },
       { status: 403 },
-    );
-  }
-
-  if (auth.app.status !== "draft") {
-    return NextResponse.json(
-      { error: "Only draft apps can be deleted." },
-      { status: 400 },
     );
   }
 

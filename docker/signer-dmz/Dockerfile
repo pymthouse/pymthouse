@@ -5,7 +5,7 @@
 #   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
 
 # Base image for signer-dmz-local (override: docker build --build-arg LIVEPEER_IMAGE=...).
-ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-33380bc9088cbd26b3797387dc6a783a68a69f84
+ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-469cf754a259b34927f8dc8d634da3b005493076
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -54,7 +54,7 @@ RUN git clone https://github.com/AnthonyDeroche/mod_authnz_jwt.git && \
     make && \
     make install
 
-FROM golang:1.25.11-bookworm AS turnkey-bootstrap-build
+FROM golang:1.25.12-bookworm AS turnkey-bootstrap-build
 
 WORKDIR /src
 COPY docker/signer-dmz/turnkey-bootstrap/go.mod ./go.mod
@@ -160,7 +160,7 @@ ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081
 ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
-ENV SIGNER_REMOTE_DISCOVERY=0
+ENV SIGNER_REMOTE_DISCOVERY=1
 # Local compose may enable a second CLI-only listener on CLI_PORT (8082).
 ENV SIGNER_DMZ_ENABLE_CLI_LISTENER=1
 
@@ -193,7 +193,7 @@ ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081
 ENV ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 ENV SIGNER_ETH_ADDR=""
-ENV SIGNER_REMOTE_DISCOVERY=0
+ENV SIGNER_REMOTE_DISCOVERY=1
 
 # Apache: $PORT = signing API; $CLI_PORT (8082) = livepeer-cli routes at / (no /__signer_cli prefix).
 # /__signer_cli on $PORT remains for single-port hosts (Railway). Loopback :8081 / :4935 are not public.
