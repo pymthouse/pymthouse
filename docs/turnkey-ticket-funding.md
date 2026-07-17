@@ -24,6 +24,7 @@ Funding uses two wei thresholds (see `src/lib/turnkey-funding.ts`):
 | --- | --- | --- | --- |
 | `TICKET_FUNDING_GAS_BUFFER_WEI` | `100000000000000` | 0.0001 | Held back so the signer keeps ETH for the on-chain `fundDepositAndReserve` tx |
 | `TICKET_FUNDING_MIN_WEI` | `1000000000000000` | 0.001 | Minimum amount credited to TicketBroker after the buffer |
+| `RESERVE_AMOUNT` | `0` | 0 | Target TicketBroker reserve balance. Incoming `fundWei` fills reserve until this amount; once reserve ≥ target, 100% goes to deposit |
 
 Computation:
 
@@ -50,6 +51,24 @@ Example with defaults for a **0.01 ETH** deposit:
 - Buffer: `100000000000000` wei (0.0001 ETH)
 - Funded to TicketBroker: `9900000000000000` wei (0.0099 ETH)
 
+## Deposit vs reserve allocation
+
+After computing `fundWei`, the webhook reads current TicketBroker reserve via
+`getSenderInfo` and splits funds using `RESERVE_AMOUNT` (wei, loaded at config
+startup):
+
+```
+reserveShortfall = max(0, RESERVE_AMOUNT - currentReserveWei)
+reserveWei       = min(fundWei, reserveShortfall)
+depositWei       = fundWei - reserveWei
+```
+
+- While reserve is below `RESERVE_AMOUNT`, incoming funds fill the shortfall
+  first; any remainder goes to deposit.
+- Once `currentReserveWei >= RESERVE_AMOUNT`, `reserveWei` is `0` and 100% of
+  `fundWei` goes to deposit.
+- Default `RESERVE_AMOUNT=0` keeps the previous all-to-deposit behavior.
+
 ## Environment variables
 
 Set on **Vercel** (the webhook handler). Vercel builds skip `db:migrate`; apply
@@ -62,6 +81,7 @@ TURNKEY_FUNDING_CAIP2=eip155:42161
 # Optional overrides (wei strings)
 TICKET_FUNDING_GAS_BUFFER_WEI=100000000000000
 TICKET_FUNDING_MIN_WEI=1000000000000000
+RESERVE_AMOUNT=0
 
 # Signer CLI (required for funding)
 SIGNER_CLI_URL=https://<railway-signer>/__signer_cli

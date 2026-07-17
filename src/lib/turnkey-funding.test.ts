@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  allocateDepositAndReserve,
   getTurnkeyFundingConfig,
   parseTurnkeyBalanceWebhookPayload,
   shouldProcessTurnkeyDeposit,
@@ -34,20 +35,38 @@ test("getTurnkeyFundingConfig uses defaults", () => {
   const prevCaip2 = process.env.TURNKEY_FUNDING_CAIP2;
   const prevBuffer = process.env.TICKET_FUNDING_GAS_BUFFER_WEI;
   const prevMin = process.env.TICKET_FUNDING_MIN_WEI;
+  const prevReserve = process.env.RESERVE_AMOUNT;
   delete process.env.TURNKEY_FUNDING_CAIP2;
   delete process.env.TICKET_FUNDING_GAS_BUFFER_WEI;
   delete process.env.TICKET_FUNDING_MIN_WEI;
+  delete process.env.RESERVE_AMOUNT;
 
   const config = getTurnkeyFundingConfig();
   assert.equal(config.caip2, "eip155:42161");
   assert.equal(config.gasBufferWei, 100_000_000_000_000n);
   assert.equal(config.minFundWei, 1_000_000_000_000_000n);
+  assert.equal(config.reserveAmountWei, 0n);
 
   if (prevCaip2 !== undefined) process.env.TURNKEY_FUNDING_CAIP2 = prevCaip2;
   if (prevBuffer !== undefined) {
     process.env.TICKET_FUNDING_GAS_BUFFER_WEI = prevBuffer;
   }
   if (prevMin !== undefined) process.env.TICKET_FUNDING_MIN_WEI = prevMin;
+  if (prevReserve !== undefined) process.env.RESERVE_AMOUNT = prevReserve;
+});
+
+test("getTurnkeyFundingConfig loads RESERVE_AMOUNT", () => {
+  const prevReserve = process.env.RESERVE_AMOUNT;
+  process.env.RESERVE_AMOUNT = "5000000000000000000";
+  try {
+    assert.equal(
+      getTurnkeyFundingConfig().reserveAmountWei,
+      5_000_000_000_000_000_000n,
+    );
+  } finally {
+    if (prevReserve !== undefined) process.env.RESERVE_AMOUNT = prevReserve;
+    else delete process.env.RESERVE_AMOUNT;
+  }
 });
 
 test("parseTurnkeyBalanceWebhookPayload rejects invalid JSON", () => {
@@ -124,4 +143,38 @@ test("shouldProcessTurnkeyDeposit skips below minimum fund", async () => {
     { signerAddress: SIGNER_ADDRESS },
   );
   assert.deepEqual(decision, { action: "skip", reason: "below_min_fund" });
+});
+
+test("allocateDepositAndReserve fills reserve until RESERVE_AMOUNT", () => {
+  // Shortfall 1000; fund 3000 → 1000 to reserve, remainder to deposit
+  assert.deepEqual(allocateDepositAndReserve(3_000n, 4_000n, 5_000n), {
+    depositWei: 2_000n,
+    reserveWei: 1_000n,
+  });
+  // Fund entirely below shortfall → all to reserve
+  assert.deepEqual(allocateDepositAndReserve(1_000n, 0n, 5_000n), {
+    depositWei: 0n,
+    reserveWei: 1_000n,
+  });
+  // Exact shortfall → all to reserve
+  assert.deepEqual(allocateDepositAndReserve(1_000n, 4_000n, 5_000n), {
+    depositWei: 0n,
+    reserveWei: 1_000n,
+  });
+});
+
+test("allocateDepositAndReserve sends 100% to deposit once reserve is full", () => {
+  assert.deepEqual(allocateDepositAndReserve(1_000n, 5_000n, 5_000n), {
+    depositWei: 1_000n,
+    reserveWei: 0n,
+  });
+  assert.deepEqual(allocateDepositAndReserve(1_000n, 5_001n, 5_000n), {
+    depositWei: 1_000n,
+    reserveWei: 0n,
+  });
+  // Default RESERVE_AMOUNT=0 → always all to deposit
+  assert.deepEqual(allocateDepositAndReserve(1_000n, 0n, 0n), {
+    depositWei: 1_000n,
+    reserveWei: 0n,
+  });
 });

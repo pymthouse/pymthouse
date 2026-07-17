@@ -2,11 +2,16 @@ import { and, eq, lt } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { turnkeyFundingEvents } from "@/db/schema";
-import { fundDepositAndReserve, getEthAddr } from "@/lib/signer-cli";
+import {
+  fundDepositAndReserve,
+  getEthAddr,
+  getSenderInfo,
+} from "@/lib/signer-cli";
 
 const DEFAULT_TURNKEY_FUNDING_CAIP2 = "eip155:42161";
 const DEFAULT_GAS_BUFFER_WEI = 100_000_000_000_000n; // 0.0001 ETH
 const DEFAULT_MIN_FUND_WEI = 1_000_000_000_000_000n; // 0.001 ETH
+const DEFAULT_RESERVE_AMOUNT_WEI = 0n;
 const STALE_PENDING_MS = 10 * 60 * 1000;
 
 export type TurnkeyBalanceWebhookPayload = {
@@ -38,6 +43,8 @@ export type TurnkeyFundingConfig = {
   caip2: string;
   gasBufferWei: bigint;
   minFundWei: bigint;
+  /** Target TicketBroker reserve balance (wei). Filled before deposit. */
+  reserveAmountWei: bigint;
 };
 
 export function getTurnkeyFundingConfig(): TurnkeyFundingConfig {
@@ -51,6 +58,10 @@ export function getTurnkeyFundingConfig(): TurnkeyFundingConfig {
     minFundWei: parseWeiEnv(
       process.env.TICKET_FUNDING_MIN_WEI,
       DEFAULT_MIN_FUND_WEI,
+    ),
+    reserveAmountWei: parseWeiEnv(
+      process.env.RESERVE_AMOUNT,
+      DEFAULT_RESERVE_AMOUNT_WEI,
     ),
   };
 }
@@ -291,10 +302,46 @@ export async function markTurnkeyFundingFailed(
     .where(eq(turnkeyFundingEvents.id, eventId));
 }
 
+/**
+ * Fill TicketBroker reserve up to `reserveAmountWei`, then send the rest to
+ * deposit. Once current reserve >= target, 100% of fundWei goes to deposit.
+ * Ensures depositWei + reserveWei === fundWei.
+ */
+export function allocateDepositAndReserve(
+  fundWei: bigint,
+  currentReserveWei: bigint,
+  reserveAmountWei: bigint,
+): { depositWei: bigint; reserveWei: bigint } {
+  if (fundWei <= 0n) {
+    return { depositWei: 0n, reserveWei: 0n };
+  }
+  if (currentReserveWei >= reserveAmountWei) {
+    return { depositWei: fundWei, reserveWei: 0n };
+  }
+  const reserveShortfall = reserveAmountWei - currentReserveWei;
+  const reserveWei =
+    fundWei < reserveShortfall ? fundWei : reserveShortfall;
+  return { depositWei: fundWei - reserveWei, reserveWei };
+}
+
 export async function executeTurnkeyFunding(
   fundWei: bigint,
   eventId: string,
-): Promise<void> {
-  await fundDepositAndReserve(fundWei.toString(), "0");
+): Promise<{ depositWei: bigint; reserveWei: bigint }> {
+  const senderInfo = await getSenderInfo();
+  if (!senderInfo) {
+    throw new Error("signer senderInfo unavailable");
+  }
+
+  const config = getTurnkeyFundingConfig();
+  const currentReserveWei = BigInt(senderInfo.reserve.fundsRemaining);
+  const { depositWei, reserveWei } = allocateDepositAndReserve(
+    fundWei,
+    currentReserveWei,
+    config.reserveAmountWei,
+  );
+
+  await fundDepositAndReserve(depositWei.toString(), reserveWei.toString());
   await markTurnkeyFundingFunded(eventId);
+  return { depositWei, reserveWei };
 }
