@@ -202,6 +202,9 @@ function buildMeterQuery(input: {
   const query: Record<string, unknown> = {
     windowSize: input.windowSize,
     groupBy: [...input.groupBy],
+    // Konnect maps SDK `clientId` → filters.dimensions.client_id (see buildKonnectMeterQueryBody).
+    // Without this, queries scan the entire shared meter and commonly 504 under load.
+    clientId: input.clientId,
   };
   if (input.startDate) {
     query.from = new Date(input.startDate);
