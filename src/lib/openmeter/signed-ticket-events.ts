@@ -52,11 +52,26 @@ export type ListViewerSignedTicketRequestsInput = {
   to?: string;
 };
 
+export type ListAdminSignedTicketRequestsInput = {
+  /**
+   * Public OIDC client_id(s) (app_…), not developer_apps.id.
+   * Prefer `clientIds`; `clientId` is kept for single-app callers.
+   */
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+};
+
 export type ListViewerSignedTicketRequestsResult = {
   items: SignedTicketRequestRow[];
   nextCursor: string | null;
   openMeterConfigured: boolean;
 };
+
+export type ListAdminSignedTicketRequestsResult = ListViewerSignedTicketRequestsResult;
 
 type CloudEventLike = {
   id?: string;
@@ -225,30 +240,10 @@ export function expandViewerSubjectMatchKeys(
   return keys;
 }
 
-export function eventMatchesViewerSubjects(
+export function eventMatchesClientIdFilter(
   event: IngestedEventLike,
-  subjects: ReadonlySet<string>,
   clientIdOrIds?: string | ReadonlySet<string> | null,
 ): boolean {
-  if (!event?.event) {
-    return false;
-  }
-  if (event.event.type && event.event.type !== CREATE_SIGNED_TICKET_EVENT_TYPE) {
-    return false;
-  }
-  const matchKeys = expandViewerSubjectMatchKeys(subjects);
-  const usageSubject = eventUsageSubject(event);
-  const ceSubject = event.event.subject?.trim() || "";
-  const candidates = [usageSubject, ceSubject].filter(
-    (value): value is string => Boolean(value),
-  );
-  const subjectMatched = candidates.some(
-    (value) =>
-      matchKeys.has(value) || matchKeys.has(normalizePlatformUserId(value)),
-  );
-  if (!subjectMatched) {
-    return false;
-  }
   if (clientIdOrIds == null) {
     return true;
   }
@@ -264,6 +259,48 @@ export function eventMatchesViewerSubjects(
     return true;
   }
   return clientIdOrIds.has(eventClient);
+}
+
+export function eventIsSignedTicket(event: IngestedEventLike): boolean {
+  if (!event?.event) {
+    return false;
+  }
+  return !event.event.type || event.event.type === CREATE_SIGNED_TICKET_EVENT_TYPE;
+}
+
+export function eventMatchesViewerSubjects(
+  event: IngestedEventLike,
+  subjects: ReadonlySet<string>,
+  clientIdOrIds?: string | ReadonlySet<string> | null,
+): boolean {
+  if (!eventIsSignedTicket(event)) {
+    return false;
+  }
+  const matchKeys = expandViewerSubjectMatchKeys(subjects);
+  const usageSubject = eventUsageSubject(event);
+  const ceSubject = event.event.subject?.trim() || "";
+  const candidates = [usageSubject, ceSubject].filter(
+    (value): value is string => Boolean(value),
+  );
+  const subjectMatched = candidates.some(
+    (value) =>
+      matchKeys.has(value) || matchKeys.has(normalizePlatformUserId(value)),
+  );
+  if (!subjectMatched) {
+    return false;
+  }
+  return eventMatchesClientIdFilter(event, clientIdOrIds);
+}
+
+/** Platform-wide signed-ticket match (admin All Usage) — no viewer subject gate. */
+export function eventMatchesAdminSignedTicket(
+  event: IngestedEventLike,
+  clientIdOrIds?: string | ReadonlySet<string> | null,
+): boolean {
+  if (!eventIsSignedTicket(event)) {
+    return false;
+  }
+  return eventMatchesClientIdFilter(event, clientIdOrIds);
 }
 
 export function normalizeSignedTicketEvent(
@@ -336,6 +373,51 @@ export async function listViewerSignedTicketRequests(
     eventMatchesViewerSubjects(ev, subjects, clientIdFilter),
   );
 
+  return pageSignedTicketEvents(matching, limit, offset);
+}
+
+/**
+ * Platform-wide signed-ticket history for admins (All Usage).
+ * Does not filter by viewer subjects — only event type + optional clientId(s).
+ */
+export async function listAdminSignedTicketRequests(
+  input: ListAdminSignedTicketRequestsInput,
+): Promise<ListAdminSignedTicketRequestsResult> {
+  if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
+    return { items: [], nextCursor: null, openMeterConfigured: false };
+  }
+
+  const client = getHostedOpenMeterClient();
+  if (!client) {
+    return { items: [], nextCursor: null, openMeterConfigured: false };
+  }
+
+  const cycle = calendarMonthBoundsUtc(new Date());
+  const from = input.from?.trim() || cycle.start;
+  const to = input.to?.trim() || cycle.end;
+  const limit = clampLimit(input.limit);
+  const offset = decodeOffsetCursor(input.cursor);
+  const clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
+
+  const rawEvents = await fetchPlatformSignedTicketEvents({
+    client,
+    clientIds: clientIdFilter,
+    from,
+    to,
+  });
+
+  const matching = rawEvents.filter((ev) =>
+    eventMatchesAdminSignedTicket(ev, clientIdFilter),
+  );
+
+  return pageSignedTicketEvents(matching, limit, offset);
+}
+
+async function pageSignedTicketEvents(
+  matching: IngestedEventLike[],
+  limit: number,
+  offset: number,
+): Promise<ListViewerSignedTicketRequestsResult> {
   const appNames = await loadAppNames(
     matching.map((ev) => eventClientId(ev)).filter((id): id is string => Boolean(id)),
   );
@@ -408,6 +490,85 @@ async function fetchSignedTicketEvents(input: {
     }),
   );
   return batches.flat();
+}
+
+/**
+ * Fetch recent create_signed_ticket events across the platform (admin path).
+ * Prefer type-filtered listV2; fall back to unscoped list + client-side type filter.
+ * When a small set of clientIds is selected, also query subject-contains per app
+ * so quieter apps are not drowned out by busy platform traffic.
+ */
+async function fetchPlatformSignedTicketEvents(input: {
+  client: OpenMeter;
+  clientIds: ReadonlySet<string> | null;
+  from: string;
+  to: string;
+}): Promise<IngestedEventLike[]> {
+  const clientIds = input.clientIds;
+  const preferPerClient =
+    clientIds != null && clientIds.size > 0 && clientIds.size <= 8;
+
+  if (preferPerClient) {
+    const batches = await Promise.all(
+      [...clientIds].map((clientId) =>
+        listSignedTicketEventsForSubjectContains(input.client, clientId, input.from, input.to),
+      ),
+    );
+    return batches.flat();
+  }
+
+  try {
+    const listedV2 = await input.client.events.listV2({
+      limit: LIST_FETCH_LIMIT,
+      filter: JSON.stringify({
+        type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
+      }),
+    });
+    return coerceIngestedEvents(listedV2?.items ?? listedV2);
+  } catch {
+    try {
+      // Unscoped list (no subject) — Konnect returns latest global events.
+      const listed = await input.client.events.list({
+        from: input.from,
+        to: input.to,
+        limit: LIST_FETCH_LIMIT,
+        // subject omitted intentionally for platform-wide admin history
+      } as { from: string; to: string; limit: number });
+      return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
+    } catch {
+      return [];
+    }
+  }
+}
+
+async function listSignedTicketEventsForSubjectContains(
+  client: OpenMeter,
+  subjectFragment: string,
+  from: string,
+  to: string,
+): Promise<IngestedEventLike[]> {
+  try {
+    const listedV2 = await client.events.listV2({
+      limit: LIST_FETCH_LIMIT,
+      filter: JSON.stringify({
+        type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
+        subject: { contains: subjectFragment },
+      }),
+    });
+    return coerceIngestedEvents(listedV2?.items ?? listedV2);
+  } catch {
+    try {
+      const listed = await client.events.list({
+        subject: subjectFragment,
+        from,
+        to,
+        limit: LIST_FETCH_LIMIT,
+      });
+      return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
+    } catch {
+      return [];
+    }
+  }
 }
 
 function normalizeClientIdFilter(

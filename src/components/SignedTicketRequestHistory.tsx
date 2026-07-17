@@ -51,11 +51,17 @@ function normalizeClientIds(
 export default function SignedTicketRequestHistory({
   clientId,
   clientIds,
+  historyScope = "own",
 }: Readonly<{
   /** Public OIDC client_id when scoped to a single app. */
   clientId?: string | null;
   /** Public OIDC client_ids when scoped to a subset of apps. */
   clientIds?: string[] | null;
+  /**
+   * `own` — viewer usage subjects only (default).
+   * `all` — platform-wide history for admins (All Usage tab).
+   */
+  historyScope?: "own" | "all";
 }>) {
   const [items, setItems] = useState<SignedTicketRequestRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -63,6 +69,17 @@ export default function SignedTicketRequestHistory({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const isPlatform = historyScope === "all";
+  const title = isPlatform
+    ? "Signed ticket requests"
+    : "Your signed ticket requests";
+  const subtitle = isPlatform
+    ? "Platform-wide signed ticket requests for the selected apps, newest first."
+    : "Only requests billed to your usage identity, newest first.";
+  const emptyCopy = isPlatform
+    ? "No signed ticket requests for the selected apps in this billing cycle."
+    : "No signed ticket requests for your usage identity in this billing cycle.";
 
   const resolvedClientIds = useMemo(
     () => normalizeClientIds(clientId, clientIds),
@@ -74,6 +91,7 @@ export default function SignedTicketRequestHistory({
     async (cursor: string | null, append: boolean) => {
       const params = new URLSearchParams();
       params.set("limit", "25");
+      params.set("scope", historyScope);
       if (cursor) {
         params.set("cursor", cursor);
       }
@@ -97,7 +115,7 @@ export default function SignedTicketRequestHistory({
       setNextCursor(body.nextCursor);
       setItems((prev) => (append ? [...prev, ...body.items] : body.items));
     },
-    [resolvedClientIds],
+    [resolvedClientIds, historyScope],
   );
 
   useEffect(() => {
@@ -122,7 +140,7 @@ export default function SignedTicketRequestHistory({
     return () => {
       cancelled = true;
     };
-  }, [fetchPage, clientIdsKey]);
+  }, [fetchPage, clientIdsKey, historyScope]);
 
   async function onLoadMore() {
     if (!nextCursor || loadingMore) {
@@ -142,10 +160,8 @@ export default function SignedTicketRequestHistory({
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
       <div className="mb-4">
-        <h2 className="text-sm font-semibold text-zinc-200">Your signed ticket requests</h2>
-        <p className="text-xs text-zinc-500 mt-1">
-          Only requests billed to your usage identity, newest first.
-        </p>
+        <h2 className="text-sm font-semibold text-zinc-200">{title}</h2>
+        <p className="text-xs text-zinc-500 mt-1">{subtitle}</p>
       </div>
 
       {!openMeterConfigured ? (
@@ -167,9 +183,7 @@ export default function SignedTicketRequestHistory({
       ) : null}
 
       {openMeterConfigured && !loading && !error && items.length === 0 ? (
-        <p className="text-sm text-zinc-500 py-6 text-center">
-          No signed ticket requests for your usage identity in this billing cycle.
-        </p>
+        <p className="text-sm text-zinc-500 py-6 text-center">{emptyCopy}</p>
       ) : null}
 
       {openMeterConfigured && !loading && items.length > 0 ? (

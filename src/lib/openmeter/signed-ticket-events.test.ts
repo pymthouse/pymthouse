@@ -6,6 +6,8 @@ import {
   coerceIngestedEvent,
   coerceIngestedEvents,
   eventClientId,
+  eventMatchesAdminSignedTicket,
+  eventMatchesClientIdFilter,
   eventMatchesViewerSubjects,
   eventUsageSubject,
   normalizeSignedTicketEvent,
@@ -162,6 +164,33 @@ test("eventMatchesViewerSubjects rejects non signed-ticket types", () => {
     ),
     false,
   );
+});
+
+test("eventMatchesAdminSignedTicket ignores viewer subjects", () => {
+  const otherUser = sampleEvent({
+    subject: "app_abc:other-user",
+    data: { external_user_id: "other-user", usage_subject: "other-user" },
+  });
+  assert.equal(eventMatchesAdminSignedTicket(otherUser), true);
+  assert.equal(eventMatchesAdminSignedTicket(otherUser, "app_abc"), true);
+  assert.equal(eventMatchesAdminSignedTicket(otherUser, "app_other"), false);
+  assert.equal(
+    eventMatchesAdminSignedTicket(otherUser, new Set(["app_abc", "app_x"])),
+    true,
+  );
+  assert.equal(
+    eventMatchesAdminSignedTicket(
+      sampleEvent({ type: "other.event" }),
+      "app_abc",
+    ),
+    false,
+  );
+});
+
+test("eventMatchesClientIdFilter handles null and empty sets", () => {
+  assert.equal(eventMatchesClientIdFilter(sampleEvent(), null), true);
+  assert.equal(eventMatchesClientIdFilter(sampleEvent(), new Set()), true);
+  assert.equal(eventMatchesClientIdFilter(sampleEvent(), ""), true);
 });
 
 test("normalizeSignedTicketEvent maps CloudEvent fields", () => {

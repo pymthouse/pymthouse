@@ -374,15 +374,16 @@ Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters 
 
 **Endpoint:** `GET /api/v1/me/usage/requests`
 
-Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents for the **signed-in viewer’s own usage subject(s)** only — newest first. This is not a Builder/M2M API for listing all end users of an app.
+Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents, newest first. This is not a Builder/M2M API for listing all end users of an app.
 
 | Query | Description |
 | --- | --- |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
-| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`) |
+| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`). Repeatable / comma-separated `clientIds` for multi-app filters. |
+| `scope` | `own` (default) — signed-in viewer’s usage subject(s) only. `all` — **platform admins only**; platform-wide history for the selected `clientId`(s) (All Usage tab). Non-admins receive `403`. |
 
-Do **not** pass `externalUserId` — the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, and `openMeterConfigured`.
+Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, and `scope`.
 
 **Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
 
