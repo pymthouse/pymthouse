@@ -71,7 +71,8 @@ export type ListViewerSignedTicketRequestsResult = {
   openMeterConfigured: boolean;
 };
 
-export type ListAdminSignedTicketRequestsResult = ListViewerSignedTicketRequestsResult;
+/** Optional client_id filter: one id, a set of ids, or unrestricted. */
+export type SignedTicketClientIdFilter = string | ReadonlySet<string> | null;
 
 type CloudEventLike = {
   id?: string;
@@ -242,7 +243,7 @@ export function expandViewerSubjectMatchKeys(
 
 export function eventMatchesClientIdFilter(
   event: IngestedEventLike,
-  clientIdOrIds?: string | ReadonlySet<string> | null,
+  clientIdOrIds?: SignedTicketClientIdFilter,
 ): boolean {
   if (clientIdOrIds == null) {
     return true;
@@ -271,7 +272,7 @@ export function eventIsSignedTicket(event: IngestedEventLike): boolean {
 export function eventMatchesViewerSubjects(
   event: IngestedEventLike,
   subjects: ReadonlySet<string>,
-  clientIdOrIds?: string | ReadonlySet<string> | null,
+  clientIdOrIds?: SignedTicketClientIdFilter,
 ): boolean {
   if (!eventIsSignedTicket(event)) {
     return false;
@@ -295,7 +296,7 @@ export function eventMatchesViewerSubjects(
 /** Platform-wide signed-ticket match (admin All Usage) — no viewer subject gate. */
 export function eventMatchesAdminSignedTicket(
   event: IngestedEventLike,
-  clientIdOrIds?: string | ReadonlySet<string> | null,
+  clientIdOrIds?: SignedTicketClientIdFilter,
 ): boolean {
   if (!eventIsSignedTicket(event)) {
     return false;
@@ -382,7 +383,7 @@ export async function listViewerSignedTicketRequests(
  */
 export async function listAdminSignedTicketRequests(
   input: ListAdminSignedTicketRequestsInput,
-): Promise<ListAdminSignedTicketRequestsResult> {
+): Promise<ListViewerSignedTicketRequestsResult> {
   if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
