@@ -66,7 +66,7 @@ async function ensureCustomerUsageAttribution(
   try {
     await client.customers.update(customer.id, {
       name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
-      // Only send subjectKeys when they actually change — Konnect 400s on
+      // Only send subjectKeys when adding missing keys — Konnect 400s on
       // "subject key change" for subscribed customers even when the set is identical.
       ...(missing.length > 0
         ? { usageAttribution: { subjectKeys: nextKeys } }
@@ -112,11 +112,13 @@ export async function ensureOwnerCustomerWireSubjects(
  * Created with subjectKeys = [bareId] so it does not conflict with a legacy
  * `owner:{id}` customer.
  *
- * Existing customers only keep the bare settlement subject (+ metadata).
- * Transitional wire/compound subjects (`owner:…`, `app_…:…`) are attached
- * best-effort once at create time; Konnect rejects later changes while a
- * subscription is active (400) or when a legacy wallet still claims them (409).
- * Meter dual-read for usage does not require those keys on the customer record.
+ * For existing customers, only ensure the bare settlement subject is present
+ * (+ metadata). Does not strip transitional keys already on the record; it
+ * simply avoids attaching more. Transitional wire/compound subjects
+ * (`owner:…`, `app_…:…`) are attached best-effort once at create time;
+ * Konnect rejects later changes while a subscription is active (400) or when
+ * a legacy wallet still claims them (409). Meter dual-read for usage does not
+ * require those keys on the customer record.
  */
 export async function ensureOwnerCustomer(
   client: OpenMeter,

@@ -244,9 +244,9 @@ async function releaseLegacySubjectKeys(input: {
       subjectKeys: [retiredKey],
     });
     const after = readKonnectSubjectKeys(updated);
-    if (after.includes(input.customerKey)) {
+    if (after.length !== 1 || after[0] !== retiredKey) {
       console.warn(
-        `  [warn] release incomplete on ${input.customerKey}: still has live subject (${JSON.stringify(after)})`,
+        `  [warn] release incomplete on ${input.customerKey}: got ${JSON.stringify(after)} (expected [${retiredKey}])`,
       );
       return;
     }
