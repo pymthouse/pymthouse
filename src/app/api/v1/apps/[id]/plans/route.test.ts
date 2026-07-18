@@ -248,6 +248,15 @@ run("plans API: network default plan rules", async (t) => {
 });
 
 run("plans POST accepts subscription with retail overageRateUsd", async (t) => {
+  installNaapCatalogMock({
+    catalog: [
+      { id: "text-to-image", name: "Text to Image", models: ["stabilityai/sdxl"] },
+    ],
+  });
+  t.after(() => {
+    uninstallNaapCatalogMock();
+  });
+
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   authorizedApp = app;
   t.after(async () => {
