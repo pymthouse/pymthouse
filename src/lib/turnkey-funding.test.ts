@@ -45,7 +45,7 @@ test("getTurnkeyFundingConfig uses defaults", () => {
   assert.equal(config.caip2, "eip155:42161");
   assert.equal(config.gasBufferWei, 100_000_000_000_000n);
   assert.equal(config.minFundWei, 1_000_000_000_000_000n);
-  assert.equal(config.reserveAmountWei, 0n);
+  assert.equal(config.reserveAmountWei, 250_000_000_000_000_000n);
 
   if (prevCaip2 !== undefined) process.env.TURNKEY_FUNDING_CAIP2 = prevCaip2;
   if (prevBuffer !== undefined) {
@@ -172,7 +172,7 @@ test("allocateDepositAndReserve sends 100% to deposit once reserve is full", () 
     depositWei: 1_000n,
     reserveWei: 0n,
   });
-  // Default RESERVE_AMOUNT=0 → always all to deposit
+  // RESERVE_AMOUNT=0 → always all to deposit
   assert.deepEqual(allocateDepositAndReserve(1_000n, 0n, 0n), {
     depositWei: 1_000n,
     reserveWei: 0n,

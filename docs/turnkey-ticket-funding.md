@@ -24,7 +24,7 @@ Funding uses two wei thresholds (see `src/lib/turnkey-funding.ts`):
 | --- | --- | --- | --- |
 | `TICKET_FUNDING_GAS_BUFFER_WEI` | `100000000000000` | 0.0001 | Held back so the signer keeps ETH for the on-chain `fundDepositAndReserve` tx |
 | `TICKET_FUNDING_MIN_WEI` | `1000000000000000` | 0.001 | Minimum amount credited to TicketBroker after the buffer |
-| `RESERVE_AMOUNT` | `0` | 0 | Target TicketBroker reserve balance. Incoming `fundWei` fills reserve until this amount; once reserve ≥ target, 100% goes to deposit |
+| `RESERVE_AMOUNT` | `250000000000000000` | 0.25 | Target TicketBroker reserve balance. Incoming `fundWei` fills reserve until this amount; once reserve ≥ target, 100% goes to deposit |
 
 Computation:
 
@@ -67,7 +67,7 @@ depositWei       = fundWei - reserveWei
   first; any remainder goes to deposit.
 - Once `currentReserveWei >= RESERVE_AMOUNT`, `reserveWei` is `0` and 100% of
   `fundWei` goes to deposit.
-- Default `RESERVE_AMOUNT=0` keeps the previous all-to-deposit behavior.
+- Default `RESERVE_AMOUNT` is `0.25 ETH` (`250000000000000000` wei). Set `RESERVE_AMOUNT=0` for all-to-deposit behavior.
 
 ## Environment variables
 
@@ -81,7 +81,7 @@ TURNKEY_FUNDING_CAIP2=eip155:42161
 # Optional overrides (wei strings)
 TICKET_FUNDING_GAS_BUFFER_WEI=100000000000000
 TICKET_FUNDING_MIN_WEI=1000000000000000
-RESERVE_AMOUNT=0
+RESERVE_AMOUNT=250000000000000000
 
 # Signer CLI (required for funding)
 SIGNER_CLI_URL=https://<railway-signer>/__signer_cli
