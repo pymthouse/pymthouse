@@ -527,8 +527,9 @@ test("ensureOwnerCustomer keeps settlement subject only on existing customers", 
     ["app_aaa", "app_bbb"],
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
-  // Bare settlement key already present — subjectKeys must not be re-sent.
-  assert.equal(updatedSubjectKeys, undefined);
+  // Bare settlement key already present; update re-sends the same set (Konnect
+  // PUT is a full replace, so omitting it would wipe subject_keys).
+  assert.deepEqual(updatedSubjectKeys, [ownerKey]);
   assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, "app_aaa,app_bbb");
   assert.ok(updateCalls >= 1);
 });

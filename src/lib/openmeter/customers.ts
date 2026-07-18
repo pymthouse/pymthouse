@@ -64,13 +64,13 @@ async function ensureCustomerUsageAttribution(
   }
 
   try {
+    // Konnect customer update is a full replace (PUT) — always send the
+    // current subjectKeys so a metadata-only update does not wipe them.
+    // nextKeys equals the existing set when nothing is missing (no real
+    // change), so this does not trip the active-subscription 400 guard.
     await client.customers.update(customer.id, {
       name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
-      // Only send subjectKeys when adding missing keys — Konnect 400s on
-      // "subject key change" for subscribed customers even when the set is identical.
-      ...(missing.length > 0
-        ? { usageAttribution: { subjectKeys: nextKeys } }
-        : {}),
+      usageAttribution: { subjectKeys: nextKeys },
       ...(Object.keys(nextMetadata).length > 0 ? { metadata: nextMetadata } : {}),
     });
   } catch (err) {
