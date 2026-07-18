@@ -18,6 +18,7 @@ import {
 import { buildKonnectUsageRateCard } from "./konnect-plan-body";
 import {
   isOpenMeterConflictError,
+  isOpenMeterPlanAlreadyPublishedError,
   isOpenMeterPlanNotFoundError,
 } from "./plan-errors";
 import { shouldUseKonnectRoutes } from "./route-mode";
@@ -86,10 +87,17 @@ function buildOwnerStarterPlanBody(input: {
   };
 }
 
+type FoundPlan = {
+  id: string;
+  key?: string;
+  version?: number;
+  status?: string;
+};
+
 async function findPlanByKey(
   client: OpenMeter,
   planKey: string,
-): Promise<{ id: string; key?: string; version?: number } | null> {
+): Promise<FoundPlan | null> {
   try {
     const listed = await client.plans.list({
       // SDK typings vary; key filter is supported by Konnect.
@@ -97,8 +105,7 @@ async function findPlanByKey(
       page: 1,
       pageSize: 50,
     } as Parameters<OpenMeter["plans"]["list"]>[0]);
-    const items = (listed as { items?: Array<{ id: string; key?: string; version?: number }> })
-      ?.items ?? [];
+    const items = (listed as { items?: Array<FoundPlan> })?.items ?? [];
     const exact = items.find((item) => item.key === planKey);
     if (exact?.id) {
       return exact;
@@ -114,12 +121,18 @@ async function findPlanByKey(
         id: plan.id,
         key: plan.key,
         version: typeof plan.version === "number" ? plan.version : undefined,
+        status: plan.status,
       };
     }
   } catch {
     return null;
   }
   return null;
+}
+
+/** Publish is only legal for these plan states; any other state is already live. */
+function planNeedsPublish(status: string | undefined): boolean {
+  return status === "draft" || status === "scheduled";
 }
 
 async function publishOwnerStarterPlanBestEffort(
@@ -130,7 +143,10 @@ async function publishOwnerStarterPlanBestEffort(
     const published = await client.plans.publish(planId);
     return published?.id ?? planId;
   } catch (err) {
-    if (!isOpenMeterConflictError(err)) {
+    if (
+      !isOpenMeterConflictError(err) &&
+      !isOpenMeterPlanAlreadyPublishedError(err)
+    ) {
       console.warn(
         "openmeter: owner starter plan publish",
         err instanceof Error ? err.message : String(err),
@@ -166,7 +182,9 @@ export async function ensureOwnerStarterPlanSynced(): Promise<OwnerStarterPlanRe
 
   const existing = await findPlanByKey(client, OWNER_STARTER_PLAN_KEY);
   if (existing?.id) {
-    await publishOwnerStarterPlanBestEffort(client, existing.id);
+    if (planNeedsPublish(existing.status)) {
+      await publishOwnerStarterPlanBestEffort(client, existing.id);
+    }
     return {
       key: OWNER_STARTER_PLAN_KEY,
       openmeterPlanId: existing.id,
