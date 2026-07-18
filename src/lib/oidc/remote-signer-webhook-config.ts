@@ -10,6 +10,7 @@ import {
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
 import { createLocalSignerJwksResolver } from "@/lib/oidc/local-signer-jwks";
+import { createLocalTokenExchangeFetch } from "@/lib/oidc/local-token-exchange-fetch";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
 import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
@@ -141,12 +142,6 @@ function isSelfIssuedJwtIssuer(jwtIssuer: string, appOrigin: string): boolean {
   }
 }
 
-/** fetch wrapper that logs composite token-exchange latency per request. */
-function createTimedExchangeFetch(): typeof fetch {
-  return (input, init) =>
-    timeSignerWebhookPhase("token_exchange", () => fetch(input, init));
-}
-
 function parseRequiredScopes(source: EnvSource): string[] {
   return trimEnv(source, "OIDC_REQUIRED_SCOPES").split(/[\s,]+/).filter(Boolean);
 }
@@ -179,6 +174,7 @@ function buildEndUserVerifier(
     return createEndUserVerifierFromEnv(source);
   }
 
+  const appOrigin = resolveAppOrigin(source, original);
   return createOidcVerifier({
     jwtIssuer,
     jwtAudience: trimEnv(source, "OIDC_AUDIENCE") || jwtIssuer,
@@ -192,7 +188,7 @@ function buildEndUserVerifier(
     exchangeM2mClientId: trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_ID") || undefined,
     exchangeM2mClientSecret:
       trimEnv(source, "OIDC_EXCHANGE_M2M_CLIENT_SECRET") || undefined,
-    fetchImpl: createTimedExchangeFetch(),
+    fetchImpl: createLocalTokenExchangeFetch(appOrigin),
   });
 }
 

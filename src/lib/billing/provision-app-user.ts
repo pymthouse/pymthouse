@@ -4,7 +4,6 @@ import {
   ensureOpenMeterCustomerForAppUser,
   type OpenMeterCustomerIdentity,
 } from "@/lib/openmeter/customers";
-import { getTrialCreditBalance, type TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ensureStarterSubscriptionForAppUser } from "@/lib/openmeter/starter-subscription";
 import { ensureTrialAllowanceForAppUser } from "@/lib/openmeter/trial-allowance";
 import { resolveOrCreateAppUser } from "@/lib/usage/record-signed-ticket";
@@ -13,7 +12,6 @@ export type ProvisionAppUserBillingResult = {
   appUserId: string;
   endUserId: string;
   externalUserId: string;
-  allowance: TrialCreditBalance | null;
   starterSubscriptionCreated: boolean;
   starterSubscriptionReady: boolean;
 };
@@ -38,8 +36,8 @@ export async function ensureAppUserKonnectCustomer(input: {
 }
 
 /**
- * Upsert app/end-user rows, ensure OpenMeter customer + Starter subscription,
- * and return subscription allowance balance (network_spend entitlement).
+ * Upsert app/end-user rows and ensure OpenMeter customer + Starter subscription.
+ * Callers that need a live balance should use {@link getSpendableUsdMicros}.
  */
 export async function provisionAppUserBilling(input: {
   clientId: string;
@@ -61,16 +59,10 @@ export async function provisionAppUserBilling(input: {
     externalUserId,
   });
 
-  const allowance = await getTrialCreditBalance({
-    clientId: input.clientId,
-    externalUserId,
-  });
-
   return {
     appUserId: appUser.id,
     endUserId,
     externalUserId,
-    allowance,
     starterSubscriptionCreated: sub.created,
     starterSubscriptionReady: isHostedAdminClientAvailable()
       ? Boolean(sub.openmeterSubscriptionId)

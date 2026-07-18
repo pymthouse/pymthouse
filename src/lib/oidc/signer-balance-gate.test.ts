@@ -24,13 +24,13 @@ test("spendable balance cache serves repeat lookups within the TTL", async () =>
     now: () => nowMs,
   });
 
-  assert.equal(await cached(identity("user-1")), "1000000");
+  assert.equal(await cached.get(identity("user-1")), "1000000");
   nowMs += 5_000;
-  assert.equal(await cached(identity("user-1")), "1000000");
+  assert.equal(await cached.get(identity("user-1")), "1000000");
   assert.equal(calls, 1);
 
   nowMs += 20_000;
-  assert.equal(await cached(identity("user-1")), "1000000");
+  assert.equal(await cached.get(identity("user-1")), "1000000");
   assert.equal(calls, 2);
 });
 
@@ -46,9 +46,9 @@ test("spendable balance cache coalesces concurrent lookups per identity", async 
   });
 
   const results = await Promise.all([
-    cached(identity("user-1")),
-    cached(identity("user-1")),
-    cached(identity("user-2")),
+    cached.get(identity("user-1")),
+    cached.get(identity("user-1")),
+    cached.get(identity("user-2")),
   ]);
 
   assert.deepEqual(results, ["111", "111", "222"]);
@@ -68,8 +68,8 @@ test("spendable balance cache does not cache failures", async () => {
     },
   });
 
-  await assert.rejects(cached(identity("user-1")), /openmeter unavailable/);
-  assert.equal(await cached(identity("user-1")), "42");
+  await assert.rejects(cached.get(identity("user-1")), /openmeter unavailable/);
+  assert.equal(await cached.get(identity("user-1")), "42");
   assert.equal(calls, 2);
 });
 
@@ -83,8 +83,8 @@ test("spendable balance cache is disabled when ttl is zero", async () => {
     },
   });
 
-  assert.equal(await cached(identity("user-1")), "7");
-  assert.equal(await cached(identity("user-1")), "7");
+  assert.equal(await cached.get(identity("user-1")), "7");
+  assert.equal(await cached.get(identity("user-1")), "7");
   assert.equal(calls, 2);
 });
 
@@ -108,10 +108,10 @@ test("spendable balance cache stays bounded when every entry is inflight", async
   });
 
   const pending = [
-    cached(identity("user-0")),
-    cached(identity("user-1")),
-    cached(identity("user-2")),
-    cached(identity("user-3")),
+    cached.get(identity("user-0")),
+    cached.get(identity("user-1")),
+    cached.get(identity("user-2")),
+    cached.get(identity("user-3")),
   ];
   assert.equal(calls, 4);
   assert.equal(waiters.length, 4);
@@ -125,11 +125,11 @@ test("spendable balance cache stays bounded when every entry is inflight", async
   // oldest identity from the burst is no longer cached.
   blockLookups = false;
   const callsAfterBurst = calls;
-  assert.equal(await cached(identity("user-1")), "user-1");
-  assert.equal(await cached(identity("user-2")), "user-2");
-  assert.equal(await cached(identity("user-3")), "user-3");
+  assert.equal(await cached.get(identity("user-1")), "user-1");
+  assert.equal(await cached.get(identity("user-2")), "user-2");
+  assert.equal(await cached.get(identity("user-3")), "user-3");
   assert.equal(calls, callsAfterBurst);
-  assert.equal(await cached(identity("user-0")), "user-0");
+  assert.equal(await cached.get(identity("user-0")), "user-0");
   assert.equal(calls, callsAfterBurst + 1);
 });
 
@@ -148,9 +148,9 @@ test("spendable balance cache repeats a lookup evicted while inflight", async ()
     },
   });
 
-  const first = cached(identity("user-1"));
-  const second = cached(identity("user-2"));
-  const repeatedFirst = cached(identity("user-1"));
+  const first = cached.get(identity("user-1"));
+  const second = cached.get(identity("user-2"));
+  const repeatedFirst = cached.get(identity("user-1"));
 
   assert.equal(calls, 3);
   assert.equal(waiters.length, 3);
@@ -176,13 +176,13 @@ test("spendable balance cache evicts oldest resolved entries at capacity", async
     },
   });
 
-  assert.equal(await cached(identity("x")), "x");
-  assert.equal(await cached(identity("y")), "y");
-  assert.equal(await cached(identity("z")), "z"); // evicts x
+  assert.equal(await cached.get(identity("x")), "x");
+  assert.equal(await cached.get(identity("y")), "y");
+  assert.equal(await cached.get(identity("z")), "z"); // evicts x
   assert.equal(calls, 3);
-  assert.equal(await cached(identity("y")), "y");
-  assert.equal(await cached(identity("z")), "z");
+  assert.equal(await cached.get(identity("y")), "y");
+  assert.equal(await cached.get(identity("z")), "z");
   assert.equal(calls, 3);
-  assert.equal(await cached(identity("x")), "x");
+  assert.equal(await cached.get(identity("x")), "x");
   assert.equal(calls, 4);
 });

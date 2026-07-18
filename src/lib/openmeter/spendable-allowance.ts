@@ -158,18 +158,30 @@ async function discountForLocalPlanId(localPlanId: string): Promise<bigint | nul
   return rows[0] ? includedDiscountUsdMicrosForPlan(rows[0]) : null;
 }
 
+export type PlanDiscountUsdMicros = {
+  /** Plan's included usage discount for the current cycle (the granted total). */
+  totalUsdMicros: bigint;
+  /** Remaining discount after this cycle's usage. */
+  remainingUsdMicros: bigint;
+};
+
 /**
- * Remaining plan usage discount for the current calendar month, for the
- * customer's primary active subscription. Zero when no discount or exhausted.
+ * Plan usage discount for the current calendar month, for the customer's
+ * primary active subscription: both the included total (granted) and the
+ * remaining amount after usage. Zero when no discount applies.
  */
-export async function getRemainingPlanDiscountUsdMicros(input: {
+export async function getPlanDiscountUsdMicros(input: {
   clientId: string;
   externalUserId: string;
   /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
   identity?: ResolvedBillingIdentity;
-}): Promise<bigint> {
+}): Promise<PlanDiscountUsdMicros> {
+  const zero: PlanDiscountUsdMicros = {
+    totalUsdMicros: 0n,
+    remainingUsdMicros: 0n,
+  };
   if (!isHostedAdminClientAvailable()) {
-    return 0n;
+    return zero;
   }
 
   const identity =
@@ -184,7 +196,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
     externalUserId: input.externalUserId,
   });
   if (!subscription) {
-    return 0n;
+    return zero;
   }
 
   const subscriptionForLookup = await resolveSubscriptionWithPlanKey(subscription);
@@ -196,9 +208,16 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
   ) {
     const discount = parsePositiveMicros(ownerStarterIncludedUsdMicros());
     if (discount == null || discount <= 0n) {
-      return 0n;
+      return zero;
     }
-    return remainingDiscountAfterUsage({ identity, input, discount });
+    return {
+      totalUsdMicros: discount,
+      remainingUsdMicros: await remainingDiscountAfterUsage({
+        identity,
+        input,
+        discount,
+      }),
+    };
   }
 
   let localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -224,10 +243,30 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
   }
 
   if (discount == null || discount <= 0n) {
-    return 0n;
+    return zero;
   }
 
-  return remainingDiscountAfterUsage({ identity, input, discount });
+  return {
+    totalUsdMicros: discount,
+    remainingUsdMicros: await remainingDiscountAfterUsage({
+      identity,
+      input,
+      discount,
+    }),
+  };
+}
+
+/**
+ * Remaining plan usage discount for the current calendar month, for the
+ * customer's primary active subscription. Zero when no discount or exhausted.
+ */
+export async function getRemainingPlanDiscountUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+  /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<bigint> {
+  return (await getPlanDiscountUsdMicros(input)).remainingUsdMicros;
 }
 
 async function remainingDiscountAfterUsage(input: {
@@ -268,34 +307,59 @@ async function remainingDiscountAfterUsage(input: {
   return used >= discount ? 0n : discount - used;
 }
 
+export type SpendableAllowanceDetails = {
+  /** Spendable now: prepaid credits + remaining plan usage discount. */
+  spendableUsdMicros: string;
+  /** Granted total for the cycle: the plan's included usage discount. */
+  grantedUsdMicros: string;
+};
+
 /**
  * Spendable allowance for mint/signer gates: prepaid credits + remaining
- * plan usage discount for the current cycle.
+ * plan usage discount for the current cycle. Also returns the plan's included
+ * discount total (granted) for the cycle, computed in the same pass.
  */
-export async function getSpendableUsdMicros(input: {
+export async function getSpendableAllowanceDetails(input: {
   clientId: string;
   externalUserId: string;
-}): Promise<string | null> {
+  /** Skip a Neon round-trip when the caller already resolved billing identity. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<SpendableAllowanceDetails | null> {
   if (!isHostedAdminClientAvailable()) {
     return null;
   }
 
   // Resolve the billing identity once and share it across both lookups so the
   // webhook balance gate performs a single Neon identity round-trip (#248).
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity =
+    input.identity ??
+    (await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }));
 
-  const [credits, discountRemaining] = await Promise.all([
+  const [credits, discount] = await Promise.all([
     getTrialCreditBalance({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
       identity,
     }),
-    getRemainingPlanDiscountUsdMicros({ ...input, identity }),
+    getPlanDiscountUsdMicros({ ...input, identity }),
   ]);
 
   const creditMicros = BigInt(credits?.balanceUsdMicros ?? "0");
-  return (creditMicros + discountRemaining).toString();
+  return {
+    spendableUsdMicros: (creditMicros + discount.remainingUsdMicros).toString(),
+    grantedUsdMicros: discount.totalUsdMicros.toString(),
+  };
+}
+
+export async function getSpendableUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+  /** Skip a Neon round-trip when the caller already resolved billing identity. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<string | null> {
+  const details = await getSpendableAllowanceDetails(input);
+  return details?.spendableUsdMicros ?? null;
 }
