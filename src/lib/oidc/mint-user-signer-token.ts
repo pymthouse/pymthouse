@@ -240,8 +240,9 @@ export async function mintSignerJwtForExternalUser(input: {
       allowance = {
         hasAccess: BigInt(spendable.spendableUsdMicros) > 0n,
         balanceUsdMicros: spendable.spendableUsdMicros,
-        consumedUsdMicros: spendable.consumedUsdMicros,
-        lifetimeGrantedUsdMicros: spendable.lifetimeGrantedUsdMicros,
+        // Not surfaced in the signer envelope; the mint gate reads balance only.
+        consumedUsdMicros: "0",
+        lifetimeGrantedUsdMicros: spendable.grantedUsdMicros,
       };
       // Same-request webhook balance_check uses owner: wire subject for owners.
       const gateSubject = identity.isOwner
