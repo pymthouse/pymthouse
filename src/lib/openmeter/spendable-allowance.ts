@@ -16,7 +16,6 @@ import { buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
 import {
   ensureOpenMeterCustomer,
   ensureOpenMeterCustomerForAppUser,
-  listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import {
@@ -30,6 +29,7 @@ import {
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "@/lib/openmeter/subscription-read";
 import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
+import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -57,6 +57,11 @@ async function querySubjectsUsedUsdMicros(
   subjects: string[],
   start: string,
   end: string,
+  /**
+   * When set, meter rows are grouped by `client_id` and only this app's usage
+   * counts toward plan-discount burn (shared owner subjects otherwise blend apps).
+   */
+  filterClientId?: string | null,
 ): Promise<bigint> {
   if (!isHostedAdminClientAvailable()) {
     return 0n;
@@ -65,6 +70,9 @@ async function querySubjectsUsedUsdMicros(
   if (unique.length === 0) {
     return 0n;
   }
+  const meterClientId = filterClientId?.trim()
+    ? await resolveOpenMeterMeterClientId(filterClientId)
+    : null;
   const client = getHostedAdminClient();
   try {
     const result = await client.meters.query(NETWORK_FEE_USD_MICROS_METER, {
@@ -72,9 +80,16 @@ async function querySubjectsUsedUsdMicros(
       from: new Date(start),
       to: new Date(end),
       subject: unique,
+      ...(meterClientId ? { groupBy: ["client_id"] } : {}),
     });
     let used = 0n;
     for (const row of result.data || []) {
+      if (meterClientId) {
+        const group = (row as { groupBy?: Record<string, unknown> }).groupBy;
+        const rowClientId =
+          typeof group?.client_id === "string" ? group.client_id.trim() : "";
+        if (rowClientId !== meterClientId) continue;
+      }
       used += meterRowValueToBigInt(row.value);
     }
     return used;
@@ -250,19 +265,14 @@ async function remainingDiscountAfterUsage(input: {
   const cycle = calendarMonthBoundsUtc(new Date());
   const usageSubjects =
     identity.isOwner && identity.ownerUserId
-      ? buildOwnerMeterSubjects(
-          identity.ownerUserId,
-          [
-            identity.publicClientId,
-            ...(await listOwnedPublicClientIds(identity.ownerUserId)),
-          ],
-        )
+      ? buildOwnerMeterSubjects(identity.ownerUserId, [identity.publicClientId])
       : [identity.customerKey];
 
   const used = await querySubjectsUsedUsdMicros(
     usageSubjects,
     cycle.start,
     cycle.end,
+    identity.isOwner ? identity.publicClientId : null,
   );
 
   return used >= discount ? 0n : discount - used;

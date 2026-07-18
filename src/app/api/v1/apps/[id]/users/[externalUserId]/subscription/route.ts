@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
+import { requireExternalUserId } from "@/lib/external-user-id";
 import {
   OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
@@ -17,7 +18,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const parsedId = requireExternalUserId(decodeURIComponent(raw));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

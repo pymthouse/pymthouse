@@ -8,12 +8,26 @@ import { issueProgrammaticTokens, ProgrammaticTokenError } from "@/lib/oidc/prog
 import { getProviderApp } from "@/lib/provider-apps";
 import { parseScopeList } from "@/lib/openapi/api-key";
 import { ProgrammaticUserTokenRequestBodySchema } from "@/lib/openapi/schemas/credentials";
+import {
+  ExternalUserIdError,
+  invalidExternalUserIdResponse,
+  parseExternalUserId,
+} from "@/lib/external-user-id";
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
-  const { id: clientId, externalUserId } = await params;
+  const { id: clientId, externalUserId: rawExternalUserId } = await params;
+  let externalUserId: string;
+  try {
+    externalUserId = parseExternalUserId(decodeURIComponent(rawExternalUserId));
+  } catch (err) {
+    if (err instanceof ExternalUserIdError) {
+      return invalidExternalUserIdResponse(err);
+    }
+    throw err;
+  }
   const correlationId = createCorrelationId();
   const client = await authenticateAppClient(request);
 

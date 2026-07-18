@@ -581,6 +581,57 @@ test("aggregateUserRows merges transitional owner groupBy external_user_id value
   assert.equal(rows[0]?.networkFeeUsdMicros, "150");
 });
 
+test("aggregateUserPipelineModelRows scopes owner usage to request app client_id", async () => {
+  const { aggregateUserPipelineModelRows } = await import("./usage-read");
+  const rows = aggregateUserPipelineModelRows({
+    clientId: "app_A",
+    filterExternalUserId: "uuid-owner",
+    feeRows: [
+      {
+        value: "100",
+        groupBy: {
+          client_id: "app_A",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: "999",
+        groupBy: {
+          client_id: "app_B",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 2,
+        groupBy: {
+          client_id: "app_A",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: 50,
+        groupBy: {
+          client_id: "app_B",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.networkFeeUsdMicros, "100");
+  assert.equal(rows[0]?.requestCount, 2);
+});
+
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {
   const listedCustomers: string[][] = [];
   const client = {
