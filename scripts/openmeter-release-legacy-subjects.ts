@@ -225,6 +225,107 @@ async function releaseCustomer(input: {
   }
 }
 
+type ReleaseResult = "ok" | "dry-run" | "skip" | "fail";
+
+type ScanTallies = {
+  ok: number;
+  dryRun: number;
+  skip: number;
+  missing: number;
+  fail: number;
+  ownersWithWork: number;
+};
+
+function emptyTallies(): ScanTallies {
+  return {
+    ok: 0,
+    dryRun: 0,
+    skip: 0,
+    missing: 0,
+    fail: 0,
+    ownersWithWork: 0,
+  };
+}
+
+function recordResult(tallies: ScanTallies, result: ReleaseResult): void {
+  if (result === "ok") tallies.ok += 1;
+  else if (result === "dry-run") tallies.dryRun += 1;
+  else if (result === "skip") tallies.skip += 1;
+  else tallies.fail += 1;
+}
+
+function ensureOwnerHeader(input: {
+  ownerLogged: boolean;
+  ownerId: string;
+  appCount: number;
+}): boolean {
+  if (input.ownerLogged) return true;
+  console.log(`\n[owner] ${input.ownerId} apps=${input.appCount}`);
+  return true;
+}
+
+async function processOwner(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  baseUrl: string;
+  apiKey: string;
+  ownerId: string;
+  apply: boolean;
+  verbose: boolean;
+  tallies: ScanTallies;
+}): Promise<void> {
+  const publicClientIds = await listOwnedPublicClientIds(input.ownerId);
+  const keys = legacyKeysForOwner(input.ownerId, publicClientIds);
+  let ownerLogged = false;
+  let ownerHadWork = false;
+
+  for (const customerKey of keys) {
+    const found = await findOpenMeterCustomerByKey(input.client, customerKey);
+    if (!found?.id) {
+      input.tallies.missing += 1;
+      if (input.verbose) {
+        ownerLogged = ensureOwnerHeader({
+          ownerLogged,
+          ownerId: input.ownerId,
+          appCount: publicClientIds.length,
+        });
+        console.log(`  [skip] no customer ${customerKey}`);
+      }
+      continue;
+    }
+
+    const result = await releaseCustomer({
+      baseUrl: input.baseUrl,
+      apiKey: input.apiKey,
+      customerId: found.id,
+      customerKey,
+      apply: input.apply,
+      verbose: input.verbose,
+    });
+
+    if (result === "skip") {
+      input.tallies.skip += 1;
+      if (input.verbose) {
+        ownerLogged = ensureOwnerHeader({
+          ownerLogged,
+          ownerId: input.ownerId,
+          appCount: publicClientIds.length,
+        });
+      }
+      continue;
+    }
+
+    ownerLogged = ensureOwnerHeader({
+      ownerLogged,
+      ownerId: input.ownerId,
+      appCount: publicClientIds.length,
+    });
+    ownerHadWork = true;
+    recordResult(input.tallies, result);
+  }
+
+  if (ownerHadWork) input.tallies.ownersWithWork += 1;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.ownerId && !args.all) {
@@ -242,69 +343,23 @@ async function main() {
     `Scanning owners=${ownerIds.length} apply=${args.apply} verbose=${args.verbose}`,
   );
 
-  let ok = 0;
-  let dryRun = 0;
-  let skip = 0;
-  let missing = 0;
-  let fail = 0;
-  let ownersWithWork = 0;
-
+  const tallies = emptyTallies();
   for (const ownerId of ownerIds) {
-    const publicClientIds = await listOwnedPublicClientIds(ownerId);
-    const keys = legacyKeysForOwner(ownerId, publicClientIds);
-    let ownerLogged = false;
-    let ownerHadWork = false;
-
-    for (const customerKey of keys) {
-      const found = await findOpenMeterCustomerByKey(client, customerKey);
-      if (!found?.id) {
-        missing += 1;
-        if (args.verbose) {
-          if (!ownerLogged) {
-            console.log(`\n[owner] ${ownerId} apps=${publicClientIds.length}`);
-            ownerLogged = true;
-          }
-          console.log(`  [skip] no customer ${customerKey}`);
-        }
-        continue;
-      }
-
-      const result = await releaseCustomer({
-        baseUrl,
-        apiKey,
-        customerId: found.id,
-        customerKey,
-        apply: args.apply,
-        verbose: args.verbose,
-      });
-
-      if (result === "skip") {
-        skip += 1;
-        if (args.verbose && !ownerLogged) {
-          console.log(`\n[owner] ${ownerId} apps=${publicClientIds.length}`);
-          ownerLogged = true;
-        }
-        continue;
-      }
-
-      if (!ownerLogged) {
-        console.log(`\n[owner] ${ownerId} apps=${publicClientIds.length}`);
-        ownerLogged = true;
-      }
-      ownerHadWork = true;
-
-      if (result === "ok") ok += 1;
-      else if (result === "dry-run") dryRun += 1;
-      else fail += 1;
-    }
-
-    if (ownerHadWork) ownersWithWork += 1;
+    await processOwner({
+      client,
+      baseUrl,
+      apiKey,
+      ownerId,
+      apply: args.apply,
+      verbose: args.verbose,
+      tallies,
+    });
   }
 
   console.log(
-    `\nDone owners=${ownerIds.length} ownersWithWork=${ownersWithWork} apply=${args.apply} ok=${ok} dryRun=${dryRun} skip=${skip} missing=${missing} fail=${fail}`,
+    `\nDone owners=${ownerIds.length} ownersWithWork=${tallies.ownersWithWork} apply=${args.apply} ok=${tallies.ok} dryRun=${tallies.dryRun} skip=${tallies.skip} missing=${tallies.missing} fail=${tallies.fail}`,
   );
-  if (fail > 0) {
+  if (tallies.fail > 0) {
     process.exitCode = 1;
   }
 }
