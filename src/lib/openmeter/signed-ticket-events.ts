@@ -146,7 +146,6 @@ export async function resolveViewerUsageSubjects(userId: string): Promise<Set<st
   }
   subjects.add(trimmedUserId);
   subjects.add(buildOwnerCustomerKey(trimmedUserId));
-  subjects.add(`owner:${trimmedUserId}`);
   subjects.add(`user:${trimmedUserId}`);
 
   const userRows = await db
@@ -195,8 +194,7 @@ export function eventClientId(event: IngestedEventLike): string | null {
     return fromData;
   }
   const subject = event.event?.subject?.trim() || "";
-  // Owner wallet events use CE subject = bare {users.id} (or legacy owner:{id});
-  // client lives in data only.
+  // Owner wallet events use CE subject owner:{id}; client lives in data only.
   if (isOwnerCustomerKey(subject)) {
     return null;
   }
@@ -219,7 +217,6 @@ export function expandViewerSubjectMatchKeys(
     const normalized = normalizePlatformUserId(trimmed);
     keys.add(normalized);
     keys.add(buildOwnerCustomerKey(normalized));
-    keys.add(`owner:${normalized}`);
     keys.add(`user:${normalized}`);
   }
   return keys;
@@ -300,9 +297,15 @@ export function normalizeSignedTicketEvent(
   };
 }
 
-export async function listViewerSignedTicketRequests(
-  input: ListViewerSignedTicketRequestsInput,
-): Promise<ListViewerSignedTicketRequestsResult> {
+async function listSignedTicketRequestsForSubjects(input: {
+  subjects: ReadonlySet<string>;
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListViewerSignedTicketRequestsResult> {
   if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
@@ -312,8 +315,7 @@ export async function listViewerSignedTicketRequests(
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
 
-  const subjects = await resolveViewerUsageSubjects(input.userId);
-  if (subjects.size === 0) {
+  if (input.subjects.size === 0) {
     return { items: [], nextCursor: null, openMeterConfigured: true };
   }
 
@@ -326,14 +328,14 @@ export async function listViewerSignedTicketRequests(
 
   const rawEvents = await fetchSignedTicketEvents({
     client,
-    subjects,
+    subjects: input.subjects,
     clientIds: clientIdFilter,
     from,
     to,
   });
 
   const matching = rawEvents.filter((ev) =>
-    eventMatchesViewerSubjects(ev, subjects, clientIdFilter),
+    eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter),
   );
 
   const appNames = await loadAppNames(
@@ -370,6 +372,50 @@ export async function listViewerSignedTicketRequests(
     nextCursor,
     openMeterConfigured: true,
   };
+}
+
+export async function listViewerSignedTicketRequests(
+  input: ListViewerSignedTicketRequestsInput,
+): Promise<ListViewerSignedTicketRequestsResult> {
+  const subjects = await resolveViewerUsageSubjects(input.userId);
+  return listSignedTicketRequestsForSubjects({
+    subjects,
+    clientId: input.clientId,
+    clientIds: input.clientIds,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
+}
+
+export type ListEndUserSignedTicketRequestsInput = {
+  externalUserId: string;
+  /** Public OIDC client_id (app_…), not developer_apps.id. */
+  clientId: string;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+};
+
+/** Signed-ticket history for one end-user subject (Bearer /api/v1/user API). */
+export async function listEndUserSignedTicketRequests(
+  input: ListEndUserSignedTicketRequestsInput,
+): Promise<ListViewerSignedTicketRequestsResult> {
+  const externalUserId = input.externalUserId.trim();
+  const clientId = input.clientId.trim();
+  if (!externalUserId || !clientId) {
+    return { items: [], nextCursor: null, openMeterConfigured: isOpenMeterEnabled() };
+  }
+  return listSignedTicketRequestsForSubjects({
+    subjects: new Set([externalUserId]),
+    clientId,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
 }
 
 async function fetchSignedTicketEvents(input: {

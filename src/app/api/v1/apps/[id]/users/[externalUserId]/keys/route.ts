@@ -16,6 +16,7 @@ import {
   revokeAppUserApiKey,
 } from "@/lib/app-api-keys";
 import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
+import { requireExternalUserId } from "@/lib/external-user-id";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 async function canAccessUserKeys(request: NextRequest, clientId: string) {
@@ -65,7 +66,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: rawExternalUserId } = await params;
-  const externalUserId = decodeURIComponent(rawExternalUserId);
+  const parsedId = requireExternalUserId(decodeURIComponent(rawExternalUserId));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const access = await canAccessUserKeys(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -93,7 +96,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: rawExternalUserId } = await params;
-  const externalUserId = decodeURIComponent(rawExternalUserId);
+  const parsedId = requireExternalUserId(decodeURIComponent(rawExternalUserId));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const access = await canAccessUserKeys(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -161,7 +166,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: rawExternalUserId } = await params;
-  const externalUserId = decodeURIComponent(rawExternalUserId);
+  const parsedId = requireExternalUserId(decodeURIComponent(rawExternalUserId));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const access = await canAccessUserKeys(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

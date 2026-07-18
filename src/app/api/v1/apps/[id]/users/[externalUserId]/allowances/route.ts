@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
 import type { GrantSource } from "@/lib/billing/types";
+import { requireExternalUserId } from "@/lib/external-user-id";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 
@@ -17,7 +18,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const parsedId = requireExternalUserId(decodeURIComponent(raw));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -47,7 +50,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const parsedId = requireExternalUserId(decodeURIComponent(raw));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

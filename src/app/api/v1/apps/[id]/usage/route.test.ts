@@ -255,7 +255,7 @@ run("usage API groupBy=daily_pipeline requires userId and returns day buckets", 
 
   const res = await GET(
     new Request(
-      `http://localhost/api/v1/apps/${app.clientId}/usage?groupBy=daily_pipeline&userId=${encodeURIComponent("john@example.com")}`,
+      `http://localhost/api/v1/apps/${app.clientId}/usage?groupBy=daily_pipeline&userId=${encodeURIComponent("user-john-1")}`,
       {
         headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
       },

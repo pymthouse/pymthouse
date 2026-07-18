@@ -41,8 +41,18 @@ export const PublicClientIdPathParamSchema = PublicClientIdSchema.openapi({
 
 export const ExternalUserIdParamSchema = z
   .string()
-  .min(1)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+  .refine((value) => !value.includes("@"), {
+    message: "externalUserId must be a machine id, not an email",
+  })
+  .refine(
+    (value) => !value.startsWith("owner:") && !value.startsWith("user:"),
+    {
+      message: "externalUserId must not use owner: or user: prefixes",
+    },
+  )
   .openapi({
     param: { name: "externalUserId", in: "path" },
-    description: "Integrator-defined stable user id.",
+    description:
+      "Integrator-defined stable machine user id (not an email; not owner:/user: wire prefixes).",
   });

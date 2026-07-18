@@ -12,6 +12,7 @@ import {
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
+import { requireExternalUserId } from "@/lib/external-user-id";
 
 async function canAccessUsers(request: NextRequest, clientId: string, requiredScope: string) {
   const app = await getProviderApp(clientId);
@@ -76,13 +77,12 @@ export async function POST(
   }
 
   const body = await request.json();
-  const externalUserId = String(body.externalUserId || "").trim();
+  const parsedId = requireExternalUserId(body.externalUserId);
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
   const hasEmail = typeof body.email === "string";
   const hasStatus = typeof body.status === "string";
   const email = hasEmail ? body.email.trim() : null;
-  if (!externalUserId) {
-    return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
-  }
 
   const status = hasStatus ? body.status : "active";
   const newUser = {
@@ -154,10 +154,9 @@ export async function PUT(
   }
 
   const body = await request.json();
-  const externalUserId = String(body.externalUserId || "").trim();
-  if (!externalUserId) {
-    return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
-  }
+  const parsedId = requireExternalUserId(body.externalUserId);
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
 
   const existingPutRows = await db
     .select()
@@ -211,10 +210,9 @@ export async function DELETE(
   }
 
   const { searchParams } = new URL(request.url);
-  const externalUserId = searchParams.get("externalUserId");
-  if (!externalUserId) {
-    return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
-  }
+  const parsedId = requireExternalUserId(searchParams.get("externalUserId"));
+  if (!parsedId.ok) return parsedId.response;
+  const externalUserId = parsedId.externalUserId;
 
   const existingDelRows = await db
     .select()
