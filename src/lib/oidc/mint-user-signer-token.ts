@@ -14,7 +14,7 @@ import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
-import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
+import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowance";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
@@ -231,23 +231,27 @@ export async function mintSignerJwtForExternalUser(input: {
 
   // Mint gate uses credits + remaining plan discount (discount covers included usage).
   if (isHostedAdminClientAvailable()) {
-    const spendable = await getSpendableUsdMicros({
+    const spendable = await getSpendableAllowanceDetails({
       clientId: identity.publicClientId,
       externalUserId: provisionExternalUserId,
       identity,
     });
     if (spendable != null) {
       allowance = {
-        hasAccess: BigInt(spendable) > 0n,
-        balanceUsdMicros: spendable,
-        consumedUsdMicros: "0",
-        lifetimeGrantedUsdMicros: "0",
+        hasAccess: BigInt(spendable.spendableUsdMicros) > 0n,
+        balanceUsdMicros: spendable.spendableUsdMicros,
+        consumedUsdMicros: spendable.consumedUsdMicros,
+        lifetimeGrantedUsdMicros: spendable.lifetimeGrantedUsdMicros,
       };
       // Same-request webhook balance_check uses owner: wire subject for owners.
       const gateSubject = identity.isOwner
         ? buildOwnerWireSubject(provisionExternalUserId)
         : provisionExternalUserId;
-      seedSignerSpendableBalance(input.publicClientId, gateSubject, spendable);
+      seedSignerSpendableBalance(
+        input.publicClientId,
+        gateSubject,
+        spendable.spendableUsdMicros,
+      );
     }
   }
 

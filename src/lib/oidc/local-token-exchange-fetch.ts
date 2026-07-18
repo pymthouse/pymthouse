@@ -1,8 +1,10 @@
+import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import {
   AppScopedSignerTokenExchangeError,
   handleAppScopedSignerTokenExchange,
 } from "@/lib/oidc/app-scoped-signer-token-exchange";
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
+import { getProviderApp } from "@/lib/provider-apps";
 
 const APP_TOKEN_PATH = /^\/api\/v1\/apps\/([^/]+)\/oidc\/token$/;
 
@@ -14,8 +16,11 @@ function requestUrl(input: RequestInfo | URL): string {
 
 function requestBody(init?: RequestInit): string {
   if (typeof init?.body === "string") return init.body;
-  if (init?.body != null) return String(init.body);
-  return "";
+  if (init?.body instanceof URLSearchParams) return init.body.toString();
+  if (init?.body == null) return "";
+  throw new TypeError(
+    "local token exchange expects a string or URLSearchParams body",
+  );
 }
 
 function clientCredentialsFromExchangeInit(
@@ -43,12 +48,33 @@ function clientCredentialsFromExchangeInit(
   return { clientId, clientSecret };
 }
 
+function writeExchangeAuditLog(
+  publicClientId: string,
+  status: string,
+  correlationId: string,
+): void {
+  void (async () => {
+    try {
+      const app = await getProviderApp(publicClientId);
+      await writeAuditLog({
+        clientId: app?.id ?? null,
+        action: "app_oidc_token_exchange",
+        status,
+        correlationId,
+      });
+    } catch (err) {
+      console.error("[local-token-exchange] audit log failed:", err);
+    }
+  })();
+}
+
 async function exchangeInProcess(
   publicClientId: string,
   init?: RequestInit,
 ): Promise<Response> {
   const form = new URLSearchParams(requestBody(init));
   const { clientId, clientSecret } = clientCredentialsFromExchangeInit(form, init);
+  const correlationId = createCorrelationId();
 
   try {
     const session = await handleAppScopedSignerTokenExchange({
@@ -61,13 +87,19 @@ async function exchangeInProcess(
       requestedTokenType: form.get("requested_token_type") || "",
       resource: form.get("resource") || "",
       audiences: form.getAll("audience"),
-      correlationId: "local-exchange",
+      correlationId,
     });
+    writeExchangeAuditLog(publicClientId, "success", correlationId);
     return Response.json(session);
   } catch (err) {
     if (err instanceof AppScopedSignerTokenExchangeError) {
+      writeExchangeAuditLog(publicClientId, err.code, correlationId);
       return Response.json(
-        { error: err.code, error_description: err.message },
+        {
+          error: err.code,
+          error_description: err.message,
+          correlation_id: correlationId,
+        },
         { status: err.status },
       );
     }

@@ -268,16 +268,23 @@ async function remainingDiscountAfterUsage(input: {
   return used >= discount ? 0n : discount - used;
 }
 
+export type SpendableAllowanceDetails = {
+  spendableUsdMicros: string;
+  consumedUsdMicros: string;
+  lifetimeGrantedUsdMicros: string;
+};
+
 /**
  * Spendable allowance for mint/signer gates: prepaid credits + remaining
- * plan usage discount for the current cycle.
+ * plan usage discount for the current cycle. Also returns credit consumed /
+ * lifetime granted from the same trial-balance lookup (no extra OpenMeter call).
  */
-export async function getSpendableUsdMicros(input: {
+export async function getSpendableAllowanceDetails(input: {
   clientId: string;
   externalUserId: string;
   /** Skip a Neon round-trip when the caller already resolved billing identity. */
   identity?: ResolvedBillingIdentity;
-}): Promise<string | null> {
+}): Promise<SpendableAllowanceDetails | null> {
   if (!isHostedAdminClientAvailable()) {
     return null;
   }
@@ -301,5 +308,19 @@ export async function getSpendableUsdMicros(input: {
   ]);
 
   const creditMicros = BigInt(credits?.balanceUsdMicros ?? "0");
-  return (creditMicros + discountRemaining).toString();
+  return {
+    spendableUsdMicros: (creditMicros + discountRemaining).toString(),
+    consumedUsdMicros: credits?.consumedUsdMicros ?? "0",
+    lifetimeGrantedUsdMicros: credits?.lifetimeGrantedUsdMicros ?? "0",
+  };
+}
+
+export async function getSpendableUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+  /** Skip a Neon round-trip when the caller already resolved billing identity. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<string | null> {
+  const details = await getSpendableAllowanceDetails(input);
+  return details?.spendableUsdMicros ?? null;
 }

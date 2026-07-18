@@ -115,6 +115,16 @@ export const authOptions: NextAuthOptions = {
       if (user?.id) {
         token.userId = user.id;
         token.role = (user as { role?: string }).role;
+      } else if (token.userId && token.role == null) {
+        // One-time backfill for JWTs minted before role was stashed on the token.
+        const rows = await db
+          .select({ role: users.role })
+          .from(users)
+          .where(eq(users.id, token.userId as string))
+          .limit(1);
+        if (rows[0]) {
+          token.role = rows[0].role;
+        }
       }
       return token;
     },
