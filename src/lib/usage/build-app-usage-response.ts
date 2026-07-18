@@ -10,6 +10,7 @@ import {
   queryOpenMeterUserDailyByPipeline,
   queryOpenMeterUserPipelineByModel,
   type OpenMeterPipelineModelRow,
+  type OpenMeterDailyPipelineRow,
   type OpenMeterUsageRow,
 } from "@/lib/usage/query-openmeter";
 
@@ -116,7 +117,7 @@ export async function buildAppUsageResponse(input: {
   });
 
   let pipelineRows: OpenMeterPipelineModelRow[] | undefined;
-  let dailyPipelineRows;
+  let dailyPipelineRows: OpenMeterDailyPipelineRow[] | undefined;
   if (groupBy === "pipeline_model") {
     if (filterUserId) {
       pipelineRows = await queryOpenMeterUserPipelineByModel({
