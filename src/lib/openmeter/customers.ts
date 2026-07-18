@@ -66,7 +66,11 @@ async function ensureCustomerUsageAttribution(
   try {
     await client.customers.update(customer.id, {
       name: customer.name?.trim() || customer.key || requiredSubjectKeys[0],
-      usageAttribution: { subjectKeys: nextKeys },
+      // Only send subjectKeys when they actually change — Konnect 400s on
+      // "subject key change" for subscribed customers even when the set is identical.
+      ...(missing.length > 0
+        ? { usageAttribution: { subjectKeys: nextKeys } }
+        : {}),
       ...(Object.keys(nextMetadata).length > 0 ? { metadata: nextMetadata } : {}),
     });
   } catch (err) {
@@ -106,8 +110,13 @@ export async function ensureOwnerCustomerWireSubjects(
 /**
  * Ensure the shared owner Konnect customer (canonical key = bare users.id).
  * Created with subjectKeys = [bareId] so it does not conflict with a legacy
- * `owner:{id}` customer. Transitional wire/compound subjects are attached
- * best-effort afterward (skipped while another customer still owns them).
+ * `owner:{id}` customer.
+ *
+ * Existing customers only keep the bare settlement subject (+ metadata).
+ * Transitional wire/compound subjects (`owner:…`, `app_…:…`) are attached
+ * best-effort once at create time; Konnect rejects later changes while a
+ * subscription is active (400) or when a legacy wallet still claims them (409).
+ * Meter dual-read for usage does not require those keys on the customer record.
  */
 export async function ensureOwnerCustomer(
   client: OpenMeter,
@@ -121,8 +130,13 @@ export async function ensureOwnerCustomer(
       publicClientIds.map((id) => id.trim()).filter((id) => id.length > 0),
     ),
   ];
-  // Prefer full transitional attribution, but never block create on conflicts.
-  const preferredKeys = buildOwnerMeterSubjects(trimmedOwnerId, uniqueClientIds);
+  // Settlement subject only for existing customers. Transitional keys are
+  // create-time best-effort; see buildOwnerMeterSubjects for meter dual-read.
+  const settlementKeys = [ownerKey];
+  const transitionalKeys = buildOwnerMeterSubjects(
+    trimmedOwnerId,
+    uniqueClientIds,
+  );
   const metadata: Record<string, string> = {
     pymthouse_owner_user_id: trimmedOwnerId,
     pymthouse_owned_client_ids: uniqueClientIds.join(","),
@@ -130,7 +144,12 @@ export async function ensureOwnerCustomer(
 
   const existing = await findOpenMeterCustomerByKey(client, ownerKey);
   if (existing?.id) {
-    await ensureCustomerUsageAttribution(client, existing, preferredKeys, metadata);
+    await ensureCustomerUsageAttribution(
+      client,
+      existing,
+      settlementKeys,
+      metadata,
+    );
     return { id: existing.id, key: ownerKey };
   }
 
@@ -145,16 +164,26 @@ export async function ensureOwnerCustomer(
     if (!created?.id) {
       throw new Error(`OpenMeter customer create failed for key ${ownerKey}`);
     }
-    // Best-effort: attach transitional subjects if Konnect allows.
+    // Best-effort: attach transitional subjects before any subscription locks keys.
     const fresh = await findOpenMeterCustomerByKey(client, ownerKey);
     if (fresh?.id) {
-      await ensureCustomerUsageAttribution(client, fresh, preferredKeys, metadata);
+      await ensureCustomerUsageAttribution(
+        client,
+        fresh,
+        transitionalKeys,
+        metadata,
+      );
     }
     return { id: created.id, key: ownerKey };
   } catch (err) {
     const raced = await findOpenMeterCustomerByKey(client, ownerKey);
     if (raced?.id) {
-      await ensureCustomerUsageAttribution(client, raced, preferredKeys, metadata);
+      await ensureCustomerUsageAttribution(
+        client,
+        raced,
+        settlementKeys,
+        metadata,
+      );
       return { id: raced.id, key: ownerKey };
     }
     throw err;

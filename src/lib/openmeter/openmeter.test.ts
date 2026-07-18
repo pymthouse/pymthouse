@@ -422,7 +422,7 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
 });
 
-test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer", async () => {
+test("ensureOwnerCustomer attaches transitional keys only on create", async () => {
   let updatedSubjectKeys: string[] | undefined;
   let createdBody: {
     key?: string;
@@ -481,6 +481,56 @@ test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer",
       "uuid-1",
     ].sort(),
   );
+});
+
+test("ensureOwnerCustomer keeps settlement subject only on existing customers", async () => {
+  let updateCalls = 0;
+  let updatedSubjectKeys: string[] | undefined;
+  const ownerKey = "uuid-1";
+  const customerRecord = {
+    id: "om-owner-1",
+    key: ownerKey,
+    name: ownerKey,
+    usageAttribution: { subjectKeys: [ownerKey] },
+    metadata: {} as Record<string, string>,
+  };
+  const client = {
+    customers: {
+      get: async () => customerRecord,
+      list: async () => ({ items: [customerRecord] }),
+      update: async (
+        _id: string,
+        input: {
+          usageAttribution?: { subjectKeys: string[] };
+          metadata?: Record<string, string>;
+        },
+      ) => {
+        updateCalls += 1;
+        if (input.usageAttribution) {
+          updatedSubjectKeys = input.usageAttribution.subjectKeys;
+          customerRecord.usageAttribution = { subjectKeys: updatedSubjectKeys };
+        }
+        if (input.metadata) {
+          customerRecord.metadata = input.metadata;
+        }
+        return customerRecord;
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOwnerCustomerWireSubjects(
+    openMeterTestClient(client),
+    "uuid-1",
+    ["app_aaa", "app_bbb"],
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
+  // Bare settlement key already present — subjectKeys must not be re-sent.
+  assert.equal(updatedSubjectKeys, undefined);
+  assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, "app_aaa,app_bbb");
+  assert.ok(updateCalls >= 1);
 });
 
 test("ensureOpenMeterCustomer soft-fails subject update when subscription is active", async () => {

@@ -50,6 +50,11 @@ import {
   isOpenMeterSubscriptionActive,
   listOpenMeterSubscriptionsForCustomer,
 } from "../src/lib/openmeter/subscription-read";
+import {
+  readKonnectSubjectKeys,
+  replaceKonnectCustomerSubjectKeys,
+  requireKonnectConfig,
+} from "./lib/openmeter-konnect-migrate";
 
 type Args = {
   ownerId?: string;
@@ -213,10 +218,11 @@ function legacyCustomerKeys(ownerId: string, apps: OwnedApp[]): string[] {
 }
 
 async function releaseLegacySubjectKeys(input: {
-  client: ReturnType<typeof getHostedAdminClient>;
   customerId: string;
   customerKey: string;
   dryRun: boolean;
+  baseUrl: string;
+  apiKey: string;
 }): Promise<void> {
   if (input.dryRun) {
     console.log(
@@ -226,13 +232,24 @@ async function releaseLegacySubjectKeys(input: {
   }
   // Free wire subjects for the bare owner customer. Use a deprecated subject
   // so Konnect still has at least one key, including when the legacy customer
-  // key itself is owner:{id}.
+  // key itself is owner:{id}. PUT-replace via Konnect — SDK update has left
+  // live keys alongside deprecated: on incomplete releases.
   const retiredKey = `deprecated:${input.customerKey}`;
   try {
-    await input.client.customers.update(input.customerId, {
+    const updated = await replaceKonnectCustomerSubjectKeys({
+      baseUrl: input.baseUrl,
+      apiKey: input.apiKey,
+      customerId: input.customerId,
       name: `Legacy ${input.customerKey}`,
-      usageAttribution: { subjectKeys: [retiredKey] },
+      subjectKeys: [retiredKey],
     });
+    const after = readKonnectSubjectKeys(updated);
+    if (after.includes(input.customerKey)) {
+      console.warn(
+        `  [warn] release incomplete on ${input.customerKey}: still has live subject (${JSON.stringify(after)})`,
+      );
+      return;
+    }
     console.log(`  [ok] released subjectKeys on ${input.customerKey} → ${retiredKey}`);
   } catch (err) {
     console.warn(
@@ -278,6 +295,7 @@ async function processLegacyWallets(input: {
   cancelLegacy: boolean;
   dryRun: boolean;
   apiKey: string | undefined;
+  baseUrl: string;
 }): Promise<bigint> {
   let transferMicros = 0n;
   if (!input.transferBalances && !input.cancelLegacy) {
@@ -312,11 +330,15 @@ async function processLegacyWallets(input: {
         customerKey: legacyKey,
         dryRun: input.dryRun,
       });
+      if (!input.apiKey) {
+        throw new Error("OPENMETER_API_KEY is required to release legacy subjects");
+      }
       await releaseLegacySubjectKeys({
-        client: input.client,
         customerId: legacyId,
         customerKey: legacyKey,
         dryRun: input.dryRun,
+        baseUrl: input.baseUrl,
+        apiKey: input.apiKey,
       });
     }
   }
@@ -340,7 +362,7 @@ async function migrateOwner(input: {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
-  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  const { baseUrl, apiKey } = requireKonnectConfig();
   if (!shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
     throw new Error("Owner migration requires Konnect prepaid credit routes");
   }
@@ -378,6 +400,7 @@ async function migrateOwner(input: {
     cancelLegacy: input.cancelLegacy,
     dryRun: input.dryRun,
     apiKey,
+    baseUrl,
   });
 
   if (transferMicros > 0n) {
