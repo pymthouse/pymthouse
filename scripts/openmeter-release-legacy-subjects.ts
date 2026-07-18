@@ -254,14 +254,8 @@ function recordResult(tallies: ScanTallies, result: ReleaseResult): void {
   else tallies.fail += 1;
 }
 
-function ensureOwnerHeader(input: {
-  ownerLogged: boolean;
-  ownerId: string;
-  appCount: number;
-}): boolean {
-  if (input.ownerLogged) return true;
-  console.log(`\n[owner] ${input.ownerId} apps=${input.appCount}`);
-  return true;
+function logOwnerHeader(ownerId: string, appCount: number): void {
+  console.log(`\n[owner] ${ownerId} apps=${appCount}`);
 }
 
 async function processOwner(input: {
@@ -278,16 +272,18 @@ async function processOwner(input: {
   let ownerLogged = false;
   let ownerHadWork = false;
 
+  const maybeLogOwner = () => {
+    if (ownerLogged) return;
+    logOwnerHeader(input.ownerId, publicClientIds.length);
+    ownerLogged = true;
+  };
+
   for (const customerKey of keys) {
     const found = await findOpenMeterCustomerByKey(input.client, customerKey);
     if (!found?.id) {
       input.tallies.missing += 1;
       if (input.verbose) {
-        ownerLogged = ensureOwnerHeader({
-          ownerLogged,
-          ownerId: input.ownerId,
-          appCount: publicClientIds.length,
-        });
+        maybeLogOwner();
         console.log(`  [skip] no customer ${customerKey}`);
       }
       continue;
@@ -304,21 +300,11 @@ async function processOwner(input: {
 
     if (result === "skip") {
       input.tallies.skip += 1;
-      if (input.verbose) {
-        ownerLogged = ensureOwnerHeader({
-          ownerLogged,
-          ownerId: input.ownerId,
-          appCount: publicClientIds.length,
-        });
-      }
+      if (input.verbose) maybeLogOwner();
       continue;
     }
 
-    ownerLogged = ensureOwnerHeader({
-      ownerLogged,
-      ownerId: input.ownerId,
-      appCount: publicClientIds.length,
-    });
+    maybeLogOwner();
     ownerHadWork = true;
     recordResult(input.tallies, result);
   }
