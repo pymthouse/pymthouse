@@ -543,6 +543,7 @@ test("ensureOpenMeterCustomer soft-fails subject update when subscription is act
         name: key,
         usageAttribution: { subjectKeys: [] },
       }),
+      listSubscriptions: async () => ({ items: [] }),
       update: async () => {
         throw new Error(
           "Request failed (https://us.api.konghq.com/v3/openmeter/customers/x) [400]: validation error: cannot change subject keys for customer with active subscriptions",
@@ -559,6 +560,37 @@ test("ensureOpenMeterCustomer soft-fails subject update when subscription is act
     "owner:uuid-1",
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
+});
+
+test("ensureOpenMeterCustomer skips subject update when active sub is known", async () => {
+  let updateCalls = 0;
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-owner-1",
+        key,
+        name: key,
+        usageAttribution: { subjectKeys: [] },
+      }),
+      listSubscriptions: async () => ({
+        items: [{ id: "sub-1", status: "active" }],
+      }),
+      update: async () => {
+        updateCalls += 1;
+        throw new Error("should not update");
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOpenMeterCustomer(
+    openMeterTestClient(client),
+    "owner:uuid-1",
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
+  assert.equal(updateCalls, 0);
 });
 
 test("buildUsageMeterSubjects dual-reads bare owner and compound forms", async () => {

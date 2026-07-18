@@ -40,6 +40,32 @@ function isSubjectKeyConflictError(err: unknown): boolean {
   );
 }
 
+/** Statuses that lock subject-key edits on Konnect (mirrors subscription-read). */
+function isSubjectKeyLockingSubscriptionStatus(status: string | undefined): boolean {
+  return status === "active" || status === "scheduled" || status === "pending";
+}
+
+/**
+ * True when the customer has a subscription that blocks subject-key changes.
+ * Local check (no subscription-read import) to avoid a customers↔subscription cycle.
+ */
+async function customerHasSubjectKeyLockingSubscription(
+  client: OpenMeter,
+  customerId: string,
+): Promise<boolean> {
+  try {
+    const listed = await client.customers.listSubscriptions(customerId, {
+      pageSize: 100,
+    });
+    return (listed?.items ?? []).some((item) =>
+      isSubjectKeyLockingSubscriptionStatus(item.status),
+    );
+  } catch {
+    // Fall through to the update attempt; catch still handles the 400.
+    return false;
+  }
+}
+
 async function ensureCustomerUsageAttribution(
   client: OpenMeter,
   customer: OpenMeterCustomerRecord,
@@ -63,6 +89,16 @@ async function ensureCustomerUsageAttribution(
     return;
   }
 
+  // Konnect rejects subject-key changes while a subscription is active.
+  // Skip the PUT (and the warn) when we already know it will fail; metadata-only
+  // updates (missing.length === 0) are still safe and proceed below.
+  if (
+    missing.length > 0 &&
+    (await customerHasSubjectKeyLockingSubscription(client, customer.id))
+  ) {
+    return;
+  }
+
   try {
     // Konnect customer update is a full replace (PUT) — always send the
     // current subjectKeys so a metadata-only update does not wipe them.
@@ -74,12 +110,12 @@ async function ensureCustomerUsageAttribution(
       ...(Object.keys(nextMetadata).length > 0 ? { metadata: nextMetadata } : {}),
     });
   } catch (err) {
-    // Konnect rejects subject-key changes while a subscription is active, or
-    // when keys are still owned by another customer (legacy owner: wallet).
-    if (
-      isActiveSubscriptionSubjectKeyError(err) ||
-      isSubjectKeyConflictError(err)
-    ) {
+    // Safety net for TOCTOU (sub activated between check and PUT) or when
+    // keys are still owned by another customer (legacy owner: wallet).
+    if (isActiveSubscriptionSubjectKeyError(err)) {
+      return;
+    }
+    if (isSubjectKeyConflictError(err)) {
       console.warn(
         "openmeter: skip subject key update",
         customer.key ?? customer.id,
