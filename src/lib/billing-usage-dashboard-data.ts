@@ -10,7 +10,10 @@ import {
   type OwnerBillingSubscriptionRow,
 } from "@/lib/owner-billing-data";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
-import { queryOpenMeterAppDashboardUsage } from "@/lib/usage/query-openmeter";
+import {
+  queryOpenMeterMultiAppDashboardUsage,
+  type OpenMeterAppDashboardUsage,
+} from "@/lib/usage/query-openmeter";
 
 export type BillingAppRow = {
   id: string;
@@ -252,16 +255,15 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const [omResults, activeSubscriptions] = await Promise.all([
-    Promise.all(
-      input.orderedApps.map((app) =>
-        queryOpenMeterAppDashboardUsage({
-          clientId: app.id,
+  const meterClientIds = input.orderedApps.map((app) => app.publicClientId);
+  const [usageByMeterClientId, activeSubscriptions] = await Promise.all([
+    meterClientIds.length === 0
+      ? Promise.resolve(new Map<string, OpenMeterAppDashboardUsage>())
+      : queryOpenMeterMultiAppDashboardUsage({
+          meterClientIds,
           startDate: input.cycle.start,
           endDate: input.cycle.end,
         }),
-      ),
-    ),
     listOwnerActiveSubscriptions(input.userId).catch((err) => {
       console.warn(
         "billing-usage-dashboard: subscription summary failed",
@@ -277,8 +279,8 @@ async function buildOpenMeterBillingDashboard(input: {
   const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
 
   const appUsage: BillingAppUsageSummary[] = sortAppUsageByMostUsed(
-    input.orderedApps.map((app, index) => {
-      const om = omResults[index];
+    input.orderedApps.map((app) => {
+      const om = usageByMeterClientId.get(app.publicClientId);
       if (!om) {
         return {
           app,

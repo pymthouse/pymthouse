@@ -17,6 +17,7 @@ import {
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
+  partitionMeterRowsByClientId,
 } from "@/lib/openmeter/usage-read";
 import {
   isOpenMeterSubscriptionActive,
@@ -307,6 +308,37 @@ test("aggregateDailyRequestCounts sums requests per day", () => {
   assert.equal(byDay.get("2026-05-07"), 1);
 });
 
+test("partitionMeterRowsByClientId splits and optionally filters by allow-list", () => {
+  const rows = [
+    {
+      value: 1,
+      groupBy: { client_id: "app_1", external_user_id: "u1" },
+    },
+    {
+      value: 2,
+      groupBy: { client_id: "app_2", external_user_id: "u2" },
+    },
+    {
+      value: 3,
+      groupBy: { client_id: "app_1", external_user_id: "u3" },
+    },
+    {
+      value: 4,
+      groupBy: { client_id: "app_3", external_user_id: "u4" },
+    },
+  ] as never;
+
+  const all = partitionMeterRowsByClientId(rows);
+  assert.equal(all.get("app_1")?.length, 2);
+  assert.equal(all.get("app_2")?.length, 1);
+  assert.equal(all.get("app_3")?.length, 1);
+
+  const filtered = partitionMeterRowsByClientId(rows, new Set(["app_1", "app_2"]));
+  assert.equal(filtered.get("app_1")?.length, 2);
+  assert.equal(filtered.get("app_2")?.length, 1);
+  assert.equal(filtered.has("app_3"), false);
+});
+
 test("buildOpenMeterUsageResponse aggregates totals and byUser", () => {
   const response = buildOpenMeterUsageResponse({
     clientId: "app_1",
@@ -527,8 +559,9 @@ test("ensureOwnerCustomer keeps settlement subject only on existing customers", 
     ["app_aaa", "app_bbb"],
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
-  // Bare settlement key already present — subjectKeys must not be re-sent.
-  assert.equal(updatedSubjectKeys, undefined);
+  // Bare settlement key already present; update re-sends the same set (Konnect
+  // PUT is a full replace, so omitting it would wipe subject_keys).
+  assert.deepEqual(updatedSubjectKeys, [ownerKey]);
   assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, "app_aaa,app_bbb");
   assert.ok(updateCalls >= 1);
 });

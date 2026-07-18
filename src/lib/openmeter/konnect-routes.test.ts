@@ -336,6 +336,24 @@ test("buildKonnectMeterQueryBody maps query string to Konnect POST body", () => 
   });
 });
 
+test("buildKonnectMeterQueryBody maps multi-app filterGroupBy client_id to in-filter", () => {
+  const params = new URLSearchParams();
+  params.append("groupBy", "client_id");
+  params.append("filterGroupBy[client_id]", "app_1");
+  params.append("filterGroupBy[client_id]", "app_2");
+  params.set("windowSize", "DAY");
+
+  assert.deepEqual(buildKonnectMeterQueryBody(params), {
+    group_by_dimensions: ["client_id"],
+    granularity: "P1D",
+    filters: {
+      dimensions: {
+        client_id: { in: ["app_1", "app_2"] },
+      },
+    },
+  });
+});
+
 test("mapKonnectMeterGranularity maps SDK window sizes", () => {
   assert.equal(mapKonnectMeterGranularity("MONTH"), "P1M");
   assert.equal(mapKonnectMeterGranularity("DAY"), "P1D");

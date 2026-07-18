@@ -269,9 +269,37 @@ export function buildKonnectMeterQueryBody(searchParams: URLSearchParams): Recor
     dimensionFilters.subject = subjectFilter;
   }
 
-  const clientId = searchParams.get("clientId")?.trim();
-  if (clientId) {
-    dimensionFilters.client_id = { eq: clientId };
+  // SDK `clientId` is remapped as meter groupBy client_id (pymthouse convention).
+  // Also honor filterGroupBy[client_id] for multi-app dashboard queries.
+  const clientIdValues = [
+    ...searchParams.getAll("clientId"),
+    ...searchParams.getAll("filterGroupBy[client_id]"),
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const clientFilter = konnectDimensionFilter([...new Set(clientIdValues)]);
+  if (clientFilter) {
+    dimensionFilters.client_id = clientFilter;
+  }
+
+  // Map any other filterGroupBy[dimension] params to Konnect dimension filters.
+  for (const key of new Set(searchParams.keys())) {
+    const match = /^filterGroupBy\[([^\]]+)\]$/.exec(key);
+    if (!match) {
+      continue;
+    }
+    const dimension = match[1];
+    if (!dimension || dimension === "client_id" || dimension in dimensionFilters) {
+      continue;
+    }
+    const values = searchParams
+      .getAll(key)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const filter = konnectDimensionFilter([...new Set(values)]);
+    if (filter) {
+      dimensionFilters[dimension] = filter;
+    }
   }
 
   if (Object.keys(dimensionFilters).length > 0) {

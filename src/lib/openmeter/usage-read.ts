@@ -2,6 +2,7 @@ import {
   getOpenMeterClientForApp,
   getMeterSlugForApp,
 } from "@/lib/openmeter/client-factory";
+import { getHostedOpenMeterClient } from "@/lib/openmeter/client";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import {
   buildOpenMeterCustomerKey,
@@ -10,6 +11,7 @@ import {
   normalizePlatformUserId,
 } from "@/lib/openmeter/customer-key";
 import {
+  NETWORK_FEE_USD_MICROS_METER,
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
@@ -96,6 +98,11 @@ const METER_GROUP_BY_DETAIL = [
   "pipeline",
   "model_id",
 ] as const;
+/** Daily chart rows do not need per-user cardinality — keep this lean for Konnect. */
+const METER_GROUP_BY_DAILY = ["client_id", "pipeline", "model_id"] as const;
+
+/** Cap `filterGroupBy` size so Konnect query URLs/bodies stay reasonable. */
+const MAX_METER_CLIENT_ID_FILTERS = 100;
 
 /**
  * CloudEvent subjects to query for a filtered user. Owners dual-read bare /
@@ -190,11 +197,27 @@ async function resolveUsageMeterSubjects(input: {
   }
 }
 
+function normalizeMeterClientIdFilters(
+  clientId?: string | readonly string[] | null,
+): string[] {
+  if (clientId == null) {
+    return [];
+  }
+  const values = typeof clientId === "string" ? [clientId] : [...clientId];
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+/**
+ * Build an OpenMeter SDK meter query. When `clientId` is set, scopes the query
+ * to those meter `client_id` groupBy values via `filterGroupBy` (self-hosted)
+ * and, for a single id, the Konnect-mapped `clientId` search param.
+ */
 function buildMeterQuery(input: {
   startDate?: string | null;
   endDate?: string | null;
   windowSize: MeterWindowSize;
-  clientId: string;
+  /** Public OIDC client_id(s) for meter dimension filter (not a progress-tracking id). */
+  clientId?: string | readonly string[] | null;
   /** Pre-resolved CloudEvent subjects (owner dual-read or compound end-user). */
   subjects?: string[] | null;
   groupBy: readonly string[];
@@ -212,7 +235,85 @@ function buildMeterQuery(input: {
   if (input.subjects && input.subjects.length > 0) {
     query.subject = input.subjects;
   }
+  const filterClientIds = normalizeMeterClientIdFilters(input.clientId);
+  if (filterClientIds.length > 0 && filterClientIds.length <= MAX_METER_CLIENT_ID_FILTERS) {
+    query.filterGroupBy = { client_id: filterClientIds };
+    // Konnect rewrite maps SDK `clientId` → filters.dimensions.client_id.
+    if (filterClientIds.length === 1) {
+      query.clientId = filterClientIds[0];
+    }
+  }
   return query;
+}
+
+function emptyAppDashboardUsage(): OpenMeterAppDashboardUsage {
+  return {
+    byUser: [],
+    byPipelineModel: [],
+    byUserPipelineModel: [],
+    byDailyPipeline: [],
+    requestsByDay: new Map(),
+  };
+}
+
+function buildAppDashboardUsageFromRows(input: {
+  clientId: string;
+  feeRows: MeterQueryRow[];
+  countRows: MeterQueryRow[];
+  dayFeeRows: MeterQueryRow[];
+  dayCountRows: MeterQueryRow[];
+}): OpenMeterAppDashboardUsage {
+  return {
+    byUser: aggregateUserRows({
+      clientId: input.clientId,
+      feeRows: input.feeRows,
+      countRows: input.countRows,
+    }),
+    byPipelineModel: aggregatePipelineModelRows({
+      clientId: input.clientId,
+      feeRows: input.feeRows,
+      countRows: input.countRows,
+    }),
+    byUserPipelineModel: aggregateUserPipelineModelRows({
+      clientId: input.clientId,
+      feeRows: input.feeRows,
+      countRows: input.countRows,
+    }),
+    byDailyPipeline: aggregateDailyPipelineModelRows({
+      clientId: input.clientId,
+      feeRows: input.dayFeeRows,
+      countRows: input.dayCountRows,
+    }),
+    requestsByDay: aggregateDailyRequestCounts({
+      clientId: input.clientId,
+      countRows: input.dayCountRows,
+    }),
+  };
+}
+
+/** Split meter query rows by groupBy.client_id (optionally restricted to an allow-list). */
+export function partitionMeterRowsByClientId(
+  rows: MeterQueryRow[],
+  allowedClientIds?: ReadonlySet<string>,
+): Map<string, MeterQueryRow[]> {
+  const byClientId = new Map<string, MeterQueryRow[]>();
+  for (const row of rows) {
+    const group = (row.groupBy || {}) as Record<string, unknown>;
+    const clientId = groupByString(group, "client_id", "");
+    if (!clientId) {
+      continue;
+    }
+    if (allowedClientIds && !allowedClientIds.has(clientId)) {
+      continue;
+    }
+    const list = byClientId.get(clientId);
+    if (list) {
+      list.push(row);
+    } else {
+      byClientId.set(clientId, [row]);
+    }
+  }
+  return byClientId;
 }
 
 function groupByString(
@@ -992,7 +1093,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "DAY",
-    groupBy: METER_GROUP_BY_DETAIL,
+    groupBy: METER_GROUP_BY_DAILY,
   });
 
   const [feeResult, countResult, dayFeeResult, dayCountResult] = await Promise.all([
@@ -1002,37 +1103,99 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
   ]);
 
-  const feeRows = feeResult.data || [];
-  const countRows = countResult.data || [];
+  return buildAppDashboardUsageFromRows({
+    clientId: meterClientId,
+    feeRows: feeResult.data || [],
+    countRows: countResult.data || [],
+    dayFeeRows: dayFeeResult.data || [],
+    dayCountRows: dayCountResult.data || [],
+  });
+}
 
-  const dayCountRows = dayCountResult.data || [];
+/**
+ * Multi-app dashboard usage in four OpenMeter queries (not 4×N).
+ * Partitions meter rows by `client_id` so "All applications" / "All Usage"
+ * do not fan out identical platform-wide Konnect queries.
+ */
+export async function queryOpenMeterMultiAppDashboardUsage(input: {
+  meterClientIds: string[];
+  startDate?: string | null;
+  endDate?: string | null;
+}): Promise<Map<string, OpenMeterAppDashboardUsage>> {
+  const meterClientIds = normalizeMeterClientIdFilters(input.meterClientIds);
+  const result = new Map<string, OpenMeterAppDashboardUsage>();
+  for (const clientId of meterClientIds) {
+    result.set(clientId, emptyAppDashboardUsage());
+  }
 
-  return {
-    byUser: aggregateUserRows({
-      clientId: meterClientId,
-      feeRows,
-      countRows,
-    }),
-    byPipelineModel: aggregatePipelineModelRows({
-      clientId: meterClientId,
-      feeRows,
-      countRows,
-    }),
-    byUserPipelineModel: aggregateUserPipelineModelRows({
-      clientId: meterClientId,
-      feeRows,
-      countRows,
-    }),
-    byDailyPipeline: aggregateDailyPipelineModelRows({
-      clientId: meterClientId,
-      feeRows: dayFeeResult.data || [],
-      countRows: dayCountRows,
-    }),
-    requestsByDay: aggregateDailyRequestCounts({
-      clientId: meterClientId,
-      countRows: dayCountRows,
-    }),
-  };
+  if (meterClientIds.length === 0 || !requireOpenMeterForUsageReads()) {
+    return result;
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    for (const clientId of meterClientIds) {
+      const stub = testDashboardByClient.get(clientId);
+      if (stub) {
+        result.set(clientId, stub);
+      }
+    }
+    return result;
+  }
+
+  if (avoidOpenMeterNetworkInTests()) {
+    return result;
+  }
+
+  const client = getHostedOpenMeterClient();
+  if (!client) {
+    return result;
+  }
+
+  const periodQuery = buildMeterQuery({
+    clientId: meterClientIds,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "MONTH",
+    groupBy: METER_GROUP_BY_DETAIL,
+  });
+  const dayQuery = buildMeterQuery({
+    clientId: meterClientIds,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "DAY",
+    groupBy: METER_GROUP_BY_DAILY,
+  });
+
+  const [feeResult, countResult, dayFeeResult, dayCountResult] = await Promise.all([
+    client.meters.query(NETWORK_FEE_USD_MICROS_METER, periodQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, periodQuery),
+    client.meters.query(NETWORK_FEE_USD_MICROS_METER, dayQuery),
+    client.meters.query(SIGNED_TICKET_COUNT_METER, dayQuery),
+  ]);
+
+  const allowed = new Set(meterClientIds);
+  const feeByClient = partitionMeterRowsByClientId(feeResult.data || [], allowed);
+  const countByClient = partitionMeterRowsByClientId(countResult.data || [], allowed);
+  const dayFeeByClient = partitionMeterRowsByClientId(dayFeeResult.data || [], allowed);
+  const dayCountByClient = partitionMeterRowsByClientId(
+    dayCountResult.data || [],
+    allowed,
+  );
+
+  for (const clientId of meterClientIds) {
+    result.set(
+      clientId,
+      buildAppDashboardUsageFromRows({
+        clientId,
+        feeRows: feeByClient.get(clientId) ?? [],
+        countRows: countByClient.get(clientId) ?? [],
+        dayFeeRows: dayFeeByClient.get(clientId) ?? [],
+        dayCountRows: dayCountByClient.get(clientId) ?? [],
+      }),
+    );
+  }
+
+  return result;
 }
 
 export function shouldReadUsageFromOpenMeter(): boolean {
