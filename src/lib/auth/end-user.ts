@@ -15,6 +15,29 @@ export type EndUserAuth = {
   externalUserId: string;
 };
 
+/**
+ * Reject client-supplied subject overrides on `/api/v1/user/*` routes.
+ * Subject is always taken from the Bearer credential.
+ */
+export function endUserSubjectOverrideError(
+  searchParams: URLSearchParams,
+  resourceLabel: string,
+): Response | null {
+  if (
+    searchParams.has("externalUserId") ||
+    searchParams.has("external_user_id") ||
+    searchParams.has("userId")
+  ) {
+    return Response.json(
+      {
+        error: `userId/externalUserId are not allowed; ${resourceLabel} is scoped to the authenticated user`,
+      },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
 function readBearerToken(request: Request): string | null {
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {

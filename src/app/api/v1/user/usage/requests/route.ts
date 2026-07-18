@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authenticateEndUser } from "@/lib/auth/end-user";
+import {
+  authenticateEndUser,
+  endUserSubjectOverrideError,
+} from "@/lib/auth/end-user";
 import { listEndUserSignedTicketRequests } from "@/lib/openmeter/signed-ticket-events";
 
 /**
@@ -8,20 +11,15 @@ import { listEndUserSignedTicketRequests } from "@/lib/openmeter/signed-ticket-e
  * Auth: end-user / signer JWT (subject forced from the token — not queryable).
  */
 export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const override = endUserSubjectOverrideError(params, "requests");
+  if (override) {
+    return override;
+  }
+
   const auth = await authenticateEndUser(request);
   if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const params = request.nextUrl.searchParams;
-  if (params.has("externalUserId") || params.has("external_user_id")) {
-    return NextResponse.json(
-      {
-        error:
-          "externalUserId is not allowed; requests are scoped to the authenticated user",
-      },
-      { status: 400 },
-    );
   }
 
   const cursor = params.get("cursor")?.trim() || undefined;

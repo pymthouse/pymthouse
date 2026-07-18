@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authenticateEndUser } from "@/lib/auth/end-user";
+import {
+  authenticateEndUser,
+  endUserSubjectOverrideError,
+} from "@/lib/auth/end-user";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import {
   buildAppUsageResponse,
@@ -13,24 +16,15 @@ import {
  * Auth: programmatic user JWT or signer JWT (subject forced — not queryable).
  */
 export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const override = endUserSubjectOverrideError(params, "usage");
+  if (override) {
+    return override;
+  }
+
   const auth = await authenticateEndUser(request);
   if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const params = request.nextUrl.searchParams;
-  if (
-    params.has("externalUserId") ||
-    params.has("external_user_id") ||
-    params.has("userId")
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "userId/externalUserId are not allowed; usage is scoped to the authenticated user",
-      },
-      { status: 400 },
-    );
   }
 
   if (!requireOpenMeterForUsageReads()) {

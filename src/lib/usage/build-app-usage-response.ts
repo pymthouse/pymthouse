@@ -105,7 +105,8 @@ export async function buildAppUsageResponse(input: {
   filterUserId: string | null;
   includeRetail: boolean;
 }): Promise<ReturnType<typeof buildOpenMeterUsageResponse>> {
-  const { appId, startDate, endDate, groupBy, filterUserId, includeRetail } = input;
+  const { appId, startDate, endDate, groupBy, includeRetail } = input;
+  const filterUserId = input.filterUserId?.trim() || null;
 
   const omRows = await queryOpenMeterUsage({
     clientId: appId,
@@ -117,12 +118,12 @@ export async function buildAppUsageResponse(input: {
   let pipelineRows: OpenMeterPipelineModelRow[] | undefined;
   let dailyPipelineRows;
   if (groupBy === "pipeline_model") {
-    if (filterUserId?.trim()) {
+    if (filterUserId) {
       pipelineRows = await queryOpenMeterUserPipelineByModel({
         clientId: appId,
         startDate,
         endDate,
-        externalUserId: filterUserId.trim(),
+        externalUserId: filterUserId,
       });
     } else {
       const dashboard = await queryOpenMeterAppDashboardUsage({
