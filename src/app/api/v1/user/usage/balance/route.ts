@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authenticateEndUser } from "@/lib/auth/end-user";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { getUsageBalanceAllowance } from "@/lib/openmeter/spendable-allowance";
 
 /**
  * End-user allowance balance for the Bearer subject only.
  * Auth: programmatic user JWT or signer JWT (subject forced — not queryable).
+ *
+ * Returns the plan's included usage discount for the cycle (granted / remaining /
+ * consumed), not prepaid trial-credit ledger fields.
  */
 export async function GET(request: NextRequest) {
   const auth = await authenticateEndUser(request);
@@ -24,7 +27,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const balance = await getTrialCreditBalance({
+  const balance = await getUsageBalanceAllowance({
     clientId: auth.developerAppId,
     externalUserId: auth.externalUserId,
   });
@@ -35,6 +38,5 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     externalUserId: auth.externalUserId,
     ...balance,
-    remainingUsdMicros: balance.balanceUsdMicros,
   });
 }

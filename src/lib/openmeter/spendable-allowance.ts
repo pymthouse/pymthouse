@@ -312,12 +312,14 @@ export type SpendableAllowanceDetails = {
   spendableUsdMicros: string;
   /** Granted total for the cycle: the plan's included usage discount. */
   grantedUsdMicros: string;
+  /** Remaining plan usage discount only (excludes prepaid credits). */
+  remainingPlanDiscountUsdMicros: string;
 };
 
 /**
  * Spendable allowance for mint/signer gates: prepaid credits + remaining
  * plan usage discount for the current cycle. Also returns the plan's included
- * discount total (granted) for the cycle, computed in the same pass.
+ * discount total (granted) and remaining plan discount for the cycle.
  */
 export async function getSpendableAllowanceDetails(input: {
   clientId: string;
@@ -351,6 +353,39 @@ export async function getSpendableAllowanceDetails(input: {
   return {
     spendableUsdMicros: (creditMicros + discount.remainingUsdMicros).toString(),
     grantedUsdMicros: discount.totalUsdMicros.toString(),
+    remainingPlanDiscountUsdMicros: discount.remainingUsdMicros.toString(),
+  };
+}
+
+/** Allowance shape for `GET .../usage/balance` (plan discount, not trial credit). */
+export async function getUsageBalanceAllowance(input: {
+  clientId: string;
+  externalUserId: string;
+  identity?: ResolvedBillingIdentity;
+}): Promise<{
+  balanceUsdMicros: string;
+  consumedUsdMicros: string;
+  lifetimeGrantedUsdMicros: string;
+  hasAccess: boolean;
+  remainingUsdMicros: string;
+} | null> {
+  const details = await getSpendableAllowanceDetails(input);
+  if (!details) {
+    return null;
+  }
+
+  const granted = BigInt(details.grantedUsdMicros);
+  const remaining = BigInt(details.remainingPlanDiscountUsdMicros);
+  const consumed = granted > remaining ? granted - remaining : 0n;
+  const spendable = BigInt(details.spendableUsdMicros);
+
+  return {
+    // Meter remaining / granted is the plan included-discount cycle.
+    balanceUsdMicros: remaining.toString(),
+    remainingUsdMicros: remaining.toString(),
+    lifetimeGrantedUsdMicros: granted.toString(),
+    consumedUsdMicros: consumed.toString(),
+    hasAccess: spendable > 0n,
   };
 }
 

@@ -394,7 +394,7 @@ Same OpenMeter usage shape as `GET /api/v1/apps/{clientId}/usage`, always scoped
 
 **Endpoint:** `GET /api/v1/user/usage/balance`
 
-Same prepaid credit balance shape as `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` (`balanceUsdMicros`, `consumedUsdMicros`, `lifetimeGrantedUsdMicros`, `hasAccess`, `remainingUsdMicros`), for the Bearer subject only. On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
+Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount, `lifetimeGrantedUsdMicros` = included total for the cycle, `consumedUsdMicros` = granted − remaining, `hasAccess` from spendable). Prepaid credits settle invoices/charges and are not the meter source. Builder M2M equivalent: `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...`.
 
 **Endpoint:** `GET /api/v1/user/usage/requests`
 

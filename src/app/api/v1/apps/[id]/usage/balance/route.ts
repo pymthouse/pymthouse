@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { getUsageBalanceAllowance } from "@/lib/openmeter/spendable-allowance";
 
 export async function GET(
   request: NextRequest,
@@ -27,7 +27,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const balance = await getTrialCreditBalance({
+  const balance = await getUsageBalanceAllowance({
     clientId: app.id,
     externalUserId,
   });
@@ -38,6 +38,5 @@ export async function GET(
   return NextResponse.json({
     externalUserId,
     ...balance,
-    remainingUsdMicros: balance.balanceUsdMicros,
   });
 }
