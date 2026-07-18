@@ -27,6 +27,7 @@
     "openmeter:migrate-owner-customers": "npx tsx scripts/openmeter-migrate-owner-customers.ts",
     "openmeter:dedupe-owner-subscriptions": "npx tsx scripts/openmeter-dedupe-owner-subscriptions.ts",
     "openmeter:release-legacy-subjects": "npx tsx scripts/openmeter-release-legacy-subjects.ts",
+    "openmeter:repair-owner-subject-keys": "npx tsx scripts/openmeter-repair-owner-subject-keys.ts",
     "openmeter:audit-billing": "npx tsx scripts/openmeter-audit-billing-consistency.ts",
     "turnkey:create-webhook": "npx tsx scripts/turnkey-create-webhook.ts",
     "openmeter:railway:bootstrap": "bash scripts/openmeter-railway-bootstrap.sh",
