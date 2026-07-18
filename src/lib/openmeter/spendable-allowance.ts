@@ -275,6 +275,8 @@ async function remainingDiscountAfterUsage(input: {
 export async function getSpendableUsdMicros(input: {
   clientId: string;
   externalUserId: string;
+  /** Skip a Neon round-trip when the caller already resolved billing identity. */
+  identity?: ResolvedBillingIdentity;
 }): Promise<string | null> {
   if (!isHostedAdminClientAvailable()) {
     return null;
@@ -282,10 +284,12 @@ export async function getSpendableUsdMicros(input: {
 
   // Resolve the billing identity once and share it across both lookups so the
   // webhook balance gate performs a single Neon identity round-trip (#248).
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity =
+    input.identity ??
+    (await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }));
 
   const [credits, discountRemaining] = await Promise.all([
     getTrialCreditBalance({

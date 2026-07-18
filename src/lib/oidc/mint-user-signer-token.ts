@@ -7,12 +7,14 @@ import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import {
-  ensureAppUserKonnectCustomer,
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
+import { seedSignerSpendableBalance } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
@@ -210,18 +212,12 @@ export async function mintSignerJwtForExternalUser(input: {
     : externalUserId;
   const jwtExternalUserId = provisionExternalUserId;
 
-  let allowance: TrialCreditBalance | null;
+  let allowance: TrialCreditBalance | null = null;
   try {
-    if (isHostedAdminClientAvailable()) {
-      await ensureAppUserKonnectCustomer({
-        clientId: identity.developerAppId,
-        externalUserId: provisionExternalUserId,
-      });
-    }
-    ({ allowance } = await provisionAppUserBilling({
+    await provisionAppUserBilling({
       clientId: identity.developerAppId,
       externalUserId: provisionExternalUserId,
-    }));
+    });
   } catch (err) {
     if (isHostedAdminClientAvailable()) {
       throw new MintUserSignerTokenError(
@@ -235,18 +231,23 @@ export async function mintSignerJwtForExternalUser(input: {
 
   // Mint gate uses credits + remaining plan discount (discount covers included usage).
   if (isHostedAdminClientAvailable()) {
-    const { getSpendableUsdMicros } = await import("@/lib/openmeter/spendable-allowance");
     const spendable = await getSpendableUsdMicros({
       clientId: identity.publicClientId,
       externalUserId: provisionExternalUserId,
+      identity,
     });
     if (spendable != null) {
       allowance = {
         hasAccess: BigInt(spendable) > 0n,
         balanceUsdMicros: spendable,
-        consumedUsdMicros: allowance?.consumedUsdMicros ?? "0",
-        lifetimeGrantedUsdMicros: allowance?.lifetimeGrantedUsdMicros ?? "0",
+        consumedUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
       };
+      // Same-request webhook balance_check uses owner: wire subject for owners.
+      const gateSubject = identity.isOwner
+        ? buildOwnerWireSubject(provisionExternalUserId)
+        : provisionExternalUserId;
+      seedSignerSpendableBalance(input.publicClientId, gateSubject, spendable);
     }
   }
 

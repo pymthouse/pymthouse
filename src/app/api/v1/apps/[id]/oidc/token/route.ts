@@ -106,11 +106,13 @@ export async function POST(
       correlationId,
     });
 
-    await writeAuditLog({
+    void writeAuditLog({
       clientId: app.id,
       action: "app_oidc_token_exchange",
       status: "success",
       correlationId,
+    }).catch((err) => {
+      console.error("[app-oidc-token] audit log failed:", err);
     });
 
     return NextResponse.json(session, {
@@ -118,11 +120,13 @@ export async function POST(
     });
   } catch (err) {
     if (err instanceof AppScopedSignerTokenExchangeError) {
-      await writeAuditLog({
+      void writeAuditLog({
         clientId: app.id,
         action: "app_oidc_token_exchange",
         status: err.code,
         correlationId,
+      }).catch((auditErr) => {
+        console.error("[app-oidc-token] audit log failed:", auditErr);
       });
       return tokenExchangeErrorResponse(err, correlationId);
     }

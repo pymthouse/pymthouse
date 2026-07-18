@@ -133,7 +133,7 @@ async function ensureOne(input: {
       externalUserId: input.externalUserId,
     });
     console.log(
-      `[ok] ${label} provisioned appUser=${result.appUserId} starterReady=${result.starterSubscriptionReady} allowance=${result.allowance?.hasAccess ?? "n/a"}`,
+      `[ok] ${label} provisioned appUser=${result.appUserId} starterReady=${result.starterSubscriptionReady}`,
     );
     return;
   }

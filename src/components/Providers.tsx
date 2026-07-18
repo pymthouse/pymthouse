@@ -12,7 +12,7 @@ export default function Providers({
   session: Session | null;
 }) {
   return (
-    <SessionProvider session={session}>
+    <SessionProvider session={session} refetchOnWindowFocus={false}>
       <TurnkeyProviderWrapper>{children}</TurnkeyProviderWrapper>
     </SessionProvider>
   );

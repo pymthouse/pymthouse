@@ -2,7 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "@/db/index";
 import { users } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { validateBearerToken, hasScope } from "@/lib/auth";
 import {
   findOrCreateDeveloperUser,
@@ -41,6 +41,7 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name || user.email,
+          role: user.role,
         };
       },
     }),
@@ -86,6 +87,7 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email || undefined,
           name: user.name || user.walletAddress || "Developer",
+          role: user.role,
         };
       },
     }),
@@ -100,40 +102,9 @@ export const authOptions: NextAuthOptions = {
       return false;
     },
     async session({ session, token }) {
-      if (session.user) {
-        if (token.userId) {
-          const pmthRows = await db
-            .select()
-            .from(users)
-            .where(eq(users.id, token.userId as string))
-            .limit(1);
-          const pmthUser = pmthRows[0];
-
-          if (pmthUser) {
-            (session.user as Record<string, unknown>).id = pmthUser.id;
-            (session.user as Record<string, unknown>).role = pmthUser.role;
-            return session;
-          }
-        }
-
-        if (token.provider && token.sub) {
-          const pmthRows = await db
-            .select()
-            .from(users)
-            .where(
-              and(
-                eq(users.oauthProvider, token.provider as string),
-                eq(users.oauthSubject, token.sub),
-              ),
-            )
-            .limit(1);
-          const pmthUser = pmthRows[0];
-
-          if (pmthUser) {
-            (session.user as Record<string, unknown>).id = pmthUser.id;
-            (session.user as Record<string, unknown>).role = pmthUser.role;
-          }
-        }
+      if (session.user && token.userId) {
+        (session.user as Record<string, unknown>).id = token.userId;
+        (session.user as Record<string, unknown>).role = token.role;
       }
       return session;
     },
@@ -143,6 +114,7 @@ export const authOptions: NextAuthOptions = {
       }
       if (user?.id) {
         token.userId = user.id;
+        token.role = (user as { role?: string }).role;
       }
       return token;
     },
