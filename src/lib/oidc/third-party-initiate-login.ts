@@ -16,7 +16,11 @@ function isLocalhostHostname(hostname: string): boolean {
 export function normalizeIssuerUrl(iss: string): string {
   try {
     const u = new URL(iss);
-    return u.href.replace(/\/+$/, "");
+    let out = u.href;
+    while (out.endsWith("/")) {
+      out = out.slice(0, -1);
+    }
+    return out;
   } catch {
     return iss.trim();
   }

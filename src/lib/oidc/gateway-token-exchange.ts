@@ -47,7 +47,11 @@ export const ISSUED_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
 function normalizeResourceOrAudienceUri(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  let out = value.trim();
+  while (out.endsWith("/")) {
+    out = out.slice(0, -1);
+  }
+  return out;
 }
 
 function assertRequestedTokenTypeForGateway(
