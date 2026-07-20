@@ -124,7 +124,7 @@ export async function POST(
     .limit(1);
   const appUser = appUserRows[0];
 
-  if (!appUser || appUser.status !== "active") {
+  if (appUser?.status !== "active") {
     await writeAuditLog({
       clientId: app.id,
       action: "programmatic_token_issued",

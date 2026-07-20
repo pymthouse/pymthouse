@@ -141,7 +141,7 @@ export async function getInitiateLoginUriForDeviceFlow(
     .where(eq(oidcClients.clientId, clientId))
     .limit(1);
   const row = rows[0];
-  if (!row || row.deviceThirdPartyInitiateLogin !== 1) return null;
+  if (row?.deviceThirdPartyInitiateLogin !== 1) return null;
   const uri = row.initiateLoginUri;
   return typeof uri === "string" && uri.trim() ? uri.trim() : null;
 }
@@ -232,7 +232,7 @@ export async function validateClientSecret(
   clientSecret: string,
 ): Promise<boolean> {
   const client = await getClient(clientId);
-  if (!client || !client.clientSecretHash) return false;
+  if (!client?.clientSecretHash) return false;
 
   const providedHash = hashClientSecret(clientSecret);
   return providedHash === client.clientSecretHash;

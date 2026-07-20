@@ -192,7 +192,7 @@ export async function rotateProgrammaticRefreshToken(input: {
     .limit(1);
   const appUser = appUserRows[0];
 
-  if (!appUser || appUser.status !== "active") {
+  if (appUser?.status !== "active") {
     return null;
   }
 

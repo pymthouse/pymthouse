@@ -234,13 +234,18 @@ export async function PUT(
         ? String(body.billingOracleProviderKey)
         : (existingPricing?.billingOracleProviderKey ?? "global_eth_usd"),
     ).key;
-    const nextConfig =
-      body.billingOracleProviderConfig !== undefined
-        ? (body.billingOracleProviderConfig &&
-          typeof body.billingOracleProviderConfig === "object"
-            ? body.billingOracleProviderConfig
-            : null)
-        : (existingPricing?.billingOracleProviderConfig ?? null);
+    let nextConfig: Record<string, unknown> | null =
+      existingPricing?.billingOracleProviderConfig ?? null;
+    if (body.billingOracleProviderConfig !== undefined) {
+      if (
+        body.billingOracleProviderConfig &&
+        typeof body.billingOracleProviderConfig === "object"
+      ) {
+        nextConfig = body.billingOracleProviderConfig as Record<string, unknown>;
+      } else {
+        nextConfig = null;
+      }
+    }
     if (existingPricing) {
       await db
         .update(appBillingOracleConfig)
