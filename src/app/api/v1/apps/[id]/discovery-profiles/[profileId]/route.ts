@@ -69,6 +69,74 @@ async function resolveAppForDiscoveryProfilesRead(clientId: string, request: Nex
   return auth?.app ?? null;
 }
 
+function parsePutDiscoveryProfileBody(body: unknown): {
+  ok: true;
+  record: Record<string, unknown>;
+} | { ok: false; response: NextResponse } {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "invalid JSON" }, { status: 400 }),
+    };
+  }
+  return { ok: true, record: body as Record<string, unknown> };
+}
+
+async function applyDiscoveryProfileUpdates(input: {
+  appId: string;
+  profileId: string;
+  setFields: {
+    name: string;
+    updatedAt: string;
+    policy?: DiscoveryPolicy | null;
+  };
+  parsedCaps: ReturnType<typeof parseDiscoveryProfileCapabilities> | null;
+  now: string;
+}): Promise<NextResponse | null> {
+  const { appId, profileId, setFields, parsedCaps, now } = input;
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(discoveryProfiles)
+        .set(setFields)
+        .where(and(eq(discoveryProfiles.id, profileId), eq(discoveryProfiles.clientId, appId)));
+
+      if (!parsedCaps) {
+        return;
+      }
+      await tx
+        .delete(discoveryProfileBundles)
+        .where(
+          and(
+            eq(discoveryProfileBundles.profileId, profileId),
+            eq(discoveryProfileBundles.clientId, appId),
+          ),
+        );
+      for (const cap of parsedCaps.capabilities) {
+        await tx.insert(discoveryProfileBundles).values({
+          id: uuidv4(),
+          profileId,
+          clientId: appId,
+          pipeline: cap.pipeline,
+          modelId: cap.modelId,
+          discoveryPolicy: cap.discoveryPolicy,
+          createdAt: now,
+        });
+      }
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("idx_discovery_profiles_client_name") || msg.includes("unique")) {
+      return NextResponse.json(
+        { error: "A discovery profile with this name already exists" },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
+  return null;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; profileId: string }> },
@@ -135,10 +203,11 @@ export async function PUT(
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+  const parsedBody = parsePutDiscoveryProfileBody(body);
+  if (!parsedBody.ok) {
+    return parsedBody.response;
   }
-  const record = body as Record<string, unknown>;
+  const { record } = parsedBody;
 
   const appId = auth.app.id;
   const existingRows = await db
@@ -181,41 +250,15 @@ export async function PUT(
     }
   }
 
-  try {
-    await db.transaction(async (tx) => {
-      await tx
-        .update(discoveryProfiles)
-        .set(setFields)
-        .where(and(eq(discoveryProfiles.id, profileId), eq(discoveryProfiles.clientId, appId)));
-
-      if (parsedCaps) {
-        await tx
-          .delete(discoveryProfileBundles)
-          .where(
-            and(
-              eq(discoveryProfileBundles.profileId, profileId),
-              eq(discoveryProfileBundles.clientId, appId),
-            ),
-          );
-        for (const cap of parsedCaps.capabilities) {
-          await tx.insert(discoveryProfileBundles).values({
-            id: uuidv4(),
-            profileId,
-            clientId: appId,
-            pipeline: cap.pipeline,
-            modelId: cap.modelId,
-            discoveryPolicy: cap.discoveryPolicy,
-            createdAt: now,
-          });
-        }
-      }
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("idx_discovery_profiles_client_name") || msg.includes("unique")) {
-      return NextResponse.json({ error: "A discovery profile with this name already exists" }, { status: 400 });
-    }
-    throw e;
+  const updateErr = await applyDiscoveryProfileUpdates({
+    appId,
+    profileId,
+    setFields,
+    parsedCaps,
+    now,
+  });
+  if (updateErr) {
+    return updateErr;
   }
 
   return NextResponse.json({ success: true });

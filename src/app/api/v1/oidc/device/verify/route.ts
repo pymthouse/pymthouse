@@ -30,6 +30,124 @@ function errorResponse(
   );
 }
 
+function deviceCodeClientId(deviceCode: {
+  clientId?: unknown;
+  params?: { client_id?: unknown };
+}): string | null {
+  const clientId = deviceCode.clientId || deviceCode.params?.client_id;
+  return typeof clientId === "string" ? clientId : null;
+}
+
+function deviceCodeScope(deviceCode: {
+  scope?: unknown;
+  params?: { scope?: unknown };
+}): string {
+  if (typeof deviceCode.scope === "string") {
+    return deviceCode.scope;
+  }
+  if (typeof deviceCode.params?.scope === "string") {
+    return deviceCode.params.scope;
+  }
+  return "";
+}
+
+async function lookupImpliedDeviceConsent(clientId: string): Promise<boolean> {
+  const policyRows = await db
+    .select({
+      deviceThirdPartyInitiateLogin: oidcClients.deviceThirdPartyInitiateLogin,
+      clientSecretHash: oidcClients.clientSecretHash,
+    })
+    .from(oidcClients)
+    .where(eq(oidcClients.clientId, clientId))
+    .limit(1);
+  const policy = policyRows[0];
+  return policy?.deviceThirdPartyInitiateLogin === 1 && !!policy?.clientSecretHash;
+}
+
+async function handleDeviceLookup(deviceCode: {
+  clientId?: unknown;
+  scope?: unknown;
+  params?: { client_id?: unknown; scope?: unknown };
+}): Promise<NextResponse> {
+  const clientId = deviceCodeClientId(deviceCode);
+  const client = clientId ? await getClient(clientId) : null;
+  const branding = clientId ? await resolveAppBrandingByClientId(clientId) : null;
+  const scope = deviceCodeScope(deviceCode);
+  const impliedDeviceConsent = clientId
+    ? await lookupImpliedDeviceConsent(clientId)
+    : false;
+
+  return NextResponse.json({
+    client_name: client?.displayName || clientId || "Unknown Application",
+    scopes: scope.split(" ").filter(Boolean),
+    implied_device_consent: impliedDeviceConsent,
+    branding: branding
+      ? {
+          mode: branding.mode,
+          displayName: branding.displayName,
+          logoUrl: branding.logoUrl,
+          primaryColor: branding.primaryColor,
+        }
+      : null,
+  });
+}
+
+async function handleDeviceApprove(
+  deviceCode: {
+    clientId?: unknown;
+    params?: { client_id?: unknown };
+  },
+  normalizedUserCode: string,
+  userId: string,
+): Promise<NextResponse> {
+  const clientId = deviceCodeClientId(deviceCode);
+  if (!clientId) {
+    return errorResponse("server_error", "Device code is missing client binding", 500);
+  }
+
+  const accessCheck = await checkAppAccess(clientId, userId);
+  if (!accessCheck.allowed) {
+    return errorResponse(
+      "access_denied",
+      accessCheck.reason || "You do not have access to this application",
+      403,
+    );
+  }
+
+  const approved = await approveDeviceCodeForAccount(
+    normalizedUserCode,
+    clientId,
+    userId,
+  );
+  if (!approved.ok) {
+    return errorResponse(approved.error, approved.description, approved.status);
+  }
+
+  return NextResponse.json({ status: "authorized" });
+}
+
+async function handleDeviceDeny(
+  adapter: InstanceType<typeof SqliteAdapter>,
+  deviceCode: {
+    jti?: string;
+    exp?: number;
+    [key: string]: unknown;
+  },
+): Promise<NextResponse> {
+  const now = Math.floor(Date.now() / 1000);
+  const expiresIn = deviceCode.exp ? Math.max(deviceCode.exp - now, 1) : 600;
+  await adapter.upsert(
+    deviceCode.jti!,
+    {
+      ...deviceCode,
+      error: "access_denied",
+      errorDescription: "The user denied the authorization request",
+    },
+    expiresIn,
+  );
+  return NextResponse.json({ status: "denied" });
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
@@ -71,87 +189,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (action === "lookup") {
-    const clientId = deviceCode.clientId || deviceCode.params?.client_id;
-    const client =
-      typeof clientId === "string" ? await getClient(clientId) : null;
-    const branding =
-      typeof clientId === "string"
-        ? await resolveAppBrandingByClientId(clientId)
-        : null;
-    const scope =
-      typeof deviceCode.scope === "string"
-        ? deviceCode.scope
-        : typeof deviceCode.params?.scope === "string"
-          ? deviceCode.params.scope
-          : "";
-    let impliedDeviceConsent = false;
-    if (typeof clientId === "string") {
-      const policyRows = await db
-        .select({
-          deviceThirdPartyInitiateLogin: oidcClients.deviceThirdPartyInitiateLogin,
-          clientSecretHash: oidcClients.clientSecretHash,
-        })
-        .from(oidcClients)
-        .where(eq(oidcClients.clientId, clientId))
-        .limit(1);
-      const policy = policyRows[0];
-      impliedDeviceConsent =
-        policy?.deviceThirdPartyInitiateLogin === 1 && !!policy?.clientSecretHash;
-    }
-
-    return NextResponse.json({
-      client_name: client?.displayName || clientId || "Unknown Application",
-      scopes: scope.split(" ").filter(Boolean),
-      implied_device_consent: impliedDeviceConsent,
-      branding: branding ? {
-        mode: branding.mode,
-        displayName: branding.displayName,
-        logoUrl: branding.logoUrl,
-        primaryColor: branding.primaryColor,
-      } : null,
-    });
+    return handleDeviceLookup(deviceCode);
   }
-
   if (action === "approve") {
-    const clientId = deviceCode.clientId || deviceCode.params?.client_id;
-    if (typeof clientId !== "string" || !clientId) {
-      return errorResponse("server_error", "Device code is missing client binding", 500);
-    }
-
-    // Check app access before approving
-    const accessCheck = await checkAppAccess(clientId, userId);
-    if (!accessCheck.allowed) {
-      return errorResponse(
-        "access_denied",
-        accessCheck.reason || "You do not have access to this application",
-        403
-      );
-    }
-
-    const approved = await approveDeviceCodeForAccount(
-      normalizedUserCode,
-      clientId,
-      userId,
-    );
-    if (!approved.ok) {
-      return errorResponse(approved.error, approved.description, approved.status);
-    }
-
-    return NextResponse.json({ status: "authorized" });
+    return handleDeviceApprove(deviceCode, normalizedUserCode, userId);
   }
-
-  // action === "deny"
-  const now = Math.floor(Date.now() / 1000);
-  const expiresIn = deviceCode.exp ? Math.max(deviceCode.exp - now, 1) : 600;
-  await adapter.upsert(
-    deviceCode.jti!,
-    {
-      ...deviceCode,
-      error: "access_denied",
-      errorDescription: "The user denied the authorization request",
-    },
-    expiresIn,
-  );
-
-  return NextResponse.json({ status: "denied" });
+  return handleDeviceDeny(adapter, deviceCode);
 }

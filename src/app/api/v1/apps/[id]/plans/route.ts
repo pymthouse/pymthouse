@@ -210,6 +210,400 @@ async function resolveAppForPlansRead(clientId: string, request: Request) {
   return auth?.app ?? null;
 }
 
+function reservedPlanNameError(name: string): string | null {
+  if (name === NETWORK_DEFAULT_PLAN_INTERNAL_NAME || name === NETWORK_DEFAULT_PLAN_DISPLAY_NAME) {
+    return "This plan name is reserved for the Network Price default plan";
+  }
+  if (name === STARTER_DEFAULT_PLAN_INTERNAL_NAME || name === STARTER_DEFAULT_PLAN_DISPLAY_NAME) {
+    return "This plan name is reserved for the Starter default plan";
+  }
+  return null;
+}
+
+function parseDiscoveryProfileIdField(
+  raw: unknown,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw === null || raw === "") {
+    return { ok: true, value: null };
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    return { ok: true, value: raw.trim() };
+  }
+  return { ok: false, error: "discoveryProfileId must be a non-empty string or null" };
+}
+
+function parseIncludedUsdMicrosField(
+  raw: unknown,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) {
+    return { ok: true, value: null };
+  }
+  const s = coerceJsonScalarString(raw).trim();
+  if (s !== "" && !isNonNegativeIntegerString(s)) {
+    return { ok: false, error: "includedUsdMicros must be a non-negative integer string" };
+  }
+  return { ok: true, value: s || null };
+}
+
+function parseIncludedUsdMicrosPutField(
+  raw: unknown,
+): { ok: true; value: string | null | undefined } | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (raw === null) {
+    return { ok: true, value: null };
+  }
+  const s = coerceJsonScalarString(raw).trim();
+  if (s !== "" && !isNonNegativeIntegerString(s)) {
+    return { ok: false, error: "includedUsdMicros must be a non-negative integer string" };
+  }
+  return { ok: true, value: s || null };
+}
+
+type ParsedCapability = ReturnType<typeof parseCapabilities>;
+
+async function validateCapabilitiesDiscoverable(
+  appId: string,
+  capabilities: ParsedCapability["capabilities"],
+): Promise<NextResponse | null> {
+  if (capabilities.length === 0) {
+    return null;
+  }
+  let catalogLite;
+  try {
+    const cat = await fetchPipelineCatalog();
+    catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
+  } catch {
+    return NextResponse.json(
+      { error: "Pipeline catalog unavailable; cannot validate capabilities" },
+      { status: 503 },
+    );
+  }
+  const discoverable = await loadDiscoverableSetForApp(appId, catalogLite, db);
+  const discCheck = assertCapabilityRowsDiscoverable(
+    catalogLite,
+    discoverable,
+    capabilities,
+  );
+  if (!discCheck.ok) {
+    return NextResponse.json(
+      {
+        error:
+          "One or more capabilities are not discoverable under Network Price exclusions. Un-exclude them there first.",
+        conflicts: discCheck.conflicts,
+      },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
+function tryParseCapabilities(
+  input: unknown,
+): { ok: true; parsed: ParsedCapability } | { ok: false; response: NextResponse } {
+  try {
+    const parsed = parseCapabilities(input);
+    if (parsed.error) {
+      return { ok: false, response: NextResponse.json({ error: parsed.error }, { status: 400 }) };
+    }
+    return { ok: true, parsed };
+  } catch (err) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: err instanceof Error ? err.message : "Invalid capabilities" },
+        { status: 400 },
+      ),
+    };
+  }
+}
+
+function isDiscoveryProfileError(e: unknown): e is Error {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    "code" in e &&
+    (e as { code?: string }).code === "DISCOVERY_PROFILE" &&
+    e instanceof Error
+  );
+}
+
+async function insertPlanCapabilities(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  appId: string,
+  planId: string,
+  capabilities: ParsedCapability["capabilities"],
+  now: string,
+) {
+  for (const capability of capabilities) {
+    await tx.insert(planCapabilityBundles).values({
+      id: uuidv4(),
+      planId,
+      clientId: appId,
+      pipeline: capability.pipeline,
+      modelId: capability.modelId,
+      slaTargetP95Ms: null,
+      maxPricePerUnit: capability.maxPricePerUnit,
+      retailRateUsd: capability.retailRateUsd,
+      openmeterFeatureKey: resolveCapabilityFeatureKey({
+        clientId: appId,
+        planId,
+        pipeline: capability.pipeline,
+        modelId: capability.modelId,
+      }),
+      createdAt: now,
+    });
+  }
+}
+
+type PutTxnResult =
+  | { tag: "notfound" }
+  | { tag: "network_default" }
+  | { tag: "starter_default" }
+  | { tag: "validation"; error: string }
+  | { tag: "ok" };
+
+function buildPlanUpdateSet(input: {
+  existing: typeof plans.$inferSelect;
+  body: Record<string, unknown>;
+  putPlanName: string | undefined;
+  nextType: string;
+  overageRateUsd: string | null;
+  includedUsdMicrosPut: string | null | undefined;
+  discoveryProfileIdPut: string | null | undefined;
+  now: string;
+}) {
+  const {
+    existing,
+    body,
+    putPlanName,
+    nextType,
+    overageRateUsd,
+    includedUsdMicrosPut,
+    discoveryProfileIdPut,
+    now,
+  } = input;
+  return {
+    name: putPlanName ?? existing.name,
+    type: nextType,
+    priceAmount:
+      body.priceAmount === undefined
+        ? existing.priceAmount
+        : coerceJsonScalarString(body.priceAmount),
+    priceCurrency:
+      body.priceCurrency === undefined
+        ? existing.priceCurrency
+        : coerceJsonScalarString(body.priceCurrency),
+    status:
+      body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
+    overageRateUsd,
+    ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
+    ...(body.billingCycle === undefined
+      ? {}
+      : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
+    ...(discoveryProfileIdPut !== undefined
+      ? { discoveryProfileId: discoveryProfileIdPut }
+      : {}),
+    updatedAt: now,
+  };
+}
+
+async function loadOwnedPlanForUpdate(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  appId: string,
+  planId: string,
+): Promise<PutTxnResult | { tag: "existing"; existing: typeof plans.$inferSelect }> {
+  const existingRows = await tx
+    .select()
+    .from(plans)
+    .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+    .limit(1);
+  const existing = existingRows[0];
+  if (!existing) {
+    return { tag: "notfound" };
+  }
+  if (existing.isNetworkDefault) {
+    return { tag: "network_default" };
+  }
+  if (existing.isStarterDefault) {
+    return { tag: "starter_default" };
+  }
+  return { tag: "existing", existing };
+}
+
+async function runPutPlanTransaction(input: {
+  appId: string;
+  planId: string;
+  body: Record<string, unknown>;
+  putPlanName: string | undefined;
+  discoveryProfileIdPut: string | null | undefined;
+  parsedCapabilities: ParsedCapability | null;
+  now: string;
+}): Promise<PutTxnResult> {
+  const {
+    appId,
+    planId,
+    body,
+    putPlanName,
+    discoveryProfileIdPut,
+    parsedCapabilities,
+    now,
+  } = input;
+
+  return db.transaction(async (tx) => {
+    const loaded = await loadOwnedPlanForUpdate(tx, appId, planId);
+    if (loaded.tag !== "existing") {
+      return loaded;
+    }
+    const { existing } = loaded;
+
+    if (discoveryProfileIdPut !== undefined && discoveryProfileIdPut !== null) {
+      const profCheck = await requireOwnedDiscoveryProfile(appId, discoveryProfileIdPut, tx);
+      if (!profCheck.ok) {
+        return { tag: "validation" as const, error: profCheck.error };
+      }
+    }
+
+    const nextType =
+      body.type === undefined ? existing.type : coerceJsonScalarString(body.type);
+    const overageRate = resolveOverageRateUsdForPut(nextType, body, existing.overageRateUsd);
+    if (!overageRate.ok) {
+      return { tag: "validation" as const, error: overageRate.error };
+    }
+
+    const includedParsed = parseIncludedUsdMicrosPutField(body.includedUsdMicros);
+    if (!includedParsed.ok) {
+      return { tag: "validation" as const, error: includedParsed.error };
+    }
+
+    const updated = await tx
+      .update(plans)
+      .set(
+        buildPlanUpdateSet({
+          existing,
+          body,
+          putPlanName,
+          nextType,
+          overageRateUsd: overageRate.value,
+          includedUsdMicrosPut: includedParsed.value,
+          discoveryProfileIdPut,
+          now,
+        }),
+      )
+      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+      .returning({ id: plans.id });
+
+    if (updated.length === 0) {
+      return { tag: "notfound" as const };
+    }
+
+    if (parsedCapabilities) {
+      await tx
+        .delete(planCapabilityBundles)
+        .where(
+          and(
+            eq(planCapabilityBundles.planId, planId),
+            eq(planCapabilityBundles.clientId, appId),
+          ),
+        );
+      await insertPlanCapabilities(tx, appId, planId, parsedCapabilities.capabilities, now);
+    }
+
+    return { tag: "ok" as const };
+  });
+}
+
+function putTxnErrorResponse(txnResult: PutTxnResult): NextResponse | null {
+  if (txnResult.tag === "notfound") {
+    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+  }
+  if (txnResult.tag === "validation") {
+    return NextResponse.json({ error: txnResult.error }, { status: 400 });
+  }
+  if (txnResult.tag === "network_default") {
+    return NextResponse.json(
+      {
+        error:
+          "The Network Price default plan cannot be edited via this endpoint; update exclusions via PUT /manifest",
+      },
+      { status: 400 },
+    );
+  }
+  if (txnResult.tag === "starter_default") {
+    return NextResponse.json(
+      {
+        error:
+          "The Starter default plan cannot be edited via this endpoint; use PUT /starter-plan",
+      },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
+type DeleteTxnResult = false | true | "network_default" | "starter_default";
+
+async function runDeletePlanTransaction(
+  appId: string,
+  planId: string,
+): Promise<DeleteTxnResult> {
+  return db.transaction(async (tx) => {
+    const planRows = await tx
+      .select({
+        id: plans.id,
+        isNetworkDefault: plans.isNetworkDefault,
+        isStarterDefault: plans.isStarterDefault,
+      })
+      .from(plans)
+      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+      .limit(1);
+
+    if (!planRows[0]) {
+      return false;
+    }
+    if (planRows[0].isNetworkDefault) {
+      return "network_default" as const;
+    }
+    if (planRows[0].isStarterDefault) {
+      return "starter_default" as const;
+    }
+
+    await tx
+      .delete(planCapabilityBundles)
+      .where(
+        and(
+          eq(planCapabilityBundles.planId, planId),
+          eq(planCapabilityBundles.clientId, appId),
+        ),
+      );
+    const removed = await tx
+      .delete(plans)
+      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+      .returning({ id: plans.id });
+    return removed.length > 0;
+  });
+}
+
+function deleteTxnErrorResponse(deleted: DeleteTxnResult): NextResponse | null {
+  if (!deleted) {
+    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+  }
+  if (deleted === "network_default") {
+    return NextResponse.json(
+      { error: "The Network Price default plan cannot be deleted" },
+      { status: 409 },
+    );
+  }
+  if (deleted === "starter_default") {
+    return NextResponse.json(
+      { error: "The Starter default plan cannot be deleted" },
+      { status: 409 },
+    );
+  }
+  return null;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -280,17 +674,9 @@ export async function POST(
     return NextResponse.json({ error: nameCheck.error }, { status: 400 });
   }
   const name = nameCheck.value;
-  if (name === NETWORK_DEFAULT_PLAN_INTERNAL_NAME || name === NETWORK_DEFAULT_PLAN_DISPLAY_NAME) {
-    return NextResponse.json(
-      { error: "This plan name is reserved for the Network Price default plan" },
-      { status: 400 },
-    );
-  }
-  if (name === STARTER_DEFAULT_PLAN_INTERNAL_NAME || name === STARTER_DEFAULT_PLAN_DISPLAY_NAME) {
-    return NextResponse.json(
-      { error: "This plan name is reserved for the Starter default plan" },
-      { status: 400 },
-    );
+  const reservedErr = reservedPlanNameError(name);
+  if (reservedErr) {
+    return NextResponse.json({ error: reservedErr }, { status: 400 });
   }
   if ("is_network_default" in body || "is_starter_default" in body) {
     return NextResponse.json(
@@ -299,61 +685,27 @@ export async function POST(
     );
   }
 
-  let parsedCapabilities: ReturnType<typeof parseCapabilities>;
-  try {
-    parsedCapabilities = parseCapabilities(body.capabilities);
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Invalid capabilities" },
-      { status: 400 },
-    );
+  const capsResult = tryParseCapabilities(body.capabilities);
+  if (!capsResult.ok) {
+    return capsResult.response;
   }
+  const parsedCapabilities = capsResult.parsed;
 
-  if (parsedCapabilities.error) {
-    return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
-  }
-
-  if (parsedCapabilities.capabilities.length > 0) {
-    let catalogLite;
-    try {
-      const cat = await fetchPipelineCatalog();
-      catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
-    } catch {
-      return NextResponse.json(
-        { error: "Pipeline catalog unavailable; cannot validate capabilities" },
-        { status: 503 },
-      );
-    }
-    const discoverable = await loadDiscoverableSetForApp(appId, catalogLite, db);
-    const discCheck = assertCapabilityRowsDiscoverable(
-      catalogLite,
-      discoverable,
-      parsedCapabilities.capabilities,
-    );
-    if (!discCheck.ok) {
-      return NextResponse.json(
-        {
-          error:
-            "One or more capabilities are not discoverable under Network Price exclusions. Un-exclude them there first.",
-          conflicts: discCheck.conflicts,
-        },
-        { status: 400 },
-      );
-    }
+  const discErr = await validateCapabilitiesDiscoverable(
+    appId,
+    parsedCapabilities.capabilities,
+  );
+  if (discErr) {
+    return discErr;
   }
 
   let discoveryProfileId: string | null = null;
   if (body.discoveryProfileId !== undefined) {
-    if (body.discoveryProfileId === null || body.discoveryProfileId === "") {
-      discoveryProfileId = null;
-    } else if (typeof body.discoveryProfileId === "string" && body.discoveryProfileId.trim()) {
-      discoveryProfileId = body.discoveryProfileId.trim();
-    } else {
-      return NextResponse.json(
-        { error: "discoveryProfileId must be a non-empty string or null" },
-        { status: 400 },
-      );
+    const parsed = parseDiscoveryProfileIdField(body.discoveryProfileId);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    discoveryProfileId = parsed.value;
   }
 
   const planType = coerceJsonScalarString(body.type, "free");
@@ -362,15 +714,11 @@ export async function POST(
     return NextResponse.json({ error: overageRate.error }, { status: 400 });
   }
 
-  const rawIncludedUsd = body.includedUsdMicros;
-  let includedUsdMicros: string | null = null;
-  if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
-    const s = coerceJsonScalarString(rawIncludedUsd).trim();
-    if (s !== "" && !isNonNegativeIntegerString(s)) {
-      return NextResponse.json({ error: "includedUsdMicros must be a non-negative integer string" }, { status: 400 });
-    }
-    includedUsdMicros = s || null;
+  const includedParsed = parseIncludedUsdMicrosField(body.includedUsdMicros);
+  if (!includedParsed.ok) {
+    return NextResponse.json({ error: includedParsed.error }, { status: 400 });
   }
+  const includedUsdMicros = includedParsed.value;
 
   const planId = uuidv4();
   if (planType !== "free" && parsedCapabilities.capabilities.length > 0) {
@@ -408,35 +756,10 @@ export async function POST(
         createdAt: now,
         updatedAt: now,
       });
-
-      for (const capability of parsedCapabilities.capabilities) {
-        await tx.insert(planCapabilityBundles).values({
-          id: uuidv4(),
-          planId,
-          clientId: appId,
-          pipeline: capability.pipeline,
-          modelId: capability.modelId,
-          slaTargetP95Ms: null,
-          maxPricePerUnit: capability.maxPricePerUnit,
-          retailRateUsd: capability.retailRateUsd,
-          openmeterFeatureKey: resolveCapabilityFeatureKey({
-            clientId: appId,
-            planId,
-            pipeline: capability.pipeline,
-            modelId: capability.modelId,
-          }),
-          createdAt: now,
-        });
-      }
+      await insertPlanCapabilities(tx, appId, planId, parsedCapabilities.capabilities, now);
     });
   } catch (e: unknown) {
-    if (
-      e &&
-      typeof e === "object" &&
-      "code" in e &&
-      (e as { code?: string }).code === "DISCOVERY_PROFILE" &&
-      e instanceof Error
-    ) {
+    if (isDiscoveryProfileError(e)) {
       return NextResponse.json({ error: e.message }, { status: 400 });
     }
     throw e;
@@ -509,59 +832,29 @@ export async function PUT(
 
   let discoveryProfileIdPut: string | null | undefined = undefined;
   if (body.discoveryProfileId !== undefined) {
-    if (body.discoveryProfileId === null || body.discoveryProfileId === "") {
-      discoveryProfileIdPut = null;
-    } else if (typeof body.discoveryProfileId === "string" && body.discoveryProfileId.trim()) {
-      discoveryProfileIdPut = body.discoveryProfileId.trim();
-    } else {
-      return NextResponse.json(
-        { error: "discoveryProfileId must be a non-empty string or null" },
-        { status: 400 },
-      );
+    const parsed = parseDiscoveryProfileIdField(body.discoveryProfileId);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    discoveryProfileIdPut = parsed.value;
   }
-  let parsedCapabilities: ReturnType<typeof parseCapabilities> | null = null;
-  if (body.capabilities !== undefined) {
-    try {
-      parsedCapabilities = parseCapabilities(body.capabilities);
-    } catch (err) {
-      return NextResponse.json(
-        { error: err instanceof Error ? err.message : "Invalid capabilities" },
-        { status: 400 },
-      );
-    }
 
-    if (parsedCapabilities.error) {
-      return NextResponse.json({ error: parsedCapabilities.error }, { status: 400 });
+  let parsedCapabilities: ParsedCapability | null = null;
+  if (body.capabilities !== undefined) {
+    const capsResult = tryParseCapabilities(body.capabilities);
+    if (!capsResult.ok) {
+      return capsResult.response;
     }
+    parsedCapabilities = capsResult.parsed;
   }
 
   if (parsedCapabilities && parsedCapabilities.capabilities.length > 0) {
-    let catalogLite;
-    try {
-      const cat = await fetchPipelineCatalog();
-      catalogLite = cat.map((e) => ({ id: e.id, models: e.models }));
-    } catch {
-      return NextResponse.json(
-        { error: "Pipeline catalog unavailable; cannot validate capabilities" },
-        { status: 503 },
-      );
-    }
-    const discoverable = await loadDiscoverableSetForApp(appId, catalogLite, db);
-    const discCheck = assertCapabilityRowsDiscoverable(
-      catalogLite,
-      discoverable,
+    const discErr = await validateCapabilitiesDiscoverable(
+      appId,
       parsedCapabilities.capabilities,
     );
-    if (!discCheck.ok) {
-      return NextResponse.json(
-        {
-          error:
-            "One or more capabilities are not discoverable under Network Price exclusions. Un-exclude them there first.",
-          conflicts: discCheck.conflicts,
-        },
-        { status: 400 },
-      );
+    if (discErr) {
+      return discErr;
     }
 
     const featureKeys = validateCapabilityFeatureKeys({
@@ -575,140 +868,19 @@ export async function PUT(
   }
 
   const now = new Date().toISOString();
-  const txnResult = await db.transaction(async (tx) => {
-    const existingRows = await tx
-      .select()
-      .from(plans)
-      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
-      .limit(1);
-    const existing = existingRows[0];
-    if (!existing) {
-      return { tag: "notfound" as const };
-    }
-
-    if (existing.isNetworkDefault) {
-      return { tag: "network_default" as const };
-    }
-    if (existing.isStarterDefault) {
-      return { tag: "starter_default" as const };
-    }
-
-    if (discoveryProfileIdPut !== undefined && discoveryProfileIdPut !== null) {
-      const profCheck = await requireOwnedDiscoveryProfile(appId, discoveryProfileIdPut, tx);
-      if (!profCheck.ok) {
-        return { tag: "validation" as const, error: profCheck.error };
-      }
-    }
-
-    const nextType =
-      body.type === undefined ? existing.type : coerceJsonScalarString(body.type);
-    const overageRate = resolveOverageRateUsdForPut(nextType, body, existing.overageRateUsd);
-    if (!overageRate.ok) {
-      return { tag: "validation" as const, error: overageRate.error };
-    }
-
-    const rawIncludedUsdPut = body.includedUsdMicros;
-    let includedUsdMicrosPut: string | null | undefined = undefined; // undefined = don't change
-    if (rawIncludedUsdPut !== undefined) {
-      if (rawIncludedUsdPut === null) {
-        includedUsdMicrosPut = null;
-      } else {
-        const s = coerceJsonScalarString(rawIncludedUsdPut).trim();
-        if (s !== "" && !isNonNegativeIntegerString(s)) {
-          return { tag: "validation" as const, error: "includedUsdMicros must be a non-negative integer string" };
-        }
-        includedUsdMicrosPut = s || null;
-      }
-    }
-
-    const updated = await tx
-      .update(plans)
-      .set({
-        name: putPlanName ?? existing.name,
-        type: nextType,
-        priceAmount:
-          body.priceAmount === undefined
-            ? existing.priceAmount
-            : coerceJsonScalarString(body.priceAmount),
-        priceCurrency:
-          body.priceCurrency === undefined
-            ? existing.priceCurrency
-            : coerceJsonScalarString(body.priceCurrency),
-        status:
-          body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
-        overageRateUsd: overageRate.value,
-        ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
-        ...(body.billingCycle === undefined
-          ? {}
-          : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
-        ...(discoveryProfileIdPut !== undefined
-          ? { discoveryProfileId: discoveryProfileIdPut }
-          : {}),
-        updatedAt: now,
-      })
-      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
-      .returning({ id: plans.id });
-
-    if (updated.length === 0) {
-      return { tag: "notfound" as const };
-    }
-
-    if (parsedCapabilities) {
-      await tx
-        .delete(planCapabilityBundles)
-        .where(
-          and(
-            eq(planCapabilityBundles.planId, planId),
-            eq(planCapabilityBundles.clientId, appId),
-          ),
-        );
-      for (const capability of parsedCapabilities.capabilities) {
-        await tx.insert(planCapabilityBundles).values({
-          id: uuidv4(),
-          planId,
-          clientId: appId,
-          pipeline: capability.pipeline,
-          modelId: capability.modelId,
-          slaTargetP95Ms: null,
-          maxPricePerUnit: capability.maxPricePerUnit,
-          retailRateUsd: capability.retailRateUsd,
-          openmeterFeatureKey: resolveCapabilityFeatureKey({
-            clientId: appId,
-            planId,
-            pipeline: capability.pipeline,
-            modelId: capability.modelId,
-          }),
-          createdAt: now,
-        });
-      }
-    }
-
-    return { tag: "ok" as const };
+  const txnResult = await runPutPlanTransaction({
+    appId,
+    planId,
+    body,
+    putPlanName,
+    discoveryProfileIdPut,
+    parsedCapabilities,
+    now,
   });
 
-  if (txnResult.tag === "notfound") {
-    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-  }
-  if (txnResult.tag === "validation") {
-    return NextResponse.json({ error: txnResult.error }, { status: 400 });
-  }
-  if (txnResult.tag === "network_default") {
-    return NextResponse.json(
-      {
-        error:
-          "The Network Price default plan cannot be edited via this endpoint; update exclusions via PUT /manifest",
-      },
-      { status: 400 },
-    );
-  }
-  if (txnResult.tag === "starter_default") {
-    return NextResponse.json(
-      {
-        error:
-          "The Starter default plan cannot be edited via this endpoint; use PUT /starter-plan",
-      },
-      { status: 400 },
-    );
+  const txnErr = putTxnErrorResponse(txnResult);
+  if (txnErr) {
+    return txnErr;
   }
 
   const updatedStatus =
@@ -747,56 +919,10 @@ export async function DELETE(
     return NextResponse.json({ error: "planId is required" }, { status: 400 });
   }
 
-  const deleted = await db.transaction(async (tx) => {
-    const planRows = await tx
-      .select({
-        id: plans.id,
-        isNetworkDefault: plans.isNetworkDefault,
-        isStarterDefault: plans.isStarterDefault,
-      })
-      .from(plans)
-      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
-      .limit(1);
-
-    if (!planRows[0]) {
-      return false;
-    }
-    if (planRows[0].isNetworkDefault) {
-      return "network_default" as const;
-    }
-    if (planRows[0].isStarterDefault) {
-      return "starter_default" as const;
-    }
-
-    await tx
-      .delete(planCapabilityBundles)
-      .where(
-        and(
-          eq(planCapabilityBundles.planId, planId),
-          eq(planCapabilityBundles.clientId, appId),
-        ),
-      );
-    const removed = await tx
-      .delete(plans)
-      .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
-      .returning({ id: plans.id });
-    return removed.length > 0;
-  });
-
-  if (!deleted) {
-    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-  }
-  if (deleted === "network_default") {
-    return NextResponse.json(
-      { error: "The Network Price default plan cannot be deleted" },
-      { status: 409 },
-    );
-  }
-  if (deleted === "starter_default") {
-    return NextResponse.json(
-      { error: "The Starter default plan cannot be deleted" },
-      { status: 409 },
-    );
+  const deleted = await runDeletePlanTransaction(appId, planId);
+  const deleteErr = deleteTxnErrorResponse(deleted);
+  if (deleteErr) {
+    return deleteErr;
   }
 
   try {

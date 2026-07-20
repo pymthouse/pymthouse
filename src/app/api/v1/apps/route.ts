@@ -22,6 +22,89 @@ import { listAllAppsForAdmin, sortAppsByPriority } from "@/lib/user-apps";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const ADMIN_ROLES = new Set(["admin", "operator"]);
+const TOKEN_AUTH_METHODS = new Set([
+  "none",
+  "client_secret_post",
+  "client_secret_basic",
+]);
+
+function buildCreateAppClientUpdates(
+  body: Record<string, unknown>,
+  clientId: string,
+): Parameters<typeof updateClientConfig>[1] {
+  const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
+  const rawRedirectUris = body.redirectUris;
+  if (Array.isArray(rawRedirectUris) && rawRedirectUris.length > 0) {
+    const redirectUris = rawRedirectUris.filter(
+      (u: unknown): u is string => typeof u === "string" && u.trim().length > 0,
+    );
+    if (redirectUris.length > 0) {
+      clientUpdates.redirectUris = redirectUris.map((u) => u.trim());
+    }
+  }
+  if (
+    typeof body.tokenEndpointAuthMethod === "string" &&
+    TOKEN_AUTH_METHODS.has(body.tokenEndpointAuthMethod)
+  ) {
+    clientUpdates.tokenEndpointAuthMethod =
+      body.tokenEndpointAuthMethod as "none" | "client_secret_post" | "client_secret_basic";
+  }
+  if (typeof body.allowedScopes === "string" && body.allowedScopes.trim()) {
+    const validScopeValues = new Set(OIDC_SCOPES.map((s) => s.value));
+    const filtered = body.allowedScopes
+      .split(/[,\s]+/)
+      .filter((s: string) => s && validScopeValues.has(s))
+      .join(" ");
+    clientUpdates.allowedScopes = filtered || DEFAULT_OIDC_SCOPES;
+  }
+  // Resolve final redirect URIs early so we can sync authorization_code grant.
+  const finalRedirectUris = clientUpdates.redirectUris ?? [];
+
+  if (Array.isArray(body.grantTypes) && body.grantTypes.length > 0) {
+    const grantTypes = body.grantTypes.filter(
+      (v: unknown): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+    if (grantTypes.length > 0) {
+      clientUpdates.grantTypes = syncPublicClientGrantTypes(grantTypes, finalRedirectUris, clientId);
+    }
+  }
+
+  // Always ensure the grant list is consistent with redirect URIs.
+  if (clientUpdates.grantTypes) {
+    clientUpdates.grantTypes = syncPublicClientGrantTypes(
+      clientUpdates.grantTypes,
+      finalRedirectUris,
+      clientId,
+    );
+  }
+
+  if (
+    body.deviceThirdPartyInitiateLogin === true &&
+    typeof body.initiateLoginUri === "string" &&
+    body.initiateLoginUri.trim() &&
+    (clientUpdates.grantTypes ?? ["refresh_token"]).includes(DEVICE_CODE_GRANT)
+  ) {
+    const allowedScopes = (clientUpdates.allowedScopes ?? DEFAULT_OIDC_SCOPES)
+      .split(/[,\s]+/)
+      .filter(Boolean);
+    if (!allowedScopes.includes("users:token")) {
+      clientUpdates.allowedScopes = [...allowedScopes, "users:token"].join(" ");
+    }
+  }
+  return clientUpdates;
+}
+
+async function syncStarterPlanToOpenMeterIfAvailable(appId: string) {
+  if (!isHostedAdminClientAvailable()) {
+    return;
+  }
+  try {
+    const starter = await getOrCreateStarterPlan(appId);
+    await syncPlanToOpenMeter(starter.id);
+  } catch (err) {
+    console.error("Starter plan OpenMeter sync failed for new app:", err);
+  }
+}
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -133,64 +216,7 @@ export async function POST(request: NextRequest) {
 
   const { id: oidcRowId, clientId } = await createAppClient(name.trim());
 
-  const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
-  const rawRedirectUris = body.redirectUris;
-  if (Array.isArray(rawRedirectUris) && rawRedirectUris.length > 0) {
-    const redirectUris = rawRedirectUris.filter(
-      (u: unknown): u is string => typeof u === "string" && u.trim().length > 0,
-    );
-    if (redirectUris.length > 0) {
-      clientUpdates.redirectUris = redirectUris.map((u) => u.trim());
-    }
-  }
-  if (
-    typeof body.tokenEndpointAuthMethod === "string" &&
-    ["none", "client_secret_post", "client_secret_basic"].includes(body.tokenEndpointAuthMethod)
-  ) {
-    clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
-  }
-  if (typeof body.allowedScopes === "string" && body.allowedScopes.trim()) {
-    const validScopeValues = new Set(OIDC_SCOPES.map((s) => s.value));
-    const filtered = body.allowedScopes
-      .split(/[,\s]+/)
-      .filter((s: string) => s && validScopeValues.has(s))
-      .join(" ");
-    clientUpdates.allowedScopes = filtered || DEFAULT_OIDC_SCOPES;
-  }
-  // Resolve final redirect URIs early so we can sync authorization_code grant.
-  const finalRedirectUris = clientUpdates.redirectUris ?? [];
-
-  if (Array.isArray(body.grantTypes) && body.grantTypes.length > 0) {
-    const grantTypes = body.grantTypes.filter(
-      (v: unknown): v is string => typeof v === "string" && v.trim().length > 0,
-    );
-    if (grantTypes.length > 0) {
-      clientUpdates.grantTypes = syncPublicClientGrantTypes(grantTypes, finalRedirectUris, clientId);
-    }
-  }
-
-  // Always ensure the grant list is consistent with redirect URIs.
-  if (clientUpdates.grantTypes) {
-    clientUpdates.grantTypes = syncPublicClientGrantTypes(
-      clientUpdates.grantTypes,
-      finalRedirectUris,
-      clientId,
-    );
-  }
-
-  if (
-    body.deviceThirdPartyInitiateLogin === true &&
-    typeof body.initiateLoginUri === "string" &&
-    body.initiateLoginUri.trim() &&
-    (clientUpdates.grantTypes ?? ["refresh_token"]).includes(DEVICE_CODE_GRANT)
-  ) {
-    const allowedScopes = (clientUpdates.allowedScopes ?? DEFAULT_OIDC_SCOPES)
-      .split(/[,\s]+/)
-      .filter(Boolean);
-    if (!allowedScopes.includes("users:token")) {
-      clientUpdates.allowedScopes = [...allowedScopes, "users:token"].join(" ");
-    }
-  }
+  const clientUpdates = buildCreateAppClientUpdates(body, clientId);
   if (Object.keys(clientUpdates).length > 0) {
     await updateClientConfig(clientId, clientUpdates);
   }
@@ -231,14 +257,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (isHostedAdminClientAvailable()) {
-    try {
-      const starter = await getOrCreateStarterPlan(appId);
-      await syncPlanToOpenMeter(starter.id);
-    } catch (err) {
-      console.error("Starter plan OpenMeter sync failed for new app:", err);
-    }
-  }
+  await syncStarterPlanToOpenMeterIfAvailable(appId);
 
   resetProvider();
   await ensureProviderAdminMembership(userId, appId);
