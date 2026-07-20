@@ -51,6 +51,70 @@ function buildNodeRequest(
   return { req, res };
 }
 
+async function parseInteractionBody(
+  request: NextRequest,
+): Promise<{ action?: "approve" | "deny" }> {
+  try {
+    const contentType = request.headers.get("content-type") ?? "";
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+      const formData = await request.formData();
+      const action = formData.get("action");
+      if (action === "approve" || action === "deny") {
+        return { action };
+      }
+      return {};
+    }
+    return await request.json();
+  } catch {
+    // Allow login interactions that do not provide a JSON body.
+    return {};
+  }
+}
+
+async function buildInteractionResult(
+  provider: Awaited<ReturnType<typeof getProvider>>,
+  details: { prompt: { name: string }; params: Record<string, unknown> },
+  userId: string,
+  body: { action?: "approve" | "deny" },
+): Promise<Record<string, unknown>> {
+  const { prompt } = details;
+  if (prompt.name === "login") {
+    return {
+      login: {
+        accountId: userId,
+        remember: true,
+      },
+    };
+  }
+  if (prompt.name !== "consent") {
+    return {};
+  }
+  if (body.action === "deny") {
+    return {
+      error: "access_denied",
+      error_description: "User denied the authorization request",
+    };
+  }
+  // Grant the requested scopes (OIDC + resource)
+  const grant = new provider.Grant();
+  grant.clientId = details.params.client_id as string;
+  grant.accountId = userId;
+
+  const requestedScopes = details.params.scope as string;
+  if (requestedScopes) {
+    grant.addOIDCScope(requestedScopes);
+    grant.addResourceScope(getIssuer(), requestedScopes);
+  }
+
+  await grant.save();
+
+  return {
+    consent: {
+      grantId: grant.jti,
+    },
+  };
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ uid: string }> },
@@ -86,21 +150,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const { uid } = await params;
   const provider = await getProvider();
-  let body: { action?: "approve" | "deny" } = {};
-  try {
-    const contentType = request.headers.get("content-type") ?? "";
-    if (contentType.includes("application/x-www-form-urlencoded")) {
-      const formData = await request.formData();
-      const action = formData.get("action");
-      if (action === "approve" || action === "deny") {
-        body = { action };
-      }
-    } else {
-      body = await request.json();
-    }
-  } catch {
-    // Allow login interactions that do not provide a JSON body.
-  }
+  const body = await parseInteractionBody(request);
 
   // Require an authenticated NextAuth session for login/consent completion
   const session = await getServerSession(authOptions);
@@ -121,48 +171,8 @@ export async function POST(
 
   try {
     const { req, res } = buildNodeRequest("POST", uid, request);
-
     const details = await provider.interactionDetails(req, res);
-    const { prompt } = details;
-
-    let result: Record<string, unknown>;
-
-    if (prompt.name === "login") {
-      result = {
-        login: {
-          accountId: userId,
-          remember: true,
-        },
-      };
-    } else if (prompt.name === "consent") {
-      if (body.action === "deny") {
-        result = {
-          error: "access_denied",
-          error_description: "User denied the authorization request",
-        };
-      } else {
-        // Grant the requested scopes (OIDC + resource)
-        const grant = new provider.Grant();
-        grant.clientId = details.params.client_id as string;
-        grant.accountId = userId;
-
-        const requestedScopes = details.params.scope as string;
-        if (requestedScopes) {
-          grant.addOIDCScope(requestedScopes);
-          grant.addResourceScope(getIssuer(), requestedScopes);
-        }
-
-        await grant.save();
-
-        result = {
-          consent: {
-            grantId: grant.jti,
-          },
-        };
-      }
-    } else {
-      result = {};
-    }
+    const result = await buildInteractionResult(provider, details, userId, body);
 
     const redirectTo = await provider.interactionResult(req, res, result, {
       mergeWithLastSubmission: false,

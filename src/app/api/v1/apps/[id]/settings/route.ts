@@ -28,6 +28,131 @@ function extractOrigins(uris: string[]): string[] {
   return Array.from(origins);
 }
 
+function buildSettingsClientUpdates(
+  body: Record<string, unknown>,
+  client: typeof oidcClients.$inferSelect,
+  app: {
+    logoLightUrl: string | null;
+    websiteUrl: string | null;
+    privacyPolicyUrl: string | null;
+    tosUrl: string | null;
+  },
+): Parameters<typeof updateClientConfig>[1] {
+  const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
+
+  if (Array.isArray(body.redirectUris)) {
+    clientUpdates.redirectUris = body.redirectUris as string[];
+  }
+  if (Array.isArray(body.postLogoutRedirectUris)) {
+    clientUpdates.postLogoutRedirectUris = body.postLogoutRedirectUris as string[];
+  }
+  if (body.initiateLoginUri !== undefined) {
+    clientUpdates.initiateLoginUri = (body.initiateLoginUri as string) || null;
+  }
+  if (body.deviceThirdPartyInitiateLogin !== undefined) {
+    clientUpdates.deviceThirdPartyInitiateLogin = Boolean(
+      body.deviceThirdPartyInitiateLogin,
+    );
+  }
+  if (body.tokenEndpointAuthMethod !== undefined) {
+    clientUpdates.tokenEndpointAuthMethod =
+      body.tokenEndpointAuthMethod as "none" | "client_secret_post" | "client_secret_basic";
+  }
+
+  // Auto-sync branding from developerApps
+  clientUpdates.logoUri = app.logoLightUrl || null;
+  clientUpdates.clientUri = app.websiteUrl || null;
+  clientUpdates.policyUri = app.privacyPolicyUrl || null;
+  clientUpdates.tosUri = app.tosUrl || null;
+
+  const nextInitiateLoginUri =
+    body.initiateLoginUri !== undefined
+      ? ((body.initiateLoginUri as string) || null)
+      : client.initiateLoginUri;
+  const nextDeviceThirdParty =
+    body.deviceThirdPartyInitiateLogin !== undefined
+      ? Boolean(body.deviceThirdPartyInitiateLogin)
+      : client.deviceThirdPartyInitiateLogin === 1;
+
+  if (nextDeviceThirdParty && nextInitiateLoginUri?.trim()) {
+    const grantTypes = client.grantTypes.split(",").filter(Boolean);
+    if (grantTypes.includes(DEVICE_CODE_GRANT)) {
+      const allowedScopes = client.allowedScopes.split(/[,\s]+/).filter(Boolean);
+      if (!allowedScopes.includes("users:token")) {
+        clientUpdates.allowedScopes = [...allowedScopes, "users:token"].join(" ");
+      }
+    }
+  }
+
+  return clientUpdates;
+}
+
+function validateDeviceThirdPartySettings(
+  body: Record<string, unknown>,
+  client: typeof oidcClients.$inferSelect,
+): NextResponse | null {
+  let nextInitiateLoginUri = client.initiateLoginUri;
+  if (body.initiateLoginUri !== undefined) {
+    nextInitiateLoginUri = (body.initiateLoginUri as string) || null;
+  }
+  let nextDeviceThirdParty = client.deviceThirdPartyInitiateLogin === 1;
+  if (body.deviceThirdPartyInitiateLogin !== undefined) {
+    nextDeviceThirdParty = Boolean(body.deviceThirdPartyInitiateLogin);
+  }
+  if (!nextDeviceThirdParty) {
+    return null;
+  }
+  const uri = nextInitiateLoginUri?.trim();
+  if (!uri) {
+    return NextResponse.json(
+      {
+        error: "invalid_request",
+        error_description:
+          "Initiate login URI is required when device third-party login is enabled",
+      },
+      { status: 400 },
+    );
+  }
+  try {
+    validateInitiateLoginUri(uri);
+  } catch {
+    return NextResponse.json(
+      {
+        error: "invalid_request",
+        error_description:
+          "Initiate login URI must be a valid HTTPS URL (HTTP on localhost allowed in development)",
+      },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
+async function syncDomainWhitelistFromRedirects(
+  appId: string,
+  allRedirects: string[],
+) {
+  const origins = extractOrigins(allRedirects);
+  const existingDomains = await db
+    .select()
+    .from(appAllowedDomains)
+    .where(eq(appAllowedDomains.appId, appId));
+  const existingSet = new Set(existingDomains.map((d) => d.domain.toLowerCase()));
+
+  for (const origin of origins) {
+    const result = normalizeDomainWhitelist(origin);
+    if (!result.success) continue;
+    const normalized = result.normalized.toLowerCase();
+    if (existingSet.has(normalized)) continue;
+    await db.insert(appAllowedDomains).values({
+      id: uuidv4(),
+      appId,
+      domain: result.normalized,
+    });
+    existingSet.add(normalized);
+  }
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -66,79 +191,12 @@ export async function PUT(
 
   const body = await request.json();
 
-  // Build update payload from allowed fields
-  const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
-
-  if (Array.isArray(body.redirectUris)) {
-    clientUpdates.redirectUris = body.redirectUris;
-  }
-  if (Array.isArray(body.postLogoutRedirectUris)) {
-    clientUpdates.postLogoutRedirectUris = body.postLogoutRedirectUris;
-  }
-  if (body.initiateLoginUri !== undefined) {
-    clientUpdates.initiateLoginUri = body.initiateLoginUri || null;
-  }
-  if (body.deviceThirdPartyInitiateLogin !== undefined) {
-    clientUpdates.deviceThirdPartyInitiateLogin = Boolean(
-      body.deviceThirdPartyInitiateLogin,
-    );
-  }
-  if (body.tokenEndpointAuthMethod !== undefined) {
-    clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
+  const validationErr = validateDeviceThirdPartySettings(body, client);
+  if (validationErr) {
+    return validationErr;
   }
 
-  let nextInitiateLoginUri = client.initiateLoginUri;
-  if (body.initiateLoginUri !== undefined) {
-    nextInitiateLoginUri = body.initiateLoginUri || null;
-  }
-  let nextDeviceThirdParty =
-    client.deviceThirdPartyInitiateLogin === 1;
-  if (body.deviceThirdPartyInitiateLogin !== undefined) {
-    nextDeviceThirdParty = Boolean(body.deviceThirdPartyInitiateLogin);
-  }
-  if (nextDeviceThirdParty) {
-    const uri = nextInitiateLoginUri?.trim();
-    if (!uri) {
-      return NextResponse.json(
-        {
-          error: "invalid_request",
-          error_description:
-            "Initiate login URI is required when device third-party login is enabled",
-        },
-        { status: 400 },
-      );
-    }
-    try {
-      validateInitiateLoginUri(uri);
-    } catch {
-      return NextResponse.json(
-        {
-          error: "invalid_request",
-          error_description:
-            "Initiate login URI must be a valid HTTPS URL (HTTP on localhost allowed in development)",
-        },
-        { status: 400 },
-      );
-    }
-  }
-
-  if (nextDeviceThirdParty && nextInitiateLoginUri?.trim()) {
-    const grantTypes = client.grantTypes.split(",").filter(Boolean);
-    const hasDeviceCode = grantTypes.includes(DEVICE_CODE_GRANT);
-    if (hasDeviceCode) {
-      const allowedScopes = client.allowedScopes.split(/[,\s]+/).filter(Boolean);
-      if (!allowedScopes.includes("users:token")) {
-        clientUpdates.allowedScopes = [...allowedScopes, "users:token"].join(" ");
-      }
-    }
-  }
-
-  // Auto-sync branding from developerApps
-  clientUpdates.logoUri = app.logoLightUrl || null;
-  clientUpdates.clientUri = app.websiteUrl || null;
-  clientUpdates.policyUri = app.privacyPolicyUrl || null;
-  clientUpdates.tosUri = app.tosUrl || null;
-
+  const clientUpdates = buildSettingsClientUpdates(body, client, app);
   await updateClientConfig(client.clientId, clientUpdates);
 
   // Auto-populate domain whitelist from redirect URI origins
@@ -146,27 +204,7 @@ export async function PUT(
     ...(clientUpdates.redirectUris ?? JSON.parse(client.redirectUris) as string[]),
     ...(clientUpdates.postLogoutRedirectUris ?? []),
   ];
-  const origins = extractOrigins(allRedirects);
-
-  const existingDomains = await db
-    .select()
-    .from(appAllowedDomains)
-    .where(eq(appAllowedDomains.appId, app.id));
-  const existingSet = new Set(existingDomains.map((d) => d.domain.toLowerCase()));
-
-  for (const origin of origins) {
-    const result = normalizeDomainWhitelist(origin);
-    if (!result.success) continue;
-    const normalized = result.normalized.toLowerCase();
-    if (!existingSet.has(normalized)) {
-      await db.insert(appAllowedDomains).values({
-        id: uuidv4(),
-        appId: app.id,
-        domain: result.normalized,
-      });
-      existingSet.add(normalized);
-    }
-  }
+  await syncDomainWhitelistFromRedirects(app.id, allRedirects);
 
   // Reset provider so in-memory client cache picks up changes
   resetProvider();

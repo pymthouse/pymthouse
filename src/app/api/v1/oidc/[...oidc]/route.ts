@@ -50,6 +50,7 @@ const RESOURCE_REQUIRED_GRANTS = new Set([
 ]);
 
 const DEBUG_OIDC_LOGS = process.env.OIDC_DEBUG_LOGS === "1";
+const NO_STORE_HEADERS = { "Cache-Control": "no-store", Pragma: "no-cache" } as const;
 
 function requestedScopesFromParams(params: URLSearchParams): string[] {
   return (params.get("scope") || "")
@@ -72,6 +73,422 @@ function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
     );
   }
   return null;
+}
+
+function jsonNoStore(body: unknown, extraHeaders?: Record<string, string>): NextResponse {
+  return NextResponse.json(body, {
+    headers: { ...NO_STORE_HEADERS, ...extraHeaders },
+  });
+}
+
+async function handleMintSignerTokenGrant(
+  request: NextRequest,
+  exchangeParams: URLSearchParams,
+): Promise<NextResponse | null> {
+  if (!isMintUserSignerTokenRequest(exchangeParams)) {
+    return null;
+  }
+  const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
+    request,
+    exchangeParams,
+  );
+  try {
+    assertSignJobNotMixedWithAdmin(requestedScopesFromParams(exchangeParams));
+    const result = await handleMintUserSignerToken({
+      clientId,
+      clientSecret,
+      externalUserId: exchangeParams.get("external_user_id") || "",
+      scope: exchangeParams.get("scope"),
+    });
+    return jsonNoStore(result);
+  } catch (err) {
+    const response = mintSignerTokenErrorResponse(err);
+    if (response) {
+      return response;
+    }
+    console.error("[OIDC] mint user signer token error:", err);
+    return NextResponse.json(
+      { error: "server_error", error_description: "Internal error during token mint" },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleM2mOwnerSignJobGrant(
+  request: NextRequest,
+  exchangeParams: URLSearchParams,
+): Promise<NextResponse | null> {
+  if (!isM2mOwnerSignJobRequest(exchangeParams)) {
+    return null;
+  }
+  const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
+    request,
+    exchangeParams,
+  );
+  try {
+    assertSignJobNotMixedWithAdmin(requestedScopesFromParams(exchangeParams));
+    const result = await handleM2mOwnerSignJob({
+      clientId,
+      clientSecret,
+    });
+    return jsonNoStore(result);
+  } catch (err) {
+    const response = mintSignerTokenErrorResponse(err);
+    if (response) {
+      return response;
+    }
+    console.error("[OIDC] M2M owner sign:job mint error:", err);
+    return NextResponse.json(
+      { error: "server_error", error_description: "Internal error during token mint" },
+      { status: 500 },
+    );
+  }
+}
+
+async function tryDeviceApprovalExchange(
+  clientId: string,
+  clientSecret: string,
+  exchangeParams: URLSearchParams,
+  grantType: string,
+  subjectTokenType: string,
+  resourceParam: string | null,
+): Promise<NextResponse | null> {
+  if (
+    !isDeviceApprovalTokenExchangeRequest({
+      grantType,
+      subjectTokenType,
+      resource: resourceParam,
+    })
+  ) {
+    return null;
+  }
+  const result = await handleDeviceApprovalTokenExchange({
+    clientId,
+    clientSecret,
+    subjectToken: exchangeParams.get("subject_token") || "",
+    subjectTokenType,
+    resource: resourceParam,
+    requestedTokenType: exchangeParams.get("requested_token_type"),
+    audience: exchangeParams.getAll("audience"),
+  });
+  return jsonNoStore(result);
+}
+
+async function trySignerJwtExchange(
+  clientId: string,
+  clientSecret: string,
+  exchangeParams: URLSearchParams,
+  grantType: string,
+  subjectTokenType: string,
+  resourceParam: string | null,
+): Promise<NextResponse | null> {
+  if (
+    !isSignerJwtTokenExchangeRequest({
+      grantType,
+      subjectTokenType,
+      resource: resourceParam,
+      audience: exchangeParams.getAll("audience"),
+    })
+  ) {
+    return null;
+  }
+  const result = await handleSignerJwtTokenExchange({
+    clientId,
+    clientSecret,
+    subjectToken: exchangeParams.get("subject_token") || "",
+    subjectTokenType,
+    resource: resourceParam,
+    audience: exchangeParams.getAll("audience"),
+  });
+  return jsonNoStore(result, {
+    Deprecation: "true",
+    Link: '</api/v1/apps/{clientId}/oidc/token>; rel="successor-version"',
+    Sunset: "2026-10-01",
+  });
+}
+
+async function tryGatewayExchange(
+  clientId: string,
+  clientSecret: string,
+  exchangeParams: URLSearchParams,
+  grantType: string,
+  subjectTokenType: string,
+  resourceParam: string | null,
+): Promise<NextResponse | null> {
+  if (
+    !isGatewayTokenExchangeRequest({
+      grantType,
+      clientId,
+      subjectTokenType,
+      resource: resourceParam,
+      audience: exchangeParams.getAll("audience"),
+    })
+  ) {
+    return null;
+  }
+  const result = await handleGatewayTokenExchange({
+    clientId,
+    clientSecret,
+    subjectToken: exchangeParams.get("subject_token") || "",
+    subjectTokenType,
+    resource: resourceParam,
+    requestedTokenType: exchangeParams.get("requested_token_type"),
+    audience: exchangeParams.getAll("audience"),
+  });
+  return jsonNoStore(result);
+}
+
+async function handleTokenExchangeGrants(
+  request: NextRequest,
+  exchangeParams: URLSearchParams,
+  grantType: string,
+): Promise<NextResponse | null> {
+  if (!isTokenExchangeGrant(grantType)) {
+    return null;
+  }
+  const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
+    request,
+    exchangeParams,
+  );
+  const subjectTokenType = exchangeParams.get("subject_token_type") || "";
+  const resourceParam = exchangeParams.get("resource");
+  try {
+    const deviceApproval = await tryDeviceApprovalExchange(
+      clientId,
+      clientSecret,
+      exchangeParams,
+      grantType,
+      subjectTokenType,
+      resourceParam,
+    );
+    if (deviceApproval) {
+      return deviceApproval;
+    }
+
+    const signerJwt = await trySignerJwtExchange(
+      clientId,
+      clientSecret,
+      exchangeParams,
+      grantType,
+      subjectTokenType,
+      resourceParam,
+    );
+    if (signerJwt) {
+      return signerJwt;
+    }
+
+    const gateway = await tryGatewayExchange(
+      clientId,
+      clientSecret,
+      exchangeParams,
+      grantType,
+      subjectTokenType,
+      resourceParam,
+    );
+    if (gateway) {
+      return gateway;
+    }
+
+    const result = await handleTokenExchange({
+      clientId,
+      clientSecret,
+      subjectToken: exchangeParams.get("subject_token") || "",
+      subjectTokenType,
+      scope: exchangeParams.get("scope") || undefined,
+      resource: exchangeParams.get("resource") || undefined,
+    });
+    return jsonNoStore(result);
+  } catch (err) {
+    if (err instanceof TokenExchangeError) {
+      console.warn("[OIDC] token exchange rejected", {
+        code: err.code,
+        detail: err.message,
+      });
+      return NextResponse.json(
+        { error: err.code, error_description: err.publicDescription },
+        { status: 400 },
+      );
+    }
+    console.error("[OIDC] token exchange error:", err);
+    return NextResponse.json(
+      { error: "server_error", error_description: "Internal error during token exchange" },
+      { status: 500 },
+    );
+  }
+}
+
+async function maybeInterceptTokenEndpoint(
+  request: NextRequest,
+  path: string,
+  body: Buffer | null,
+): Promise<NextResponse | null> {
+  const contentType = request.headers.get("content-type") || "";
+  if (
+    request.method !== "POST" ||
+    path !== "/token" ||
+    !contentType.includes("application/x-www-form-urlencoded") ||
+    !body ||
+    body.length === 0
+  ) {
+    return null;
+  }
+
+  const exchangeParams = new URLSearchParams(body.toString("utf-8"));
+  const grantType = exchangeParams.get("grant_type") || "";
+
+  if (grantType === "refresh_token") {
+    const refreshToken = exchangeParams.get("refresh_token") || "";
+    const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
+      request,
+      exchangeParams,
+    );
+    const refreshed = await rotateProgrammaticRefreshToken({
+      refreshToken,
+      clientId,
+      clientSecret,
+    });
+    if (refreshed) {
+      return jsonNoStore(refreshed);
+    }
+  }
+
+  const mintResponse = await handleMintSignerTokenGrant(request, exchangeParams);
+  if (mintResponse) {
+    return mintResponse;
+  }
+
+  const m2mResponse = await handleM2mOwnerSignJobGrant(request, exchangeParams);
+  if (m2mResponse) {
+    return m2mResponse;
+  }
+
+  return handleTokenExchangeGrants(request, exchangeParams, grantType);
+}
+
+function injectResourceIndicatorIfNeeded(
+  request: NextRequest,
+  path: string,
+  body: Buffer | null,
+): Buffer | null {
+  const contentType = request.headers.get("content-type") || "";
+  if (
+    request.method !== "POST" ||
+    !contentType.includes("application/x-www-form-urlencoded") ||
+    !body ||
+    body.length === 0 ||
+    (path !== "/device/auth" && path !== "/token")
+  ) {
+    return body;
+  }
+  const params = new URLSearchParams(body.toString("utf-8"));
+  const grantType = params.get("grant_type");
+  const needsResource =
+    path === "/device/auth" || (!!grantType && RESOURCE_REQUIRED_GRANTS.has(grantType));
+  if (needsResource && !params.has("resource")) {
+    params.set("resource", getIssuer());
+    return Buffer.from(params.toString(), "utf-8");
+  }
+  return body;
+}
+
+function copyNodeHeadersToWeb(rawHeaders: ReturnType<ServerResponse["getHeaders"]>): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(rawHeaders)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        headers.append(key, String(v));
+      }
+    } else {
+      headers.set(key, String(value));
+    }
+  }
+  return headers;
+}
+
+function buildRedirectOidcResponse(
+  statusCode: number,
+  location: string,
+  externalOrigin: string,
+  registeredRedirectOriginsList: Set<string>,
+  trustedOidcOriginsSet: Set<string>,
+  rawHeaders: ReturnType<ServerResponse["getHeaders"]>,
+): NextResponse {
+  const allowedOrigins = new Set([
+    new URL(externalOrigin).origin,
+    ...registeredRedirectOriginsList,
+    ...trustedOidcOriginsSet,
+  ]);
+  const redirectResponse = NextResponse.redirect(
+    resolveRedirectLocation(location, externalOrigin, allowedOrigins),
+    statusCode as 301 | 302 | 303 | 307 | 308,
+  );
+  const setCookies = rawHeaders["set-cookie"];
+  if (setCookies) {
+    const cookies = Array.isArray(setCookies) ? setCookies : [setCookies];
+    for (const cookie of cookies) {
+      redirectResponse.headers.append("Set-Cookie", cookie);
+    }
+  }
+
+  const redirectSecureHeaders = getSecureHeaders(false);
+  for (const [key, value] of Object.entries(redirectSecureHeaders)) {
+    redirectResponse.headers.set(key, value);
+  }
+  return redirectResponse;
+}
+
+function rewriteDeviceAuthVerificationUri(
+  responseBody: Buffer,
+  path: string,
+  headers: Headers,
+  body: Buffer | null,
+  externalOrigin: string,
+): Buffer | null {
+  let finalBody: Buffer | null = responseBody.length > 0 ? responseBody : null;
+  const ct = headers.get("content-type") || "";
+  if (
+    !finalBody ||
+    !ct.includes("application/json") ||
+    path !== "/device/auth"
+  ) {
+    return finalBody;
+  }
+  try {
+    const json = JSON.parse(finalBody.toString("utf-8"));
+    if (!json.verification_uri) {
+      return finalBody;
+    }
+    const deviceParams = new URLSearchParams();
+    if (json.user_code) {
+      deviceParams.set("user_code", json.user_code);
+    }
+    if (body && body.length > 0) {
+      try {
+        const form = new URLSearchParams(body.toString("utf-8"));
+        const deviceClientId = form.get("client_id");
+        if (deviceClientId) {
+          deviceParams.set("client_id", deviceClientId);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    deviceParams.set("iss", getIssuer());
+    const qs = deviceParams.toString();
+    const verificationBase = `${externalOrigin}/oidc/device`;
+    json.verification_uri = verificationBase;
+    if (json.user_code) {
+      json.verification_uri_complete = qs
+        ? `${verificationBase}?${qs}`
+        : verificationBase;
+    }
+    finalBody = Buffer.from(JSON.stringify(json), "utf-8");
+    headers.set("content-length", String(finalBody.length));
+  } catch {
+    /* non-JSON body, pass through */
+  }
+  return finalBody;
 }
 
 /**
@@ -100,222 +517,17 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
   path = normalizedPath;
 
   // Create a Node.js IncomingMessage from the NextRequest
-  let body = request.body ? Buffer.from(await request.arrayBuffer()) : null;
+  let body: Buffer | null = request.body ? Buffer.from(await request.arrayBuffer()) : null;
 
-  // Intercept RFC 8693 token exchange before node-oidc-provider
-  const contentType = request.headers.get("content-type") || "";
-  if (
-    request.method === "POST" &&
-    path === "/token" &&
-    contentType.includes("application/x-www-form-urlencoded") &&
-    body &&
-    body.length > 0
-  ) {
-    const exchangeParams = new URLSearchParams(body.toString("utf-8"));
-    const grantType = exchangeParams.get("grant_type") || "";
-
-    if (grantType === "refresh_token") {
-      const refreshToken = exchangeParams.get("refresh_token") || "";
-      const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
-        request,
-        exchangeParams,
-      );
-      const refreshed = await rotateProgrammaticRefreshToken({
-        refreshToken,
-        clientId,
-        clientSecret,
-      });
-      if (refreshed) {
-        return NextResponse.json(refreshed, {
-          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-        });
-      }
-    }
-
-    if (isMintUserSignerTokenRequest(exchangeParams)) {
-      const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
-        request,
-        exchangeParams,
-      );
-      try {
-        assertSignJobNotMixedWithAdmin(requestedScopesFromParams(exchangeParams));
-        const result = await handleMintUserSignerToken({
-          clientId,
-          clientSecret,
-          externalUserId: exchangeParams.get("external_user_id") || "",
-          scope: exchangeParams.get("scope"),
-        });
-        return NextResponse.json(result, {
-          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-        });
-      } catch (err) {
-        const response = mintSignerTokenErrorResponse(err);
-        if (response) {
-          return response;
-        }
-        console.error("[OIDC] mint user signer token error:", err);
-        return NextResponse.json(
-          { error: "server_error", error_description: "Internal error during token mint" },
-          { status: 500 },
-        );
-      }
-    }
-
-    if (isM2mOwnerSignJobRequest(exchangeParams)) {
-      const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
-        request,
-        exchangeParams,
-      );
-      try {
-        assertSignJobNotMixedWithAdmin(requestedScopesFromParams(exchangeParams));
-        const result = await handleM2mOwnerSignJob({
-          clientId,
-          clientSecret,
-        });
-        return NextResponse.json(result, {
-          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-        });
-      } catch (err) {
-        const response = mintSignerTokenErrorResponse(err);
-        if (response) {
-          return response;
-        }
-        console.error("[OIDC] M2M owner sign:job mint error:", err);
-        return NextResponse.json(
-          { error: "server_error", error_description: "Internal error during token mint" },
-          { status: 500 },
-        );
-      }
-    }
-
-    if (isTokenExchangeGrant(grantType)) {
-      const { clientId, clientSecret } = clientCredentialsFromTokenRequest(
-        request,
-        exchangeParams,
-      );
-      const subjectTokenType = exchangeParams.get("subject_token_type") || "";
-      const resourceParam = exchangeParams.get("resource");
-      try {
-        if (
-          isDeviceApprovalTokenExchangeRequest({
-            grantType,
-            subjectTokenType,
-            resource: resourceParam,
-          })
-        ) {
-          const result = await handleDeviceApprovalTokenExchange({
-            clientId,
-            clientSecret,
-            subjectToken: exchangeParams.get("subject_token") || "",
-            subjectTokenType,
-            resource: resourceParam,
-            requestedTokenType: exchangeParams.get("requested_token_type"),
-            audience: exchangeParams.getAll("audience"),
-          });
-          return NextResponse.json(result, {
-            headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-          });
-        }
-
-        if (
-          isSignerJwtTokenExchangeRequest({
-            grantType,
-            subjectTokenType,
-            resource: resourceParam,
-            audience: exchangeParams.getAll("audience"),
-          })
-        ) {
-          const result = await handleSignerJwtTokenExchange({
-            clientId,
-            clientSecret,
-            subjectToken: exchangeParams.get("subject_token") || "",
-            subjectTokenType,
-            resource: resourceParam,
-            audience: exchangeParams.getAll("audience"),
-          });
-          return NextResponse.json(result, {
-            headers: {
-              "Cache-Control": "no-store",
-              Pragma: "no-cache",
-              Deprecation: "true",
-              Link: '</api/v1/apps/{clientId}/oidc/token>; rel="successor-version"',
-              "Sunset": "2026-10-01",
-            },
-          });
-        }
-
-        if (
-          isGatewayTokenExchangeRequest({
-            grantType,
-            clientId,
-            subjectTokenType,
-            resource: resourceParam,
-            audience: exchangeParams.getAll("audience"),
-          })
-        ) {
-          const result = await handleGatewayTokenExchange({
-            clientId,
-            clientSecret,
-            subjectToken: exchangeParams.get("subject_token") || "",
-            subjectTokenType,
-            resource: resourceParam,
-            requestedTokenType: exchangeParams.get("requested_token_type"),
-            audience: exchangeParams.getAll("audience"),
-          });
-          return NextResponse.json(result, {
-            headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-          });
-        }
-
-        const result = await handleTokenExchange({
-          clientId,
-          clientSecret,
-          subjectToken: exchangeParams.get("subject_token") || "",
-          subjectTokenType,
-          scope: exchangeParams.get("scope") || undefined,
-          resource: exchangeParams.get("resource") || undefined,
-        });
-        return NextResponse.json(result, {
-          headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-        });
-      } catch (err) {
-        if (err instanceof TokenExchangeError) {
-          console.warn("[OIDC] token exchange rejected", {
-            code: err.code,
-            detail: err.message,
-          });
-          return NextResponse.json(
-            { error: err.code, error_description: err.publicDescription },
-            { status: 400 },
-          );
-        }
-        console.error("[OIDC] token exchange error:", err);
-        return NextResponse.json(
-          { error: "server_error", error_description: "Internal error during token exchange" },
-          { status: 500 },
-        );
-      }
-    }
+  const intercepted = await maybeInterceptTokenEndpoint(request, path, body);
+  if (intercepted) {
+    return intercepted;
   }
 
   // RFC 8707 strict mode: ensure resource indicator is present on token-issuing
   // endpoints so access tokens are always audience-bound JWTs.
-  if (
-    request.method === "POST" &&
-    contentType.includes("application/x-www-form-urlencoded") &&
-    body &&
-    body.length > 0 &&
-    (path === "/device/auth" || path === "/token")
-  ) {
-    const params = new URLSearchParams(body.toString("utf-8"));
-    const grantType = params.get("grant_type");
-    const needsResource =
-      path === "/device/auth" || (grantType && RESOURCE_REQUIRED_GRANTS.has(grantType));
-    if (needsResource && !params.has("resource")) {
-      params.set("resource", getIssuer());
-      body = Buffer.from(params.toString(), "utf-8");
-    }
-  }
+  body = injectResourceIndicatorIfNeeded(request, path, body);
+
   const socket = new Socket();
   const req = new IncomingMessage(socket);
   req.method = request.method;
@@ -368,113 +580,54 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
 
       const responseBody = Buffer.concat(chunks);
       const statusCode = res.statusCode || 200;
-      const headers = new Headers();
-
-      // Copy response headers
       const rawHeaders = res.getHeaders();
-      for (const [key, value] of Object.entries(rawHeaders)) {
-        if (value !== undefined) {
-          if (Array.isArray(value)) {
-            for (const v of value) {
-              headers.append(key, String(v));
-            }
-          } else {
-            headers.set(key, String(value));
-          }
-        }
-      }
+      const headers = copyNodeHeadersToWeb(rawHeaders);
 
       // Handle redirects — must forward Set-Cookie so the _interaction cookie reaches the browser
       if ([301, 302, 303, 307, 308].includes(statusCode)) {
         const location = headers.get("location");
         if (location) {
-          const allowedOrigins = new Set([
-            new URL(externalOrigin).origin,
-            ...registeredRedirectOriginsList,
-            ...trustedOidcOriginsSet,
-          ]);
-          const redirectResponse = NextResponse.redirect(
-            resolveRedirectLocation(location, externalOrigin, allowedOrigins),
-            statusCode as 301 | 302 | 303 | 307 | 308,
+          resolve(
+            buildRedirectOidcResponse(
+              statusCode,
+              location,
+              externalOrigin,
+              registeredRedirectOriginsList,
+              trustedOidcOriginsSet,
+              rawHeaders,
+            ),
           );
-          const setCookies = rawHeaders["set-cookie"];
-          if (setCookies) {
-            const cookies = Array.isArray(setCookies) ? setCookies : [setCookies];
-            for (const cookie of cookies) {
-              redirectResponse.headers.append("Set-Cookie", cookie);
-            }
-          }
-          
-          // Add security headers to redirect responses
-          const redirectSecureHeaders = getSecureHeaders(false);
-          for (const [key, value] of Object.entries(redirectSecureHeaders)) {
-            redirectResponse.headers.set(key, value);
-          }
-          
-          resolve(redirectResponse);
           return originalEnd(chunk, ...args);
         }
       }
 
       // Rewrite verification_uri in device auth responses to point to our
       // custom React UI instead of the provider's built-in HTML form.
-      let finalBody: Buffer | null = responseBody.length > 0 ? responseBody : null;
-      const ct = headers.get("content-type") || "";
-      if (
-        finalBody &&
-        ct.includes("application/json") &&
-        path === "/device/auth"
-      ) {
-        try {
-          const json = JSON.parse(finalBody.toString("utf-8"));
-          if (json.verification_uri) {
-            const deviceParams = new URLSearchParams();
-            if (json.user_code) {
-              deviceParams.set("user_code", json.user_code);
-            }
-            if (body && body.length > 0) {
-              try {
-                const form = new URLSearchParams(body.toString("utf-8"));
-                const deviceClientId = form.get("client_id");
-                if (deviceClientId) {
-                  deviceParams.set("client_id", deviceClientId);
-                }
-              } catch {
-                /* ignore */
-              }
-            }
-                       deviceParams.set("iss", getIssuer());
-            const qs = deviceParams.toString();
-            const verificationBase = `${externalOrigin}/oidc/device`;
-            json.verification_uri = verificationBase;
-            if (json.user_code) {
-              json.verification_uri_complete = qs
-                ? `${verificationBase}?${qs}`
-                : verificationBase;
-            }
-            finalBody = Buffer.from(JSON.stringify(json), "utf-8");
-            headers.set("content-length", String(finalBody.length));
-          }
-        } catch { /* non-JSON body, pass through */ }
-      }
+      const finalBody = rewriteDeviceAuthVerificationUri(
+        responseBody,
+        path,
+        headers,
+        body,
+        externalOrigin,
+      );
 
       // Determine if this is a custom domain request
       const requestHost = req.headers["x-forwarded-host"] || req.headers.host || "";
       const hostStr = Array.isArray(requestHost) ? requestHost[0] : requestHost;
       const isCustomDomain = await isVerifiedCustomDomain(hostStr);
-      
+
       // Add security headers
       const secureHeaders = getSecureHeaders(isCustomDomain);
       for (const [key, value] of Object.entries(secureHeaders)) {
         headers.set(key, value);
       }
 
-      const nextResponse = new NextResponse(
-        finalBody ? new Uint8Array(finalBody) : null,
-        { status: statusCode, headers },
+      resolve(
+        new NextResponse(finalBody ? new Uint8Array(finalBody) : null, {
+          status: statusCode,
+          headers,
+        }),
       );
-
-      resolve(nextResponse);
       return originalEnd(chunk, ...args);
     } as any;
 

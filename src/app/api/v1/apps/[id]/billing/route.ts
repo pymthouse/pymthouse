@@ -39,33 +39,102 @@ function buildBillingSubscriptionPayload(input: {
   return null;
 }
 
+async function resolveAppForBilling(
+  clientId: string,
+  request: NextRequest,
+): Promise<{ app: NonNullable<Awaited<ReturnType<typeof getProviderApp>>> } | { error: NextResponse }> {
+  const clientAuth = await authenticateAppClient(request);
+  if (clientAuth?.appId === clientId) {
+    const app = await getProviderApp(clientId);
+    if (!app) {
+      return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+    }
+    return { app };
+  }
+
+  let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
+  try {
+    providerAuth = await getAuthorizedProviderApp(clientId);
+  } catch (err) {
+    console.error("getAuthorizedProviderApp failed", err);
+    providerAuth = null;
+  }
+  if (!providerAuth?.app) {
+    return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  }
+  return { app: providerAuth.app };
+}
+
+async function loadBillingPlanRow(
+  appId: string,
+  ownerSubscription: (typeof subscriptions.$inferSelect) | null,
+) {
+  if (ownerSubscription) {
+    const pr = await db
+      .select()
+      .from(plans)
+      .where(eq(plans.id, ownerSubscription.planId))
+      .limit(1);
+    if (pr[0]) {
+      return pr[0];
+    }
+  }
+  const fallbackPlans = await db
+    .select()
+    .from(plans)
+    .where(and(eq(plans.clientId, appId), eq(plans.status, "active")))
+    .orderBy(desc(plans.updatedAt))
+    .limit(1);
+  return fallbackPlans[0] ?? null;
+}
+
+function resolveBillingPeriod(
+  openMeterOwnerSubscription: Awaited<ReturnType<typeof verifyOpenMeterSubscriptionId>>,
+  ownerSubscription: (typeof subscriptions.$inferSelect) | null,
+): { periodStart: string; periodEnd: string } {
+  if (openMeterOwnerSubscription?.activeFrom && openMeterOwnerSubscription?.activeTo) {
+    return {
+      periodStart: openMeterOwnerSubscription.activeFrom,
+      periodEnd: openMeterOwnerSubscription.activeTo,
+    };
+  }
+  if (ownerSubscription?.currentPeriodStart && ownerSubscription?.currentPeriodEnd) {
+    return {
+      periodStart: ownerSubscription.currentPeriodStart,
+      periodEnd: ownerSubscription.currentPeriodEnd,
+    };
+  }
+  const cal = calendarMonthBoundsUtc(new Date());
+  return { periodStart: cal.start, periodEnd: cal.end };
+}
+
+function computeOverageUnits(
+  planType: string,
+  includedUnits: bigint | null | undefined,
+  totalUnits: bigint,
+): string {
+  if (
+    (planType === "subscription" || planType === "usage") &&
+    includedUnits != null
+  ) {
+    const included = BigInt(includedUnits);
+    if (totalUnits > included) {
+      return (totalUnits - included).toString();
+    }
+  }
+  return "0";
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const clientAuth = await authenticateAppClient(request);
-
-  let app: Awaited<ReturnType<typeof getProviderApp>> | null = null;
-  if (clientAuth?.appId === clientId) {
-    app = await getProviderApp(clientId);
-  } else {
-    let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
-    try {
-      providerAuth = await getAuthorizedProviderApp(clientId);
-    } catch (err) {
-      console.error("getAuthorizedProviderApp failed", err);
-      providerAuth = null;
-    }
-    if (!providerAuth) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    app = providerAuth.app;
+  const resolved = await resolveAppForBilling(clientId, request);
+  if ("error" in resolved) {
+    return resolved.error;
   }
-
-  if (!app) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const { app } = resolved;
 
   if (!requireOpenMeterForUsageReads()) {
     return NextResponse.json(
@@ -95,25 +164,7 @@ export async function GET(
     .limit(1);
   const ownerSubscription = ownerSubRows[0] ?? null;
 
-  let planRow: typeof plans.$inferSelect | null = null;
-  if (ownerSubscription) {
-    const pr = await db
-      .select()
-      .from(plans)
-      .where(eq(plans.id, ownerSubscription.planId))
-      .limit(1);
-    planRow = pr[0] ?? null;
-  }
-
-  if (!planRow) {
-    const fallbackPlans = await db
-      .select()
-      .from(plans)
-      .where(and(eq(plans.clientId, app.id), eq(plans.status, "active")))
-      .orderBy(desc(plans.updatedAt))
-      .limit(1);
-    planRow = fallbackPlans[0] ?? null;
-  }
+  const planRow = await loadBillingPlanRow(app.id, ownerSubscription);
 
   let openMeterOwnerSubscription: Awaited<
     ReturnType<typeof verifyOpenMeterSubscriptionId>
@@ -128,22 +179,10 @@ export async function GET(
     );
   }
 
-  let periodStart: string;
-  let periodEnd: string;
-  if (openMeterOwnerSubscription?.activeFrom && openMeterOwnerSubscription?.activeTo) {
-    periodStart = openMeterOwnerSubscription.activeFrom;
-    periodEnd = openMeterOwnerSubscription.activeTo;
-  } else if (
-    ownerSubscription?.currentPeriodStart &&
-    ownerSubscription?.currentPeriodEnd
-  ) {
-    periodStart = ownerSubscription.currentPeriodStart;
-    periodEnd = ownerSubscription.currentPeriodEnd;
-  } else {
-    const cal = calendarMonthBoundsUtc(new Date());
-    periodStart = cal.start;
-    periodEnd = cal.end;
-  }
+  const { periodStart, periodEnd } = resolveBillingPeriod(
+    openMeterOwnerSubscription,
+    ownerSubscription,
+  );
 
   const [omRows, omDashboard] = await Promise.all([
     queryOpenMeterUsage({
@@ -185,17 +224,8 @@ export async function GET(
 
   const planType = planRow?.type ?? "free";
   const totalUnits = 0n;
-  let overageUnits = "0";
-  let overageWei = "0";
-  if (
-    (planType === "subscription" || planType === "usage") &&
-    planRow?.includedUnits != null
-  ) {
-    const included = BigInt(planRow.includedUnits);
-    if (totalUnits > included) {
-      overageUnits = (totalUnits - included).toString();
-    }
-  }
+  const overageUnits = computeOverageUnits(planType, planRow?.includedUnits, totalUnits);
+  const overageWei = "0";
 
   const includedUsdMicros = planRow?.includedUsdMicros
     ? BigInt(planRow.includedUsdMicros)
