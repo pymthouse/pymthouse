@@ -5,6 +5,7 @@ import { CREATE_SIGNED_TICKET_EVENT_TYPE } from "./constants";
 import {
   coerceIngestedEvent,
   coerceIngestedEvents,
+  collectAdminSubjectsFromMeterRows,
   eventClientId,
   eventMatchesAdminSignedTicket,
   eventMatchesClientIdFilter,
@@ -259,4 +260,53 @@ test("coerceIngestedEvents unwraps items/data envelopes and drops junk", () => {
   assert.equal(rows.length, 2);
   assert.equal(rows[0]?.event.id, "evt-1");
   assert.equal(rows[1]?.event.id, "flat-2");
+});
+
+test("collectAdminSubjectsFromMeterRows prefers CloudEvent subject", () => {
+  const subjects = collectAdminSubjectsFromMeterRows(
+    [
+      {
+        subject: "app_story:eu-1",
+        value: 10,
+        groupBy: { client_id: "app_story", external_user_id: "eu-1" },
+      },
+      {
+        subject: "owner-uuid-1",
+        value: 3,
+        groupBy: { client_id: "app_story", external_user_id: "owner-uuid-1" },
+      },
+      {
+        subject: "app_other:eu-2",
+        value: 99,
+        groupBy: { client_id: "app_other", external_user_id: "eu-2" },
+      },
+    ],
+    new Set(["app_story"]),
+  );
+  assert.ok(subjects.includes("app_story:eu-1"));
+  assert.ok(subjects.includes("owner-uuid-1"));
+  assert.ok(subjects.includes("eu-1"));
+  assert.ok(!subjects.includes("app_other:eu-2"));
+});
+
+test("collectAdminSubjectsFromMeterRows expands external_user_id without subject", () => {
+  const subjects = collectAdminSubjectsFromMeterRows(
+    [
+      {
+        subject: null,
+        value: "5",
+        groupBy: {
+          client_id: "app_98575870d7ae33589a3f0660",
+          external_user_id: "eu-story",
+        },
+      },
+    ],
+    new Set(["app_98575870d7ae33589a3f0660"]),
+  );
+  assert.ok(subjects.includes("app_98575870d7ae33589a3f0660:eu-story"));
+  assert.ok(subjects.includes("eu-story"));
+  assert.ok(subjects.includes("owner:eu-story"));
+  assert.ok(
+    subjects.includes("app_98575870d7ae33589a3f0660:owner:eu-story"),
+  );
 });
