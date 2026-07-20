@@ -129,6 +129,9 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
     echo "" >/data/.eth-password
   fi
   ARGS="-remoteSigner -network=${SIGNER_NETWORK:-arbitrum-one-mainnet} -httpAddr=127.0.0.1:${SIGNER_PORT} -cliAddr=127.0.0.1:4935 -ethUrl=${ETH_RPC_URL:-https://arb1.arbitrum.io/rpc} -ethPassword=/data/.eth-password -datadir=/data -v=99"
+  # Raise max payment EV above go-livepeer default (20k gwei) so large BYOC/batch
+  # fees can settle in fewer tickets without hitting -maxTotalEV before the 100-ticket cap.
+  ARGS="$ARGS -maxTotalEV=${SIGNER_MAX_TOTAL_EV:-100000000000000}"
   # Pinned CI binaries may predate -remoteSignerUsageIdentityMode (feat/remote-signing-identity).
   if /usr/local/bin/livepeer -help 2>&1 | grep -q 'remoteSignerUsageIdentityMode'; then
     ARGS="$ARGS -remoteSignerUsageIdentityMode=${REMOTE_SIGNER_USAGE_IDENTITY_MODE:-trusted_headers}"

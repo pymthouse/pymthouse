@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  formatExactUsdMicrosString,
   formatUsdFromWei,
   formatUsdMicrosString,
 } from "@/lib/format-usd-micros";
@@ -98,7 +99,9 @@ function pipelineModelLabel(pipeline: string, modelId: string): string {
 function requestFeeLabel(row: SignedTicketRequestRow): string {
   const fromWei = formatUsdFromWei(row.feeWei, row.ethUsdPrice);
   if (fromWei) return fromWei;
-  return formatUsdMicrosString(row.networkFeeUsdMicros, 4) ?? "$0";
+  // Exact ingest may store fractional micros (e.g. "0.932"); the integer-only
+  // formatter would treat those as invalid and the row would falsely show $0.
+  return formatExactUsdMicrosString(row.networkFeeUsdMicros) ?? "$0";
 }
 
 function requestFeeTitle(row: SignedTicketRequestRow): string {

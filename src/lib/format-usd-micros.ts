@@ -103,6 +103,49 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
   }
 }
 
+/** Format a non-negative dollar amount from whole + fractional digit string. */
+function formatDollarParts(whole: bigint, fracDigits: string): string {
+  const frac = trimFracDigitZeros(
+    fracDigits.length > 12 ? fracDigits.slice(0, 12) : fracDigits,
+  );
+  if (frac.length === 0) {
+    return `$${whole.toString()}`;
+  }
+  return `$${whole.toString()}.${frac}`;
+}
+
+/**
+ * Parse Wei strings from collector / OpenMeter (`"123"`, `"123.0"`, scientific).
+ * Returns null when missing, non-numeric, or non-positive.
+ */
+function parseWeiString(raw: string): bigint | null {
+  const t = raw.trim();
+  if (!t) return null;
+  if (/^\d+$/.test(t)) {
+    try {
+      const wei = BigInt(t);
+      return wei > 0n ? wei : null;
+    } catch {
+      return null;
+    }
+  }
+  // Bloblang float.string() may emit "123.0" or scientific notation.
+  if (/^\d+\.0+$/.test(t)) {
+    try {
+      const wei = BigInt(t.slice(0, t.indexOf(".")));
+      return wei > 0n ? wei : null;
+    } catch {
+      return null;
+    }
+  }
+  if (!/^\d+(\.\d+)?([eE][+-]?\d+)?$/.test(t)) return null;
+  const asNumber = Number(t);
+  if (!Number.isFinite(asNumber) || asNumber <= 0) return null;
+  if (asNumber > Number.MAX_SAFE_INTEGER) return null;
+  const wei = BigInt(Math.trunc(asNumber));
+  return wei > 0n ? wei : null;
+}
+
 /**
  * Format exact USD from Wei and ETH/USD price:
  *   usd = fee_wei * eth_usd / 1e18
@@ -114,15 +157,13 @@ export function formatUsdFromWei(
   ethUsdPrice: string | null | undefined,
 ): string | null {
   if (feeWei == null || ethUsdPrice == null) return null;
-  const weiTrim = feeWei.trim();
   const priceTrim = ethUsdPrice.trim();
-  if (!weiTrim || !priceTrim) return null;
-  if (!/^\d+$/.test(weiTrim)) return null;
+  if (!priceTrim) return null;
   const price = Number(priceTrim);
   if (!Number.isFinite(price) || price <= 0) return null;
   try {
-    const wei = BigInt(weiTrim);
-    if (wei <= 0n) return null;
+    const wei = parseWeiString(feeWei);
+    if (wei == null) return null;
     // dollars = wei * price / 1e18 ≈ (wei * floor(price*1e6)) / 1e24
     const ethUsdMicros = BigInt(Math.floor(price * 1_000_000));
     const product = wei * ethUsdMicros;
@@ -130,24 +171,37 @@ export function formatUsdFromWei(
     const dollarWhole = product / DOLLAR_DIV;
     const dollarRem = product % DOLLAR_DIV;
     if (dollarWhole === 0n && dollarRem === 0n) return null;
-    let frac = dollarRem.toString().padStart(24, "0");
-    while (frac.endsWith("0")) {
-      frac = frac.slice(0, -1);
-    }
-    // Cap display at 12 fraction digits for readability.
-    if (frac.length > 12) {
-      frac = frac.slice(0, 12);
-      while (frac.endsWith("0")) {
-        frac = frac.slice(0, -1);
-      }
-    }
-    if (frac.length === 0) {
-      return `$${dollarWhole.toString()}`;
-    }
-    return `$${dollarWhole.toString()}.${frac}`;
+    return formatDollarParts(dollarWhole, dollarRem.toString().padStart(24, "0"));
   } catch {
     return null;
   }
+}
+
+/**
+ * Format ticket/request USD from integer or fractional micros (exact ingest).
+ * Fractional values are rendered exactly so sub-micro tickets never appear as $0.
+ * Integer micros keep the ledger floor label via {@link formatUsdMicrosString}.
+ */
+export function formatExactUsdMicrosString(
+  microsStr: string | null | undefined,
+): string | null {
+  if (microsStr == null || microsStr === "") return null;
+  const t = microsStr.trim();
+  if (isIntegerMicrosString(t)) {
+    return formatUsdMicrosString(t);
+  }
+  if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(t)) return null;
+  const micros = Number(t);
+  if (!Number.isFinite(micros) || micros === 0) return null;
+  const negative = micros < 0;
+  const dollars = Math.abs(micros) / 1_000_000;
+  // 12 fraction digits matches formatUsdFromWei display cap.
+  let fixed = dollars.toFixed(12);
+  if (fixed.includes(".")) {
+    fixed = fixed.replace(/\.?0+$/, "");
+  }
+  if (fixed === "0") return null;
+  return `${negative ? "-" : ""}$${fixed}`;
 }
 
 /** 1 cent = 10_000 USD micros. */

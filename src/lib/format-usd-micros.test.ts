@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ceilUsdMicrosToCents,
+  formatExactUsdMicrosString,
   formatUsdFromWei,
   formatUsdMicrosDisplay,
   formatUsdMicrosString,
@@ -70,6 +71,17 @@ test("formatUsdFromWei renders full sub-micro ticket valuation", () => {
   assert.ok(label.startsWith("$0.000000"));
   assert.equal(formatUsdFromWei("0", "1897.485"), null);
   assert.equal(formatUsdFromWei(null, "1897.485"), null);
+  // Collector/OpenMeter may emit float-formatted Wei strings.
+  assert.ok(formatUsdFromWei("131568070.0", "1897.485")?.startsWith("$0.000000"));
+  assert.ok(formatUsdFromWei("1.3156807e8", "1897.485")?.startsWith("$0.000000"));
+});
+
+test("formatExactUsdMicrosString renders fractional ingest micros", () => {
+  assert.equal(formatExactUsdMicrosString("0.932"), "$0.000000932");
+  assert.equal(formatExactUsdMicrosString("932"), "$0.000932");
+  assert.equal(formatExactUsdMicrosString("15"), "< $0.0001");
+  assert.equal(formatExactUsdMicrosString("0"), null);
+  assert.equal(formatExactUsdMicrosString("0.0"), null);
 });
 
 test("ceilUsdMicrosToCents rounds invoice lines up to the next cent", () => {
