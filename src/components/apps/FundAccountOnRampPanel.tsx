@@ -305,11 +305,12 @@ export default function FundAccountOnRampPanel({
       clientState,
       httpClient,
     });
-    if (prereqError) {
-      setError(prereqError);
+    if (prereqError || !httpClient) {
+      setError(prereqError ?? "Turnkey client is not ready. Refresh and try again.");
       setPhase("error");
       return;
     }
+    const turnkeyClient = httpClient;
 
     pollAbortRef.current?.abort();
     const pollAbort = new AbortController();
@@ -328,7 +329,7 @@ export default function FundAccountOnRampPanel({
         throw new Error("Turnkey session is missing organization context.");
       }
 
-      const initResult = await httpClient.initFiatOnRamp({
+      const initResult = await turnkeyClient.initFiatOnRamp({
         organizationId,
         onrampProvider: FiatOnRampProvider.MOONPAY,
         walletAddress,
@@ -364,7 +365,7 @@ export default function FundAccountOnRampPanel({
       }
 
       const terminalStatus = await pollUntilTerminal(
-        httpClient,
+        turnkeyClient,
         initResult.onRampTransactionId,
         organizationId,
         pollAbort.signal,
