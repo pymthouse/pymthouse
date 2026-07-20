@@ -112,18 +112,109 @@ function subscriptionViewFromCreateResult(
   };
 }
 
-async function createStarterSubscriptionWithRecovery(input: {
+type StarterRecoveryInput = {
   client: OpenMeter;
   customerId: string;
   clientId: string;
   starter: typeof plans.$inferSelect;
   planKey: string;
-}): Promise<{
+};
+
+type StarterRecoveryResult = {
   subscription: OpenMeterSubscriptionView | null;
   starter: typeof plans.$inferSelect;
   created: boolean;
-}> {
-  let activeStarter = input.starter;
+};
+
+function createdStarterResult(
+  createdSub: NonNullable<Awaited<ReturnType<OpenMeter["subscriptions"]["create"]>>>,
+  planKey: string,
+  starter: typeof plans.$inferSelect,
+): StarterRecoveryResult {
+  return {
+    subscription: subscriptionViewFromCreateResult(
+      createdSub,
+      planKey,
+      starter.openmeterPlanId,
+    ),
+    starter,
+    created: true,
+  };
+}
+
+async function recreateAfterPlanNotFound(
+  input: StarterRecoveryInput,
+  starter: typeof plans.$inferSelect,
+): Promise<StarterRecoveryResult> {
+  const sync = await syncPlanToOpenMeter(starter.id);
+  if (!sync.ok) {
+    throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
+  }
+  const activeStarter = await refreshStarterPlan(starter.id);
+  const createdSub = await createStarterOpenMeterSubscription({
+    client: input.client,
+    customerId: input.customerId,
+    starter: activeStarter,
+    planKey: input.planKey,
+  });
+  if (!createdSub?.id) {
+    throw new Error("Failed to create OpenMeter Starter subscription after plan sync");
+  }
+  return createdStarterResult(createdSub, input.planKey, activeStarter);
+}
+
+async function recoverFromConflict(
+  input: StarterRecoveryInput,
+  starter: typeof plans.$inferSelect,
+  originalErr: unknown,
+): Promise<StarterRecoveryResult> {
+  const existing = await findOpenMeterSubscriptionByPlanKey(
+    input.client,
+    input.customerId,
+    input.planKey,
+    { openmeterPlanId: starter.openmeterPlanId },
+  );
+  if (existing) {
+    return { subscription: existing, starter, created: false };
+  }
+
+  await applyFreeBillingProfileToCustomer({
+    client: input.client,
+    customerId: input.customerId,
+  });
+  try {
+    const createdSub = await createStarterOpenMeterSubscription({
+      client: input.client,
+      customerId: input.customerId,
+      starter,
+      planKey: input.planKey,
+    });
+    if (createdSub?.id) {
+      return createdStarterResult(createdSub, input.planKey, starter);
+    }
+  } catch (retryErr) {
+    const existingAfterRetry = await findOpenMeterSubscriptionByPlanKey(
+      input.client,
+      input.customerId,
+      input.planKey,
+      { openmeterPlanId: starter.openmeterPlanId },
+    );
+    if (existingAfterRetry) {
+      return {
+        subscription: existingAfterRetry,
+        starter,
+        created: false,
+      };
+    }
+    throw retryErr;
+  }
+  throw originalErr;
+}
+
+async function createStarterSubscriptionWithRecovery(
+  input: StarterRecoveryInput,
+): Promise<StarterRecoveryResult> {
+  const activeStarter = input.starter;
   try {
     const createdSub = await createStarterOpenMeterSubscription({
       client: input.client,
@@ -134,91 +225,13 @@ async function createStarterSubscriptionWithRecovery(input: {
     if (!createdSub?.id) {
       throw new Error("Failed to create OpenMeter Starter subscription");
     }
-    return {
-      subscription: subscriptionViewFromCreateResult(
-        createdSub,
-        input.planKey,
-        activeStarter.openmeterPlanId,
-      ),
-      starter: activeStarter,
-      created: true,
-    };
+    return createdStarterResult(createdSub, input.planKey, activeStarter);
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
-      const sync = await syncPlanToOpenMeter(activeStarter.id);
-      if (!sync.ok) {
-        throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
-      }
-      activeStarter = await refreshStarterPlan(activeStarter.id);
-      const createdSub = await createStarterOpenMeterSubscription({
-        client: input.client,
-        customerId: input.customerId,
-        starter: activeStarter,
-        planKey: input.planKey,
-      });
-      if (!createdSub?.id) {
-        throw new Error("Failed to create OpenMeter Starter subscription after plan sync");
-      }
-      return {
-        subscription: subscriptionViewFromCreateResult(
-          createdSub,
-          input.planKey,
-          activeStarter.openmeterPlanId,
-        ),
-        starter: activeStarter,
-        created: true,
-      };
+      return recreateAfterPlanNotFound(input, activeStarter);
     }
     if (isOpenMeterConflictError(err)) {
-      const existing = await findOpenMeterSubscriptionByPlanKey(
-        input.client,
-        input.customerId,
-        input.planKey,
-        { openmeterPlanId: activeStarter.openmeterPlanId },
-      );
-      if (existing) {
-        return { subscription: existing, starter: activeStarter, created: false };
-      }
-
-      await applyFreeBillingProfileToCustomer({
-        client: input.client,
-        customerId: input.customerId,
-      });
-      try {
-        const createdSub = await createStarterOpenMeterSubscription({
-          client: input.client,
-          customerId: input.customerId,
-          starter: activeStarter,
-          planKey: input.planKey,
-        });
-        if (createdSub?.id) {
-          return {
-            subscription: subscriptionViewFromCreateResult(
-              createdSub,
-              input.planKey,
-              activeStarter.openmeterPlanId,
-            ),
-            starter: activeStarter,
-            created: true,
-          };
-        }
-      } catch (retryErr) {
-        const existingAfterRetry = await findOpenMeterSubscriptionByPlanKey(
-          input.client,
-          input.customerId,
-          input.planKey,
-          { openmeterPlanId: activeStarter.openmeterPlanId },
-        );
-        if (existingAfterRetry) {
-          return {
-            subscription: existingAfterRetry,
-            starter: activeStarter,
-            created: false,
-          };
-        }
-        throw retryErr;
-      }
-      throw err;
+      return recoverFromConflict(input, activeStarter, err);
     }
     throw err;
   }

@@ -132,6 +132,199 @@ function expiresInFromPayload(payload: Record<string, unknown>): number {
   return Math.max(1, exp - now);
 }
 
+function tokenClientIdFromPayload(rec: Record<string, unknown>): string | null {
+  if (typeof rec.client_id === "string") return rec.client_id;
+  if (typeof rec.azp === "string") return rec.azp;
+  return null;
+}
+
+async function loadConfidentialDeviceApprovalClient(
+  dbConn: DrizzleDb,
+  clientId: string,
+  clientSecret: string,
+  validateSecret: typeof validateClientSecret,
+) {
+  if (!(await validateSecret(clientId, clientSecret))) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "Invalid client credentials",
+      "Invalid client credentials",
+    );
+  }
+
+  const clientRows = await dbConn
+    .select()
+    .from(oidcClients)
+    .where(eq(oidcClients.clientId, clientId))
+    .limit(1);
+  const m2mRow = clientRows[0];
+  if (!m2mRow?.clientSecretHash) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "Client not found or not confidential",
+      "Invalid client credentials",
+    );
+  }
+
+  if (
+    !hasScope(m2mRow.allowedScopes, "device:approve") &&
+    !hasScope(m2mRow.allowedScopes, "users:token")
+  ) {
+    throw new TokenExchangeError(
+      "invalid_scope",
+      "Requires device:approve or users:token on the confidential client",
+      "Missing required scope for device approval token exchange",
+    );
+  }
+
+  return m2mRow;
+}
+
+function normalizeDeviceUserCodeFromResource(
+  resource: string | null | undefined,
+): string {
+  const resourceStr = resource?.trim() ?? "";
+  if (!resourceStr.startsWith(DEVICE_CODE_RESOURCE_PREFIX)) {
+    throw new TokenExchangeError(
+      "invalid_target",
+      `resource must start with ${DEVICE_CODE_RESOURCE_PREFIX}`,
+      "Invalid resource for device approval",
+    );
+  }
+
+  const userCodeRaw = parseDeviceCodeFromResource(resourceStr);
+  if (!userCodeRaw) {
+    throw new TokenExchangeError(
+      "invalid_target",
+      "device user_code missing from resource",
+      "Invalid resource for device approval",
+    );
+  }
+  return normalizeUserCode(userCodeRaw);
+}
+
+async function resolvePublicClientIdForDeviceExchange(
+  dbConn: DrizzleDb,
+  m2mInternalId: string,
+): Promise<string> {
+  let publicClientId: string | null;
+  try {
+    publicClientId = await resolvePublicClientIdForOidcRow(dbConn, m2mInternalId);
+  } catch (err) {
+    if (err instanceof DeveloperAppSiblingAmbiguousError) {
+      console.error("[device-token-exchange] ambiguous developer app mapping", {
+        message: err.message,
+        conflictingDeveloperAppIds: err.conflictingDeveloperAppIds,
+      });
+      throw new TokenExchangeError(
+        "invalid_request",
+        "Ambiguous developer app mapping for this client",
+        "Multiple developer apps found for this client",
+      );
+    }
+    throw err;
+  }
+  if (!publicClientId) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "No developer app linked to this client",
+      "Invalid client credentials",
+    );
+  }
+  return publicClientId;
+}
+
+async function resolveDeveloperAppForPublicClient(
+  dbConn: DrizzleDb,
+  publicClientId: string,
+): Promise<string> {
+  const publicOidcRows = await dbConn
+    .select({
+      id: oidcClients.id,
+      deviceThirdPartyInitiateLogin: oidcClients.deviceThirdPartyInitiateLogin,
+    })
+    .from(oidcClients)
+    .where(eq(oidcClients.clientId, publicClientId))
+    .limit(1);
+  const publicOidc = publicOidcRows[0];
+  if (!publicOidc) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "Public client not found",
+      "Public client not found",
+    );
+  }
+  if (publicOidc.deviceThirdPartyInitiateLogin !== 1) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "Device third-party login is not enabled for this client",
+      "Device third-party login is not enabled for this client",
+    );
+  }
+
+  const devAppRows = await dbConn
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .where(eq(developerApps.oidcClientId, publicOidc.id))
+    .limit(1);
+  const developerAppId = devAppRows[0]?.id;
+  if (!developerAppId) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "Developer app not found",
+      "Developer app not found",
+    );
+  }
+  return developerAppId;
+}
+
+async function resolveAccountIdFromSubjectToken(
+  dbConn: DrizzleDb,
+  subjectToken: string,
+  publicClientId: string,
+  developerAppId: string,
+  verifySubject: typeof verifyAccessToken,
+  resolveEndUser: typeof findOrCreateAppEndUser,
+): Promise<{ accountId: string; payload: Record<string, unknown> }> {
+  const payload = await verifySubject(subjectToken);
+  if (!payload || typeof payload.sub !== "string" || !payload.sub) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token is not a valid access token for this issuer",
+      "Invalid subject token",
+    );
+  }
+
+  const rec = payload as Record<string, unknown>;
+  const tokenClientId = tokenClientIdFromPayload(rec);
+  if (!tokenClientId || tokenClientId !== publicClientId) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token must have been issued to this app's public client_id",
+      "Invalid subject token",
+    );
+  }
+
+  // subject_token `sub` is an app_users.id (see programmatic-tokens.ts), but
+  // node-oidc-provider `findAccount` resolves `users`/`end_users`. Translate to
+  // the end_users.id so the bound grant is servable when the CLI polls /token.
+  const appUserRows = await dbConn
+    .select({ externalUserId: appUsers.externalUserId })
+    .from(appUsers)
+    .where(eq(appUsers.id, payload.sub))
+    .limit(1);
+  const externalUserId = appUserRows[0]?.externalUserId;
+  if (!externalUserId) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token sub does not map to an app user",
+      "Invalid subject token",
+    );
+  }
+  const { id: accountId } = await resolveEndUser(developerAppId, externalUserId);
+  return { accountId, payload: rec };
+}
+
 export async function handleDeviceApprovalTokenExchange(
   params: {
     clientId: string;
@@ -172,16 +365,7 @@ export async function handleDeviceApprovalTokenExchange(
     audience: audienceParams,
   } = params;
 
-  if (!(await validateSecret(clientId, clientSecret))) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "Invalid client credentials",
-      "Invalid client credentials",
-    );
-  }
-
-  const normalizedSubjectTokenType = subjectTokenType.trim();
-  if (normalizedSubjectTokenType !== SUBJECT_ACCESS_TOKEN_TYPE) {
+  if (subjectTokenType.trim() !== SUBJECT_ACCESS_TOKEN_TYPE) {
     throw new TokenExchangeError(
       "invalid_request",
       `subject_token_type must be ${SUBJECT_ACCESS_TOKEN_TYPE}`,
@@ -189,159 +373,32 @@ export async function handleDeviceApprovalTokenExchange(
     );
   }
 
-  const clientRows = await dbConn
-    .select()
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
-  const m2mRow = clientRows[0];
-  if (!m2mRow?.clientSecretHash) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "Client not found or not confidential",
-      "Invalid client credentials",
-    );
-  }
-
-  if (
-    !hasScope(m2mRow.allowedScopes, "device:approve") &&
-    !hasScope(m2mRow.allowedScopes, "users:token")
-  ) {
-    throw new TokenExchangeError(
-      "invalid_scope",
-      "Requires device:approve or users:token on the confidential client",
-      "Missing required scope for device approval token exchange",
-    );
-  }
-
+  const m2mRow = await loadConfidentialDeviceApprovalClient(
+    dbConn,
+    clientId,
+    clientSecret,
+    validateSecret,
+  );
   assertRequestedTokenTypeForDeviceApproval(requestedTokenType);
-
-  const resourceStr = resource?.trim() ?? "";
-  if (!resourceStr.startsWith(DEVICE_CODE_RESOURCE_PREFIX)) {
-    throw new TokenExchangeError(
-      "invalid_target",
-      `resource must start with ${DEVICE_CODE_RESOURCE_PREFIX}`,
-      "Invalid resource for device approval",
-    );
-  }
-
-  const userCodeRaw = parseDeviceCodeFromResource(resourceStr);
-  if (!userCodeRaw) {
-    throw new TokenExchangeError(
-      "invalid_target",
-      "device user_code missing from resource",
-      "Invalid resource for device approval",
-    );
-  }
-  const normalizedUserCode = normalizeUserCode(userCodeRaw);
-
+  const normalizedUserCode = normalizeDeviceUserCodeFromResource(resource);
   assertDeviceApprovalAudiences(audienceParams ?? []);
 
-  let publicClientId: string | null;
-  try {
-    publicClientId = await resolvePublicClientIdForOidcRow(dbConn, m2mRow.id);
-  } catch (err) {
-    if (err instanceof DeveloperAppSiblingAmbiguousError) {
-      console.error("[device-token-exchange] ambiguous developer app mapping", {
-        message: err.message,
-        conflictingDeveloperAppIds: err.conflictingDeveloperAppIds,
-      });
-      throw new TokenExchangeError(
-        "invalid_request",
-        "Ambiguous developer app mapping for this client",
-        "Multiple developer apps found for this client",
-      );
-    }
-    throw err;
-  }
-  if (!publicClientId) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "No developer app linked to this client",
-      "Invalid client credentials",
-    );
-  }
-
-  const payload = await verifySubject(subjectToken);
-  if (!payload || typeof payload.sub !== "string" || !payload.sub) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token is not a valid access token for this issuer",
-      "Invalid subject token",
-    );
-  }
-
-  const rec = payload as Record<string, unknown>;
-  const tokenClientId =
-    typeof rec.client_id === "string"
-      ? rec.client_id
-      : typeof rec.azp === "string"
-        ? rec.azp
-        : null;
-  if (!tokenClientId || tokenClientId !== publicClientId) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token must have been issued to this app's public client_id",
-      "Invalid subject token",
-    );
-  }
-
-  const publicOidcRows = await dbConn
-    .select({
-      id: oidcClients.id,
-      deviceThirdPartyInitiateLogin: oidcClients.deviceThirdPartyInitiateLogin,
-    })
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, publicClientId))
-    .limit(1);
-  const publicOidc = publicOidcRows[0];
-  if (!publicOidc) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "Public client not found",
-      "Public client not found",
-    );
-  }
-  if (publicOidc.deviceThirdPartyInitiateLogin !== 1) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "Device third-party login is not enabled for this client",
-      "Device third-party login is not enabled for this client",
-    );
-  }
-  const publicInternalId = publicOidc.id;
-
-  const devAppRows = await dbConn
-    .select({ id: developerApps.id })
-    .from(developerApps)
-    .where(eq(developerApps.oidcClientId, publicInternalId))
-    .limit(1);
-  const developerAppId = devAppRows[0]?.id;
-  if (!developerAppId) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "Developer app not found",
-      "Developer app not found",
-    );
-  }
-
-  // subject_token `sub` is an app_users.id (see programmatic-tokens.ts), but
-  // node-oidc-provider `findAccount` resolves `users`/`end_users`. Translate to
-  // the end_users.id so the bound grant is servable when the CLI polls /token.
-  const appUserRows = await dbConn
-    .select({ externalUserId: appUsers.externalUserId })
-    .from(appUsers)
-    .where(eq(appUsers.id, payload.sub))
-    .limit(1);
-  const externalUserId = appUserRows[0]?.externalUserId;
-  if (!externalUserId) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token sub does not map to an app user",
-      "Invalid subject token",
-    );
-  }
-  const { id: accountId } = await resolveEndUser(developerAppId, externalUserId);
+  const publicClientId = await resolvePublicClientIdForDeviceExchange(
+    dbConn,
+    m2mRow.id,
+  );
+  const developerAppId = await resolveDeveloperAppForPublicClient(
+    dbConn,
+    publicClientId,
+  );
+  const { accountId, payload: rec } = await resolveAccountIdFromSubjectToken(
+    dbConn,
+    subjectToken,
+    publicClientId,
+    developerAppId,
+    verifySubject,
+    resolveEndUser,
+  );
 
   const approve = await approveDevice(
     normalizedUserCode,
@@ -355,9 +412,6 @@ export async function handleDeviceApprovalTokenExchange(
       approve.description,
     );
   }
-
-  const scopeStr = scopeStringFromAccessPayload(rec);
-  const expiresIn = expiresInFromPayload(rec);
 
   const correlationId = newCorrelationId();
   await auditLog({
@@ -382,8 +436,8 @@ export async function handleDeviceApprovalTokenExchange(
   return {
     access_token: subjectToken,
     token_type: "Bearer",
-    expires_in: expiresIn,
-    scope: scopeStr,
+    expires_in: expiresInFromPayload(rec),
+    scope: scopeStringFromAccessPayload(rec),
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
   };
 }

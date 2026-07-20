@@ -90,36 +90,41 @@ export async function registerClient(config: OidcClientConfig): Promise<void> {
   });
 }
 
+const COMMON_REDIRECT_PORTS = [
+  "3000", "3001", "3002", "3003", "3004", "3005",
+  "4000", "4001", "4200", "5000", "5173", "5174",
+  "8000", "8080", "8081", "8888", "9000",
+];
+
+function tryAddOrigin(origins: Set<string>, uri: string): void {
+  try {
+    origins.add(new URL(uri).origin);
+  } catch {
+    /* malformed URI, skip */
+  }
+}
+
+function addRedirectUriOrigins(origins: Set<string>, uri: string): void {
+  if (!uri.includes("*")) {
+    tryAddOrigin(origins, uri);
+    return;
+  }
+  for (const port of COMMON_REDIRECT_PORTS) {
+    tryAddOrigin(origins, uri.replace(/:\*/, `:${port}`).replace(/\*/g, ""));
+  }
+}
+
 /**
  * Return the set of allowed redirect URI origins for all registered clients.
  */
 export async function getRegisteredRedirectOrigins(): Promise<Set<string>> {
   const rows = await db.select().from(oidcClients);
   const origins = new Set<string>();
-  const commonPorts = [
-    "3000", "3001", "3002", "3003", "3004", "3005",
-    "4000", "4001", "4200", "5000", "5173", "5174",
-    "8000", "8080", "8081", "8888", "9000",
-  ];
 
   for (const row of rows) {
     const uris = JSON.parse(row.redirectUris) as string[];
     for (const uri of uris) {
-      if (uri.includes("*")) {
-        for (const port of commonPorts) {
-          try {
-            origins.add(new URL(uri.replace(/:\*/, `:${port}`).replace(/\*/g, "")).origin);
-          } catch {
-            /* malformed URI, skip */
-          }
-        }
-      } else {
-        try {
-          origins.add(new URL(uri).origin);
-        } catch {
-          /* malformed URI, skip */
-        }
-      }
+      addRedirectUriOrigins(origins, uri);
     }
   }
 
@@ -563,35 +568,30 @@ export async function loadM2mOidcClientSummary(
   };
 }
 
-export async function updateClientConfig(
+type ClientConfigPatch = {
+  displayName?: string;
+  redirectUris?: string[];
+  allowedScopes?: string;
+  grantTypes?: string[];
+  tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+  postLogoutRedirectUris?: string[];
+  deviceThirdPartyInitiateLogin?: boolean;
+  initiateLoginUri?: string | null;
+  logoUri?: string | null;
+  policyUri?: string | null;
+  tosUri?: string | null;
+  clientUri?: string | null;
+};
+
+function buildClientConfigUpdates(
   clientId: string,
-  config: {
-    displayName?: string;
-    redirectUris?: string[];
-    allowedScopes?: string;
-    grantTypes?: string[];
-    tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
-    postLogoutRedirectUris?: string[];
-    deviceThirdPartyInitiateLogin?: boolean;
-    initiateLoginUri?: string | null;
-    logoUri?: string | null;
-    policyUri?: string | null;
-    tosUri?: string | null;
-    clientUri?: string | null;
-  },
-): Promise<boolean> {
-  const rows = await db
-    .select()
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
-  const existing = rows[0];
-
-  if (!existing) return false;
-
+  config: ClientConfigPatch,
+): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
   if (config.displayName !== undefined) updates.displayName = config.displayName;
-  if (config.redirectUris !== undefined) updates.redirectUris = JSON.stringify(config.redirectUris);
+  if (config.redirectUris !== undefined) {
+    updates.redirectUris = JSON.stringify(config.redirectUris);
+  }
   if (config.allowedScopes !== undefined) {
     updates.allowedScopes = normalizePublicAllowedScopes(
       config.allowedScopes,
@@ -610,12 +610,30 @@ export async function updateClientConfig(
   if (config.deviceThirdPartyInitiateLogin !== undefined) {
     updates.deviceThirdPartyInitiateLogin = config.deviceThirdPartyInitiateLogin ? 1 : 0;
   }
-  if (config.initiateLoginUri !== undefined) updates.initiateLoginUri = config.initiateLoginUri;
+  if (config.initiateLoginUri !== undefined) {
+    updates.initiateLoginUri = config.initiateLoginUri;
+  }
   if (config.logoUri !== undefined) updates.logoUri = config.logoUri;
   if (config.policyUri !== undefined) updates.policyUri = config.policyUri;
   if (config.tosUri !== undefined) updates.tosUri = config.tosUri;
   if (config.clientUri !== undefined) updates.clientUri = config.clientUri;
+  return updates;
+}
 
+export async function updateClientConfig(
+  clientId: string,
+  config: ClientConfigPatch,
+): Promise<boolean> {
+  const rows = await db
+    .select()
+    .from(oidcClients)
+    .where(eq(oidcClients.clientId, clientId))
+    .limit(1);
+  const existing = rows[0];
+
+  if (!existing) return false;
+
+  const updates = buildClientConfigUpdates(clientId, config);
   if (Object.keys(updates).length === 0) return true;
 
   await db.update(oidcClients).set(updates).where(eq(oidcClients.clientId, clientId));

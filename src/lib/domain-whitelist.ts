@@ -41,6 +41,93 @@ function getDefaultPort(scheme: string): number {
   return scheme === "http" ? DEFAULT_HTTP_PORT : DEFAULT_HTTPS_PORT;
 }
 
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === SLASH_CHAR_CODE) {
+    end--;
+  }
+  return end !== value.length ? value.slice(0, end) : value;
+}
+
+function stripAuthoritySuffix(value: string): string {
+  const end = value.search(/[/?#]/);
+  return end !== -1 ? value.slice(0, end) : value;
+}
+
+function parseSchemeAndHostPort(trimmed: string): {
+  scheme: string | null;
+  hostPort: string;
+} {
+  const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+  if (schemeMatch) {
+    return {
+      scheme: schemeMatch[1].toLowerCase(),
+      hostPort: stripAuthoritySuffix(trimmed.slice(schemeMatch[0].length)),
+    };
+  }
+  return {
+    scheme: null,
+    hostPort: stripAuthoritySuffix(trimmed),
+  };
+}
+
+function parseHostAndPort(hostPort: string): {
+  host: string;
+  port: number | null;
+} {
+  const ipv6Match = hostPort.match(/^\[([^\]]+)\](?::(\d+))?$/);
+  if (ipv6Match) {
+    return {
+      host: `[${ipv6Match[1]}]`,
+      port: ipv6Match[2] ? parseInt(ipv6Match[2], 10) : null,
+    };
+  }
+
+  const lastColon = hostPort.lastIndexOf(":");
+  if (lastColon !== -1 && hostPort.indexOf(":") === lastColon) {
+    const possiblePort = hostPort.slice(lastColon + 1);
+    if (/^\d+$/.test(possiblePort)) {
+      return {
+        host: hostPort.slice(0, lastColon),
+        port: parseInt(possiblePort, 10),
+      };
+    }
+  }
+
+  return { host: hostPort, port: null };
+}
+
+function validateSchemeForHost(
+  scheme: string,
+  host: string,
+): NormalizationError | null {
+  if (scheme !== "http" && scheme !== "https") {
+    return {
+      success: false,
+      error: `Unsupported scheme: ${scheme} (only http and https are allowed)`,
+    };
+  }
+  if (scheme === "http" && !isLocalhost(host.replace(/[\[\]]/g, ""))) {
+    return {
+      success: false,
+      error: "http scheme is only allowed for localhost, 127.0.0.1, and [::1]",
+    };
+  }
+  return null;
+}
+
+function buildCanonicalOrigin(
+  scheme: string,
+  host: string,
+  port: number | null,
+): string {
+  const defaultPort = getDefaultPort(scheme);
+  const effectivePort = port === defaultPort ? null : port;
+  return effectivePort !== null
+    ? `${scheme}://${host}:${effectivePort}`
+    : `${scheme}://${host}`;
+}
+
 export function normalizeDomainWhitelist(input: string): NormalizeResult {
   if (typeof input !== "string") {
     return { success: false, error: "Domain must be a string" };
@@ -61,63 +148,10 @@ export function normalizeDomainWhitelist(input: string): NormalizeResult {
   // Strip trailing slashes without a regex (e.g. "example.com///").
   // Using a bounded index scan guarantees O(n) worst case and avoids the
   // polynomial-regex ReDoS surface flagged by CodeQL (js/polynomial-redos).
-  let end = trimmed.length;
-  while (end > 0 && trimmed.charCodeAt(end - 1) === SLASH_CHAR_CODE) {
-    end--;
-  }
-  if (end !== trimmed.length) {
-    trimmed = trimmed.slice(0, end);
-  }
+  trimmed = stripTrailingSlashes(trimmed);
 
-  // Parse scheme and host:port
-  let scheme: string | null = null;
-  let hostPort: string;
-
-  const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):\/\//i);
-  if (schemeMatch) {
-    scheme = schemeMatch[1].toLowerCase();
-    hostPort = trimmed.slice(schemeMatch[0].length);
-    // For full URLs, ignore path/query/fragment and keep only authority.
-    const authorityEnd = hostPort.search(/[/?#]/);
-    if (authorityEnd !== -1) {
-      hostPort = hostPort.slice(0, authorityEnd);
-    }
-  } else {
-    // No scheme provided - determine based on host
-    hostPort = trimmed;
-    // For host input without scheme, allow accidental path/query suffixes.
-    const hostEnd = hostPort.search(/[/?#]/);
-    if (hostEnd !== -1) {
-      hostPort = hostPort.slice(0, hostEnd);
-    }
-  }
-
-  // Parse host and port
-  let host: string;
-  let port: number | null = null;
-
-  // IPv6 addresses in URLs are wrapped in brackets like [::1]
-  const ipv6Match = hostPort.match(/^\[([^\]]+)\](?::(\d+))?$/);
-  if (ipv6Match) {
-    host = `[${ipv6Match[1]}]`;
-    if (ipv6Match[2]) {
-      port = parseInt(ipv6Match[2], 10);
-    }
-  } else {
-    const lastColon = hostPort.lastIndexOf(":");
-    if (lastColon !== -1 && hostPort.indexOf(":") === lastColon) {
-      // Only one colon, likely host:port
-      const possiblePort = hostPort.slice(lastColon + 1);
-      if (/^\d+$/.test(possiblePort)) {
-        host = hostPort.slice(0, lastColon);
-        port = parseInt(possiblePort, 10);
-      } else {
-        host = hostPort;
-      }
-    } else {
-      host = hostPort;
-    }
-  }
+  const { scheme: parsedScheme, hostPort } = parseSchemeAndHostPort(trimmed);
+  let { host, port } = parseHostAndPort(hostPort);
 
   if (!host) {
     return { success: false, error: "Invalid domain: no host found" };
@@ -125,36 +159,19 @@ export function normalizeDomainWhitelist(input: string): NormalizeResult {
 
   host = host.toLowerCase();
 
-  // Validate port
-  if (port !== null) {
-    if (port < 1 || port > 65535) {
-      return { success: false, error: `Invalid port: ${port} (must be 1-65535)` };
-    }
+  if (port !== null && (port < 1 || port > 65535)) {
+    return { success: false, error: `Invalid port: ${port} (must be 1-65535)` };
   }
 
-  // Determine scheme if not provided
-  if (!scheme) {
-    scheme = isLocalhost(host.replace(/[\[\]]/g, "")) ? "http" : "https";
-  }
+  const scheme =
+    parsedScheme ??
+    (isLocalhost(host.replace(/[\[\]]/g, "")) ? "http" : "https");
 
-  // Validate scheme
-  if (scheme !== "http" && scheme !== "https") {
-    return { success: false, error: `Unsupported scheme: ${scheme} (only http and https are allowed)` };
-  }
+  const schemeError = validateSchemeForHost(scheme, host);
+  if (schemeError) return schemeError;
 
-  // http is only allowed for localhost
-  if (scheme === "http" && !isLocalhost(host.replace(/[\[\]]/g, ""))) {
-    return { success: false, error: "http scheme is only allowed for localhost, 127.0.0.1, and [::1]" };
-  }
-
-  // Normalize port: omit if it's the default for the scheme
-  const defaultPort = getDefaultPort(scheme);
-  if (port === defaultPort) {
-    port = null;
-  }
-
-  // Build canonical origin
-  const normalized = port !== null ? `${scheme}://${host}:${port}` : `${scheme}://${host}`;
-
-  return { success: true, normalized };
+  return {
+    success: true,
+    normalized: buildCanonicalOrigin(scheme, host, port),
+  };
 }

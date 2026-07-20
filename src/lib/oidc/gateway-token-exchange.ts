@@ -89,6 +89,138 @@ function assertGatewayResource(resource: string | null | undefined): void {
   );
 }
 
+async function loadGatewayCallerRow(
+  dbConn: DrizzleDb,
+  clientId: string,
+  clientSecret: string,
+  validateSecret: typeof validateClientSecret,
+) {
+  if (!(await validateSecret(clientId, clientSecret))) {
+    throw new TokenExchangeError("invalid_client", "Invalid client credentials");
+  }
+
+  const clientRows = await dbConn
+    .select()
+    .from(oidcClients)
+    .where(eq(oidcClients.clientId, clientId))
+    .limit(1);
+  const callerRow = clientRows[0];
+  if (!callerRow?.clientSecretHash) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "Client not found or not confidential",
+    );
+  }
+
+  if (!hasScope(callerRow.allowedScopes, "users:token")) {
+    throw new TokenExchangeError(
+      "invalid_scope",
+      "Requires users:token on the confidential client",
+    );
+  }
+
+  if (
+    billingPatternFromAllowedScopesString(callerRow.allowedScopes) !== "per_user"
+  ) {
+    throw new TokenExchangeError(
+      "invalid_request",
+      "Remote signer session exchange requires per-user billing (users:token scope on the OAuth client)",
+    );
+  }
+
+  return callerRow;
+}
+
+async function resolveGatewaySibling(
+  dbConn: DrizzleDb,
+  callerInternalId: string,
+  resolveSibling: typeof resolveDeveloperAppAndPublicClientForOidcRow,
+): Promise<{ developerAppId: string; publicClientId: string }> {
+  let sibling: { developerAppId: string; publicClientId: string } | null;
+  try {
+    sibling = await resolveSibling(dbConn, callerInternalId);
+  } catch (err) {
+    if (err instanceof DeveloperAppSiblingAmbiguousError) {
+      console.error("[gateway-token-exchange] ambiguous developer app mapping", {
+        message: err.message,
+        conflictingDeveloperAppIds: err.conflictingDeveloperAppIds,
+      });
+      throw new TokenExchangeError(
+        "invalid_request",
+        err.message,
+        "Ambiguous developer app mapping for this client",
+      );
+    }
+    throw err;
+  }
+  if (!sibling) {
+    throw new TokenExchangeError(
+      "invalid_client",
+      "No developer app linked to this client",
+    );
+  }
+  return sibling;
+}
+
+function tokenClientIdFromPayload(rec: Record<string, unknown>): string | null {
+  if (typeof rec.client_id === "string") return rec.client_id;
+  if (typeof rec.azp === "string") return rec.azp;
+  return null;
+}
+
+function effectiveScopesFromPayload(payload: Record<string, unknown>): string {
+  const scopeFromScope =
+    typeof payload.scope === "string" ? payload.scope : "";
+  const scpRaw = payload.scp;
+  const scopeFromScp = Array.isArray(scpRaw)
+    ? scpRaw.filter((v): v is string => typeof v === "string").join(" ")
+    : typeof scpRaw === "string"
+      ? scpRaw
+      : "";
+  return (scopeFromScope || scopeFromScp).trim().replace(/\s+/g, ",");
+}
+
+function assertGatewaySubjectToken(
+  payload: Awaited<ReturnType<typeof verifyAccessToken>>,
+  clientId: string,
+  publicClientId: string,
+): Record<string, unknown> {
+  if (!payload || typeof payload.sub !== "string" || !payload.sub) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token is not a valid OIDC access token for this issuer",
+    );
+  }
+
+  const rec = payload as Record<string, unknown>;
+  const tokenClientId = tokenClientIdFromPayload(rec);
+  if (!tokenClientId) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token must include client_id or azp",
+    );
+  }
+
+  const callerIsM2M = clientId !== publicClientId;
+  const subjectMatchesCaller = tokenClientId === clientId;
+  const subjectMatchesPublicSibling = tokenClientId === publicClientId;
+  if (!subjectMatchesCaller && !(callerIsM2M && subjectMatchesPublicSibling)) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token must have been issued to this app's public client or to the same confidential client as this request",
+    );
+  }
+
+  if (!hasScope(effectiveScopesFromPayload(rec), "sign:job")) {
+    throw new TokenExchangeError(
+      "invalid_grant",
+      "subject_token must include sign:job scope for remote signer session exchange",
+    );
+  }
+
+  return rec;
+}
+
 /**
  * Remote signer session exchange: OIDC access token (JWT from this issuer) -> long-lived `pmth_*`
  * session, via RFC 8693 at POST /api/v1/oidc/token.
@@ -135,129 +267,32 @@ export async function handleGatewayTokenExchange(
     );
   }
 
-  if (!(await deps.validateClientSecret(clientId, clientSecret))) {
-    throw new TokenExchangeError("invalid_client", "Invalid client credentials");
-  }
-
-  const clientRows = await dbConn
-    .select()
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
-  const callerRow = clientRows[0];
-  if (!callerRow?.clientSecretHash) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "Client not found or not confidential",
-    );
-  }
-
-  if (!hasScope(callerRow.allowedScopes, "users:token")) {
-    throw new TokenExchangeError(
-      "invalid_scope",
-      "Requires users:token on the confidential client",
-    );
-  }
-
-  if (
-    billingPatternFromAllowedScopesString(callerRow.allowedScopes) !== "per_user"
-  ) {
-    throw new TokenExchangeError(
-      "invalid_request",
-      "Remote signer session exchange requires per-user billing (users:token scope on the OAuth client)",
-    );
-  }
+  const callerRow = await loadGatewayCallerRow(
+    dbConn,
+    clientId,
+    clientSecret,
+    deps.validateClientSecret,
+  );
 
   assertRequestedTokenTypeForGateway(requestedTokenType);
   assertGatewayAudiences(audienceParams);
   assertGatewayResource(resource);
 
-  let sibling: { developerAppId: string; publicClientId: string } | null;
-  try {
-    sibling = await deps.resolveDeveloperAppAndPublicClientForOidcRow(
-      dbConn,
-      callerRow.id,
-    );
-  } catch (err) {
-    if (err instanceof DeveloperAppSiblingAmbiguousError) {
-      console.error("[gateway-token-exchange] ambiguous developer app mapping", {
-        message: err.message,
-        conflictingDeveloperAppIds: err.conflictingDeveloperAppIds,
-      });
-      throw new TokenExchangeError(
-        "invalid_request",
-        err.message,
-        "Ambiguous developer app mapping for this client",
-      );
-    }
-    throw err;
-  }
-  if (!sibling) {
-    throw new TokenExchangeError(
-      "invalid_client",
-      "No developer app linked to this client",
-    );
-  }
-
-  const { publicClientId, developerAppId } = sibling;
+  const { publicClientId, developerAppId } = await resolveGatewaySibling(
+    dbConn,
+    callerRow.id,
+    deps.resolveDeveloperAppAndPublicClientForOidcRow,
+  );
 
   const payload = await deps.verifyAccessToken(subjectToken);
-  if (!payload || typeof payload.sub !== "string" || !payload.sub) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token is not a valid OIDC access token for this issuer",
-    );
-  }
-
-  const rec = payload as Record<string, unknown>;
-  const tokenClientId =
-    typeof rec.client_id === "string"
-      ? rec.client_id
-      : typeof rec.azp === "string"
-        ? rec.azp
-        : null;
-  if (!tokenClientId) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token must include client_id or azp",
-    );
-  }
-
-  const callerIsM2M = clientId !== publicClientId;
-  const subjectMatchesCaller = tokenClientId === clientId;
-  const subjectMatchesPublicSibling = tokenClientId === publicClientId;
-  if (!subjectMatchesCaller && !(callerIsM2M && subjectMatchesPublicSibling)) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token must have been issued to this app's public client or to the same confidential client as this request",
-    );
-  }
-
-  const scopeFromScope =
-    typeof payload.scope === "string" ? payload.scope : "";
-  const scpRaw = (payload as Record<string, unknown>).scp;
-  const scopeFromScp = Array.isArray(scpRaw)
-    ? scpRaw.filter((v): v is string => typeof v === "string").join(" ")
-    : typeof scpRaw === "string"
-      ? scpRaw
-      : "";
-  const normalizedScopes = (scopeFromScope || scopeFromScp)
-    .trim()
-    .replace(/\s+/g, ",");
-  const effectiveScopes = normalizedScopes;
-
-  if (!hasScope(effectiveScopes, "sign:job")) {
-    throw new TokenExchangeError(
-      "invalid_grant",
-      "subject_token must include sign:job scope for remote signer session exchange",
-    );
-  }
+  const rec = assertGatewaySubjectToken(payload, clientId, publicClientId);
+  const tokenClientId = tokenClientIdFromPayload(rec)!;
 
   const sessionBinding = await resolveGatewaySessionPrincipal(
     {
       dbConn,
       developerAppId,
-      sub: payload.sub,
+      sub: payload!.sub as string,
       tokenClientId,
       clientId,
     },
@@ -286,12 +321,10 @@ export async function handleGatewayTokenExchange(
     },
   });
 
-  const expiresIn = 90 * 24 * 60 * 60;
-
   return {
     access_token: token,
     token_type: "Bearer",
-    expires_in: expiresIn,
+    expires_in: 90 * 24 * 60 * 60,
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     scope: "sign:job",
   };

@@ -9,6 +9,36 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function isPrivateOrLoopbackIpv4(
+  a: number,
+  b: number,
+  c: number,
+  d: number,
+): boolean {
+  if (![a, b, c, d].every((x) => x >= 0 && x <= 255)) return false;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
+function isPrivateIpv4Match(match: RegExpMatchArray): boolean {
+  return isPrivateOrLoopbackIpv4(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+    Number(match[4]),
+  );
+}
+
+function isLinkLocalIpv6(hostname: string): boolean {
+  const firstHextet = hostname.split(":")[0];
+  if (!firstHextet) return false;
+  const n = parseInt(firstHextet, 16);
+  return !Number.isNaN(n) && n >= 0xfe80 && n <= 0xfebf;
+}
+
 /** HTTP may stay http for loopback, RFC1918, IPv6 link-local, and *.local dev hosts. */
 function isLocalOrPrivateHost(hostname: string): boolean {
   let h = hostname.trim().toLowerCase();
@@ -23,39 +53,15 @@ function isLocalOrPrivateHost(hostname: string): boolean {
   const dottedQuad = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
   const plain4 = h.match(dottedQuad);
   if (plain4) {
-    const a = Number(plain4[1]);
-    const b = Number(plain4[2]);
-    const c = Number(plain4[3]);
-    const d = Number(plain4[4]);
-    if (![a, b, c, d].every((x) => x >= 0 && x <= 255)) return false;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    return false;
+    return isPrivateIpv4Match(plain4);
   }
 
   const embedded4 = h.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (embedded4) {
-    const a = Number(embedded4[1]);
-    const b = Number(embedded4[2]);
-    const c = Number(embedded4[3]);
-    const d = Number(embedded4[4]);
-    if ([a, b, c, d].every((x) => x >= 0 && x <= 255)) {
-      if (a === 10) return true;
-      if (a === 127) return true;
-      if (a === 192 && b === 168) return true;
-      if (a === 172 && b >= 16 && b <= 31) return true;
-    }
+  if (embedded4 && isPrivateIpv4Match(embedded4)) {
+    return true;
   }
 
-  const firstHextet = h.split(":")[0];
-  if (firstHextet) {
-    const n = parseInt(firstHextet, 16);
-    if (!Number.isNaN(n) && n >= 0xfe80 && n <= 0xfebf) return true;
-  }
-
-  return false;
+  return isLinkLocalIpv6(h);
 }
 
 /** Upgrade http→https for public hosts; leave http for local/private hosts. */
