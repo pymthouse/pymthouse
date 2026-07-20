@@ -1005,13 +1005,8 @@ export async function queryOpenMeterUsageByManifest(input: {
   if (process.env.NODE_ENV === "test") {
     const stub = testManifestByClient.get(input.clientId);
     if (stub) {
-      if (!input.externalUserId?.trim()) {
-        return stub;
-      }
-      const matchKeys = buildExternalUserIdMatchKeys(input.externalUserId);
-      // Stub rows are already rolled up by manifest; filter is applied at query time
-      // only when live meters include external_user_id. For tests, return full stub.
-      void matchKeys;
+      // Stub rows are already rolled up by manifest; external_user_id filtering
+      // applies on live meter queries below.
       return stub;
     }
   }
