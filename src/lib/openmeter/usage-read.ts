@@ -447,9 +447,10 @@ export function aggregateManifestRows(input: {
   const feeWeiByManifest = new Map<string, bigint>();
   const billableMillisByManifest = new Map<string, bigint>();
 
-  const accumulateBigInt = (
+  const accumulate = (
     rows: MeterQueryRow[],
     target: Map<string, bigint>,
+    convert: (value: unknown) => bigint,
   ): void => {
     for (const row of rows) {
       const group = (row.groupBy || {}) as Record<string, unknown>;
@@ -467,37 +468,18 @@ export function aggregateManifestRows(input: {
       const manifestId = groupByString(group, "manifest_id", "unknown");
       target.set(
         manifestId,
-        (target.get(manifestId) ?? 0n) + meterRowValueToBigInt(row.value),
+        (target.get(manifestId) ?? 0n) + convert(row.value),
       );
     }
   };
 
-  const accumulateMillis = (rows: MeterQueryRow[]): void => {
-    for (const row of rows) {
-      const group = (row.groupBy || {}) as Record<string, unknown>;
-      if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-      const rawExternalUserId = groupByString(group, "external_user_id", "");
-      if (
-        !matchesExternalUserFilter(
-          rawExternalUserId,
-          input.filterExternalUserId,
-          matchKeys,
-        )
-      ) {
-        continue;
-      }
-      const manifestId = groupByString(group, "manifest_id", "unknown");
-      billableMillisByManifest.set(
-        manifestId,
-        (billableMillisByManifest.get(manifestId) ?? 0n) +
-          meterRowValueToMillis(row.value),
-      );
-    }
-  };
-
-  accumulateBigInt(input.feeMicrosRows, feeMicrosByManifest);
-  accumulateBigInt(input.feeWeiRows, feeWeiByManifest);
-  accumulateMillis(input.billableSecsRows);
+  accumulate(input.feeMicrosRows, feeMicrosByManifest, meterRowValueToBigInt);
+  accumulate(input.feeWeiRows, feeWeiByManifest, meterRowValueToBigInt);
+  accumulate(
+    input.billableSecsRows,
+    billableMillisByManifest,
+    meterRowValueToMillis,
+  );
 
   const keys = new Set([
     ...feeMicrosByManifest.keys(),
