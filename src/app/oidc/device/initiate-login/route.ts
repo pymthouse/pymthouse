@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getInitiateLoginUriForDeviceFlow } from "@/lib/oidc/clients";
 import {
   buildInitiateLoginRedirectUrl,
-  initiateSkipCookieOptions,
-  thirdPartyInitiateSkipCookieName,
   userCodeFromDeviceTargetLinkUri,
 } from "@/lib/oidc/third-party-initiate-login";
+import {
+  initiateSkipCookieOptions,
+  thirdPartyInitiateSkipCookieName,
+} from "@/lib/oidc/third-party-initiate-skip-cookie";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 
 /**
