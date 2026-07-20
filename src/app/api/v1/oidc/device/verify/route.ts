@@ -78,12 +78,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       typeof clientId === "string"
         ? await resolveAppBrandingByClientId(clientId)
         : null;
-    const scope =
-      typeof deviceCode.scope === "string"
-        ? deviceCode.scope
-        : typeof deviceCode.params?.scope === "string"
-          ? deviceCode.params.scope
-          : "";
+    let scope = "";
+    if (typeof deviceCode.scope === "string") {
+      scope = deviceCode.scope;
+    } else if (typeof deviceCode.params?.scope === "string") {
+      scope = deviceCode.params.scope;
+    }
     let impliedDeviceConsent = false;
     if (typeof clientId === "string") {
       const policyRows = await db

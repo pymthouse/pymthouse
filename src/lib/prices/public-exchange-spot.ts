@@ -26,7 +26,12 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 
 /** Parse and validate a price number: must be finite and positive. */
 function parsePositiveNumber(v: unknown): number | null {
-  const n = typeof v === "string" ? Number.parseFloat(v) : typeof v === "number" ? v : Number.NaN;
+  let n = Number.NaN;
+  if (typeof v === "string") {
+    n = Number.parseFloat(v);
+  } else if (typeof v === "number") {
+    n = v;
+  }
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 

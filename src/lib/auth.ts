@@ -245,12 +245,12 @@ export async function authenticateRequestAsync(request: NextRequest): Promise<Au
   const scopeFromScope =
     typeof jwtPayload.scope === "string" ? jwtPayload.scope : "";
   const scpRaw = (jwtPayload as Record<string, unknown>).scp;
-  const scopeFromScp =
-    Array.isArray(scpRaw)
-      ? scpRaw.filter((v): v is string => typeof v === "string").join(" ")
-      : typeof scpRaw === "string"
-        ? scpRaw
-        : "";
+  let scopeFromScp = "";
+  if (Array.isArray(scpRaw)) {
+    scopeFromScp = scpRaw.filter((v): v is string => typeof v === "string").join(" ");
+  } else if (typeof scpRaw === "string") {
+    scopeFromScp = scpRaw;
+  }
   const normalizedScopes = (scopeFromScope || scopeFromScp)
     .trim()
     .replace(/\s+/g, ",");
