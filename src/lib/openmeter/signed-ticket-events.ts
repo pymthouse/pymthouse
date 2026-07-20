@@ -53,6 +53,8 @@ export type ListViewerSignedTicketRequestsInput = {
    */
   clientId?: string | null;
   clientIds?: string[] | null;
+  /** When set, only return requests for this stream/session mid. */
+  manifestId?: string | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -66,6 +68,8 @@ export type ListAdminSignedTicketRequestsInput = {
    */
   clientId?: string | null;
   clientIds?: string[] | null;
+  /** When set, only return requests for this stream/session mid. */
+  manifestId?: string | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -74,6 +78,27 @@ export type ListAdminSignedTicketRequestsInput = {
 
 export type ListViewerSignedTicketRequestsResult = {
   items: SignedTicketRequestRow[];
+  nextCursor: string | null;
+  openMeterConfigured: boolean;
+};
+
+/** One remote-signer session (manifest_id) with cycle fee totals from analytics meters. */
+export type SignedTicketSessionRow = {
+  manifestId: string;
+  clientId: string;
+  appName?: string;
+  pipeline: string;
+  modelId: string;
+  /** Ceiled integer USD micros for the session. */
+  networkFeeUsdMicros: string;
+  /** Exact fractional USD micros before ceil. */
+  networkFeeUsdExact: string;
+  feeWei: string;
+  billableSecs: string;
+};
+
+export type ListSignedTicketSessionsResult = {
+  items: SignedTicketSessionRow[];
   nextCursor: string | null;
   openMeterConfigured: boolean;
 };
@@ -357,6 +382,7 @@ async function listSignedTicketRequestsForSubjects(input: {
   subjects: ReadonlySet<string>;
   clientId?: string | null;
   clientIds?: string[] | null;
+  manifestId?: string | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -394,7 +420,7 @@ async function listSignedTicketRequestsForSubjects(input: {
     eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter),
   );
 
-  return pageSignedTicketEvents(matching, limit, offset);
+  return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
 
 /**
@@ -431,21 +457,29 @@ export async function listAdminSignedTicketRequests(
     eventMatchesAdminSignedTicket(ev, clientIdFilter),
   );
 
-  return pageSignedTicketEvents(matching, limit, offset);
+  return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
 
 async function pageSignedTicketEvents(
   matching: IngestedEventLike[],
   limit: number,
   offset: number,
+  manifestId?: string | null,
 ): Promise<ListViewerSignedTicketRequestsResult> {
   const appNames = await loadAppNames(
     matching.map((ev) => eventClientId(ev)).filter((id): id is string => Boolean(id)),
   );
 
+  const manifestFilter = manifestId?.trim() || null;
+
   const rows = matching
     .map((ev) => normalizeSignedTicketEvent(ev, appNames))
-    .filter((row): row is SignedTicketRequestRow => row != null);
+    .filter((row): row is SignedTicketRequestRow => row != null)
+    .filter((row) => {
+      if (!manifestFilter) return true;
+      const mid = row.manifestId?.trim() || "unknown";
+      return mid === manifestFilter;
+    });
 
   rows.sort((a, b) => {
     const byTime = b.time.localeCompare(a.time);
@@ -483,6 +517,7 @@ export async function listViewerSignedTicketRequests(
     subjects,
     clientId: input.clientId,
     clientIds: input.clientIds,
+    manifestId: input.manifestId,
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -494,6 +529,7 @@ export type ListEndUserSignedTicketRequestsInput = {
   externalUserId: string;
   /** Public OIDC client_id (app_…), not developer_apps.id. */
   clientId: string;
+  manifestId?: string | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -516,11 +552,152 @@ export async function listEndUserSignedTicketRequests(
   return listSignedTicketRequestsForSubjects({
     subjects: new Set([externalUserId]),
     clientId,
+    manifestId: input.manifestId,
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
     to: input.to,
   });
+}
+
+/**
+ * Session (manifest) list backed by per-manifest analytics meters — authoritative
+ * cycle totals, not a sum of paged request history rows.
+ */
+export async function listViewerSignedTicketSessions(input: {
+  userId: string;
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListSignedTicketSessionsResult> {
+  const subjects = await resolveViewerUsageSubjects(input.userId);
+  // Viewer sessions: query each selected app; filter is applied via meter subject
+  // resolution inside queryOpenMeterUsageByManifest when externalUserId is set.
+  // For multi-subject viewers we query without externalUserId filter and rely on
+  // client scope — owner wallets span apps.
+  return listSignedTicketSessionsForClientIds({
+    clientId: input.clientId,
+    clientIds: input.clientIds,
+    // Prefer a single subject when the viewer has exactly one; otherwise leave
+    // unfiltered at the meter layer (app-scoped rows still apply).
+    externalUserId: subjects.size === 1 ? [...subjects][0] : null,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
+}
+
+export async function listAdminSignedTicketSessions(input: {
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListSignedTicketSessionsResult> {
+  return listSignedTicketSessionsForClientIds({
+    clientId: input.clientId,
+    clientIds: input.clientIds,
+    externalUserId: null,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
+}
+
+export async function listEndUserSignedTicketSessions(input: {
+  externalUserId: string;
+  clientId: string;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListSignedTicketSessionsResult> {
+  return listSignedTicketSessionsForClientIds({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
+}
+
+async function listSignedTicketSessionsForClientIds(input: {
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  externalUserId?: string | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListSignedTicketSessionsResult> {
+  if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
+    return { items: [], nextCursor: null, openMeterConfigured: false };
+  }
+
+  const { queryOpenMeterUsageByManifest } = await import(
+    "@/lib/openmeter/usage-read"
+  );
+
+  const cycle = calendarMonthBoundsUtc(new Date());
+  const from = input.from?.trim() || cycle.start;
+  const to = input.to?.trim() || cycle.end;
+  const limit = clampLimit(input.limit);
+  const offset = decodeOffsetCursor(input.cursor);
+  const clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
+  if (!clientIdFilter || clientIdFilter.size === 0) {
+    // Session list requires an app filter — totals come from per-app meter queries.
+    // The Usage UI always passes the application selector.
+    return { items: [], nextCursor: null, openMeterConfigured: true };
+  }
+
+  const clientIds = [...clientIdFilter];
+  const appNames = await loadAppNames(clientIds);
+  const batches = await Promise.all(
+    clientIds.map(async (clientId) => {
+      const rows = await queryOpenMeterUsageByManifest({
+        clientId,
+        startDate: from,
+        endDate: to,
+        externalUserId: input.externalUserId,
+      });
+      return rows.map((row) => ({
+        manifestId: row.manifestId,
+        clientId,
+        appName: appNames.get(clientId),
+        pipeline: row.pipeline || "unknown",
+        modelId: row.modelId || "unknown",
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+        networkFeeUsdExact: row.networkFeeUsdExact,
+        feeWei: row.feeWei,
+        billableSecs: row.billableSecs,
+      }) satisfies SignedTicketSessionRow);
+    }),
+  );
+
+  const items = batches.flat();
+  items.sort((a, b) => {
+    const feeCmp = BigInt(b.networkFeeUsdMicros) - BigInt(a.networkFeeUsdMicros);
+    if (feeCmp !== 0n) return feeCmp > 0n ? 1 : -1;
+    return b.manifestId.localeCompare(a.manifestId);
+  });
+
+  const page = items.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  const nextCursor =
+    nextOffset < items.length ? encodeOffsetCursor({ offset: nextOffset }) : null;
+
+  return {
+    items: page,
+    nextCursor,
+    openMeterConfigured: true,
+  };
 }
 
 async function fetchSignedTicketEvents(input: {
@@ -962,7 +1139,8 @@ function microsField(data: Record<string, unknown>, key: string): string | null 
     return value.trim();
   }
   if (typeof value === "number" && Number.isFinite(value)) {
-    return String(Math.trunc(value));
+    // Preserve fractional micros from exact ingest (no per-ticket trunc).
+    return String(value);
   }
   return null;
 }

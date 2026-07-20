@@ -29,7 +29,10 @@ import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "@/lib/openmeter/subscription-read";
-import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
+import {
+  ceilExactUsdMicrosSum,
+  meterRowValueToNumber,
+} from "@/lib/openmeter/usage-read";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -73,11 +76,13 @@ async function querySubjectsUsedUsdMicros(
       to: new Date(end),
       subject: unique,
     });
-    let used = 0n;
+    let usedExact = 0;
     for (const row of result.data || []) {
-      used += meterRowValueToBigInt(row.value);
+      usedExact += meterRowValueToNumber(row.value);
     }
-    return used;
+    // Ceil once at the spendable-allowance boundary so fractional sub-micro
+    // usage still burns at least 1 micro when any positive dust remains.
+    return ceilExactUsdMicrosSum(usedExact);
   } catch {
     return 0n;
   }

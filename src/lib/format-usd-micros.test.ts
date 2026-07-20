@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ceilUsdMicrosToCents,
+  formatUsdFromWei,
   formatUsdMicrosDisplay,
   formatUsdMicrosString,
   hasPositiveUsdMicrosBalance,
@@ -59,4 +61,20 @@ test("usd micros ↔ cents display round-trips at cent precision", () => {
   assert.equal(normalizeUsdCentsDisplay("5"), "5.00");
   assert.equal(normalizeUsdCentsDisplay("5.5"), "5.50");
   assert.equal(normalizeUsdCentsDisplay("5."), "5.00");
+});
+
+test("formatUsdFromWei renders full sub-micro ticket valuation", () => {
+  // 131568070 wei at $1897.485 ≈ $0.000000249648
+  const label = formatUsdFromWei("131568070", "1897.485");
+  assert.ok(label);
+  assert.ok(label.startsWith("$0.000000"));
+  assert.equal(formatUsdFromWei("0", "1897.485"), null);
+  assert.equal(formatUsdFromWei(null, "1897.485"), null);
+});
+
+test("ceilUsdMicrosToCents rounds invoice lines up to the next cent", () => {
+  assert.equal(ceilUsdMicrosToCents("0"), "0");
+  assert.equal(ceilUsdMicrosToCents("10000"), "10000"); // exact 1 cent
+  assert.equal(ceilUsdMicrosToCents("1"), "10000"); // dust → 1 cent
+  assert.equal(ceilUsdMicrosToCents("10001"), "20000");
 });

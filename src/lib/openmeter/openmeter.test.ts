@@ -235,6 +235,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
   const mid1 = byId.get("mid-1");
   assert.ok(mid1);
   assert.equal(mid1.networkFeeUsdMicros, "1250");
+  assert.equal(mid1.networkFeeUsdExact, "1250");
   assert.equal(mid1.feeWei, "7000");
   assert.equal(mid1.billableSecs, "42.5");
   const mid2 = byId.get("mid-2");
@@ -242,6 +243,54 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
   assert.equal(mid2.networkFeeUsdMicros, "100");
   assert.equal(mid2.feeWei, "0");
   assert.equal(mid2.billableSecs, "0");
+});
+
+test("aggregateManifestRows ceils fractional micros once per session", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 0.3,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+      {
+        value: "0.3",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+      {
+        value: 0.3,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+    ] as never,
+    feeWeiRows: [] as never,
+    billableSecsRows: [] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.networkFeeUsdExact, "0.9");
+  assert.equal(rows[0]?.networkFeeUsdMicros, "1");
+  assert.equal(rows[0]?.pipeline, "byoc");
+  assert.equal(rows[0]?.modelId, "transcode/ffmpeg");
 });
 
 test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {
@@ -277,6 +326,7 @@ test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () 
       {
         manifestId: "mid-1",
         networkFeeUsdMicros: "1500",
+        networkFeeUsdExact: "1500",
         feeWei: "9000",
         billableSecs: "45",
       },

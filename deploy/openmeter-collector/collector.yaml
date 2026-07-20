@@ -6,7 +6,9 @@
 # PRICE_ORACLE_REFRESH; refresh errors keep the last cached value. Runtime events read
 # from cache only (no static default). Each egress CloudEvent includes data.eth_usd_price
 # (the cached rate used for that event’s Wei → USD micros conversion), string data.fee_wei,
-# data.manifest_id, and string data.billable_secs (defaults: manifest_id="unknown", billable_secs=0).
+# data.manifest_id (fallback: session_id → request_id → "unknown"), and string
+# data.billable_secs (default 0). network_fee_usd_micros is the exact fractional
+# fee_wei * eth_usd / 1e12 (no per-ticket ceil; read paths ceil once per session/boundary).
 # Numeric meter values are emitted as strings per OpenMeter precision guidance.
 #
 # Oracle JSON (any one shape):
@@ -139,13 +141,19 @@ pipeline:
         root = if $eth_usd == null { throw("eth_usd price cache miss") }
 
         # USD micros = fee_wei * eth_usd / 1e12 (1 USD = 1e6 micros).
-        # Ceil so sub-micro live-runner fees still count as at least 1 micro;
-        # do not use a nanos meter (reverted cutover).
+        # Exact fractional value at ingest (no per-ticket ceil). Read paths and
+        # session/display boundaries ceil once so sub-micro tickets accumulate
+        # into whole micros without overbilling dense sessions.
         let fee_wei = $data.computed_fee.number().or(0)
-        let fee_usd_micros = ($fee_wei * $eth_usd / 1000000000000).ceil()
+        let fee_usd_micros = $fee_wei * $eth_usd / 1000000000000
         let billable_secs = $data.billable_secs.number().or(0)
+        # Session key: stream mid → payment StateID → request id (BYOC/stateless).
         let manifest_id = if $data.manifest_id != "" && $data.manifest_id != null {
           $data.manifest_id.string().trim()
+        } else if $data.session_id != "" && $data.session_id != null {
+          $data.session_id.string().trim()
+        } else if $data.request_id != "" && $data.request_id != null {
+          $data.request_id.string().trim()
         } else {
           "unknown"
         }

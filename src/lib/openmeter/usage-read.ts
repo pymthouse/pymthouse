@@ -24,8 +24,29 @@ function avoidOpenMeterNetworkInTests(): boolean {
 }
 
 /**
+ * Parse an OpenMeter/Konnect meter row value to a finite number (may be fractional).
+ * Used to accumulate exact USD micros before ceilling at a read/session boundary.
+ */
+export function meterRowValueToNumber(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0;
+    const parsed = Number(t);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+/**
  * Parse an OpenMeter/Konnect meter row value to integer micros (or counts).
  * Prefers exact integer strings so small fee aggregates like `"34"` are not lost.
+ * Prefer {@link meterRowValueToNumber} + {@link ceilExactUsdMicrosSum} for fee sums
+ * that may include fractional (sub-micro) values.
  */
 export function meterRowValueToBigInt(value: unknown): bigint {
   if (value == null) return 0n;
@@ -49,6 +70,14 @@ export function meterRowValueToBigInt(value: unknown): bigint {
     return BigInt(Math.trunc(parsed));
   }
   return 0n;
+}
+
+/** Ceil an exact (possibly fractional) USD micros sum to an integer micro string. */
+export function ceilExactUsdMicrosSum(exactMicros: number): bigint {
+  if (!Number.isFinite(exactMicros) || exactMicros <= 0) {
+    return 0n;
+  }
+  return BigInt(Math.ceil(exactMicros));
 }
 
 function meterRowValueToCount(value: unknown): number {
@@ -120,9 +149,14 @@ export type OpenMeterDailyPipelineRow = {
 
 export type OpenMeterManifestRow = {
   manifestId: string;
+  /** Ceiled integer USD micros for the session (read/display boundary). */
   networkFeeUsdMicros: string;
+  /** Exact fractional USD micros before ceil (may include a decimal point). */
+  networkFeeUsdExact: string;
   feeWei: string;
   billableSecs: string;
+  pipeline?: string;
+  modelId?: string;
 };
 
 export type OpenMeterAppDashboardUsage = {
@@ -347,13 +381,13 @@ function aggregateUserRows(input: {
     );
   }
 
-  const feeByUser = new Map<string, bigint>();
+  const feeByUser = new Map<string, number>();
   for (const row of input.feeRows) {
     const externalUserId = acceptRow((row.groupBy || {}) as Record<string, unknown>);
     if (!externalUserId) continue;
     feeByUser.set(
       externalUserId,
-      (feeByUser.get(externalUserId) ?? 0n) + meterRowValueToBigInt(row.value),
+      (feeByUser.get(externalUserId) ?? 0) + meterRowValueToNumber(row.value),
     );
   }
 
@@ -361,7 +395,9 @@ function aggregateUserRows(input: {
   const rows: OpenMeterUsageRow[] = [...externalUserIds].map((externalUserId) => ({
     externalUserId,
     requestCount: countByUser.get(externalUserId) ?? 0,
-    networkFeeUsdMicros: (feeByUser.get(externalUserId) ?? 0n).toString(),
+    networkFeeUsdMicros: ceilExactUsdMicrosSum(
+      feeByUser.get(externalUserId) ?? 0,
+    ).toString(),
   }));
 
   if (rows.length === 0 && input.filterExternalUserId) {
@@ -397,7 +433,7 @@ export function aggregatePipelineModelRows(input: {
     );
   }
 
-  const feeByKey = new Map<string, bigint>();
+  const feeByKey = new Map<string, number>();
   for (const row of input.feeRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
     if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
@@ -407,7 +443,7 @@ export function aggregatePipelineModelRows(input: {
     metaByKey.set(key, { pipeline, modelId });
     feeByKey.set(
       key,
-      (feeByKey.get(key) ?? 0n) + meterRowValueToBigInt(row.value),
+      (feeByKey.get(key) ?? 0) + meterRowValueToNumber(row.value),
     );
   }
 
@@ -422,7 +458,7 @@ export function aggregatePipelineModelRows(input: {
         pipeline: meta.pipeline,
         modelId: meta.modelId,
         requestCount: countByKey.get(key) ?? 0,
-        networkFeeUsdMicros: (feeByKey.get(key) ?? 0n).toString(),
+        networkFeeUsdMicros: ceilExactUsdMicrosSum(feeByKey.get(key) ?? 0).toString(),
       },
     ];
   });
@@ -443,9 +479,41 @@ export function aggregateManifestRows(input: {
     ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
     : undefined;
 
-  const feeMicrosByManifest = new Map<string, bigint>();
+  const feeMicrosByManifest = new Map<string, number>();
   const feeWeiByManifest = new Map<string, bigint>();
   const billableMillisByManifest = new Map<string, bigint>();
+  const metaByManifest = new Map<string, { pipeline: string; modelId: string }>();
+
+  const accumulateNumber = (
+    rows: MeterQueryRow[],
+    target: Map<string, number>,
+  ): void => {
+    for (const row of rows) {
+      const group = (row.groupBy || {}) as Record<string, unknown>;
+      if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+      const rawExternalUserId = groupByString(group, "external_user_id", "");
+      if (
+        !matchesExternalUserFilter(
+          rawExternalUserId,
+          input.filterExternalUserId,
+          matchKeys,
+        )
+      ) {
+        continue;
+      }
+      const manifestId = groupByString(group, "manifest_id", "unknown");
+      if (!metaByManifest.has(manifestId)) {
+        metaByManifest.set(manifestId, {
+          pipeline: groupByString(group, "pipeline", "unknown"),
+          modelId: groupByString(group, "model_id", "unknown"),
+        });
+      }
+      target.set(
+        manifestId,
+        (target.get(manifestId) ?? 0) + meterRowValueToNumber(row.value),
+      );
+    }
+  };
 
   const accumulate = (
     rows: MeterQueryRow[],
@@ -466,6 +534,12 @@ export function aggregateManifestRows(input: {
         continue;
       }
       const manifestId = groupByString(group, "manifest_id", "unknown");
+      if (!metaByManifest.has(manifestId)) {
+        metaByManifest.set(manifestId, {
+          pipeline: groupByString(group, "pipeline", "unknown"),
+          modelId: groupByString(group, "model_id", "unknown"),
+        });
+      }
       target.set(
         manifestId,
         (target.get(manifestId) ?? 0n) + convert(row.value),
@@ -473,7 +547,7 @@ export function aggregateManifestRows(input: {
     }
   };
 
-  accumulate(input.feeMicrosRows, feeMicrosByManifest, meterRowValueToBigInt);
+  accumulateNumber(input.feeMicrosRows, feeMicrosByManifest);
   accumulate(input.feeWeiRows, feeWeiByManifest, meterRowValueToBigInt);
   accumulate(
     input.billableSecsRows,
@@ -487,12 +561,29 @@ export function aggregateManifestRows(input: {
     ...billableMillisByManifest.keys(),
   ]);
 
-  return [...keys].map((manifestId) => ({
-    manifestId,
-    networkFeeUsdMicros: (feeMicrosByManifest.get(manifestId) ?? 0n).toString(),
-    feeWei: (feeWeiByManifest.get(manifestId) ?? 0n).toString(),
-    billableSecs: millisToSecsString(billableMillisByManifest.get(manifestId) ?? 0n),
-  }));
+  return [...keys].map((manifestId) => {
+    const exact = feeMicrosByManifest.get(manifestId) ?? 0;
+    const meta = metaByManifest.get(manifestId);
+    return {
+      manifestId,
+      networkFeeUsdMicros: ceilExactUsdMicrosSum(exact).toString(),
+      networkFeeUsdExact: formatExactUsdMicros(exact),
+      feeWei: (feeWeiByManifest.get(manifestId) ?? 0n).toString(),
+      billableSecs: millisToSecsString(billableMillisByManifest.get(manifestId) ?? 0n),
+      pipeline: meta?.pipeline,
+      modelId: meta?.modelId,
+    };
+  });
+}
+
+/** Format an exact micros number for API/audit (trim trailing zeros). */
+export function formatExactUsdMicros(exact: number): string {
+  if (!Number.isFinite(exact) || exact === 0) return "0";
+  const fixed = exact.toFixed(12);
+  let end = fixed.length;
+  while (end > 0 && fixed[end - 1] === "0") end -= 1;
+  if (end > 0 && fixed[end - 1] === ".") end -= 1;
+  return fixed.slice(0, end);
 }
 
 type UserPipelineModelMeta = {
@@ -566,7 +657,7 @@ export function aggregateUserPipelineModelRows(input: {
     );
   }
 
-  const feeByKey = new Map<string, bigint>();
+  const feeByKey = new Map<string, number>();
   for (const row of input.feeRows) {
     const meta = resolveUserPipelineModelMeta(
       row,
@@ -582,7 +673,7 @@ export function aggregateUserPipelineModelRows(input: {
     });
     feeByKey.set(
       meta.key,
-      (feeByKey.get(meta.key) ?? 0n) + meterRowValueToBigInt(row.value),
+      (feeByKey.get(meta.key) ?? 0) + meterRowValueToNumber(row.value),
     );
   }
 
@@ -598,7 +689,7 @@ export function aggregateUserPipelineModelRows(input: {
         pipeline: meta.pipeline,
         modelId: meta.modelId,
         requestCount: countByKey.get(key) ?? 0,
-        networkFeeUsdMicros: (feeByKey.get(key) ?? 0n).toString(),
+        networkFeeUsdMicros: ceilExactUsdMicrosSum(feeByKey.get(key) ?? 0).toString(),
       },
     ];
   });
@@ -616,7 +707,7 @@ export function aggregateDailyPipelineModelRows(input: {
       modelId: string;
       date: string;
       requestCount: number;
-      networkFeeUsdMicros: bigint;
+      networkFeeUsdMicros: number;
     }
   >();
 
@@ -633,7 +724,7 @@ export function aggregateDailyPipelineModelRows(input: {
       modelId,
       date: day,
       requestCount: 0,
-      networkFeeUsdMicros: 0n,
+      networkFeeUsdMicros: 0,
     };
     existing.requestCount += meterRowValueToCount(row.value);
     byKey.set(key, existing);
@@ -652,9 +743,9 @@ export function aggregateDailyPipelineModelRows(input: {
       modelId,
       date: day,
       requestCount: 0,
-      networkFeeUsdMicros: 0n,
+      networkFeeUsdMicros: 0,
     };
-    existing.networkFeeUsdMicros += meterRowValueToBigInt(row.value);
+    existing.networkFeeUsdMicros += meterRowValueToNumber(row.value);
     byKey.set(key, existing);
   }
 
@@ -664,7 +755,7 @@ export function aggregateDailyPipelineModelRows(input: {
       modelId: row.modelId,
       date: row.date,
       requestCount: row.requestCount,
-      networkFeeUsdMicros: row.networkFeeUsdMicros.toString(),
+      networkFeeUsdMicros: ceilExactUsdMicrosSum(row.networkFeeUsdMicros).toString(),
     }))
     .sort((a, b) => {
       const dateCmp = a.date.localeCompare(b.date);
@@ -1389,9 +1480,12 @@ export function buildOpenMeterUsageResponse(input: {
       manifestId: row.manifestId,
       currency: usageCurrency,
       networkFeeUsdMicros: row.networkFeeUsdMicros,
+      networkFeeUsdExact: row.networkFeeUsdExact,
       ownerChargeUsdMicros: row.networkFeeUsdMicros,
       feeWei: row.feeWei,
       billableSecs: row.billableSecs,
+      pipeline: row.pipeline,
+      modelId: row.modelId,
     }));
   }
 

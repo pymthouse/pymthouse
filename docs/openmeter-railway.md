@@ -119,16 +119,16 @@ This runs [`scripts/openmeter-bootstrap.ts`](../scripts/openmeter-bootstrap.ts) 
 
 | Resource | Purpose |
 |----------|---------|
-| `network_fee_usd_micros` meter | Sum of signed-ticket USD micros (`$.network_fee_usd_micros`) — **billing / settlement** |
+| `network_fee_usd_micros` meter | Sum of signed-ticket USD micros (`$.network_fee_usd_micros`) — **billing / settlement**. Values may be fractional (exact Wei→USD at ingest); PymtHouse ceils once at spendable/usage read boundaries. |
 | `signed_ticket_count` meter | Request count — **billing** |
 | `fee_wei` meter | Analytics SUM of `$.fee_wei` (includes `manifest_id` groupBy) |
-| `network_fee_usd_micros_by_manifest` meter | Analytics per-stream USD micros (includes `manifest_id` groupBy) |
+| `network_fee_usd_micros_by_manifest` meter | Analytics per-stream USD micros (includes `manifest_id` groupBy) — session totals for Usage history |
 | `billable_secs` meter | Analytics SUM of `$.billable_secs` (includes `manifest_id` groupBy) |
 | `network_spend` feature | Meter-backed feature for Starter rate cards (**no** LLM `unit_cost`) |
 
 Analytics meters are not attached to `network_spend` / plan rate cards. Settlement continues to use `network_fee_usd_micros` only.
 
-**Dual-signer note:** Both LV2V and BYOC signers emit `computed_fee`, `billable_secs`, and `manifest_id` on Kafka. Prefer `billable_secs` for duration analytics — do not SUM `pixels` across signers (LV2V uses synthetic H×W×FPS×secs; BYOC per-cap pricing may set `pixels ≈ billable_secs`).
+**Dual-signer note:** Both LV2V and BYOC signers emit `computed_fee`, `billable_secs`, and `manifest_id` on Kafka. Prefer `billable_secs` for duration analytics — do not SUM `pixels` across signers (LV2V uses synthetic H×W×FPS×secs; BYOC per-cap pricing may set `pixels ≈ billable_secs`). The collector session key is `manifest_id → session_id → request_id` so BYOC/stateless jobs still group.
 
 Bootstrap does **not** create per-app plans or grant credits. Those happen at runtime:
 

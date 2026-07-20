@@ -4,7 +4,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import {
   listAdminSignedTicketRequests,
+  listAdminSignedTicketSessions,
   listViewerSignedTicketRequests,
+  listViewerSignedTicketSessions,
 } from "@/lib/openmeter/signed-ticket-events";
 
 export async function GET(request: NextRequest) {
@@ -17,6 +19,7 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const scope = params.get("scope")?.trim().toLowerCase() || "own";
+  const groupBy = params.get("groupBy")?.trim().toLowerCase() || "request";
   const isAdmin = sessionUser?.role === "admin";
 
   if (scope === "all" && !isAdmin) {
@@ -31,6 +34,12 @@ export async function GET(request: NextRequest) {
       { status: 400 },
     );
   }
+  if (groupBy !== "request" && groupBy !== "session") {
+    return NextResponse.json(
+      { error: "Invalid groupBy; use request or session" },
+      { status: 400 },
+    );
+  }
 
   const clientIds = [
     ...params.getAll("clientId").map((id) => id.trim()).filter(Boolean),
@@ -39,6 +48,7 @@ export async function GET(request: NextRequest) {
   ];
   const uniqueClientIds = [...new Set(clientIds)];
   const cursor = params.get("cursor")?.trim() || undefined;
+  const manifestId = params.get("manifestId")?.trim() || undefined;
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
 
@@ -60,12 +70,35 @@ export async function GET(request: NextRequest) {
     limit: Number.isFinite(limit) ? limit : undefined,
   };
 
+  if (groupBy === "session") {
+    const result =
+      scope === "all"
+        ? await listAdminSignedTicketSessions(listInput)
+        : await listViewerSignedTicketSessions({
+            userId,
+            ...listInput,
+          });
+
+    return NextResponse.json({
+      items: result.items,
+      nextCursor: result.nextCursor,
+      openMeterConfigured: result.openMeterConfigured,
+      scope,
+      groupBy: "session",
+    });
+  }
+
+  const requestInput = {
+    ...listInput,
+    manifestId,
+  };
+
   const result =
     scope === "all"
-      ? await listAdminSignedTicketRequests(listInput)
+      ? await listAdminSignedTicketRequests(requestInput)
       : await listViewerSignedTicketRequests({
           userId,
-          ...listInput,
+          ...requestInput,
         });
 
   return NextResponse.json({
@@ -73,5 +106,6 @@ export async function GET(request: NextRequest) {
     nextCursor: result.nextCursor,
     openMeterConfigured: result.openMeterConfigured,
     scope,
+    groupBy: "request",
   });
 }

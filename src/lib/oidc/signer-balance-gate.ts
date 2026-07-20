@@ -122,7 +122,9 @@ export function createSpendableBalanceCache(options: {
 
 /**
  * Spendable allowance for a verified signer identity: prepaid credits plus any
- * remaining plan usage discount for the current cycle.
+ * remaining plan usage discount for the current cycle. Values are integer
+ * micros — {@link getSpendableUsdMicros} already ceils fractional meter sums
+ * once at the read boundary (exact ingest, no per-ticket ceil).
  */
 async function readIdentityBalanceUsdMicros(
   identity: UsageIdentity,

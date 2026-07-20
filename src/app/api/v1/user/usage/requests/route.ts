@@ -4,7 +4,10 @@ import {
   authenticateEndUser,
   endUserSubjectOverrideError,
 } from "@/lib/auth/end-user";
-import { listEndUserSignedTicketRequests } from "@/lib/openmeter/signed-ticket-events";
+import {
+  listEndUserSignedTicketRequests,
+  listEndUserSignedTicketSessions,
+} from "@/lib/openmeter/signed-ticket-events";
 
 /**
  * End-user signed-ticket request history for the Bearer subject only.
@@ -23,12 +26,40 @@ export async function GET(request: NextRequest) {
   }
 
   const cursor = params.get("cursor")?.trim() || undefined;
+  const manifestId = params.get("manifestId")?.trim() || undefined;
+  const groupBy = params.get("groupBy")?.trim().toLowerCase() || "request";
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+
+  if (groupBy !== "request" && groupBy !== "session") {
+    return NextResponse.json(
+      { error: "Invalid groupBy; use request or session" },
+      { status: 400 },
+    );
+  }
+
+  if (groupBy === "session") {
+    const result = await listEndUserSignedTicketSessions({
+      externalUserId: auth.externalUserId,
+      clientId: auth.publicClientId,
+      cursor,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+
+    return NextResponse.json({
+      items: result.items,
+      nextCursor: result.nextCursor,
+      openMeterConfigured: result.openMeterConfigured,
+      clientId: auth.publicClientId,
+      externalUserId: auth.externalUserId,
+      groupBy: "session",
+    });
+  }
 
   const result = await listEndUserSignedTicketRequests({
     externalUserId: auth.externalUserId,
     clientId: auth.publicClientId,
+    manifestId,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
   });
@@ -39,5 +70,6 @@ export async function GET(request: NextRequest) {
     openMeterConfigured: result.openMeterConfigured,
     clientId: auth.publicClientId,
     externalUserId: auth.externalUserId,
+    groupBy: "request",
   });
 }

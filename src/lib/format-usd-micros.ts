@@ -103,8 +103,67 @@ export function formatUsdMicrosDisplay(microsStr: string | undefined | null): st
   }
 }
 
+/**
+ * Format exact USD from Wei and ETH/USD price:
+ *   usd = fee_wei * eth_usd / 1e18
+ * Renders full precision for sub-micro tickets (e.g. `$0.00000025`).
+ * Returns null for missing/invalid inputs or zero.
+ */
+export function formatUsdFromWei(
+  feeWei: string | null | undefined,
+  ethUsdPrice: string | null | undefined,
+): string | null {
+  if (feeWei == null || ethUsdPrice == null) return null;
+  const weiTrim = feeWei.trim();
+  const priceTrim = ethUsdPrice.trim();
+  if (!weiTrim || !priceTrim) return null;
+  if (!/^\d+$/.test(weiTrim)) return null;
+  const price = Number(priceTrim);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  try {
+    const wei = BigInt(weiTrim);
+    if (wei <= 0n) return null;
+    // dollars = wei * price / 1e18 ≈ (wei * floor(price*1e6)) / 1e24
+    const ethUsdMicros = BigInt(Math.floor(price * 1_000_000));
+    const product = wei * ethUsdMicros;
+    const DOLLAR_DIV = 10n ** 24n;
+    const dollarWhole = product / DOLLAR_DIV;
+    const dollarRem = product % DOLLAR_DIV;
+    if (dollarWhole === 0n && dollarRem === 0n) return null;
+    let frac = dollarRem.toString().padStart(24, "0");
+    while (frac.endsWith("0")) {
+      frac = frac.slice(0, -1);
+    }
+    // Cap display at 12 fraction digits for readability.
+    if (frac.length > 12) {
+      frac = frac.slice(0, 12);
+      while (frac.endsWith("0")) {
+        frac = frac.slice(0, -1);
+      }
+    }
+    if (frac.length === 0) {
+      return `$${dollarWhole.toString()}`;
+    }
+    return `$${dollarWhole.toString()}.${frac}`;
+  } catch {
+    return null;
+  }
+}
+
 /** 1 cent = 10_000 USD micros. */
 const USD_MICROS_PER_CENT = 10_000n;
+
+/**
+ * Ceil USD micros up to the next whole cent (10_000 micros).
+ * Invoice line policy: round line totals up so merchants are not under-billed.
+ */
+export function ceilUsdMicrosToCents(microsStr: string | null | undefined): string {
+  const amount = parseUsdMicrosString(microsStr);
+  if (amount == null || amount <= 0n) return "0";
+  const rem = amount % USD_MICROS_PER_CENT;
+  if (rem === 0n) return amount.toString();
+  return (amount + (USD_MICROS_PER_CENT - rem)).toString();
+}
 
 /**
  * Sanitize typed USD amount input to non-negative dollars with at most 2

@@ -350,7 +350,7 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
-2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros` via `ceil(fee_wei * eth_usd / 1e12)` so sub-micro fees still count as at least 1 micro, and writes normalized CloudEvents to OpenMeter/Konnect:
+2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to **exact** `network_fee_usd_micros` via `fee_wei * eth_usd / 1e12` (no per-ticket ceil — fractional micros are allowed), and writes normalized CloudEvents to OpenMeter/Konnect:
    - `subject` = compound `auth_id` for M2M end-users; **bare `{users.id}`** when wire `usage_subject` starts with `owner:` (shared owner wallet / Konnect customer key)
    - `data.client_id` = tenant (developer app OAuth `client_id`)
    - `data.usage_subject` / `data.external_user_id` = end user id, or bare `{users.id}` for owners
@@ -358,8 +358,10 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
    - `data.openmeter_customer_key` = billing wallet key (bare owner id or compound end-user key)
    - `data.fee_wei` = Wei from Kafka `computed_fee` as a **string** (OpenMeter precision; authoritative network cost input)
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
-   - `data.manifest_id` = stream / remote-signer session mid (`"unknown"` when missing)
+   - `data.manifest_id` = stream / remote-signer session mid; falls back to Kafka `session_id` (payment StateID) then `request_id` when missing (`"unknown"` only as last resort)
    - `data.billable_secs` = billable duration from the signer as a **string** (prefer this over `pixels` for time analytics across LV2V and BYOC signers)
+
+**Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.
 
 **Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 
@@ -371,22 +373,26 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros` (ceiled once per session), `networkFeeUsdExact`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 ### Session request history (Usage dashboard)
 
 **Endpoint:** `GET /api/v1/me/usage/requests`
 
-Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents, newest first. This is not a Builder/M2M API for listing all end users of an app.
+Session-authenticated (NextAuth). Default UI view is **sessions** (`groupBy=session`); expand a session for per-request detail, or use `groupBy=request` for the flat ticket list.
 
 | Query | Description |
 | --- | --- |
+| `groupBy` | `session` (default in UI) — one row per `manifest_id` from analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) with ceiled session fee. `request` — flat CloudEvent list, newest first. |
+| `manifestId` | When `groupBy=request`, restrict to one session mid (used when expanding a session). |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
-| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`). Repeatable / comma-separated `clientIds` for multi-app filters. |
+| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`). Repeatable / comma-separated `clientIds` for multi-app filters. **Required for `groupBy=session`.** |
 | `scope` | `own` (default) — signed-in viewer’s usage subject(s) only. `all` — **platform admins only**; platform-wide history for the selected `clientId`(s) (All Usage tab). Non-admins receive `403`. |
 
-Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, and `scope`.
+Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, `scope`, and `groupBy`.
+
+Per-request fees in the UI are valued exactly from `feeWei × ethUsdPrice` (full sub-micro precision). Session fees use the ceiled meter sum for the billing cycle.
 
 ### End-user usage (Bearer subject)
 
@@ -402,14 +408,16 @@ Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `rema
 
 **Endpoint:** `GET /api/v1/user/usage/requests`
 
-Lists signed-ticket CloudEvents for the **token subject only** — newest first.
+Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`).
 
 | Query | Description |
 | --- | --- |
+| `groupBy` | `session` or `request` (default `request`) |
+| `manifestId` | When `groupBy=request`, filter to one session mid |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
 
-Responses include `items`, `nextCursor`, `openMeterConfigured`, plus `clientId` / `externalUserId` echoed from the credential.
+Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus `clientId` / `externalUserId` echoed from the credential.
 
 **Balance (Builder M2M):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` is the confidential-client equivalent when an end-user JWT is not available.
 
