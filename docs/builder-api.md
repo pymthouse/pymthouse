@@ -356,7 +356,10 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
    - `data.usage_subject` / `data.external_user_id` = end user id, or bare `{users.id}` for owners
    - `data.auth_id` retained for compatibility
    - `data.openmeter_customer_key` = billing wallet key (bare owner id or compound end-user key)
+   - `data.fee_wei` = numeric Wei from Kafka `computed_fee` (authoritative network cost input)
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
+   - `data.manifest_id` = stream / remote-signer session mid (`"unknown"` when missing)
+   - `data.billable_secs` = billable duration from the signer (prefer this over `pixels` for time analytics across LV2V and BYOC signers)
 
 **Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 
@@ -368,7 +371,7 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 ### Session request history (Usage dashboard)
 
@@ -391,7 +394,7 @@ Integrators (e.g. Livepeer Dashboard / `@pymthouse/builder-sdk`) mint a user JWT
 
 **Endpoint:** `GET /api/v1/user/usage`
 
-Same OpenMeter usage shape as `GET /api/v1/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline`), and `include=retail`.
+Same OpenMeter usage shape as `GET /api/v1/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline` / `manifest`), and `include=retail`.
 
 **Endpoint:** `GET /api/v1/user/usage/balance`
 
@@ -436,7 +439,7 @@ Requests that fail auth or tenant match receive **`404 Not Found`** (not `401`/`
 | --- | --- | --- | --- |
 | `startDate` | ISO 8601 | — | Inclusive lower bound on `usage_records.created_at` |
 | `endDate` | ISO 8601 | — | Inclusive upper bound |
-| `groupBy` | `none` \| `user` \| `pipeline_model` \| `daily_pipeline` | `none` | `user` adds `byUser`; `pipeline_model` adds `byPipelineModel`; `daily_pipeline` adds `byDailyPipeline` (requires `userId`, OpenMeter DAY windows) |
+| `groupBy` | `none` \| `user` \| `pipeline_model` \| `daily_pipeline` \| `manifest` | `none` | `user` adds `byUser`; `pipeline_model` adds `byPipelineModel`; `daily_pipeline` adds `byDailyPipeline` (requires `userId`, OpenMeter DAY windows); `manifest` adds `byManifest` (per-stream USD / Wei / billable seconds) |
 | `userId` | string | — | Filter to one internal **`usage_records.user_id`** (not `externalUserId`) |
 | `gatewayRequestId` | string | — | When set, filters billing events to that gateway request and may include `events` detail |
 

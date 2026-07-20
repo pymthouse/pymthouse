@@ -196,7 +196,14 @@ test("eventMatchesClientIdFilter handles null and empty sets", () => {
 
 test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   const row = normalizeSignedTicketEvent(
-    sampleEvent(),
+    sampleEvent({
+      data: {
+        manifest_id: "mid-abc",
+        eth_usd_price: "3456.78",
+        billable_secs: 12.5,
+        fee_wei: 100,
+      },
+    }),
     new Map([["app_abc", "Demo App"]]),
   );
   assert.ok(row);
@@ -209,6 +216,9 @@ test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   assert.equal(row?.networkFeeUsdMicros, "1500");
   assert.equal(row?.feeWei, "100");
   assert.equal(row?.pixels, "64");
+  assert.equal(row?.manifestId, "mid-abc");
+  assert.equal(row?.ethUsdPrice, "3456.78");
+  assert.equal(row?.billableSecs, 12.5);
   assert.equal(row?.time, "2026-07-11T12:00:00.000Z");
 });
 

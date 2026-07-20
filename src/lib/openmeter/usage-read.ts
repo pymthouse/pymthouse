@@ -10,6 +10,9 @@ import {
   normalizePlatformUserId,
 } from "@/lib/openmeter/customer-key";
 import {
+  BILLABLE_SECS_METER,
+  FEE_WEI_METER,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
   openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
@@ -78,6 +81,14 @@ export type OpenMeterDailyPipelineRow = {
   networkFeeUsdMicros: string;
 };
 
+export type OpenMeterManifestRow = {
+  manifestId: string;
+  requestCount: number;
+  networkFeeUsdMicros: string;
+  feeWei: string;
+  billableSecs: string;
+};
+
 export type OpenMeterAppDashboardUsage = {
   byUser: OpenMeterUsageRow[];
   byPipelineModel: OpenMeterPipelineModelRow[];
@@ -95,6 +106,13 @@ const METER_GROUP_BY_DETAIL = [
   "external_user_id",
   "pipeline",
   "model_id",
+] as const;
+const METER_GROUP_BY_MANIFEST = [
+  "client_id",
+  "external_user_id",
+  "pipeline",
+  "model_id",
+  "manifest_id",
 ] as const;
 
 /**
@@ -372,6 +390,69 @@ export function aggregatePipelineModelRows(input: {
       },
     ];
   });
+}
+
+/**
+ * Roll up analytics meter rows by manifest_id (sums across pipeline/model).
+ * requestCount is always 0 — billing signed_ticket_count has no manifest_id groupBy.
+ */
+export function aggregateManifestRows(input: {
+  clientId: string;
+  feeMicrosRows: MeterQueryRow[];
+  feeWeiRows: MeterQueryRow[];
+  billableSecsRows: MeterQueryRow[];
+  filterExternalUserId?: string | null;
+}): OpenMeterManifestRow[] {
+  const matchKeys = input.filterExternalUserId
+    ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
+    : undefined;
+
+  const feeMicrosByManifest = new Map<string, bigint>();
+  const feeWeiByManifest = new Map<string, bigint>();
+  const billableSecsByManifest = new Map<string, bigint>();
+
+  const accumulate = (
+    rows: MeterQueryRow[],
+    target: Map<string, bigint>,
+  ): void => {
+    for (const row of rows) {
+      const group = (row.groupBy || {}) as Record<string, unknown>;
+      if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+      const rawExternalUserId = groupByString(group, "external_user_id", "");
+      if (
+        !matchesExternalUserFilter(
+          rawExternalUserId,
+          input.filterExternalUserId,
+          matchKeys,
+        )
+      ) {
+        continue;
+      }
+      const manifestId = groupByString(group, "manifest_id", "unknown");
+      target.set(
+        manifestId,
+        (target.get(manifestId) ?? 0n) + meterRowValueToBigInt(row.value),
+      );
+    }
+  };
+
+  accumulate(input.feeMicrosRows, feeMicrosByManifest);
+  accumulate(input.feeWeiRows, feeWeiByManifest);
+  accumulate(input.billableSecsRows, billableSecsByManifest);
+
+  const keys = new Set([
+    ...feeMicrosByManifest.keys(),
+    ...feeWeiByManifest.keys(),
+    ...billableSecsByManifest.keys(),
+  ]);
+
+  return [...keys].map((manifestId) => ({
+    manifestId,
+    requestCount: 0,
+    networkFeeUsdMicros: (feeMicrosByManifest.get(manifestId) ?? 0n).toString(),
+    feeWei: (feeWeiByManifest.get(manifestId) ?? 0n).toString(),
+    billableSecs: (billableSecsByManifest.get(manifestId) ?? 0n).toString(),
+  }));
 }
 
 type UserPipelineModelMeta = {
@@ -898,6 +979,81 @@ export function __testSetOpenMeterDailyPipelineRows(
   testDailyByClient.set(clientId, rows);
 }
 
+const testManifestByClient = new Map<string, OpenMeterManifestRow[]>();
+
+export function __testSetOpenMeterManifestRows(
+  clientId: string,
+  rows: OpenMeterManifestRow[],
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testSetOpenMeterManifestRows is only available in test");
+  }
+  testManifestByClient.set(clientId, rows);
+}
+
+/** Per-manifest analytics: USD micros, fee_wei, and billable_secs. */
+export async function queryOpenMeterUsageByManifest(input: {
+  clientId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  externalUserId?: string | null;
+}): Promise<OpenMeterManifestRow[]> {
+  if (!requireOpenMeterForUsageReads()) {
+    return [];
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    const stub = testManifestByClient.get(input.clientId);
+    if (stub) {
+      if (!input.externalUserId?.trim()) {
+        return stub;
+      }
+      const matchKeys = buildExternalUserIdMatchKeys(input.externalUserId);
+      // Stub rows are already rolled up by manifest; filter is applied at query time
+      // only when live meters include external_user_id. For tests, return full stub.
+      void matchKeys;
+      return stub;
+    }
+  }
+
+  if (avoidOpenMeterNetworkInTests()) {
+    return [];
+  }
+
+  const meterClientId = await resolveOpenMeterMeterClientId(input.clientId);
+  const client = await getOpenMeterClientForApp(input.clientId);
+  if (!client) {
+    return [];
+  }
+
+  const subjects = await resolveUsageMeterSubjects({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const periodQuery = buildMeterQuery({
+    clientId: meterClientId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    windowSize: "MONTH",
+    subjects,
+    groupBy: METER_GROUP_BY_MANIFEST,
+  });
+
+  const [feeMicrosResult, feeWeiResult, billableSecsResult] = await Promise.all([
+    client.meters.query(NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER, periodQuery),
+    client.meters.query(FEE_WEI_METER, periodQuery),
+    client.meters.query(BILLABLE_SECS_METER, periodQuery),
+  ]);
+
+  return aggregateManifestRows({
+    clientId: meterClientId,
+    feeMicrosRows: feeMicrosResult.data || [],
+    feeWeiRows: feeWeiResult.data || [],
+    billableSecsRows: billableSecsResult.data || [],
+    filterExternalUserId: input.externalUserId,
+  });
+}
+
 export async function queryOpenMeterUsage(input: {
   clientId: string;
   startDate?: string | null;
@@ -1126,6 +1282,7 @@ export function buildOpenMeterUsageResponse(input: {
   rows: OpenMeterUsageRow[];
   pipelineRows?: OpenMeterPipelineModelRow[];
   dailyPipelineRows?: OpenMeterDailyPipelineRow[];
+  manifestRows?: OpenMeterManifestRow[];
   includeRetail?: boolean;
   retailByPipelineModel?: Map<
     string,
@@ -1190,6 +1347,18 @@ export function buildOpenMeterUsageResponse(input: {
       (response.totals as Record<string, unknown>).endUserBillableUsdMicros =
         totalRetail.toString();
     }
+  }
+
+  if (input.groupBy === "manifest" && input.manifestRows) {
+    response.byManifest = input.manifestRows.map((row) => ({
+      manifestId: row.manifestId,
+      requestCount: row.requestCount,
+      currency: usageCurrency,
+      networkFeeUsdMicros: row.networkFeeUsdMicros,
+      ownerChargeUsdMicros: row.networkFeeUsdMicros,
+      feeWei: row.feeWei,
+      billableSecs: row.billableSecs,
+    }));
   }
 
   return response;

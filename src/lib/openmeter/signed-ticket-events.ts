@@ -39,6 +39,9 @@ export type SignedTicketRequestRow = {
   networkFeeUsdMicros: string;
   feeWei?: string;
   pixels?: string;
+  manifestId?: string;
+  ethUsdPrice?: string;
+  billableSecs?: number;
   eventId: string;
 };
 
@@ -329,6 +332,9 @@ export function normalizeSignedTicketEvent(
     event.event.id?.trim() ||
     `${clientId}:${time}`;
   const networkFeeUsdMicros = microsField(data, "network_fee_usd_micros") || "0";
+  const manifestId = stringField(data, "manifest_id") || undefined;
+  const ethUsdPrice = stringField(data, "eth_usd_price") || undefined;
+  const billableSecs = numberField(data, "billable_secs");
   return {
     time,
     clientId,
@@ -340,6 +346,9 @@ export function normalizeSignedTicketEvent(
     networkFeeUsdMicros,
     feeWei: stringField(data, "fee_wei") || undefined,
     pixels: stringField(data, "pixels") || undefined,
+    manifestId,
+    ethUsdPrice,
+    billableSecs: billableSecs ?? undefined,
     eventId: event.event.id?.trim() || gatewayRequestId,
   };
 }
@@ -954,6 +963,20 @@ function microsField(data: Record<string, unknown>, key: string): string | null 
   }
   if (typeof value === "number" && Number.isFinite(value)) {
     return String(Math.trunc(value));
+  }
+  return null;
+}
+
+function numberField(data: Record<string, unknown>, key: string): number | null {
+  const value = data[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
   }
   return null;
 }

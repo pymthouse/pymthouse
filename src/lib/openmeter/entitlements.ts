@@ -1,8 +1,11 @@
 import type { OpenMeter } from "@openmeter/sdk";
 import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import {
+  BILLABLE_SECS_METER,
   CREATE_SIGNED_TICKET_EVENT_TYPE,
+  FEE_WEI_METER,
   getHostedOpenMeterUrl,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
   NETWORK_FEE_USD_MICROS_METER,
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
@@ -161,6 +164,8 @@ export type SignedTicketOpenMeterEvent = {
   pixels?: string;
   pipeline?: string;
   modelId?: string;
+  manifestId?: string;
+  billableSecs?: number;
   gatewayRequestId?: string;
   ethUsdPrice?: string;
   ethUsdRoundId?: string;
@@ -204,10 +209,12 @@ export async function ingestSignedTicketEvent(input: {
       usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
       external_user_id: platformUserId,
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
-      fee_wei: input.event.feeWei,
+      fee_wei: input.event.feeWei != null ? Number(input.event.feeWei) : undefined,
       pixels: input.event.pixels,
       pipeline: input.event.pipeline || "unknown",
       model_id: input.event.modelId || "unknown",
+      manifest_id: input.event.manifestId?.trim() || "unknown",
+      billable_secs: input.event.billableSecs ?? 0,
       gateway_request_id: input.event.gatewayRequestId,
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
@@ -217,6 +224,14 @@ export async function ingestSignedTicketEvent(input: {
     },
   });
 }
+
+const ANALYTICS_METER_GROUP_BY = {
+  client_id: "$.client_id",
+  external_user_id: "$.external_user_id",
+  pipeline: "$.pipeline",
+  model_id: "$.model_id",
+  manifest_id: "$.manifest_id",
+} as const;
 
 export const OPENMETER_METER_DEFINITIONS = [
   {
@@ -245,10 +260,40 @@ export const OPENMETER_METER_DEFINITIONS = [
       model_id: "$.model_id",
     },
   },
+  {
+    slug: FEE_WEI_METER,
+    description:
+      "Analytics: SUM of signed-ticket fee_wei (Wei); grouped by client, user, pipeline, model, manifest",
+    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "SUM" as const,
+    valueProperty: "$.fee_wei",
+    groupBy: { ...ANALYTICS_METER_GROUP_BY },
+  },
+  {
+    slug: NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+    description:
+      "Analytics: SUM of network fee USD micros grouped by manifest_id (per-stream cost)",
+    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "SUM" as const,
+    valueProperty: "$.network_fee_usd_micros",
+    groupBy: { ...ANALYTICS_METER_GROUP_BY },
+  },
+  {
+    slug: BILLABLE_SECS_METER,
+    description:
+      "Analytics: SUM of billable_secs; grouped by client, user, pipeline, model, manifest",
+    eventType: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "SUM" as const,
+    valueProperty: "$.billable_secs",
+    groupBy: { ...ANALYTICS_METER_GROUP_BY },
+  },
 ];
 
 export {
+  BILLABLE_SECS_METER,
   DEFAULT_TRIAL_FEATURE_KEY,
+  FEE_WEI_METER,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
   NETWORK_FEE_USD_MICROS_METER,
   SIGNED_TICKET_COUNT_METER,
 } from "./constants";

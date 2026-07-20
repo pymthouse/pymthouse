@@ -7,10 +7,12 @@ import {
   buildOpenMeterUsageResponse,
   queryOpenMeterAppDashboardUsage,
   queryOpenMeterUsage,
+  queryOpenMeterUsageByManifest,
   queryOpenMeterUserDailyByPipeline,
   queryOpenMeterUserPipelineByModel,
   type OpenMeterPipelineModelRow,
   type OpenMeterDailyPipelineRow,
+  type OpenMeterManifestRow,
   type OpenMeterUsageRow,
 } from "@/lib/usage/query-openmeter";
 
@@ -118,6 +120,7 @@ export async function buildAppUsageResponse(input: {
 
   let pipelineRows: OpenMeterPipelineModelRow[] | undefined;
   let dailyPipelineRows: OpenMeterDailyPipelineRow[] | undefined;
+  let manifestRows: OpenMeterManifestRow[] | undefined;
   if (groupBy === "pipeline_model") {
     if (filterUserId) {
       pipelineRows = await queryOpenMeterUserPipelineByModel({
@@ -143,6 +146,14 @@ export async function buildAppUsageResponse(input: {
       externalUserId: filterUserId,
     });
   }
+  if (groupBy === "manifest") {
+    manifestRows = await queryOpenMeterUsageByManifest({
+      clientId: appId,
+      startDate,
+      endDate,
+      externalUserId: filterUserId,
+    });
+  }
 
   const retailByPipelineModel = includeRetail
     ? await buildRetailByPipelineModel({ appId, pipelineRows, omRows })
@@ -157,6 +168,7 @@ export async function buildAppUsageResponse(input: {
     rows: omRows,
     pipelineRows,
     dailyPipelineRows,
+    manifestRows,
     includeRetail,
     retailByPipelineModel,
   });

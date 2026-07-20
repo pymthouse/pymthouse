@@ -14,6 +14,7 @@ import { buildOpenMeterUsageResponse } from "@/lib/usage/query-openmeter";
 import {
   aggregateDailyRequestCounts,
   aggregateDailyPipelineModelRows,
+  aggregateManifestRows,
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
@@ -23,7 +24,13 @@ import {
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
 import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
-import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
+import {
+  BILLABLE_SECS_METER,
+  FEE_WEI_METER,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "@/lib/openmeter/constants";
+import { OPENMETER_METER_DEFINITIONS } from "@/lib/openmeter/entitlements";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -133,6 +140,163 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 250,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-2",
+        },
+      },
+    ] as never,
+    feeWeiRows: [
+      {
+        value: "5000",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 2000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+    billableSecsRows: [
+      {
+        value: 30,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: "12.5",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+  });
+
+  const byId = new Map(rows.map((r) => [r.manifestId, r]));
+  assert.equal(byId.size, 2);
+  const mid1 = byId.get("mid-1");
+  assert.ok(mid1);
+  assert.equal(mid1.networkFeeUsdMicros, "1250");
+  assert.equal(mid1.feeWei, "7000");
+  assert.equal(mid1.billableSecs, "42");
+  assert.equal(mid1.requestCount, 0);
+  const mid2 = byId.get("mid-2");
+  assert.ok(mid2);
+  assert.equal(mid2.networkFeeUsdMicros, "100");
+  assert.equal(mid2.feeWei, "0");
+  assert.equal(mid2.billableSecs, "0");
+});
+
+test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {
+  const bySlug = new Map(OPENMETER_METER_DEFINITIONS.map((m) => [m.slug, m]));
+  for (const slug of [
+    FEE_WEI_METER,
+    NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+    BILLABLE_SECS_METER,
+  ]) {
+    const meter = bySlug.get(slug);
+    assert.ok(meter, `missing meter ${slug}`);
+    assert.equal(meter.aggregation, "SUM");
+    assert.ok(meter.groupBy?.manifest_id);
+  }
+  assert.equal(
+    bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy?.manifest_id,
+    undefined,
+  );
+});
+
+test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () => {
+  const response = buildOpenMeterUsageResponse({
+    clientId: "app_1",
+    groupBy: "manifest",
+    rows: [
+      {
+        externalUserId: "u1",
+        requestCount: 3,
+        networkFeeUsdMicros: "1500",
+      },
+    ],
+    manifestRows: [
+      {
+        manifestId: "mid-1",
+        requestCount: 0,
+        networkFeeUsdMicros: "1500",
+        feeWei: "9000",
+        billableSecs: "45",
+      },
+    ],
+  });
+  assert.equal(
+    (response.totals as { networkFeeUsdMicros: string }).networkFeeUsdMicros,
+    "1500",
+  );
+  const byManifest = response.byManifest as Array<{
+    manifestId: string;
+    feeWei: string;
+    billableSecs: string;
+  }>;
+  assert.equal(byManifest.length, 1);
+  assert.equal(byManifest[0]?.manifestId, "mid-1");
+  assert.equal(byManifest[0]?.feeWei, "9000");
+  assert.equal(byManifest[0]?.billableSecs, "45");
 });
 
 test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {
