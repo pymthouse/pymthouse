@@ -85,7 +85,11 @@ export function millisToSecsString(millis: bigint): string {
   if (frac === 0n) {
     return `${sign}${whole.toString()}`;
   }
-  const fracStr = frac.toString().padStart(3, "0").replace(/0+$/, "");
+  // Trim trailing zeros without a /0+$/ regex (Sonar S8786 backtracking).
+  let fracStr = frac.toString().padStart(3, "0");
+  while (fracStr.endsWith("0")) {
+    fracStr = fracStr.slice(0, -1);
+  }
   return `${sign}${whole.toString()}.${fracStr}`;
 }
 
