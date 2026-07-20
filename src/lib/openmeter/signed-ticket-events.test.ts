@@ -3,15 +3,19 @@ import assert from "node:assert/strict";
 
 import { CREATE_SIGNED_TICKET_EVENT_TYPE } from "./constants";
 import {
+  aggregateManifestSessionEventStats,
   coerceIngestedEvent,
   coerceIngestedEvents,
   collectAdminSubjectsFromMeterRows,
+  compareSignedTicketSessions,
   eventClientId,
   eventMatchesAdminSignedTicket,
   eventMatchesClientIdFilter,
   eventMatchesViewerSubjects,
   eventUsageSubject,
   normalizeSignedTicketEvent,
+  resolveSessionBillableSecs,
+  sessionEventStatsKey,
 } from "./signed-ticket-events";
 
 function sampleEvent(overrides?: {
@@ -318,5 +322,81 @@ test("collectAdminSubjectsFromMeterRows expands external_user_id without subject
   assert.ok(subjects.includes("owner:eu-story"));
   assert.ok(
     subjects.includes("app_98575870d7ae33589a3f0660:owner:eu-story"),
+  );
+});
+
+test("aggregateManifestSessionEventStats tracks first/last and billable sum", () => {
+  const stats = aggregateManifestSessionEventStats([
+    sampleEvent({
+      time: "2026-07-20T15:00:00.000Z",
+      data: { manifest_id: "mid-1", billable_secs: 10 },
+    }),
+    sampleEvent({
+      id: "evt-2",
+      time: "2026-07-20T15:05:00.000Z",
+      data: { manifest_id: "mid-1", billable_secs: "2.5" },
+    }),
+    sampleEvent({
+      id: "evt-3",
+      time: "2026-07-20T14:00:00.000Z",
+      data: { manifest_id: "mid-2", billable_secs: 0 },
+    }),
+  ]);
+  const mid1 = stats.get(sessionEventStatsKey("app_abc", "mid-1"));
+  assert.ok(mid1);
+  assert.equal(mid1.firstSeen, "2026-07-20T15:00:00.000Z");
+  assert.equal(mid1.lastSeen, "2026-07-20T15:05:00.000Z");
+  assert.equal(mid1.billableSecs, 12.5);
+  const mid2 = stats.get(sessionEventStatsKey("app_abc", "mid-2"));
+  assert.ok(mid2);
+  assert.equal(mid2.billableSecs, 0);
+});
+
+test("resolveSessionBillableSecs falls back to events then wall clock", () => {
+  assert.equal(resolveSessionBillableSecs("42.5", 0), "42.5");
+  assert.equal(resolveSessionBillableSecs("0", 12.5), "12.5");
+  assert.equal(
+    resolveSessionBillableSecs(
+      "0",
+      0,
+      "2026-07-20T15:00:00.000Z",
+      "2026-07-20T15:01:30.000Z",
+    ),
+    "90",
+  );
+});
+
+test("compareSignedTicketSessions orders open by start and ended by end", () => {
+  const now = Date.parse("2026-07-20T16:00:00.000Z");
+  const openRecent = {
+    manifestId: "open-new",
+    clientId: "app_a",
+    pipeline: "p",
+    modelId: "m",
+    networkFeeUsdMicros: "1",
+    networkFeeUsdExact: "1",
+    feeWei: "1",
+    billableSecs: "10",
+    startedAt: "2026-07-20T15:55:00.000Z",
+    endedAt: "2026-07-20T15:58:00.000Z",
+  };
+  const endedLater = {
+    ...openRecent,
+    manifestId: "ended-late",
+    startedAt: "2026-07-20T14:00:00.000Z",
+    endedAt: "2026-07-20T15:30:00.000Z",
+  };
+  const endedEarlier = {
+    ...openRecent,
+    manifestId: "ended-early",
+    startedAt: "2026-07-20T13:00:00.000Z",
+    endedAt: "2026-07-20T14:00:00.000Z",
+  };
+  const sorted = [endedEarlier, endedLater, openRecent].sort((a, b) =>
+    compareSignedTicketSessions(a, b, now),
+  );
+  assert.deepEqual(
+    sorted.map((s) => s.manifestId),
+    ["open-new", "ended-late", "ended-early"],
   );
 });

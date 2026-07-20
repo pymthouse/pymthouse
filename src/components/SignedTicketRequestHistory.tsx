@@ -75,7 +75,7 @@ function historyCopy(scope: HistoryScope): {
     return {
       title: "Signed ticket requests",
       subtitle:
-        "Platform-wide signed ticket sessions (and requests), newest / highest fee first. Filtered by the application selector when a subset is selected.",
+        "Platform-wide signed ticket sessions (and requests), newest first. Filtered by the application selector when a subset is selected.",
       emptySessions:
         "No signed ticket sessions for the selected apps in this billing cycle.",
       emptyRequests:
@@ -325,6 +325,13 @@ function SessionRow({
     `exact=${session.networkFeeUsdExact} micros`,
     `fee_wei=${session.feeWei}`,
   ].join(" · ");
+  const startedLabel = session.startedAt
+    ? formatRequestTime(session.startedAt)
+    : "—";
+  const durationLabel =
+    session.billableSecs && session.billableSecs !== "0"
+      ? `${session.billableSecs}s`
+      : "—";
 
   return (
     <>
@@ -339,8 +346,14 @@ function SessionRow({
             {expanded ? "▾" : "▸"}
           </button>
         </td>
-        <td className="px-2 py-3 font-mono text-xs text-zinc-300 align-top">
-          <span title={session.manifestId}>{shortenId(session.manifestId)}</span>
+        <td className="px-2 py-3 text-zinc-300 align-top whitespace-nowrap">
+          <div title={session.startedAt || undefined}>{startedLabel}</div>
+          <div
+            className="font-mono text-xs text-zinc-500 mt-0.5"
+            title={session.manifestId}
+          >
+            {shortenId(session.manifestId)}
+          </div>
         </td>
         <td className="px-2 py-3 text-zinc-300 align-top">
           <div
@@ -357,7 +370,7 @@ function SessionRow({
           {pipelineLabel}
         </td>
         <td className="px-2 py-3 text-right font-mono text-xs text-zinc-400 align-top whitespace-nowrap">
-          {session.billableSecs}s
+          {durationLabel}
         </td>
         <td
           className="px-2 py-3 text-right font-mono text-emerald-400/90 align-top whitespace-nowrap"
@@ -405,7 +418,7 @@ function SessionTable({
           <thead>
             <tr className="border-b border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
               <th className="px-2 py-2 font-medium w-8" />
-              <th className="px-2 py-2 font-medium">Session</th>
+              <th className="px-2 py-2 font-medium">Started</th>
               <th className="px-2 py-2 font-medium">App</th>
               <th className="px-2 py-2 font-medium">Pipeline / Model</th>
               <th className="px-2 py-2 font-medium text-right">Duration</th>

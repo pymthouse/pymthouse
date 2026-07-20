@@ -95,6 +95,19 @@ export type SignedTicketSessionRow = {
   networkFeeUsdExact: string;
   feeWei: string;
   billableSecs: string;
+  /** ISO time of first signed-ticket event in the session (when known). */
+  startedAt?: string;
+  /** ISO time of last signed-ticket event in the session (when known). */
+  endedAt?: string;
+};
+
+/** Sessions with no ticket activity for this long are treated as ended. */
+export const SESSION_ENDED_IDLE_MS = 5 * 60 * 1000;
+
+export type ManifestSessionEventStats = {
+  firstSeen: string;
+  lastSeen: string;
+  billableSecs: number;
 };
 
 export type ListSignedTicketSessionsResult = {
@@ -659,34 +672,63 @@ async function listSignedTicketSessionsForClientIds(input: {
 
   const clientIds = [...clientIdFilter];
   const appNames = await loadAppNames(clientIds);
-  const batches = await Promise.all(
-    clientIds.map(async (clientId) => {
-      const rows = await queryOpenMeterUsageByManifest({
-        clientId,
-        startDate: from,
-        endDate: to,
-        externalUserId: input.externalUserId,
-      });
-      return rows.map((row) => ({
-        manifestId: row.manifestId,
-        clientId,
-        appName: appNames.get(clientId),
-        pipeline: row.pipeline || "unknown",
-        modelId: row.modelId || "unknown",
-        networkFeeUsdMicros: row.networkFeeUsdMicros,
-        networkFeeUsdExact: row.networkFeeUsdExact,
-        feeWei: row.feeWei,
-        billableSecs: row.billableSecs,
-      }) satisfies SignedTicketSessionRow);
-    }),
-  );
+  const omClient = getHostedOpenMeterClient();
 
-  const items = batches.flat();
-  items.sort((a, b) => {
-    const feeCmp = BigInt(b.networkFeeUsdMicros) - BigInt(a.networkFeeUsdMicros);
-    if (feeCmp !== 0n) return feeCmp > 0n ? 1 : -1;
-    return b.manifestId.localeCompare(a.manifestId);
+  const [batches, rawEvents] = await Promise.all([
+    Promise.all(
+      clientIds.map(async (clientId) => {
+        const rows = await queryOpenMeterUsageByManifest({
+          clientId,
+          startDate: from,
+          endDate: to,
+          externalUserId: input.externalUserId,
+        });
+        return rows.map((row) => ({
+          manifestId: row.manifestId,
+          clientId,
+          appName: appNames.get(clientId),
+          pipeline: row.pipeline || "unknown",
+          modelId: row.modelId || "unknown",
+          networkFeeUsdMicros: row.networkFeeUsdMicros,
+          networkFeeUsdExact: row.networkFeeUsdExact,
+          feeWei: row.feeWei,
+          billableSecs: row.billableSecs,
+        }) satisfies SignedTicketSessionRow);
+      }),
+    ),
+    omClient
+      ? fetchPlatformSignedTicketEvents({
+          client: omClient,
+          clientIds: clientIdFilter,
+          from,
+          to,
+        })
+      : Promise.resolve([] as IngestedEventLike[]),
+  ]);
+
+  const eventStats = aggregateManifestSessionEventStats(rawEvents, {
+    clientIds: clientIdFilter,
+    externalUserId: input.externalUserId,
   });
+
+  const items = batches.flat().map((row) => {
+    const stats = eventStats.get(sessionEventStatsKey(row.clientId, row.manifestId));
+    const startedAt = stats?.firstSeen;
+    const endedAt = stats?.lastSeen;
+    return {
+      ...row,
+      startedAt,
+      endedAt,
+      billableSecs: resolveSessionBillableSecs(
+        row.billableSecs,
+        stats?.billableSecs ?? 0,
+        startedAt,
+        endedAt,
+      ),
+    } satisfies SignedTicketSessionRow;
+  });
+
+  items.sort(compareSignedTicketSessions);
 
   const page = items.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
@@ -698,6 +740,144 @@ async function listSignedTicketSessionsForClientIds(input: {
     nextCursor,
     openMeterConfigured: true,
   };
+}
+
+export function sessionEventStatsKey(clientId: string, manifestId: string): string {
+  return `${clientId}\0${manifestId}`;
+}
+
+/**
+ * Roll up first/last event times and billable_secs per client+manifest.
+ * Used to show session start time and to recover duration when the
+ * billable_secs meter is empty (historical string ingest).
+ */
+export function aggregateManifestSessionEventStats(
+  events: readonly IngestedEventLike[],
+  opts?: {
+    clientIds?: ReadonlySet<string> | null;
+    externalUserId?: string | null;
+  },
+): Map<string, ManifestSessionEventStats> {
+  const out = new Map<string, ManifestSessionEventStats>();
+  const externalFilter = opts?.externalUserId?.trim() || null;
+  const externalKeys = externalFilter
+    ? new Set([
+        externalFilter,
+        normalizePlatformUserId(externalFilter),
+        buildOwnerWireSubject(normalizePlatformUserId(externalFilter)),
+      ])
+    : null;
+
+  for (const ev of events) {
+    if (!eventIsSignedTicket(ev)) continue;
+    const clientId = eventClientId(ev);
+    if (!clientId) continue;
+    if (opts?.clientIds && opts.clientIds.size > 0 && !opts.clientIds.has(clientId)) {
+      continue;
+    }
+    const usageSubject = eventUsageSubject(ev);
+    if (
+      externalKeys &&
+      usageSubject &&
+      !externalKeys.has(usageSubject) &&
+      !externalKeys.has(normalizePlatformUserId(usageSubject))
+    ) {
+      continue;
+    }
+    const data = ev.event.data ?? {};
+    const manifestId = stringField(data, "manifest_id") || "unknown";
+    const time =
+      toIsoTime(ev.event.time) || toIsoTime(ev.ingestedAt) || new Date(0).toISOString();
+    const secs = numberField(data, "billable_secs") ?? 0;
+    const key = sessionEventStatsKey(clientId, manifestId);
+    const prev = out.get(key);
+    if (!prev) {
+      out.set(key, {
+        firstSeen: time,
+        lastSeen: time,
+        billableSecs: secs > 0 ? secs : 0,
+      });
+      continue;
+    }
+    if (time < prev.firstSeen) prev.firstSeen = time;
+    if (time > prev.lastSeen) prev.lastSeen = time;
+    if (secs > 0) prev.billableSecs += secs;
+  }
+  return out;
+}
+
+/** Prefer meter SUM; fall back to event SUM or wall-clock span when meter is 0. */
+export function resolveSessionBillableSecs(
+  meterSecs: string,
+  eventSumSecs: number,
+  startedAt?: string,
+  endedAt?: string,
+): string {
+  const meter = Number(meterSecs);
+  if (Number.isFinite(meter) && meter > 0) {
+    return meterSecs.trim() || String(meter);
+  }
+  if (Number.isFinite(eventSumSecs) && eventSumSecs > 0) {
+    return formatFractionalSecs(eventSumSecs);
+  }
+  if (startedAt && endedAt) {
+    const ms = Date.parse(endedAt) - Date.parse(startedAt);
+    if (Number.isFinite(ms) && ms > 0) {
+      return formatFractionalSecs(ms / 1000);
+    }
+  }
+  return meterSecs.trim() || "0";
+}
+
+function formatFractionalSecs(secs: number): string {
+  if (!Number.isFinite(secs) || secs <= 0) return "0";
+  const millis = BigInt(Math.round(secs * 1000));
+  const negative = millis < 0n;
+  const abs = negative ? -millis : millis;
+  const whole = abs / 1000n;
+  const frac = abs % 1000n;
+  const sign = negative ? "-" : "";
+  if (frac === 0n) return `${sign}${whole.toString()}`;
+  let fracStr = frac.toString().padStart(3, "0");
+  while (fracStr.endsWith("0")) {
+    fracStr = fracStr.slice(0, -1);
+  }
+  return `${sign}${whole.toString()}.${fracStr}`;
+}
+
+export function isSignedTicketSessionEnded(
+  session: Pick<SignedTicketSessionRow, "endedAt" | "startedAt">,
+  nowMs: number = Date.now(),
+): boolean {
+  const last = session.endedAt || session.startedAt;
+  if (!last) return true;
+  const t = Date.parse(last);
+  if (!Number.isFinite(t)) return true;
+  return nowMs - t >= SESSION_ENDED_IDLE_MS;
+}
+
+/** Sort key: open sessions by start, ended sessions by end. Newest first. */
+export function signedTicketSessionSortKey(
+  session: Pick<SignedTicketSessionRow, "startedAt" | "endedAt" | "manifestId">,
+  nowMs: number = Date.now(),
+): string {
+  const ended = isSignedTicketSessionEnded(session, nowMs);
+  if (ended) {
+    return session.endedAt || session.startedAt || "";
+  }
+  return session.startedAt || session.endedAt || "";
+}
+
+export function compareSignedTicketSessions(
+  a: SignedTicketSessionRow,
+  b: SignedTicketSessionRow,
+  nowMs: number = Date.now(),
+): number {
+  const keyCmp = signedTicketSessionSortKey(b, nowMs).localeCompare(
+    signedTicketSessionSortKey(a, nowMs),
+  );
+  if (keyCmp !== 0) return keyCmp;
+  return b.manifestId.localeCompare(a.manifestId);
 }
 
 async function fetchSignedTicketEvents(input: {

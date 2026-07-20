@@ -199,10 +199,11 @@ export async function ingestSignedTicketEvent(input: {
 
   const feeWei =
     input.event.feeWei != null ? parseFiniteNumericString(input.event.feeWei) : undefined;
+  // Number (not string) so OpenMeter SUM $.billable_secs accumulates.
   const billableSecs =
     input.event.billableSecs != null && Number.isFinite(input.event.billableSecs)
-      ? String(input.event.billableSecs)
-      : "0";
+      ? input.event.billableSecs
+      : 0;
 
   await input.client.events.ingest({
     specversion: "1.0",
