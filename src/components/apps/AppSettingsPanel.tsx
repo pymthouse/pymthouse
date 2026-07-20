@@ -160,9 +160,12 @@ export default function AppSettingsPanel({ data }: Props) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-zinc-300 mb-1.5">Redirect URIs</label>
+          <label htmlFor="settings-new-redirect-uri" className="block text-sm font-medium text-zinc-300 mb-1.5">
+            Redirect URIs
+          </label>
           <div className="flex gap-2 mb-2">
             <input
+              id="settings-new-redirect-uri"
               type="text"
               value={newRedirectUri}
               onChange={(event) => setNewRedirectUri(event.target.value)}
@@ -174,6 +177,7 @@ export default function AppSettingsPanel({ data }: Props) {
               className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100"
             />
             <button
+              type="button"
               onClick={() => addValue(newRedirectUri, setNewRedirectUri, setRedirectUris)}
               className="px-4 py-2 rounded-lg bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors"
             >
@@ -185,6 +189,7 @@ export default function AppSettingsPanel({ data }: Props) {
               <div key={uri} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2">
                 <code className="text-xs text-zinc-300">{uri}</code>
                 <button
+                  type="button"
                   onClick={() => setRedirectUris((items) => items.filter((item) => item !== uri))}
                   className="text-xs text-zinc-500 hover:text-red-400"
                 >
@@ -196,9 +201,12 @@ export default function AppSettingsPanel({ data }: Props) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-zinc-300 mb-1.5">Post-logout Redirect URIs</label>
+          <label htmlFor="settings-new-post-logout-uri" className="block text-sm font-medium text-zinc-300 mb-1.5">
+            Post-logout Redirect URIs
+          </label>
           <div className="flex gap-2 mb-2">
             <input
+              id="settings-new-post-logout-uri"
               type="text"
               value={newPostLogoutUri}
               onChange={(event) => setNewPostLogoutUri(event.target.value)}
@@ -210,6 +218,7 @@ export default function AppSettingsPanel({ data }: Props) {
               className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100"
             />
             <button
+              type="button"
               onClick={() => addValue(newPostLogoutUri, setNewPostLogoutUri, setPostLogoutRedirectUris)}
               className="px-4 py-2 rounded-lg bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors"
             >
@@ -221,6 +230,7 @@ export default function AppSettingsPanel({ data }: Props) {
               <div key={uri} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2">
                 <code className="text-xs text-zinc-300">{uri}</code>
                 <button
+                  type="button"
                   onClick={() => setPostLogoutRedirectUris((items) => items.filter((item) => item !== uri))}
                   className="text-xs text-zinc-500 hover:text-red-400"
                 >
@@ -233,8 +243,11 @@ export default function AppSettingsPanel({ data }: Props) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Initiate Login URI</label>
+            <label htmlFor="settings-initiate-login-uri" className="block text-sm font-medium text-zinc-300 mb-1.5">
+              Initiate Login URI
+            </label>
             <input
+              id="settings-initiate-login-uri"
               type="url"
               value={initiateLoginUri}
               onChange={(event) => setInitiateLoginUri(event.target.value)}
@@ -243,8 +256,11 @@ export default function AppSettingsPanel({ data }: Props) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Token Auth Method</label>
+            <label htmlFor="settings-token-auth-method" className="block text-sm font-medium text-zinc-300 mb-1.5">
+              Token Auth Method
+            </label>
             <select
+              id="settings-token-auth-method"
               value={tokenEndpointAuthMethod}
               onChange={(event) => setTokenEndpointAuthMethod(event.target.value)}
               className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100"
@@ -258,6 +274,7 @@ export default function AppSettingsPanel({ data }: Props) {
 
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={saveSettings}
             disabled={saving}
             className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-500 disabled:opacity-50"
@@ -265,6 +282,7 @@ export default function AppSettingsPanel({ data }: Props) {
             Save Settings
           </button>
           <button
+            type="button"
             onClick={rotateSecret}
             disabled={saving}
             className="px-4 py-2 rounded-lg border border-zinc-700 text-zinc-200 text-sm hover:bg-zinc-800 disabled:opacity-50"
@@ -299,6 +317,7 @@ export default function AppSettingsPanel({ data }: Props) {
             className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100"
           />
           <button
+            type="button"
             onClick={addDomain}
             disabled={saving}
             className="px-4 py-2 rounded-lg bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 disabled:opacity-50"
@@ -312,6 +331,7 @@ export default function AppSettingsPanel({ data }: Props) {
             <div key={domain.id} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2">
               <code className="text-xs text-zinc-300">{domain.domain}</code>
               <button
+                type="button"
                 onClick={() => removeDomain(domain.id)}
                 className="text-xs text-zinc-500 hover:text-red-400"
               >
@@ -357,7 +377,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-zinc-500 mb-1.5">{label}</label>
+      <div className="block text-xs font-medium text-zinc-500 mb-1.5">{label}</div>
       <code className="block rounded-lg border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-xs text-zinc-300 break-all">
         {value}
       </code>

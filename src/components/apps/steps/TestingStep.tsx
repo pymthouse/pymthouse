@@ -1335,10 +1335,11 @@ function DeviceInitiateLoginUriField({
   return (
     <div className="border-t border-zinc-800 pt-5">
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-zinc-300">
+        <label htmlFor="device-initiate-login-uri" className="block text-sm font-medium text-zinc-300">
           Third-party initiate login URI
         </label>
         <input
+          id="device-initiate-login-uri"
           type="url"
           value={initiateLoginUri}
           onChange={(e) => {
@@ -1751,9 +1752,9 @@ export default function TestingStep({
       {primaryIsConfidential ? (
         <>
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
               Client ID
-            </label>
+            </div>
             <div className="flex items-center gap-2">
               <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
                 {clientId || "Create app first"}
@@ -1771,9 +1772,9 @@ export default function TestingStep({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
               Client Secret
-            </label>
+            </div>
             {secret ? (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -1817,9 +1818,9 @@ export default function TestingStep({
       ) : (
         <>
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">
+            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
               Public / SDK client ID
-            </label>
+            </div>
             <p className="text-xs text-zinc-500 mb-2">
               Use this in SDKs, CLIs, and the device authorization flow. It stays public (no secret).
             </p>
@@ -1854,7 +1855,7 @@ export default function TestingStep({
             Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
           </p>
           <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-1">Client ID</label>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
                 {backendHelper.clientId}
@@ -1869,7 +1870,7 @@ export default function TestingStep({
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</label>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
             {backendSecret ? (
               <div>
                 <div className="flex items-center gap-2 mb-2">

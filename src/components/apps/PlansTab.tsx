@@ -650,7 +650,7 @@ function PlanDraftForm({
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-500 mb-1">Type</label>
+        <div className="block text-xs text-zinc-500 mb-1">Type</div>
         <PlanTypePills
           value={draft.type}
           onChange={(type) =>
@@ -1124,12 +1124,12 @@ function NetworkPricePlanCard({
                   Unselect all
                 </button>
               </div>
-              <label className="block text-xs text-zinc-500">
+              <div className="block text-xs text-zinc-500">
                 Pipelines &amp; models discoverable to integrators
                 <span className="block text-zinc-600 mt-0.5">
                   Per-capability price limits coming soon.
                 </span>
-              </label>
+              </div>
               <PipelineModelPicker
                 catalog={catalog}
                 values={pickerValues}

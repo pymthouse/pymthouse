@@ -63,6 +63,7 @@ export default function SignerControlPanel({
       <div className="flex flex-wrap gap-3">
         {!managedRemote && !isRunning && (
           <button
+            type="button"
             onClick={() => doAction("start")}
             disabled={!!loading}
             className="px-4 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg text-sm font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
@@ -73,6 +74,7 @@ export default function SignerControlPanel({
 
         {!managedRemote && isRunning && (
           <button
+            type="button"
             onClick={() => doAction("stop")}
             disabled={!!loading}
             className="px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg text-sm font-medium hover:bg-red-500/20 transition-colors disabled:opacity-50"
@@ -83,6 +85,7 @@ export default function SignerControlPanel({
 
         {!managedRemote && (
           <button
+            type="button"
             onClick={() => doAction("restart")}
             disabled={!!loading}
             className="px-4 py-2 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-lg text-sm font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
@@ -92,6 +95,7 @@ export default function SignerControlPanel({
         )}
 
         <button
+          type="button"
           onClick={() => doAction("sync")}
           disabled={!!loading}
           className="px-4 py-2 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded-lg text-sm font-medium hover:bg-blue-500/20 transition-colors disabled:opacity-50"

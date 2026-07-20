@@ -140,6 +140,7 @@ export default function AdminOidcClientsPage() {
       <DashboardLayout>
         <div className="mb-8">
           <button
+            type="button"
             onClick={cancelEdit}
             className="text-sm text-zinc-400 hover:text-zinc-300 mb-4 flex items-center gap-2"
           >
@@ -157,10 +158,11 @@ export default function AdminOidcClientsPage() {
           <div className="space-y-6">
             {/* Display Name */}
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-2">
+              <label htmlFor="oidc-edit-display-name" className="block text-sm font-medium text-zinc-300 mb-2">
                 Display Name
               </label>
               <input
+                id="oidc-edit-display-name"
                 type="text"
                 value={formData.displayName}
                 onChange={(e) =>
@@ -172,13 +174,14 @@ export default function AdminOidcClientsPage() {
 
             {/* Redirect URIs */}
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-2">
+              <label htmlFor="oidc-edit-redirect-uris" className="block text-sm font-medium text-zinc-300 mb-2">
                 Redirect URIs
                 <span className="text-zinc-500 font-normal ml-2">
                   (one per line)
                 </span>
               </label>
               <textarea
+                id="oidc-edit-redirect-uris"
                 value={formData.redirectUris}
                 onChange={(e) =>
                   setFormData({ ...formData, redirectUris: e.target.value })
@@ -190,13 +193,14 @@ export default function AdminOidcClientsPage() {
 
             {/* Allowed Scopes */}
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-2">
+              <label htmlFor="oidc-edit-allowed-scopes" className="block text-sm font-medium text-zinc-300 mb-2">
                 Allowed Scopes
                 <span className="text-zinc-500 font-normal ml-2">
                   (space-separated)
                 </span>
               </label>
               <input
+                id="oidc-edit-allowed-scopes"
                 type="text"
                 value={formData.allowedScopes}
                 onChange={(e) =>
@@ -250,6 +254,7 @@ export default function AdminOidcClientsPage() {
             {/* Actions */}
             <div className="flex gap-3 pt-4">
               <button
+                type="button"
                 onClick={saveEdit}
                 disabled={saving}
                 className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -257,6 +262,7 @@ export default function AdminOidcClientsPage() {
                 {saving ? "Saving..." : "Save Changes"}
               </button>
               <button
+                type="button"
                 onClick={cancelEdit}
                 disabled={saving}
                 className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded-lg text-sm font-medium hover:bg-zinc-700 transition-colors disabled:opacity-50"
@@ -318,6 +324,7 @@ function ClientCard({
           </code>
         </div>
         <button
+          type="button"
           onClick={() => onEdit(client)}
           className="px-3 py-1.5 bg-zinc-800 text-zinc-300 rounded-lg text-sm hover:bg-zinc-700 transition-colors"
         >

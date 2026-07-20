@@ -210,10 +210,11 @@ export default function AppWizard({ initialData }: Props) {
 
         {/* Application name */}
         <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+          <label htmlFor="wizard-app-name" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Application name <span className="text-red-400">*</span>
           </label>
           <input
+            id="wizard-app-name"
             type="text"
             value={formData.name}
             onChange={(e) => set("name", e.target.value)}
@@ -226,10 +227,11 @@ export default function AppWizard({ initialData }: Props) {
 
         {/* Developer / organization name */}
         <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+          <label htmlFor="wizard-developer-name" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Developer / organization name
           </label>
           <input
+            id="wizard-developer-name"
             type="text"
             value={formData.developerName}
             onChange={(e) => set("developerName", e.target.value)}
@@ -240,10 +242,11 @@ export default function AppWizard({ initialData }: Props) {
 
         {/* Homepage URL (optional) */}
         <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+          <label htmlFor="wizard-homepage-url" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Homepage URL <span className="text-zinc-500 font-normal">(optional)</span>
           </label>
           <input
+            id="wizard-homepage-url"
             type="url"
             value={formData.websiteUrl}
             onChange={(e) => set("websiteUrl", e.target.value)}
@@ -257,10 +260,11 @@ export default function AppWizard({ initialData }: Props) {
 
         {/* Description */}
         <div>
-          <label className="block text-sm font-medium text-zinc-200 mb-1.5">
+          <label htmlFor="wizard-description" className="block text-sm font-medium text-zinc-200 mb-1.5">
             Application description
           </label>
           <textarea
+            id="wizard-description"
             value={formData.description}
             onChange={(e) => set("description", e.target.value)}
             rows={3}
@@ -281,31 +285,35 @@ export default function AppWizard({ initialData }: Props) {
             </p>
           </div>
 
-          <label className="flex items-start gap-3 cursor-pointer">
+          <label
+            aria-label="Confidential client"
+            className="flex items-start gap-3 cursor-pointer"
+          >
             <input
               type="checkbox"
               checked={Boolean(formData.backendDeviceHelper)}
               onChange={(e) => toggleConfidential(e.target.checked)}
               className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0"
             />
-            <div>
-              <p className="text-sm font-medium text-zinc-200">
+            <span>
+              <span className="block text-sm font-medium text-zinc-200">
                 Confidential client{" "}
                 <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
                   (client credentials)
                 </span>
-              </p>
-              <p className="text-xs text-zinc-500 mt-1">
+              </span>
+              <span className="block text-xs text-zinc-500 mt-1">
                 Provisions a confidential{" "}
                 <code className="font-mono text-zinc-400">m2m_</code> client for
                 server-to-server Builder APIs. Your public client stays unauthenticated for SDK
                 / CLI device login.
-              </p>
-            </div>
+              </span>
+            </span>
           </label>
 
           <div>
             <label
+              aria-label="Enable Device Flow"
               className={`flex items-start gap-3 ${
                 formData.backendDeviceHelper ? "cursor-pointer" : "cursor-not-allowed opacity-60"
               }`}
@@ -317,9 +325,9 @@ export default function AppWizard({ initialData }: Props) {
                 disabled={!formData.backendDeviceHelper}
                 className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
               />
-              <div>
-                <p className="text-sm font-medium text-zinc-200">Enable Device Flow</p>
-                <p className="text-xs text-zinc-500 mt-0.5">
+              <span>
+                <span className="block text-sm font-medium text-zinc-200">Enable Device Flow</span>
+                <span className="block text-xs text-zinc-500 mt-0.5">
                   Allow CLI tools, SDKs, and headless clients to authorize via a user code.{" "}
                   <a
                     href={docsDeviceFlowUrl()}
@@ -329,8 +337,8 @@ export default function AppWizard({ initialData }: Props) {
                   >
                     Device Flow documentation
                   </a>
-                </p>
-              </div>
+                </span>
+              </span>
             </label>
             {!formData.backendDeviceHelper && (
               <p className="text-xs text-zinc-600 mt-1.5 ml-[26px]">
@@ -340,17 +348,20 @@ export default function AppWizard({ initialData }: Props) {
           </div>
 
           {formData.backendDeviceHelper && (
-            <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-zinc-700/70 bg-zinc-800/30 p-3">
+            <label
+              aria-label={USERS_TOKEN_SCOPE.label}
+              className="flex items-start gap-3 cursor-pointer rounded-lg border border-zinc-700/70 bg-zinc-800/30 p-3"
+            >
               <input
                 type="checkbox"
                 checked={hasIssueUserTokens}
                 onChange={toggleIssueUserTokens}
                 className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0"
               />
-              <div>
-                <p className="text-sm font-medium text-zinc-200">{USERS_TOKEN_SCOPE.label}</p>
-                <p className="text-xs text-zinc-500 mt-0.5">{USERS_TOKEN_SCOPE.description}</p>
-              </div>
+              <span>
+                <span className="block text-sm font-medium text-zinc-200">{USERS_TOKEN_SCOPE.label}</span>
+                <span className="block text-xs text-zinc-500 mt-0.5">{USERS_TOKEN_SCOPE.description}</span>
+              </span>
             </label>
           )}
 

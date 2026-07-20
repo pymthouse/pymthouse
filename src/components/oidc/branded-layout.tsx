@@ -176,6 +176,7 @@ export function BrandedButton({
   variant = "primary",
   children,
   className = "",
+  type = "button",
   ...props
 }: BrandedButtonProps) {
   const baseClasses = "px-6 py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
@@ -192,6 +193,7 @@ export function BrandedButton({
 
   return (
     <button
+      type={type}
       className={`${baseClasses} ${variantClasses[variant]} ${className}`}
       style={style}
       {...props}

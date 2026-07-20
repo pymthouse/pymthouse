@@ -129,6 +129,7 @@ export default function SignerLiveStats() {
             </span>
           )}
           <button
+            type="button"
             onClick={fetchStats}
             className="px-2.5 py-1 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-300 hover:bg-zinc-700 transition-colors"
           >

@@ -182,7 +182,9 @@ export default function AuthorizationCodeRedirectBlock({
   return (
     <div className="space-y-5">
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-zinc-300">Redirect URIs</label>
+        <label htmlFor="auth-code-new-redirect-uri" className="block text-sm font-medium text-zinc-300">
+          Redirect URIs
+        </label>
         <p className="text-xs text-zinc-500">
           URIs where PymtHouse can redirect after authorization. Wildcards (*) are supported.
           {appId
@@ -194,6 +196,7 @@ export default function AuthorizationCodeRedirectBlock({
         )}
         <div className="flex gap-2 mb-2">
           <input
+            id="auth-code-new-redirect-uri"
             type="text"
             value={newUri}
             onChange={(e) => setNewUri(e.target.value)}

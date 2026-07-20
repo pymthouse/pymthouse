@@ -201,14 +201,15 @@ export default function MarketplaceAppDetailPage() {
             <div className="space-y-4">
               {app.clientId && (
                 <div>
-                  <label className="block text-xs text-zinc-500 mb-1.5">
+                  <div className="block text-xs text-zinc-500 mb-1.5">
                     OIDC Client ID
-                  </label>
+                  </div>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-300 font-mono">
                       {app.clientId}
                     </code>
                     <button
+                      type="button"
                       onClick={() => copyToClipboard(app.clientId!, "clientId")}
                       className="px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 rounded-lg hover:border-zinc-600 transition-colors shrink-0"
                     >
@@ -220,9 +221,9 @@ export default function MarketplaceAppDetailPage() {
 
               {grants.length > 0 && (
                 <div>
-                  <label className="block text-xs text-zinc-500 mb-1.5">
+                  <div className="block text-xs text-zinc-500 mb-1.5">
                     Supported Grant Types
-                  </label>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {grants.map((g) => (
                       <span
