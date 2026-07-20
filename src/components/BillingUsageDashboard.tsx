@@ -101,6 +101,7 @@ function UsageLoadingShell({
 function deriveFilteredView(
   data: BillingUsageDashboardClientPayload,
   selectedPublicClientIds: string[],
+  historyScope: "own" | "all",
 ) {
   const allIds = data.orderedApps.map((a) => a.publicClientId);
   const allSelected =
@@ -123,12 +124,22 @@ function deriveFilteredView(
   }
   filteredAppUsage = filteredAppUsage.filter((e) => e.requestCount > 0);
 
+  // Admin All Usage + all apps selected: omit clientId filter so the platform
+  // list is truly unrestricted (and avoids a huge id-set post-filter).
+  // Subset selection still passes the dropdown ids. Own scope unchanged.
+  let historyClientIds: string[];
+  if (allSelected && historyScope === "all") {
+    historyClientIds = [];
+  } else if (allSelected) {
+    historyClientIds = data.orderedApps.map((a) => a.publicClientId);
+  } else {
+    historyClientIds = selectedPublicClientIds;
+  }
+
   return {
     filteredSeries,
     filteredAppUsage,
-    historyClientIds: allSelected
-      ? data.orderedApps.map((a) => a.publicClientId)
-      : selectedPublicClientIds,
+    historyClientIds,
   };
 }
 
@@ -361,9 +372,9 @@ function BillingUsageBody({
     setSelectedAppIds(allIdsKey.length > 0 ? allIdsKey.split("\0") : []);
   }
 
-  const derived = deriveFilteredView(data, selectedAppIds);
   const historyScope: "own" | "all" =
     showTabs && activeTab === "all" ? "all" : "own";
+  const derived = deriveFilteredView(data, selectedAppIds, historyScope);
   const periodCopy =
     activeTab === "all" && showTabs
       ? "Platform-wide usage for the current cycle."

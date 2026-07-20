@@ -59,7 +59,7 @@ function historyCopy(scope: HistoryScope): {
     return {
       title: "Signed ticket requests",
       subtitle:
-        "Platform-wide signed ticket requests for the selected apps, newest first.",
+        "Platform-wide signed ticket requests, newest first. Filtered by the application selector when a subset is selected.",
       empty: "No signed ticket requests for the selected apps in this billing cycle.",
     };
   }
