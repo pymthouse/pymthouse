@@ -193,8 +193,8 @@ const POLL_DEADLINE_MS = 15 * 60 * 1000;
 
 function fundingPrerequisiteError(input: {
   turnkeyConfigured: boolean;
-  authState: AuthState;
-  clientState: ClientState;
+  authState: AuthState | undefined;
+  clientState: ClientState | undefined;
   httpClient: TurnkeyHttpClient | null | undefined;
 }): string | null {
   if (!input.turnkeyConfigured) {
