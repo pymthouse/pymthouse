@@ -179,7 +179,12 @@ export function weiToEthString(weiAmt: bigint): string {
   const abs = negative ? -weiAmt : weiAmt;
   const whole = abs / 10n ** 18n;
   const frac = abs % 10n ** 18n;
-  const fracStr = frac.toString().padStart(18, "0").replace(/0+$/, "");
+  let fracStr = frac.toString().padStart(18, "0");
+  let end = fracStr.length;
+  while (end > 0 && fracStr.charCodeAt(end - 1) === 48 /* 0 */) {
+    end -= 1;
+  }
+  fracStr = end === fracStr.length ? fracStr : fracStr.slice(0, end);
   const result = fracStr ? `${whole}.${fracStr}` : whole.toString();
   return negative ? `-${result}` : result;
 }

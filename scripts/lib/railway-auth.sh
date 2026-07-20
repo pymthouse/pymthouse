@@ -9,6 +9,7 @@
 
 railway_default_project_id() {
   echo "${RAILWAY_PROJECT_ID:-dab233aa-dd5f-429d-8cc4-9042e8735e2b}"
+  return 0
 }
 
 railway_export_auth() {
@@ -45,7 +46,9 @@ railway_export_auth() {
 
 # Args: environment name (e.g. production)
 railway_pe_flags() {
-  echo "-p $(railway_default_project_id) -e $1"
+  local env_name="$1"
+  echo "-p $(railway_default_project_id) -e ${env_name}"
+  return 0
 }
 
 railway_stack_json() {
@@ -117,9 +120,12 @@ railway_apply_livepeer_image() {
 # True when stderr looks like a transient network / API failure (retryable).
 railway_retryable_failure() {
   local err_file="$1"
-  grep -qiE \
+  if grep -qiE \
     'timed out|timeout|Failed to fetch|error sending request|connection reset|connection refused|temporarily unavailable|\b502\b|\b503\b|\b429\b' \
-    "$err_file"
+    "$err_file"; then
+    return 0
+  fi
+  return 1
 }
 
 # Run a Railway CLI command with exponential backoff on transient failures.
