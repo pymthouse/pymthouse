@@ -31,7 +31,7 @@ export default function AuthorizationCodeRedirectBlock({
   domains,
   onDomainsChange,
   readOnly = false,
-}: Props) {
+}: Readonly<Props>) {
   const [newUri, setNewUri] = useState("");
   const [newDomain, setNewDomain] = useState("");
   const [adding, setAdding] = useState(false);

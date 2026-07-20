@@ -32,7 +32,7 @@ export default function PipelineModelPicker({
   blockedConcreteKeys,
   blockedSelectionTitle = "Not available for custom plans under current Network Price exclusions.",
   showSelectedChips = true,
-}: PipelineModelPickerProps) {
+}: Readonly<PipelineModelPickerProps>) {
   const inputId = useId();
   const listboxId = `${inputId}-listbox`;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -264,7 +264,7 @@ export default function PipelineModelPicker({
   );
 }
 
-function PipelineCheckMark({ state }: { state: PipelineCheckState }) {
+function PipelineCheckMark({ state }: Readonly<{ state: PipelineCheckState }>) {
   const base = "flex-shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] font-bold leading-none";
   if (state === "wildcard") {
     return <span className={`${base} border-emerald-600 bg-emerald-600 text-white`}>✓</span>;
@@ -278,7 +278,7 @@ function PipelineCheckMark({ state }: { state: PipelineCheckState }) {
   return <span className={`${base} border-zinc-600 bg-transparent`} />;
 }
 
-function ModelCheckMark({ checked, implicit }: { checked: boolean; implicit: boolean }) {
+function ModelCheckMark({ checked, implicit }: Readonly<{ checked: boolean; implicit: boolean }>) {
   const base = "flex-shrink-0 w-3 h-3 rounded border flex items-center justify-center text-[8px] font-bold leading-none";
   if (implicit) {
     return <span className={`${base} border-zinc-700 bg-zinc-800 text-zinc-600`}>✓</span>;

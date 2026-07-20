@@ -296,7 +296,7 @@ export default function MarketplaceAppDetailPage() {
   );
 }
 
-function PageShell({ children }: { children: React.ReactNode }) {
+function PageShell({ children }: Readonly<{ children: React.ReactNode }>) {
   const insideDashboard = useInsideDashboard();
 
   if (insideDashboard) {
@@ -326,7 +326,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ExternalLink({ href, label }: { href: string; label: string }) {
+function ExternalLink({ href, label }: Readonly<{ href: string; label: string }>) {
   return (
     <a
       href={href}

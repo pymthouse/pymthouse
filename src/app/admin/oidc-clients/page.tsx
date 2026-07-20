@@ -295,10 +295,10 @@ export default function AdminOidcClientsPage() {
 function ClientCard({
   client,
   onEdit,
-}: {
+}: Readonly<{
   client: OidcClient;
   onEdit: (client: OidcClient) => void;
-}) {
+}>) {
   return (
     <div className="border border-zinc-800 rounded-xl p-5 bg-zinc-900/30">
       <div className="flex items-start justify-between mb-4">

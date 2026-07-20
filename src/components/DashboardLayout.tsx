@@ -93,9 +93,9 @@ function roleBadgeClassName(role: string): string {
 
 export default function DashboardLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session, status } = useSession();

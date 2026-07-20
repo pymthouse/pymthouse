@@ -49,7 +49,7 @@ const statusDot: Record<string, string> = {
 
 export default function TransactionLog({
   transactions,
-}: TransactionLogProps) {
+}: Readonly<TransactionLogProps>) {
   if (transactions.length === 0) {
     return (
       <div className="text-center py-12 text-zinc-500">

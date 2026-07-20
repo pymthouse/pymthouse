@@ -1560,7 +1560,7 @@ export default function TestingStep({
   readOnly = false,
   hideRedirectUriEditor = false,
   hideAuthCodeFlowSection = false,
-}: Props) {
+}: Readonly<Props>) {
   const [secret, setSecret] = useState<string | null>(null);
   const [backendSecret, setBackendSecret] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);

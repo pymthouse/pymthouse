@@ -18,7 +18,7 @@ interface Props {
   data: AppSettingsData;
 }
 
-export default function AppSettingsPanel({ data }: Props) {
+export default function AppSettingsPanel({ data }: Readonly<Props>) {
   const [redirectUris, setRedirectUris] = useState<string[]>(data.redirectUris);
   const [postLogoutRedirectUris, setPostLogoutRedirectUris] = useState<string[]>(
     data.postLogoutRedirectUris || [],
@@ -351,10 +351,10 @@ export default function AppSettingsPanel({ data }: Props) {
 function Field({
   label,
   value,
-}: {
+}: Readonly<{
   label: string;
   value: string;
-}) {
+}>) {
   return (
     <div>
       <label className="block text-xs font-medium text-zinc-500 mb-1.5">{label}</label>

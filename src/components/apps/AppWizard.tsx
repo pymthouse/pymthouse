@@ -76,7 +76,7 @@ function joinScopes(scopes: string[]): string {
   return scopes.join(" ");
 }
 
-export default function AppWizard({ initialData }: Props) {
+export default function AppWizard({ initialData }: Readonly<Props>) {
   const router = useRouter();
   const [formData, setFormData] = useState<AppFormData>({
     ...defaultAppFormData,

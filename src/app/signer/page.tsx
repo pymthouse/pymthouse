@@ -246,11 +246,11 @@ function ConfigRow({
   label,
   value,
   mono = false,
-}: {
+}: Readonly<{
   label: string;
   value: string;
   mono?: boolean;
-}) {
+}>) {
   return (
     <div className="flex border-b border-zinc-800/50 last:border-b-0">
       <div className="w-40 shrink-0 px-5 py-2.5 text-zinc-500 bg-zinc-900/50">
@@ -271,11 +271,11 @@ function StatCard({
   label,
   value,
   color = "text-zinc-200",
-}: {
+}: Readonly<{
   label: string;
   value: string;
   color?: string;
-}) {
+}>) {
   return (
     <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/30">
       <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">

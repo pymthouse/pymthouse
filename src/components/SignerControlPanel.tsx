@@ -11,7 +11,7 @@ interface SignerControlPanelProps {
 export default function SignerControlPanel({
   currentStatus,
   managedRemote = false,
-}: SignerControlPanelProps) {
+}: Readonly<SignerControlPanelProps>) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);

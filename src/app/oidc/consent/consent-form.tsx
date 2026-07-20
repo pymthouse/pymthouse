@@ -8,7 +8,7 @@ interface ConsentFormProps {
   branding?: AppBranding;
 }
 
-export default function ConsentForm({ uid, branding = getDefaultBranding() }: ConsentFormProps) {
+export default function ConsentForm({ uid, branding = getDefaultBranding() }: Readonly<ConsentFormProps>) {
   const [loading, setLoading] = useState(false);
 
   function submitConsent(action: "approve" | "deny") {

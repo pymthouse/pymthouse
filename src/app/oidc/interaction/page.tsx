@@ -43,9 +43,9 @@ function buildNodeRequest(
 
 export default async function OidcInteractionPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<SearchParams>;
-}) {
+}>) {
   const params = await searchParams;
   const uid = asSingleValue(params.uid);
 

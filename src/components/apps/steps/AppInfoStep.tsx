@@ -8,7 +8,7 @@ interface Props {
   readOnly?: boolean;
 }
 
-export default function AppInfoStep({ data, onChange, readOnly = false }: Props) {
+export default function AppInfoStep({ data, onChange, readOnly = false }: Readonly<Props>) {
   return (
     <div className="space-y-6">
       <div>

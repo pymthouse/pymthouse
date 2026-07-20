@@ -39,7 +39,7 @@ export default function AppModeStep({
   data,
   onChange,
   readOnly = false,
-}: Props) {
+}: Readonly<Props>) {
   const scopes = data.allowedScopes.split(/\s+/).filter(Boolean);
   const hasDeviceCode = data.grantTypes.includes(DEVICE_CODE_GRANT);
   const hasSignJob = scopes.includes("sign:job");

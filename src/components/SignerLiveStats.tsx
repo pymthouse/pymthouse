@@ -54,12 +54,12 @@ function StatCard({
   value,
   color = "text-zinc-200",
   dim = false,
-}: {
+}: Readonly<{
   label: string;
   value: string;
   color?: string;
   dim?: boolean;
-}) {
+}>) {
   return (
     <div className={`border border-zinc-800 rounded-xl p-4 bg-zinc-900/30 ${dim ? "opacity-50" : ""}`}>
       <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">

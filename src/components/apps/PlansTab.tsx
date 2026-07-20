@@ -336,11 +336,11 @@ function PlanTypePills({
   value,
   onChange,
   disabled,
-}: {
+}: Readonly<{
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
-}) {
+}>) {
   return (
     <div
       className="flex w-full overflow-hidden rounded-lg border border-zinc-700"
@@ -369,10 +369,10 @@ function PlanTypePills({
 function CapabilityChips({
   capabilities,
   catalog,
-}: {
+}: Readonly<{
   capabilities: PlanRow["capabilities"];
   catalog: PipelineCatalogEntry[];
-}) {
+}>) {
   if (capabilities.length === 0) {
     return <span className="text-xs text-zinc-500">No pipeline overrides</span>;
   }
@@ -432,7 +432,7 @@ function CapabilityPricingRow({
   idPrefix,
   onMarkupChange,
   onRemove,
-}: {
+}: Readonly<{
   capKey: string;
   label: string;
   markupPct: string;
@@ -440,7 +440,7 @@ function CapabilityPricingRow({
   idPrefix: string;
   onMarkupChange: (pct: string) => void;
   onRemove: () => void;
-}) {
+}>) {
   const [markupFocused, setMarkupFocused] = useState(false);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -551,7 +551,7 @@ function CapabilityPricingRules({
   idPrefix,
   onMarkupChange,
   onRemove,
-}: {
+}: Readonly<{
   keys: string[];
   markupByKey: Record<string, string>;
   catalog: PipelineCatalogEntry[];
@@ -559,7 +559,7 @@ function CapabilityPricingRules({
   idPrefix: string;
   onMarkupChange: (key: string, pct: string) => void;
   onRemove: (key: string) => void;
-}) {
+}>) {
   const sorted = sortedCapabilityKeys(keys, catalog);
 
   return (
@@ -586,7 +586,7 @@ function CapabilityPricingRules({
   );
 }
 
-function TypeBadge({ type }: { type: string }) {
+function TypeBadge({ type }: Readonly<{ type: string }>) {
   const styles: Record<string, string> = {
     free: "text-emerald-400/90 border-emerald-500/30 bg-emerald-500/10",
     subscription: "text-sky-400/90 border-sky-500/30 bg-sky-500/10",
@@ -614,7 +614,7 @@ function PlanDraftForm({
   blockedConcreteKeys,
   canEdit,
   idPrefix,
-}: {
+}: Readonly<{
   draft: PlanDraft;
   onChange: (d: PlanDraft) => void;
   catalog: PipelineCatalogEntry[];
@@ -622,7 +622,7 @@ function PlanDraftForm({
   blockedConcreteKeys: Set<string>;
   canEdit: boolean;
   idPrefix: string;
-}) {
+}>) {
   return (
     <div className="space-y-4 pt-4 border-t border-zinc-800">
       <div>
@@ -880,11 +880,11 @@ function CollapsedPlanCardHitArea({
   enabled,
   ariaLabel,
   onActivate,
-}: {
+}: Readonly<{
   enabled: boolean;
   ariaLabel: string;
   onActivate: () => void;
-}) {
+}>) {
   if (!enabled) return null;
   return (
     <button
@@ -905,14 +905,14 @@ function NetworkPricePlanCard({
   catalogError,
   canEdit,
   onSaved,
-}: {
+}: Readonly<{
   appId: string;
   plan: PlanRow;
   catalog: PipelineCatalogEntry[];
   catalogError: string | null;
   canEdit: boolean;
   onSaved: () => void | Promise<void>;
-}) {
+}>) {
   const catalogLite = useMemo(() => catalogLiteFrom(catalog), [catalog]);
   const [expanded, setExpanded] = useState(false);
   const [pickerValues, setPickerValues] = useState<string[]>([]);
@@ -1353,7 +1353,7 @@ function CustomPlanCard({
   onCancelEdit,
   onSaved,
   onDelete,
-}: {
+}: Readonly<{
   appId: string;
   plan: PlanRow;
   catalog: PipelineCatalogEntry[];
@@ -1365,7 +1365,7 @@ function CustomPlanCard({
   onCancelEdit: () => void;
   onSaved: () => void | Promise<void>;
   onDelete: () => void;
-}) {
+}>) {
   const [draft, setDraft] = useState<PlanDraft>(() => planToDraft(plan));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1534,14 +1534,14 @@ function AddPlanPanel({
   blockedConcreteKeys,
   canEdit,
   onCreated,
-}: {
+}: Readonly<{
   appId: string;
   catalog: PipelineCatalogEntry[];
   catalogError: string | null;
   blockedConcreteKeys: Set<string>;
   canEdit: boolean;
   onCreated: () => void | Promise<void>;
-}) {
+}>) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState<PlanDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
@@ -1664,7 +1664,7 @@ interface PlansTabProps {
   canEdit: boolean;
 }
 
-export default function PlansTab({ appId, canEdit }: PlansTabProps) {
+export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [catalog, setCatalog] = useState<PipelineCatalogEntry[]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);

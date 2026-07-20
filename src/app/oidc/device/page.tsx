@@ -47,9 +47,9 @@ async function resolveAuthoritativeClientId(
 
 export default async function DeviceVerificationPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<SearchParams>;
-}) {
+}>) {
   const params = await searchParams;
   const session = await getServerSession(authOptions);
   const hostContext = await resolveHostContext();

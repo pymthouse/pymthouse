@@ -96,7 +96,7 @@ export default function AppSettingsScreen({
   canManageBilling = false,
   ownerExternalUserId = null,
   initialTab,
-}: Props) {
+}: Readonly<Props>) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -700,13 +700,13 @@ function ReferenceEndpointsSection({
   authorizeUrl,
   tokenUrl,
   signerSessionUrl,
-}: {
+}: Readonly<{
   clientId: string;
   discoveryUrl: string;
   authorizeUrl: string;
   tokenUrl: string;
   signerSessionUrl: string;
-}) {
+}>) {
   const rows = useMemo(
     () =>
       [

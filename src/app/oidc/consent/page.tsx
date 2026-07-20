@@ -44,9 +44,9 @@ function getExternalHref(value: string): string {
 
 export default async function ConsentPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<SearchParams>;
-}) {
+}>) {
   const params = await searchParams;
   const uid = asSingleValue(params.uid);
 
