@@ -218,8 +218,8 @@ export async function syncSignerStatus(): Promise<{
   let containerRunning = false;
   let lastError: string | null = null;
   try {
-    const { exec } = await import("child_process");
-    const { promisify } = await import("util");
+    const { exec } = await import("node:child_process");
+    const { promisify } = await import("node:util");
     const execAsync = promisify(exec);
 
     const { stdout } = await execAsync(

@@ -18,7 +18,7 @@ import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-l
 import { db } from "@/db/index";
 import { oidcSigningKeys, oidcClients, appAllowedDomains, developerApps } from "@/db/schema";
 import { desc, eq, or } from "drizzle-orm";
-import { timingSafeEqual } from "crypto";
+import { timingSafeEqual } from "node:crypto";
 import * as jose from "jose";
 
 const KEY_ALGORITHM = "RS256";
@@ -86,7 +86,7 @@ async function loadClients(): Promise<ClientMetadata[]> {
           "8000", "8080", "8081", "8888", "9000",
         ];
         for (const port of commonPorts) {
-          expanded.push(uri.replace(/:\*/, `:${port}`).replace(/\*/g, ""));
+          expanded.push(uri.replace(/:\*/, `:${port}`).replaceAll("*", ""));
         }
         return expanded;
       });

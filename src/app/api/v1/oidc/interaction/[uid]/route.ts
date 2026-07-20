@@ -9,8 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { getProvider } from "@/lib/oidc/provider";
-import { IncomingMessage, ServerResponse } from "http";
-import { Socket } from "net";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import {
   OIDC_MOUNT_PATH,
   getIssuer,

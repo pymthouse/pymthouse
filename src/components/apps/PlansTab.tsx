@@ -419,7 +419,7 @@ function sanitizePercentInput(raw: string): string {
   let s = raw.replace(/[^\d.]/g, "");
   const dot = s.indexOf(".");
   if (dot !== -1) {
-    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replace(/\./g, "")}`;
+    s = `${s.slice(0, dot + 1)}${s.slice(dot + 1).replaceAll(".", "")}`;
   }
   return s;
 }
@@ -458,7 +458,7 @@ function CapabilityPricingRow({
 
   useEffect(() => () => clearBlurTimeout(), []);
 
-  const currentRate = markupPct.trim() === "" ? null : parseFloat(markupPct);
+  const currentRate = markupPct.trim() === "" ? null : Number.parseFloat(markupPct);
 
   return (
     <div className="px-3 py-2.5">
@@ -489,7 +489,7 @@ function CapabilityPricingRow({
               Markup
             </span>
             <input
-              id={`${idPrefix}-rule-${capKey.replace(/[|]/g, "-")}`}
+              id={`${idPrefix}-rule-${capKey.replaceAll("|", "-")}`}
               type="text"
               inputMode="decimal"
               autoComplete="off"

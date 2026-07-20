@@ -9,7 +9,7 @@
  *   This module retains pricing helpers for pipeline/model constraint parsing.
  */
 
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { extractPipelineModelFromCapabilitiesBase64 } from "./proto";
 
 // ─── Types ────────────────────────────────────────────────────────────────────

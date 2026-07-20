@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 import { normalizeUserCode } from "@/lib/oidc/device";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
