@@ -6,8 +6,8 @@ import { weiToEthString } from "@/lib/billing-runtime";
 export const GET = withAdminGuard(async (request) => {
   const url = new URL(request.url);
   const endUserId = url.searchParams.get("endUserId");
-  const limit = Number.parseInt(url.searchParams.get("limit") || "50");
-  const offset = Number.parseInt(url.searchParams.get("offset") || "0");
+  const limit = parseInt(url.searchParams.get("limit") || "50");
+  const offset = parseInt(url.searchParams.get("offset") || "0");
 
   const recentTransactions = await getTransactions(
     endUserId || undefined,
