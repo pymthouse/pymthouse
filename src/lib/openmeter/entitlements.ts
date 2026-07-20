@@ -129,25 +129,27 @@ export async function getTrialCreditBalance(input: {
 function entitlementAmountToMicros(value: unknown): bigint {
   if (value == null) return 0n;
   if (typeof value === "bigint") return value > 0n ? value : 0n;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || value <= 0) return 0n;
-    return BigInt(Math.trunc(value));
-  }
-  if (typeof value === "string") {
-    const t = value.trim();
-    if (!t) return 0n;
-    if (/^\d+$/.test(t)) {
-      try {
-        return BigInt(t);
-      } catch {
-        return 0n;
-      }
-    }
-    const parsed = Number(t);
-    if (!Number.isFinite(parsed) || parsed <= 0) return 0n;
-    return BigInt(Math.trunc(parsed));
-  }
+  if (typeof value === "number") return numberToMicros(value);
+  if (typeof value === "string") return parseStringMicros(value);
   return 0n;
+}
+
+function numberToMicros(value: number): bigint {
+  if (!Number.isFinite(value) || value <= 0) return 0n;
+  return BigInt(Math.trunc(value));
+}
+
+function parseStringMicros(value: string): bigint {
+  const trimmed = value.trim();
+  if (!trimmed) return 0n;
+  if (/^\d+$/.test(trimmed)) {
+    try {
+      return BigInt(trimmed);
+    } catch {
+      return 0n;
+    }
+  }
+  return numberToMicros(Number(trimmed));
 }
 
 export type SignedTicketOpenMeterEvent = {

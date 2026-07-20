@@ -80,6 +80,14 @@ function usage(): string {
   ].join("\n");
 }
 
+function statsKeyForChangeResult(
+  result: "changed" | "skipped" | "error",
+): "changed" | "skipped" | "errors" {
+  if (result === "changed") return "changed";
+  if (result === "error") return "errors";
+  return "skipped";
+}
+
 function parseArgs(argv: string[]): Args {
   const args: Args = { apply: false, timing: "immediate" };
   for (let i = 0; i < argv.length; i += 1) {
@@ -507,7 +515,7 @@ async function changeSubsOntoAllowancePlans(input: {
       plan,
       targetPlanId,
     });
-    stats[result === "changed" ? "changed" : result === "error" ? "errors" : "skipped"] += 1;
+    stats[statsKeyForChangeResult(result)] += 1;
   }
 
   return stats;

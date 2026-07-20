@@ -87,6 +87,8 @@ type IngestedEventLike = {
   ingestedAt?: Date | string;
 };
 
+type DateLikeValue = Date | string | undefined;
+
 type OffsetCursor = { offset: number };
 
 /** Normalize SDK / Konnect list payloads into IngestedEvent-shaped rows. */
@@ -100,8 +102,8 @@ export function coerceIngestedEvent(raw: unknown): IngestedEventLike | null {
   if (row.event && typeof row.event === "object") {
     const event = row.event as CloudEventLike;
     const ingestedAt =
-      (row.ingestedAt as Date | string | undefined) ??
-      (row.ingested_at as Date | string | undefined);
+      (row.ingestedAt as DateLikeValue) ??
+      (row.ingested_at as DateLikeValue);
     return { event, ingestedAt };
   }
 
@@ -123,8 +125,8 @@ export function coerceIngestedEvent(raw: unknown): IngestedEventLike | null {
             : null,
       },
       ingestedAt:
-        (row.ingestedAt as Date | string | undefined) ??
-        (row.ingested_at as Date | string | undefined),
+        (row.ingestedAt as DateLikeValue) ??
+        (row.ingested_at as DateLikeValue),
     };
   }
 
@@ -549,8 +551,11 @@ async function fetchSignedTicketEvents(input: {
 /**
  * Fetch recent create_signed_ticket events across the platform (admin path).
  * Prefer type-filtered listV2; fall back to unscoped list + client-side type filter.
- * When a small set of clientIds is selected, also query subject-contains per app
- * so quieter apps are not drowned out by busy platform traffic.
+ *
+ * Important: do not scope by `subject contains clientId` for subset app filters.
+ * Owner-wallet events often use owner-subject forms (`owner:{id}` / bare owner id)
+ * where client_id only exists in event data, so subject-scoped filtering can
+ * hide valid rows and make All Usage appear empty for a selected app.
  */
 async function fetchPlatformSignedTicketEvents(input: {
   client: OpenMeter;
@@ -558,19 +563,6 @@ async function fetchPlatformSignedTicketEvents(input: {
   from: string;
   to: string;
 }): Promise<IngestedEventLike[]> {
-  const clientIds = input.clientIds;
-  const preferPerClient =
-    clientIds != null && clientIds.size > 0 && clientIds.size <= 8;
-
-  if (preferPerClient) {
-    const batches = await Promise.all(
-      [...clientIds].map((clientId) =>
-        listSignedTicketEventsForSubjectContains(input.client, clientId, input.from, input.to),
-      ),
-    );
-    return batches.flat();
-  }
-
   try {
     const listedV2 = await input.client.events.listV2({
       limit: LIST_FETCH_LIMIT,
@@ -588,36 +580,6 @@ async function fetchPlatformSignedTicketEvents(input: {
         limit: LIST_FETCH_LIMIT,
         // subject omitted intentionally for platform-wide admin history
       } as { from: string; to: string; limit: number });
-      return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
-    } catch {
-      return [];
-    }
-  }
-}
-
-async function listSignedTicketEventsForSubjectContains(
-  client: OpenMeter,
-  subjectFragment: string,
-  from: string,
-  to: string,
-): Promise<IngestedEventLike[]> {
-  try {
-    const listedV2 = await client.events.listV2({
-      limit: LIST_FETCH_LIMIT,
-      filter: JSON.stringify({
-        type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
-        subject: { contains: subjectFragment },
-      }),
-    });
-    return coerceIngestedEvents(listedV2?.items ?? listedV2);
-  } catch {
-    try {
-      const listed = await client.events.list({
-        subject: subjectFragment,
-        from,
-        to,
-        limit: LIST_FETCH_LIMIT,
-      });
       return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
     } catch {
       return [];

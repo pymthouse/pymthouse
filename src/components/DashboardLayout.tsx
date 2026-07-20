@@ -369,6 +369,7 @@ export default function DashboardLayout({
               </div>
             </div>
             <button
+              type="button"
               onClick={() => signOut({ callbackUrl: "/" })}
               className="w-full flex items-center justify-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/40 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
             >

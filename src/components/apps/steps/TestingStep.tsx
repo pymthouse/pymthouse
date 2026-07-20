@@ -844,8 +844,7 @@ function M2mTokenTestResult({
       {tokenKind === "api_key" ? (
         <p className="text-[11px] text-sky-300/70">
           Use as <span className="font-mono text-sky-200/80">Authorization: Bearer</span> on the
-          remote signer, or as <span className="font-mono text-sky-200/80">subject_token</span> at{" "}
-          <span className="font-mono text-sky-200/80">
+          remote signer, or as <span className="font-mono text-sky-200/80">subject_token</span> at <span className="font-mono text-sky-200/80">
             POST /api/v1/apps/{`{clientId}`}/oidc/token
           </span>
           .

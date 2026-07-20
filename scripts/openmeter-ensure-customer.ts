@@ -12,7 +12,7 @@
  */
 import "./load-env-first";
 import { eq } from "drizzle-orm";
-import { db, postgresClient } from "../src/db/index";
+import { closeDb, db } from "../src/db/index";
 import { appUsers } from "../src/db/schema";
 import {
   ensureAppUserKonnectCustomer,
@@ -202,7 +202,7 @@ async function main() {
       process.exit(1);
     }
   } finally {
-    await postgresClient.end({ timeout: 5 });
+    await closeDb({ timeout: 5 });
   }
 }
 
