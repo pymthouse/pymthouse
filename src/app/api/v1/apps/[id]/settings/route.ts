@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/index";
-import { developerApps, oidcClients, appAllowedDomains } from "@/db/schema";
+import { oidcClients, appAllowedDomains } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { updateClientConfig } from "@/lib/oidc/clients";
 import { resetProvider } from "@/lib/oidc/provider";

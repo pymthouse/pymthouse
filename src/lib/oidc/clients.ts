@@ -2,7 +2,7 @@ import { db } from "@/db/index";
 import { developerApps, oidcClients, oidcPayloads } from "@/db/schema";
 import { eq, or, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { randomBytes } from "crypto";
+import { randomBytes } from "node:crypto";
 import {
   computeBackendM2mAllowedScopes,
 } from "@/lib/oidc/backend-m2m-scopes";
@@ -10,7 +10,6 @@ import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
 import {
   DEFAULT_OIDC_SCOPES,
   ensureOpenIdScope,
-  OIDC_SCOPES,
 } from "@/lib/oidc/scopes";
 
 export { computeBackendM2mAllowedScopes };
@@ -108,7 +107,7 @@ export async function getRegisteredRedirectOrigins(): Promise<Set<string>> {
       if (uri.includes("*")) {
         for (const port of commonPorts) {
           try {
-            origins.add(new URL(uri.replace(/:\*/, `:${port}`).replace(/\*/g, "")).origin);
+            origins.add(new URL(uri.replace(/:\*/, `:${port}`).replaceAll("*", "")).origin);
           } catch {
             /* malformed URI, skip */
           }

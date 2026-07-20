@@ -8,11 +8,10 @@ import { getClient } from "@/lib/oidc/clients";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { resolveAppBrandingByClientId, getDefaultBranding, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
-import { resolveHostContext } from "@/lib/oidc/host-resolution";
+import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { eq } from "drizzle-orm";
-import { IncomingMessage, ServerResponse } from "http";
-import { Socket } from "net";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import ConsentForm from "./consent-form";
 
 type SearchParams = Record<string, string | string[] | undefined>;

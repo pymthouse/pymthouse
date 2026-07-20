@@ -11,7 +11,7 @@ import {
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
 import { resolveDmzHostPort } from "@/lib/signer-dmz-host-port";
-import { spawn } from "child_process";
+import { spawn } from "node:child_process";
 
 /** `docker compose up --build` can take minutes on a cold build (go-livepeer + Apache image). */
 const COMPOSE_START_TIMEOUT_MS = 15 * 60 * 1000;
