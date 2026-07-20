@@ -74,7 +74,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli@latest
+        run: npm install -g @railway/cli@5.27.1 --ignore-scripts
 
       - name: Apply preview environment variables
         if: inputs.apply_env == true || vars.RAILWAY_PREVIEW_APPLY_ENV == 'true'

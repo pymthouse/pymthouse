@@ -79,9 +79,9 @@ export async function verifyDomainOwnership(
   }
 
   try {
-    const { Resolver } = await import("dns/promises");
+    const { Resolver } = await import("node:dns/promises");
     const resolver = new Resolver();
-    resolver.setServers(["8.8.8.8", "1.1.1.1"]);
+    // Use the host's configured resolvers (no hardcoded public DNS IPs).
 
     const expectedRecord = getDnsVerificationRecord(verificationToken);
     const records = await resolver.resolveTxt(`_pymthouse.${normalized}`);

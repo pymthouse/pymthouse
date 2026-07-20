@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
   seedDeveloperAppWithClient,
@@ -23,7 +22,7 @@ test.after(() => {
   uninstallProviderAppSessionAuth();
 });
 
-run("starter-plan API", async (t) => {
+test("starter-plan API", async (t) => {
   await t.test("PUT updates includedUsdMicros", async (t) => {
     const app = await seedDeveloperAppWithClient({ status: "approved" });
     authorizedApp = app;

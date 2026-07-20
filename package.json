@@ -40,7 +40,8 @@
     "validate:env": "node scripts/validate-env.js",
     "openapi:generate": "npx tsx scripts/generate-openapi-routes.ts",
     "check:openapi": "npm run openapi:generate && npx tsx scripts/check-openapi.ts",
-    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\""
+    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\"",
+    "test:coverage": "mkdir -p coverage && node --import ./src/test-env.ts --import tsx --test --test-force-exit --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/lcov.info \"src/**/*.test.ts\" \"src/**/*.test.mjs\""
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",

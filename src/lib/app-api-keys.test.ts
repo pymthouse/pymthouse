@@ -1,16 +1,15 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import { cleanupTestApp, createAppUser, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import { db } from "@/db/index";
 import { apiKeys } from "@/db/schema";
 import { resolveActiveAppApiKey } from "@/lib/app-api-keys";
 import { hashToken } from "@/lib/token-hash";
 
-run("resolveActiveAppApiKey accepts per-app-user keys", async (t) => {
+test("resolveActiveAppApiKey accepts per-app-user keys", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
@@ -35,7 +34,7 @@ run("resolveActiveAppApiKey accepts per-app-user keys", async (t) => {
   assert.equal(resolved?.publicClientId, app.clientId);
 });
 
-run("resolveActiveAppApiKey rejects keys without app_user_id", async (t) => {
+test("resolveActiveAppApiKey rejects keys without app_user_id", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
@@ -54,7 +53,7 @@ run("resolveActiveAppApiKey rejects keys without app_user_id", async (t) => {
   assert.equal(resolved, null);
 });
 
-run("resolveActiveAppApiKey rejects legacy SHA-256 key hashes", async (t) => {
+test("resolveActiveAppApiKey rejects legacy SHA-256 key hashes", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
@@ -77,7 +76,7 @@ run("resolveActiveAppApiKey rejects legacy SHA-256 key hashes", async (t) => {
   assert.equal(resolved, null);
 });
 
-run("resolveActiveAppApiKey rejects keys for a different public client_id", async (t) => {
+test("resolveActiveAppApiKey rejects keys for a different public client_id", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   const other = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(async () => {
@@ -136,7 +135,7 @@ test("splitCompositeApiKey parses app_*_* and rejects malformed forms", async ()
   assert.equal(normalizeAppApiKeySubjectToken("deadbeef", clientId), "pmth_deadbeef");
 });
 
-run("resolveActiveAppApiKey accepts composite app_*_* subject tokens", async (t) => {
+test("resolveActiveAppApiKey accepts composite app_*_* subject tokens", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
