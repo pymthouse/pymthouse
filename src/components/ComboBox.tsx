@@ -79,6 +79,38 @@ export default function ComboBox({
     inputRef.current?.blur();
   };
 
+  const openListAt = (index: number) => {
+    setOpen(true);
+    setHighlightIndex(index);
+  };
+
+  const onArrowDown = () => {
+    if (filteredOptions.length === 0) return;
+    if (!open) {
+      openListAt(0);
+      return;
+    }
+    setHighlightIndex((i) => Math.min(i + 1, filteredOptions.length - 1));
+  };
+
+  const onArrowUp = () => {
+    if (filteredOptions.length === 0) return;
+    if (!open) {
+      openListAt(filteredOptions.length - 1);
+      return;
+    }
+    setHighlightIndex((i) => Math.max(i - 1, 0));
+  };
+
+  const onEnter = () => {
+    if (!open) {
+      openListAt(0);
+      return;
+    }
+    const pick = filteredOptions[safeHighlightIndex] ?? filteredOptions[0];
+    if (pick) selectOption(pick.value);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (disabled) return;
     if (e.key === "Escape") {
@@ -88,36 +120,17 @@ export default function ComboBox({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (filteredOptions.length === 0) return;
-      if (!open) {
-        setOpen(true);
-        setHighlightIndex(0);
-        return;
-      }
-      setHighlightIndex((i) => Math.min(i + 1, filteredOptions.length - 1));
+      onArrowDown();
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (filteredOptions.length === 0) return;
-      if (!open) {
-        setOpen(true);
-        setHighlightIndex(filteredOptions.length - 1);
-        return;
-      }
-      setHighlightIndex((i) => Math.max(i - 1, 0));
+      onArrowUp();
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      if (!open) {
-        setOpen(true);
-        setHighlightIndex(0);
-        return;
-      }
-      const pick = filteredOptions[safeHighlightIndex] ?? filteredOptions[0];
-      if (pick) selectOption(pick.value);
-      return;
+      onEnter();
     }
   };
 

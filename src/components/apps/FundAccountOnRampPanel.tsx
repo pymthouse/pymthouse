@@ -317,6 +317,13 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+function fundErrorMessage(fundError: unknown): string {
+  if (fundError instanceof DOMException && fundError.name === "AbortError") {
+    return "Funding cancelled.";
+  }
+  return fundError instanceof Error ? fundError.message : "On-ramp funding failed";
+}
+
 export default function FundAccountOnRampPanel({
   clientId,
   ownerExternalUserId,
@@ -425,11 +432,7 @@ export default function FundAccountOnRampPanel({
       router.refresh();
     } catch (fundError) {
       closeCheckoutWindow(checkoutWindow);
-      if (fundError instanceof DOMException && fundError.name === "AbortError") {
-        setError("Funding cancelled.");
-      } else {
-        setError(fundError instanceof Error ? fundError.message : "On-ramp funding failed");
-      }
+      setError(fundErrorMessage(fundError));
       setPhase("error");
       setStatusMessage(null);
     } finally {
