@@ -1540,6 +1540,491 @@ export function AuthCodeFlowTestSection({
   );
 }
 
+async function parseCredentialsError(res: Response): Promise<string> {
+  const text = await res.text();
+  try {
+    const data = text ? JSON.parse(text) : {};
+    if (
+      typeof data.error_description === "string" &&
+      data.error_description.trim()
+    ) {
+      return data.error_description.trim();
+    }
+    if (typeof data.error === "string" && data.error) return data.error;
+  } catch {
+    /* keep generic */
+  }
+  return text.trim() || res.statusText || `Failed to generate secret (${res.status})`;
+}
+
+function resolvePrimaryClientFlags(input: {
+  backendHelper: { clientId: string; hasSecret: boolean } | null;
+  tokenEndpointAuthMethod: string;
+  grantTypes: string[];
+  hasAuthCodeFlow: boolean;
+}): { primaryIsConfidential: boolean; isM2MOnly: boolean } {
+  // The primary client may only hold a secret when it is confidential. A public
+  // client (token_endpoint_auth_method === "none") never surfaces a secret or
+  // rotate control, regardless of its grant types — confidential credentials live
+  // exclusively on the m2m_ backend helper.
+  // When an m2m_ backend helper exists, app_ is always public regardless of stale DB auth.
+  const primaryIsConfidential =
+    input.backendHelper == null && input.tokenEndpointAuthMethod !== "none";
+  const isM2MOnly =
+    input.backendHelper == null &&
+    primaryIsConfidential &&
+    input.grantTypes.includes("client_credentials") &&
+    !input.hasAuthCodeFlow;
+  return { primaryIsConfidential, isM2MOnly };
+}
+
+function CopyableIdField({
+  label,
+  value,
+  placeholder,
+  copyLabel,
+  copied,
+  onCopy,
+  valueClassName = "text-emerald-400",
+  hint,
+}: Readonly<{
+  label: string;
+  value: string | null | undefined;
+  placeholder?: string;
+  copyLabel: string;
+  copied: string | null;
+  onCopy: (text: string, label: string) => void;
+  valueClassName?: string;
+  hint?: string;
+}>): ReactNode {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-zinc-300 mb-1.5">{label}</label>
+      {hint ? <p className="text-xs text-zinc-500 mb-2">{hint}</p> : null}
+      <div className="flex items-center gap-2">
+        <code
+          className={`flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg ${valueClassName} text-sm font-mono`}
+        >
+          {value || placeholder || "Create app first"}
+        </code>
+        {value ? (
+          <button
+            type="button"
+            onClick={() => onCopy(value, copyLabel)}
+            className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+          >
+            {copied === copyLabel ? "Copied!" : "Copy"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ClientSecretReveal({
+  secret,
+  hasSecret,
+  generating,
+  fetchError,
+  copyLabel,
+  copied,
+  onCopy,
+  onGenerate,
+  generateDisabled,
+  idleRotateHint,
+  wrapGenerateRow = false,
+}: Readonly<{
+  secret: string | null;
+  hasSecret: boolean;
+  generating: boolean;
+  fetchError: string | null;
+  copyLabel: string;
+  copied: string | null;
+  onCopy: (text: string, label: string) => void;
+  onGenerate: () => void;
+  generateDisabled: boolean;
+  idleRotateHint: string;
+  wrapGenerateRow?: boolean;
+}>): ReactNode {
+  return (
+    <>
+      {secret ? (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
+              {secret}
+            </code>
+            <button
+              type="button"
+              onClick={() => onCopy(secret, copyLabel)}
+              className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors shrink-0"
+            >
+              {copied === copyLabel ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <p className="text-xs text-amber-400/80">
+            Store this secret securely. It will not be shown again.
+          </p>
+        </div>
+      ) : (
+        <div className={`flex items-center gap-3${wrapGenerateRow ? " flex-wrap" : ""}`}>
+          {hasSecret ? <p className="text-sm text-zinc-500">{idleRotateHint}</p> : null}
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={generateDisabled}
+            className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+          >
+            {generating ? "Generating..." : hasSecret ? "Rotate Secret" : "Generate Secret"}
+          </button>
+        </div>
+      )}
+      {fetchError ? <p className="text-xs text-red-400 mt-2">{fetchError}</p> : null}
+    </>
+  );
+}
+
+function PrimaryCredentialsSection({
+  primaryIsConfidential,
+  clientId,
+  secret,
+  hasSecret,
+  generating,
+  secretFetchError,
+  copied,
+  onCopy,
+  onGenerateSecret,
+  generateDisabled,
+}: Readonly<{
+  primaryIsConfidential: boolean;
+  clientId: string | null;
+  secret: string | null;
+  hasSecret: boolean;
+  generating: boolean;
+  secretFetchError: string | null;
+  copied: string | null;
+  onCopy: (text: string, label: string) => void;
+  onGenerateSecret: () => void;
+  generateDisabled: boolean;
+}>): ReactNode {
+  if (!primaryIsConfidential) {
+    return (
+      <CopyableIdField
+        label="Public / SDK client ID"
+        value={clientId}
+        copyLabel="clientId"
+        copied={copied}
+        onCopy={onCopy}
+        hint="Use this in SDKs, CLIs, and the device authorization flow. It stays public (no secret)."
+      />
+    );
+  }
+  return (
+    <>
+      <CopyableIdField
+        label="Client ID"
+        value={clientId}
+        copyLabel="clientId"
+        copied={copied}
+        onCopy={onCopy}
+      />
+      <div>
+        <label className="block text-sm font-medium text-zinc-300 mb-1.5">Client Secret</label>
+        <ClientSecretReveal
+          secret={secret}
+          hasSecret={hasSecret}
+          generating={generating}
+          fetchError={secretFetchError}
+          copyLabel="secret"
+          copied={copied}
+          onCopy={onCopy}
+          onGenerate={onGenerateSecret}
+          generateDisabled={generateDisabled}
+          idleRotateHint="A secret has been generated. Generate a new one to rotate it."
+        />
+      </div>
+    </>
+  );
+}
+
+function BackendHelperSection({
+  backendHelper,
+  backendDeviceHelper,
+  isM2MOnly,
+  backendSecret,
+  generatingBackend,
+  backendSecretFetchError,
+  copied,
+  onCopy,
+  onGenerateBackendSecret,
+  generateDisabled,
+}: Readonly<{
+  backendHelper: { clientId: string; hasSecret: boolean } | null;
+  backendDeviceHelper: boolean;
+  isM2MOnly: boolean;
+  backendSecret: string | null;
+  generatingBackend: boolean;
+  backendSecretFetchError: string | null;
+  copied: string | null;
+  onCopy: (text: string, label: string) => void;
+  onGenerateBackendSecret: () => void;
+  generateDisabled: boolean;
+}>): ReactNode {
+  if (backendHelper) {
+    return (
+      <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
+        <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
+        <p className="text-xs text-zinc-500">
+          Use Basic auth with this client for Builder APIs and server-side device approval. Never
+          embed in public apps.
+        </p>
+        <div>
+          <label className="block text-xs font-medium text-zinc-400 mb-1">Client ID</label>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
+              {backendHelper.clientId}
+            </code>
+            <button
+              type="button"
+              onClick={() => onCopy(backendHelper.clientId, "m2mClientId")}
+              className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+            >
+              {copied === "m2mClientId" ? "Copied!" : "Copy"}
+            </button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</label>
+          <ClientSecretReveal
+            secret={backendSecret}
+            hasSecret={backendHelper.hasSecret}
+            generating={generatingBackend}
+            fetchError={backendSecretFetchError}
+            copyLabel="backendSecret"
+            copied={copied}
+            onCopy={onCopy}
+            onGenerate={onGenerateBackendSecret}
+            generateDisabled={generateDisabled}
+            idleRotateHint="A secret exists. Generate a new one to rotate."
+            wrapGenerateRow
+          />
+        </div>
+      </div>
+    );
+  }
+  if (isM2MOnly) return null;
+  if (backendDeviceHelper) {
+    return (
+      <p className="text-sm text-zinc-500 mt-4">
+        <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet
+        provisioned. Save the app to provision the Backend device helper and create a confidential{" "}
+        <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side
+        device approval, then return here.
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-zinc-500 mt-4">
+      Confidential M2M backend is off on{" "}
+      <strong className="text-zinc-400">App profile</strong>. Turn on{" "}
+      <strong className="text-zinc-400">Confidential M2M backend</strong> there to manage M2M
+      credentials on this tab.
+    </p>
+  );
+}
+
+function authTestTabButtonClass(active: boolean, tone: "remote" | "admin"): string {
+  if (!active) return "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]";
+  if (tone === "remote") {
+    return "bg-emerald-500/15 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.25)]";
+  }
+  return "bg-cyan-500/15 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.25)]";
+}
+
+function AuthTestSection({
+  showRemoteSigningTab,
+  showAdminAccessTab,
+  effectiveAuthTestTab,
+  onTabChange,
+  clientId,
+  backendHelperClientId,
+  ownerExternalUserId,
+  m2mSecretForTests,
+  allowedScopes,
+  readOnly,
+  browserOrigin,
+  onCopy,
+  copied,
+}: Readonly<{
+  showRemoteSigningTab: boolean;
+  showAdminAccessTab: boolean;
+  effectiveAuthTestTab: "remote" | "admin";
+  onTabChange: (tab: "remote" | "admin") => void;
+  clientId: string | null;
+  backendHelperClientId: string | null | undefined;
+  ownerExternalUserId: string | null;
+  m2mSecretForTests: string | null;
+  allowedScopes: string;
+  readOnly: boolean;
+  browserOrigin: string;
+  onCopy: (text: string, label: string) => void;
+  copied: string | null;
+}>): ReactNode {
+  if (!showRemoteSigningTab && !showAdminAccessTab) return null;
+  const scopes = allowedScopes || DEFAULT_OIDC_SCOPES;
+  return (
+    <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-zinc-200">Test authentication</h3>
+          <p className="text-xs text-zinc-500 mt-1">
+            {effectiveAuthTestTab === "remote"
+              ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
+              : "Client-credentials token exchange with the Backend helper for Builder APIs, user provisioning, and device approval."}
+          </p>
+        </div>
+        {showRemoteSigningTab && showAdminAccessTab ? (
+          <div
+            className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5"
+            role="tablist"
+            aria-label="Authentication test type"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectiveAuthTestTab === "remote"}
+              onClick={() => onTabChange("remote")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${authTestTabButtonClass(effectiveAuthTestTab === "remote", "remote")}`}
+            >
+              Remote signing
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectiveAuthTestTab === "admin"}
+              onClick={() => onTabChange("admin")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${authTestTabButtonClass(effectiveAuthTestTab === "admin", "admin")}`}
+            >
+              Administrative
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {effectiveAuthTestTab === "remote" && showRemoteSigningTab && clientId ? (
+        <M2mTokenTestPanel
+          clientId={clientId}
+          publicClientId={clientId}
+          ownerExternalUserId={ownerExternalUserId}
+          generatedSecret={null}
+          allowedScopes={scopes}
+          readOnly={readOnly}
+          origin={browserOrigin}
+          onCopy={onCopy}
+          copiedLabel={copied}
+          showTopBorder={false}
+          hasM2mBackend={false}
+          flows={["owner"]}
+        />
+      ) : null}
+
+      {effectiveAuthTestTab === "admin" && backendHelperClientId ? (
+        <M2mTokenTestPanel
+          clientId={backendHelperClientId}
+          publicClientId={clientId?.startsWith("app_") ? clientId : null}
+          ownerExternalUserId={ownerExternalUserId}
+          generatedSecret={m2mSecretForTests}
+          allowedScopes={scopes}
+          readOnly={readOnly}
+          origin={browserOrigin}
+          onCopy={onCopy}
+          copiedLabel={copied}
+          showTopBorder={false}
+          hasM2mBackend
+          flows={["admin"]}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function M2mOnlyTokenExchangeSection({
+  clientId,
+  ownerExternalUserId,
+  m2mSecretForTests,
+  allowedScopes,
+  readOnly,
+  browserOrigin,
+  onCopy,
+  copied,
+  hasM2mBackend,
+}: Readonly<{
+  clientId: string;
+  ownerExternalUserId: string | null;
+  m2mSecretForTests: string | null;
+  allowedScopes: string;
+  readOnly: boolean;
+  browserOrigin: string;
+  onCopy: (text: string, label: string) => void;
+  copied: string | null;
+  hasM2mBackend: boolean;
+}>): ReactNode {
+  return (
+    <div className="space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
+      <div className="flex items-center gap-2">
+        <div className="w-2 h-2 rounded-full bg-cyan-500" />
+        <h3 className="text-sm font-semibold text-zinc-200">M2M token exchange</h3>
+      </div>
+      <M2mTokenTestPanel
+        clientId={clientId}
+        publicClientId={clientId.startsWith("app_") ? clientId : null}
+        ownerExternalUserId={ownerExternalUserId}
+        generatedSecret={m2mSecretForTests}
+        allowedScopes={allowedScopes || DEFAULT_OIDC_SCOPES}
+        readOnly={readOnly}
+        origin={browserOrigin}
+        onCopy={onCopy}
+        copiedLabel={copied}
+        showTopBorder={false}
+        hasM2mBackend={hasM2mBackend}
+      />
+    </div>
+  );
+}
+
+function CredentialsPageHeader({
+  isM2MOnly,
+  hideAuthCodeFlowSection,
+}: Readonly<{
+  isM2MOnly: boolean;
+  hideAuthCodeFlowSection: boolean;
+}>): ReactNode {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
+        <p className="text-sm text-zinc-500">
+          {getCredentialsIntroText(isM2MOnly, hideAuthCodeFlowSection)}
+        </p>
+      </div>
+      <a
+        href={API_REFERENCE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+        </svg>
+        API Reference
+        <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+        </svg>
+      </a>
+    </div>
+  );
+}
+
 export default function TestingStep({
   appId,
   clientId,
@@ -1578,35 +2063,12 @@ export default function TestingStep({
     [grantTypes, redirectUris, clientId],
   );
   const hasAuthCodeFlow = effectiveGrantTypes.includes(AUTHORIZATION_CODE_GRANT);
-  // The primary client may only hold a secret when it is confidential. A public
-  // client (token_endpoint_auth_method === "none") never surfaces a secret or
-  // rotate control, regardless of its grant types — confidential credentials live
-  // exclusively on the m2m_ backend helper.
-  // When an m2m_ backend helper exists, app_ is always public regardless of stale DB auth.
-  const primaryIsConfidential =
-    backendHelper == null && tokenEndpointAuthMethod !== "none";
-  const isM2MOnly =
-    backendHelper == null &&
-    primaryIsConfidential &&
-    grantTypes.includes("client_credentials") &&
-    !hasAuthCodeFlow;
-
-  const parseCredentialsError = async (res: Response): Promise<string> => {
-    const text = await res.text();
-    try {
-      const data = text ? JSON.parse(text) : {};
-      if (
-        typeof data.error_description === "string" &&
-        data.error_description.trim()
-      ) {
-        return data.error_description.trim();
-      }
-      if (typeof data.error === "string" && data.error) return data.error;
-    } catch {
-      /* keep generic */
-    }
-    return text.trim() || res.statusText || `Failed to generate secret (${res.status})`;
-  };
+  const { primaryIsConfidential, isM2MOnly } = resolvePrimaryClientFlags({
+    backendHelper,
+    tokenEndpointAuthMethod,
+    grantTypes,
+    hasAuthCodeFlow,
+  });
 
   useEffect(() => {
     return () => {
@@ -1641,7 +2103,9 @@ export default function TestingStep({
       onSecretGenerated();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Could not reach the server. Check your connection and try again.";
+        err instanceof Error
+          ? err.message
+          : "Could not reach the server. Check your connection and try again.";
       setSecretFetchError(message);
     } finally {
       setGenerating(false);
@@ -1665,41 +2129,40 @@ export default function TestingStep({
       onBackendSecretGenerated?.();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Could not reach the server. Check your connection and try again.";
+        err instanceof Error
+          ? err.message
+          : "Could not reach the server. Check your connection and try again.";
       setBackendSecretFetchError(message);
     } finally {
       setGeneratingBackend(false);
     }
   }, [appId, backendDeviceHelper, onBackendSecretGenerated, readOnly]);
 
-  const copyToClipboard = useCallback(
-    async (text: string, label: string) => {
-      if (typeof navigator === "undefined" || !navigator.clipboard) {
-        setCopyError("Clipboard is unavailable in this browser.");
-        return;
-      }
+  const copyToClipboard = useCallback(async (text: string, label: string) => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      setCopyError("Clipboard is unavailable in this browser.");
+      return;
+    }
 
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch (err) {
-        console.error("Failed to copy to clipboard.", err);
-        setCopied(null);
-        setCopyError("Could not copy to clipboard. Please copy the value manually.");
-        return;
-      }
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      console.error("Failed to copy to clipboard.", err);
+      setCopied(null);
+      setCopyError("Could not copy to clipboard. Please copy the value manually.");
+      return;
+    }
 
-      setCopyError(null);
-      setCopied(label);
-      if (copyResetTimeoutRef.current !== null) {
-        clearTimeout(copyResetTimeoutRef.current);
-      }
-      copyResetTimeoutRef.current = setTimeout(() => {
-        copyResetTimeoutRef.current = null;
-        setCopied(null);
-      }, 2000);
-    },
-    []
-  );
+    setCopyError(null);
+    setCopied(label);
+    if (copyResetTimeoutRef.current !== null) {
+      clearTimeout(copyResetTimeoutRef.current);
+    }
+    copyResetTimeoutRef.current = setTimeout(() => {
+      copyResetTimeoutRef.current = null;
+      setCopied(null);
+    }, 2000);
+  }, []);
 
   const m2mSecretForTests = isM2MOnly ? secret : backendSecret;
   const browserOrigin = getBrowserOrigin();
@@ -1710,7 +2173,6 @@ export default function TestingStep({
     Boolean(clientId?.startsWith("app_")) &&
     publicAppAllowsSignJob(allowedScopes ?? DEFAULT_OIDC_SCOPES);
   const showAdminAccessTab = Boolean(backendHelper?.clientId);
-  const showAuthTestSection = showRemoteSigningTab || showAdminAccessTab;
   const effectiveAuthTestTab = resolveEffectiveAuthTestTab(
     authTestTab,
     showAdminAccessTab,
@@ -1725,315 +2187,71 @@ export default function TestingStep({
 
   return (
     <div className="space-y-8">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
-          <p className="text-sm text-zinc-500">
-            {getCredentialsIntroText(isM2MOnly, hideAuthCodeFlowSection)}
-          </p>
-        </div>
-        <a
-          href={API_REFERENCE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
-          API Reference
-          <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-        </a>
-      </div>
-      {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
+      <CredentialsPageHeader
+        isM2MOnly={isM2MOnly}
+        hideAuthCodeFlowSection={hideAuthCodeFlowSection}
+      />
+      {copyError ? <p className="text-xs text-red-400 mt-2">{copyError}</p> : null}
 
-      {primaryIsConfidential ? (
-        <>
-          <div>
-            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-              Client ID
-            </div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
-                {clientId || "Create app first"}
-              </code>
-              {clientId && (
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(clientId, "clientId")}
-                  className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
-                >
-                  {copied === "clientId" ? "Copied!" : "Copy"}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-              Client Secret
-            </div>
-            {secret ? (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
-                    {secret}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(secret, "secret")}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors shrink-0"
-                  >
-                    {copied === "secret" ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-                <p className="text-xs text-amber-400/80">
-                  Store this secret securely. It will not be shown again.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3">
-                {hasSecret && (
-                  <p className="text-sm text-zinc-500">
-                    A secret has been generated. Generate a new one to rotate it.
-                  </p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void generateSecret()}
-                  disabled={readOnly || generating || !appId}
-                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
-                >
-                  {generating ? "Generating..." : hasSecret ? "Rotate Secret" : "Generate Secret"}
-                </button>
-              </div>
-            )}
-            {secretFetchError && (
-              <p className="text-xs text-red-400 mt-2">{secretFetchError}</p>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div>
-            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-              Public / SDK client ID
-            </div>
-            <p className="text-xs text-zinc-500 mb-2">
-              Use this in SDKs, CLIs, and the device authorization flow. It stays public (no secret).
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
-                {clientId || "Create app first"}
-              </code>
-              {clientId && (
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(clientId, "clientId")}
-                  className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
-                >
-                  {copied === "clientId" ? "Copied!" : "Copy"}
-                </button>
-              )}
-            </div>
-          </div>
-
-        </>
-      )}
+      <PrimaryCredentialsSection
+        primaryIsConfidential={primaryIsConfidential}
+        clientId={clientId}
+        secret={secret}
+        hasSecret={hasSecret}
+        generating={generating}
+        secretFetchError={secretFetchError}
+        copied={copied}
+        onCopy={copyToClipboard}
+        onGenerateSecret={() => void generateSecret()}
+        generateDisabled={readOnly || generating || !appId}
+      />
 
       {/*
         Backend helper (confidential m2m_) — driven by server state
         (`backendHelper` / `backendDeviceHelper`), refreshed when the
         Credentials tab loads and after save.
       */}
-      {backendHelper ? (
-        <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
-          <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
-          <p className="text-xs text-zinc-500">
-            Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
-          </p>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
-                {backendHelper.clientId}
-              </code>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
-                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
-              >
-                {copied === "m2mClientId" ? "Copied!" : "Copy"}
-              </button>
-            </div>
-          </div>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
-            {backendSecret ? (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
-                    {backendSecret}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(backendSecret, "backendSecret")}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
-                  >
-                    {copied === "backendSecret" ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-                <p className="text-xs text-amber-400/80">
-                  Store this secret securely. It will not be shown again.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 flex-wrap">
-                {backendHelper.hasSecret && (
-                  <p className="text-sm text-zinc-500">
-                    A secret exists. Generate a new one to rotate.
-                  </p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void generateBackendSecret()}
-                  disabled={readOnly || generatingBackend || !appId}
-                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
-                >
-                  {generatingBackend
-                    ? "Generating..."
-                    : backendHelper.hasSecret
-                      ? "Rotate Secret"
-                      : "Generate Secret"}
-                </button>
-              </div>
-            )}
-            {backendSecretFetchError && (
-              <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
-            )}
-          </div>
-        </div>
-      ) : !isM2MOnly && backendDeviceHelper ? (
-        <p className="text-sm text-zinc-500 mt-4">
-          <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
-          Save the app to provision the Backend device helper and create a confidential{" "}
-          <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
-          approval, then return here.
-        </p>
-      ) : !isM2MOnly ? (
-        <p className="text-sm text-zinc-500 mt-4">
-          Confidential M2M backend is off on{" "}
-          <strong className="text-zinc-400">App profile</strong>. Turn on{" "}
-          <strong className="text-zinc-400">Confidential M2M backend</strong>{" "}
-          there to manage M2M credentials on this tab.
-        </p>
-      ) : null}
+      <BackendHelperSection
+        backendHelper={backendHelper}
+        backendDeviceHelper={backendDeviceHelper}
+        isM2MOnly={isM2MOnly}
+        backendSecret={backendSecret}
+        generatingBackend={generatingBackend}
+        backendSecretFetchError={backendSecretFetchError}
+        copied={copied}
+        onCopy={copyToClipboard}
+        onGenerateBackendSecret={() => void generateBackendSecret()}
+        generateDisabled={readOnly || generatingBackend || !appId}
+      />
 
-      {showAuthTestSection ? (
-        <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-zinc-200">Test authentication</h3>
-              <p className="text-xs text-zinc-500 mt-1">
-                {effectiveAuthTestTab === "remote"
-                  ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
-                  : "Client-credentials token exchange with the Backend helper for Builder APIs, user provisioning, and device approval."}
-              </p>
-            </div>
-            {showRemoteSigningTab && showAdminAccessTab ? (
-              <div
-                className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5"
-                role="tablist"
-                aria-label="Authentication test type"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={effectiveAuthTestTab === "remote"}
-                  onClick={() => setAuthTestTab("remote")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    effectiveAuthTestTab === "remote"
-                      ? "bg-emerald-500/15 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.25)]"
-                      : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
-                  }`}
-                >
-                  Remote signing
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={effectiveAuthTestTab === "admin"}
-                  onClick={() => setAuthTestTab("admin")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    effectiveAuthTestTab === "admin"
-                      ? "bg-cyan-500/15 text-cyan-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.25)]"
-                      : "text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]"
-                  }`}
-                >
-                  Administrative
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          {effectiveAuthTestTab === "remote" && showRemoteSigningTab && clientId ? (
-            <M2mTokenTestPanel
-              clientId={clientId}
-              publicClientId={clientId}
-              ownerExternalUserId={ownerExternalUserId}
-              generatedSecret={null}
-              allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
-              readOnly={readOnly}
-              origin={browserOrigin}
-              onCopy={copyToClipboard}
-              copiedLabel={copied}
-              showTopBorder={false}
-              hasM2mBackend={false}
-              flows={["owner"]}
-            />
-          ) : null}
-
-          {effectiveAuthTestTab === "admin" && backendHelper?.clientId ? (
-            <M2mTokenTestPanel
-              clientId={backendHelper.clientId}
-              publicClientId={clientId?.startsWith("app_") ? clientId : null}
-              ownerExternalUserId={ownerExternalUserId}
-              generatedSecret={m2mSecretForTests}
-              allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
-              readOnly={readOnly}
-              origin={browserOrigin}
-              onCopy={copyToClipboard}
-              copiedLabel={copied}
-              showTopBorder={false}
-              hasM2mBackend
-              flows={["admin"]}
-            />
-          ) : null}
-        </div>
-      ) : null}
+      <AuthTestSection
+        showRemoteSigningTab={showRemoteSigningTab}
+        showAdminAccessTab={showAdminAccessTab}
+        effectiveAuthTestTab={effectiveAuthTestTab}
+        onTabChange={setAuthTestTab}
+        clientId={clientId}
+        backendHelperClientId={backendHelper?.clientId}
+        ownerExternalUserId={ownerExternalUserId}
+        m2mSecretForTests={m2mSecretForTests}
+        allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
+        readOnly={readOnly}
+        browserOrigin={browserOrigin}
+        onCopy={copyToClipboard}
+        copied={copied}
+      />
 
       {isM2MOnly && clientId ? (
-        <div className="space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-cyan-500" />
-            <h3 className="text-sm font-semibold text-zinc-200">M2M token exchange</h3>
-          </div>
-          <M2mTokenTestPanel
-            clientId={clientId}
-            publicClientId={clientId.startsWith("app_") ? clientId : null}
-            ownerExternalUserId={ownerExternalUserId}
-            generatedSecret={m2mSecretForTests}
-            allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
-            readOnly={readOnly}
-            origin={browserOrigin}
-            onCopy={copyToClipboard}
-            copiedLabel={copied}
-            showTopBorder={false}
-            hasM2mBackend={hasM2mBackend}
-          />
-        </div>
+        <M2mOnlyTokenExchangeSection
+          clientId={clientId}
+          ownerExternalUserId={ownerExternalUserId}
+          m2mSecretForTests={m2mSecretForTests}
+          allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
+          readOnly={readOnly}
+          browserOrigin={browserOrigin}
+          onCopy={copyToClipboard}
+          copied={copied}
+          hasM2mBackend={hasM2mBackend}
+        />
       ) : null}
 
       {hideAuthCodeFlowSection ? null : (
