@@ -8,12 +8,14 @@ import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   isOpenMeterEnabled,
   requireOpenMeterForUsageReads,
+  SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
 import { getHostedOpenMeterClient } from "@/lib/openmeter/client";
 import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
+  buildOwnerWireSubject,
   isOwnerCustomerKey,
   normalizePlatformUserId,
   parseOpenMeterCustomerKey,
@@ -23,6 +25,8 @@ import {
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
 const LIST_FETCH_LIMIT = 100;
+/** Cap meter-discovered subjects so admin event fan-out stays bounded. */
+const MAX_ADMIN_DISCOVERED_SUBJECTS = 40;
 
 export type SignedTicketRequestRow = {
   time: string;
@@ -550,12 +554,17 @@ async function fetchSignedTicketEvents(input: {
 
 /**
  * Fetch recent create_signed_ticket events across the platform (admin path).
- * Prefer type-filtered listV2; fall back to unscoped list + client-side type filter.
  *
- * Important: do not scope by `subject contains clientId` for subset app filters.
- * Owner-wallet events often use owner-subject forms (`owner:{id}` / bare owner id)
- * where client_id only exists in event data, so subject-scoped filtering can
- * hide valid rows and make All Usage appear empty for a selected app.
+ * When clientIds are selected, discover usage subjects from the
+ * signed_ticket_count meter (scoped by client_id dimension — same source as the
+ * usage chart), then list events for those subjects. A global listV2(limit=100)
+ * drowns quieter apps out under busy platform traffic, which made storyboard
+ * (and similar) look empty despite non-zero meter usage.
+ *
+ * Do not use `subject contains clientId` alone: owner-wallet CloudEvents use
+ * bare / `owner:{id}` subjects with client_id only in event data.
+ *
+ * Unrestricted (all apps) still uses type-filtered listV2 / unscoped list.
  */
 async function fetchPlatformSignedTicketEvents(input: {
   client: OpenMeter;
@@ -563,8 +572,51 @@ async function fetchPlatformSignedTicketEvents(input: {
   from: string;
   to: string;
 }): Promise<IngestedEventLike[]> {
+  if (input.clientIds && input.clientIds.size > 0) {
+    const subjects = await discoverAdminUsageSubjects({
+      client: input.client,
+      clientIds: input.clientIds,
+      from: input.from,
+      to: input.to,
+    });
+    if (subjects.size > 0) {
+      // Exact subjects from meter discovery — do not re-expand via
+      // buildSubjectQueries (that would explode fan-out).
+      return fetchEventsForExactSubjects({
+        client: input.client,
+        subjects,
+        from: input.from,
+        to: input.to,
+      });
+    }
+    // Meter lag / empty discovery: still try compound end-user subjects via
+    // subject-contains, then merge with a short global window for owner events.
+    const [containsBatches, globalRecent] = await Promise.all([
+      Promise.all(
+        [...input.clientIds].map((clientId) =>
+          listSignedTicketEventsForSubjectContains(
+            input.client,
+            clientId,
+            input.from,
+            input.to,
+          ),
+        ),
+      ),
+      listRecentPlatformSignedTicketEvents(input.client, input.from, input.to),
+    ]);
+    return [...containsBatches.flat(), ...globalRecent];
+  }
+
+  return listRecentPlatformSignedTicketEvents(input.client, input.from, input.to);
+}
+
+async function listRecentPlatformSignedTicketEvents(
+  client: OpenMeter,
+  from: string,
+  to: string,
+): Promise<IngestedEventLike[]> {
   try {
-    const listedV2 = await input.client.events.listV2({
+    const listedV2 = await client.events.listV2({
       limit: LIST_FETCH_LIMIT,
       filter: JSON.stringify({
         type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
@@ -573,18 +625,203 @@ async function fetchPlatformSignedTicketEvents(input: {
     return coerceIngestedEvents(listedV2?.items ?? listedV2);
   } catch {
     try {
-      // Unscoped list (no subject) — Konnect returns latest global events.
-      const listed = await input.client.events.list({
-        from: input.from,
-        to: input.to,
+      const listed = await client.events.list({
+        from,
+        to,
         limit: LIST_FETCH_LIMIT,
-        // subject omitted intentionally for platform-wide admin history
       } as { from: string; to: string; limit: number });
       return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
     } catch {
       return [];
     }
   }
+}
+
+/** List signed-ticket events for exact CloudEvent subjects (no key expansion). */
+async function fetchEventsForExactSubjects(input: {
+  client: OpenMeter;
+  subjects: ReadonlySet<string>;
+  from: string;
+  to: string;
+}): Promise<IngestedEventLike[]> {
+  const subjectList = [...input.subjects]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, MAX_ADMIN_DISCOVERED_SUBJECTS);
+  const batches = await Promise.all(
+    subjectList.map(async (subject) => {
+      try {
+        const listed = await input.client.events.list({
+          subject,
+          from: input.from,
+          to: input.to,
+          limit: LIST_FETCH_LIMIT,
+        });
+        return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
+      } catch {
+        try {
+          const listedV2 = await input.client.events.listV2({
+            limit: LIST_FETCH_LIMIT,
+            filter: JSON.stringify({
+              type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
+              subject: { eq: subject },
+            }),
+          });
+          return coerceIngestedEvents(listedV2?.items ?? listedV2);
+        } catch {
+          return [];
+        }
+      }
+    }),
+  );
+  return batches.flat();
+}
+
+async function listSignedTicketEventsForSubjectContains(
+  client: OpenMeter,
+  subjectFragment: string,
+  from: string,
+  to: string,
+): Promise<IngestedEventLike[]> {
+  try {
+    const listedV2 = await client.events.listV2({
+      limit: LIST_FETCH_LIMIT,
+      filter: JSON.stringify({
+        type: { eq: CREATE_SIGNED_TICKET_EVENT_TYPE },
+        subject: { contains: subjectFragment },
+      }),
+    });
+    return coerceIngestedEvents(listedV2?.items ?? listedV2);
+  } catch {
+    try {
+      const listed = await client.events.list({
+        subject: subjectFragment,
+        from,
+        to,
+        limit: LIST_FETCH_LIMIT,
+      });
+      return coerceIngestedEvents(listed).filter(eventIsSignedTicket);
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * Resolve OpenMeter event subjects that have signed-ticket usage for the
+ * selected apps in [from, to], ranked by request count.
+ *
+ * Prefers the meter row `subject` (CloudEvent subject) when present; otherwise
+ * expands external_user_id into compound + owner subject forms.
+ */
+export function collectAdminSubjectsFromMeterRows(
+  rows: ReadonlyArray<AdminMeterRowLike>,
+  clientIds: ReadonlySet<string>,
+): string[] {
+  const countBySubject = new Map<string, number>();
+
+  for (const row of rows) {
+    const count = meterValueToCount(row.value);
+    if (count <= 0) continue;
+    for (const subject of subjectCandidatesForMeterRow(row, clientIds)) {
+      countBySubject.set(subject, (countBySubject.get(subject) ?? 0) + count);
+    }
+  }
+
+  return [...countBySubject.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, MAX_ADMIN_DISCOVERED_SUBJECTS)
+    .map(([subject]) => subject);
+}
+
+type AdminMeterRowLike = {
+  subject?: string | null;
+  value?: unknown;
+  groupBy?: Record<string, string | null> | null;
+};
+
+function trimmedRecordField(
+  record: Record<string, string | null>,
+  key: string,
+): string {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Compound + bare + owner-wire subject forms for one meter row. */
+function subjectCandidatesForMeterRow(
+  row: AdminMeterRowLike,
+  clientIds: ReadonlySet<string>,
+): string[] {
+  const group = row.groupBy ?? {};
+  const rowClientId = trimmedRecordField(group, "client_id");
+  if (rowClientId && !clientIds.has(rowClientId)) {
+    return [];
+  }
+
+  const candidates: string[] = [];
+  const ceSubject = typeof row.subject === "string" ? row.subject.trim() : "";
+  if (ceSubject) {
+    candidates.push(ceSubject);
+  }
+
+  const externalUserId = trimmedRecordField(group, "external_user_id");
+  if (!externalUserId) {
+    return candidates;
+  }
+
+  const apps = rowClientId ? [rowClientId] : [...clientIds];
+  for (const clientId of apps) {
+    candidates.push(
+      buildOpenMeterCustomerKey(clientId, externalUserId),
+      buildOpenMeterCustomerKey(clientId, buildOwnerWireSubject(externalUserId)),
+    );
+  }
+  candidates.push(externalUserId, buildOwnerWireSubject(externalUserId));
+  return candidates.filter(Boolean);
+}
+
+function meterValueToCount(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+  }
+  if (typeof value === "bigint") {
+    return value > 0n ? Number(value) : 0;
+  }
+  return 0;
+}
+
+async function discoverAdminUsageSubjects(input: {
+  client: OpenMeter;
+  clientIds: ReadonlySet<string>;
+  from: string;
+  to: string;
+}): Promise<Set<string>> {
+  const batches = await Promise.all(
+    [...input.clientIds].map(async (clientId) => {
+      try {
+        const result = await input.client.meters.query(SIGNED_TICKET_COUNT_METER, {
+          from: new Date(input.from),
+          to: new Date(input.to),
+          windowSize: "MONTH",
+          clientId,
+          groupBy: ["client_id", "external_user_id"],
+        });
+        return result?.data ?? [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+
+  return new Set(
+    collectAdminSubjectsFromMeterRows(batches.flat(), input.clientIds),
+  );
 }
 
 function normalizeClientIdFilter(
