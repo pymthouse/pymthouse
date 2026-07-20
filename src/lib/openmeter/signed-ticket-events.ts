@@ -715,60 +715,70 @@ async function listSignedTicketEventsForSubjectContains(
  * expands external_user_id into compound + owner subject forms.
  */
 export function collectAdminSubjectsFromMeterRows(
-  rows: ReadonlyArray<{
-    subject?: string | null;
-    value?: unknown;
-    groupBy?: Record<string, string | null> | null;
-  }>,
+  rows: ReadonlyArray<AdminMeterRowLike>,
   clientIds: ReadonlySet<string>,
 ): string[] {
   const countBySubject = new Map<string, number>();
 
-  const addSubject = (raw: string, count: number) => {
-    const subject = raw.trim();
-    if (!subject) return;
-    countBySubject.set(subject, (countBySubject.get(subject) ?? 0) + count);
-  };
-
   for (const row of rows) {
-    const group = row.groupBy ?? {};
-    const rowClientId =
-      (typeof group.client_id === "string" && group.client_id.trim()) || "";
-    if (rowClientId && !clientIds.has(rowClientId)) {
-      continue;
-    }
     const count = meterValueToCount(row.value);
     if (count <= 0) continue;
-
-    const ceSubject = typeof row.subject === "string" ? row.subject.trim() : "";
-    if (ceSubject) {
-      addSubject(ceSubject, count);
+    for (const subject of subjectCandidatesForMeterRow(row, clientIds)) {
+      countBySubject.set(subject, (countBySubject.get(subject) ?? 0) + count);
     }
-
-    const externalUserId =
-      (typeof group.external_user_id === "string" &&
-        group.external_user_id.trim()) ||
-      "";
-    if (!externalUserId) continue;
-
-    const apps = rowClientId
-      ? [rowClientId]
-      : [...clientIds];
-    for (const clientId of apps) {
-      addSubject(buildOpenMeterCustomerKey(clientId, externalUserId), count);
-      addSubject(
-        buildOpenMeterCustomerKey(clientId, buildOwnerWireSubject(externalUserId)),
-        count,
-      );
-    }
-    addSubject(externalUserId, count);
-    addSubject(buildOwnerWireSubject(externalUserId), count);
   }
 
   return [...countBySubject.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, MAX_ADMIN_DISCOVERED_SUBJECTS)
     .map(([subject]) => subject);
+}
+
+type AdminMeterRowLike = {
+  subject?: string | null;
+  value?: unknown;
+  groupBy?: Record<string, string | null> | null;
+};
+
+function trimmedRecordField(
+  record: Record<string, string | null>,
+  key: string,
+): string {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Compound + bare + owner-wire subject forms for one meter row. */
+function subjectCandidatesForMeterRow(
+  row: AdminMeterRowLike,
+  clientIds: ReadonlySet<string>,
+): string[] {
+  const group = row.groupBy ?? {};
+  const rowClientId = trimmedRecordField(group, "client_id");
+  if (rowClientId && !clientIds.has(rowClientId)) {
+    return [];
+  }
+
+  const candidates: string[] = [];
+  const ceSubject = typeof row.subject === "string" ? row.subject.trim() : "";
+  if (ceSubject) {
+    candidates.push(ceSubject);
+  }
+
+  const externalUserId = trimmedRecordField(group, "external_user_id");
+  if (!externalUserId) {
+    return candidates;
+  }
+
+  const apps = rowClientId ? [rowClientId] : [...clientIds];
+  for (const clientId of apps) {
+    candidates.push(
+      buildOpenMeterCustomerKey(clientId, externalUserId),
+      buildOpenMeterCustomerKey(clientId, buildOwnerWireSubject(externalUserId)),
+    );
+  }
+  candidates.push(externalUserId, buildOwnerWireSubject(externalUserId));
+  return candidates.filter(Boolean);
 }
 
 function meterValueToCount(value: unknown): number {
