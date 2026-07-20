@@ -52,6 +52,62 @@ function parseTopN(raw: unknown): { ok: true; value: number } | { ok: false; err
   return { ok: true, value: n };
 }
 
+function assignOptionalNonNegative(
+  target: DiscoveryPolicyFilters,
+  key: keyof DiscoveryPolicyFilters,
+  raw: unknown,
+  path: string,
+): { ok: true } | { ok: false; error: string } {
+  if (raw === undefined) return { ok: true };
+  const v = parseNonNegativeNumber(raw, path);
+  if (!v.ok) return v;
+  target[key] = v.value;
+  return { ok: true };
+}
+
+function parseDiscoveryFilters(
+  rawFilters: unknown,
+  pathPrefix: string,
+): { ok: true; filters: DiscoveryPolicyFilters | undefined } | { ok: false; error: string } {
+  if (!isPlainObject(rawFilters)) {
+    return { ok: false, error: `${pathPrefix}.filters must be an object` };
+  }
+  const f: DiscoveryPolicyFilters = {};
+  const fl = rawFilters;
+
+  for (const [key, path] of [
+    ["gpuRamGbMin", `${pathPrefix}.filters.gpuRamGbMin`],
+    ["gpuRamGbMax", `${pathPrefix}.filters.gpuRamGbMax`],
+    ["priceMax", `${pathPrefix}.filters.priceMax`],
+    ["maxAvgLatencyMs", `${pathPrefix}.filters.maxAvgLatencyMs`],
+  ] as const) {
+    const assigned = assignOptionalNonNegative(f, key, fl[key], path);
+    if (!assigned.ok) return assigned;
+  }
+
+  if (fl.maxSwapRatio !== undefined) {
+    const v = parseRatio(fl.maxSwapRatio, `${pathPrefix}.filters.maxSwapRatio`);
+    if (!v.ok) return { ok: false, error: v.error };
+    f.maxSwapRatio = v.value;
+  }
+
+  if (
+    f.gpuRamGbMin !== undefined &&
+    f.gpuRamGbMax !== undefined &&
+    f.gpuRamGbMin > f.gpuRamGbMax
+  ) {
+    return {
+      ok: false,
+      error: `${pathPrefix}.filters: gpuRamGbMin must be <= gpuRamGbMax`,
+    };
+  }
+
+  return {
+    ok: true,
+    filters: Object.keys(f).length > 0 ? f : undefined,
+  };
+}
+
 /**
  * Parse and validate a discovery policy object.
  * `null` / `undefined` input → success with `policy: null` (clear / omit).
@@ -87,47 +143,9 @@ export function parseDiscoveryPolicyInput(
   }
 
   if (raw.filters !== undefined) {
-    if (!isPlainObject(raw.filters)) {
-      return { ok: false, error: `${pathPrefix}.filters must be an object` };
-    }
-    const f: DiscoveryPolicyFilters = {};
-    const fl = raw.filters;
-    if (fl.gpuRamGbMin !== undefined) {
-      const v = parseNonNegativeNumber(fl.gpuRamGbMin, `${pathPrefix}.filters.gpuRamGbMin`);
-      if (!v.ok) return { ok: false, error: v.error };
-      f.gpuRamGbMin = v.value;
-    }
-    if (fl.gpuRamGbMax !== undefined) {
-      const v = parseNonNegativeNumber(fl.gpuRamGbMax, `${pathPrefix}.filters.gpuRamGbMax`);
-      if (!v.ok) return { ok: false, error: v.error };
-      f.gpuRamGbMax = v.value;
-    }
-    if (fl.priceMax !== undefined) {
-      const v = parseNonNegativeNumber(fl.priceMax, `${pathPrefix}.filters.priceMax`);
-      if (!v.ok) return { ok: false, error: v.error };
-      f.priceMax = v.value;
-    }
-    if (fl.maxAvgLatencyMs !== undefined) {
-      const v = parseNonNegativeNumber(fl.maxAvgLatencyMs, `${pathPrefix}.filters.maxAvgLatencyMs`);
-      if (!v.ok) return { ok: false, error: v.error };
-      f.maxAvgLatencyMs = v.value;
-    }
-    if (fl.maxSwapRatio !== undefined) {
-      const v = parseRatio(fl.maxSwapRatio, `${pathPrefix}.filters.maxSwapRatio`);
-      if (!v.ok) return { ok: false, error: v.error };
-      f.maxSwapRatio = v.value;
-    }
-    if (
-      f.gpuRamGbMin !== undefined &&
-      f.gpuRamGbMax !== undefined &&
-      f.gpuRamGbMin > f.gpuRamGbMax
-    ) {
-      return {
-        ok: false,
-        error: `${pathPrefix}.filters: gpuRamGbMin must be <= gpuRamGbMax`,
-      };
-    }
-    if (Object.keys(f).length > 0) out.filters = f;
+    const parsed = parseDiscoveryFilters(raw.filters, pathPrefix);
+    if (!parsed.ok) return parsed;
+    if (parsed.filters) out.filters = parsed.filters;
   }
 
   if (Object.keys(out).length === 0) {
@@ -142,6 +160,44 @@ export function discoveryPolicyFromDb(raw: unknown): DiscoveryPolicy | null {
   if (!isPlainObject(raw)) return null;
   const parsed = parseDiscoveryPolicyInput(raw, "discoveryPolicy");
   return parsed.ok ? parsed.policy : null;
+}
+
+function mergeOptionalMax(
+  appVal: number | undefined,
+  userVal: number | undefined,
+): number | undefined {
+  if (appVal !== undefined && userVal !== undefined) return Math.min(appVal, userVal);
+  if (userVal !== undefined) return userVal;
+  if (appVal !== undefined) return appVal;
+  return undefined;
+}
+
+function mergeDiscoveryFilters(
+  af: DiscoveryPolicyFilters | undefined,
+  uf: DiscoveryPolicyFilters | undefined,
+): DiscoveryPolicyFilters | undefined {
+  if (!af && !uf) return undefined;
+
+  const f: DiscoveryPolicyFilters = {};
+  const gminA = af?.gpuRamGbMin;
+  const gminU = uf?.gpuRamGbMin;
+  if (gminA !== undefined || gminU !== undefined) {
+    f.gpuRamGbMin = Math.max(gminA ?? 0, gminU ?? 0);
+  }
+
+  const gmax = mergeOptionalMax(af?.gpuRamGbMax, uf?.gpuRamGbMax);
+  if (gmax !== undefined) f.gpuRamGbMax = gmax;
+
+  const priceMax = mergeOptionalMax(af?.priceMax, uf?.priceMax);
+  if (priceMax !== undefined) f.priceMax = priceMax;
+
+  const latency = mergeOptionalMax(af?.maxAvgLatencyMs, uf?.maxAvgLatencyMs);
+  if (latency !== undefined) f.maxAvgLatencyMs = latency;
+
+  const swap = mergeOptionalMax(af?.maxSwapRatio, uf?.maxSwapRatio);
+  if (swap !== undefined) f.maxSwapRatio = swap;
+
+  return Object.keys(f).length > 0 ? f : undefined;
 }
 
 /**
@@ -167,40 +223,9 @@ export function mergeDiscoveryPolicies(
     out.sortBy = user.sortBy;
   }
 
-  const af = app.filters;
-  const uf = user.filters;
-  if (af || uf) {
-    const f: DiscoveryPolicyFilters = {};
-    const gminA = af?.gpuRamGbMin;
-    const gminU = uf?.gpuRamGbMin;
-    if (gminA !== undefined || gminU !== undefined) {
-      f.gpuRamGbMin = Math.max(gminA ?? 0, gminU ?? 0);
-    }
-    const gmaxA = af?.gpuRamGbMax;
-    const gmaxU = uf?.gpuRamGbMax;
-    if (gmaxA !== undefined && gmaxU !== undefined) f.gpuRamGbMax = Math.min(gmaxA, gmaxU);
-    else if (gmaxU !== undefined) f.gpuRamGbMax = gmaxU;
-    else if (gmaxA !== undefined) f.gpuRamGbMax = gmaxA;
-
-    const pA = af?.priceMax;
-    const pU = uf?.priceMax;
-    if (pA !== undefined && pU !== undefined) f.priceMax = Math.min(pA, pU);
-    else if (pU !== undefined) f.priceMax = pU;
-    else if (pA !== undefined) f.priceMax = pA;
-
-    const lA = af?.maxAvgLatencyMs;
-    const lU = uf?.maxAvgLatencyMs;
-    if (lA !== undefined && lU !== undefined) f.maxAvgLatencyMs = Math.min(lA, lU);
-    else if (lU !== undefined) f.maxAvgLatencyMs = lU;
-    else if (lA !== undefined) f.maxAvgLatencyMs = lA;
-
-    const sA = af?.maxSwapRatio;
-    const sU = uf?.maxSwapRatio;
-    if (sA !== undefined && sU !== undefined) f.maxSwapRatio = Math.min(sA, sU);
-    else if (sU !== undefined) f.maxSwapRatio = sU;
-    else if (sA !== undefined) f.maxSwapRatio = sA;
-
-    if (Object.keys(f).length > 0) out.filters = f;
+  if (app.filters || user.filters) {
+    const merged = mergeDiscoveryFilters(app.filters, user.filters);
+    if (merged) out.filters = merged;
     else delete out.filters;
   }
 

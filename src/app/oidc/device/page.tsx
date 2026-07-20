@@ -16,33 +16,102 @@ import { getIssuer } from "@/lib/oidc/issuer-urls";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+function clientIdFromDevicePayload(
+  payload: Record<string, unknown>,
+): string | undefined {
+  if (typeof payload.clientId === "string") {
+    return payload.clientId;
+  }
+  if (
+    typeof payload.params === "object" &&
+    payload.params !== null &&
+    typeof (payload.params as Record<string, unknown>).client_id === "string"
+  ) {
+    return (payload.params as Record<string, unknown>).client_id as string;
+  }
+  return undefined;
+}
+
 async function resolveAuthoritativeClientId(
   userCode: string | undefined,
   clientIdParam: string | undefined,
 ): Promise<string | undefined> {
-  if (userCode) {
-    try {
-      const adapter = new SqliteAdapter("DeviceCode");
-      const normalized = normalizeUserCode(userCode);
-      const payload = await adapter.findByUserCode(normalized);
-      if (payload) {
-        const bound =
-          typeof payload.clientId === "string"
-            ? payload.clientId
-            : typeof payload.params === "object" &&
-                payload.params !== null &&
-                typeof (payload.params as Record<string, unknown>).client_id === "string"
-              ? ((payload.params as Record<string, unknown>).client_id as string)
-              : undefined;
-        if (bound) {
-          return bound;
-        }
-      }
-    } catch {
-      /* ignore */
+  if (!userCode) return clientIdParam;
+
+  try {
+    const adapter = new SqliteAdapter("DeviceCode");
+    const normalized = normalizeUserCode(userCode);
+    const payload = await adapter.findByUserCode(normalized);
+    if (payload) {
+      const bound = clientIdFromDevicePayload(payload as Record<string, unknown>);
+      if (bound) return bound;
     }
+  } catch {
+    /* ignore */
   }
   return clientIdParam;
+}
+
+async function maybeRedirectThirdPartyInitiate(input: {
+  authoritativeClientId: string;
+  userCode: string | undefined;
+  issParam: string;
+  loginHintParam: string | undefined;
+  expectedIssuer: string;
+}): Promise<void> {
+  const {
+    authoritativeClientId,
+    userCode,
+    issParam,
+    loginHintParam,
+    expectedIssuer,
+  } = input;
+
+  if (!issuerMatchesExpected(issParam, expectedIssuer)) return;
+
+  const skipCookieName = thirdPartyInitiateSkipCookieName(
+    authoritativeClientId,
+    userCode,
+  );
+  const skipThirdParty =
+    (await cookies()).get(skipCookieName)?.value === "1";
+  if (skipThirdParty) return;
+
+  const initiateLoginUri = await getInitiateLoginUriForDeviceFlow(
+    authoritativeClientId,
+  );
+  if (!initiateLoginUri) return;
+
+  const targetLinkUri = buildDeviceFlowTargetLinkUri({
+    user_code: userCode,
+    client_id: authoritativeClientId,
+    iss: issParam,
+    login_hint: loginHintParam,
+  });
+  redirect(
+    `/oidc/device/initiate-login?${new URLSearchParams({
+      client_id: authoritativeClientId,
+      target_link_uri: targetLinkUri,
+      ...(loginHintParam ? { login_hint: loginHintParam } : {}),
+    }).toString()}`,
+  );
+}
+
+function redirectToLoginForDevice(input: {
+  userCode: string | undefined;
+  authoritativeClientId: string | undefined;
+  issParam: string | undefined;
+  loginHintParam: string | undefined;
+}): never {
+  const qs = new URLSearchParams();
+  if (input.userCode) qs.set("user_code", input.userCode);
+  if (input.authoritativeClientId) {
+    qs.set("client_id", input.authoritativeClientId);
+  }
+  if (input.issParam) qs.set("iss", input.issParam);
+  if (input.loginHintParam) qs.set("login_hint", input.loginHintParam);
+  const devicePath = `/oidc/device${qs.toString() ? `?${qs.toString()}` : ""}`;
+  redirect(`/login?callbackUrl=${encodeURIComponent(devicePath)}`);
 }
 
 export default async function DeviceVerificationPage({
@@ -69,47 +138,22 @@ export default async function DeviceVerificationPage({
   );
 
   if (!session?.user) {
-    const skipCookieName = authoritativeClientId
-      ? thirdPartyInitiateSkipCookieName(authoritativeClientId, userCode)
-      : null;
-    const skipThirdParty =
-      skipCookieName !== null
-        ? (await cookies()).get(skipCookieName)?.value === "1"
-        : true;
-
-    if (
-      authoritativeClientId &&
-      issParam &&
-      issuerMatchesExpected(issParam, expectedIssuer) &&
-      !skipThirdParty
-    ) {
-      const initiateLoginUri = await getInitiateLoginUriForDeviceFlow(
+    if (authoritativeClientId && issParam) {
+      await maybeRedirectThirdPartyInitiate({
         authoritativeClientId,
-      );
-      if (initiateLoginUri) {
-        const targetLinkUri = buildDeviceFlowTargetLinkUri({
-          user_code: userCode,
-          client_id: authoritativeClientId,
-          iss: issParam,
-          login_hint: loginHintParam,
-        });
-        redirect(
-          `/oidc/device/initiate-login?${new URLSearchParams({
-            client_id: authoritativeClientId,
-            target_link_uri: targetLinkUri,
-            ...(loginHintParam ? { login_hint: loginHintParam } : {}),
-          }).toString()}`,
-        );
-      }
+        userCode,
+        issParam,
+        loginHintParam,
+        expectedIssuer,
+      });
     }
 
-    const qs = new URLSearchParams();
-    if (userCode) qs.set("user_code", userCode);
-    if (authoritativeClientId) qs.set("client_id", authoritativeClientId);
-    if (issParam) qs.set("iss", issParam);
-    if (loginHintParam) qs.set("login_hint", loginHintParam);
-    const devicePath = `/oidc/device${qs.toString() ? `?${qs.toString()}` : ""}`;
-    redirect(`/login?callbackUrl=${encodeURIComponent(devicePath)}`);
+    redirectToLoginForDevice({
+      userCode,
+      authoritativeClientId,
+      issParam,
+      loginHintParam,
+    });
   }
 
   return (

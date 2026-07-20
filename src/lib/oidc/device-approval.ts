@@ -27,63 +27,32 @@ function isDeviceCodeBound(payload: Record<string, unknown>): boolean {
   return false;
 }
 
-/**
- * Bind a pending device code to an OIDC account and grant scopes.
- * `oidcClientId` must match the client that requested the device code.
- */
-export async function approveDeviceCodeForAccount(
-  normalizedUserCode: string,
-  oidcClientId: string,
-  accountId: string,
-): Promise<DeviceApprovalSuccess | DeviceApprovalFailure> {
-  const adapter = new SqliteAdapter("DeviceCode");
-  const deviceCode = await adapter.findByUserCode(normalizedUserCode);
+function approvalFailure(
+  error: string,
+  description: string,
+  status = 400,
+): DeviceApprovalFailure {
+  return { ok: false, error, description, status };
+}
 
-  if (!deviceCode) {
-    return {
-      ok: false,
-      error: "invalid_grant",
-      description: "Invalid, expired, or already used device code",
-      status: 400,
-    };
+function extractBoundClientId(deviceCode: Record<string, unknown>): string | null {
+  if (typeof deviceCode.clientId === "string") {
+    return deviceCode.clientId;
   }
-
-  if (deviceCode.consumed) {
-    return {
-      ok: false,
-      error: "invalid_grant",
-      description: "Device code already used",
-      status: 400,
-    };
+  if (
+    typeof deviceCode.params === "object" &&
+    deviceCode.params !== null &&
+    typeof (deviceCode.params as Record<string, unknown>).client_id === "string"
+  ) {
+    return (deviceCode.params as Record<string, unknown>).client_id as string;
   }
+  return null;
+}
 
-  if (deviceCode.exp && deviceCode.exp < Math.floor(Date.now() / 1000)) {
-    return {
-      ok: false,
-      error: "expired_token",
-      description: "The device code has expired",
-      status: 400,
-    };
-  }
-
-  const boundClient =
-    typeof deviceCode.clientId === "string"
-      ? deviceCode.clientId
-      : typeof deviceCode.params === "object" &&
-          deviceCode.params !== null &&
-          typeof (deviceCode.params as Record<string, unknown>).client_id === "string"
-        ? ((deviceCode.params as Record<string, unknown>).client_id as string)
-        : null;
-
-  if (!boundClient || boundClient !== oidcClientId) {
-    return {
-      ok: false,
-      error: "invalid_grant",
-      description: "Device code does not match this client",
-      status: 400,
-    };
-  }
-
+function resolveDeviceResourceAndScope(deviceCode: Record<string, unknown>): {
+  resource: string;
+  scope: string;
+} {
   const params =
     typeof deviceCode.params === "object" && deviceCode.params !== null
       ? (deviceCode.params as Record<string, unknown>)
@@ -103,29 +72,59 @@ export async function approveDeviceCodeForAccount(
         ? params.scope
         : "";
 
+  return { resource, scope };
+}
+
+function validatePendingDeviceCode(
+  deviceCode: Record<string, unknown> | null | undefined,
+  oidcClientId: string,
+): DeviceApprovalFailure | null {
+  if (!deviceCode) {
+    return approvalFailure(
+      "invalid_grant",
+      "Invalid, expired, or already used device code",
+    );
+  }
+
+  if (deviceCode.consumed) {
+    return approvalFailure("invalid_grant", "Device code already used");
+  }
+
+  if (
+    deviceCode.exp &&
+    typeof deviceCode.exp === "number" &&
+    deviceCode.exp < Math.floor(Date.now() / 1000)
+  ) {
+    return approvalFailure("expired_token", "The device code has expired");
+  }
+
+  const boundClient = extractBoundClientId(deviceCode);
+  if (!boundClient || boundClient !== oidcClientId) {
+    return approvalFailure(
+      "invalid_grant",
+      "Device code does not match this client",
+    );
+  }
+
   if (typeof deviceCode.jti !== "string" || deviceCode.jti.length === 0) {
-    return {
-      ok: false,
-      error: "invalid_grant",
-      description: "Invalid, expired, or already used device code",
-      status: 400,
-    };
+    return approvalFailure(
+      "invalid_grant",
+      "Invalid, expired, or already used device code",
+    );
   }
 
-  const latest = await adapter.find(deviceCode.jti);
-  if (!latest) {
-    return {
-      ok: false,
-      error: "invalid_grant",
-      description: "Invalid, expired, or already used device code",
-      status: 400,
-    };
-  }
+  return null;
+}
 
-  if (isDeviceCodeBound(latest as Record<string, unknown>)) {
-    return { ok: true };
-  }
-
+async function bindDeviceApproval(
+  adapter: InstanceType<typeof SqliteAdapter>,
+  deviceCode: Record<string, unknown>,
+  latest: Record<string, unknown>,
+  oidcClientId: string,
+  accountId: string,
+  resource: string,
+  scope: string,
+): Promise<DeviceApprovalSuccess> {
   const provider = await getProvider();
   const grant = new provider.Grant();
   grant.clientId = oidcClientId;
@@ -137,12 +136,14 @@ export async function approveDeviceCodeForAccount(
   const newGrantId = await grant.save();
 
   const now = Math.floor(Date.now() / 1000);
-  const expiresIn = deviceCode.exp ? Math.max(deviceCode.exp - now, 1) : 600;
+  const expiresIn = deviceCode.exp
+    ? Math.max((deviceCode.exp as number) - now, 1)
+    : 600;
 
   let bound: boolean;
   try {
     bound = await adapter.bindDeviceApprovalIfUnbound(
-      deviceCode.jti,
+      deviceCode.jti as string,
       {
         ...latest,
         accountId,
@@ -158,7 +159,7 @@ export async function approveDeviceCodeForAccount(
       expiresIn,
     );
   } catch (err) {
-    const after = await adapter.find(deviceCode.jti);
+    const after = await adapter.find(deviceCode.jti as string);
     const payloadGrantId =
       after && typeof (after as Record<string, unknown>).grantId === "string"
         ? ((after as Record<string, unknown>).grantId as string)
@@ -171,8 +172,51 @@ export async function approveDeviceCodeForAccount(
 
   if (!bound) {
     await grant.destroy();
-    return { ok: true };
   }
 
   return { ok: true };
+}
+
+/**
+ * Bind a pending device code to an OIDC account and grant scopes.
+ * `oidcClientId` must match the client that requested the device code.
+ */
+export async function approveDeviceCodeForAccount(
+  normalizedUserCode: string,
+  oidcClientId: string,
+  accountId: string,
+): Promise<DeviceApprovalSuccess | DeviceApprovalFailure> {
+  const adapter = new SqliteAdapter("DeviceCode");
+  const deviceCode = await adapter.findByUserCode(normalizedUserCode);
+
+  const earlyFailure = validatePendingDeviceCode(
+    deviceCode as Record<string, unknown> | null | undefined,
+    oidcClientId,
+  );
+  if (earlyFailure) return earlyFailure;
+
+  const code = deviceCode as Record<string, unknown>;
+  const { resource, scope } = resolveDeviceResourceAndScope(code);
+
+  const latest = await adapter.find(code.jti as string);
+  if (!latest) {
+    return approvalFailure(
+      "invalid_grant",
+      "Invalid, expired, or already used device code",
+    );
+  }
+
+  if (isDeviceCodeBound(latest as Record<string, unknown>)) {
+    return { ok: true };
+  }
+
+  return bindDeviceApproval(
+    adapter,
+    code,
+    latest as Record<string, unknown>,
+    oidcClientId,
+    accountId,
+    resource,
+    scope,
+  );
 }

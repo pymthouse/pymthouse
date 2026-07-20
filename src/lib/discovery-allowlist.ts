@@ -181,11 +181,10 @@ export function pickerValuesFromExcludedDocument(
   return out;
 }
 
-/** Convert picker selection into minimal exclusion rows for persistence. */
-export function excludedDocumentFromPickerValues(
+function includedConcreteFromPickerValues(
   catalog: PipelineCatalogEntryLite[],
   values: string[],
-): DiscoveryAllowlistCapability[] {
+): Set<string> {
   const wild = new Set(values.filter((v) => !v.includes("|")));
   const indiv = new Set(values.filter((v) => v.includes("|")));
   const includedConcrete = new Set<string>();
@@ -194,16 +193,21 @@ export function excludedDocumentFromPickerValues(
       for (const m of e.models) {
         includedConcrete.add(`${e.id}|${m}`);
       }
-    } else {
-      for (const m of e.models) {
-        if (indiv.has(`${e.id}|${m}`)) {
-          includedConcrete.add(`${e.id}|${m}`);
-        }
+      continue;
+    }
+    for (const m of e.models) {
+      if (indiv.has(`${e.id}|${m}`)) {
+        includedConcrete.add(`${e.id}|${m}`);
       }
     }
   }
-  const all = fullCatalogConcreteKeys(catalog);
-  const excludedKeys = [...all].filter((k) => !includedConcrete.has(k));
+  return includedConcrete;
+}
+
+function exclusionRowsFromExcludedKeys(
+  catalog: PipelineCatalogEntryLite[],
+  excludedKeys: string[],
+): DiscoveryAllowlistCapability[] {
   const out: DiscoveryAllowlistCapability[] = [];
   for (const e of catalog) {
     const exModels = excludedKeys
@@ -212,11 +216,22 @@ export function excludedDocumentFromPickerValues(
     if (exModels.length === 0) continue;
     if (exModels.length === e.models.length) {
       out.push({ pipeline: e.id, modelId: "*" });
-    } else {
-      for (const m of exModels) {
-        out.push({ pipeline: e.id, modelId: m });
-      }
+      continue;
+    }
+    for (const m of exModels) {
+      out.push({ pipeline: e.id, modelId: m });
     }
   }
   return out.sort(sortCap);
+}
+
+/** Convert picker selection into minimal exclusion rows for persistence. */
+export function excludedDocumentFromPickerValues(
+  catalog: PipelineCatalogEntryLite[],
+  values: string[],
+): DiscoveryAllowlistCapability[] {
+  const includedConcrete = includedConcreteFromPickerValues(catalog, values);
+  const all = fullCatalogConcreteKeys(catalog);
+  const excludedKeys = [...all].filter((k) => !includedConcrete.has(k));
+  return exclusionRowsFromExcludedKeys(catalog, excludedKeys);
 }

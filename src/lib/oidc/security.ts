@@ -33,6 +33,113 @@ export async function buildSecurityContext(requestHost: string): Promise<Securit
   };
 }
 
+function matchesHostWildcard(
+  redirectUrl: URL,
+  templateUrl: URL,
+): boolean {
+  const hostSuffix = templateUrl.host.replace("WILDCARD", "");
+  return (
+    redirectUrl.protocol === templateUrl.protocol &&
+    (redirectUrl.host === hostSuffix.replace(/^\./, "") ||
+      redirectUrl.host.endsWith(hostSuffix)) &&
+    redirectUrl.pathname === templateUrl.pathname &&
+    redirectUrl.search === templateUrl.search
+  );
+}
+
+function matchesPathWildcard(
+  redirectUrl: URL,
+  templateUrl: URL,
+): boolean {
+  const pathPrefix = templateUrl.pathname.split("WILDCARD")[0];
+  return (
+    redirectUrl.protocol === templateUrl.protocol &&
+    redirectUrl.host === templateUrl.host &&
+    redirectUrl.pathname.startsWith(pathPrefix)
+  );
+}
+
+function matchesMiddleWildcard(
+  redirectUrl: URL,
+  allowedUri: string,
+): boolean {
+  try {
+    const templateUrl = new URL(allowedUri.replace(/\*/g, "WILDCARD"));
+    if (templateUrl.host.includes("WILDCARD")) {
+      return matchesHostWildcard(redirectUrl, templateUrl);
+    }
+    if (templateUrl.pathname.includes("WILDCARD")) {
+      return matchesPathWildcard(redirectUrl, templateUrl);
+    }
+    // Wildcard in query/fragment — too permissive, skip
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function matchesWildcardAllowedUri(
+  redirectUrl: URL,
+  allowedUri: string,
+): boolean {
+  // Only allow a single wildcard; reject entries with multiple wildcards
+  const wildcardCount = (allowedUri.match(/\*/g) || []).length;
+  if (wildcardCount !== 1) return false;
+
+  const starIdx = allowedUri.indexOf("*");
+  const prefix = allowedUri.slice(0, starIdx);
+  const suffix = allowedUri.slice(starIdx + 1);
+
+  if (prefix && suffix) {
+    return matchesMiddleWildcard(redirectUrl, allowedUri);
+  }
+  if (prefix) {
+    // Prefix-only wildcard (e.g. "https://*"): compare via URL href
+    return redirectUrl.href.startsWith(prefix);
+  }
+  if (suffix) {
+    // Suffix-only wildcard (e.g. "*.example.com"): compare host component only
+    return (
+      redirectUrl.host === suffix.replace(/^\./, "") ||
+      redirectUrl.host.endsWith(suffix)
+    );
+  }
+  return false;
+}
+
+function matchesLooseOriginPath(
+  redirectUrl: URL,
+  allowedUri: string,
+): boolean {
+  try {
+    const allowedUrl = new URL(allowedUri);
+    return (
+      redirectUrl.origin === allowedUrl.origin &&
+      redirectUrl.pathname === allowedUrl.pathname
+    );
+  } catch {
+    return false;
+  }
+}
+
+function matchesAllowedUri(
+  redirectUri: string,
+  redirectUrl: URL,
+  allowedUri: string,
+  strictMode: boolean,
+): boolean {
+  if (allowedUri.includes("*")) {
+    return matchesWildcardAllowedUri(redirectUrl, allowedUri);
+  }
+  if (redirectUri === allowedUri) {
+    return true;
+  }
+  if (!strictMode) {
+    return matchesLooseOriginPath(redirectUrl, allowedUri);
+  }
+  return false;
+}
+
 export function validateRedirectUri(
   redirectUri: string,
   allowedUris: string[],
@@ -40,76 +147,13 @@ export function validateRedirectUri(
 ): boolean {
   try {
     const redirectUrl = new URL(redirectUri);
-    
+
     for (const allowedUri of allowedUris) {
-      if (allowedUri.includes("*")) {
-        // Only allow a single wildcard; reject entries with multiple wildcards
-        const wildcardCount = (allowedUri.match(/\*/g) || []).length;
-        if (wildcardCount !== 1) continue;
-
-        const starIdx = allowedUri.indexOf("*");
-        const prefix = allowedUri.slice(0, starIdx);
-        const suffix = allowedUri.slice(starIdx + 1);
-
-        if (prefix && suffix) {
-          // Wildcard in the middle (e.g. https://*.example.com/callback):
-          // parse URL components to avoid matching across URL boundaries
-          try {
-            const templateUrl = new URL(allowedUri.replace(/\*/g, "WILDCARD"));
-            if (templateUrl.host.includes("WILDCARD")) {
-              // Wildcard is in the host component
-              const hostSuffix = templateUrl.host.replace("WILDCARD", "");
-              if (
-                redirectUrl.protocol === templateUrl.protocol &&
-                (redirectUrl.host === hostSuffix.replace(/^\./, "") ||
-                  redirectUrl.host.endsWith(hostSuffix)) &&
-                redirectUrl.pathname === templateUrl.pathname &&
-                redirectUrl.search === templateUrl.search
-              ) {
-                return true;
-              }
-            } else if (templateUrl.pathname.includes("WILDCARD")) {
-              // Wildcard is in the path component
-              const pathPrefix = templateUrl.pathname.split("WILDCARD")[0];
-              if (
-                redirectUrl.protocol === templateUrl.protocol &&
-                redirectUrl.host === templateUrl.host &&
-                redirectUrl.pathname.startsWith(pathPrefix)
-              ) {
-                return true;
-              }
-            }
-            // Wildcard in query/fragment — too permissive, skip
-          } catch {
-            continue;
-          }
-        } else if (prefix) {
-          // Prefix-only wildcard (e.g. "https://*"): compare via URL href
-          if (redirectUrl.href.startsWith(prefix)) return true;
-        } else if (suffix) {
-          // Suffix-only wildcard (e.g. "*.example.com"): compare host component only
-          if (
-            redirectUrl.host === suffix.replace(/^\./, "") ||
-            redirectUrl.host.endsWith(suffix)
-          ) {
-            return true;
-          }
-        }
-      } else if (redirectUri === allowedUri) {
+      if (matchesAllowedUri(redirectUri, redirectUrl, allowedUri, strictMode)) {
         return true;
-      } else if (!strictMode) {
-        try {
-          const allowedUrl = new URL(allowedUri);
-          if (redirectUrl.origin === allowedUrl.origin && 
-              redirectUrl.pathname === allowedUrl.pathname) {
-            return true;
-          }
-        } catch {
-          continue;
-        }
       }
     }
-    
+
     return false;
   } catch {
     return false;
