@@ -112,6 +112,7 @@ export default function SignerLogs({
               onChange={(e) => setAutoRefresh(e.target.checked)}
               className="rounded border-zinc-600"
             />
+            {" "}
             Auto-refresh
           </label>
 

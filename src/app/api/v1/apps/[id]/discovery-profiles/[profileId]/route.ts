@@ -152,7 +152,11 @@ export async function PUT(
   }
 
   const name =
-    record.name !== undefined ? String(record.name || "").trim() : existing.name;
+    record.name !== undefined
+      ? typeof record.name === "string"
+        ? record.name.trim()
+        : ""
+      : existing.name;
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }

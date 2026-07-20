@@ -2,7 +2,7 @@
  * Shared device-code approval logic for interactive UI and Builder API.
  */
 
-import { SqliteAdapter } from "@/lib/oidc/adapter";
+import { PostgresOidcAdapter } from "@/lib/oidc/adapter";
 import { getProvider } from "@/lib/oidc/provider";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 
@@ -36,7 +36,7 @@ export async function approveDeviceCodeForAccount(
   oidcClientId: string,
   accountId: string,
 ): Promise<DeviceApprovalSuccess | DeviceApprovalFailure> {
-  const adapter = new SqliteAdapter("DeviceCode");
+  const adapter = new PostgresOidcAdapter("DeviceCode");
   const deviceCode = await adapter.findByUserCode(normalizedUserCode);
 
   if (!deviceCode) {
