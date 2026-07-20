@@ -230,6 +230,61 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+function navigateCheckoutOrPrompt(
+  checkoutWindow: Window | null,
+  onRampUrl: string,
+): string {
+  if (checkoutWindow && !checkoutWindow.closed) {
+    checkoutWindow.location.href = onRampUrl;
+    return "Complete the purchase in the MoonPay window…";
+  }
+  return "Checkout ready — open the MoonPay link below, then wait here for confirmation.";
+}
+
+function fundErrorMessage(fundError: unknown): string {
+  if (fundError instanceof DOMException && fundError.name === "AbortError") {
+    return "Funding cancelled.";
+  }
+  return fundError instanceof Error ? fundError.message : "On-ramp funding failed";
+}
+
+async function initAndRegisterOnRamp(input: {
+  turnkeyClient: TurnkeyHttpClient;
+  organizationId: string;
+  walletAddress: string;
+  amount: string;
+  clientId: string;
+  ownerExternalUserId: string;
+}): Promise<{ onRampUrl: string; onRampTransactionId: string; sessionId: string }> {
+  const initResult = await input.turnkeyClient.initFiatOnRamp({
+    organizationId: input.organizationId,
+    onrampProvider: FiatOnRampProvider.MOONPAY,
+    walletAddress: input.walletAddress,
+    network: FiatOnRampBlockchainNetwork.ETHEREUM,
+    cryptoCurrencyCode: FiatOnRampCryptoCurrency.ETHEREUM,
+    fiatCurrencyCode: FiatOnRampCurrency.USD,
+    fiatCurrencyAmount: input.amount,
+    sandboxMode: true,
+  });
+  if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
+    throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
+  }
+  const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
+  const sessionId = await registerOnRampSession({
+    clientId: input.clientId,
+    ownerExternalUserId: input.ownerExternalUserId,
+    walletAddress: input.walletAddress,
+    onRampTransactionId: initResult.onRampTransactionId,
+    organizationId: input.organizationId,
+    amount: input.amount,
+  });
+  return {
+    onRampUrl,
+    onRampTransactionId: initResult.onRampTransactionId,
+    sessionId,
+  };
+}
+
 export default function FundAccountOnRampPanel({
   clientId,
   ownerExternalUserId,
@@ -329,44 +384,20 @@ export default function FundAccountOnRampPanel({
         throw new Error("Turnkey session is missing organization context.");
       }
 
-      const initResult = await turnkeyClient.initFiatOnRamp({
+      const { onRampUrl, onRampTransactionId, sessionId } = await initAndRegisterOnRamp({
+        turnkeyClient,
         organizationId,
-        onrampProvider: FiatOnRampProvider.MOONPAY,
         walletAddress,
-        network: FiatOnRampBlockchainNetwork.ETHEREUM,
-        cryptoCurrencyCode: FiatOnRampCryptoCurrency.ETHEREUM,
-        fiatCurrencyCode: FiatOnRampCurrency.USD,
-        fiatCurrencyAmount: amount,
-        sandboxMode: true,
-      });
-      if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
-        throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
-      }
-
-      const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
-      setCheckoutUrl(onRampUrl);
-
-      const sessionId = await registerOnRampSession({
+        amount,
         clientId,
         ownerExternalUserId,
-        walletAddress,
-        onRampTransactionId: initResult.onRampTransactionId,
-        organizationId,
-        amount,
       });
-
-      if (checkoutWindow && !checkoutWindow.closed) {
-        checkoutWindow.location.href = onRampUrl;
-        setStatusMessage("Complete the purchase in the MoonPay window…");
-      } else {
-        setStatusMessage(
-          "Checkout ready — open the MoonPay link below, then wait here for confirmation.",
-        );
-      }
+      setCheckoutUrl(onRampUrl);
+      setStatusMessage(navigateCheckoutOrPrompt(checkoutWindow, onRampUrl));
 
       const terminalStatus = await pollUntilTerminal(
         turnkeyClient,
-        initResult.onRampTransactionId,
+        onRampTransactionId,
         organizationId,
         pollAbort.signal,
       );
@@ -385,11 +416,7 @@ export default function FundAccountOnRampPanel({
       router.refresh();
     } catch (fundError) {
       closeCheckoutWindow(checkoutWindow);
-      if (fundError instanceof DOMException && fundError.name === "AbortError") {
-        setError("Funding cancelled.");
-      } else {
-        setError(fundError instanceof Error ? fundError.message : "On-ramp funding failed");
-      }
+      setError(fundErrorMessage(fundError));
       setPhase("error");
       setStatusMessage(null);
     } finally {

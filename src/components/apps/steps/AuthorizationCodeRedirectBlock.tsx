@@ -24,6 +24,44 @@ async function parseDomainError(res: Response): Promise<string> {
   return text.trim() || res.statusText || `Domain request failed (${res.status})`;
 }
 
+function parseRedirectPersistError(text: string, status: number): string {
+  try {
+    const data = text ? JSON.parse(text) : {};
+    if (data.error) return data.error;
+  } catch {
+    /* keep generic */
+  }
+  return `Failed to save redirect URIs (${status})`;
+}
+
+/** Returns a normalized origin, or null when the URI cannot be auto-whitelisted. */
+function redirectUriOriginOrNull(uri: string): string | null {
+  try {
+    const origin = new URL(uri).origin;
+    if (origin === "null") return null;
+    return origin.toLowerCase();
+  } catch {
+    /* invalid URL or wildcard — skip auto-whitelist */
+    return null;
+  }
+}
+
+async function postAppDomain(
+  appId: string,
+  domain: string,
+): Promise<{ id: string; domain: string }> {
+  const res = await fetch(`/api/v1/apps/${appId}/domains`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseDomainError(res));
+  }
+  const resData = await res.json();
+  return { id: resData.id, domain: resData.domain };
+}
+
 export default function AuthorizationCodeRedirectBlock({
   appId,
   redirectUris,
@@ -51,15 +89,7 @@ export default function AuthorizationCodeRedirectBlock({
         body: JSON.stringify({ redirectUris: nextUris }),
       });
       if (!res.ok) {
-        const text = await res.text();
-        let message = `Failed to save redirect URIs (${res.status})`;
-        try {
-          const data = text ? JSON.parse(text) : {};
-          if (data.error) message = data.error;
-        } catch {
-          /* keep generic */
-        }
-        setRedirectPersistError(message);
+        setRedirectPersistError(parseRedirectPersistError(await res.text(), res.status));
         return false;
       }
       return true;
@@ -69,6 +99,24 @@ export default function AuthorizationCodeRedirectBlock({
       return false;
     } finally {
       setRedirectSaving(false);
+    }
+  };
+
+  const autoWhitelistRedirectOrigin = async (uri: string) => {
+    if (!appId) return;
+    const normalizedOrigin = redirectUriOriginOrNull(uri);
+    if (!normalizedOrigin) return;
+    if (domains.some((d) => d.domain.toLowerCase() === normalizedOrigin)) return;
+
+    setDomainError(null);
+    try {
+      const added = await postAppDomain(appId, normalizedOrigin);
+      onDomainsChange([...domains, added]);
+    } catch (err) {
+      console.error("Failed to auto-whitelist redirect URI domain.", err);
+      setDomainError(
+        err instanceof Error ? err.message : "Could not auto-whitelist redirect URI domain.",
+      );
     }
   };
 
@@ -87,40 +135,7 @@ export default function AuthorizationCodeRedirectBlock({
         onRedirectUrisChange(previous);
         return;
       }
-    }
-
-    if (appId) {
-      let normalizedOrigin: string;
-      try {
-        const origin = new URL(uri).origin;
-        if (origin === "null") return;
-        normalizedOrigin = origin.toLowerCase();
-      } catch {
-        /* invalid URL or wildcard — skip auto-whitelist */
-        return;
-      }
-
-      if (domains.some((d) => d.domain.toLowerCase() === normalizedOrigin)) return;
-
-      setDomainError(null);
-      try {
-        const res = await fetch(`/api/v1/apps/${appId}/domains`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain: normalizedOrigin }),
-        });
-        if (!res.ok) {
-          setDomainError(await parseDomainError(res));
-          return;
-        }
-        const resData = await res.json();
-        onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
-      } catch (err) {
-        console.error("Failed to auto-whitelist redirect URI domain.", err);
-        setDomainError(
-          err instanceof Error ? err.message : "Could not auto-whitelist redirect URI domain.",
-        );
-      }
+      await autoWhitelistRedirectOrigin(uri);
     }
   };
 
@@ -140,17 +155,8 @@ export default function AuthorizationCodeRedirectBlock({
     setAdding(true);
     setDomainError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/domains`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: newDomain.trim() }),
-      });
-      if (!res.ok) {
-        setDomainError(await parseDomainError(res));
-        return;
-      }
-      const resData = await res.json();
-      onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
+      const added = await postAppDomain(appId, newDomain.trim());
+      onDomainsChange([...domains, added]);
       setNewDomain("");
     } catch (err) {
       setDomainError(err instanceof Error ? err.message : "Could not add domain.");
