@@ -385,7 +385,30 @@ Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEv
 
 Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, and `scope`.
 
-**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
+### End-user usage (Bearer subject)
+
+Integrators (e.g. Livepeer Dashboard / `@pymthouse/builder-sdk`) mint a user JWT via Builder `POST .../users/{externalUserId}/token`, then call these routes. Subject is forced from the credential — do **not** pass `userId` / `externalUserId` query params (rejected with 400).
+
+**Endpoint:** `GET /api/v1/user/usage`
+
+Same OpenMeter usage shape as `GET /api/v1/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline`), and `include=retail`.
+
+**Endpoint:** `GET /api/v1/user/usage/balance`
+
+Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount, `lifetimeGrantedUsdMicros` = included total for the cycle, `consumedUsdMicros` = granted − remaining, `hasAccess` from spendable). Prepaid credits settle invoices/charges and are not the meter source. Builder M2M equivalent: `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...`.
+
+**Endpoint:** `GET /api/v1/user/usage/requests`
+
+Lists signed-ticket CloudEvents for the **token subject only** — newest first.
+
+| Query | Description |
+| --- | --- |
+| `cursor` | Opaque pagination cursor from a prior response |
+| `limit` | Page size (default 25, max 50) |
+
+Responses include `items`, `nextCursor`, `openMeterConfigured`, plus `clientId` / `externalUserId` echoed from the credential.
+
+**Balance (Builder M2M):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` is the confidential-client equivalent when an end-user JWT is not available.
 
 **Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** instead share one platform **Owner Starter** plan (`pymthouse_owner_starter`) on their bare `{users.id}` Konnect customer — not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
 

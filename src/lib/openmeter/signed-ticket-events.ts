@@ -338,9 +338,15 @@ export function normalizeSignedTicketEvent(
   };
 }
 
-export async function listViewerSignedTicketRequests(
-  input: ListViewerSignedTicketRequestsInput,
-): Promise<ListViewerSignedTicketRequestsResult> {
+async function listSignedTicketRequestsForSubjects(input: {
+  subjects: ReadonlySet<string>;
+  clientId?: string | null;
+  clientIds?: string[] | null;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Promise<ListViewerSignedTicketRequestsResult> {
   if (!requireOpenMeterForUsageReads() || !isOpenMeterEnabled()) {
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
@@ -350,8 +356,7 @@ export async function listViewerSignedTicketRequests(
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
 
-  const subjects = await resolveViewerUsageSubjects(input.userId);
-  if (subjects.size === 0) {
+  if (input.subjects.size === 0) {
     return { items: [], nextCursor: null, openMeterConfigured: true };
   }
 
@@ -364,14 +369,14 @@ export async function listViewerSignedTicketRequests(
 
   const rawEvents = await fetchSignedTicketEvents({
     client,
-    subjects,
+    subjects: input.subjects,
     clientIds: clientIdFilter,
     from,
     to,
   });
 
   const matching = rawEvents.filter((ev) =>
-    eventMatchesViewerSubjects(ev, subjects, clientIdFilter),
+    eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter),
   );
 
   return pageSignedTicketEvents(matching, limit, offset);
@@ -453,6 +458,54 @@ async function pageSignedTicketEvents(
     nextCursor,
     openMeterConfigured: true,
   };
+}
+
+export async function listViewerSignedTicketRequests(
+  input: ListViewerSignedTicketRequestsInput,
+): Promise<ListViewerSignedTicketRequestsResult> {
+  const subjects = await resolveViewerUsageSubjects(input.userId);
+  return listSignedTicketRequestsForSubjects({
+    subjects,
+    clientId: input.clientId,
+    clientIds: input.clientIds,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
+}
+
+export type ListEndUserSignedTicketRequestsInput = {
+  externalUserId: string;
+  /** Public OIDC client_id (app_…), not developer_apps.id. */
+  clientId: string;
+  cursor?: string | null;
+  limit?: number;
+  from?: string;
+  to?: string;
+};
+
+/** Signed-ticket history for one end-user subject (Bearer `/api/v1/user` API). */
+export async function listEndUserSignedTicketRequests(
+  input: ListEndUserSignedTicketRequestsInput,
+): Promise<ListViewerSignedTicketRequestsResult> {
+  const externalUserId = input.externalUserId.trim();
+  const clientId = input.clientId.trim();
+  if (!externalUserId || !clientId) {
+    return {
+      items: [],
+      nextCursor: null,
+      openMeterConfigured: isOpenMeterEnabled(),
+    };
+  }
+  return listSignedTicketRequestsForSubjects({
+    subjects: new Set([externalUserId]),
+    clientId,
+    cursor: input.cursor,
+    limit: input.limit,
+    from: input.from,
+    to: input.to,
+  });
 }
 
 async function fetchSignedTicketEvents(input: {

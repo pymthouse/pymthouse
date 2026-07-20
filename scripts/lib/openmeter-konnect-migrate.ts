@@ -190,3 +190,50 @@ export async function changeKonnectSubscription(input: {
     },
   );
 }
+
+export type KonnectCustomer = {
+  id: string;
+  key: string;
+  name?: string;
+  usage_attribution?: { subject_keys?: string[] };
+};
+
+/** PUT replace subject_keys (SDK update can leave live keys alongside deprecated). */
+export async function replaceKonnectCustomerSubjectKeys(input: {
+  baseUrl: string;
+  apiKey: string;
+  customerId: string;
+  name: string;
+  subjectKeys: string[];
+}): Promise<KonnectCustomer> {
+  return konnectFetch<KonnectCustomer>(
+    input.baseUrl,
+    input.apiKey,
+    "PUT",
+    `/customers/${input.customerId}`,
+    {
+      name: input.name,
+      usage_attribution: { subject_keys: input.subjectKeys },
+    },
+  );
+}
+
+export async function getKonnectCustomer(
+  baseUrl: string,
+  apiKey: string,
+  customerId: string,
+): Promise<KonnectCustomer> {
+  return konnectFetch<KonnectCustomer>(
+    baseUrl,
+    apiKey,
+    "GET",
+    `/customers/${customerId}`,
+  );
+}
+
+export function readKonnectSubjectKeys(customer: KonnectCustomer): string[] {
+  const keys = customer.usage_attribution?.subject_keys;
+  return Array.isArray(keys)
+    ? keys.filter((key): key is string => typeof key === "string")
+    : [];
+}

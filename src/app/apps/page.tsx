@@ -3,13 +3,13 @@ export const dynamic = "force-dynamic";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppsListSection from "@/components/apps/AppsListSection";
 import AdminAppsHome from "@/components/apps/AdminAppsHome";
+import MyAppsShortcutTiles from "@/components/apps/MyAppsShortcutTiles";
 import { listUserAccessibleApps } from "@/lib/user-apps";
 import { syncSignerStatus } from "@/lib/signer-proxy";
 import NetworkLiveIndicator from "@/components/NetworkLiveIndicator";
@@ -47,20 +47,14 @@ async function DeveloperMyApps({ userId }: Readonly<{ userId: string }>) {
 
   return (
     <>
-      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100">My Apps</h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Manage your provider applications
-          </p>
-        </div>
-        <Link
-          href="/usage"
-          className="shrink-0 text-sm font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
-        >
-          Open Usage →
-        </Link>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-zinc-100">My Apps</h1>
+        <p className="mt-1 text-sm text-zinc-500">
+          Manage your provider applications
+        </p>
       </div>
+
+      <MyAppsShortcutTiles />
 
       <AppsListSection
         apps={apps}

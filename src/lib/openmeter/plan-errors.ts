@@ -19,6 +19,12 @@ export function isOpenMeterPlanImmutableError(err: unknown): boolean {
   return /only Plans in \[draft scheduled\] can be updated/i.test(message);
 }
 
+/** True when a publish is a no-op because the plan version is already active/published. */
+export function isOpenMeterPlanAlreadyPublishedError(err: unknown): boolean {
+  const message = errorMessage(err);
+  return /only Plans in \[draft scheduled\] can be published\/rescheduled/i.test(message);
+}
+
 /** True when OpenMeter rejects a duplicate subscription or entitlement for the same feature. */
 export function isOpenMeterConflictError(err: unknown): boolean {
   const message = errorMessage(err);

@@ -105,12 +105,25 @@ export async function POST(request: Request): Promise<Response> {
     console.log(tag, "claimed eventId:", claim.eventId, "— calling fundDepositAndReserve");
 
     try {
-      await executeTurnkeyFunding(decision.fundWei, claim.eventId);
-      console.log(tag, "funded successfully, eventId:", claim.eventId);
+      const allocation = await executeTurnkeyFunding(
+        decision.fundWei,
+        claim.eventId,
+      );
+      console.log(
+        tag,
+        "funded successfully, eventId:",
+        claim.eventId,
+        "deposit:",
+        allocation.depositWei.toString(),
+        "reserve:",
+        allocation.reserveWei.toString(),
+      );
       return Response.json({
         status: "funded",
         eventId: claim.eventId,
         fundedWei: decision.fundWei.toString(),
+        depositWei: allocation.depositWei.toString(),
+        reserveWei: allocation.reserveWei.toString(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
