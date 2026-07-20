@@ -210,12 +210,12 @@ export async function handleGatewayTokenExchange(
   }
 
   const rec = payload as Record<string, unknown>;
-  const tokenClientId =
-    typeof rec.client_id === "string"
-      ? rec.client_id
-      : typeof rec.azp === "string"
-        ? rec.azp
-        : null;
+  let tokenClientId: string | null = null;
+  if (typeof rec.client_id === "string") {
+    tokenClientId = rec.client_id;
+  } else if (typeof rec.azp === "string") {
+    tokenClientId = rec.azp;
+  }
   if (!tokenClientId) {
     throw new TokenExchangeError(
       "invalid_grant",
@@ -236,11 +236,12 @@ export async function handleGatewayTokenExchange(
   const scopeFromScope =
     typeof payload.scope === "string" ? payload.scope : "";
   const scpRaw = (payload as Record<string, unknown>).scp;
-  const scopeFromScp = Array.isArray(scpRaw)
-    ? scpRaw.filter((v): v is string => typeof v === "string").join(" ")
-    : typeof scpRaw === "string"
-      ? scpRaw
-      : "";
+  let scopeFromScp = "";
+  if (Array.isArray(scpRaw)) {
+    scopeFromScp = scpRaw.filter((v): v is string => typeof v === "string").join(" ");
+  } else if (typeof scpRaw === "string") {
+    scopeFromScp = scpRaw;
+  }
   const normalizedScopes = (scopeFromScope || scopeFromScp)
     .trim()
     .replace(/\s+/g, ",");
