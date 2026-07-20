@@ -587,16 +587,12 @@ export async function listViewerSignedTicketSessions(input: {
   to?: string;
 }): Promise<ListSignedTicketSessionsResult> {
   const subjects = await resolveViewerUsageSubjects(input.userId);
-  // Viewer sessions: query each selected app; filter is applied via meter subject
-  // resolution inside queryOpenMeterUsageByManifest when externalUserId is set.
-  // For multi-subject viewers we query without externalUserId filter and rely on
-  // client scope — owner wallets span apps.
+  // Always scope to the viewer's subjects — never fall back to an unfiltered
+  // app-wide meter query (that would leak other tenants' session fees).
   return listSignedTicketSessionsForClientIds({
     clientId: input.clientId,
     clientIds: input.clientIds,
-    // Prefer a single subject when the viewer has exactly one; otherwise leave
-    // unfiltered at the meter layer (app-scoped rows still apply).
-    externalUserId: subjects.size === 1 ? [...subjects][0] : null,
+    externalUserIds: subjects,
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -615,7 +611,7 @@ export async function listAdminSignedTicketSessions(input: {
   return listSignedTicketSessionsForClientIds({
     clientId: input.clientId,
     clientIds: input.clientIds,
-    externalUserId: null,
+    externalUserIds: null,
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -633,7 +629,7 @@ export async function listEndUserSignedTicketSessions(input: {
 }): Promise<ListSignedTicketSessionsResult> {
   return listSignedTicketSessionsForClientIds({
     clientId: input.clientId,
-    externalUserId: input.externalUserId,
+    externalUserIds: new Set([input.externalUserId]),
     cursor: input.cursor,
     limit: input.limit,
     from: input.from,
@@ -644,7 +640,11 @@ export async function listEndUserSignedTicketSessions(input: {
 async function listSignedTicketSessionsForClientIds(input: {
   clientId?: string | null;
   clientIds?: string[] | null;
-  externalUserId?: string | null;
+  /**
+   * Viewer/end-user subject allow-list. `null` = admin unfiltered.
+   * Empty set returns no sessions.
+   */
+  externalUserIds?: ReadonlySet<string> | null;
   cursor?: string | null;
   limit?: number;
   from?: string;
@@ -670,6 +670,11 @@ async function listSignedTicketSessionsForClientIds(input: {
     return { items: [], nextCursor: null, openMeterConfigured: true };
   }
 
+  // Viewer with no resolved subjects must not see app-wide sessions.
+  if (input.externalUserIds != null && input.externalUserIds.size === 0) {
+    return { items: [], nextCursor: null, openMeterConfigured: true };
+  }
+
   const clientIds = [...clientIdFilter];
   const appNames = await loadAppNames(clientIds);
   const omClient = getHostedOpenMeterClient();
@@ -681,7 +686,7 @@ async function listSignedTicketSessionsForClientIds(input: {
           clientId,
           startDate: from,
           endDate: to,
-          externalUserId: input.externalUserId,
+          externalUserIds: input.externalUserIds,
         });
         return rows.map((row) => ({
           manifestId: row.manifestId,
@@ -708,7 +713,7 @@ async function listSignedTicketSessionsForClientIds(input: {
 
   const eventStats = aggregateManifestSessionEventStats(rawEvents, {
     clientIds: clientIdFilter,
-    externalUserId: input.externalUserId,
+    externalUserIds: input.externalUserIds,
   });
 
   const items = batches.flat().map((row) => {
@@ -756,17 +761,29 @@ export function aggregateManifestSessionEventStats(
   opts?: {
     clientIds?: ReadonlySet<string> | null;
     externalUserId?: string | null;
+    /** When set, restrict to any of these subjects (`null` = unfiltered). */
+    externalUserIds?: ReadonlySet<string> | null;
   },
 ): Map<string, ManifestSessionEventStats> {
   const out = new Map<string, ManifestSessionEventStats>();
-  const externalFilter = opts?.externalUserId?.trim() || null;
-  const externalKeys = externalFilter
-    ? new Set([
-        externalFilter,
-        normalizePlatformUserId(externalFilter),
-        buildOwnerWireSubject(normalizePlatformUserId(externalFilter)),
-      ])
-    : null;
+  const subjectSet =
+    opts?.externalUserIds != null
+      ? opts.externalUserIds
+      : opts?.externalUserId?.trim()
+        ? new Set([opts.externalUserId.trim()])
+        : null;
+  const externalKeys =
+    subjectSet != null
+      ? (() => {
+          const keys = new Set<string>();
+          for (const subject of subjectSet) {
+            keys.add(subject);
+            keys.add(normalizePlatformUserId(subject));
+            keys.add(buildOwnerWireSubject(normalizePlatformUserId(subject)));
+          }
+          return keys;
+        })()
+      : null;
 
   for (const ev of events) {
     if (!eventIsSignedTicket(ev)) continue;
@@ -776,13 +793,15 @@ export function aggregateManifestSessionEventStats(
       continue;
     }
     const usageSubject = eventUsageSubject(ev);
-    if (
-      externalKeys &&
-      usageSubject &&
-      !externalKeys.has(usageSubject) &&
-      !externalKeys.has(normalizePlatformUserId(usageSubject))
-    ) {
-      continue;
+    if (externalKeys) {
+      if (externalKeys.size === 0) continue;
+      if (
+        !usageSubject ||
+        (!externalKeys.has(usageSubject) &&
+          !externalKeys.has(normalizePlatformUserId(usageSubject)))
+      ) {
+        continue;
+      }
     }
     const data = ev.event.data ?? {};
     const manifestId = stringField(data, "manifest_id") || "unknown";

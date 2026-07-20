@@ -356,10 +356,10 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
    - `data.usage_subject` / `data.external_user_id` = end user id, or bare `{users.id}` for owners
    - `data.auth_id` retained for compatibility
    - `data.openmeter_customer_key` = billing wallet key (bare owner id or compound end-user key)
-   - `data.fee_wei` = Wei from Kafka `computed_fee` as a **string** (OpenMeter precision; authoritative network cost input)
+   - `data.fee_wei` = Wei from Kafka `computed_fee` as a **number** (required for OpenMeter SUM; authoritative network cost input)
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
    - `data.manifest_id` = stream / remote-signer session mid; falls back to Kafka `session_id` (payment StateID) then `request_id` when missing (`"unknown"` only as last resort)
-   - `data.billable_secs` = billable duration from the signer as a **string** (prefer this over `pixels` for time analytics across LV2V and BYOC signers)
+   - `data.billable_secs` = billable duration from the signer as a **number** (required for OpenMeter SUM; prefer this over `pixels` for time analytics across LV2V and BYOC signers)
 
 **Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.
 

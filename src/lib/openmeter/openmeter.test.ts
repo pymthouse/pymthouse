@@ -293,6 +293,102 @@ test("aggregateManifestRows ceils fractional micros once per session", () => {
   assert.equal(rows[0]?.modelId, "transcode/ffmpeg");
 });
 
+test("aggregateManifestRows filters to multi-subject allow-list", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-a",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-a",
+        },
+      },
+      {
+        value: 999,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "other-user",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-leak",
+        },
+      },
+      {
+        value: 50,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-b",
+          pipeline: "byoc",
+          model_id: "m2",
+          manifest_id: "mid-b",
+        },
+      },
+    ] as never,
+    feeWeiRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-a",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-a",
+        },
+      },
+      {
+        value: 5000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "other-user",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-leak",
+        },
+      },
+    ] as never,
+    billableSecsRows: [] as never,
+    filterExternalUserIds: new Set(["viewer-a", "viewer-b"]),
+  });
+  const byId = new Map(rows.map((r) => [r.manifestId, r]));
+  assert.equal(byId.size, 2);
+  assert.equal(byId.get("mid-a")?.networkFeeUsdMicros, "100");
+  assert.equal(byId.get("mid-a")?.feeWei, "1000");
+  assert.equal(byId.get("mid-b")?.networkFeeUsdMicros, "50");
+  assert.equal(byId.get("mid-leak"), undefined);
+});
+
+test("aggregateManifestRows empty subject set matches nothing", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+    feeWeiRows: [] as never,
+    billableSecsRows: [] as never,
+    filterExternalUserIds: new Set(),
+  });
+  assert.equal(rows.length, 0);
+});
+
 test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {
   const bySlug = new Map(OPENMETER_METER_DEFINITIONS.map((m) => [m.slug, m]));
   for (const slug of [

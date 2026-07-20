@@ -197,9 +197,10 @@ export async function ingestSignedTicketEvent(input: {
   );
   const meterSubject = identity.customerKey;
 
+  // Numbers (not strings) so OpenMeter SUM $.fee_wei / $.billable_secs accumulate.
+  // Ticket Wei values are typically << 2^53; Number is required for Konnect SUM.
   const feeWei =
-    input.event.feeWei != null ? parseFiniteNumericString(input.event.feeWei) : undefined;
-  // Number (not string) so OpenMeter SUM $.billable_secs accumulates.
+    input.event.feeWei != null ? parseFiniteNumber(input.event.feeWei) : undefined;
   const billableSecs =
     input.event.billableSecs != null && Number.isFinite(input.event.billableSecs)
       ? input.event.billableSecs
@@ -233,14 +234,14 @@ export async function ingestSignedTicketEvent(input: {
   });
 }
 
-/** OpenMeter prefers string numerics; reject NaN/Infinity/non-numeric. */
-function parseFiniteNumericString(raw: string): string | undefined {
+/** Parse a finite number for OpenMeter SUM valueProperty; reject NaN/Infinity/non-numeric. */
+function parseFiniteNumber(raw: string): number | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed)) return undefined;
   const n = Number(trimmed);
   if (!Number.isFinite(n)) return undefined;
-  return trimmed;
+  return n;
 }
 
 const ANALYTICS_METER_GROUP_BY = {

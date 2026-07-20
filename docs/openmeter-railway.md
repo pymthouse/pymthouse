@@ -128,7 +128,7 @@ This runs [`scripts/openmeter-bootstrap.ts`](../scripts/openmeter-bootstrap.ts) 
 
 Analytics meters are not attached to `network_spend` / plan rate cards. Settlement continues to use `network_fee_usd_micros` only.
 
-**Dual-signer note:** Both LV2V and BYOC signers emit `computed_fee`, `billable_secs`, and `manifest_id` on Kafka. Prefer `billable_secs` for duration analytics — do not SUM `pixels` across signers (LV2V uses synthetic H×W×FPS×secs; BYOC per-cap pricing may set `pixels ≈ billable_secs`). The collector session key is `manifest_id → session_id → request_id` so BYOC/stateless jobs still group.
+**Dual-signer note:** Both LV2V and BYOC signers emit `computed_fee`, `billable_secs`, and `manifest_id` on Kafka. Collector CloudEvents emit `fee_wei` and `billable_secs` as **numbers** so OpenMeter SUM meters accumulate (string valueProperties return 0). Prefer `billable_secs` for duration analytics — do not SUM `pixels` across signers (LV2V uses synthetic H×W×FPS×secs; BYOC per-cap pricing may set `pixels ≈ billable_secs`). The collector session key is `manifest_id → session_id → request_id` so BYOC/stateless jobs still group.
 
 Bootstrap does **not** create per-app plans or grant credits. Those happen at runtime:
 

@@ -226,12 +226,33 @@ function matchesExternalUserFilter(
   filter: string | null | undefined,
   matchKeys?: Set<string>,
 ): boolean {
+  // When matchKeys is provided it is the authoritative allow-list (single or
+  // multi-subject). An empty set matches nothing — never fall through to "no filter".
+  if (matchKeys !== undefined) {
+    if (matchKeys.size === 0) return false;
+    if (matchKeys.has(groupExternalUserId)) return true;
+    if (matchKeys.has(normalizePlatformUserId(groupExternalUserId))) return true;
+    return Boolean(filter?.trim() && groupExternalUserId === filter);
+  }
   if (!filter?.trim()) return true;
   if (groupExternalUserId === filter) return true;
-  if (matchKeys?.has(groupExternalUserId)) return true;
   return (
     normalizePlatformUserId(groupExternalUserId) === normalizePlatformUserId(filter)
   );
+}
+
+/** Union of groupBy.external_user_id variants for one or more viewer subjects. */
+export function buildExternalUserIdMatchKeysForSubjects(
+  subjects: ReadonlySet<string> | readonly string[] | null | undefined,
+): Set<string> {
+  const keys = new Set<string>();
+  if (!subjects) return keys;
+  for (const subject of subjects) {
+    for (const key of buildExternalUserIdMatchKeys(subject)) {
+      keys.add(key);
+    }
+  }
+  return keys;
 }
 
 /**
@@ -276,6 +297,24 @@ async function resolveUsageMeterSubjects(input: {
   } catch {
     return buildUsageMeterSubjects(input.clientId, externalUserId);
   }
+}
+
+async function resolveUsageMeterSubjectsForMany(input: {
+  clientId: string;
+  externalUserIds: ReadonlySet<string>;
+}): Promise<string[] | undefined> {
+  if (input.externalUserIds.size === 0) return [];
+  const all = new Set<string>();
+  for (const externalUserId of input.externalUserIds) {
+    const subjects = await resolveUsageMeterSubjects({
+      clientId: input.clientId,
+      externalUserId,
+    });
+    for (const subject of subjects ?? []) {
+      all.add(subject);
+    }
+  }
+  return [...all];
 }
 
 function buildMeterQuery(input: {
@@ -474,10 +513,20 @@ export function aggregateManifestRows(input: {
   feeWeiRows: MeterQueryRow[];
   billableSecsRows: MeterQueryRow[];
   filterExternalUserId?: string | null;
+  /** When set, filter to any of these subjects (multi-subject viewers). */
+  filterExternalUserIds?: ReadonlySet<string> | null;
 }): OpenMeterManifestRow[] {
-  const matchKeys = input.filterExternalUserId
-    ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
-    : undefined;
+  const matchKeys =
+    input.filterExternalUserIds != null
+      ? buildExternalUserIdMatchKeysForSubjects(input.filterExternalUserIds)
+      : input.filterExternalUserId
+        ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
+        : undefined;
+  const filterLabel =
+    input.filterExternalUserId?.trim() ||
+    (input.filterExternalUserIds != null && input.filterExternalUserIds.size === 1
+      ? [...input.filterExternalUserIds][0]
+      : null);
 
   const feeMicrosByManifest = new Map<string, number>();
   const feeWeiByManifest = new Map<string, bigint>();
@@ -495,7 +544,7 @@ export function aggregateManifestRows(input: {
       if (
         !matchesExternalUserFilter(
           rawExternalUserId,
-          input.filterExternalUserId,
+          filterLabel,
           matchKeys,
         )
       ) {
@@ -527,7 +576,7 @@ export function aggregateManifestRows(input: {
       if (
         !matchesExternalUserFilter(
           rawExternalUserId,
-          input.filterExternalUserId,
+          filterLabel,
           matchKeys,
         )
       ) {
@@ -1128,6 +1177,8 @@ export async function queryOpenMeterUsageByManifest(input: {
   startDate?: string | null;
   endDate?: string | null;
   externalUserId?: string | null;
+  /** When set, restrict to any of these usage subjects (viewer multi-subject). */
+  externalUserIds?: ReadonlySet<string> | null;
 }): Promise<OpenMeterManifestRow[]> {
   if (!requireOpenMeterForUsageReads()) {
     return [];
@@ -1152,10 +1203,20 @@ export async function queryOpenMeterUsageByManifest(input: {
     return [];
   }
 
-  const subjects = await resolveUsageMeterSubjects({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const subjectFilter =
+    input.externalUserIds != null
+      ? input.externalUserIds
+      : input.externalUserId?.trim()
+        ? new Set([input.externalUserId.trim()])
+        : null;
+
+  const subjects =
+    subjectFilter != null
+      ? await resolveUsageMeterSubjectsForMany({
+          clientId: input.clientId,
+          externalUserIds: subjectFilter,
+        })
+      : undefined;
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
@@ -1177,6 +1238,7 @@ export async function queryOpenMeterUsageByManifest(input: {
     feeWeiRows: feeWeiResult.data || [],
     billableSecsRows: billableSecsResult.data || [],
     filterExternalUserId: input.externalUserId,
+    filterExternalUserIds: subjectFilter,
   });
 }
 

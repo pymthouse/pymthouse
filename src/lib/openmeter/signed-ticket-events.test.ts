@@ -352,6 +352,37 @@ test("aggregateManifestSessionEventStats tracks first/last and billable sum", ()
   assert.equal(mid2.billableSecs, 0);
 });
 
+test("aggregateManifestSessionEventStats filters to viewer subjects only", () => {
+  const stats = aggregateManifestSessionEventStats(
+    [
+      sampleEvent({
+        data: { manifest_id: "mine", billable_secs: 5 },
+      }),
+      sampleEvent({
+        id: "evt-other",
+        subject: "app_abc:other-user",
+        data: {
+          external_user_id: "other-user",
+          usage_subject: "other-user",
+          manifest_id: "theirs",
+          billable_secs: 99,
+        },
+      }),
+    ],
+    { externalUserIds: new Set(["user-123", "alt-subject"]) },
+  );
+  assert.ok(stats.get(sessionEventStatsKey("app_abc", "mine")));
+  assert.equal(stats.get(sessionEventStatsKey("app_abc", "theirs")), undefined);
+});
+
+test("aggregateManifestSessionEventStats empty subject set matches nothing", () => {
+  const stats = aggregateManifestSessionEventStats(
+    [sampleEvent({ data: { manifest_id: "mid-1", billable_secs: 5 } })],
+    { externalUserIds: new Set() },
+  );
+  assert.equal(stats.size, 0);
+});
+
 test("resolveSessionBillableSecs falls back to events then wall clock", () => {
   assert.equal(resolveSessionBillableSecs("42.5", 0), "42.5");
   assert.equal(resolveSessionBillableSecs("0", 12.5), "12.5");

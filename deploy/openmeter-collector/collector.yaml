@@ -5,11 +5,11 @@
 # warm succeeds; collector never reads Kafka until cache is populated). Refreshed on
 # PRICE_ORACLE_REFRESH; refresh errors keep the last cached value. Runtime events read
 # from cache only (no static default). Each egress CloudEvent includes data.eth_usd_price
-# (the cached rate used for that event’s Wei → USD micros conversion), string data.fee_wei,
-# data.manifest_id (fallback: session_id → request_id → "unknown"), and string
-# data.billable_secs (number, default 0). network_fee_usd_micros is the exact fractional
-# fee_wei * eth_usd / 1e12 (no per-ticket ceil; read paths ceil once per session/boundary).
-# Numeric meter values are emitted as strings per OpenMeter precision guidance.
+# (the cached rate used for that event’s Wei → USD micros conversion), numeric data.fee_wei
+# and data.billable_secs (so OpenMeter SUM valueProperty accumulates), and data.manifest_id
+# (fallback: session_id → request_id → "unknown"). network_fee_usd_micros is the exact
+# fractional fee_wei * eth_usd / 1e12 (no per-ticket ceil; read paths ceil once per
+# session/boundary). Meter values that must SUM are numbers (not strings).
 #
 # Oracle JSON (any one shape):
 #   {"price": 3456.78}
@@ -178,11 +178,10 @@ pipeline:
               "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
               "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
               "manifest_id": $manifest_id_out,
-              # Number (not string) so OpenMeter SUM $.billable_secs accumulates.
+              # Numbers (not strings) so OpenMeter SUM $.billable_secs / $.fee_wei accumulate.
               "billable_secs": $billable_secs,
               "pixels": $data.pixels.string().or("0"),
-              # String form preserves Wei precision for OpenMeter SUM valueProperty.
-              "fee_wei": $fee_wei.string(),
+              "fee_wei": $fee_wei,
               "auth_id": $auth_id,
               "openmeter_customer_key": $openmeter_customer_key,
               "eth_usd_price": $eth_usd.string(),
