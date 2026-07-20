@@ -356,10 +356,10 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
    - `data.usage_subject` / `data.external_user_id` = end user id, or bare `{users.id}` for owners
    - `data.auth_id` retained for compatibility
    - `data.openmeter_customer_key` = billing wallet key (bare owner id or compound end-user key)
-   - `data.fee_wei` = numeric Wei from Kafka `computed_fee` (authoritative network cost input)
+   - `data.fee_wei` = Wei from Kafka `computed_fee` as a **string** (OpenMeter precision; authoritative network cost input)
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
    - `data.manifest_id` = stream / remote-signer session mid (`"unknown"` when missing)
-   - `data.billable_secs` = billable duration from the signer (prefer this over `pixels` for time analytics across LV2V and BYOC signers)
+   - `data.billable_secs` = billable duration from the signer as a **string** (prefer this over `pixels` for time analytics across LV2V and BYOC signers)
 
 **Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 

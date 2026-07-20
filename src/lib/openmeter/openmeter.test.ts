@@ -236,8 +236,7 @@ test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id",
   assert.ok(mid1);
   assert.equal(mid1.networkFeeUsdMicros, "1250");
   assert.equal(mid1.feeWei, "7000");
-  assert.equal(mid1.billableSecs, "42");
-  assert.equal(mid1.requestCount, 0);
+  assert.equal(mid1.billableSecs, "42.5");
   const mid2 = byId.get("mid-2");
   assert.ok(mid2);
   assert.equal(mid2.networkFeeUsdMicros, "100");
@@ -277,7 +276,6 @@ test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () 
     manifestRows: [
       {
         manifestId: "mid-1",
-        requestCount: 0,
         networkFeeUsdMicros: "1500",
         feeWei: "9000",
         billableSecs: "45",
@@ -292,11 +290,13 @@ test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () 
     manifestId: string;
     feeWei: string;
     billableSecs: string;
+    requestCount?: number;
   }>;
   assert.equal(byManifest.length, 1);
   assert.equal(byManifest[0]?.manifestId, "mid-1");
   assert.equal(byManifest[0]?.feeWei, "9000");
   assert.equal(byManifest[0]?.billableSecs, "45");
+  assert.equal(byManifest[0]?.requestCount, undefined);
 });
 
 test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {

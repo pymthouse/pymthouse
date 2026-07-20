@@ -56,6 +56,39 @@ function meterRowValueToCount(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Convert meter values to millisecond bigint (preserves fractional billable_secs). */
+export function meterRowValueToMillis(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === "bigint") {
+    return value * 1000n;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return 0n;
+    return BigInt(Math.round(value * 1000));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return 0n;
+    const parsed = Number(t);
+    if (!Number.isFinite(parsed)) return 0n;
+    return BigInt(Math.round(parsed * 1000));
+  }
+  return 0n;
+}
+
+export function millisToSecsString(millis: bigint): string {
+  const negative = millis < 0n;
+  const abs = negative ? -millis : millis;
+  const whole = abs / 1000n;
+  const frac = abs % 1000n;
+  const sign = negative ? "-" : "";
+  if (frac === 0n) {
+    return `${sign}${whole.toString()}`;
+  }
+  const fracStr = frac.toString().padStart(3, "0").replace(/0+$/, "");
+  return `${sign}${whole.toString()}.${fracStr}`;
+}
+
 export type OpenMeterUsageRow = {
   externalUserId: string;
   requestCount: number;
@@ -83,7 +116,6 @@ export type OpenMeterDailyPipelineRow = {
 
 export type OpenMeterManifestRow = {
   manifestId: string;
-  requestCount: number;
   networkFeeUsdMicros: string;
   feeWei: string;
   billableSecs: string;
@@ -394,7 +426,7 @@ export function aggregatePipelineModelRows(input: {
 
 /**
  * Roll up analytics meter rows by manifest_id (sums across pipeline/model).
- * requestCount is always 0 — billing signed_ticket_count has no manifest_id groupBy.
+ * Billable seconds are accumulated as milliseconds to preserve fractional values.
  */
 export function aggregateManifestRows(input: {
   clientId: string;
@@ -409,9 +441,9 @@ export function aggregateManifestRows(input: {
 
   const feeMicrosByManifest = new Map<string, bigint>();
   const feeWeiByManifest = new Map<string, bigint>();
-  const billableSecsByManifest = new Map<string, bigint>();
+  const billableMillisByManifest = new Map<string, bigint>();
 
-  const accumulate = (
+  const accumulateBigInt = (
     rows: MeterQueryRow[],
     target: Map<string, bigint>,
   ): void => {
@@ -436,22 +468,44 @@ export function aggregateManifestRows(input: {
     }
   };
 
-  accumulate(input.feeMicrosRows, feeMicrosByManifest);
-  accumulate(input.feeWeiRows, feeWeiByManifest);
-  accumulate(input.billableSecsRows, billableSecsByManifest);
+  const accumulateMillis = (rows: MeterQueryRow[]): void => {
+    for (const row of rows) {
+      const group = (row.groupBy || {}) as Record<string, unknown>;
+      if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
+      const rawExternalUserId = groupByString(group, "external_user_id", "");
+      if (
+        !matchesExternalUserFilter(
+          rawExternalUserId,
+          input.filterExternalUserId,
+          matchKeys,
+        )
+      ) {
+        continue;
+      }
+      const manifestId = groupByString(group, "manifest_id", "unknown");
+      billableMillisByManifest.set(
+        manifestId,
+        (billableMillisByManifest.get(manifestId) ?? 0n) +
+          meterRowValueToMillis(row.value),
+      );
+    }
+  };
+
+  accumulateBigInt(input.feeMicrosRows, feeMicrosByManifest);
+  accumulateBigInt(input.feeWeiRows, feeWeiByManifest);
+  accumulateMillis(input.billableSecsRows);
 
   const keys = new Set([
     ...feeMicrosByManifest.keys(),
     ...feeWeiByManifest.keys(),
-    ...billableSecsByManifest.keys(),
+    ...billableMillisByManifest.keys(),
   ]);
 
   return [...keys].map((manifestId) => ({
     manifestId,
-    requestCount: 0,
     networkFeeUsdMicros: (feeMicrosByManifest.get(manifestId) ?? 0n).toString(),
     feeWei: (feeWeiByManifest.get(manifestId) ?? 0n).toString(),
-    billableSecs: (billableSecsByManifest.get(manifestId) ?? 0n).toString(),
+    billableSecs: millisToSecsString(billableMillisByManifest.get(manifestId) ?? 0n),
   }));
 }
 
@@ -1347,7 +1401,6 @@ export function buildOpenMeterUsageResponse(input: {
   if (input.groupBy === "manifest" && input.manifestRows) {
     response.byManifest = input.manifestRows.map((row) => ({
       manifestId: row.manifestId,
-      requestCount: row.requestCount,
       currency: usageCurrency,
       networkFeeUsdMicros: row.networkFeeUsdMicros,
       ownerChargeUsdMicros: row.networkFeeUsdMicros,

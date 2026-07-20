@@ -197,6 +197,13 @@ export async function ingestSignedTicketEvent(input: {
   );
   const meterSubject = identity.customerKey;
 
+  const feeWei =
+    input.event.feeWei != null ? parseFiniteNumericString(input.event.feeWei) : undefined;
+  const billableSecs =
+    input.event.billableSecs != null && Number.isFinite(input.event.billableSecs)
+      ? String(input.event.billableSecs)
+      : "0";
+
   await input.client.events.ingest({
     specversion: "1.0",
     type: CREATE_SIGNED_TICKET_EVENT_TYPE,
@@ -209,12 +216,12 @@ export async function ingestSignedTicketEvent(input: {
       usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
       external_user_id: platformUserId,
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
-      fee_wei: input.event.feeWei != null ? Number(input.event.feeWei) : undefined,
+      fee_wei: feeWei,
       pixels: input.event.pixels,
       pipeline: input.event.pipeline || "unknown",
       model_id: input.event.modelId || "unknown",
       manifest_id: input.event.manifestId?.trim() || "unknown",
-      billable_secs: input.event.billableSecs ?? 0,
+      billable_secs: billableSecs,
       gateway_request_id: input.event.gatewayRequestId,
       eth_usd_price: input.event.ethUsdPrice,
       eth_usd_round_id: input.event.ethUsdRoundId,
@@ -223,6 +230,16 @@ export async function ingestSignedTicketEvent(input: {
       openmeter_customer_key: identity.customerKey,
     },
   });
+}
+
+/** OpenMeter prefers string numerics; reject NaN/Infinity/non-numeric. */
+function parseFiniteNumericString(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed)) return undefined;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return undefined;
+  return trimmed;
 }
 
 const ANALYTICS_METER_GROUP_BY = {

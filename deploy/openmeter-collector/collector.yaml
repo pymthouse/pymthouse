@@ -5,8 +5,9 @@
 # warm succeeds; collector never reads Kafka until cache is populated). Refreshed on
 # PRICE_ORACLE_REFRESH; refresh errors keep the last cached value. Runtime events read
 # from cache only (no static default). Each egress CloudEvent includes data.eth_usd_price
-# (the cached rate used for that event’s Wei → USD micros conversion), numeric data.fee_wei,
-# data.manifest_id, and data.billable_secs (defaults: manifest_id="unknown", billable_secs=0).
+# (the cached rate used for that event’s Wei → USD micros conversion), string data.fee_wei,
+# data.manifest_id, and string data.billable_secs (defaults: manifest_id="unknown", billable_secs=0).
+# Numeric meter values are emitted as strings per OpenMeter precision guidance.
 #
 # Oracle JSON (any one shape):
 #   {"price": 3456.78}
@@ -169,9 +170,10 @@ pipeline:
               "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
               "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
               "manifest_id": $manifest_id_out,
-              "billable_secs": $billable_secs,
+              "billable_secs": $billable_secs.string(),
               "pixels": $data.pixels.string().or("0"),
-              "fee_wei": $fee_wei,
+              # String form preserves Wei precision for OpenMeter SUM valueProperty.
+              "fee_wei": $fee_wei.string(),
               "auth_id": $auth_id,
               "openmeter_customer_key": $openmeter_customer_key,
               "eth_usd_price": $eth_usd.string(),
