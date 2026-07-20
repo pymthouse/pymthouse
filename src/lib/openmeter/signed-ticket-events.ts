@@ -663,21 +663,47 @@ async function listSignedTicketSessionsForClientIds(input: {
   const to = input.to?.trim() || cycle.end;
   const limit = clampLimit(input.limit);
   const offset = decodeOffsetCursor(input.cursor);
-  const clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
-  if (!clientIdFilter || clientIdFilter.size === 0) {
-    // Session list requires an app filter — totals come from per-app meter queries.
-    // The Usage UI always passes the application selector.
-    return { items: [], nextCursor: null, openMeterConfigured: true };
-  }
+  let clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
+  const omClient = getHostedOpenMeterClient();
 
   // Viewer with no resolved subjects must not see app-wide sessions.
   if (input.externalUserIds != null && input.externalUserIds.size === 0) {
     return { items: [], nextCursor: null, openMeterConfigured: true };
   }
 
+  // Prefetched when admin All Usage omits clientIds (platform-wide).
+  let prefetchedEvents: IngestedEventLike[] | null = null;
+
+  if (!clientIdFilter || clientIdFilter.size === 0) {
+    // Viewer/end-user session lists always need an app filter.
+    if (input.externalUserIds != null) {
+      return { items: [], nextCursor: null, openMeterConfigured: true };
+    }
+    // Admin All Usage + "all apps": UI omits clientIds so request history can
+    // use the unrestricted event list. Discover apps from those events, then
+    // meter-query each (sessions still need per-app manifest meters).
+    if (!omClient) {
+      return { items: [], nextCursor: null, openMeterConfigured: true };
+    }
+    prefetchedEvents = await fetchPlatformSignedTicketEvents({
+      client: omClient,
+      clientIds: null,
+      from,
+      to,
+    });
+    const discovered = new Set<string>();
+    for (const ev of prefetchedEvents) {
+      const id = eventClientId(ev);
+      if (id) discovered.add(id);
+    }
+    if (discovered.size === 0) {
+      return { items: [], nextCursor: null, openMeterConfigured: true };
+    }
+    clientIdFilter = discovered;
+  }
+
   const clientIds = [...clientIdFilter];
   const appNames = await loadAppNames(clientIds);
-  const omClient = getHostedOpenMeterClient();
 
   const [batches, rawEvents] = await Promise.all([
     Promise.all(
@@ -701,14 +727,16 @@ async function listSignedTicketSessionsForClientIds(input: {
         }) satisfies SignedTicketSessionRow);
       }),
     ),
-    omClient
-      ? fetchPlatformSignedTicketEvents({
-          client: omClient,
-          clientIds: clientIdFilter,
-          from,
-          to,
-        })
-      : Promise.resolve([] as IngestedEventLike[]),
+    prefetchedEvents != null
+      ? Promise.resolve(prefetchedEvents)
+      : omClient
+        ? fetchPlatformSignedTicketEvents({
+            client: omClient,
+            clientIds: clientIdFilter,
+            from,
+            to,
+          })
+        : Promise.resolve([] as IngestedEventLike[]),
   ]);
 
   const eventStats = aggregateManifestSessionEventStats(rawEvents, {
