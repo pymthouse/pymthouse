@@ -176,8 +176,6 @@ export default async function ConsentPage({
     : null;
 
   const primaryColorStyle = { backgroundColor: branding.primaryColor };
-  const primaryBorderStyle = { borderColor: `${branding.primaryColor}33` };
-  const primaryBgStyle = { backgroundColor: `${branding.primaryColor}1a` };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">

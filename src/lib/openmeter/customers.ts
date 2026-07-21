@@ -7,6 +7,7 @@ import {
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
 } from "@/lib/openmeter/customer-key";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedOpenMeterUrl } from "./constants";
 import { isOpenMeterUlid } from "./konnect-routes";
 import { shouldUseKonnectRoutes } from "./route-mode";
@@ -118,9 +119,9 @@ async function ensureCustomerUsageAttribution(
     if (isSubjectKeyConflictError(err)) {
       console.warn(
         "openmeter: skip subject key update",
-        customer.key ?? customer.id,
-        missing.join(","),
-        err instanceof Error ? err.message : String(err),
+        sanitizeForLog(customer.key ?? customer.id),
+        sanitizeForLog(missing.join(",")),
+        sanitizeForLog(err instanceof Error ? err.message : String(err)),
       );
       return;
     }

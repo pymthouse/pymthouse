@@ -63,9 +63,6 @@ test("eventUsageSubject prefers data.external_user_id", () => {
 });
 
 test("eventUsageSubject falls back to subject suffix", () => {
-  const ev = sampleEvent({
-    data: { external_user_id: "", usage_subject: "" },
-  });
   // clear empty strings from data by rebuilding
   const bare = {
     event: {

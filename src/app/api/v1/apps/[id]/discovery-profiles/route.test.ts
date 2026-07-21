@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import Module from "node:module";
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
