@@ -11,14 +11,6 @@ import DashboardLayout from "@/components/DashboardLayout";
 import UserTable from "@/components/UserTable";
 import CreateEndUserForm from "@/components/CreateEndUserForm";
 
-function formatWei(wei: string): string {
-  if (wei === "0") return "0 ETH";
-  const value = BigInt(wei);
-  const eth = Number(value) / 1e18;
-  if (eth < 0.001) return `${wei} wei`;
-  return `${eth.toFixed(6)} ETH`;
-}
-
 export default async function UsersPage() {
   const session = await getServerSession(authOptions);
   const userRole = (session?.user as Record<string, unknown> | undefined)
