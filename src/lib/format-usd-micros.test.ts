@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ceilUsdMicrosToCents,
+  formatExactUsdMicrosString,
+  formatUsdFromWei,
   formatUsdMicrosDisplay,
   formatUsdMicrosString,
   hasPositiveUsdMicrosBalance,
@@ -59,4 +62,43 @@ test("usd micros ↔ cents display round-trips at cent precision", () => {
   assert.equal(normalizeUsdCentsDisplay("5"), "5.00");
   assert.equal(normalizeUsdCentsDisplay("5.5"), "5.50");
   assert.equal(normalizeUsdCentsDisplay("5."), "5.00");
+});
+
+test("formatUsdFromWei renders full sub-micro ticket valuation", () => {
+  // 131568070 wei at $1897.485 ≈ $0.000000249648
+  const label = formatUsdFromWei("131568070", "1897.485");
+  assert.ok(label);
+  assert.ok(label.startsWith("$0.000000"));
+  assert.equal(formatUsdFromWei("0", "1897.485"), null);
+  assert.equal(formatUsdFromWei(null, "1897.485"), null);
+  // Collector/OpenMeter may emit float-formatted Wei strings.
+  assert.ok(formatUsdFromWei("131568070.0", "1897.485")?.startsWith("$0.000000"));
+  assert.ok(formatUsdFromWei("1.3156807e8", "1897.485")?.startsWith("$0.000000"));
+});
+
+test("formatExactUsdMicrosString renders fractional ingest micros", () => {
+  assert.equal(formatExactUsdMicrosString("0.932"), "$0.000000932");
+  assert.equal(formatExactUsdMicrosString("932"), "$0.000932");
+  assert.equal(formatExactUsdMicrosString("15"), "< $0.0001");
+  assert.equal(formatExactUsdMicrosString("0"), null);
+  assert.equal(formatExactUsdMicrosString("0.0"), null);
+});
+
+test("formatUsdFromWei handles whole dollars and unsafe magnitudes", () => {
+  assert.equal(formatUsdFromWei("1000000000000000000", "2000"), "$2000");
+  assert.equal(formatUsdFromWei("1e20", "1"), null);
+  assert.equal(formatUsdFromWei("", "1"), null);
+  assert.equal(formatUsdFromWei("0.0", "1"), null);
+});
+
+test("formatExactUsdMicrosString rejects tiny underflow", () => {
+  assert.equal(formatExactUsdMicrosString("1e-20"), null);
+});
+
+test("ceilUsdMicrosToCents covers remainder and exact-cent paths", () => {
+  assert.equal(ceilUsdMicrosToCents(null), "0");
+  assert.equal(ceilUsdMicrosToCents("0"), "0");
+  assert.equal(ceilUsdMicrosToCents("10000"), "10000");
+  assert.equal(ceilUsdMicrosToCents("1"), "10000");
+  assert.equal(ceilUsdMicrosToCents("10001"), "20000");
 });

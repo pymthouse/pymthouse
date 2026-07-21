@@ -58,3 +58,39 @@ meters:
       external_user_id: $.external_user_id
       pipeline: $.pipeline
       model_id: $.model_id
+
+  - slug: fee_wei
+    description: Analytics SUM of signed-ticket fee_wei (Wei)
+    eventType: create_signed_ticket
+    aggregation: SUM
+    valueProperty: $.fee_wei
+    groupBy:
+      client_id: $.client_id
+      external_user_id: $.external_user_id
+      pipeline: $.pipeline
+      model_id: $.model_id
+      manifest_id: $.manifest_id
+
+  - slug: network_fee_usd_micros_by_manifest
+    description: Analytics SUM of network fee USD micros by manifest_id
+    eventType: create_signed_ticket
+    aggregation: SUM
+    valueProperty: $.network_fee_usd_micros
+    groupBy:
+      client_id: $.client_id
+      external_user_id: $.external_user_id
+      pipeline: $.pipeline
+      model_id: $.model_id
+      manifest_id: $.manifest_id
+
+  - slug: billable_secs
+    description: Analytics SUM of billable_secs
+    eventType: create_signed_ticket
+    aggregation: SUM
+    valueProperty: $.billable_secs
+    groupBy:
+      client_id: $.client_id
+      external_user_id: $.external_user_id
+      pipeline: $.pipeline
+      model_id: $.model_id
+      manifest_id: $.manifest_id

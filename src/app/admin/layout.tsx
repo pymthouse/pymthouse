@@ -8,9 +8,9 @@ import { authOptions } from "@/lib/next-auth-options";
  */
 export default async function AdminLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
     | string

@@ -3,12 +3,25 @@ import assert from "node:assert/strict";
 
 import { CREATE_SIGNED_TICKET_EVENT_TYPE } from "./constants";
 import {
+  aggregateManifestSessionEventStats,
   coerceIngestedEvent,
   coerceIngestedEvents,
+  collectAdminSubjectsFromMeterRows,
+  compareSignedTicketSessions,
   eventClientId,
+  eventMatchesAdminSignedTicket,
+  eventMatchesClientIdFilter,
   eventMatchesViewerSubjects,
   eventUsageSubject,
+  enrichSessionRowWithEventStats,
+  isSignedTicketSessionEnded,
+  listAdminSignedTicketSessions,
+  listEndUserSignedTicketSessions,
+  manifestMeterRowToSessionRow,
   normalizeSignedTicketEvent,
+  resolveSessionBillableSecs,
+  sessionEventStatsKey,
+  signedTicketSessionSortKey,
 } from "./signed-ticket-events";
 
 function sampleEvent(overrides?: {
@@ -164,9 +177,43 @@ test("eventMatchesViewerSubjects rejects non signed-ticket types", () => {
   );
 });
 
+test("eventMatchesAdminSignedTicket ignores viewer subjects", () => {
+  const otherUser = sampleEvent({
+    subject: "app_abc:other-user",
+    data: { external_user_id: "other-user", usage_subject: "other-user" },
+  });
+  assert.equal(eventMatchesAdminSignedTicket(otherUser), true);
+  assert.equal(eventMatchesAdminSignedTicket(otherUser, "app_abc"), true);
+  assert.equal(eventMatchesAdminSignedTicket(otherUser, "app_other"), false);
+  assert.equal(
+    eventMatchesAdminSignedTicket(otherUser, new Set(["app_abc", "app_x"])),
+    true,
+  );
+  assert.equal(
+    eventMatchesAdminSignedTicket(
+      sampleEvent({ type: "other.event" }),
+      "app_abc",
+    ),
+    false,
+  );
+});
+
+test("eventMatchesClientIdFilter handles null and empty sets", () => {
+  assert.equal(eventMatchesClientIdFilter(sampleEvent(), null), true);
+  assert.equal(eventMatchesClientIdFilter(sampleEvent(), new Set()), true);
+  assert.equal(eventMatchesClientIdFilter(sampleEvent(), ""), true);
+});
+
 test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   const row = normalizeSignedTicketEvent(
-    sampleEvent(),
+    sampleEvent({
+      data: {
+        manifest_id: "mid-abc",
+        eth_usd_price: "3456.78",
+        billable_secs: 12.5,
+        fee_wei: 100,
+      },
+    }),
     new Map([["app_abc", "Demo App"]]),
   );
   assert.ok(row);
@@ -179,6 +226,9 @@ test("normalizeSignedTicketEvent maps CloudEvent fields", () => {
   assert.equal(row?.networkFeeUsdMicros, "1500");
   assert.equal(row?.feeWei, "100");
   assert.equal(row?.pixels, "64");
+  assert.equal(row?.manifestId, "mid-abc");
+  assert.equal(row?.ethUsdPrice, "3456.78");
+  assert.equal(row?.billableSecs, 12.5);
   assert.equal(row?.time, "2026-07-11T12:00:00.000Z");
 });
 
@@ -230,4 +280,354 @@ test("coerceIngestedEvents unwraps items/data envelopes and drops junk", () => {
   assert.equal(rows.length, 2);
   assert.equal(rows[0]?.event.id, "evt-1");
   assert.equal(rows[1]?.event.id, "flat-2");
+});
+
+test("collectAdminSubjectsFromMeterRows prefers CloudEvent subject", () => {
+  const subjects = collectAdminSubjectsFromMeterRows(
+    [
+      {
+        subject: "app_story:eu-1",
+        value: 10,
+        groupBy: { client_id: "app_story", external_user_id: "eu-1" },
+      },
+      {
+        subject: "owner-uuid-1",
+        value: 3,
+        groupBy: { client_id: "app_story", external_user_id: "owner-uuid-1" },
+      },
+      {
+        subject: "app_other:eu-2",
+        value: 99,
+        groupBy: { client_id: "app_other", external_user_id: "eu-2" },
+      },
+    ],
+    new Set(["app_story"]),
+  );
+  assert.ok(subjects.includes("app_story:eu-1"));
+  assert.ok(subjects.includes("owner-uuid-1"));
+  assert.ok(subjects.includes("eu-1"));
+  assert.ok(!subjects.includes("app_other:eu-2"));
+});
+
+test("collectAdminSubjectsFromMeterRows expands external_user_id without subject", () => {
+  const subjects = collectAdminSubjectsFromMeterRows(
+    [
+      {
+        subject: null,
+        value: "5",
+        groupBy: {
+          client_id: "app_98575870d7ae33589a3f0660",
+          external_user_id: "eu-story",
+        },
+      },
+    ],
+    new Set(["app_98575870d7ae33589a3f0660"]),
+  );
+  assert.ok(subjects.includes("app_98575870d7ae33589a3f0660:eu-story"));
+  assert.ok(subjects.includes("eu-story"));
+  assert.ok(subjects.includes("owner:eu-story"));
+  assert.ok(
+    subjects.includes("app_98575870d7ae33589a3f0660:owner:eu-story"),
+  );
+});
+
+test("aggregateManifestSessionEventStats tracks first/last and billable sum", () => {
+  const stats = aggregateManifestSessionEventStats([
+    sampleEvent({
+      time: "2026-07-20T15:00:00.000Z",
+      data: { manifest_id: "mid-1", billable_secs: 10 },
+    }),
+    sampleEvent({
+      id: "evt-2",
+      time: "2026-07-20T15:05:00.000Z",
+      data: { manifest_id: "mid-1", billable_secs: "2.5" },
+    }),
+    sampleEvent({
+      id: "evt-3",
+      time: "2026-07-20T14:00:00.000Z",
+      data: { manifest_id: "mid-2", billable_secs: 0 },
+    }),
+  ]);
+  const mid1 = stats.get(sessionEventStatsKey("app_abc", "mid-1"));
+  assert.ok(mid1);
+  assert.equal(mid1.firstSeen, "2026-07-20T15:00:00.000Z");
+  assert.equal(mid1.lastSeen, "2026-07-20T15:05:00.000Z");
+  assert.equal(mid1.billableSecs, 12.5);
+  const mid2 = stats.get(sessionEventStatsKey("app_abc", "mid-2"));
+  assert.ok(mid2);
+  assert.equal(mid2.billableSecs, 0);
+});
+
+test("aggregateManifestSessionEventStats filters to viewer subjects only", () => {
+  const stats = aggregateManifestSessionEventStats(
+    [
+      sampleEvent({
+        data: { manifest_id: "mine", billable_secs: 5 },
+      }),
+      sampleEvent({
+        id: "evt-other",
+        subject: "app_abc:other-user",
+        data: {
+          external_user_id: "other-user",
+          usage_subject: "other-user",
+          manifest_id: "theirs",
+          billable_secs: 99,
+        },
+      }),
+    ],
+    { externalUserIds: new Set(["user-123", "alt-subject"]) },
+  );
+  assert.ok(stats.get(sessionEventStatsKey("app_abc", "mine")));
+  assert.equal(stats.get(sessionEventStatsKey("app_abc", "theirs")), undefined);
+});
+
+test("aggregateManifestSessionEventStats empty subject set matches nothing", () => {
+  const stats = aggregateManifestSessionEventStats(
+    [sampleEvent({ data: { manifest_id: "mid-1", billable_secs: 5 } })],
+    { externalUserIds: new Set() },
+  );
+  assert.equal(stats.size, 0);
+});
+
+test("resolveSessionBillableSecs falls back to events then wall clock", () => {
+  assert.equal(resolveSessionBillableSecs("42.5", 0), "42.5");
+  assert.equal(resolveSessionBillableSecs("0", 12.5), "12.5");
+  assert.equal(
+    resolveSessionBillableSecs(
+      "0",
+      0,
+      "2026-07-20T15:00:00.000Z",
+      "2026-07-20T15:01:30.000Z",
+    ),
+    "90",
+  );
+});
+
+test("compareSignedTicketSessions orders open by start and ended by end", () => {
+  const now = Date.parse("2026-07-20T16:00:00.000Z");
+  const openRecent = {
+    manifestId: "open-new",
+    clientId: "app_a",
+    pipeline: "p",
+    modelId: "m",
+    networkFeeUsdMicros: "1",
+    networkFeeUsdExact: "1",
+    feeWei: "1",
+    billableSecs: "10",
+    startedAt: "2026-07-20T15:55:00.000Z",
+    endedAt: "2026-07-20T15:58:00.000Z",
+  };
+  const endedLater = {
+    ...openRecent,
+    manifestId: "ended-late",
+    startedAt: "2026-07-20T14:00:00.000Z",
+    endedAt: "2026-07-20T15:30:00.000Z",
+  };
+  const endedEarlier = {
+    ...openRecent,
+    manifestId: "ended-early",
+    startedAt: "2026-07-20T13:00:00.000Z",
+    endedAt: "2026-07-20T14:00:00.000Z",
+  };
+  const sorted = [endedEarlier, endedLater, openRecent].sort((a, b) =>
+    compareSignedTicketSessions(a, b, now),
+  );
+  assert.deepEqual(
+    sorted.map((s) => s.manifestId),
+    ["open-new", "ended-late", "ended-early"],
+  );
+});
+
+test("isSignedTicketSessionEnded uses idle window and missing timestamps", () => {
+  const now = Date.parse("2026-07-20T16:00:00.000Z");
+  assert.equal(isSignedTicketSessionEnded({}, now), true);
+  assert.equal(
+    isSignedTicketSessionEnded({ endedAt: "not-a-date" }, now),
+    true,
+  );
+  assert.equal(
+    isSignedTicketSessionEnded(
+      { endedAt: "2026-07-20T15:54:00.000Z" },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    isSignedTicketSessionEnded(
+      { endedAt: "2026-07-20T15:59:00.000Z" },
+      now,
+    ),
+    false,
+  );
+  assert.equal(
+    isSignedTicketSessionEnded(
+      { startedAt: "2026-07-20T15:58:00.000Z" },
+      now,
+    ),
+    false,
+  );
+});
+
+test("signedTicketSessionSortKey prefers start for open and end for ended", () => {
+  const now = Date.parse("2026-07-20T16:00:00.000Z");
+  assert.equal(
+    signedTicketSessionSortKey(
+      {
+        manifestId: "open",
+        startedAt: "2026-07-20T15:58:00.000Z",
+        endedAt: "2026-07-20T15:59:00.000Z",
+      },
+      now,
+    ),
+    "2026-07-20T15:58:00.000Z",
+  );
+  assert.equal(
+    signedTicketSessionSortKey(
+      {
+        manifestId: "ended",
+        startedAt: "2026-07-20T14:00:00.000Z",
+        endedAt: "2026-07-20T15:00:00.000Z",
+      },
+      now,
+    ),
+    "2026-07-20T15:00:00.000Z",
+  );
+});
+
+test("resolveSessionBillableSecs handles blank meter and fractional event sum", () => {
+  assert.equal(resolveSessionBillableSecs("  ", 0), "0");
+  assert.equal(resolveSessionBillableSecs("0", 0, "bad", "also-bad"), "0");
+  assert.equal(resolveSessionBillableSecs("0", 1.25), "1.25");
+});
+
+test("listAdminSignedTicketSessions returns stub meter rows without network", async () => {
+  const {
+    __testSetOpenMeterManifestRows,
+  } = await import("./usage-read");
+  __testSetOpenMeterManifestRows("app_abc", [
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "100",
+      networkFeeUsdExact: "100",
+      feeWei: "500",
+      billableSecs: "12.5",
+      pipeline: "byoc",
+      modelId: "m1",
+    },
+  ]);
+  const result = await listAdminSignedTicketSessions({
+    clientIds: ["app_abc"],
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.manifestId, "mid-1");
+  assert.equal(result.items[0]?.feeWei, "500");
+  assert.equal(result.items[0]?.billableSecs, "12.5");
+  assert.equal(result.nextCursor, null);
+});
+
+test("listAdminSignedTicketSessions returns empty when OpenMeter unset", async () => {
+  const previous = process.env.OPENMETER_URL;
+  delete process.env.OPENMETER_URL;
+  try {
+    const result = await listAdminSignedTicketSessions({
+      clientIds: ["app_abc"],
+    });
+    assert.deepEqual(result, {
+      items: [],
+      nextCursor: null,
+      openMeterConfigured: false,
+    });
+  } finally {
+    if (previous == null) {
+      delete process.env.OPENMETER_URL;
+    } else {
+      process.env.OPENMETER_URL = previous;
+    }
+  }
+});
+
+test("listEndUserSignedTicketSessions scopes to client stub rows", async () => {
+  const {
+    __testSetOpenMeterManifestRows,
+  } = await import("./usage-read");
+  __testSetOpenMeterManifestRows("app_eu", [
+    {
+      manifestId: "eu-mid",
+      networkFeeUsdMicros: "50",
+      networkFeeUsdExact: "50.5",
+      feeWei: "10",
+      billableSecs: "3",
+      pipeline: "p",
+      modelId: "m",
+    },
+  ]);
+  const result = await listEndUserSignedTicketSessions({
+    externalUserId: "eu-1",
+    clientId: "app_eu",
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.manifestId, "eu-mid");
+});
+
+test("listAdminSignedTicketSessions without clientIds stays empty offline", async () => {
+  const result = await listAdminSignedTicketSessions({
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.deepEqual(result.items, []);
+});
+
+test("manifestMeterRowToSessionRow maps meter fields and defaults", () => {
+  const row = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid",
+      networkFeeUsdMicros: "10",
+      networkFeeUsdExact: "10.5",
+      feeWei: "99",
+      billableSecs: "1.5",
+    },
+    "app_x",
+    "Demo App",
+  );
+  assert.equal(row.clientId, "app_x");
+  assert.equal(row.appName, "Demo App");
+  assert.equal(row.pipeline, "unknown");
+  assert.equal(row.modelId, "unknown");
+  assert.equal(row.feeWei, "99");
+});
+
+test("enrichSessionRowWithEventStats attaches times and resolves duration", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "byoc",
+      modelId: "m",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.startedAt, "2026-07-20T15:00:00.000Z");
+  assert.equal(enriched.endedAt, "2026-07-20T15:01:00.000Z");
+  assert.equal(enriched.billableSecs, "12.5");
 });

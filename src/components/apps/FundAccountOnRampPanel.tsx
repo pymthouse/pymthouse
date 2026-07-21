@@ -191,6 +191,27 @@ const POLL_INTERVAL_MS = 3000;
 /** Stop waiting for a stuck Turnkey status after this long. */
 const POLL_DEADLINE_MS = 15 * 60 * 1000;
 
+function fundingPrerequisiteError(input: {
+  turnkeyConfigured: boolean;
+  authState: AuthState | undefined;
+  clientState: ClientState | undefined;
+  httpClient: TurnkeyHttpClient | null | undefined;
+}): string | null {
+  if (!input.turnkeyConfigured) {
+    return "Turnkey Wallet Kit is not configured in this environment.";
+  }
+  if (
+    input.authState !== AuthState.Authenticated ||
+    input.clientState !== ClientState.Ready
+  ) {
+    return "Sign in with Turnkey Wallet Kit to fund your account.";
+  }
+  if (!input.httpClient) {
+    return "Turnkey client is not ready. Refresh and try again.";
+  }
+  return null;
+}
+
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -278,21 +299,18 @@ export default function FundAccountOnRampPanel({
     setLastGrantedUsdMicros(null);
     setCheckoutUrl(null);
 
-    if (!turnkeyConfigured) {
-      setError("Turnkey Wallet Kit is not configured in this environment.");
+    const prereqError = fundingPrerequisiteError({
+      turnkeyConfigured,
+      authState,
+      clientState,
+      httpClient,
+    });
+    if (prereqError || !httpClient) {
+      setError(prereqError ?? "Turnkey client is not ready. Refresh and try again.");
       setPhase("error");
       return;
     }
-    if (authState !== AuthState.Authenticated || clientState !== ClientState.Ready) {
-      setError("Sign in with Turnkey Wallet Kit to fund your account.");
-      setPhase("error");
-      return;
-    }
-    if (!httpClient) {
-      setError("Turnkey client is not ready. Refresh and try again.");
-      setPhase("error");
-      return;
-    }
+    const turnkeyClient = httpClient;
 
     pollAbortRef.current?.abort();
     const pollAbort = new AbortController();
@@ -311,7 +329,7 @@ export default function FundAccountOnRampPanel({
         throw new Error("Turnkey session is missing organization context.");
       }
 
-      const initResult = await httpClient.initFiatOnRamp({
+      const initResult = await turnkeyClient.initFiatOnRamp({
         organizationId,
         onrampProvider: FiatOnRampProvider.MOONPAY,
         walletAddress,
@@ -347,7 +365,7 @@ export default function FundAccountOnRampPanel({
       }
 
       const terminalStatus = await pollUntilTerminal(
-        httpClient,
+        turnkeyClient,
         initResult.onRampTransactionId,
         organizationId,
         pollAbort.signal,

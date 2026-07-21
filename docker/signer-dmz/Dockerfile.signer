@@ -9,7 +9,9 @@ FROM debian:bookworm-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
-    mkdir -p /data /usr/local/cuda/targets/x86_64-linux/lib
+    mkdir -p /data /usr/local/cuda/targets/x86_64-linux/lib && \
+    groupadd --system --gid 10001 livepeer && \
+    useradd --system --uid 10001 --gid livepeer --home-dir /data --shell /usr/sbin/nologin livepeer
 
 COPY --from=livepeer-src /usr/local/bin/livepeer /usr/local/bin/livepeer
 COPY --from=livepeer-src /usr/local/lib/ /usr/local/lib/
@@ -19,7 +21,9 @@ COPY --from=livepeer-src /usr/local/cuda/targets/x86_64-linux/lib/libnppicc.so* 
 
 ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib:/usr/local/lib
 
-RUN chmod +x /usr/local/bin/livepeer && ldconfig
+RUN chmod +x /usr/local/bin/livepeer && ldconfig && chown -R livepeer:livepeer /data
+
+USER livepeer
 
 ENV SIGNER_NETWORK=arbitrum-one-mainnet
 ENV SIGNER_PORT=8081

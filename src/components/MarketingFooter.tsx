@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export function MarketingFooter({ className = "" }: { className?: string }) {
+export function MarketingFooter({ className = "" }: Readonly<{ className?: string }>) {
   return (
     <footer
       className={`border-t border-zinc-800 pt-4 ${className}`.trim()}

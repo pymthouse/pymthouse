@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import Module from "node:module";
-import test from "node:test";
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { discoveryProfileBundles, discoveryProfiles, plans } from "@/db/schema";
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
   seedDeveloperAppWithClient,
@@ -25,7 +24,7 @@ test.after(() => {
   uninstallProviderAppSessionAuth();
 });
 
-run("discovery-profiles POST GET and DELETE", async (t) => {
+test("discovery-profiles POST GET and DELETE", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   authorizedApp = app;
   t.after(async () => {

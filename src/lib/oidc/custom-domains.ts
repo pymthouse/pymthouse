@@ -1,7 +1,7 @@
 import { db } from "@/db/index";
 import { developerApps } from "@/db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
-import { randomBytes } from "crypto";
+import { randomBytes } from "node:crypto";
 
 export interface CustomDomainConfig {
   appId: string;
@@ -79,9 +79,9 @@ export async function verifyDomainOwnership(
   }
 
   try {
-    const { Resolver } = await import("dns/promises");
+    const { Resolver } = await import("node:dns/promises");
     const resolver = new Resolver();
-    resolver.setServers(["8.8.8.8", "1.1.1.1"]);
+    // Use the host's configured resolvers (no hardcoded public DNS IPs).
 
     const expectedRecord = getDnsVerificationRecord(verificationToken);
     const records = await resolver.resolveTxt(`_pymthouse.${normalized}`);

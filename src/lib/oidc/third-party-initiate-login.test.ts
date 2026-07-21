@@ -7,9 +7,9 @@ import {
   validateInitiateLoginUri,
   validateDeviceFlowTargetLinkUri,
   buildInitiateLoginRedirectUrl,
-  thirdPartyInitiateSkipCookieName,
   userCodeFromDeviceTargetLinkUri,
 } from "./third-party-initiate-login";
+import { thirdPartyInitiateSkipCookieName } from "./third-party-initiate-skip-cookie";
 import { getIssuer, getPublicOrigin } from "./issuer-urls";
 
 test("normalizeIssuerUrl trims trailing slashes", () => {

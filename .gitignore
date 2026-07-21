@@ -40,6 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# test coverage (c8 / nyc / lcov)
+/coverage/
+/coverage-c8/
+
 # database
 /data/
 /data-staging/

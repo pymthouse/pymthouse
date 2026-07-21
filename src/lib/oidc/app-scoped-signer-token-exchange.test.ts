@@ -64,7 +64,7 @@ test("acceptedSignerAudiences includes issuer and legacy values", () => {
 });
 
 test("validateOptionalM2mClient allows empty credentials", async () => {
-  await validateOptionalM2mClient("", "");
+  await assert.doesNotReject(async () => validateOptionalM2mClient("", ""));
 });
 
 test("validateOptionalM2mClient rejects partial credentials", async () => {

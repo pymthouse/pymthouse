@@ -7,10 +7,10 @@ const MarketplaceLayoutContext = createContext<boolean>(false);
 export function MarketplaceLayoutProvider({
   insideDashboard,
   children,
-}: {
+}: Readonly<{
   insideDashboard: boolean;
   children: ReactNode;
-}) {
+}>) {
   return (
     <MarketplaceLayoutContext.Provider value={insideDashboard}>
       {children}

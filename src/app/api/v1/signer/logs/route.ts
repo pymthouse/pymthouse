@@ -3,13 +3,16 @@ import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { withAdminGuard } from "@/lib/api-guards";
-import { spawn } from "child_process";
+import { spawn } from "node:child_process";
 import { DOCKER_COMPOSE_LOCAL_SIGNER_SERVICE } from "@/lib/signer-local-compose";
 import { isManagedRemoteSigner } from "@/lib/signer-proxy";
 
 const DEFAULT_TAIL = 50;
 const MAX_TAIL = 1000;
 const LOG_FETCH_TIMEOUT_MS = 10000;
+/** Absolute path so spawn does not rely on a writable PATH (Sonar S4036). */
+const DOCKER_BIN = "/usr/bin/docker";
+const SAFE_PATH = "/usr/bin:/bin";
 
 /**
  * GET /api/v1/signer/logs -- Fetch recent container logs
@@ -70,7 +73,7 @@ function parseTail(value: string | null): number {
 function getSignerLogs(): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(
-      "docker",
+      DOCKER_BIN,
       [
         "compose",
         "logs",
@@ -81,6 +84,7 @@ function getSignerLogs(): Promise<{ stdout: string; stderr: string }> {
       ],
       {
         cwd: process.cwd(),
+        env: { ...process.env, PATH: SAFE_PATH },
         stdio: ["ignore", "pipe", "pipe"],
       }
     );

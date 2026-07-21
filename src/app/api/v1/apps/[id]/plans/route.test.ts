@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { discoveryProfiles, plans } from "@/db/schema";
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
   seedDeveloperAppWithClient,
@@ -41,7 +40,7 @@ async function postPlan(clientId: string, body: Record<string, unknown>) {
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
-run("plans API: network default plan rules", async (t) => {
+test("plans API: network default plan rules", async (t) => {
   const MOCK_CATALOG = [
     { id: "pipe-a", name: "A", models: ["m1", "m2"] },
     { id: "pipe-b", name: "B", models: ["only"] },
@@ -247,7 +246,7 @@ run("plans API: network default plan rules", async (t) => {
   });
 });
 
-run("plans POST accepts subscription with retail overageRateUsd", async (t) => {
+test("plans POST accepts subscription with retail overageRateUsd", async (t) => {
   installNaapCatalogMock({
     catalog: [
       { id: "text-to-image", name: "Text to Image", models: ["stabilityai/sdxl"] },
@@ -293,7 +292,7 @@ run("plans POST accepts subscription with retail overageRateUsd", async (t) => {
   assert.equal(planRows[0].includedUsdMicros, "20000000");
 });
 
-run("plans POST validates capabilities and discovery policy payloads", async (t) => {
+test("plans POST validates capabilities and discovery policy payloads", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   authorizedApp = app;
   t.after(async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   basicAuthHeader,
   cleanupTestApp,
@@ -13,7 +13,7 @@ import {
   __testSetOpenMeterUsageRows,
 } from "@/lib/openmeter/usage-read";
 
-run("usage API requires a matching client or authorized session", async (t) => {
+test("usage API requires a matching client or authorized session", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
@@ -60,7 +60,7 @@ run("usage API requires a matching client or authorized session", async (t) => {
   assert.equal(ok.status, 200);
 });
 
-run("usage API aggregates OpenMeter meter rows and validates input", async (t) => {
+test("usage API aggregates OpenMeter meter rows and validates input", async (t) => {
   const { GET } = await import("./route");
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -126,7 +126,7 @@ run("usage API aggregates OpenMeter meter rows and validates input", async (t) =
   assert.equal(badStart.status, 400);
 });
 
-run("usage API groupBy=pipeline_model reads OpenMeter dashboard meters", async (t) => {
+test("usage API groupBy=pipeline_model reads OpenMeter dashboard meters", async (t) => {
   const { GET } = await import("./route");
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -218,7 +218,7 @@ run("usage API groupBy=pipeline_model reads OpenMeter dashboard meters", async (
   assert.equal(byPipelineModel.byPipelineModel.length, 2);
 });
 
-run("usage API groupBy=daily_pipeline requires userId and returns day buckets", async (t) => {
+test("usage API groupBy=daily_pipeline requires userId and returns day buckets", async (t) => {
   const { GET } = await import("./route");
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });

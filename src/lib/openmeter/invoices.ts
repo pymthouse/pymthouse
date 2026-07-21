@@ -9,6 +9,16 @@ import {
 } from "@/lib/openmeter/customer-key";
 import { listTenantCustomerIds } from "./customers";
 
+/**
+ * Invoice line rounding policy:
+ * Network fees are ingested as exact fractional USD micros. When building
+ * merchant-facing invoice line totals (cents), round **up** to the next cent
+ * via {@link ceilUsdMicrosToCents} from `@/lib/format-usd-micros` so merchants
+ * are never under-billed on dust. OpenMeter/Konnect invoice `totals` returned
+ * here are already settled by the billing engine — do not re-round them on read.
+ */
+export { ceilUsdMicrosToCents } from "@/lib/format-usd-micros";
+
 export type TenantInvoiceDto = {
   id: string;
   number?: string;

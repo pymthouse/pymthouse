@@ -7,12 +7,14 @@ import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import {
-  ensureAppUserKonnectCustomer,
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
+import { seedSignerSpendableBalance } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowance";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
@@ -166,7 +168,8 @@ export function mintAllowanceGateDecision(
     };
   }
   // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
-  // remainders still authorize after collector ceil-to-micro billing.
+  // remainders still authorize. Spendable allowance already ceils fractional
+  // meter sums once at the read boundary (exact ingest, no per-ticket ceil).
   if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
     return {
       code: "trial_credits_exhausted",
@@ -210,18 +213,12 @@ export async function mintSignerJwtForExternalUser(input: {
     : externalUserId;
   const jwtExternalUserId = provisionExternalUserId;
 
-  let allowance: TrialCreditBalance | null;
+  let allowance: TrialCreditBalance | null = null;
   try {
-    if (isHostedAdminClientAvailable()) {
-      await ensureAppUserKonnectCustomer({
-        clientId: identity.developerAppId,
-        externalUserId: provisionExternalUserId,
-      });
-    }
-    ({ allowance } = await provisionAppUserBilling({
+    await provisionAppUserBilling({
       clientId: identity.developerAppId,
       externalUserId: provisionExternalUserId,
-    }));
+    });
   } catch (err) {
     if (isHostedAdminClientAvailable()) {
       throw new MintUserSignerTokenError(
@@ -235,18 +232,28 @@ export async function mintSignerJwtForExternalUser(input: {
 
   // Mint gate uses credits + remaining plan discount (discount covers included usage).
   if (isHostedAdminClientAvailable()) {
-    const { getSpendableUsdMicros } = await import("@/lib/openmeter/spendable-allowance");
-    const spendable = await getSpendableUsdMicros({
+    const spendable = await getSpendableAllowanceDetails({
       clientId: identity.publicClientId,
       externalUserId: provisionExternalUserId,
+      identity,
     });
     if (spendable != null) {
       allowance = {
-        hasAccess: BigInt(spendable) > 0n,
-        balanceUsdMicros: spendable,
-        consumedUsdMicros: allowance?.consumedUsdMicros ?? "0",
-        lifetimeGrantedUsdMicros: allowance?.lifetimeGrantedUsdMicros ?? "0",
+        hasAccess: BigInt(spendable.spendableUsdMicros) > 0n,
+        balanceUsdMicros: spendable.spendableUsdMicros,
+        // Not surfaced in the signer envelope; the mint gate reads balance only.
+        consumedUsdMicros: "0",
+        lifetimeGrantedUsdMicros: spendable.grantedUsdMicros,
       };
+      // Same-request webhook balance_check uses owner: wire subject for owners.
+      const gateSubject = identity.isOwner
+        ? buildOwnerWireSubject(provisionExternalUserId)
+        : provisionExternalUserId;
+      seedSignerSpendableBalance(
+        input.publicClientId,
+        gateSubject,
+        spendable.spendableUsdMicros,
+      );
     }
   }
 

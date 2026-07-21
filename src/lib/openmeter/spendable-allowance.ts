@@ -29,7 +29,10 @@ import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "@/lib/openmeter/subscription-read";
-import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
+import {
+  ceilExactUsdMicrosSum,
+  meterRowValueToNumber,
+} from "@/lib/openmeter/usage-read";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -73,11 +76,13 @@ async function querySubjectsUsedUsdMicros(
       to: new Date(end),
       subject: unique,
     });
-    let used = 0n;
+    let usedExact = 0;
     for (const row of result.data || []) {
-      used += meterRowValueToBigInt(row.value);
+      usedExact += meterRowValueToNumber(row.value);
     }
-    return used;
+    // Ceil once at the spendable-allowance boundary so fractional sub-micro
+    // usage still burns at least 1 micro when any positive dust remains.
+    return ceilExactUsdMicrosSum(usedExact);
   } catch {
     return 0n;
   }
@@ -158,18 +163,30 @@ async function discountForLocalPlanId(localPlanId: string): Promise<bigint | nul
   return rows[0] ? includedDiscountUsdMicrosForPlan(rows[0]) : null;
 }
 
+export type PlanDiscountUsdMicros = {
+  /** Plan's included usage discount for the current cycle (the granted total). */
+  totalUsdMicros: bigint;
+  /** Remaining discount after this cycle's usage. */
+  remainingUsdMicros: bigint;
+};
+
 /**
- * Remaining plan usage discount for the current calendar month, for the
- * customer's primary active subscription. Zero when no discount or exhausted.
+ * Plan usage discount for the current calendar month, for the customer's
+ * primary active subscription: both the included total (granted) and the
+ * remaining amount after usage. Zero when no discount applies.
  */
-export async function getRemainingPlanDiscountUsdMicros(input: {
+export async function getPlanDiscountUsdMicros(input: {
   clientId: string;
   externalUserId: string;
   /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
   identity?: ResolvedBillingIdentity;
-}): Promise<bigint> {
+}): Promise<PlanDiscountUsdMicros> {
+  const zero: PlanDiscountUsdMicros = {
+    totalUsdMicros: 0n,
+    remainingUsdMicros: 0n,
+  };
   if (!isHostedAdminClientAvailable()) {
-    return 0n;
+    return zero;
   }
 
   const identity =
@@ -184,7 +201,7 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
     externalUserId: input.externalUserId,
   });
   if (!subscription) {
-    return 0n;
+    return zero;
   }
 
   const subscriptionForLookup = await resolveSubscriptionWithPlanKey(subscription);
@@ -196,9 +213,16 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
   ) {
     const discount = parsePositiveMicros(ownerStarterIncludedUsdMicros());
     if (discount == null || discount <= 0n) {
-      return 0n;
+      return zero;
     }
-    return remainingDiscountAfterUsage({ identity, input, discount });
+    return {
+      totalUsdMicros: discount,
+      remainingUsdMicros: await remainingDiscountAfterUsage({
+        identity,
+        input,
+        discount,
+      }),
+    };
   }
 
   let localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -224,10 +248,30 @@ export async function getRemainingPlanDiscountUsdMicros(input: {
   }
 
   if (discount == null || discount <= 0n) {
-    return 0n;
+    return zero;
   }
 
-  return remainingDiscountAfterUsage({ identity, input, discount });
+  return {
+    totalUsdMicros: discount,
+    remainingUsdMicros: await remainingDiscountAfterUsage({
+      identity,
+      input,
+      discount,
+    }),
+  };
+}
+
+/**
+ * Remaining plan usage discount for the current calendar month, for the
+ * customer's primary active subscription. Zero when no discount or exhausted.
+ */
+export async function getRemainingPlanDiscountUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+  /** Pre-resolved billing identity — avoids a duplicate DB lookup when the caller already has it. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<bigint> {
+  return (await getPlanDiscountUsdMicros(input)).remainingUsdMicros;
 }
 
 async function remainingDiscountAfterUsage(input: {
@@ -268,34 +312,94 @@ async function remainingDiscountAfterUsage(input: {
   return used >= discount ? 0n : discount - used;
 }
 
+export type SpendableAllowanceDetails = {
+  /** Spendable now: prepaid credits + remaining plan usage discount. */
+  spendableUsdMicros: string;
+  /** Granted total for the cycle: the plan's included usage discount. */
+  grantedUsdMicros: string;
+  /** Remaining plan usage discount only (excludes prepaid credits). */
+  remainingPlanDiscountUsdMicros: string;
+};
+
 /**
  * Spendable allowance for mint/signer gates: prepaid credits + remaining
- * plan usage discount for the current cycle.
+ * plan usage discount for the current cycle. Also returns the plan's included
+ * discount total (granted) and remaining plan discount for the cycle.
  */
-export async function getSpendableUsdMicros(input: {
+export async function getSpendableAllowanceDetails(input: {
   clientId: string;
   externalUserId: string;
-}): Promise<string | null> {
+  /** Skip a Neon round-trip when the caller already resolved billing identity. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<SpendableAllowanceDetails | null> {
   if (!isHostedAdminClientAvailable()) {
     return null;
   }
 
   // Resolve the billing identity once and share it across both lookups so the
   // webhook balance gate performs a single Neon identity round-trip (#248).
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const identity =
+    input.identity ??
+    (await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }));
 
-  const [credits, discountRemaining] = await Promise.all([
+  const [credits, discount] = await Promise.all([
     getTrialCreditBalance({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
       identity,
     }),
-    getRemainingPlanDiscountUsdMicros({ ...input, identity }),
+    getPlanDiscountUsdMicros({ ...input, identity }),
   ]);
 
   const creditMicros = BigInt(credits?.balanceUsdMicros ?? "0");
-  return (creditMicros + discountRemaining).toString();
+  return {
+    spendableUsdMicros: (creditMicros + discount.remainingUsdMicros).toString(),
+    grantedUsdMicros: discount.totalUsdMicros.toString(),
+    remainingPlanDiscountUsdMicros: discount.remainingUsdMicros.toString(),
+  };
+}
+
+/** Allowance shape for `GET .../usage/balance` (plan discount, not trial credit). */
+export async function getUsageBalanceAllowance(input: {
+  clientId: string;
+  externalUserId: string;
+  identity?: ResolvedBillingIdentity;
+}): Promise<{
+  balanceUsdMicros: string;
+  consumedUsdMicros: string;
+  lifetimeGrantedUsdMicros: string;
+  hasAccess: boolean;
+  remainingUsdMicros: string;
+} | null> {
+  const details = await getSpendableAllowanceDetails(input);
+  if (!details) {
+    return null;
+  }
+
+  const granted = BigInt(details.grantedUsdMicros);
+  const remaining = BigInt(details.remainingPlanDiscountUsdMicros);
+  const consumed = granted > remaining ? granted - remaining : 0n;
+  const spendable = BigInt(details.spendableUsdMicros);
+
+  return {
+    // Meter remaining / granted is the plan included-discount cycle.
+    balanceUsdMicros: remaining.toString(),
+    remainingUsdMicros: remaining.toString(),
+    lifetimeGrantedUsdMicros: granted.toString(),
+    consumedUsdMicros: consumed.toString(),
+    hasAccess: spendable > 0n,
+  };
+}
+
+export async function getSpendableUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+  /** Skip a Neon round-trip when the caller already resolved billing identity. */
+  identity?: ResolvedBillingIdentity;
+}): Promise<string | null> {
+  const details = await getSpendableAllowanceDetails(input);
+  return details?.spendableUsdMicros ?? null;
 }

@@ -51,7 +51,7 @@ function isLocalOrPrivateHost(hostname: string): boolean {
 
   const firstHextet = h.split(":")[0];
   if (firstHextet) {
-    const n = parseInt(firstHextet, 16);
+    const n = Number.parseInt(firstHextet, 16);
     if (!Number.isNaN(n) && n >= 0xfe80 && n <= 0xfebf) return true;
   }
 

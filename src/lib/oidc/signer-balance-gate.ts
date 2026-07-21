@@ -36,6 +36,15 @@ type BalanceCacheEntry = {
   inflight?: Promise<string | null>;
 };
 
+export type SpendableBalanceCache = {
+  get: (identity: UsageIdentity) => Promise<string | null>;
+  seed: (clientId: string, usageSubject: string, value: string) => void;
+};
+
+function cacheKey(clientId: string, usageSubject: string): string {
+  return `${clientId}\u0000${usageSubject}`;
+}
+
 /**
  * Short-lived keyed cache with singleflight for spendable-balance lookups
  * (issue #248). Concurrent webhook calls for the same identity share one
@@ -48,13 +57,13 @@ export function createSpendableBalanceCache(options: {
   now?: () => number;
   /** Override for tests; production uses {@link BALANCE_CACHE_MAX_ENTRIES}. */
   maxEntries?: number;
-}): (identity: UsageIdentity) => Promise<string | null> {
+}): SpendableBalanceCache {
   const { ttlSeconds, getBalance } = options;
   const now = options.now ?? Date.now;
   const maxEntries = options.maxEntries ?? BALANCE_CACHE_MAX_ENTRIES;
 
   if (ttlSeconds <= 0) {
-    return getBalance;
+    return { get: getBalance, seed: () => undefined };
   }
 
   const entries = new Map<string, BalanceCacheEntry>();
@@ -74,38 +83,48 @@ export function createSpendableBalanceCache(options: {
     entries.set(key, entry);
   }
 
-  return (identity) => {
-    const key = `${identity.client_id}\u0000${identity.usage_subject}`;
-    const existing = entries.get(key);
-    if (existing) {
-      if (existing.inflight) {
-        return existing.inflight;
-      }
-      if (existing.expiresAtMs > now()) {
-        return Promise.resolve(existing.value ?? null);
-      }
-      entries.delete(key);
-    }
-
-    const inflight = getBalance(identity).then(
-      (value) => {
-        setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, value });
-        return value;
-      },
-      (err) => {
+  return {
+    seed(clientId, usageSubject, value) {
+      setBounded(cacheKey(clientId, usageSubject), {
+        expiresAtMs: now() + ttlSeconds * 1000,
+        value,
+      });
+    },
+    get(identity) {
+      const key = cacheKey(identity.client_id, identity.usage_subject);
+      const existing = entries.get(key);
+      if (existing) {
+        if (existing.inflight) {
+          return existing.inflight;
+        }
+        if (existing.expiresAtMs > now()) {
+          return Promise.resolve(existing.value ?? null);
+        }
         entries.delete(key);
-        throw err;
-      },
-    );
+      }
 
-    setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, inflight });
-    return inflight;
+      const inflight = getBalance(identity).then(
+        (value) => {
+          setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, value });
+          return value;
+        },
+        (err) => {
+          entries.delete(key);
+          throw err;
+        },
+      );
+
+      setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, inflight });
+      return inflight;
+    },
   };
 }
 
 /**
  * Spendable allowance for a verified signer identity: prepaid credits plus any
- * remaining plan usage discount for the current cycle.
+ * remaining plan usage discount for the current cycle. Values are integer
+ * micros — {@link getSpendableUsdMicros} already ceils fractional meter sums
+ * once at the read boundary (exact ingest, no per-ticket ceil).
  */
 async function readIdentityBalanceUsdMicros(
   identity: UsageIdentity,
@@ -114,6 +133,29 @@ async function readIdentityBalanceUsdMicros(
     clientId: identity.client_id,
     externalUserId: identity.usage_subject,
   });
+}
+
+/** Process-local cache shared by mint (seed) and the webhook balance gate. */
+let sharedSpendableCache: SpendableBalanceCache | null = null;
+
+function getSharedSpendableCache(): SpendableBalanceCache {
+  sharedSpendableCache ??= createSpendableBalanceCache({
+    ttlSeconds: resolvePositiveSecondsEnv(
+      "SIGNER_BALANCE_CACHE_TTL_SECONDS",
+      DEFAULT_BALANCE_CACHE_TTL_SECONDS,
+    ),
+    getBalance: readIdentityBalanceUsdMicros,
+  });
+  return sharedSpendableCache;
+}
+
+/** Seed the webhook balance cache after mint so the same request skips a re-fetch. */
+export function seedSignerSpendableBalance(
+  clientId: string,
+  usageSubject: string,
+  value: string,
+): void {
+  getSharedSpendableCache().seed(clientId, usageSubject, value);
 }
 
 /**
@@ -125,15 +167,9 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
   if (!isHostedAdminClientAvailable()) {
     return undefined;
   }
-  const cachedBalance = createSpendableBalanceCache({
-    ttlSeconds: resolvePositiveSecondsEnv(
-      "SIGNER_BALANCE_CACHE_TTL_SECONDS",
-      DEFAULT_BALANCE_CACHE_TTL_SECONDS,
-    ),
-    getBalance: readIdentityBalanceUsdMicros,
-  });
+  const cache = getSharedSpendableCache();
   return createBalanceGate({
-    getBalanceUsdMicros: (identity) => cachedBalance(identity),
+    getBalanceUsdMicros: (identity) => cache.get(identity),
     reauthTtlSeconds: resolveReauthTtlSeconds(),
     failClosed: true,
     onError: (err) => {

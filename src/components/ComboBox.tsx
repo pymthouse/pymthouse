@@ -30,7 +30,7 @@ export default function ComboBox({
   placeholder = "Search…",
   disabled = false,
   emptyLabel = "— none —",
-}: ComboBoxProps) {
+}: Readonly<ComboBoxProps>) {
   const listId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);

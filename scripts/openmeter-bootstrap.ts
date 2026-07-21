@@ -139,6 +139,14 @@ async function ensureSelfHostedMeters(
         `[openmeter-bootstrap] meter ${meter.slug} is missing pipeline/model_id groupBy — recreate OpenMeter or add groupBy manually for per-capability retail pricing`,
       );
     }
+    if (
+      "manifest_id" in (meter.groupBy ?? {}) &&
+      !("manifest_id" in groupBy)
+    ) {
+      console.warn(
+        `[openmeter-bootstrap] meter ${meter.slug} is missing manifest_id groupBy — recreate OpenMeter or add groupBy manually for per-stream analytics`,
+      );
+    }
   }
 }
 

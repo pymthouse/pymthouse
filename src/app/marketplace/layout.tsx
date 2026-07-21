@@ -6,9 +6,9 @@ import { MarketplaceLayoutProvider } from "@/context/MarketplaceLayoutContext";
 
 export default function MarketplaceLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   const { data: session, status } = useSession();
 
   if (status === "loading") {

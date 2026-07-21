@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as jose from "jose";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
@@ -157,7 +158,7 @@ export async function handleTokenExchange(params: {
     .setAudience(issuer)
     .setIssuedAt()
     .setExpirationTime(`${expiresIn}s`)
-    .setJti(`te_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`)
+    .setJti(`te_${Date.now()}_${randomBytes(5).toString("hex")}`)
     .sign(signingKey.privateKey);
 
   return {

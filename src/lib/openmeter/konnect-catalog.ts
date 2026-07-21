@@ -1,7 +1,10 @@
 import {
+  BILLABLE_SECS_METER,
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   DEFAULT_TRIAL_FEATURE_KEY,
+  FEE_WEI_METER,
   getHostedOpenMeterUrl,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
   NETWORK_FEE_USD_MICROS_METER,
   normalizeKonnectMeteringUrl,
   SIGNED_TICKET_COUNT_METER,
@@ -25,6 +28,14 @@ type KonnectFeature = {
   /** Present when misconfigured as LLM unit pricing — breaks usage→charge settlement. */
   unit_cost?: unknown;
 };
+
+const ANALYTICS_DIMENSIONS = {
+  client_id: "$.client_id",
+  external_user_id: "$.external_user_id",
+  pipeline: "$.pipeline",
+  model_id: "$.model_id",
+  manifest_id: "$.manifest_id",
+} as const;
 
 const KONNECT_METER_DEFINITIONS = [
   {
@@ -54,6 +65,33 @@ const KONNECT_METER_DEFINITIONS = [
       pipeline: "$.pipeline",
       model_id: "$.model_id",
     },
+  },
+  {
+    key: FEE_WEI_METER,
+    name: "Fee (Wei)",
+    description: "Analytics SUM of signed-ticket fee_wei (Wei)",
+    event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "sum" as const,
+    value_property: "$.fee_wei",
+    dimensions: { ...ANALYTICS_DIMENSIONS },
+  },
+  {
+    key: NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+    name: "Network fee by manifest (USD micros)",
+    description: "Analytics SUM of network fee USD micros by manifest_id",
+    event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "sum" as const,
+    value_property: "$.network_fee_usd_micros",
+    dimensions: { ...ANALYTICS_DIMENSIONS },
+  },
+  {
+    key: BILLABLE_SECS_METER,
+    name: "Billable seconds",
+    description: "Analytics SUM of billable_secs",
+    event_type: CREATE_SIGNED_TICKET_EVENT_TYPE,
+    aggregation: "sum" as const,
+    value_property: "$.billable_secs",
+    dimensions: { ...ANALYTICS_DIMENSIONS },
   },
 ];
 

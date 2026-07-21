@@ -33,7 +33,7 @@ export default function MultiComboBox({
   placeholder = "Search…",
   disabled = false,
   chipLabel,
-}: MultiComboBoxProps) {
+}: Readonly<MultiComboBoxProps>) {
   const listId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);

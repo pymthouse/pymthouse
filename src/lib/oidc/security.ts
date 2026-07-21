@@ -55,7 +55,7 @@ export function validateRedirectUri(
           // Wildcard in the middle (e.g. https://*.example.com/callback):
           // parse URL components to avoid matching across URL boundaries
           try {
-            const templateUrl = new URL(allowedUri.replace(/\*/g, "WILDCARD"));
+            const templateUrl = new URL(allowedUri.replaceAll("*", "WILDCARD"));
             if (templateUrl.host.includes("WILDCARD")) {
               // Wildcard is in the host component
               const hostSuffix = templateUrl.host.replace("WILDCARD", "");

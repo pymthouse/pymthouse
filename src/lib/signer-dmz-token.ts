@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { SignJWT } from "jose";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
@@ -32,7 +33,7 @@ export async function issueSignerDmzToken(input: {
     .setIssuer(issuer)
     .setAudience(issuer)
     .setSubject(input.subject)
-    .setJti(`dmz_${input.gate}_${now}_${Math.random().toString(36).slice(2, 10)}`)
+    .setJti(`dmz_${input.gate}_${now}_${randomBytes(5).toString("hex")}`)
     .setIssuedAt(now)
     .setNotBefore(now)
     .setExpirationTime(now + DMZ_TOKEN_TTL_SECONDS)
