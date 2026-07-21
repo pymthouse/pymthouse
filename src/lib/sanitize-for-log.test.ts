@@ -12,7 +12,15 @@ test("sanitizeForLog coerces nullish to empty string", () => {
   assert.equal(sanitizeForLog(undefined), "");
 });
 
-test("sanitizeForLog stringifies non-strings", () => {
+test("sanitizeForLog stringifies primitives", () => {
   assert.equal(sanitizeForLog(42), "42");
   assert.equal(sanitizeForLog(true), "true");
+});
+
+test("sanitizeForLog uses Error message", () => {
+  assert.equal(sanitizeForLog(new Error("boom\nline")), "boomline");
+});
+
+test("sanitizeForLog JSON-stringifies plain objects", () => {
+  assert.equal(sanitizeForLog({ a: 1 }), '{"a":1}');
 });
