@@ -373,7 +373,7 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros` (ceiled once per session), `networkFeeUsdExact`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros` (rounded up once per session/read boundary), `networkFeeUsdExact`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 ### Session request history (Usage dashboard)
 
@@ -383,7 +383,7 @@ Session-authenticated (NextAuth). Default UI view is **sessions** (`groupBy=sess
 
 | Query | Description |
 | --- | --- |
-| `groupBy` | `session` (default in UI) — one row per `manifest_id` from analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) with ceiled session fee. `request` — flat CloudEvent list, newest first. |
+| `groupBy` | `session` (default in UI) — one row per `manifest_id` from analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) with session fee rounded up once at the read boundary. `request` — flat CloudEvent list, newest first. |
 | `manifestId` | When `groupBy=request`, restrict to one session mid (used when expanding a session). |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
@@ -392,7 +392,7 @@ Session-authenticated (NextAuth). Default UI view is **sessions** (`groupBy=sess
 
 Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, `scope`, and `groupBy`.
 
-Per-request fees in the UI are valued exactly from `feeWei × ethUsdPrice` (full sub-micro precision). Session fees use the ceiled meter sum for the billing cycle.
+Per-request fees in the UI are valued exactly from `feeWei × ethUsdPrice` (full sub-micro precision). Session fees are rounded up once at the session/read boundary (same policy as Usage API `groupBy=manifest` totals).
 
 ### End-user usage (Bearer subject)
 

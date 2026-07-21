@@ -562,9 +562,12 @@ export function aggregateManifestRows(input: {
   const billableMillisByManifest = new Map<string, bigint>();
   const metaByManifest = new Map<string, { pipeline: string; modelId: string }>();
 
-  const accumulateNumber = (
+  const accumulateManifest = <T>(
     rows: MeterQueryRow[],
-    target: Map<string, number>,
+    target: Map<string, T>,
+    zero: T,
+    convert: (value: unknown) => T,
+    add: (current: T, next: T) => T,
   ): void => {
     for (const row of rows) {
       const group = (row.groupBy || {}) as Record<string, unknown>;
@@ -588,49 +591,31 @@ export function aggregateManifestRows(input: {
       }
       target.set(
         manifestId,
-        (target.get(manifestId) ?? 0) + meterRowValueToNumber(row.value),
+        add(target.get(manifestId) ?? zero, convert(row.value)),
       );
     }
   };
 
-  const accumulate = (
-    rows: MeterQueryRow[],
-    target: Map<string, bigint>,
-    convert: (value: unknown) => bigint,
-  ): void => {
-    for (const row of rows) {
-      const group = (row.groupBy || {}) as Record<string, unknown>;
-      if (clientIdFromGroup(group, input.clientId) !== input.clientId) continue;
-      const rawExternalUserId = groupByString(group, "external_user_id", "");
-      if (
-        !matchesExternalUserFilter(
-          rawExternalUserId,
-          filterLabel,
-          matchKeys,
-        )
-      ) {
-        continue;
-      }
-      const manifestId = groupByString(group, "manifest_id", "unknown");
-      if (!metaByManifest.has(manifestId)) {
-        metaByManifest.set(manifestId, {
-          pipeline: groupByString(group, "pipeline", "unknown"),
-          modelId: groupByString(group, "model_id", "unknown"),
-        });
-      }
-      target.set(
-        manifestId,
-        (target.get(manifestId) ?? 0n) + convert(row.value),
-      );
-    }
-  };
-
-  accumulateNumber(input.feeMicrosRows, feeMicrosByManifest);
-  accumulate(input.feeWeiRows, feeWeiByManifest, meterRowValueToBigInt);
-  accumulate(
+  accumulateManifest(
+    input.feeMicrosRows,
+    feeMicrosByManifest,
+    0,
+    meterRowValueToNumber,
+    (a, b) => a + b,
+  );
+  accumulateManifest(
+    input.feeWeiRows,
+    feeWeiByManifest,
+    0n,
+    meterRowValueToBigInt,
+    (a, b) => a + b,
+  );
+  accumulateManifest(
     input.billableSecsRows,
     billableMillisByManifest,
+    0n,
     meterRowValueToMillis,
+    (a, b) => a + b,
   );
 
   const keys = new Set([

@@ -342,6 +342,7 @@ function SessionRow({
             onClick={onToggle}
             className="text-zinc-400 hover:text-zinc-200 text-xs font-semibold"
             aria-expanded={expanded}
+            aria-label={expanded ? "Collapse session" : "Expand session"}
           >
             {expanded ? "▾" : "▸"}
           </button>
@@ -492,7 +493,7 @@ export default function SignedTicketRequestHistory({
   const clientIdsKey = resolvedClientIds.join(",");
 
   const fetchPage = useCallback(
-    async (cursor: string | null, append: boolean, mode: ViewMode) => {
+    async (cursor: string | null, mode: ViewMode) => {
       const params = new URLSearchParams();
       params.set("limit", "25");
       params.set("scope", historyScope);
@@ -518,21 +519,12 @@ export default function SignedTicketRequestHistory({
         throw new Error("Empty response");
       }
 
-      setOpenMeterConfigured(body.openMeterConfigured !== false);
-      setNextCursor(body.nextCursor);
-      if (mode === "session") {
-        setSessions((prev) =>
-          append
-            ? [...prev, ...(body.items as SignedTicketSessionRow[])]
-            : (body.items as SignedTicketSessionRow[]),
-        );
-      } else {
-        setRequests((prev) =>
-          append
-            ? [...prev, ...(body.items as SignedTicketRequestRow[])]
-            : (body.items as SignedTicketRequestRow[]),
-        );
-      }
+      return {
+        openMeterConfigured: body.openMeterConfigured !== false,
+        nextCursor: body.nextCursor,
+        items: body.items,
+        mode,
+      };
     },
     [resolvedClientIds, historyScope],
   );
@@ -545,7 +537,17 @@ export default function SignedTicketRequestHistory({
     setRequests([]);
     setNextCursor(null);
 
-    fetchPage(null, false, viewMode)
+    fetchPage(null, viewMode)
+      .then((page) => {
+        if (cancelled) return;
+        setOpenMeterConfigured(page.openMeterConfigured);
+        setNextCursor(page.nextCursor);
+        if (page.mode === "session") {
+          setSessions(page.items as SignedTicketSessionRow[]);
+        } else {
+          setRequests(page.items as SignedTicketRequestRow[]);
+        }
+      })
       .catch((err: unknown) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load history");
@@ -569,7 +571,20 @@ export default function SignedTicketRequestHistory({
     setLoadingMore(true);
     setError(null);
     try {
-      await fetchPage(nextCursor, true, viewMode);
+      const page = await fetchPage(nextCursor, viewMode);
+      setOpenMeterConfigured(page.openMeterConfigured);
+      setNextCursor(page.nextCursor);
+      if (page.mode === "session") {
+        setSessions((prev) => [
+          ...prev,
+          ...(page.items as SignedTicketSessionRow[]),
+        ]);
+      } else {
+        setRequests((prev) => [
+          ...prev,
+          ...(page.items as SignedTicketRequestRow[]),
+        ]);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {

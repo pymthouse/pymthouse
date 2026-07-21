@@ -22,6 +22,7 @@ import {
   parseOpenMeterCustomerKey,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
+import { millisToSecsString } from "@/lib/openmeter/usage-read";
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
@@ -970,31 +971,15 @@ export function resolveSessionBillableSecs(
     return meterSecs.trim() || String(meter);
   }
   if (Number.isFinite(eventSumSecs) && eventSumSecs > 0) {
-    return formatFractionalSecs(eventSumSecs);
+    return millisToSecsString(BigInt(Math.round(eventSumSecs * 1000)));
   }
   if (startedAt && endedAt) {
     const ms = Date.parse(endedAt) - Date.parse(startedAt);
     if (Number.isFinite(ms) && ms > 0) {
-      return formatFractionalSecs(ms / 1000);
+      return millisToSecsString(BigInt(Math.round(ms)));
     }
   }
   return meterSecs.trim() || "0";
-}
-
-function formatFractionalSecs(secs: number): string {
-  if (!Number.isFinite(secs) || secs <= 0) return "0";
-  const millis = BigInt(Math.round(secs * 1000));
-  const negative = millis < 0n;
-  const abs = negative ? -millis : millis;
-  const whole = abs / 1000n;
-  const frac = abs % 1000n;
-  const sign = negative ? "-" : "";
-  if (frac === 0n) return `${sign}${whole.toString()}`;
-  let fracStr = frac.toString().padStart(3, "0");
-  while (fracStr.endsWith("0")) {
-    fracStr = fracStr.slice(0, -1);
-  }
-  return `${sign}${whole.toString()}.${fracStr}`;
 }
 
 export function isSignedTicketSessionEnded(
