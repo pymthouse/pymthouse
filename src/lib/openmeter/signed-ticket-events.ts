@@ -7,6 +7,7 @@ import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   CREATE_SIGNED_TICKET_EVENT_TYPE,
   isOpenMeterEnabled,
+  openMeterUsesLiveNetworkInTests,
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
@@ -664,7 +665,11 @@ async function listSignedTicketSessionsForClientIds(input: {
   const limit = clampLimit(input.limit);
   const offset = decodeOffsetCursor(input.cursor);
   let clientIdFilter = normalizeClientIdFilter(input.clientId, input.clientIds);
-  const omClient = getHostedOpenMeterClient();
+  // Match usage-read stubs: do not hit live OpenMeter during unit tests.
+  const omClient =
+    process.env.NODE_ENV === "test" && !openMeterUsesLiveNetworkInTests()
+      ? null
+      : getHostedOpenMeterClient();
 
   // Viewer with no resolved subjects must not see app-wide sessions.
   if (input.externalUserIds != null && input.externalUserIds.size === 0) {
@@ -1331,20 +1336,24 @@ async function loadAppNames(clientIds: string[]): Promise<Map<string, string>> {
     return map;
   }
 
-  const rows = await db
-    .select({
-      publicClientId: oidcClients.clientId,
-      name: developerApps.name,
-    })
-    .from(oidcClients)
-    .innerJoin(developerApps, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(inArray(oidcClients.clientId, unique));
+  try {
+    const rows = await db
+      .select({
+        publicClientId: oidcClients.clientId,
+        name: developerApps.name,
+      })
+      .from(oidcClients)
+      .innerJoin(developerApps, eq(developerApps.oidcClientId, oidcClients.id))
+      .where(inArray(oidcClients.clientId, unique));
 
-  for (const row of rows) {
-    const id = row.publicClientId?.trim();
-    if (id) {
-      map.set(id, row.name);
+    for (const row of rows) {
+      const id = row.publicClientId?.trim();
+      if (id) {
+        map.set(id, row.name);
+      }
     }
+  } catch {
+    // App names are display-only; session totals still work without DB.
   }
   return map;
 }

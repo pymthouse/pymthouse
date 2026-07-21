@@ -18,6 +18,10 @@ import {
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
+  meterRowValueToMillis,
+  millisToSecsString,
+  queryOpenMeterUsageByManifest,
+  __testSetOpenMeterManifestRows,
 } from "@/lib/openmeter/usage-read";
 import {
   isOpenMeterSubscriptionActive,
@@ -387,6 +391,44 @@ test("aggregateManifestRows empty subject set matches nothing", () => {
     filterExternalUserIds: new Set(),
   });
   assert.equal(rows.length, 0);
+});
+
+test("meterRowValueToMillis and millisToSecsString preserve fractional seconds", () => {
+  assert.equal(meterRowValueToMillis(null), 0n);
+  assert.equal(meterRowValueToMillis(12.5), 12500n);
+  assert.equal(meterRowValueToMillis("12.5"), 12500n);
+  assert.equal(meterRowValueToMillis(1n), 1000n);
+  assert.equal(meterRowValueToMillis("x"), 0n);
+  assert.equal(meterRowValueToMillis(Number.NaN), 0n);
+  assert.equal(millisToSecsString(42500n), "42.5");
+  assert.equal(millisToSecsString(0n), "0");
+  assert.equal(millisToSecsString(-1500n), "-1.5");
+  assert.equal(millisToSecsString(1000n), "1");
+});
+
+test("queryOpenMeterUsageByManifest returns test stub rows", async () => {
+  __testSetOpenMeterManifestRows("app_stub", [
+    {
+      manifestId: "m1",
+      networkFeeUsdMicros: "10",
+      networkFeeUsdExact: "10",
+      feeWei: "20",
+      billableSecs: "1.5",
+    },
+  ]);
+  const rows = await queryOpenMeterUsageByManifest({
+    clientId: "app_stub",
+    startDate: "2026-07-01T00:00:00.000Z",
+    endDate: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.manifestId, "m1");
+  assert.equal(rows[0]?.billableSecs, "1.5");
+
+  const missing = await queryOpenMeterUsageByManifest({
+    clientId: "app_no_stub",
+  });
+  assert.deepEqual(missing, []);
 });
 
 test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {

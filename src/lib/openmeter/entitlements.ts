@@ -198,9 +198,9 @@ export async function ingestSignedTicketEvent(input: {
   const meterSubject = identity.customerKey;
 
   // Numbers (not strings) so OpenMeter SUM $.fee_wei / $.billable_secs accumulate.
-  // Ticket Wei values are typically << 2^53; Number is required for Konnect SUM.
+  // Wei must be a non-negative integer within Number.MAX_SAFE_INTEGER (Konnect SUM).
   const feeWei =
-    input.event.feeWei != null ? parseFiniteNumber(input.event.feeWei) : undefined;
+    input.event.feeWei != null ? parseSafeWeiNumber(input.event.feeWei) : undefined;
   const billableSecs =
     input.event.billableSecs != null && Number.isFinite(input.event.billableSecs)
       ? input.event.billableSecs
@@ -234,14 +234,20 @@ export async function ingestSignedTicketEvent(input: {
   });
 }
 
-/** Parse a finite number for OpenMeter SUM valueProperty; reject NaN/Infinity/non-numeric. */
-function parseFiniteNumber(raw: string): number | undefined {
+/**
+ * Parse Wei for OpenMeter SUM valueProperty: non-negative integer only,
+ * within Number.MAX_SAFE_INTEGER (reject decimals/exponents/oversized values).
+ */
+function parseSafeWeiNumber(raw: string): number | undefined {
   const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed)) return undefined;
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return undefined;
-  return n;
+  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
+  try {
+    const wei = BigInt(trimmed);
+    if (wei > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
+    return Number(wei);
+  } catch {
+    return undefined;
+  }
 }
 
 const ANALYTICS_METER_GROUP_BY = {

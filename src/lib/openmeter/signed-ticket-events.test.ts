@@ -13,9 +13,13 @@ import {
   eventMatchesClientIdFilter,
   eventMatchesViewerSubjects,
   eventUsageSubject,
+  isSignedTicketSessionEnded,
+  listAdminSignedTicketSessions,
+  listEndUserSignedTicketSessions,
   normalizeSignedTicketEvent,
   resolveSessionBillableSecs,
   sessionEventStatsKey,
+  signedTicketSessionSortKey,
 } from "./signed-ticket-events";
 
 function sampleEvent(overrides?: {
@@ -430,4 +434,150 @@ test("compareSignedTicketSessions orders open by start and ended by end", () => 
     sorted.map((s) => s.manifestId),
     ["open-new", "ended-late", "ended-early"],
   );
+});
+
+test("isSignedTicketSessionEnded uses idle window and missing timestamps", () => {
+  const now = Date.parse("2026-07-20T16:00:00.000Z");
+  assert.equal(isSignedTicketSessionEnded({}, now), true);
+  assert.equal(
+    isSignedTicketSessionEnded({ endedAt: "not-a-date" }, now),
+    true,
+  );
+  assert.equal(
+    isSignedTicketSessionEnded(
+      { endedAt: "2026-07-20T15:54:00.000Z" },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    isSignedTicketSessionEnded(
+      { endedAt: "2026-07-20T15:59:00.000Z" },
+      now,
+    ),
+    false,
+  );
+  assert.equal(
+    isSignedTicketSessionEnded(
+      { startedAt: "2026-07-20T15:58:00.000Z" },
+      now,
+    ),
+    false,
+  );
+});
+
+test("signedTicketSessionSortKey prefers start for open and end for ended", () => {
+  const now = Date.parse("2026-07-20T16:00:00.000Z");
+  assert.equal(
+    signedTicketSessionSortKey(
+      {
+        manifestId: "open",
+        startedAt: "2026-07-20T15:58:00.000Z",
+        endedAt: "2026-07-20T15:59:00.000Z",
+      },
+      now,
+    ),
+    "2026-07-20T15:58:00.000Z",
+  );
+  assert.equal(
+    signedTicketSessionSortKey(
+      {
+        manifestId: "ended",
+        startedAt: "2026-07-20T14:00:00.000Z",
+        endedAt: "2026-07-20T15:00:00.000Z",
+      },
+      now,
+    ),
+    "2026-07-20T15:00:00.000Z",
+  );
+});
+
+test("resolveSessionBillableSecs handles blank meter and fractional event sum", () => {
+  assert.equal(resolveSessionBillableSecs("  ", 0), "0");
+  assert.equal(resolveSessionBillableSecs("0", 0, "bad", "also-bad"), "0");
+  assert.equal(resolveSessionBillableSecs("0", 1.25), "1.25");
+});
+
+test("listAdminSignedTicketSessions returns stub meter rows without network", async () => {
+  const {
+    __testSetOpenMeterManifestRows,
+  } = await import("./usage-read");
+  __testSetOpenMeterManifestRows("app_abc", [
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "100",
+      networkFeeUsdExact: "100",
+      feeWei: "500",
+      billableSecs: "12.5",
+      pipeline: "byoc",
+      modelId: "m1",
+    },
+  ]);
+  const result = await listAdminSignedTicketSessions({
+    clientIds: ["app_abc"],
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.manifestId, "mid-1");
+  assert.equal(result.items[0]?.feeWei, "500");
+  assert.equal(result.items[0]?.billableSecs, "12.5");
+  assert.equal(result.nextCursor, null);
+});
+
+test("listAdminSignedTicketSessions returns empty when OpenMeter unset", async () => {
+  const previous = process.env.OPENMETER_URL;
+  delete process.env.OPENMETER_URL;
+  try {
+    const result = await listAdminSignedTicketSessions({
+      clientIds: ["app_abc"],
+    });
+    assert.deepEqual(result, {
+      items: [],
+      nextCursor: null,
+      openMeterConfigured: false,
+    });
+  } finally {
+    if (previous == null) {
+      delete process.env.OPENMETER_URL;
+    } else {
+      process.env.OPENMETER_URL = previous;
+    }
+  }
+});
+
+test("listEndUserSignedTicketSessions scopes to client stub rows", async () => {
+  const {
+    __testSetOpenMeterManifestRows,
+  } = await import("./usage-read");
+  __testSetOpenMeterManifestRows("app_eu", [
+    {
+      manifestId: "eu-mid",
+      networkFeeUsdMicros: "50",
+      networkFeeUsdExact: "50.5",
+      feeWei: "10",
+      billableSecs: "3",
+      pipeline: "p",
+      modelId: "m",
+    },
+  ]);
+  const result = await listEndUserSignedTicketSessions({
+    externalUserId: "eu-1",
+    clientId: "app_eu",
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.manifestId, "eu-mid");
+});
+
+test("listAdminSignedTicketSessions without clientIds stays empty offline", async () => {
+  const result = await listAdminSignedTicketSessions({
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(result.openMeterConfigured, true);
+  assert.deepEqual(result.items, []);
 });

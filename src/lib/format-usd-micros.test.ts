@@ -84,9 +84,21 @@ test("formatExactUsdMicrosString renders fractional ingest micros", () => {
   assert.equal(formatExactUsdMicrosString("0.0"), null);
 });
 
-test("ceilUsdMicrosToCents rounds invoice lines up to the next cent", () => {
+test("formatUsdFromWei handles whole dollars and unsafe magnitudes", () => {
+  assert.equal(formatUsdFromWei("1000000000000000000", "2000"), "$2000");
+  assert.equal(formatUsdFromWei("1e20", "1"), null);
+  assert.equal(formatUsdFromWei("", "1"), null);
+  assert.equal(formatUsdFromWei("0.0", "1"), null);
+});
+
+test("formatExactUsdMicrosString rejects tiny underflow", () => {
+  assert.equal(formatExactUsdMicrosString("1e-20"), null);
+});
+
+test("ceilUsdMicrosToCents covers remainder and exact-cent paths", () => {
+  assert.equal(ceilUsdMicrosToCents(null), "0");
   assert.equal(ceilUsdMicrosToCents("0"), "0");
-  assert.equal(ceilUsdMicrosToCents("10000"), "10000"); // exact 1 cent
-  assert.equal(ceilUsdMicrosToCents("1"), "10000"); // dust → 1 cent
+  assert.equal(ceilUsdMicrosToCents("10000"), "10000");
+  assert.equal(ceilUsdMicrosToCents("1"), "10000");
   assert.equal(ceilUsdMicrosToCents("10001"), "20000");
 });
