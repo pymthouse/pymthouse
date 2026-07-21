@@ -13,9 +13,11 @@ import {
   eventMatchesClientIdFilter,
   eventMatchesViewerSubjects,
   eventUsageSubject,
+  enrichSessionRowWithEventStats,
   isSignedTicketSessionEnded,
   listAdminSignedTicketSessions,
   listEndUserSignedTicketSessions,
+  manifestMeterRowToSessionRow,
   normalizeSignedTicketEvent,
   resolveSessionBillableSecs,
   sessionEventStatsKey,
@@ -580,4 +582,52 @@ test("listAdminSignedTicketSessions without clientIds stays empty offline", asyn
   });
   assert.equal(result.openMeterConfigured, true);
   assert.deepEqual(result.items, []);
+});
+
+test("manifestMeterRowToSessionRow maps meter fields and defaults", () => {
+  const row = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid",
+      networkFeeUsdMicros: "10",
+      networkFeeUsdExact: "10.5",
+      feeWei: "99",
+      billableSecs: "1.5",
+    },
+    "app_x",
+    "Demo App",
+  );
+  assert.equal(row.clientId, "app_x");
+  assert.equal(row.appName, "Demo App");
+  assert.equal(row.pipeline, "unknown");
+  assert.equal(row.modelId, "unknown");
+  assert.equal(row.feeWei, "99");
+});
+
+test("enrichSessionRowWithEventStats attaches times and resolves duration", () => {
+  const base = manifestMeterRowToSessionRow(
+    {
+      manifestId: "mid-1",
+      networkFeeUsdMicros: "1",
+      networkFeeUsdExact: "1",
+      feeWei: "1",
+      billableSecs: "0",
+      pipeline: "byoc",
+      modelId: "m",
+    },
+    "app_abc",
+  );
+  const stats = new Map([
+    [
+      sessionEventStatsKey("app_abc", "mid-1"),
+      {
+        firstSeen: "2026-07-20T15:00:00.000Z",
+        lastSeen: "2026-07-20T15:01:00.000Z",
+        billableSecs: 12.5,
+      },
+    ],
+  ]);
+  const enriched = enrichSessionRowWithEventStats(base, stats);
+  assert.equal(enriched.startedAt, "2026-07-20T15:00:00.000Z");
+  assert.equal(enriched.endedAt, "2026-07-20T15:01:00.000Z");
+  assert.equal(enriched.billableSecs, "12.5");
 });

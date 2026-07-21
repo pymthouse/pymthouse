@@ -1184,13 +1184,9 @@ export async function queryOpenMeterUsageByManifest(input: {
     return [];
   }
 
-  if (process.env.NODE_ENV === "test") {
-    const stub = testManifestByClient.get(input.clientId);
-    if (stub) {
-      // Stub rows are already rolled up by manifest; external_user_id filtering
-      // applies on live meter queries below.
-      return stub;
-    }
+  const stub = readTestManifestStub(input.clientId);
+  if (stub) {
+    return stub;
   }
 
   if (avoidOpenMeterNetworkInTests()) {
@@ -1240,6 +1236,16 @@ export async function queryOpenMeterUsageByManifest(input: {
     filterExternalUserId: input.externalUserId,
     filterExternalUserIds: subjectFilter,
   });
+}
+
+/** Sync test stub lookup so coverage attribution is reliable under node:test. */
+export function readTestManifestStub(
+  clientId: string,
+): OpenMeterManifestRow[] | null {
+  if (process.env.NODE_ENV !== "test") {
+    return null;
+  }
+  return testManifestByClient.get(clientId) ?? null;
 }
 
 export async function queryOpenMeterUsage(input: {

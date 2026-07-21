@@ -655,10 +655,6 @@ async function listSignedTicketSessionsForClientIds(input: {
     return { items: [], nextCursor: null, openMeterConfigured: false };
   }
 
-  const { queryOpenMeterUsageByManifest } = await import(
-    "@/lib/openmeter/usage-read"
-  );
-
   const cycle = calendarMonthBoundsUtc(new Date());
   const from = input.from?.trim() || cycle.start;
   const to = input.to?.trim() || cycle.end;
@@ -712,25 +708,15 @@ async function listSignedTicketSessionsForClientIds(input: {
 
   const [batches, rawEvents] = await Promise.all([
     Promise.all(
-      clientIds.map(async (clientId) => {
-        const rows = await queryOpenMeterUsageByManifest({
+      clientIds.map((clientId) =>
+        loadManifestSessionRowsForClient({
           clientId,
-          startDate: from,
-          endDate: to,
+          from,
+          to,
           externalUserIds: input.externalUserIds,
-        });
-        return rows.map((row) => ({
-          manifestId: row.manifestId,
-          clientId,
           appName: appNames.get(clientId),
-          pipeline: row.pipeline || "unknown",
-          modelId: row.modelId || "unknown",
-          networkFeeUsdMicros: row.networkFeeUsdMicros,
-          networkFeeUsdExact: row.networkFeeUsdExact,
-          feeWei: row.feeWei,
-          billableSecs: row.billableSecs,
-        }) satisfies SignedTicketSessionRow);
-      }),
+        }),
+      ),
     ),
     prefetchedEvents != null
       ? Promise.resolve(prefetchedEvents)
@@ -749,22 +735,9 @@ async function listSignedTicketSessionsForClientIds(input: {
     externalUserIds: input.externalUserIds,
   });
 
-  const items = batches.flat().map((row) => {
-    const stats = eventStats.get(sessionEventStatsKey(row.clientId, row.manifestId));
-    const startedAt = stats?.firstSeen;
-    const endedAt = stats?.lastSeen;
-    return {
-      ...row,
-      startedAt,
-      endedAt,
-      billableSecs: resolveSessionBillableSecs(
-        row.billableSecs,
-        stats?.billableSecs ?? 0,
-        startedAt,
-        endedAt,
-      ),
-    } satisfies SignedTicketSessionRow;
-  });
+  const items = batches
+    .flat()
+    .map((row) => enrichSessionRowWithEventStats(row, eventStats));
 
   items.sort(compareSignedTicketSessions);
 
@@ -778,6 +751,75 @@ async function listSignedTicketSessionsForClientIds(input: {
     nextCursor,
     openMeterConfigured: true,
   };
+}
+
+/** Map a per-manifest meter row into a session list row (no event timestamps yet). */
+export function manifestMeterRowToSessionRow(
+  row: {
+    manifestId: string;
+    networkFeeUsdMicros: string;
+    networkFeeUsdExact: string;
+    feeWei: string;
+    billableSecs: string;
+    pipeline?: string;
+    modelId?: string;
+  },
+  clientId: string,
+  appName?: string,
+): SignedTicketSessionRow {
+  return {
+    manifestId: row.manifestId,
+    clientId,
+    appName,
+    pipeline: row.pipeline || "unknown",
+    modelId: row.modelId || "unknown",
+    networkFeeUsdMicros: row.networkFeeUsdMicros,
+    networkFeeUsdExact: row.networkFeeUsdExact,
+    feeWei: row.feeWei,
+    billableSecs: row.billableSecs,
+  };
+}
+
+/** Attach first/last event times and resolve billable duration for a session row. */
+export function enrichSessionRowWithEventStats(
+  row: SignedTicketSessionRow,
+  eventStats: ReadonlyMap<string, ManifestSessionEventStats>,
+): SignedTicketSessionRow {
+  const stats = eventStats.get(sessionEventStatsKey(row.clientId, row.manifestId));
+  const startedAt = stats?.firstSeen;
+  const endedAt = stats?.lastSeen;
+  return {
+    ...row,
+    startedAt,
+    endedAt,
+    billableSecs: resolveSessionBillableSecs(
+      row.billableSecs,
+      stats?.billableSecs ?? 0,
+      startedAt,
+      endedAt,
+    ),
+  };
+}
+
+async function loadManifestSessionRowsForClient(input: {
+  clientId: string;
+  from: string;
+  to: string;
+  externalUserIds?: ReadonlySet<string> | null;
+  appName?: string;
+}): Promise<SignedTicketSessionRow[]> {
+  const { queryOpenMeterUsageByManifest } = await import(
+    "@/lib/openmeter/usage-read"
+  );
+  const rows = await queryOpenMeterUsageByManifest({
+    clientId: input.clientId,
+    startDate: input.from,
+    endDate: input.to,
+    externalUserIds: input.externalUserIds,
+  });
+  return rows.map((row) =>
+    manifestMeterRowToSessionRow(row, input.clientId, input.appName),
+  );
 }
 
 export function sessionEventStatsKey(clientId: string, manifestId: string): string {

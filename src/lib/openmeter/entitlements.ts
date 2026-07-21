@@ -238,7 +238,7 @@ export async function ingestSignedTicketEvent(input: {
  * Parse Wei for OpenMeter SUM valueProperty: non-negative integer only,
  * within Number.MAX_SAFE_INTEGER (reject decimals/exponents/oversized values).
  */
-function parseSafeWeiNumber(raw: string): number | undefined {
+export function parseSafeWeiNumber(raw: string): number | undefined {
   const trimmed = raw.trim();
   if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
   try {

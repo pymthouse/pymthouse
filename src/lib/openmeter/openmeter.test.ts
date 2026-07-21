@@ -21,6 +21,7 @@ import {
   meterRowValueToMillis,
   millisToSecsString,
   queryOpenMeterUsageByManifest,
+  readTestManifestStub,
   __testSetOpenMeterManifestRows,
 } from "@/lib/openmeter/usage-read";
 import {
@@ -34,7 +35,7 @@ import {
   NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
   NETWORK_FEE_USD_MICROS_METER,
 } from "@/lib/openmeter/constants";
-import { OPENMETER_METER_DEFINITIONS } from "@/lib/openmeter/entitlements";
+import { OPENMETER_METER_DEFINITIONS, parseSafeWeiNumber } from "@/lib/openmeter/entitlements";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -416,6 +417,8 @@ test("queryOpenMeterUsageByManifest returns test stub rows", async () => {
       billableSecs: "1.5",
     },
   ]);
+  assert.equal(readTestManifestStub("app_stub")?.length, 1);
+  assert.equal(readTestManifestStub("app_no_stub"), null);
   const rows = await queryOpenMeterUsageByManifest({
     clientId: "app_stub",
     startDate: "2026-07-01T00:00:00.000Z",
@@ -429,6 +432,20 @@ test("queryOpenMeterUsageByManifest returns test stub rows", async () => {
     clientId: "app_no_stub",
   });
   assert.deepEqual(missing, []);
+});
+
+test("parseSafeWeiNumber accepts safe integers and rejects invalid Wei", () => {
+  assert.equal(parseSafeWeiNumber("123"), 123);
+  assert.equal(parseSafeWeiNumber(" 42 "), 42);
+  assert.equal(parseSafeWeiNumber(""), undefined);
+  assert.equal(parseSafeWeiNumber("-1"), undefined);
+  assert.equal(parseSafeWeiNumber("1.5"), undefined);
+  assert.equal(parseSafeWeiNumber("1e18"), undefined);
+  assert.equal(parseSafeWeiNumber("NaN"), undefined);
+  assert.equal(
+    parseSafeWeiNumber(String(Number.MAX_SAFE_INTEGER + 1)),
+    undefined,
+  );
 });
 
 test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {
