@@ -45,8 +45,13 @@ export function getHostedOpenMeterUrl(): string {
 }
 
 export function isKonnectMeteringUrl(url: string, apiKey?: string): boolean {
-  if (/konghq\.com/i.test(url)) {
-    return true;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if (hostname === "konghq.com" || hostname.endsWith(".konghq.com")) {
+      return true;
+    }
+  } catch {
+    // Non-URL strings fall through to API-key heuristics.
   }
   const key = apiKey?.trim() ?? "";
   return key.startsWith("kpat_") || key.startsWith("spat_");
