@@ -168,7 +168,8 @@ export function mintAllowanceGateDecision(
     };
   }
   // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
-  // remainders still authorize after collector ceil-to-micro billing.
+  // remainders still authorize. Spendable allowance already ceils fractional
+  // meter sums once at the read boundary (exact ingest, no per-ticket ceil).
   if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
     return {
       code: "trial_credits_exhausted",

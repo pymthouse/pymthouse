@@ -14,16 +14,28 @@ import { buildOpenMeterUsageResponse } from "@/lib/usage/query-openmeter";
 import {
   aggregateDailyRequestCounts,
   aggregateDailyPipelineModelRows,
+  aggregateManifestRows,
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
+  meterRowValueToMillis,
+  millisToSecsString,
+  queryOpenMeterUsageByManifest,
+  readTestManifestStub,
+  __testSetOpenMeterManifestRows,
 } from "@/lib/openmeter/usage-read";
 import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
 import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
-import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
+import {
+  BILLABLE_SECS_METER,
+  FEE_WEI_METER,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "@/lib/openmeter/constants";
+import { OPENMETER_METER_DEFINITIONS, parseSafeWeiNumber } from "@/lib/openmeter/entitlements";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -133,6 +145,363 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 250,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-2",
+        },
+      },
+    ] as never,
+    feeWeiRows: [
+      {
+        value: "5000",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 2000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+    billableSecsRows: [
+      {
+        value: 30,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: "12.5",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+  });
+
+  const byId = new Map(rows.map((r) => [r.manifestId, r]));
+  assert.equal(byId.size, 2);
+  const mid1 = byId.get("mid-1");
+  assert.ok(mid1);
+  assert.equal(mid1.networkFeeUsdMicros, "1250");
+  assert.equal(mid1.networkFeeUsdExact, "1250");
+  assert.equal(mid1.feeWei, "7000");
+  assert.equal(mid1.billableSecs, "42.5");
+  const mid2 = byId.get("mid-2");
+  assert.ok(mid2);
+  assert.equal(mid2.networkFeeUsdMicros, "100");
+  assert.equal(mid2.feeWei, "0");
+  assert.equal(mid2.billableSecs, "0");
+});
+
+test("aggregateManifestRows ceils fractional micros once per session", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 0.3,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+      {
+        value: "0.3",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+      {
+        value: 0.3,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+    ] as never,
+    feeWeiRows: [] as never,
+    billableSecsRows: [] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.networkFeeUsdExact, "0.9");
+  assert.equal(rows[0]?.networkFeeUsdMicros, "1");
+  assert.equal(rows[0]?.pipeline, "byoc");
+  assert.equal(rows[0]?.modelId, "transcode/ffmpeg");
+});
+
+test("aggregateManifestRows filters to multi-subject allow-list", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-a",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-a",
+        },
+      },
+      {
+        value: 999,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "other-user",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-leak",
+        },
+      },
+      {
+        value: 50,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-b",
+          pipeline: "byoc",
+          model_id: "m2",
+          manifest_id: "mid-b",
+        },
+      },
+    ] as never,
+    feeWeiRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-a",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-a",
+        },
+      },
+      {
+        value: 5000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "other-user",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-leak",
+        },
+      },
+    ] as never,
+    billableSecsRows: [] as never,
+    filterExternalUserIds: new Set(["viewer-a", "viewer-b"]),
+  });
+  const byId = new Map(rows.map((r) => [r.manifestId, r]));
+  assert.equal(byId.size, 2);
+  assert.equal(byId.get("mid-a")?.networkFeeUsdMicros, "100");
+  assert.equal(byId.get("mid-a")?.feeWei, "1000");
+  assert.equal(byId.get("mid-b")?.networkFeeUsdMicros, "50");
+  assert.equal(byId.get("mid-leak"), undefined);
+});
+
+test("aggregateManifestRows empty subject set matches nothing", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+    feeWeiRows: [] as never,
+    billableSecsRows: [] as never,
+    filterExternalUserIds: new Set(),
+  });
+  assert.equal(rows.length, 0);
+});
+
+test("meterRowValueToMillis and millisToSecsString preserve fractional seconds", () => {
+  assert.equal(meterRowValueToMillis(null), 0n);
+  assert.equal(meterRowValueToMillis(12.5), 12500n);
+  assert.equal(meterRowValueToMillis("12.5"), 12500n);
+  assert.equal(meterRowValueToMillis(1n), 1000n);
+  assert.equal(meterRowValueToMillis("x"), 0n);
+  assert.equal(meterRowValueToMillis(Number.NaN), 0n);
+  assert.equal(millisToSecsString(42500n), "42.5");
+  assert.equal(millisToSecsString(0n), "0");
+  assert.equal(millisToSecsString(-1500n), "-1.5");
+  assert.equal(millisToSecsString(1000n), "1");
+});
+
+test("queryOpenMeterUsageByManifest returns test stub rows", async () => {
+  __testSetOpenMeterManifestRows("app_stub", [
+    {
+      manifestId: "m1",
+      networkFeeUsdMicros: "10",
+      networkFeeUsdExact: "10",
+      feeWei: "20",
+      billableSecs: "1.5",
+    },
+  ]);
+  assert.equal(readTestManifestStub("app_stub")?.length, 1);
+  assert.equal(readTestManifestStub("app_no_stub"), null);
+  const rows = await queryOpenMeterUsageByManifest({
+    clientId: "app_stub",
+    startDate: "2026-07-01T00:00:00.000Z",
+    endDate: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.manifestId, "m1");
+  assert.equal(rows[0]?.billableSecs, "1.5");
+
+  const missing = await queryOpenMeterUsageByManifest({
+    clientId: "app_no_stub",
+  });
+  assert.deepEqual(missing, []);
+});
+
+test("parseSafeWeiNumber accepts safe integers and rejects invalid Wei", () => {
+  assert.equal(parseSafeWeiNumber("123"), 123);
+  assert.equal(parseSafeWeiNumber(" 42 "), 42);
+  assert.equal(parseSafeWeiNumber(""), undefined);
+  assert.equal(parseSafeWeiNumber("-1"), undefined);
+  assert.equal(parseSafeWeiNumber("1.5"), undefined);
+  assert.equal(parseSafeWeiNumber("1e18"), undefined);
+  assert.equal(parseSafeWeiNumber("NaN"), undefined);
+  assert.equal(
+    parseSafeWeiNumber(String(Number.MAX_SAFE_INTEGER + 1)),
+    undefined,
+  );
+});
+
+test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {
+  const bySlug = new Map(OPENMETER_METER_DEFINITIONS.map((m) => [m.slug, m]));
+  for (const slug of [
+    FEE_WEI_METER,
+    NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+    BILLABLE_SECS_METER,
+  ]) {
+    const meter = bySlug.get(slug);
+    assert.ok(meter, `missing meter ${slug}`);
+    assert.equal(meter.aggregation, "SUM");
+    assert.ok(meter.groupBy?.manifest_id);
+  }
+  assert.equal(
+    bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy?.manifest_id,
+    undefined,
+  );
+});
+
+test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () => {
+  const response = buildOpenMeterUsageResponse({
+    clientId: "app_1",
+    groupBy: "manifest",
+    rows: [
+      {
+        externalUserId: "u1",
+        requestCount: 3,
+        networkFeeUsdMicros: "1500",
+      },
+    ],
+    manifestRows: [
+      {
+        manifestId: "mid-1",
+        networkFeeUsdMicros: "1500",
+        networkFeeUsdExact: "1500",
+        feeWei: "9000",
+        billableSecs: "45",
+      },
+    ],
+  });
+  assert.equal(
+    (response.totals as { networkFeeUsdMicros: string }).networkFeeUsdMicros,
+    "1500",
+  );
+  const byManifest = response.byManifest as Array<{
+    manifestId: string;
+    feeWei: string;
+    billableSecs: string;
+    requestCount?: number;
+  }>;
+  assert.equal(byManifest.length, 1);
+  assert.equal(byManifest[0]?.manifestId, "mid-1");
+  assert.equal(byManifest[0]?.feeWei, "9000");
+  assert.equal(byManifest[0]?.billableSecs, "45");
+  assert.equal(byManifest[0]?.requestCount, undefined);
 });
 
 test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {

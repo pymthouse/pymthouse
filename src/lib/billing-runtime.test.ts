@@ -6,6 +6,7 @@ import protobuf from "protobufjs";
 import {
   buildConstraintHash,
   buildSignedTicketConstraintHash,
+  ceilExactUsdMicros,
   computeUsdMicrosFromWei,
   resolveGatewayAttribution,
   resolvePaymentPipelineModelConstraint,
@@ -182,36 +183,45 @@ test("buildConstraintHash normalises orchAddress to lowercase", () => {
 
 test("computeUsdMicrosFromWei: 1 ETH at $3000 = 3_000_000_000 micros", () => {
   const oneEthWei = 10n ** 18n;
-  assert.equal(computeUsdMicrosFromWei(oneEthWei, 3000), 3_000_000_000n);
+  assert.equal(computeUsdMicrosFromWei(oneEthWei, 3000), 3_000_000_000);
 });
 
 test("computeUsdMicrosFromWei: zero wei returns 0", () => {
-  assert.equal(computeUsdMicrosFromWei(0n, 3000), 0n);
+  assert.equal(computeUsdMicrosFromWei(0n, 3000), 0);
 });
 
 test("computeUsdMicrosFromWei: negative price returns 0", () => {
-  assert.equal(computeUsdMicrosFromWei(10n ** 18n, -1), 0n);
+  assert.equal(computeUsdMicrosFromWei(10n ** 18n, -1), 0);
 });
 
 test("computeUsdMicrosFromWei: non-finite price returns 0", () => {
-  assert.equal(computeUsdMicrosFromWei(10n ** 18n, Number.NaN), 0n);
-  assert.equal(computeUsdMicrosFromWei(10n ** 18n, Infinity), 0n);
+  assert.equal(computeUsdMicrosFromWei(10n ** 18n, Number.NaN), 0);
+  assert.equal(computeUsdMicrosFromWei(10n ** 18n, Infinity), 0);
 });
 
-test("computeUsdMicrosFromWei: small wei amount stays integer", () => {
+test("computeUsdMicrosFromWei: small wei amount stays exact fractional", () => {
   const smallWei = 1_000_000n; // 0.000_000_000_001 ETH
   const result = computeUsdMicrosFromWei(smallWei, 3000);
-  assert.ok(typeof result === "bigint");
+  assert.ok(typeof result === "number");
+  assert.ok(result > 0 && result < 1);
 });
 
-test("computeUsdMicrosFromWei: ceils sub-micro fees to at least 1 micro", () => {
-  // 1 wei at $1 → floor would be 0; collector .ceil() bills 1 micro.
-  assert.equal(computeUsdMicrosFromWei(1n, 1), 1n);
+test("computeUsdMicrosFromWei: sub-micro fees stay fractional (no per-ticket ceil)", () => {
+  // 1 wei at $1 → exact micros = 1e-18; must not round up here.
+  const exact = computeUsdMicrosFromWei(1n, 1);
+  assert.ok(exact > 0 && exact < 1);
+  assert.equal(ceilExactUsdMicros(exact), 1n);
 });
 
 test("computeUsdMicrosFromWei: exact multiples are not rounded up", () => {
   const oneEthWei = 10n ** 18n;
-  assert.equal(computeUsdMicrosFromWei(oneEthWei, 3000), 3_000_000_000n);
+  assert.equal(computeUsdMicrosFromWei(oneEthWei, 3000), 3_000_000_000);
+});
+
+test("ceilExactUsdMicros: ceils fractional session sums once", () => {
+  assert.equal(ceilExactUsdMicros(0.3 + 0.3 + 0.3), 1n);
+  assert.equal(ceilExactUsdMicros(0), 0n);
+  assert.equal(ceilExactUsdMicros(2), 2n);
 });
 
 // ─── weiToEthString ───────────────────────────────────────────────────────────
