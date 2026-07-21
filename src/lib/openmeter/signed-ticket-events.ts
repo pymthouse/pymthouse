@@ -668,7 +668,7 @@ async function listSignedTicketSessionsForClientIds(input: {
       : getHostedOpenMeterClient();
 
   // Viewer with no resolved subjects must not see app-wide sessions.
-  if (input.externalUserIds != null && input.externalUserIds.size === 0) {
+  if (input.externalUserIds?.size === 0) {
     return { items: [], nextCursor: null, openMeterConfigured: true };
   }
 
@@ -676,31 +676,17 @@ async function listSignedTicketSessionsForClientIds(input: {
   let prefetchedEvents: IngestedEventLike[] | null = null;
 
   if (!clientIdFilter || clientIdFilter.size === 0) {
-    // Viewer/end-user session lists always need an app filter.
-    if (input.externalUserIds != null) {
-      return { items: [], nextCursor: null, openMeterConfigured: true };
-    }
-    // Admin All Usage + "all apps": UI omits clientIds so request history can
-    // use the unrestricted event list. Discover apps from those events, then
-    // meter-query each (sessions still need per-app manifest meters).
-    if (!omClient) {
-      return { items: [], nextCursor: null, openMeterConfigured: true };
-    }
-    prefetchedEvents = await fetchPlatformSignedTicketEvents({
-      client: omClient,
-      clientIds: null,
+    const discovered = await discoverAdminAllAppsClientIds({
+      omClient,
+      externalUserIds: input.externalUserIds,
       from,
       to,
     });
-    const discovered = new Set<string>();
-    for (const ev of prefetchedEvents) {
-      const id = eventClientId(ev);
-      if (id) discovered.add(id);
-    }
-    if (discovered.size === 0) {
+    if (!discovered) {
       return { items: [], nextCursor: null, openMeterConfigured: true };
     }
-    clientIdFilter = discovered;
+    prefetchedEvents = discovered.prefetchedEvents;
+    clientIdFilter = discovered.clientIds;
   }
 
   const clientIds = [...clientIdFilter];
@@ -718,16 +704,13 @@ async function listSignedTicketSessionsForClientIds(input: {
         }),
       ),
     ),
-    prefetchedEvents != null
-      ? Promise.resolve(prefetchedEvents)
-      : omClient
-        ? fetchPlatformSignedTicketEvents({
-            client: omClient,
-            clientIds: clientIdFilter,
-            from,
-            to,
-          })
-        : Promise.resolve([] as IngestedEventLike[]),
+    loadSessionListEvents({
+      prefetchedEvents,
+      omClient,
+      clientIdFilter,
+      from,
+      to,
+    }),
   ]);
 
   const eventStats = aggregateManifestSessionEventStats(rawEvents, {
@@ -751,6 +734,58 @@ async function listSignedTicketSessionsForClientIds(input: {
     nextCursor,
     openMeterConfigured: true,
   };
+}
+
+/**
+ * Admin All Usage with no clientIds: discover apps from platform events.
+ * Returns null when the caller should exit with an empty page.
+ */
+async function discoverAdminAllAppsClientIds(input: {
+  omClient: OpenMeter | null;
+  externalUserIds?: ReadonlySet<string> | null;
+  from: string;
+  to: string;
+}): Promise<{
+  clientIds: Set<string>;
+  prefetchedEvents: IngestedEventLike[];
+} | null> {
+  // Viewer/end-user session lists always need an app filter.
+  if (input.externalUserIds != null) return null;
+  if (!input.omClient) return null;
+
+  // UI omits clientIds so request history can use the unrestricted event list.
+  // Discover apps from those events, then meter-query each (sessions still need
+  // per-app manifest meters).
+  const prefetchedEvents = await fetchPlatformSignedTicketEvents({
+    client: input.omClient,
+    clientIds: null,
+    from: input.from,
+    to: input.to,
+  });
+  const discovered = new Set<string>();
+  for (const ev of prefetchedEvents) {
+    const id = eventClientId(ev);
+    if (id) discovered.add(id);
+  }
+  if (discovered.size === 0) return null;
+  return { clientIds: discovered, prefetchedEvents };
+}
+
+async function loadSessionListEvents(input: {
+  prefetchedEvents: IngestedEventLike[] | null;
+  omClient: OpenMeter | null;
+  clientIdFilter: ReadonlySet<string>;
+  from: string;
+  to: string;
+}): Promise<IngestedEventLike[]> {
+  if (input.prefetchedEvents != null) return input.prefetchedEvents;
+  if (!input.omClient) return [];
+  return fetchPlatformSignedTicketEvents({
+    client: input.omClient,
+    clientIds: input.clientIdFilter,
+    from: input.from,
+    to: input.to,
+  });
 }
 
 /** Map a per-manifest meter row into a session list row (no event timestamps yet). */
@@ -841,24 +876,7 @@ export function aggregateManifestSessionEventStats(
   },
 ): Map<string, ManifestSessionEventStats> {
   const out = new Map<string, ManifestSessionEventStats>();
-  const subjectSet =
-    opts?.externalUserIds != null
-      ? opts.externalUserIds
-      : opts?.externalUserId?.trim()
-        ? new Set([opts.externalUserId.trim()])
-        : null;
-  const externalKeys =
-    subjectSet != null
-      ? (() => {
-          const keys = new Set<string>();
-          for (const subject of subjectSet) {
-            keys.add(subject);
-            keys.add(normalizePlatformUserId(subject));
-            keys.add(buildOwnerWireSubject(normalizePlatformUserId(subject)));
-          }
-          return keys;
-        })()
-      : null;
+  const externalKeys = buildSessionExternalSubjectKeys(opts);
 
   for (const ev of events) {
     if (!eventIsSignedTicket(ev)) continue;
@@ -867,37 +885,77 @@ export function aggregateManifestSessionEventStats(
     if (opts?.clientIds && opts.clientIds.size > 0 && !opts.clientIds.has(clientId)) {
       continue;
     }
-    const usageSubject = eventUsageSubject(ev);
-    if (externalKeys) {
-      if (externalKeys.size === 0) continue;
-      if (
-        !usageSubject ||
-        (!externalKeys.has(usageSubject) &&
-          !externalKeys.has(normalizePlatformUserId(usageSubject)))
-      ) {
-        continue;
-      }
-    }
+    if (!eventMatchesSessionExternalFilter(ev, externalKeys)) continue;
+
     const data = ev.event.data ?? {};
     const manifestId = stringField(data, "manifest_id") || "unknown";
     const time =
       toIsoTime(ev.event.time) || toIsoTime(ev.ingestedAt) || new Date(0).toISOString();
-    const secs = numberField(data, "billable_secs") ?? 0;
-    const key = sessionEventStatsKey(clientId, manifestId);
-    const prev = out.get(key);
-    if (!prev) {
-      out.set(key, {
-        firstSeen: time,
-        lastSeen: time,
-        billableSecs: secs > 0 ? secs : 0,
-      });
-      continue;
-    }
-    if (time < prev.firstSeen) prev.firstSeen = time;
-    if (time > prev.lastSeen) prev.lastSeen = time;
-    if (secs > 0) prev.billableSecs += secs;
+    const secs = Math.max(numberField(data, "billable_secs") ?? 0, 0);
+    accumulateSessionEventStat(
+      out,
+      sessionEventStatsKey(clientId, manifestId),
+      time,
+      secs,
+    );
   }
   return out;
+}
+
+function buildSessionExternalSubjectKeys(opts?: {
+  externalUserId?: string | null;
+  externalUserIds?: ReadonlySet<string> | null;
+}): Set<string> | null {
+  let subjectSet: ReadonlySet<string> | null = null;
+  if (opts?.externalUserIds != null) {
+    subjectSet = opts.externalUserIds;
+  } else {
+    const trimmed = opts?.externalUserId?.trim();
+    if (trimmed) subjectSet = new Set([trimmed]);
+  }
+  if (subjectSet == null) return null;
+
+  const keys = new Set<string>();
+  for (const subject of subjectSet) {
+    keys.add(subject);
+    keys.add(normalizePlatformUserId(subject));
+    keys.add(buildOwnerWireSubject(normalizePlatformUserId(subject)));
+  }
+  return keys;
+}
+
+function eventMatchesSessionExternalFilter(
+  ev: IngestedEventLike,
+  externalKeys: ReadonlySet<string> | null,
+): boolean {
+  if (!externalKeys) return true;
+  if (externalKeys.size === 0) return false;
+  const usageSubject = eventUsageSubject(ev);
+  if (!usageSubject) return false;
+  return (
+    externalKeys.has(usageSubject) ||
+    externalKeys.has(normalizePlatformUserId(usageSubject))
+  );
+}
+
+function accumulateSessionEventStat(
+  out: Map<string, ManifestSessionEventStats>,
+  key: string,
+  time: string,
+  secs: number,
+): void {
+  const prev = out.get(key);
+  if (!prev) {
+    out.set(key, {
+      firstSeen: time,
+      lastSeen: time,
+      billableSecs: secs,
+    });
+    return;
+  }
+  if (time < prev.firstSeen) prev.firstSeen = time;
+  if (time > prev.lastSeen) prev.lastSeen = time;
+  if (secs > 0) prev.billableSecs += secs;
 }
 
 /** Prefer meter SUM; fall back to event SUM or wall-clock span when meter is 0. */
@@ -1411,16 +1469,9 @@ function stringField(data: Record<string, unknown>, key: string): string | null 
   return null;
 }
 
+/** Same coercion as stringField; keeps fractional micros from exact ingest. */
 function microsField(data: Record<string, unknown>, key: string): string | null {
-  const value = data[key];
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    // Preserve fractional micros from exact ingest (no per-ticket trunc).
-    return String(value);
-  }
-  return null;
+  return stringField(data, key);
 }
 
 function numberField(data: Record<string, unknown>, key: string): number | null {

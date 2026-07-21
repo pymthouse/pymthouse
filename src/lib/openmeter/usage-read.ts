@@ -255,6 +255,44 @@ export function buildExternalUserIdMatchKeysForSubjects(
   return keys;
 }
 
+/** Prefer multi-subject filter when present; else single-subject match keys. */
+function resolveManifestExternalMatchKeys(input: {
+  filterExternalUserId?: string | null;
+  filterExternalUserIds?: ReadonlySet<string> | null;
+}): Set<string> | undefined {
+  if (input.filterExternalUserIds != null) {
+    return buildExternalUserIdMatchKeysForSubjects(input.filterExternalUserIds);
+  }
+  if (input.filterExternalUserId) {
+    return buildExternalUserIdMatchKeys(input.filterExternalUserId);
+  }
+  return undefined;
+}
+
+/** Display label for external-user filtering (single subject when unambiguous). */
+function resolveManifestFilterLabel(input: {
+  filterExternalUserId?: string | null;
+  filterExternalUserIds?: ReadonlySet<string> | null;
+}): string | null {
+  const single = input.filterExternalUserId?.trim();
+  if (single) return single;
+  if (input.filterExternalUserIds?.size === 1) {
+    return [...input.filterExternalUserIds][0] ?? null;
+  }
+  return null;
+}
+
+/** Multi-subject set wins; else wrap a single trimmed subject; else unfiltered. */
+function resolveOptionalExternalUserSubjectSet(
+  externalUserIds?: ReadonlySet<string> | null,
+  externalUserId?: string | null,
+): ReadonlySet<string> | null {
+  if (externalUserIds != null) return externalUserIds;
+  const trimmed = externalUserId?.trim();
+  if (trimmed) return new Set([trimmed]);
+  return null;
+}
+
 /**
  * When filtering to one user, collapse transitional groupBy external_user_id
  * variants onto the normalized filter id so dual-read rows merge.
@@ -516,17 +554,8 @@ export function aggregateManifestRows(input: {
   /** When set, filter to any of these subjects (multi-subject viewers). */
   filterExternalUserIds?: ReadonlySet<string> | null;
 }): OpenMeterManifestRow[] {
-  const matchKeys =
-    input.filterExternalUserIds != null
-      ? buildExternalUserIdMatchKeysForSubjects(input.filterExternalUserIds)
-      : input.filterExternalUserId
-        ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
-        : undefined;
-  const filterLabel =
-    input.filterExternalUserId?.trim() ||
-    (input.filterExternalUserIds != null && input.filterExternalUserIds.size === 1
-      ? [...input.filterExternalUserIds][0]
-      : null);
+  const matchKeys = resolveManifestExternalMatchKeys(input);
+  const filterLabel = resolveManifestFilterLabel(input);
 
   const feeMicrosByManifest = new Map<string, number>();
   const feeWeiByManifest = new Map<string, bigint>();
@@ -1199,12 +1228,10 @@ export async function queryOpenMeterUsageByManifest(input: {
     return [];
   }
 
-  const subjectFilter =
-    input.externalUserIds != null
-      ? input.externalUserIds
-      : input.externalUserId?.trim()
-        ? new Set([input.externalUserId.trim()])
-        : null;
+  const subjectFilter = resolveOptionalExternalUserSubjectSet(
+    input.externalUserIds,
+    input.externalUserId,
+  );
 
   const subjects =
     subjectFilter != null

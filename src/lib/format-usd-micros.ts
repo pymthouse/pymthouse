@@ -196,9 +196,12 @@ export function formatExactUsdMicrosString(
   const negative = micros < 0;
   const dollars = Math.abs(micros) / 1_000_000;
   // 12 fraction digits matches formatUsdFromWei display cap.
+  // Trim trailing zeros without /.?0+$/ (Sonar S8786 backtracking).
   let fixed = dollars.toFixed(12);
   if (fixed.includes(".")) {
-    fixed = fixed.replace(/\.?0+$/, "");
+    const [whole, frac = ""] = fixed.split(".");
+    const trimmedFrac = trimFracDigitZeros(frac);
+    fixed = trimmedFrac ? `${whole}.${trimmedFrac}` : whole;
   }
   if (fixed === "0") return null;
   return `${negative ? "-" : ""}$${fixed}`;
