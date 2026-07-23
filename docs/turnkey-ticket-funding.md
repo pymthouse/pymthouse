@@ -116,62 +116,54 @@ flowchart LR
 
 ---
 
-## Transaction flow with decisions
+## Transaction flow
 
-End-to-end sequence for one webhook delivery. Decision diamonds map 1:1 to
-`shouldProcessTurnkeyDeposit`, `claimTurnkeyFundingEvent`, and
-`executeTurnkeyFunding`.
+Happy-path sequence for one webhook delivery that funds TicketBroker. Branching
+outcomes (skip reasons, claim races, allocation split) live in the [decision
+trees](#decision-trees) below — not in this diagram.
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant TK as Turnkey
   participant WH as turnkey-balance route
-  participant Dec as shouldProcessTurnkeyDeposit
+  participant Logic as turnkey-funding.ts
   participant CLI as Signer CLI
   participant DB as Neon
-  participant Exec as executeTurnkeyFunding
   participant Chain as Arbitrum / TicketBroker
 
-  TK->>WH: POST balances:finalized (signed body)
-  WH->>WH: verifyTurnkeyWebhook (JWKS, replay window)
-
-  alt signature invalid
-    WH-->>TK: 401 { status: error, reason }
-  else signature ok
-    WH->>WH: parseTurnkeyBalanceWebhookPayload
-    alt invalid JSON
-      WH-->>TK: 200 { status: ignored, reason: invalid_json }
-    else parsed
-      WH->>Dec: shouldProcessTurnkeyDeposit(payload, config)
-      Dec->>CLI: GET /ethAddr
-      alt CLI ethAddr unavailable
-        Dec-->>WH: throw
-        WH-->>TK: 503 { status: error }
-      else filters fail (see decision tree)
-        Dec-->>WH: { action: skip, reason }
-        WH-->>TK: 200 { status: ignored, reason }
-      else action fund
-        Dec-->>WH: fundWei, address, txHash, idempotencyKey
-        WH->>DB: claimTurnkeyFundingEvent (insert pending)
-        alt claim skip (already_*, in_progress, …)
-          WH-->>TK: 200 { status: ignored, reason }
-        else claimed
-          WH->>Exec: executeTurnkeyFunding(fundWei, eventId)
-          Exec->>CLI: GET /senderInfo
-          Exec->>Exec: allocateDepositAndReserve
-          Exec->>CLI: POST /fundDepositAndReserve
-          CLI->>Chain: on-chain fundDepositAndReserve
-          Chain-->>CLI: mined (CheckTx)
-          Exec->>DB: status = funded
-          WH-->>TK: 200 { status: funded, depositWei, reserveWei, … }
-        end
-      end
-    end
-  end
-
-  Note over WH,DB: On execute failure after claim: mark failed, return 500
+  TK->>WH: POST /webhooks/turnkey-balance (signed body)
+  WH->>WH: verifyTurnkeyWebhook + parse payload
+  WH->>Logic: shouldProcessTurnkeyDeposit
+  Logic->>CLI: GET /ethAddr
+  CLI-->>Logic: signer address
+  Logic-->>WH: action fund (fundWei, …)
+  WH->>DB: claimTurnkeyFundingEvent → pending
+  DB-->>WH: eventId
+  WH->>Logic: executeTurnkeyFunding(fundWei, eventId)
+  Logic->>CLI: GET /senderInfo
+  CLI-->>Logic: current reserve
+  Note over Logic: allocateDepositAndReserve (see decision tree)
+  Logic->>CLI: POST /fundDepositAndReserve
+  CLI->>Chain: fundDepositAndReserve tx
+  Chain-->>CLI: mined (CheckTx)
+  Logic->>DB: status = funded
+  WH-->>TK: 200 { status: funded, depositWei, reserveWei, … }
 ```
+
+Stage → decision gate (when the happy path may exit early):
+
+| Stage | Gate | Typical non-success |
+| --- | --- | --- |
+| Verify + parse | Signature / JSON | `401 error`, `ignored: invalid_json` |
+| `shouldProcessTurnkeyDeposit` | [Deposit filters](#decision-tree--shouldprocessturnkeydeposit) | `ignored: wrong_address`, … or `503` if CLI down |
+| `claimTurnkeyFundingEvent` | [Idempotency claim](#decision-tree--claimturnkeyfundingevent) | `ignored: already_funded`, `in_progress`, … |
+| `allocateDepositAndReserve` | [Reserve split](#decision-tree--deposit-vs-reserve-allocation) | (always returns a split; `senderInfo` miss → `500`) |
+| `fundDepositAndReserve` | On-chain / CLI error | `500` + DB `failed` |
+
+---
+
+## Decision trees
 
 ### Decision tree — `shouldProcessTurnkeyDeposit`
 
@@ -225,21 +217,15 @@ flowchart TD
 
 ### Decision tree — deposit vs reserve allocation
 
-After a successful claim, `executeTurnkeyFunding` reads live TicketBroker state
-and splits `fundWei` so reserve fills to `RESERVE_AMOUNT` before surplus goes to
-deposit. Invariant: `depositWei + reserveWei === fundWei`.
+Pure split of `fundWei` given live `currentReserveWei` and `RESERVE_AMOUNT`.
+Invariant: `depositWei + reserveWei === fundWei`. The transaction flow then
+posts those amounts via CLI and marks the event funded.
 
 ```mermaid
 flowchart TD
-  Start([fundWei]) --> SI[GET /senderInfo]
-  SI --> Avail{senderInfo OK?}
-  Avail -->|no| Fail[throw: signer senderInfo unavailable]
-  Avail -->|yes| Full{currentReserve >= RESERVE_AMOUNT?}
-  Full -->|yes| AllDep[depositWei = fundWei<br/>reserveWei = 0]
-  Full -->|no| Split[reserveWei = min fundWei, shortfall<br/>depositWei = fundWei - reserveWei]
-  AllDep --> Post[POST /fundDepositAndReserve]
-  Split --> Post
-  Post --> Mark[DB status = funded]
+  Start([fundWei, currentReserveWei, RESERVE_AMOUNT]) --> Full{currentReserve >= RESERVE_AMOUNT?}
+  Full -->|yes| AllDep([depositWei = fundWei<br/>reserveWei = 0])
+  Full -->|no| Split([reserveWei = min fundWei, shortfall<br/>depositWei = fundWei - reserveWei])
 ```
 
 ---
