@@ -190,6 +190,64 @@ export default function AppModeStep({
           </div>
         </label>
 
+        <label
+          aria-label="Enable x402 payments"
+          className={capabilityRowClass(Boolean(data.x402Enabled), readOnly)}
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(data.x402Enabled)}
+            onChange={(e) => {
+              if (readOnly) return;
+              onChange({ x402Enabled: e.target.checked });
+            }}
+            disabled={readOnly}
+            className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
+          />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-zinc-200">Enable x402 payments</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Allow app user deposits on-chain (USDC on Arbitrum) via the PymtHouse
+              x402 facilitator. Agents can pay with a wallet or a payment approval code.
+            </p>
+            {data.x402Enabled ? (
+              <label className="mt-2 block text-xs text-zinc-400">
+                Deposit address (payTo), optional — leave blank to provision via API
+                <input
+                  type="text"
+                  value={data.x402PayToAddress || ""}
+                  onChange={(e) => onChange({ x402PayToAddress: e.target.value })}
+                  disabled={readOnly}
+                  placeholder="0x…"
+                  className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 disabled:opacity-50"
+                />
+              </label>
+            ) : null}
+          </div>
+        </label>
+
+        <label
+          aria-label="Enable fiat on-ramp"
+          className={capabilityRowClass(Boolean(data.onrampEnabled), readOnly)}
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(data.onrampEnabled)}
+            onChange={(e) => {
+              if (readOnly) return;
+              onChange({ onrampEnabled: e.target.checked });
+            }}
+            disabled={readOnly}
+            className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
+          />
+          <div>
+            <p className="text-sm font-medium text-zinc-200">Enable fiat on-ramp</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Offer Wallet Kit / MoonPay fiat on-ramp for funding prepaid credits.
+            </p>
+          </div>
+        </label>
+
         <label aria-label="Refresh tokens" className={capabilityRowClass(hasRefreshToken, readOnly)}>
           <input
             type="checkbox"

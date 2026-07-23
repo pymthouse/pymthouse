@@ -74,6 +74,12 @@ export const OIDC_SCOPES: ScopeDefinition[] = [
       "RFC 8693 token exchange to bind RFC 8628 device codes after third-party login (confidential client only).",
   },
   {
+    value: "x402:settle",
+    label: "Settle x402 payments",
+    description:
+      "Settle EIP-3009 USDC authorizations via the PymtHouse x402 facilitator (M2M only).",
+  },
+  {
     value: "admin",
     label: "Admin",
     description: "Administrative access to provider configuration surfaces",
@@ -91,7 +97,10 @@ export function getScopeDefinition(scope: string): ScopeDefinition | undefined {
 /** Scopes that must not appear in the same token as sign:job. */
 export const ADMIN_SCOPES = new Set(
   OIDC_SCOPES.map((definition) => definition.value).filter(
-    (value) => value !== OPENID_SCOPE && value !== "sign:job",
+    (value) =>
+      value !== OPENID_SCOPE &&
+      value !== "sign:job" &&
+      !value.startsWith("x402:"),
   ),
 );
 

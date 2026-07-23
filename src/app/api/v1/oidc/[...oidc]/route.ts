@@ -59,9 +59,19 @@ function requestedScopesFromParams(params: URLSearchParams): string[] {
 
 function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
   if (err instanceof MintUserSignerTokenError) {
+    const headers: Record<string, string> = {};
+    if (err.status === 402 && err.paymentRequired) {
+      headers["PAYMENT-REQUIRED"] = err.paymentRequired;
+    }
     return NextResponse.json(
-      { error: err.code, error_description: err.message },
-      { status: err.status },
+      {
+        error: err.code,
+        error_description: err.message,
+        ...(err.paymentRequired
+          ? { paymentRequired: err.paymentRequired }
+          : {}),
+      },
+      { status: err.status, headers },
     );
   }
   if (err instanceof SignJobScopeExclusivityError) {

@@ -55,6 +55,12 @@ export default function AppDetailPage() {
             tokenEndpointAuthMethod:
               data.oidcClient?.tokenEndpointAuthMethod || "none",
             backendDeviceHelper: Boolean(data.m2mOidcClient),
+            x402Enabled: data.x402Enabled === 1 || data.x402Enabled === true,
+            onrampEnabled:
+              data.onrampEnabled === undefined
+                ? true
+                : data.onrampEnabled === 1 || data.onrampEnabled === true,
+            x402PayToAddress: data.x402PayToAddress || "",
           },
           state: {
             id: data.id,

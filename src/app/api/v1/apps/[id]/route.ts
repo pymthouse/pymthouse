@@ -348,6 +348,29 @@ export async function PUT(
     }
   }
 
+  if (body.x402Enabled !== undefined || body.onrampEnabled !== undefined || body.x402PayToAddress !== undefined) {
+    const { setAppX402Flags } = await import("@/lib/x402/wallets");
+    await setAppX402Flags({
+      appId: app.id,
+      x402Enabled:
+        body.x402Enabled !== undefined ? Boolean(body.x402Enabled) : undefined,
+      onrampEnabled:
+        body.onrampEnabled !== undefined ? Boolean(body.onrampEnabled) : undefined,
+      x402PayToAddress:
+        body.x402PayToAddress !== undefined
+          ? (String(body.x402PayToAddress || "").trim() || null)
+          : undefined,
+    });
+    if (body.x402Enabled === true && !body.x402PayToAddress) {
+      try {
+        const { provisionAppX402Wallet } = await import("@/lib/x402/wallets");
+        await provisionAppX402Wallet({ appId: app.id });
+      } catch (err) {
+        console.warn("[apps PUT] x402 wallet provision deferred:", err);
+      }
+    }
+  }
+
   if (await syncBackendM2mAllowedScopesFromPublicApp(app.id)) {
     resetProvider();
   }

@@ -20,6 +20,7 @@
     "db:prepare": "npx tsx scripts/db-migrate.ts",
     "api-keys:hard-cutover": "npx tsx scripts/api-keys-hard-cutover.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
+    "x402:seed-public-app": "npx tsx scripts/seed-public-x402-app.ts",
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
     "openmeter:ensure-customer": "npx tsx scripts/openmeter-ensure-customer.ts",
     "openmeter:migrate-starter-prepaid": "npx tsx scripts/openmeter-migrate-starter-prepaid.ts",
@@ -63,6 +64,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "uuid": "^14.0.0",
+    "viem": "^2.55.2",
     "zod": "^4.4.3"
   },
   "overrides": {
