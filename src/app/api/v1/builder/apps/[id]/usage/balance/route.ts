@@ -5,7 +5,7 @@ import {
   resolveAppForUsageAccess,
 } from "@/lib/usage/app-usage-handlers";
 
-/** Legacy usage balance route. Accepts M2M Basic or an authorized provider session. */
+/** Builder API: M2M Basic only (no provider session). */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -19,6 +19,7 @@ export async function GET(
   const app = await resolveAppForUsageAccess({
     request,
     clientId,
+    m2mOnly: true,
   });
   if (!app) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

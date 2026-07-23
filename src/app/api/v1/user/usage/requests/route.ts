@@ -11,10 +11,10 @@ import {
 
 /**
  * End-user signed-ticket request history for the Bearer subject only.
- * Auth: end-user / signer JWT (subject forced from the token — not queryable).
+ * Auth: composite API key, bare app API key, or end-user/signer JWT.
  */
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
+  const params = new URL(request.url).searchParams;
   const override = endUserSubjectOverrideError(params, "requests");
   if (override) {
     return override;

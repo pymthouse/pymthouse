@@ -1,21 +1,36 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { isOpenApiContractOperation } from "@/lib/openapi/tags";
+
 export const API_V1_ROOT = join(process.cwd(), "src/app/api/v1");
 
-/** Prefixes excluded from the public Builder OpenAPI contract. */
+/**
+ * Prefixes excluded from OpenAPI contracts.
+ * Legacy `/admin`, `/signer`, `/me`, `/dashboard` stay excluded — Internal docs
+ * use `/api/v1/internal/…` (rewrites + virtual metadata).
+ */
 export const OPENAPI_EXCLUDED_PREFIXES = [
   "oidc/",
-  "internal/",
   "admin/",
   "webhooks/",
   "oidc/interaction/",
+  "me/",
+  "dashboard/",
+  "signer/",
 ] as const;
 
-/** Meta routes that serve docs/spec only — not Builder API operations. */
+/** Meta routes that serve docs/spec only — not API operations. */
 export const OPENAPI_EXCLUDED_FILES = new Set([
   "openapi.json/route.ts",
   "docs/route.ts",
+  "internal/openapi.json/route.ts",
+  "internal/docs/route.ts",
+  // Legacy billing path — Internal documents `/api/v1/internal/billing`
+  "billing/route.ts",
+  // Legacy usage — Builder documents `/builder/…/usage*`
+  "apps/[id]/usage/route.ts",
+  "apps/[id]/usage/balance/route.ts",
 ]);
 
 export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -52,7 +67,7 @@ export function routeKey(method: string, path: string): string {
 
 export function shouldExcludeOpenApiRoute(relPath: string): string | null {
   if (OPENAPI_EXCLUDED_FILES.has(relPath)) {
-    return "meta route (docs or openapi.json)";
+    return "excluded from OpenAPI contracts (docs/meta or legacy alias)";
   }
   for (const prefix of OPENAPI_EXCLUDED_PREFIXES) {
     if (relPath.startsWith(prefix)) {
@@ -69,7 +84,9 @@ export function toOpenApiPath(fileRel: string): string {
   const segments = withoutRoute.split("/").map((segment, index, all) => {
     if (segment.startsWith("[") && segment.endsWith("]")) {
       const inner = segment.slice(1, -1);
-      const underApps = all[0] === "apps" && all[1]?.startsWith("[");
+      const appsIdx = all.findIndex((s) => s === "apps");
+      const underApps =
+        appsIdx >= 0 && all[appsIdx + 1]?.startsWith("[") && index === appsIdx + 1;
       if (inner === "id" && underApps) {
         return "{clientId}";
       }
@@ -131,17 +148,24 @@ export function scanApiV1Routes(apiRoot = API_V1_ROOT): ScannedRouteOperation[] 
   const operations: ScannedRouteOperation[] = [];
 
   for (const fileRel of collectRouteFiles(apiRoot)) {
-    const exclusion = shouldExcludeOpenApiRoute(fileRel);
+    const fileExclusion = shouldExcludeOpenApiRoute(fileRel);
     const source = readFileSync(join(apiRoot, fileRel), "utf8");
     const path = toOpenApiPath(fileRel);
 
     for (const method of exportedHttpMethods(source)) {
+      const methodLower = method.toLowerCase() as HttpMethodLower;
+      let excluded = fileExclusion !== null;
+      let excludedReason = fileExclusion ?? undefined;
+      if (!excluded && !isOpenApiContractOperation(methodLower, path)) {
+        excluded = true;
+        excludedReason = "not in Builder/End-user/Internal contract";
+      }
       operations.push({
-        method: method.toLowerCase() as HttpMethodLower,
+        method: methodLower,
         path,
         sourceFile: fileRel,
-        excluded: exclusion !== null,
-        excludedReason: exclusion ?? undefined,
+        excluded,
+        excludedReason,
       });
     }
   }
