@@ -14,7 +14,7 @@ import { handleAppUsageBalanceGet } from "@/lib/usage/app-usage-handlers";
  * consumed), not prepaid trial-credit ledger fields.
  */
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
+  const params = new URL(request.url).searchParams;
   const override = endUserSubjectOverrideError(params, "balance");
   if (override) {
     return override;

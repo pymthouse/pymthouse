@@ -11,7 +11,7 @@ import { handleAppUsageGet } from "@/lib/usage/app-usage-handlers";
  * Auth: composite API key, bare app API key, or end-user/signer JWT.
  */
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
+  const params = new URL(request.url).searchParams;
   const override = endUserSubjectOverrideError(params, "usage");
   if (override) {
     return override;

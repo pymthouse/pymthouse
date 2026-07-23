@@ -39,7 +39,7 @@ run("resolveActiveAppApiKeyFromBearer accepts composite and bare keys", async (t
     clientId: app.clientId,
     externalUserId,
   });
-  const bare = `pmth_${"c".repeat(64)}`;
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"1".repeat(32)}`;
   await db.insert(apiKeys).values({
     id: `key-${randomUUID()}`,
     keyHash: hashToken(bare),
@@ -69,7 +69,7 @@ run("authenticateEndUser resolves composite Bearer to end-user identity", async 
     clientId: app.clientId,
     externalUserId,
   });
-  const bare = `pmth_${"d".repeat(64)}`;
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"2".repeat(32)}`;
   await db.insert(apiKeys).values({
     id: `key-${randomUUID()}`,
     keyHash: hashToken(bare),

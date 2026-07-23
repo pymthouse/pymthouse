@@ -1,6 +1,23 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+
 import { NextRequest } from "next/server";
+
+import { run } from "@/test-utils/db-guard";
+import {
+  cleanupTestApp,
+  createAppUser,
+  seedDeveloperAppWithClient,
+} from "@/test-utils/fixtures";
+import { db } from "@/db/index";
+import { apiKeys } from "@/db/schema";
+import { formatCompositeApiKey } from "@/lib/app-api-keys";
+import {
+  __testClearOpenMeterUsageStubs,
+  __testSetOpenMeterUsageRows,
+} from "@/lib/openmeter/usage-read";
+import { hashToken } from "@/lib/token-hash";
 
 test("end-user usage routes reject subject overrides and require auth", async () => {
   const usage = await import("./route");
@@ -28,30 +45,14 @@ test("end-user usage routes reject subject overrides and require auth", async ()
   }
 });
 
-import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-
-import { run } from "@/test-utils/db-guard";
-import {
-  cleanupTestApp,
-  createAppUser,
-  seedDeveloperAppWithClient,
-} from "@/test-utils/fixtures";
-import { db } from "@/db/index";
-import { apiKeys } from "@/db/schema";
-import { formatCompositeApiKey } from "@/lib/app-api-keys";
-import {
-  __testClearOpenMeterUsageStubs,
-  __testSetOpenMeterUsageRows,
-} from "@/lib/openmeter/usage-read";
-import { hashToken } from "@/lib/token-hash";
-
 run("user usage API requires end-user Bearer and scopes to that user", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
 
-  const anonymous = await GET(new Request("http://localhost/api/v1/user/usage"));
+  const anonymous = await GET(
+    new NextRequest("http://localhost/api/v1/user/usage"),
+  );
   assert.equal(anonymous.status, 401);
 
   const externalUserId = `user-${randomUUID()}`;
@@ -59,7 +60,7 @@ run("user usage API requires end-user Bearer and scopes to that user", async (t)
     clientId: app.clientId,
     externalUserId,
   });
-  const bare = `pmth_${"e".repeat(64)}`;
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"e".repeat(32)}`;
   await db.insert(apiKeys).values({
     id: `key-${randomUUID()}`,
     keyHash: hashToken(bare),
@@ -71,7 +72,7 @@ run("user usage API requires end-user Bearer and scopes to that user", async (t)
   const composite = formatCompositeApiKey(app.clientId, bare);
 
   const rejectedOverride = await GET(
-    new Request("http://localhost/api/v1/user/usage?externalUserId=other", {
+    new NextRequest("http://localhost/api/v1/user/usage?externalUserId=other", {
       headers: { Authorization: `Bearer ${composite}` },
     }),
   );
@@ -92,7 +93,7 @@ run("user usage API requires end-user Bearer and scopes to that user", async (t)
   t.after(() => __testClearOpenMeterUsageStubs());
 
   const ok = await GET(
-    new Request("http://localhost/api/v1/user/usage?groupBy=user", {
+    new NextRequest("http://localhost/api/v1/user/usage?groupBy=user", {
       headers: { Authorization: `Bearer ${composite}` },
     }),
   );

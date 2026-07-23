@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
+import { NextRequest } from "next/server";
+
 import { run } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -22,7 +24,7 @@ run("user usage balance rejects externalUserId override", async (t) => {
     clientId: app.clientId,
     externalUserId,
   });
-  const bare = `pmth_${"f".repeat(64)}`;
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"f".repeat(32)}`;
   await db.insert(apiKeys).values({
     id: `key-${randomUUID()}`,
     keyHash: hashToken(bare),
@@ -34,12 +36,12 @@ run("user usage balance rejects externalUserId override", async (t) => {
   const composite = formatCompositeApiKey(app.clientId, bare);
 
   const unauthorized = await GET(
-    new Request("http://localhost/api/v1/user/usage/balance"),
+    new NextRequest("http://localhost/api/v1/user/usage/balance"),
   );
   assert.equal(unauthorized.status, 401);
 
   const bad = await GET(
-    new Request(
+    new NextRequest(
       "http://localhost/api/v1/user/usage/balance?externalUserId=other",
       { headers: { Authorization: `Bearer ${composite}` } },
     ),
