@@ -1,439 +1,206 @@
 # Turnkey balance → TicketBroker auto-funding
 
-When ETH lands in the remote signer wallet on Arbitrum, Turnkey delivers
-`balances:finalized` webhooks to `POST /webhooks/turnkey-balance`. PymtHouse
-verifies the webhook (HTTP message authentication), decides whether the deposit
-belongs to this signer and clears funding thresholds, then calls the protected
-signer CLI `POST /fundDepositAndReserve` so go-livepeer submits an on-chain
-TicketBroker funding transaction.
+When native ETH arrives in the **remote signer** wallet on Arbitrum, Turnkey
+notifies PymtHouse. PymtHouse decides whether that deposit belongs to this
+signer and is large enough to act on, then asks the signer to move funds into
+Livepeer **TicketBroker** (deposit + reserve) so the gateway can pay for work.
 
-This document covers **architecture and flows** for that path, then operational
-thresholds, env vars, and verification. It does **not** cover the identity
-authorization webhook (`POST /webhooks/remote-signer`), which authenticates
-end-user JWTs before ticket signing and never moves deposit ETH.
-
-Register the deposit webhook:
+This is the **deposit automation** path. It is separate from the **identity**
+webhook that authorizes end-user JWTs before ticket signing; that path never
+moves ETH.
 
 ```bash
 npm run turnkey:create-webhook
-# or with an explicit URL:
-npm run turnkey:create-webhook -- --url https://staging.pymthouse.com/webhooks/turnkey-balance
+# optional: --url https://staging.pymthouse.com/webhooks/turnkey-balance
 ```
 
-Requires a Turnkey billing org on Pay As You Go, Pro, or Enterprise. Balance
-webhooks must be registered from the parent billing organization.
+Balance webhooks require a Turnkey billing org (Pay As You Go / Pro / Enterprise)
+and must be registered from the **parent** billing organization.
 
 ---
 
-## Scope and participants
+## Participants
 
-| Participant | Role |
+| Actor | Role |
 | --- | --- |
-| Funder / operator | Sends native ETH to the signer address on Arbitrum One |
-| Arbitrum One | Settlement chain for the deposit and TicketBroker tx |
-| Turnkey | Observes wallet balance changes; signs and delivers webhooks |
-| PymtHouse (Vercel) | `POST /webhooks/turnkey-balance` — verify, filter, claim, allocate, invoke CLI |
-| Neon (`turnkey_funding_events`) | Idempotency ledger for webhook deliveries |
-| Signer DMZ (Railway) | Apache JWT gate + go-livepeer remote signer (CLI on `/__signer_cli`) |
-| TicketBroker (on-chain) | Livepeer deposit + reserve balances used for ticket payments |
-
-Primary source files:
-
-| Concern | Path |
-| --- | --- |
-| HTTP handler | `src/app/webhooks/turnkey-balance/route.ts` |
-| Decision + claim + execute | `src/lib/turnkey-funding.ts` |
-| CLI client (`/ethAddr`, `/senderInfo`, `/fundDepositAndReserve`) | `src/lib/signer-cli.ts` |
-| Webhook JWKS / signature keys | `src/lib/turnkey-webhook-jwks.ts` |
-| Event table | `turnkey_funding_events` in `src/db/schema.ts` |
+| Funder | Sends ETH to the signer address on Arbitrum One |
+| Turnkey | Detects finalized balance changes; delivers signed webhooks |
+| PymtHouse | Verifies, filters, records, and instructs funding |
+| Remote signer | Holds the ETH account; submits the TicketBroker transaction |
+| TicketBroker | On-chain deposit + reserve used for Livepeer payments |
 
 ---
 
-## Data flow diagram
+## Data flow
 
-System-context view of how deposit data moves from chain observation to
-TicketBroker credit. Edges are labeled with the data carried.
+How value and control signals move from a chain deposit to TicketBroker credit.
 
 ```mermaid
 flowchart LR
-  subgraph External
-    Funder[Funder wallet]
-    Arb[(Arbitrum One)]
-    TK[Turnkey balance service]
-  end
-
-  subgraph PymtHouse["PymtHouse (Vercel)"]
-    WH["POST /webhooks/turnkey-balance"]
-    Logic["turnkey-funding.ts"]
-    DB[(Neon<br/>turnkey_funding_events)]
-  end
-
-  subgraph Signer["Remote signer (Railway DMZ)"]
-    Apache[Apache /__signer_cli]
-    CLI[go-livepeer CLI]
-    EthClient[ETH account + RPC]
-  end
-
-  Broker[TicketBroker]
-
-  Funder -->|native ETH tx| Arb
-  Arb -->|balance finalized for msg.address| TK
-  TK -->|"signed webhook<br/>type, msg.*"| WH
-  WH --> Logic
-  Logic -->|GET /ethAddr| Apache
-  Logic -->|insert/claim by idempotencyKey| DB
-  Logic -->|GET /senderInfo| Apache
-  Logic -->|"POST /fundDepositAndReserve<br/>depositAmount, reserveAmount"| Apache
-  Apache --> CLI
-  CLI --> EthClient
-  EthClient -->|fundDepositAndReserve tx| Arb
-  Arb --> Broker
+  Funder[Funder] -->|ETH| Chain[(Arbitrum)]
+  Chain -->|balance finalized| Turnkey
+  Turnkey -->|signed deposit event| PymtHouse
+  PymtHouse -->|confirm signer address<br/>read reserve<br/>fund deposit+reserve| Signer[Remote signer]
+  PymtHouse -->|idempotency ledger| DB[(Database)]
+  Signer -->|on-chain funding tx| Chain
+  Chain --> Broker[TicketBroker]
 ```
 
-### Data objects on the critical path
+### Trust ideas (high level)
 
-| Stage | Data | Source of truth |
-| --- | --- | --- |
-| Chain deposit | `txHash`, destination `address`, `amount` (wei), `caip2` | Arbitrum / Turnkey `msg` |
-| Webhook auth | Signature headers + body + JWKS keys | Turnkey + PymtHouse key cache |
-| Signer identity check | Live CLI `GET /ethAddr` vs webhook `msg.address` | go-livepeer account, not env alone |
-| Funding decision | `fundWei = amountWei - gasBuffer` | Config + payload |
-| Idempotency claim | `idempotencyKey` → row `pending` / terminal status | Neon unique index |
-| Allocation | `depositWei`, `reserveWei` from current reserve + `RESERVE_AMOUNT` | CLI `senderInfo` + config |
-| On-chain credit | TicketBroker deposit / reserve | go-livepeer `CheckTx` |
-
-### Trust boundaries
-
-1. **Turnkey → PymtHouse:** Untrusted until `verifyTurnkeyWebhookSignature` succeeds
-   (replay window 5 minutes). Failed auth returns HTTP 401; no DB write, no CLI call.
-2. **PymtHouse → Signer CLI:** Authenticated with a short-lived admin-scope JWT
-   (unless `SIGNER_DMZ_FORWARD_JWT=false`). CLI is not a public funding API.
-3. **Address binding:** Before claiming, PymtHouse compares webhook `msg.address`
-   to the **live** remote-signer CLI eth account. A mismatch skips with
-   `wrong_address` so a shared webhook never funds the wrong signer process.
-4. **Idempotency:** Neon unique constraint on `idempotency_key` is the
-   single-flight gate for concurrent or retried deliveries of the same Turnkey event.
+1. **Authenticate the webhook** before any funding side effect.
+2. **Bind to the live signer account** — the deposit destination must match the
+   eth address the signer process reports, not only a configured env value.
+3. **Treat the CLI as privileged** — funding calls go through the protected
+   signer control plane (DMZ), not a public API.
+4. **Exactly-once intent** — each Turnkey event key is claimed once so retries
+   and duplicates do not double-fund.
 
 ---
 
 ## Transaction flow
 
-Happy-path sequence for one webhook delivery that funds TicketBroker. Branching
-outcomes (skip reasons, claim races, allocation split) live in the [decision
-trees](#decision-trees) below — not in this diagram.
+Happy path only. Branching lives in [Decision trees](#decision-trees).
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant TK as Turnkey
-  participant WH as turnkey-balance route
-  participant Logic as turnkey-funding.ts
-  participant CLI as Signer CLI
-  participant DB as Neon
-  participant Chain as Arbitrum / TicketBroker
+  participant Turnkey
+  participant PymtHouse
+  participant Signer as Remote signer
+  participant DB as Database
+  participant Chain as Arbitrum
 
-  TK->>WH: POST /webhooks/turnkey-balance (signed body)
-  WH->>WH: verifyTurnkeyWebhook + parse payload
-  WH->>Logic: shouldProcessTurnkeyDeposit
-  Logic->>CLI: GET /ethAddr
-  CLI-->>Logic: signer address
-  Logic-->>WH: action fund (fundWei, …)
-  WH->>DB: claimTurnkeyFundingEvent → pending
-  DB-->>WH: eventId
-  WH->>Logic: executeTurnkeyFunding(fundWei, eventId)
-  Logic->>CLI: GET /senderInfo
-  CLI-->>Logic: current reserve
-  Note over Logic: allocateDepositAndReserve (see decision tree)
-  Logic->>CLI: POST /fundDepositAndReserve
-  CLI->>Chain: fundDepositAndReserve tx
-  Chain-->>CLI: mined (CheckTx)
-  Logic->>DB: status = funded
-  WH-->>TK: 200 { status: funded, depositWei, reserveWei, … }
+  Turnkey->>PymtHouse: Deposit webhook (signed)
+  PymtHouse->>PymtHouse: Verify + accept event
+  PymtHouse->>Signer: Who is your eth account?
+  Signer-->>PymtHouse: Address
+  Note over PymtHouse: Filters + thresholds (decision tree)
+  PymtHouse->>DB: Claim event (idempotent)
+  PymtHouse->>Signer: Current TicketBroker reserve?
+  Signer-->>PymtHouse: Reserve balance
+  Note over PymtHouse: Split deposit vs reserve (decision tree)
+  PymtHouse->>Signer: Fund TicketBroker
+  Signer->>Chain: Funding transaction
+  Chain-->>Signer: Mined
+  PymtHouse->>DB: Mark funded
+  PymtHouse-->>Turnkey: Success
 ```
 
-Stage → decision gate (when the happy path may exit early):
-
-| Stage | Gate | Typical non-success |
-| --- | --- | --- |
-| Verify + parse | Signature / JSON | `401 error`, `ignored: invalid_json` |
-| `shouldProcessTurnkeyDeposit` | [Deposit filters](#decision-tree--shouldprocessturnkeydeposit) | `ignored: wrong_address`, … or `503` if CLI down |
-| `claimTurnkeyFundingEvent` | [Idempotency claim](#decision-tree--claimturnkeyfundingevent) | `ignored: already_funded`, `in_progress`, … |
-| `allocateDepositAndReserve` | [Reserve split](#decision-tree--deposit-vs-reserve-allocation) | (always returns a split; `senderInfo` miss → `500`) |
-| `fundDepositAndReserve` | On-chain / CLI error | `500` + DB `failed` |
+| Stage | What can go wrong |
+| --- | --- |
+| Verify | Reject unsigned / replayed / malformed events |
+| Filter | Wrong chain, asset, address, or amount too small → ignore |
+| Claim | Duplicate or in-flight event → ignore |
+| Fund | Signer or chain failure → record failure; no silent retry |
 
 ---
 
 ## Decision trees
 
-### Decision tree — `shouldProcessTurnkeyDeposit`
-
-Evaluated in order. First matching skip wins. Address check uses live CLI
-`GET /ethAddr` (case-insensitive hex compare).
+### Should we fund this deposit?
 
 ```mermaid
 flowchart TD
-  Start([payload + config]) --> T{type == balances:finalized?}
-  T -->|no| S1[skip: not_finalized]
-  T -->|yes| Op{msg.operation == deposit?}
-  Op -->|no| S2[skip: not_deposit]
-  Op -->|yes| Chain{msg.caip2 == TURNKEY_FUNDING_CAIP2?}
-  Chain -->|no| S3[skip: wrong_chain]
-  Chain -->|yes| Eth{native ETH asset?}
-  Eth -->|no| S4[skip: not_native_eth]
-  Eth -->|yes| Fields{address, idempotencyKey, txHash, amount present?}
-  Fields -->|no| S5[skip: missing_fields]
-  Fields -->|yes| Amt{amountWei parseable and > 0?}
-  Amt -->|no| S6[skip: invalid_amount / non_positive_amount]
-  Amt -->|yes| CLI[GET /ethAddr]
-  CLI --> AddrAvail{signerAddress available?}
-  AddrAvail -->|no| Err503[throw → HTTP 503]
-  AddrAvail -->|yes| Match{msg.address == CLI ethAddr?}
-  Match -->|no| S7[skip: wrong_address]
-  Match -->|yes| Buf{fundWei = amount - gasBuffer > 0?}
-  Buf -->|no| S8[skip: below_gas_buffer]
-  Buf -->|yes| Min{fundWei >= minFundWei?}
-  Min -->|no| S9[skip: below_min_fund]
-  Min -->|yes| Fund([action: fund])
+  Start([Deposit event]) --> Auth{Authenticated?}
+  Auth -->|no| Reject[Reject]
+  Auth -->|yes| Kind{Finalized native ETH deposit<br/>on expected chain?}
+  Kind -->|no| Ignore[Ignore]
+  Kind -->|yes| Addr{Destination == live signer address?}
+  Addr -->|no| Ignore
+  Addr -->|unavailable| Unavailable[Unavailable — retry later]
+  Addr -->|yes| Size{Amount clears gas buffer + minimum?}
+  Size -->|no| Ignore
+  Size -->|yes| Fund([Proceed to claim + fund])
 ```
 
-### Decision tree — `claimTurnkeyFundingEvent`
+### Can we claim this event?
 
-Idempotency uses a unique index on `idempotency_key`. Insert-first; on conflict,
-inspect the existing row. Stale `pending` rows (≥ 10 minutes) may be reclaimed.
+Prevents double-funding when Turnkey retries or delivers companions.
 
 ```mermaid
 flowchart TD
-  Start([idempotencyKey + amounts]) --> Ins{INSERT pending OK?}
-  Ins -->|yes| Claim([action: fund, new eventId])
-  Ins -->|unique conflict| Load[SELECT existing by idempotencyKey]
-  Load --> St{existing.status?}
-  St -->|funded / skipped| Sk1[skip: already_funded / already_skipped]
-  St -->|failed| Sk2[skip: already_failed]
-  St -->|pending and fresh| Sk3[skip: in_progress]
-  St -->|pending and stale| Upd{conditional UPDATE reclaim?}
-  Upd -->|0 rows| Sk4[skip: claim_lost]
-  Upd -->|1 row| Reclaim([action: fund, existing eventId])
+  Start([Event key]) --> New{First time seeing key?}
+  New -->|yes| Claim([Claim — proceed])
+  New -->|no| State{Prior outcome?}
+  State -->|Already finished or failed| Stop[Ignore]
+  State -->|In progress recent| Stop
+  State -->|In progress stale| Reclaim([Reclaim — proceed])
 ```
 
-### Decision tree — deposit vs reserve allocation
+### How do we split deposit vs reserve?
 
-Pure split of `fundWei` given live `currentReserveWei` and `RESERVE_AMOUNT`.
-Invariant: `depositWei + reserveWei === fundWei`. The transaction flow then
-posts those amounts via CLI and marks the event funded.
+Incoming fundable amount fills TicketBroker **reserve** up to a configured
+target, then the remainder goes to **deposit**.
 
 ```mermaid
 flowchart TD
-  Start([fundWei, currentReserveWei, RESERVE_AMOUNT]) --> Full{currentReserve >= RESERVE_AMOUNT?}
-  Full -->|yes| AllDep([depositWei = fundWei<br/>reserveWei = 0])
-  Full -->|no| Split([reserveWei = min fundWei, shortfall<br/>depositWei = fundWei - reserveWei])
+  Start([Fundable amount]) --> Full{Reserve already at target?}
+  Full -->|yes| AllDep([100% → deposit])
+  Full -->|no| Split([Fill reserve shortfall first<br/>remainder → deposit])
 ```
 
 ---
 
-## Minimum deposit requirements
+## Operating parameters
 
-Funding uses two wei thresholds (see `src/lib/turnkey-funding.ts`):
+Defaults are sized for Arbitrum One. Override via Vercel env if needed.
 
-| Env var | Default (wei) | Default (ETH) | Purpose |
-| --- | --- | --- | --- |
-| `TICKET_FUNDING_GAS_BUFFER_WEI` | `100000000000000` | 0.0001 | Held back so the signer keeps ETH for the on-chain `fundDepositAndReserve` tx |
-| `TICKET_FUNDING_MIN_WEI` | `1000000000000000` | 0.001 | Minimum amount credited to TicketBroker after the buffer |
-| `RESERVE_AMOUNT` | `250000000000000000` | 0.25 | Target TicketBroker reserve balance. Incoming `fundWei` fills reserve until this amount; once reserve ≥ target, 100% goes to deposit |
-
-Computation:
-
-```
-fundWei = depositAmountWei - TICKET_FUNDING_GAS_BUFFER_WEI
-```
-
-A deposit is funded only when `fundWei > 0` and `fundWei >= TICKET_FUNDING_MIN_WEI`.
-
-**Minimum incoming deposit (defaults):**
-
-```
-TICKET_FUNDING_GAS_BUFFER_WEI + TICKET_FUNDING_MIN_WEI + 1 wei
-= 100000000000000 + 1000000000000000 + 1
-= 1100000000000001 wei  (~0.0011 ETH)
-```
-
-Practical recommendation: send **≥ 0.002 ETH** on Arbitrum One so small rounding
-or companion events do not land near the threshold.
-
-Example with defaults for a **0.01 ETH** deposit:
-
-- Deposit: `10000000000000000` wei (0.01 ETH)
-- Buffer: `100000000000000` wei (0.0001 ETH)
-- Funded to TicketBroker: `9900000000000000` wei (0.0099 ETH)
-
----
-
-## Deposit vs reserve allocation
-
-After computing `fundWei`, the webhook reads current TicketBroker reserve via
-`getSenderInfo` and splits funds using `RESERVE_AMOUNT` (wei, loaded at config
-startup):
-
-```
-reserveShortfall = max(0, RESERVE_AMOUNT - currentReserveWei)
-reserveWei       = min(fundWei, reserveShortfall)
-depositWei       = fundWei - reserveWei
-```
-
-- While reserve is below `RESERVE_AMOUNT`, incoming funds fill the shortfall
-  first; any remainder goes to deposit.
-- Once `currentReserveWei >= RESERVE_AMOUNT`, `reserveWei` is `0` and 100% of
-  `fundWei` goes to deposit.
-- Default `RESERVE_AMOUNT` is `0.25 ETH` (`250000000000000000` wei). Set `RESERVE_AMOUNT=0` for all-to-deposit behavior.
-
----
-
-## Environment variables
-
-Set on **Vercel** (the webhook handler). Vercel builds skip `db:migrate`; apply
-migrations to the Preview/Production Neon branch separately.
-
-```bash
-# Chain for incoming deposits (Arbitrum One mainnet)
-TURNKEY_FUNDING_CAIP2=eip155:42161
-
-# Optional overrides (wei strings)
-TICKET_FUNDING_GAS_BUFFER_WEI=100000000000000
-TICKET_FUNDING_MIN_WEI=1000000000000000
-RESERVE_AMOUNT=250000000000000000
-
-# Signer CLI (required for funding)
-SIGNER_CLI_URL=https://<railway-signer>/__signer_cli
-```
-
-Also required for webhook registration: `TURNKEY_ORG_ID`, `TURNKEY_API_PUBLIC_KEY`,
-`TURNKEY_API_PRIVATE_KEY`.
-
-Webhook signature verification also depends on Turnkey JWKS resolution in
-`src/lib/turnkey-webhook-jwks.ts` (see Turnkey webhook authentication guidance;
-message authentication for HTTP webhooks is in the same problem space as
-[RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) HTTP Message Signatures,
-though Turnkey’s concrete header scheme is vendor-specific).
-
----
-
-## Webhook response statuses
-
-| HTTP | JSON `status` | Meaning |
+| Knob | Default | Intent |
 | --- | --- | --- |
-| 200 | `funded` | Deposit claimed and `fundDepositAndReserve` succeeded |
-| 200 | `ignored` | Valid webhook, intentionally not funded (see `reason`) |
-| 401 | `error` | Signature verification failed |
-| 500 | `error` | Funding failed after claim (row marked `failed` in DB) |
-| 503 | `error` | Signer address unavailable (`getEthAddr` failed) |
+| Chain | Arbitrum One | Only fund deposits on the configured chain |
+| Gas buffer | ~0.0001 ETH | Leave ETH in the wallet to pay for the funding tx |
+| Minimum fund | ~0.001 ETH | Ignore dust after the buffer |
+| Reserve target | ~0.25 ETH | Prefer filling reserve before deposit |
 
-Common `ignored` reasons:
+**Practical tip:** send **≥ ~0.002 ETH** so companion/dust events near the
+threshold do not confuse operators. Turnkey may emit **multiple** events for one
+user transfer; a small “ignored” event does not mean the main deposit failed.
 
-| `reason` | Meaning |
+Required wiring: Turnkey org API credentials (webhook registration),
+`SIGNER_CLI_URL` to the signer control plane, and DB migrations applied on the
+target Neon branch.
+
+---
+
+## Outcomes operators see
+
+| Result | Meaning |
 | --- | --- |
-| `below_gas_buffer` | `depositAmount <= TICKET_FUNDING_GAS_BUFFER_WEI` |
-| `below_min_fund` | After buffer, amount is below `TICKET_FUNDING_MIN_WEI` |
-| `wrong_address` | Deposit destination ≠ live CLI `/ethAddr` |
-| `not_deposit` | Outgoing / withdraw balance event |
-| `wrong_chain` | `msg.caip2` ≠ `TURNKEY_FUNDING_CAIP2` |
-| `not_native_eth` | Asset is not ETH / slip44:60 |
-| `already_funded` / `already_skipped` / `already_failed` | Idempotency key already terminal |
-| `in_progress` | Fresh `pending` claim held by another delivery |
-| `claim_lost` | Stale reclaim lost the race |
-
-Successful `funded` responses also include `fundedWei`, `depositWei`, and
-`reserveWei` (decimal wei strings).
+| Funded | Event claimed; TicketBroker updated on-chain |
+| Ignored | Valid webhook, intentionally no funding (filter, dust, duplicate, …) |
+| Unauthorized | Signature / auth failed |
+| Error | Funding attempted and failed, or signer temporarily unreachable |
 
 ---
 
-## Multiple webhooks per deposit
+## How to verify
 
-Turnkey may deliver **several** `balances:finalized` events for one user-facing
-transfer: the main deposit, internal movements, dust, or unrelated tiny incoming
-transfers to the same address. Each delivery has its own `msg.idempotencyKey` and
-`msg.asset.amount`.
-
-A `skipped: below_gas_buffer` log does **not** mean a larger deposit failed — it
-often means a separate small event was correctly ignored. Check Vercel logs for a
-later `decision: fund` / `funded successfully` line and confirm
-`turnkey_funding_events.status = 'funded'`.
+1. Webhook registered; PymtHouse can reach the signer CLI.
+2. Send a deposit ≥ ~0.002 ETH to the **signer** address on Arbitrum One.
+3. Logs show a successful fund; ledger row is `funded`.
+4. Explorer shows the signer’s TicketBroker funding tx; signer UI deposit/reserve increased.
 
 ---
 
-## Example: happy-path payload sketch
+## Design decisions
 
-Illustrative shape only — field set follows Turnkey balance webhooks:
-
-```json
-{
-  "type": "balances:finalized",
-  "organizationId": "…",
-  "msg": {
-    "operation": "deposit",
-    "caip2": "eip155:42161",
-    "txHash": "0x…",
-    "address": "0x6CAE3C7aa09Adf84C0eD1C3A53465364cEcb7260",
-    "idempotencyKey": "…",
-    "asset": {
-      "symbol": "ETH",
-      "caip19": "eip155:42161/slip44:60",
-      "amount": "10000000000000000"
-    }
-  }
-}
-```
-
-If CLI `/ethAddr` returns the same address and thresholds pass, the handler claims
-the key, allocates deposit/reserve, and returns roughly:
-
-```json
-{
-  "status": "funded",
-  "eventId": "…",
-  "fundedWei": "9900000000000000",
-  "depositWei": "…",
-  "reserveWei": "…"
-}
-```
-
----
-
-## Verification checklist
-
-1. Deploy pymthouse with `SIGNER_CLI_URL` pointing at `/__signer_cli` on Railway.
-2. Run `npm run db:migrate` against the target Neon branch (Preview vs production
-   use different branches — see `scripts/db-migrate.ts` journal notes).
-3. Register the webhook: `npm run turnkey:create-webhook`.
-4. Send **≥ 0.002 ETH** to the signer address on Arbitrum One.
-5. Vercel logs: `[turnkey-balance] funded successfully`.
-6. DB: `SELECT * FROM turnkey_funding_events ORDER BY created_at DESC LIMIT 5;`
-7. On-chain: Arbiscan shows `fundDepositAndReserve` from the signer to TicketBroker.
-8. Signer admin: deposit increased via cli-status / signer dashboard.
-
----
-
-## Design decisions and trade-offs
-
-| Decision | Rationale | Trade-off |
+| Choice | Why | Cost |
 | --- | --- | --- |
-| Live CLI `/ethAddr` for address binding | Ensures the process that will sign `fundDepositAndReserve` owns the deposit destination; avoids funding from a stale `SIGNER_ETH_ADDR` / DB `ethAcctAddr` | Webhook fails open to 503 if CLI is down, even for deposits that would otherwise be ignored |
-| Skip (`200 ignored`) vs hard fail for filter mismatches | Turnkey retries on non-2xx; intentional skips must acknowledge | Operators must read `reason` / logs; silent ignores can look like “webhook broken” |
-| Insert-first idempotency with unique key | Cheap single-flight without distributed locks | Stale `pending` needs a reclaim window (10 min); failed rows are not auto-retried |
-| Gas buffer kept in the wallet | On-chain funding tx needs ETH for gas after credit | Dust and near-threshold deposits are skipped (`below_gas_buffer` / `below_min_fund`) |
-| Reserve-first allocation via live `senderInfo` | Keeps TicketBroker reserve at a configured floor for payment reliability | Allocation can race if two claims execute concurrently on different keys; each call re-reads reserve |
-| Separate from identity webhook | Deposit automation must not depend on end-user JWT auth | Two webhook URLs / mental models to operate |
-| `maxDuration = 300` on the route | CLI `fundDepositAndReserve` blocks until mined | Long-running serverless invocations; cost and timeout risk under RPC congestion |
+| Live signer address check | Avoid funding the wrong process if config drifts | Funding path depends on signer availability |
+| Ignore (ack) bad/small events | Stops Turnkey retry storms | Operators must read ignore reasons |
+| Idempotent claim ledger | Safe under retries without distributed locks | Stuck/failed claims need ops attention |
+| Keep a gas buffer in-wallet | Funding tx must still pay gas | Tiny deposits are skipped |
+| Reserve-first split | Payment reliability floor | Concurrent large deposits can race on reserve reads |
+| Separate from identity webhook | Money movement ≠ user auth | Two webhook surfaces to operate |
 
 ---
 
-## Implementation tasks
+## Follow-ups
 
-Use this checklist for hardening or extending the deposit webhook path:
-
-- [ ] Log both webhook `msg.address` and CLI `/ethAddr` on `wrong_address` (and on successful verify) for operator debugging.
-- [ ] Optionally cross-check live CLI address against configured `SIGNER_ETH_ADDR` / DB `ethAcctAddr` and surface config drift as a distinct skip or error reason.
-- [ ] Add structured metrics (count by `reason`, fund latency, claim reclaim rate) for Vercel/observability dashboards.
-- [ ] Document and alert on `already_failed` / stale `pending` so operators know when manual reclaim or CLI repair is required.
-- [ ] Consider safe retry policy for `failed` rows (manual admin endpoint or Turnkey redelivery) without double-funding.
-- [ ] Keep unit coverage in `src/lib/turnkey-funding.test.ts` aligned with every skip reason in the decision tree above.
-- [ ] If multi-signer / multi-wallet deployments appear, partition webhook registration or routing by address instead of a single shared `SIGNER_CLI_URL`.
-- [ ] Phase-2 MoonPay / per-user deposit wallets: extend filters to registered deposit addresses and attribution — see [moonpay-onramp-demo.md](./moonpay-onramp-demo.md).
+- [ ] Richer ops logging when address binding fails (expected vs live address).
+- [ ] Metrics by ignore reason and fund latency.
+- [ ] Alerting / runbook for failed or stuck claims.
+- [ ] Safe manual retry for failed funds without double-credit.
+- [ ] Multi-signer routing if more than one funded wallet is required.
+- [ ] Per-user deposit wallets (MoonPay phase 2) — see [moonpay-onramp-demo.md](./moonpay-onramp-demo.md).

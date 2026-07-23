@@ -13,7 +13,7 @@ legal / compliance / security documentation set.
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Operators | High-level deploy overview |
 | [vercel-deployment.md](./vercel-deployment.md) | Operators | Vercel app, env vars, CI secrets |
 | [signer-deployment-options.md](./signer-deployment-options.md) | Operators | Remote signer hosts + Apache JWT DMZ |
-| [turnkey-ticket-funding.md](./turnkey-ticket-funding.md) | Operators / security | Turnkey deposit webhook → TicketBroker (DFD + decision flows) |
+| [turnkey-ticket-funding.md](./turnkey-ticket-funding.md) | Operators / security | Turnkey deposit → TicketBroker (architecture + decision trees) |
 | [builder-api.md](./builder-api.md) | Integrators | Builder / Billing / OIDC API surface |
 | [moonpay-onramp-demo.md](./moonpay-onramp-demo.md) | Operators | Fiat on-ramp demo (phase-1) |
 | [openmeter-railway.md](./openmeter-railway.md) | Operators | OpenMeter / Konnect on Railway |
