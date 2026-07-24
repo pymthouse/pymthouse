@@ -9,6 +9,8 @@ interface Props {
   domains: { id: string; domain: string }[];
   onDomainsChange: (domains: { id: string; domain: string }[]) => void;
   readOnly?: boolean;
+  /** When true, the last redirect URI cannot be removed (confidential web clients). */
+  requireAtLeastOne?: boolean;
 }
 
 async function parseDomainError(res: Response): Promise<string> {
@@ -31,6 +33,7 @@ export default function AuthorizationCodeRedirectBlock({
   domains,
   onDomainsChange,
   readOnly = false,
+  requireAtLeastOne = false,
 }: Readonly<Props>) {
   const [newUri, setNewUri] = useState("");
   const [newDomain, setNewDomain] = useState("");
@@ -126,6 +129,7 @@ export default function AuthorizationCodeRedirectBlock({
 
   const removeRedirectUri = async (uri: string) => {
     if (readOnly) return;
+    if (requireAtLeastOne && redirectUris.length <= 1) return;
     const previous = redirectUris;
     const next = redirectUris.filter((u) => u !== uri);
     onRedirectUrisChange(next);
@@ -225,7 +229,11 @@ export default function AuthorizationCodeRedirectBlock({
                 <button
                   type="button"
                   onClick={() => void removeRedirectUri(uri)}
-                  disabled={readOnly || redirectSaving}
+                  disabled={
+                    readOnly ||
+                    redirectSaving ||
+                    (requireAtLeastOne && redirectUris.length <= 1)
+                  }
                   className="text-zinc-500 hover:text-red-400 ml-2 shrink-0 disabled:opacity-40"
                   aria-label={`Remove ${uri}`}
                 >

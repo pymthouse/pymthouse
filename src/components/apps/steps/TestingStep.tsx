@@ -43,6 +43,15 @@ interface Props {
   backendHelper: { clientId: string; hasSecret: boolean } | null;
   /** App profile → Confidential M2M backend (may be false while M2M still exists until save). */
   backendDeviceHelper: boolean;
+  /** Confidential web RP sibling; null until provisioned. */
+  webHelper: {
+    clientId: string;
+    hasSecret: boolean;
+    redirectUris: string[];
+  } | null;
+  /** App profile → Confidential web RP. */
+  confidentialWebHelper: boolean;
+  confidentialWebRedirectUris: string[];
   initiateLoginUri: string;
   deviceThirdPartyInitiateLogin: boolean;
   domains: { id: string; domain: string }[];
@@ -50,6 +59,7 @@ interface Props {
   onDomainsChange: (domains: { id: string; domain: string }[]) => void;
   onSecretGenerated: () => void;
   onBackendSecretGenerated?: () => void;
+  onWebSecretGenerated?: () => void;
   ownerExternalUserId?: string | null;
   readOnly?: boolean;
   /** When true, the redirect URI / domain editor is omitted (managed from Credentials & URLs tab). */
@@ -440,7 +450,7 @@ function getTokenTestActionLabel(
 function getCredentialsIntroText(isM2MOnly: boolean, hideAuthCodeFlowSection: boolean): string {
   if (isM2MOnly) return "Generate your client secret, then test your M2M token request.";
   if (hideAuthCodeFlowSection) {
-    return "Generate and rotate credentials, then test token exchange.";
+    return "Generate and rotate credentials for confidential siblings, then test token exchange.";
   }
   return "Configure redirect URLs, generate and rotate credentials, try a live authorization request, and copy reference endpoints.";
 }
@@ -1550,6 +1560,9 @@ export default function TestingStep({
   hasSecret,
   backendHelper,
   backendDeviceHelper,
+  webHelper,
+  confidentialWebHelper,
+  confidentialWebRedirectUris,
   initiateLoginUri,
   deviceThirdPartyInitiateLogin,
   domains,
@@ -1557,6 +1570,7 @@ export default function TestingStep({
   onDomainsChange,
   onSecretGenerated,
   onBackendSecretGenerated,
+  onWebSecretGenerated,
   ownerExternalUserId = null,
   readOnly = false,
   hideRedirectUriEditor = false,
@@ -1564,10 +1578,13 @@ export default function TestingStep({
 }: Readonly<Props>) {
   const [secret, setSecret] = useState<string | null>(null);
   const [backendSecret, setBackendSecret] = useState<string | null>(null);
+  const [webSecret, setWebSecret] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generatingBackend, setGeneratingBackend] = useState(false);
+  const [generatingWeb, setGeneratingWeb] = useState(false);
   const [secretFetchError, setSecretFetchError] = useState<string | null>(null);
   const [backendSecretFetchError, setBackendSecretFetchError] = useState<string | null>(null);
+  const [webSecretFetchError, setWebSecretFetchError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [authTestTab, setAuthTestTab] = useState<"remote" | "admin">("remote");
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -1580,13 +1597,14 @@ export default function TestingStep({
   const hasAuthCodeFlow = effectiveGrantTypes.includes(AUTHORIZATION_CODE_GRANT);
   // The primary client may only hold a secret when it is confidential. A public
   // client (token_endpoint_auth_method === "none") never surfaces a secret or
-  // rotate control, regardless of its grant types — confidential credentials live
-  // exclusively on the m2m_ backend helper.
-  // When an m2m_ backend helper exists, app_ is always public regardless of stale DB auth.
+  // rotate control — confidential credentials live on m2m_ / web_ siblings.
   const primaryIsConfidential =
-    backendHelper == null && tokenEndpointAuthMethod !== "none";
+    backendHelper == null &&
+    webHelper == null &&
+    tokenEndpointAuthMethod !== "none";
   const isM2MOnly =
     backendHelper == null &&
+    webHelper == null &&
     primaryIsConfidential &&
     grantTypes.includes("client_credentials") &&
     !hasAuthCodeFlow;
@@ -1624,12 +1642,19 @@ export default function TestingStep({
     }
   }, [backendDeviceHelper]);
 
+  useEffect(() => {
+    if (!confidentialWebHelper) {
+      setWebSecret(null);
+      setWebSecretFetchError(null);
+    }
+  }, [confidentialWebHelper]);
+
   const generateSecret = useCallback(async () => {
     if (readOnly || !appId) return;
     setGenerating(true);
     setSecretFetchError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/credentials`, {
+      const res = await fetch(`/api/v1/apps/${appId}/credentials?target=primary`, {
         method: "POST",
       });
       if (!res.ok) {
@@ -1653,7 +1678,7 @@ export default function TestingStep({
     setGeneratingBackend(true);
     setBackendSecretFetchError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/credentials`, {
+      const res = await fetch(`/api/v1/apps/${appId}/credentials?target=m2m`, {
         method: "POST",
       });
       if (!res.ok) {
@@ -1671,6 +1696,50 @@ export default function TestingStep({
       setGeneratingBackend(false);
     }
   }, [appId, backendDeviceHelper, onBackendSecretGenerated, readOnly]);
+
+  const generateWebSecret = useCallback(async () => {
+    if (readOnly || !appId || !confidentialWebHelper) return;
+    setGeneratingWeb(true);
+    setWebSecretFetchError(null);
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/credentials?target=web`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        setWebSecretFetchError(await parseCredentialsError(res));
+        return;
+      }
+      const data = (await res.json()) as { clientSecret?: string };
+      setWebSecret(data.clientSecret ?? null);
+      onWebSecretGenerated?.();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not reach the server. Check your connection and try again.";
+      setWebSecretFetchError(message);
+    } finally {
+      setGeneratingWeb(false);
+    }
+  }, [appId, confidentialWebHelper, onWebSecretGenerated, readOnly]);
+
+  const persistWebRedirectUris = useCallback(
+    async (nextUris: string[]) => {
+      if (readOnly || !appId) return;
+      onChange({ confidentialWebRedirectUris: nextUris });
+      try {
+        await fetch(`/api/v1/apps/${appId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confidentialWebHelper: true,
+            confidentialWebRedirectUris: nextUris,
+          }),
+        });
+      } catch {
+        /* surface via next load */
+      }
+    },
+    [appId, onChange, readOnly],
+  );
 
   const copyToClipboard = useCallback(
     async (text: string, label: string) => {
@@ -1822,7 +1891,10 @@ export default function TestingStep({
               Public / SDK client ID
             </div>
             <p className="text-xs text-zinc-500 mb-2">
-              Use this in SDKs, CLIs, and the device authorization flow. It stays public (no secret).
+              Use this in SDKs, CLIs, and the device authorization flow. It stays public
+              (no secret). Portal SSO needs the confidential{" "}
+              <code className="font-mono text-zinc-400">web_</code> sibling; Builder APIs
+              need the <code className="font-mono text-zinc-400">m2m_</code> sibling.
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
@@ -1930,6 +2002,105 @@ export default function TestingStep({
           there to manage M2M credentials on this tab.
         </p>
       ) : null}
+
+      {webHelper ? (
+        <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
+          <h3 className="text-sm font-semibold text-violet-200/90">
+            Confidential web RP
+          </h3>
+          <p className="text-xs text-zinc-500">
+            Use this <code className="font-mono text-zinc-400">web_</code> client ID +
+            secret in external portal SSO (e.g. Kong Dev Portal User authentication). Not
+            for Builder M2M.
+          </p>
+          <div>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-violet-300 text-sm font-mono">
+                {webHelper.clientId}
+              </code>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(webHelper.clientId, "webClientId")}
+                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+              >
+                {copied === "webClientId" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">
+              Redirect URIs
+            </div>
+            <AuthorizationCodeRedirectBlock
+              appId={null}
+              redirectUris={confidentialWebRedirectUris}
+              onRedirectUrisChange={(uris) => void persistWebRedirectUris(uris)}
+              domains={domains}
+              onDomainsChange={onDomainsChange}
+              readOnly={readOnly}
+              requireAtLeastOne={confidentialWebRedirectUris.length > 0}
+            />
+          </div>
+          <div>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
+            {webSecret ? (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
+                    {webSecret}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(webSecret, "webSecret")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
+                  >
+                    {copied === "webSecret" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-xs text-amber-400/80">
+                  Store this secret securely. It will not be shown again.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 flex-wrap">
+                {webHelper.hasSecret && (
+                  <p className="text-sm text-zinc-500">
+                    A secret exists. Generate a new one to rotate.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void generateWebSecret()}
+                  disabled={readOnly || generatingWeb || !appId}
+                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                >
+                  {generatingWeb
+                    ? "Generating..."
+                    : webHelper.hasSecret
+                      ? "Rotate Secret"
+                      : "Generate Secret"}
+                </button>
+              </div>
+            )}
+            {webSecretFetchError && (
+              <p className="text-xs text-red-400 mt-2">{webSecretFetchError}</p>
+            )}
+          </div>
+        </div>
+      ) : confidentialWebHelper ? (
+        <p className="text-sm text-zinc-500 mt-4">
+          <strong className="text-zinc-400">Confidential web RP</strong> is enabled but not
+          yet provisioned. Save the app to create the{" "}
+          <code className="font-mono text-zinc-400">web_</code> sibling, then return here.
+        </p>
+      ) : (
+        <p className="text-sm text-zinc-500 mt-4">
+          Confidential web RP is off on{" "}
+          <strong className="text-zinc-400">App profile</strong>. Turn it on there for
+          portal SSO (Kong Dev Portal, etc.).
+        </p>
+      )}
 
       {showAuthTestSection ? (
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">

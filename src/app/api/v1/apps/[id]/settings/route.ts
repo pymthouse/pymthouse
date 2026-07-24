@@ -84,6 +84,20 @@ export async function PUT(
     );
   }
   if (body.tokenEndpointAuthMethod !== undefined) {
+    // Primary stays public when confidential siblings exist.
+    if (
+      (app.m2mOidcClientId || app.webOidcClientId) &&
+      body.tokenEndpointAuthMethod !== "none"
+    ) {
+      return NextResponse.json(
+        {
+          error: "public_client_no_secret",
+          error_description:
+            "The public app_ client must remain public while M2M or confidential web siblings exist.",
+        },
+        { status: 400 },
+      );
+    }
     clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
   }
 

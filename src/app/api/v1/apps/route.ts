@@ -6,6 +6,7 @@ import { developerApps, oidcClients, providerAdmins } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import {
   createAppClient,
+  ensureConfidentialWebClient,
   ensureM2mBackendClient,
   updateClientConfig,
 } from "@/lib/oidc/clients";
@@ -228,6 +229,19 @@ export async function POST(request: NextRequest) {
     await ensureM2mBackendClient({
       appInternalId: appId,
       appDisplayName: name.trim(),
+    });
+  }
+
+  if (body.confidentialWebHelper === true) {
+    const webRedirects = Array.isArray(body.confidentialWebRedirectUris)
+      ? body.confidentialWebRedirectUris.filter(
+          (u: unknown): u is string => typeof u === "string" && u.trim().length > 0,
+        ).map((u: string) => u.trim())
+      : [];
+    await ensureConfidentialWebClient({
+      appInternalId: appId,
+      appDisplayName: name.trim(),
+      redirectUris: webRedirects,
     });
   }
 

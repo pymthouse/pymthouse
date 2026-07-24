@@ -265,6 +265,7 @@ async function buildCorsSnapshot(): Promise<{
         or(
           eq(developerApps.oidcClientId, oc.id),
           eq(developerApps.m2mOidcClientId, oc.id),
+          eq(developerApps.webOidcClientId, oc.id),
         ),
       )
       .limit(1);
