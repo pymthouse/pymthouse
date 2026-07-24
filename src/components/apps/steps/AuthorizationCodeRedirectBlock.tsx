@@ -244,7 +244,8 @@ export default function AuthorizationCodeRedirectBlock({
           <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
           <p className="text-xs text-zinc-500 mt-1">
             Allowed origins for CORS and request validation. Redirect URIs above should match these
-            domains.
+            domains. Browser clients (including Kong Dev Portal Try It) must use an origin listed
+            here for app-scoped Builder API calls.
           </p>
         </div>
         <div className="flex gap-2">
