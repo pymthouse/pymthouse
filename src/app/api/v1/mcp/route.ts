@@ -9,9 +9,9 @@ export const dynamic = "force-dynamic";
 
 const HOSTED_TOOLS = [
   "livepeer_mcp_info",
-  "list_network_capabilities",
+  "list_capabilities",
   "list_discovery_profiles",
-  "query_network_orchestrators",
+  "query_orchestrators",
   "get_discovery_freshness",
   "create_signer_session",
 ] as const;
@@ -31,7 +31,7 @@ function metadataResponse(request: NextRequest) {
     name: "Livepeer MCP",
     mode: "hosted",
     description:
-      "User-scoped Livepeer MCP for the PymtHouse platform. Authenticate as developer, end-user, or M2M. Network tools follow each app's discovery settings. For live-runner/BYOC/LV2V execution, use the local client in livepeer-python-gateway/examples/comfypeer-mcp.",
+      "User-scoped Livepeer MCP for the PymtHouse platform. Authenticate as developer, end-user, or M2M. Network tools follow each app's discovery settings. For run_capability / start_stream / call_live_runner, use the local client in livepeer-python-gateway/examples/comfypeer-mcp.",
     mcp_url: mcpUrl,
     issuer_url: issuerUrl,
     discovery_service_url: readDiscoveryServiceUrl(),
@@ -46,11 +46,11 @@ function metadataResponse(request: NextRequest) {
     local_client: {
       path: "livepeer-python-gateway/examples/comfypeer-mcp",
       tools: [
-        "live_runner_call_tool",
-        "byoc_submit_tool",
-        "lv2v_start_tool",
+        "list_capabilities",
+        "run_capability",
+        "start_stream",
+        "call_live_runner",
         "create_signer_session",
-        "list_network_capabilities",
       ],
     },
     cursor_snippet: {

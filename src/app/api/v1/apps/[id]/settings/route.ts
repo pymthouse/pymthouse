@@ -4,6 +4,7 @@ import { oidcClients, appAllowedDomains } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { updateClientConfig } from "@/lib/oidc/clients";
 import { resetProvider } from "@/lib/oidc/provider";
+import { invalidateAppCorsCache } from "@/lib/api-cors";
 import { normalizeDomainWhitelist } from "@/lib/domain-whitelist";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -170,6 +171,7 @@ export async function PUT(
 
   // Reset provider so in-memory client cache picks up changes
   resetProvider();
+  invalidateAppCorsCache();
 
   return NextResponse.json({ success: true });
 }

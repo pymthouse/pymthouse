@@ -26,7 +26,7 @@ function textResult(data: unknown) {
  * Hosted Livepeer MCP: user-scoped platform MCP on PymtHouse.
  * Auth is the caller's developer/end-user/M2M credential (no fixed app M2M behind MCP).
  * Network tools are scoped by the app's network discovery / manifest settings.
- * Live-runner / BYOC / LV2V execution stays in the local
+ * Execution (`run_capability` / `start_stream` / `call_live_runner`) stays in the local
  * livepeer-python-gateway examples/comfypeer-mcp client.
  */
 export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServer {
@@ -37,7 +37,8 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
       "Hosted Livepeer MCP on PymtHouse. Authenticate as developer, end-user, or M2M " +
       "(Authorization: Bearer <API key|JWT>, or Basic M2M). " +
       "Tools cover app network capabilities and create_signer_session. " +
-      "For live_runner / BYOC / LV2V execution, run livepeer-python-gateway/examples/comfypeer-mcp.",
+      "For run_capability / start_stream / call_live_runner, use " +
+      "livepeer-python-gateway/examples/comfypeer-mcp.",
   });
 
   server.registerTool(
@@ -62,13 +63,13 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
         developer_app_id: principal.developerAppId,
         discovery_service_url: readDiscoveryServiceUrl(),
         local_execution:
-          "livepeer-python-gateway/examples/comfypeer-mcp (full live-runner/BYOC/LV2V tools)",
+          "livepeer-python-gateway/examples/comfypeer-mcp (run_capability / start_stream / call_live_runner)",
       });
     },
   );
 
   server.registerTool(
-    "list_network_capabilities",
+    "list_capabilities",
     {
       description:
         "List network capabilities allowed for this app (network default plan / discovery exclusions). " +
@@ -114,7 +115,7 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
   );
 
   server.registerTool(
-    "query_network_orchestrators",
+    "query_orchestrators",
     {
       description:
         "Query ranked orchestrators for capability names. Requests are filtered to this app's network allowlist.",
