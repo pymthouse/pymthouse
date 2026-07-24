@@ -6,7 +6,7 @@ import { test } from "@/test-utils/db-guard";
 import { cleanupTestApp, createAppUser, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import { db } from "@/db/index";
 import { apiKeys } from "@/db/schema";
-import { resolveActiveAppApiKey } from "@/lib/app-api-keys";
+import { resolveActiveAppApiKey, resolveActiveAppApiKeyByBearer } from "@/lib/app-api-keys";
 import { hashToken } from "@/lib/token-hash";
 
 test("resolveActiveAppApiKey accepts per-app-user keys", async (t) => {
@@ -165,4 +165,34 @@ test("resolveActiveAppApiKey accepts composite app_*_* subject tokens", async (t
     app.clientId,
   );
   assert.equal(mismatched, null);
+});
+
+test("resolveActiveAppApiKeyByBearer resolves composite and bare keys", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const appUser = await createAppUser({
+    clientId: app.clientId,
+    externalUserId: `user-${randomUUID()}`,
+  });
+  const bare = `pmth_${"f".repeat(64)}`;
+  const composite = `${app.clientId}_${bare}`;
+
+  await db.insert(apiKeys).values({
+    id: `key-${randomUUID()}`,
+    keyHash: hashToken(bare),
+    clientId: app.clientId,
+    appUserId: appUser.id,
+    label: "bearer resolve",
+    status: "active",
+  });
+
+  const fromComposite = await resolveActiveAppApiKeyByBearer(composite);
+  assert.ok(fromComposite);
+  assert.equal(fromComposite?.publicClientId, app.clientId);
+  assert.equal(fromComposite?.externalUserId, appUser.externalUserId);
+
+  const fromBare = await resolveActiveAppApiKeyByBearer(bare);
+  assert.ok(fromBare);
+  assert.equal(fromBare?.developerAppId, fromComposite?.developerAppId);
 });

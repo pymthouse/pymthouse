@@ -161,6 +161,78 @@ export async function resolveActiveAppApiKey(
   };
 }
 
+/**
+ * Resolve an API key Bearer without a caller-supplied public client id.
+ * Composite `app_*_*` keys carry the client id; bare keys are looked up by hash.
+ */
+export async function resolveActiveAppApiKeyByBearer(
+  bearerToken: string,
+): Promise<ResolvedAppApiKey | null> {
+  const trimmed = bearerToken.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    return resolveActiveAppApiKey(trimmed, composite.publicClientId);
+  }
+
+  const token = rehydrateStoredApiKey(trimmed);
+  if (!token) {
+    return null;
+  }
+
+  const keyHash = hashToken(token);
+  const keyRows = await db
+    .select({
+      id: apiKeys.id,
+      clientId: apiKeys.clientId,
+      appUserId: apiKeys.appUserId,
+      label: apiKeys.label,
+      status: apiKeys.status,
+    })
+    .from(apiKeys)
+    .where(eq(apiKeys.keyHash, keyHash))
+    .limit(1);
+  const row = keyRows[0];
+  if (row?.status !== "active" || !row?.appUserId) {
+    return null;
+  }
+
+  const bindingRows = await db
+    .select({
+      appUserId: appUsers.id,
+      externalUserId: appUsers.externalUserId,
+      developerAppId: developerApps.id,
+      publicClientId: oidcClients.clientId,
+    })
+    .from(appUsers)
+    .innerJoin(developerApps, eq(appUsers.clientId, developerApps.id))
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(
+      and(
+        eq(appUsers.id, row.appUserId),
+        eq(developerApps.id, row.clientId),
+        eq(appUsers.status, "active"),
+      ),
+    )
+    .limit(1);
+  const binding = bindingRows[0];
+  if (!binding) {
+    return null;
+  }
+
+  return {
+    apiKeyId: row.id,
+    developerAppId: binding.developerAppId,
+    publicClientId: binding.publicClientId,
+    appUserId: binding.appUserId,
+    externalUserId: binding.externalUserId,
+    label: row.label,
+  };
+}
+
 export async function listAppUserApiKeys(input: {
   developerAppId: string;
   appUserId: string;
