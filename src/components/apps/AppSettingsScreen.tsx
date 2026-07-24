@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep, {
+  API_REFERENCE_URL,
   type CredentialsClientTab,
 } from "./steps/TestingStep";
 import PlansTab from "./PlansTab";
@@ -148,19 +149,25 @@ export default function AppSettingsScreen({
     [pathname, router, searchParams],
   );
 
+  const credentialsTabRefs = useRef<
+    Partial<Record<CredentialsClientTab, HTMLButtonElement | null>>
+  >({});
+
   const selectCredentialsClient = useCallback(
     (client: CredentialsClientTab, updateUrl = true) => {
       setCredentialsClient(client);
-      if (!updateUrl) return;
-      const nextParams = new URLSearchParams(searchParams.toString());
-      nextParams.set("tab", "credentials");
-      if (client === "public") {
-        nextParams.delete("client");
-      } else {
-        nextParams.set("client", client);
+      if (updateUrl) {
+        const nextParams = new URLSearchParams(searchParams.toString());
+        nextParams.set("tab", "credentials");
+        if (client === "public") {
+          nextParams.delete("client");
+        } else {
+          nextParams.set("client", client);
+        }
+        const query = nextParams.toString();
+        router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
       }
-      const query = nextParams.toString();
-      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+      requestAnimationFrame(() => credentialsTabRefs.current[client]?.focus());
     },
     [pathname, router, searchParams],
   );
@@ -404,14 +411,71 @@ export default function AppSettingsScreen({
   const showWebCredentialsTab =
     Boolean(formData.confidentialWebHelper) || Boolean(appState.webHelper);
 
+  const credentialsClientTabs = useMemo(
+    () =>
+      (
+        [
+          {
+            id: "public" as const,
+            label: "Public / SDK",
+            hint: "app_",
+            show: true,
+          },
+          {
+            id: "m2m" as const,
+            label: "M2M / Builder",
+            hint: "m2m_",
+            show: showM2mCredentialsTab,
+          },
+          {
+            id: "web" as const,
+            label: "Web RP",
+            hint: "web_",
+            show: showWebCredentialsTab,
+          },
+        ] as const
+      ).filter((tab) => tab.show),
+    [showM2mCredentialsTab, showWebCredentialsTab],
+  );
+
+  const handleCredentialsClientTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, id: CredentialsClientTab) => {
+      const currentIndex = credentialsClientTabs.findIndex((tab) => tab.id === id);
+      if (currentIndex === -1) return;
+
+      let nextIndex: number | null = null;
+      if (event.key === "ArrowLeft") {
+        nextIndex =
+          (currentIndex - 1 + credentialsClientTabs.length) %
+          credentialsClientTabs.length;
+      } else if (event.key === "ArrowRight") {
+        nextIndex = (currentIndex + 1) % credentialsClientTabs.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = credentialsClientTabs.length - 1;
+      }
+
+      if (nextIndex === null) return;
+      event.preventDefault();
+      selectCredentialsClient(credentialsClientTabs[nextIndex].id);
+    },
+    [credentialsClientTabs, selectCredentialsClient],
+  );
+
   useEffect(() => {
     if (
       (credentialsClient === "m2m" && !showM2mCredentialsTab) ||
       (credentialsClient === "web" && !showWebCredentialsTab)
     ) {
-      setCredentialsClient("public");
+      selectCredentialsClient("public");
     }
-  }, [credentialsClient, showM2mCredentialsTab, showWebCredentialsTab]);
+  }, [
+    credentialsClient,
+    selectCredentialsClient,
+    showM2mCredentialsTab,
+    showWebCredentialsTab,
+  ]);
 
   return (
     <div className="max-w-3xl">
@@ -547,7 +611,7 @@ export default function AppSettingsScreen({
               </p>
             </div>
             <a
-              href="https://pymthouse.com/api/v1/docs"
+              href={API_REFERENCE_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
@@ -562,34 +626,7 @@ export default function AppSettingsScreen({
               role="tablist"
               aria-label="OIDC client credentials"
             >
-              {(
-                [
-                  {
-                    id: "public" as const,
-                    label: "Public / SDK",
-                    hint: "app_",
-                    show: true,
-                  },
-                  {
-                    id: "m2m" as const,
-                    label: "M2M / Builder",
-                    hint: "m2m_",
-                    show:
-                      Boolean(formData.backendDeviceHelper) ||
-                      Boolean(appState.backendHelper),
-                  },
-                  {
-                    id: "web" as const,
-                    label: "Web RP",
-                    hint: "web_",
-                    show:
-                      Boolean(formData.confidentialWebHelper) ||
-                      Boolean(appState.webHelper),
-                  },
-                ] as const
-              )
-                .filter((tab) => tab.show)
-                .map((tab) => {
+              {credentialsClientTabs.map((tab) => {
                   const selected = credentialsClient === tab.id;
                   return (
                     <button
@@ -597,9 +634,16 @@ export default function AppSettingsScreen({
                       type="button"
                       role="tab"
                       id={`credentials-client-tab-${tab.id}`}
+                      ref={(node) => {
+                        credentialsTabRefs.current[tab.id] = node;
+                      }}
                       aria-selected={selected}
                       aria-controls={`credentials-client-panel-${tab.id}`}
+                      tabIndex={selected ? 0 : -1}
                       onClick={() => selectCredentialsClient(tab.id)}
+                      onKeyDown={(event) =>
+                        handleCredentialsClientTabKeyDown(event, tab.id)
+                      }
                       className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
                         selected
                           ? "border-emerald-500 text-zinc-100 bg-zinc-900/80"

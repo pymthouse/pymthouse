@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -30,6 +31,8 @@ import { mintOwnerApiKey } from "../mint-owner-api-key";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 
 const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+
+export { API_REFERENCE_URL };
 
 export type CredentialsClientTab = "public" | "m2m" | "web";
 
@@ -1698,6 +1701,7 @@ export default function TestingStep({
   showPostLogoutRedirectUris = false,
 }: Readonly<Props>) {
   const [newPostLogoutUri, setNewPostLogoutUri] = useState("");
+  const postLogoutUriInputId = useId();
   const [secret, setSecret] = useState<string | null>(null);
   const [backendSecret, setBackendSecret] = useState<string | null>(null);
   const [webSecret, setWebSecret] = useState<string | null>(null);
@@ -1711,6 +1715,13 @@ export default function TestingStep({
   const [authTestTab, setAuthTestTab] = useState<"remote" | "admin">("remote");
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const addPostLogoutUri = () => {
+    const uri = newPostLogoutUri.trim();
+    if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
+    onPostLogoutRedirectUrisChange?.([...postLogoutRedirectUris, uri]);
+    setNewPostLogoutUri("");
+  };
 
   const effectiveGrantTypes = useMemo(
     () => syncPublicClientGrantTypes(grantTypes, redirectUris, clientId ?? ""),
@@ -2252,7 +2263,12 @@ export default function TestingStep({
             {showPostLogoutRedirectUris && onPostLogoutRedirectUrisChange ? (
               <div className="space-y-3 pt-2 border-t border-violet-500/15">
                 <div>
-                  <h4 className="text-xs font-semibold text-zinc-200">Post-logout redirects</h4>
+                  <label
+                    htmlFor={postLogoutUriInputId}
+                    className="block text-xs font-semibold text-zinc-200"
+                  >
+                    Post-logout redirects
+                  </label>
                   <p className="text-xs text-zinc-500 mt-1">
                     Where users go after sign-out. Saved with{" "}
                     <strong className="text-zinc-400">Save changes</strong>.
@@ -2260,17 +2276,14 @@ export default function TestingStep({
                 </div>
                 <div className="flex gap-2 mb-2">
                   <input
-                    id="postLogoutUriInput"
+                    id={postLogoutUriInputId}
                     type="text"
                     value={newPostLogoutUri}
                     onChange={(e) => setNewPostLogoutUri(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key !== "Enter") return;
                       e.preventDefault();
-                      const uri = newPostLogoutUri.trim();
-                      if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
-                      onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
-                      setNewPostLogoutUri("");
+                      addPostLogoutUri();
                     }}
                     placeholder="https://example.com/logout-complete"
                     disabled={readOnly}
@@ -2278,12 +2291,7 @@ export default function TestingStep({
                   />
                   <button
                     type="button"
-                    onClick={() => {
-                      const uri = newPostLogoutUri.trim();
-                      if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
-                      onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
-                      setNewPostLogoutUri("");
-                    }}
+                    onClick={addPostLogoutUri}
                     disabled={readOnly}
                     className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >

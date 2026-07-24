@@ -96,6 +96,7 @@ export default function DomainAllowlistBlock({
           onChange={(e) => setNewDomain(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void addDomain())}
           placeholder="example.com"
+          aria-label="Domain to allowlist"
           disabled={readOnly}
           className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
         />

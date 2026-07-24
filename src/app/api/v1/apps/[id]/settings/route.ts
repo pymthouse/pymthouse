@@ -175,25 +175,17 @@ export async function PUT(
   // Auto-populate domain whitelist from confidential web redirect / post-logout origins
   let webRedirectUris: string[] = [];
   let webPostLogout: string[] = [];
-  if (app.webOidcClientId) {
-    const webRows = await db
-      .select({
-        redirectUris: oidcClients.redirectUris,
-        postLogoutRedirectUris: oidcClients.postLogoutRedirectUris,
-      })
-      .from(oidcClients)
-      .where(eq(oidcClients.id, app.webOidcClientId))
-      .limit(1);
-    if (webRows[0]?.redirectUris) {
+  if (webSummary) {
+    if (webSummary.redirectUris) {
       try {
-        webRedirectUris = JSON.parse(webRows[0].redirectUris) as string[];
+        webRedirectUris = JSON.parse(webSummary.redirectUris) as string[];
       } catch {
         webRedirectUris = [];
       }
     }
-    if (webRows[0]?.postLogoutRedirectUris) {
+    if (webSummary.postLogoutRedirectUris) {
       try {
-        webPostLogout = JSON.parse(webRows[0].postLogoutRedirectUris) as string[];
+        webPostLogout = JSON.parse(webSummary.postLogoutRedirectUris) as string[];
       } catch {
         webPostLogout = [];
       }

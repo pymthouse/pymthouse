@@ -414,12 +414,7 @@ export async function demotePublicClientWhenM2mSiblingExists(
     nextGrants = nextGrants.filter((g) => g !== "client_credentials");
   }
 
-  let redirectUris: string[] = [];
-  try {
-    redirectUris = JSON.parse(pub.redirectUris ?? "[]") as string[];
-  } catch {
-    redirectUris = [];
-  }
+  let redirectUris = parseJsonStringArray(pub.redirectUris);
 
   const needsUpdate =
     redirectUris.length > 0 ||
@@ -805,21 +800,8 @@ export async function loadConfidentialWebOidcClientSummary(
     return null;
   }
 
-  let redirectUris: string[] = [];
-  try {
-    redirectUris = JSON.parse(web.redirectUris) as string[];
-  } catch {
-    redirectUris = [];
-  }
-
-  let postLogoutRedirectUris: string[] = [];
-  try {
-    postLogoutRedirectUris = web.postLogoutRedirectUris
-      ? (JSON.parse(web.postLogoutRedirectUris) as string[])
-      : [];
-  } catch {
-    postLogoutRedirectUris = [];
-  }
+  const redirectUris = parseJsonStringArray(web.redirectUris);
+  const postLogoutRedirectUris = parseJsonStringArray(web.postLogoutRedirectUris);
 
   return {
     clientId: web.clientId,

@@ -85,7 +85,10 @@ export default function AuthorizationCodeRedirectBlock({
     if (!appId) return;
     let normalizedOrigin: string;
     try {
-      const origin = new URL(uri).origin;
+      if (uri.includes("*")) return;
+      const parsed = new URL(uri);
+      if (parsed.hostname.includes("*")) return;
+      const origin = parsed.origin;
       if (origin === "null") return;
       normalizedOrigin = origin.toLowerCase();
     } catch {

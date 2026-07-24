@@ -24,12 +24,15 @@ const AUTHORIZATION_CODE = "authorization_code";
 type Db = PostgresJsDatabase<typeof schema>;
 type ClientRow = typeof schema.oidcClients.$inferSelect;
 
-function parseJsonArray(raw: string | null | undefined): string[] {
+/** Local copy — avoid importing oidc/clients (pulls app db) into this script. */
+function parseJsonStringArray(raw: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(raw ?? "[]") as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((u): u is string => typeof u === "string" && u.trim().length > 0)
-      : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((u): u is string => typeof u === "string")
+      .map((u) => u.trim())
+      .filter(Boolean);
   } catch {
     return [];
   }
@@ -47,15 +50,15 @@ async function migratePublicRedirectsToWeb(
   pub: ClientRow,
   web: ClientRow,
 ): Promise<boolean> {
-  const pubRedirects = parseJsonArray(pub.redirectUris);
+  const pubRedirects = parseJsonStringArray(pub.redirectUris);
   if (pubRedirects.length === 0) return false;
-  if (parseJsonArray(web.redirectUris).length > 0) return false;
+  if (parseJsonStringArray(web.redirectUris).length > 0) return false;
 
-  const pubPostLogout = parseJsonArray(pub.postLogoutRedirectUris);
+  const pubPostLogout = parseJsonStringArray(pub.postLogoutRedirectUris);
   const nextWebGrants = parseGrants(web.grantTypes).filter((g) => g !== AUTHORIZATION_CODE);
   nextWebGrants.unshift(AUTHORIZATION_CODE);
 
-  const webPostLogoutEmpty = parseJsonArray(web.postLogoutRedirectUris).length === 0;
+  const webPostLogoutEmpty = parseJsonStringArray(web.postLogoutRedirectUris).length === 0;
   await db
     .update(schema.oidcClients)
     .set({
@@ -78,8 +81,8 @@ async function stripPublicAuthCode(
   pub: ClientRow,
   web: ClientRow | undefined,
 ): Promise<"fixed" | "skipped"> {
-  const pubRedirects = parseJsonArray(pub.redirectUris);
-  const pubPostLogout = parseJsonArray(pub.postLogoutRedirectUris);
+  const pubRedirects = parseJsonStringArray(pub.redirectUris);
+  const pubPostLogout = parseJsonStringArray(pub.postLogoutRedirectUris);
   const pubGrants = parseGrants(pub.grantTypes);
   const nextPubGrants = pubGrants.filter((g) => g !== AUTHORIZATION_CODE);
   const needsPubStrip =
@@ -112,7 +115,7 @@ async function repairWebClientGrants(
 ): Promise<"fixed" | "skipped"> {
   if (!row.clientId.startsWith("web_")) return "skipped";
 
-  const redirectUris = parseJsonArray(row.redirectUris);
+  const redirectUris = parseJsonStringArray(row.redirectUris);
   const grants = parseGrants(row.grantTypes);
   const hasRedirects = redirectUris.length > 0;
   const hasAuthCode = grants.includes(AUTHORIZATION_CODE);

@@ -152,29 +152,17 @@ export async function POST(request: NextRequest) {
     clientUpdates.allowedScopes = filtered || DEFAULT_OIDC_SCOPES;
   }
 
-  if (Array.isArray(body.grantTypes) && body.grantTypes.length > 0) {
-    const grantTypes = body.grantTypes.filter(
-      (v: unknown): v is string => typeof v === "string" && v.trim().length > 0,
-    );
-    if (grantTypes.length > 0) {
-      clientUpdates.grantTypes = syncPublicClientGrantTypes(grantTypes, [], clientId);
-    }
-  }
-
+  const requestedGrantTypes = Array.isArray(body.grantTypes)
+    ? body.grantTypes.filter(
+        (v: unknown): v is string => typeof v === "string" && v.trim().length > 0,
+      )
+    : [];
   // Always strip authorization_code from the public client.
-  if (clientUpdates.grantTypes) {
-    clientUpdates.grantTypes = syncPublicClientGrantTypes(
-      clientUpdates.grantTypes,
-      [],
-      clientId,
-    );
-  } else {
-    clientUpdates.grantTypes = syncPublicClientGrantTypes(
-      ["refresh_token"],
-      [],
-      clientId,
-    );
-  }
+  clientUpdates.grantTypes = syncPublicClientGrantTypes(
+    requestedGrantTypes.length > 0 ? requestedGrantTypes : ["refresh_token"],
+    [],
+    clientId,
+  );
 
   if (
     body.deviceThirdPartyInitiateLogin === true &&
