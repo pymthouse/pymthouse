@@ -469,13 +469,13 @@ function getCredentialsIntroText(
 ): string {
   if (isM2MOnly) return "Generate your client secret, then test your M2M token request.";
   if (activeClient === "public") {
-    return "Public SDK client ID, shared domain allowlist, and device / remote-signing verification. Authorization-code login lives on the Web RP tab.";
+    return "Public client for SDKs, CLIs, and device login.";
   }
   if (activeClient === "m2m") {
-    return "M2M / Builder credentials and client-credentials token exchange for server APIs.";
+    return "Server credentials for Builder APIs.";
   }
   if (activeClient === "web") {
-    return "Confidential web RP credentials, portal redirect URIs, and authorization-code verification.";
+    return "Confidential client for portal SSO.";
   }
   return "Configure credentials and URLs per OIDC sibling, then verify each client’s auth flow.";
 }
@@ -939,7 +939,7 @@ function M2mFlowSelection({
                 Administrative access
               </span>
               <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
-                Builder APIs, user provisioning, and device approval
+                Builder APIs and device approval
               </span>
             </button>
           ) : null}
@@ -958,7 +958,7 @@ function M2mFlowSelection({
                 Remote signing
               </span>
               <span className="mt-1 block text-[11px] leading-snug text-zinc-500">
-                Bearer API key, or mint + exchange for a signer JWT (device code is the end-user path)
+                API key or signer JWT
               </span>
             </button>
           ) : null}
@@ -1399,11 +1399,8 @@ function DeviceInitiateLoginUriField({
           className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <p className="text-xs text-zinc-500">
-          OIDC <code className="font-mono text-zinc-400">initiate_login_uri</code>. When set,
-          unauthenticated device verification redirects here with{" "}
-          <code className="font-mono text-zinc-400">iss</code> and{" "}
-          <code className="font-mono text-zinc-400">target_link_uri</code>. Your app must return
-          users to <code className="font-mono text-zinc-400">target_link_uri</code> after login.
+          Optional login page for unauthenticated device verification. After login, return
+          users to <code className="font-mono text-zinc-400">target_link_uri</code>.
         </p>
         {initiateLoginUri.trim() && !deviceThirdPartyInitiateLogin ? (
           <p className="text-xs text-amber-300">
@@ -1948,8 +1945,8 @@ export default function TestingStep({
   }
   const authTestDescription =
     effectiveAuthTestTab === "remote"
-      ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
-      : "Client-credentials token exchange with the M2M / Builder client for Builder APIs, user provisioning, and device approval.";
+      ? "Test remote signing with an API key or signer JWT."
+      : "Test a client-credentials token for Builder APIs.";
 
   return (
     <div className="space-y-8">
@@ -2061,10 +2058,7 @@ export default function TestingStep({
               <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
             </h3>
             <p className="text-xs text-zinc-500 mt-1">
-              Use this in SDKs, CLIs, and the device authorization flow. It stays public
-              (no secret). Portal SSO needs the confidential{" "}
-              <code className="font-mono text-zinc-400">web_</code> sibling; Builder APIs
-              need the <code className="font-mono text-zinc-400">m2m_</code> sibling.
+              For SDKs, CLIs, and device login. No secret — public only.
             </p>
           </div>
 
@@ -2092,8 +2086,7 @@ export default function TestingStep({
             <div>
               <h4 className="text-xs font-semibold text-zinc-200">Domain allowlist</h4>
               <p className="text-xs text-zinc-500 mt-1">
-                Shared origins for CORS and request validation. Authorization-code redirect
-                URIs live on the Web RP tab. Device flow does not need a redirect URI.
+                Shared origins for CORS and request validation.
               </p>
             </div>
             <DomainAllowlistBlock
@@ -2142,7 +2135,7 @@ export default function TestingStep({
               <code className="font-mono text-cyan-300/80 font-normal">(m2m_)</code>
             </h3>
             <p className="text-xs text-zinc-500">
-              Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
+              For Builder APIs and server-side device approval. Keep the secret off public apps.
             </p>
             <div>
               <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
@@ -2224,9 +2217,7 @@ export default function TestingStep({
               <code className="font-mono text-violet-300/80 font-normal">(web_)</code>
             </h3>
             <p className="text-xs text-zinc-500">
-              Use this <code className="font-mono text-zinc-400">web_</code> client ID +
-              secret in external portal SSO (e.g. Kong Dev Portal User authentication). Not
-              for Builder M2M. Domain allowlist is shared — manage it on the Public / SDK tab.
+              For portal SSO (auth code + secret). Redirects live here; domains on Public / SDK.
             </p>
             <div>
               <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
@@ -2255,7 +2246,7 @@ export default function TestingStep({
                 persistRedirectUrisToPublicClient={false}
                 showDomains={false}
                 label="Portal redirect URIs"
-                description="Callback URLs for the confidential web_ client (portal SSO / authorization code). Each add or remove is saved immediately. Origins are auto-added to the shared domain allowlist."
+                description="Portal SSO callback URLs. Saved immediately; origins are added to the shared domain allowlist."
               />
             </div>
             {showPostLogoutRedirectUris && onPostLogoutRedirectUrisChange ? (
@@ -2263,8 +2254,8 @@ export default function TestingStep({
                 <div>
                   <h4 className="text-xs font-semibold text-zinc-200">Post-logout redirects</h4>
                   <p className="text-xs text-zinc-500 mt-1">
-                    URIs to redirect users to after sign-out. Saved with{" "}
-                    <strong className="text-zinc-400">Save changes</strong> below.
+                    Where users go after sign-out. Saved with{" "}
+                    <strong className="text-zinc-400">Save changes</strong>.
                   </p>
                 </div>
                 <div className="flex gap-2 mb-2">
@@ -2372,7 +2363,7 @@ export default function TestingStep({
       {showWebCredentials && !webHelper && !confidentialWebHelper ? (
           <SiblingDisabledMessage
             label="Confidential web RP"
-            detail="Turn it on there for portal SSO (Kong Dev Portal, etc.)."
+            detail="Turn it on there for portal SSO."
           />
       ) : null}
 
@@ -2393,7 +2384,7 @@ export default function TestingStep({
           forceAuthCodeFlow
           showInitiateLogin={false}
           title="Try the portal authorization code flow"
-          description="Opens a test authorization request using the confidential web_ client ID and a portal redirect URI."
+          description="Opens a test portal authorization request with this web_ client."
         />
       ) : null}
 

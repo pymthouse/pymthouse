@@ -543,8 +543,7 @@ export default function AppSettingsScreen({
                 Credentials &amp; URLs
               </h2>
               <p className="text-sm text-zinc-500">
-                Manage each OIDC sibling separately: public SDK, M2M / Builder, and
-                confidential web RP.
+                SDK, Builder, and portal credentials — each on its own tab.
               </p>
             </div>
             <a
@@ -711,8 +710,7 @@ export default function AppSettingsScreen({
       {integrationSection !== "plans" && integrationSection !== "payments" && (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 max-w-sm">
-          Redirect URIs (Web RP) and domains update immediately. Post-logout
-          redirects and profile fields need{" "}
+          Redirects and domains save immediately. Post-logout and profile need{" "}
           <strong className="text-zinc-400">Save changes</strong>.
         </p>
         <div className="flex items-center gap-3 shrink-0">
