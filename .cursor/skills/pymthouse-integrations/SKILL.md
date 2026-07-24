@@ -20,16 +20,17 @@ PymtHouse is the **sole OIDC issuer** for integrator apps. External backends tal
 | --- | --- |
 | Builder product (OIDC issuer, Builder API, Usage API, device + token exchange) | `docs/builder-api.md` || [docs.pymthouse.com](https://docs.pymthouse.com)
 
-## Two clients per interactive app
+## OIDC siblings per interactive app
 
-Each developer app typically has **two** registered OIDC clients:
+Each developer app typically registers **two or three** OIDC clients:
 
 | Role | `client_id` shape | Secret? | Used for |
 | --- | --- | --- | --- |
-| **Public** (SDK, browser, RFC 8628 device) | `app_…` | No (`token_endpoint_auth_method: none`) | Device/auth URLs, `client_id` in verification links, subject JWT must show this `client_id` |
+| **Public** (SDK, browser device, RFC 8628) | `app_…` | No (`token_endpoint_auth_method: none`) | Device/auth URLs, `client_id` in verification links, subject JWT must show this `client_id` — **no** authorization-code redirects |
 | **Confidential** (Builder / M2M) | `m2m_…` | Yes | `Authorization: Basic base64(m2m_id:secret)` on Builder routes and RFC 8693 token exchange |
+| **Confidential web RP** (portal SSO) | `web_…` | Yes | authorization_code + redirects (Kong Dev Portal, etc.) |
 
-They are siblings: `developer_apps.oidc_client_id` → public row; `developer_apps.m2m_oidc_client_id` → M2M row.
+They are siblings: `developer_apps.oidc_client_id` → public row; `developer_apps.m2m_oidc_client_id` → M2M row; `developer_apps.web_oidc_client_id` → web RP row.
 
 **Do not** put the M2M id in env vars meant for the public app (e.g. integrators must set **public** `app_…` wherever the device URL’s `client_id` or Builder path `{clientId}` is the public id).
 
@@ -69,6 +70,16 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 4. **Account id for the grant** must resolve through **`findAccount`** (`src/lib/oidc/account.ts` — `users` / `end_users`). Device approval exchange maps `subject_token.sub` (app user id) → `end_users` via `findOrCreateAppEndUser` before binding (`device-token-exchange.ts`).
 
 Public client must have **device third-party initiate** enabled where required (`device_third_party_initiate_login`).
+
+## Client shapes
+
+| Shape | When to use |
+| --- | --- |
+| Public `app_…` (+ optional `m2m_…` / `web_…`) | SDK / CLI / SPA + optional Builder API + optional portal SSO |
+| `m2m_…` sibling | Machine tokens only — never portal SSO redirects |
+| `web_…` sibling | Portal SSO / confidential auth-code RP (Kong Dev Portal user auth) |
+
+Shape helpers: `src/lib/oidc/confidential-web.ts`, `ensureConfidentialWebClient` in `clients.ts`.
 
 ## Key implementation files
 

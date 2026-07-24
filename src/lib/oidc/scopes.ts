@@ -15,10 +15,23 @@ export interface ScopeDefinition {
 
 export const OPENID_SCOPE = "openid";
 
+/** Standard OIDC identity scopes (not PymtHouse admin/capability scopes). */
+export const EMAIL_SCOPE = "email";
+export const PROFILE_SCOPE = "profile";
+
+const STANDARD_IDENTITY_SCOPES = new Set([
+  OPENID_SCOPE,
+  EMAIL_SCOPE,
+  PROFILE_SCOPE,
+]);
+
 /** M2M-only scope that selects the clearinghouse signer-mint token path. */
 export const SIGN_MINT_USER_TOKEN_SCOPE = "sign:mint_user_token";
 
 export const DEFAULT_OIDC_SCOPES = "openid sign:job";
+
+/** Scopes Kong Dev Portal (and similar RPs) expect for user mapping. */
+export const DEFAULT_CONFIDENTIAL_WEB_SCOPES = "openid email profile";
 
 /** Public app clients always include `openid`; callers must not rely on the UI to add it. */
 export function ensureOpenIdScope(allowedScopes: string): string {
@@ -32,12 +45,37 @@ export function ensureOpenIdScope(allowedScopes: string): string {
   return [OPENID_SCOPE, ...tokens].join(" ");
 }
 
+/** Ensure confidential web RPs can satisfy portal claim mappings (email/name). */
+export function ensureConfidentialWebIdentityScopes(allowedScopes: string): string {
+  const tokens = ensureOpenIdScope(allowedScopes)
+    .split(/[,\s]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const out = [...tokens];
+  for (const scope of [EMAIL_SCOPE, PROFILE_SCOPE]) {
+    if (!out.includes(scope)) out.push(scope);
+  }
+  return out.join(" ");
+}
+
 export const OIDC_SCOPES: ScopeDefinition[] = [
   {
     value: OPENID_SCOPE,
     label: "OpenID",
     description: "Confirm which PymtHouse account you are signed in with",
     required: true,
+    hiddenInAppConfig: true,
+  },
+  {
+    value: EMAIL_SCOPE,
+    label: "Email",
+    description: "Share your account email with the application",
+    hiddenInAppConfig: true,
+  },
+  {
+    value: PROFILE_SCOPE,
+    label: "Profile",
+    description: "Share your display name with the application",
     hiddenInAppConfig: true,
   },
   {
@@ -91,7 +129,8 @@ export function getScopeDefinition(scope: string): ScopeDefinition | undefined {
 /** Scopes that must not appear in the same token as sign:job. */
 export const ADMIN_SCOPES = new Set(
   OIDC_SCOPES.map((definition) => definition.value).filter(
-    (value) => value !== OPENID_SCOPE && value !== "sign:job",
+    (value) =>
+      !STANDARD_IDENTITY_SCOPES.has(value) && value !== "sign:job",
   ),
 );
 
