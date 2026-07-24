@@ -14,6 +14,12 @@ description: >-
 
 PymtHouse is the **sole OIDC issuer** for integrator apps. External backends talk to it via **Builder API** (`/api/v1/apps/{clientId}/...`) and **OIDC** (`/api/v1/oidc/...`). Read discovery from `{issuer}/.well-known/openid-configuration` in production.
 
+## Related skills
+
+| Skill | When |
+| --- | --- |
+| `pymthouse-sdk-token-streaming` | Mint app-user API key / `sdkToken`, decode `--token`, stream with livepeer-python-gateway |
+
 ## Canonical docs (source of truth)
 
 | Topic | Path |
