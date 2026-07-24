@@ -36,9 +36,17 @@ import {
   listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
-import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
+import {
+  getHostedOpenMeterUrl,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "@/lib/openmeter/constants";
 import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import {
+  getKonnectCustomerBillingProfileId,
+  getStripeCustomerAppDataId,
+} from "@/lib/openmeter/stripe-customer-data";
+import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 
 export type FindingSeverity = "error" | "warn" | "info";
 
@@ -77,6 +85,8 @@ const FIX_DEDUPE =
   "npm run openmeter:dedupe-owner-subscriptions -- --owner-id <users.id> --apply";
 const FIX_MIGRATE =
   "npm run openmeter:migrate-owner-customers -- --owner-id <users.id> --provision --transfer-balances --cancel-legacy";
+const FIX_SANDBOX_TO_STRIPE =
+  "npm run openmeter:migrate-sandbox-to-stripe -- --apply";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -663,6 +673,35 @@ async function auditOwnerSubscriptions(
         details: { customerKey },
       },
     ];
+  }
+
+  const stripeCus = await getStripeCustomerAppDataId({ client, customerId });
+  if (!stripeCus) {
+    findings.push({
+      code: "owner_missing_stripe_app_data",
+      severity: "error",
+      ownerId,
+      message: `Owner customer ${customerKey} has no Stripe customer app data (cus_…)`,
+      details: { customerId, customerKey },
+      remediation: FIX_SANDBOX_TO_STRIPE,
+    });
+  }
+
+  if (
+    shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+  ) {
+    const profileId = await getKonnectCustomerBillingProfileId(customerId);
+    const sandboxId = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
+    if (profileId && sandboxId && profileId === sandboxId) {
+      findings.push({
+        code: "owner_sandbox_billing_profile",
+        severity: "error",
+        ownerId,
+        message: `Owner customer ${customerKey} still uses sandbox billing profile ${profileId}`,
+        details: { customerId, profileId },
+        remediation: FIX_SANDBOX_TO_STRIPE,
+      });
+    }
   }
 
   const subs = await listOpenMeterSubscriptionsForCustomer(client, customerId);

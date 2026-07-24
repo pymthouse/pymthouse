@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PipelineModelPicker from "@/components/PipelineModelPicker";
 
 import type { PipelineCatalogEntry } from "@/components/PipelineModelPicker";
+import InfoTooltip from "@/components/InfoTooltip";
 import {
   excludedDocumentFromPickerValues,
   expandDocumentToConcreteKeys,
@@ -21,6 +22,7 @@ import {
   parseMarkupPercentInput,
 } from "@/lib/plan-pricing";
 import { validateCapabilityFeatureKeys } from "@/lib/openmeter/capability-features";
+import { OPENMETER_DOCS } from "@/lib/openmeter/constants";
 import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
   validateCustomPlanName,
@@ -306,7 +308,7 @@ function planToDraft(plan: PlanRow): PlanDraft {
   return {
     name: plan.name,
     type: plan.type,
-    priceAmount: plan.priceAmount,
+    priceAmount: normalizeUsdCentsDisplay(plan.priceAmount || "0"),
     priceCurrency: plan.priceCurrency,
     billingCycle: normalizePlanBillingCycle(plan.billingCycle),
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
@@ -320,7 +322,7 @@ function emptyDraft(): PlanDraft {
   return {
     name: "",
     type: "free",
-    priceAmount: "0",
+    priceAmount: "0.00",
     priceCurrency: "USD",
     billingCycle: "monthly",
     includedUsdDisplay: "",
@@ -685,8 +687,19 @@ function PlanDraftForm({
 
       {(draft.type === "subscription" || draft.type === "usage") && (
         <div>
-          <label htmlFor={`${idPrefix}-billing-cycle`} className="block text-xs text-zinc-500 mb-1">
+          <label
+            htmlFor={`${idPrefix}-billing-cycle`}
+            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+          >
             Billing cycle
+            <InfoTooltip
+              href={OPENMETER_DOCS.billingCadence}
+              wide
+              label={
+                "Maps to OpenMeter rate-card billingCadence (e.g. Monthly → P1M).\n" +
+                "Controls how often usage invoices close and included allowance renews."
+              }
+            />
           </label>
           <select
             id={`${idPrefix}-billing-cycle`}
@@ -735,20 +748,43 @@ function PlanDraftForm({
       {draft.type === "subscription" && (
         <>
           <div>
-            <label htmlFor={`${idPrefix}-price`} className="block text-xs text-zinc-500 mb-1">
+            <label
+              htmlFor={`${idPrefix}-price`}
+              className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+            >
               {billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
+              <InfoTooltip
+                href={OPENMETER_DOCS.flatFee}
+                wide
+                label={
+                  "Maps to an OpenMeter flat_fee rate card (subscription_fee).\n" +
+                  "Recurring charge billed each billing cadence when amount is greater than $0."
+                }
+              />
             </label>
-            <input
+            <DollarCentsInput
               id={`${idPrefix}-price`}
               value={draft.priceAmount}
-              onChange={(e) => onChange({ ...draft, priceAmount: e.target.value })}
+              onChange={(priceAmount) => onChange({ ...draft, priceAmount })}
+              placeholder="0.00"
               disabled={!canEdit}
-              className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+              aria-label={billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
             />
           </div>
           <div>
-          <label htmlFor={`${idPrefix}-included`} className="block text-xs text-zinc-500 mb-1">
+          <label
+            htmlFor={`${idPrefix}-included`}
+            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+          >
             Included usage allowance (per billing cycle)
+            <InfoTooltip
+              href={OPENMETER_DOCS.usageDiscount}
+              wide
+              label={
+                "Maps to OpenMeter rate-card discounts.usage (metered entitlement grant).\n" +
+                "Free included USD micros each cycle before prepaid credits / overage invoice."
+              }
+            />
           </label>
           <DollarCentsInput
             id={`${idPrefix}-included`}
@@ -886,7 +922,10 @@ function buildPlanPayload(
   const payload: Record<string, unknown> = {
     name: draft.name.trim(),
     type: draft.type,
-    priceAmount: draft.priceAmount,
+    priceAmount:
+      draft.type === "subscription"
+        ? normalizeUsdCentsDisplay(draft.priceAmount || "0")
+        : "0",
     priceCurrency: draft.priceCurrency,
     billingCycle: draft.billingCycle,
     ...(planId ? {} : { status: "active" }),
@@ -1350,8 +1389,19 @@ function StarterPlanCard({
       {expanded && (
         <div className="relative z-10 space-y-3 border-t border-zinc-800 pt-3">
           <div>
-            <label htmlFor="starter-included-usd" className="block text-sm text-zinc-300 mb-1">
+            <label
+              htmlFor="starter-included-usd"
+              className="mb-1 flex items-center gap-1.5 text-sm text-zinc-300"
+            >
               Included usage allowance
+              <InfoTooltip
+                href={OPENMETER_DOCS.usageDiscount}
+                wide
+                label={
+                  "Maps to OpenMeter rate-card discounts.usage (metered entitlement grant).\n" +
+                  "Free included USD micros each cycle for new end users on Starter."
+                }
+              />
             </label>
             <DollarCentsInput
               id="starter-included-usd"

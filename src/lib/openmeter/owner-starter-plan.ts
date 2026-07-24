@@ -3,7 +3,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
+import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
@@ -327,9 +327,10 @@ export async function ensureOwnerStarterSubscription(input: {
     input.publicClientIds ?? [],
   );
 
-  await applyFreeBillingProfileToCustomer({
+  await prepareOwnerCustomerStripeBilling({
     client,
     customerId: customer.id,
+    customerKey: customer.key,
   });
 
   const existing = await findExistingOwnerWalletSubscription({

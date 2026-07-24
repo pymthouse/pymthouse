@@ -221,8 +221,9 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           <div>
             <h3 className="text-base font-semibold">Stripe Connect</h3>
             <p className="text-sm text-muted-foreground">
-              Connect Stripe to bill end users via OpenMeter. On Konnect, this uses the
-              platform Stripe account configured in Metering &amp; Billing settings.
+              Stripe bills end users through this app&apos;s OpenMeter billing profile
+              (platform Stripe processor). Starter included usage works without Connect;
+              Connect ensures the profile and unlocks mid-cycle invoicing settings.
             </p>
           </div>
           <span

@@ -682,12 +682,14 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 
 | Backend | `POST …/billing/stripe/connect` behavior |
 | --- | --- |
-| **Konnect** | No OAuth. Links the developer app to the org-level Stripe app installed in Konnect and creates a per-app billing profile. Returns `{ "method": "konnect", "connected": true }`. |
+| **Konnect** | No OAuth. Links the developer app to the org-level Stripe app installed in Konnect and creates a per-app billing profile. Returns `{ "method": "konnect", "connected": true }`. Starter provision also auto-ensures this profile without Connect. |
 | **Self-hosted** | OAuth redirect when marketplace OAuth is available; otherwise returns `{ "method": "api_key", … }` and accepts `{ "stripeSecretKey": "sk_…" }` for API-key install. |
 | **OpenMeter Cloud** | OAuth redirect (`{ "method": "oauth", "url": "…" }`). |
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect Stripe |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session | End-user checkout via OpenMeter subscription + Stripe Checkout |
+
+**Starter billing:** Starter is a normal synced OpenMeter plan on the app’s Stripe billing profile. PymtHouse creates a Stripe Customer (`cus_…`) with `STRIPE_SECRET_KEY` (no card) and upserts Konnect billing app-data so included usage works immediately. Payment methods are collected later via checkout for paid plans / overage. Migrate legacy Sandbox-linked customers with `npm run openmeter:migrate-sandbox-to-stripe -- --apply`.
 
 **Plan → OpenMeter sync:** Publishing a paid plan (`status: active`) creates/updates an OpenMeter plan keyed `{clientId}:{planId}` with flat subscription fee, included allowance on `network_fee_usd_micros`, and usage rate cards. Plans expose `openmeterPlanId`, `lastSyncedAt`, and `syncError` in the dashboard. Sync requires `OPENMETER_URL` / `OPENMETER_API_KEY`; Stripe Connect is for invoicing/checkout, not for provisioning plans in OpenMeter. Stale `openmeterPlanId` values are recreated automatically when OpenMeter returns plan-not-found.
 

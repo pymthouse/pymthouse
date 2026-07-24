@@ -29,11 +29,6 @@ export async function createEndUserCheckout(input: {
     throw new Error("Plan is not synced to OpenMeter");
   }
 
-  const billingConfig = await getAppBillingConfig(input.clientId);
-  if (billingConfig?.stripeConnectStatus !== "connected") {
-    throw new Error("Stripe is not connected for this app");
-  }
-
   const client = getHostedAdminClient();
   const customer = await ensureOpenMeterCustomerForAppUser({
     client,
@@ -44,7 +39,10 @@ export async function createEndUserCheckout(input: {
     client,
     clientId: input.clientId,
     customerId: customer.id,
+    customerKey: customer.key,
   });
+
+  const billingConfig = await getAppBillingConfig(input.clientId);
 
   const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
   const subscription = await client.subscriptions.create({

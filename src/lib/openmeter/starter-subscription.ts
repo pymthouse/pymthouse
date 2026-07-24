@@ -3,7 +3,7 @@ import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
+import { prepareAppCustomerStripeBilling } from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomer } from "./customers";
 import {
@@ -116,6 +116,7 @@ async function createStarterSubscriptionWithRecovery(input: {
   client: OpenMeter;
   customerId: string;
   clientId: string;
+  customerKey: string;
   starter: typeof plans.$inferSelect;
   planKey: string;
 }): Promise<{
@@ -180,9 +181,11 @@ async function createStarterSubscriptionWithRecovery(input: {
         return { subscription: existing, starter: activeStarter, created: false };
       }
 
-      await applyFreeBillingProfileToCustomer({
+      await prepareAppCustomerStripeBilling({
         client: input.client,
+        clientId: input.clientId,
         customerId: input.customerId,
+        customerKey: input.customerKey,
       });
       try {
         const createdSub = await createStarterOpenMeterSubscription({
@@ -287,11 +290,13 @@ export async function ensureStarterSubscriptionForAppUser(input: {
 
   const client = getHostedAdminClient();
   const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
-  // Starter trial subscriptions always use the sandbox billing profile so Konnect
-  // does not require Stripe customer data, even when the app has Stripe Connect.
-  await applyFreeBillingProfileToCustomer({
+  // Starter is a real synced plan on the Stripe billing profile. Included usage
+  // works without a payment method; we only need Stripe customer app data (cus_…).
+  await prepareAppCustomerStripeBilling({
     client,
+    clientId: identity.developerAppId,
     customerId: customer.id,
+    customerKey: identity.customerKey,
   });
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
@@ -311,6 +316,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
       client,
       customerId: customer.id,
       clientId: identity.developerAppId,
+      customerKey: identity.customerKey,
       starter: activeStarter,
       planKey,
     });
