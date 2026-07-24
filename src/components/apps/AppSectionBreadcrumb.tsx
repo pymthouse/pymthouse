@@ -8,7 +8,7 @@ interface Props {
 /**
  * In-app navigation: My Apps → app → Plans (current).
  */
-export default function AppSectionBreadcrumb({ appId, appName }: Props) {
+export default function AppSectionBreadcrumb({ appId, appName }: Readonly<Props>) {
   return (
     <nav className="text-sm text-zinc-500 mb-3" aria-label="Breadcrumb">
       <Link href="/apps" className="hover:text-zinc-300 transition-colors">

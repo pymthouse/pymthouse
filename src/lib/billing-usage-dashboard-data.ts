@@ -10,7 +10,10 @@ import {
   type OwnerBillingSubscriptionRow,
 } from "@/lib/owner-billing-data";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
-import { queryOpenMeterAppDashboardUsage } from "@/lib/usage/query-openmeter";
+import {
+  queryOpenMeterAppDashboardUsage,
+  type OpenMeterAppDashboardUsage,
+} from "@/lib/usage/query-openmeter";
 
 export type BillingAppRow = {
   id: string;
@@ -243,6 +246,51 @@ export async function getBillingUsageDashboardData(
   });
 }
 
+/** Max apps queried in parallel against Konnect (each app fires 4 meter queries). */
+const DASHBOARD_APP_QUERY_PAGE_SIZE = 3;
+
+function chunkApps<T>(items: T[], size: number): T[][] {
+  const pages: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    pages.push(items.slice(i, i + size));
+  }
+  return pages;
+}
+
+async function queryDashboardUsageForApp(
+  app: BillingAppRow,
+  cycle: { start: string; end: string },
+): Promise<OpenMeterAppDashboardUsage | null> {
+  try {
+    return await queryOpenMeterAppDashboardUsage({
+      clientId: app.id,
+      startDate: cycle.start,
+      endDate: cycle.end,
+    });
+  } catch (err) {
+    console.warn(
+      "billing-usage-dashboard: OpenMeter query failed",
+      app.id,
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+async function queryDashboardUsagePaged(
+  apps: BillingAppRow[],
+  cycle: { start: string; end: string },
+): Promise<Array<OpenMeterAppDashboardUsage | null>> {
+  const results: Array<OpenMeterAppDashboardUsage | null> = [];
+  for (const page of chunkApps(apps, DASHBOARD_APP_QUERY_PAGE_SIZE)) {
+    const pageResults = await Promise.all(
+      page.map((app) => queryDashboardUsageForApp(app, cycle)),
+    );
+    results.push(...pageResults);
+  }
+  return results;
+}
+
 async function buildOpenMeterBillingDashboard(input: {
   scope: "all" | "single";
   userId: string;
@@ -253,15 +301,7 @@ async function buildOpenMeterBillingDashboard(input: {
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
   const [omResults, activeSubscriptions] = await Promise.all([
-    Promise.all(
-      input.orderedApps.map((app) =>
-        queryOpenMeterAppDashboardUsage({
-          clientId: app.id,
-          startDate: input.cycle.start,
-          endDate: input.cycle.end,
-        }),
-      ),
-    ),
+    queryDashboardUsagePaged(input.orderedApps, input.cycle),
     listOwnerActiveSubscriptions(input.userId).catch((err) => {
       console.warn(
         "billing-usage-dashboard: subscription summary failed",

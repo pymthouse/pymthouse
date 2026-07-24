@@ -11,7 +11,7 @@
 import "./load-env-first";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { randomBytes } from "crypto";
+import { randomBytes } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { eq } from "drizzle-orm";
 import * as schema from "../src/db/schema";

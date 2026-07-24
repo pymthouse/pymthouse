@@ -45,7 +45,7 @@ export default function AppDetailPage() {
             description: data.description || "",
             developerName: data.developerName || "",
             websiteUrl: data.websiteUrl || "",
-            redirectUris: data.oidcClient?.redirectUris || [],
+            redirectUris: [],
             allowedScopes: ensureOpenIdScope(
               data.oidcClient?.allowedScopes || DEFAULT_OIDC_SCOPES,
             ),
@@ -55,6 +55,8 @@ export default function AppDetailPage() {
             tokenEndpointAuthMethod:
               data.oidcClient?.tokenEndpointAuthMethod || "none",
             backendDeviceHelper: Boolean(data.m2mOidcClient),
+            confidentialWebHelper: Boolean(data.webOidcClient),
+            confidentialWebRedirectUris: data.webOidcClient?.redirectUris || [],
           },
           state: {
             id: data.id,
@@ -62,6 +64,7 @@ export default function AppDetailPage() {
             status: data.status,
             hasSecret: data.oidcClient?.hasSecret || false,
             backendHelper: data.m2mOidcClient ?? null,
+            webHelper: data.webOidcClient ?? null,
           },
           domains: (data.domains || []).map(
             (d: { id: string; domain: string }) => ({
@@ -69,7 +72,10 @@ export default function AppDetailPage() {
               domain: d.domain,
             }),
           ),
-          postLogoutRedirectUris: data.oidcClient?.postLogoutRedirectUris || [],
+          postLogoutRedirectUris:
+            data.webOidcClient?.postLogoutRedirectUris ||
+            data.oidcClient?.postLogoutRedirectUris ||
+            [],
           initiateLoginUri: data.oidcClient?.initiateLoginUri ?? null,
           deviceThirdPartyInitiateLogin:
             data.oidcClient?.deviceThirdPartyInitiateLogin === true,

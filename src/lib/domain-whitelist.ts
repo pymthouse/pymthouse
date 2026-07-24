@@ -101,7 +101,7 @@ export function normalizeDomainWhitelist(input: string): NormalizeResult {
   if (ipv6Match) {
     host = `[${ipv6Match[1]}]`;
     if (ipv6Match[2]) {
-      port = parseInt(ipv6Match[2], 10);
+      port = Number.parseInt(ipv6Match[2], 10);
     }
   } else {
     const lastColon = hostPort.lastIndexOf(":");
@@ -110,7 +110,7 @@ export function normalizeDomainWhitelist(input: string): NormalizeResult {
       const possiblePort = hostPort.slice(lastColon + 1);
       if (/^\d+$/.test(possiblePort)) {
         host = hostPort.slice(0, lastColon);
-        port = parseInt(possiblePort, 10);
+        port = Number.parseInt(possiblePort, 10);
       } else {
         host = hostPort;
       }

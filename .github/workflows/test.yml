@@ -55,7 +55,7 @@ jobs:
             cache-node-modules-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Apply database migrations
         run: npm run db:prepare

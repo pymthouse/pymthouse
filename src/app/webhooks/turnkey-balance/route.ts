@@ -11,6 +11,7 @@ import {
   getTurnkeyWebhookVerificationKeys,
   getTurnkeyWebhookVerificationKeysForKeyId,
 } from "@/lib/turnkey-webhook-jwks";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 export const maxDuration = 300;
 
@@ -51,7 +52,7 @@ export async function POST(request: Request): Promise<Response> {
   const tag = "[turnkey-balance]";
   try {
     const rawBody = await request.text();
-    console.log(tag, "POST received, body length:", rawBody.length);
+    console.log(tag, "POST received, body length:", sanitizeForLog(rawBody.length));
 
     const verified = await verifyTurnkeyWebhook(request, rawBody);
     if (!verified.ok) {
@@ -87,7 +88,15 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ status: "ignored", reason: decision.reason });
     }
 
-    console.log(tag, "decision: fund", decision.idempotencyKey, "amount:", decision.amountWei.toString(), "fund:", decision.fundWei.toString());
+    console.log(
+      tag,
+      "decision: fund",
+      sanitizeForLog(decision.idempotencyKey),
+      "amount:",
+      sanitizeForLog(decision.amountWei.toString()),
+      "fund:",
+      sanitizeForLog(decision.fundWei.toString()),
+    );
 
     const claim = await claimTurnkeyFundingEvent({
       idempotencyKey: decision.idempotencyKey,
@@ -105,12 +114,25 @@ export async function POST(request: Request): Promise<Response> {
     console.log(tag, "claimed eventId:", claim.eventId, "— calling fundDepositAndReserve");
 
     try {
-      await executeTurnkeyFunding(decision.fundWei, claim.eventId);
-      console.log(tag, "funded successfully, eventId:", claim.eventId);
+      const allocation = await executeTurnkeyFunding(
+        decision.fundWei,
+        claim.eventId,
+      );
+      console.log(
+        tag,
+        "funded successfully, eventId:",
+        claim.eventId,
+        "deposit:",
+        allocation.depositWei.toString(),
+        "reserve:",
+        allocation.reserveWei.toString(),
+      );
       return Response.json({
         status: "funded",
         eventId: claim.eventId,
         fundedWei: decision.fundWei.toString(),
+        depositWei: allocation.depositWei.toString(),
+        reserveWei: allocation.reserveWei.toString(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

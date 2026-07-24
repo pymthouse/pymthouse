@@ -12,6 +12,7 @@ import {
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 async function canAccessUsers(request: NextRequest, clientId: string, requiredScope: string) {
   const app = await getProviderApp(clientId);
@@ -117,7 +118,10 @@ export async function POST(
       externalUserId,
     });
   } catch (err) {
-    console.error("provisionAppUserBilling failed on user upsert:", err);
+    console.error(
+      "provisionAppUserBilling failed on user upsert:",
+      sanitizeForLog(err instanceof Error ? err.message : err),
+    );
   }
 
   await writeAuditLog({

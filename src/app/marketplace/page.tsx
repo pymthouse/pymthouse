@@ -126,6 +126,7 @@ export default function MarketplacePage() {
           {categories.length > 0 && (
             <div className="flex flex-wrap gap-2">
               <button
+                type="button"
                 onClick={() => setSelectedCategory(null)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   selectedCategory === null
@@ -137,6 +138,7 @@ export default function MarketplacePage() {
               </button>
               {categories.map((cat) => (
                 <button
+                  type="button"
                   key={cat}
                   onClick={() =>
                     setSelectedCategory(selectedCategory === cat ? null : cat)

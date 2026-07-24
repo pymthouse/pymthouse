@@ -35,7 +35,7 @@ const providerIcon: Record<string, string> = {
   github: "GH",
 };
 
-export default function UserTable({ users }: UserTableProps) {
+export default function UserTable({ users }: Readonly<UserTableProps>) {
   if (users.length === 0) {
     return (
       <div className="text-center py-12 text-zinc-500">

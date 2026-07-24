@@ -4,11 +4,11 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db/index";
 import { priceOracleSnapshots } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 
 import { getEthUsdOracle, resetEthUsdOracleCacheForTests } from "./eth-usd-oracle";
 
-run("getEthUsdOracle returns fresh cached snapshot when present", async () => {
+test("getEthUsdOracle returns fresh cached snapshot when present", async () => {
   const providerKey = "global_eth_usd";
   resetEthUsdOracleCacheForTests();
   await db.delete(priceOracleSnapshots).where(eq(priceOracleSnapshots.symbol, "ETH"));
@@ -27,7 +27,7 @@ run("getEthUsdOracle returns fresh cached snapshot when present", async () => {
   assert.equal(result.priceUsd, 3210.12);
 });
 
-run("getEthUsdOracle serves stale cache without waiting for live refresh", async () => {
+test("getEthUsdOracle serves stale cache without waiting for live refresh", async () => {
   const providerKey = "global_eth_usd";
   resetEthUsdOracleCacheForTests();
   await db.delete(priceOracleSnapshots).where(eq(priceOracleSnapshots.symbol, "ETH"));
@@ -60,7 +60,7 @@ run("getEthUsdOracle serves stale cache without waiting for live refresh", async
   }
 });
 
-run("getEthUsdOracle falls back to ETH_USD_PRICE when cache is empty", async () => {
+test("getEthUsdOracle falls back to ETH_USD_PRICE when cache is empty", async () => {
   const providerKey = "global_eth_usd";
   resetEthUsdOracleCacheForTests();
   const previous = process.env.ETH_USD_PRICE;

@@ -11,7 +11,7 @@ interface BrandedLayoutProps {
   children: React.ReactNode;
 }
 
-export function BrandedLayout({ branding, children }: BrandedLayoutProps) {
+export function BrandedLayout({ branding, children }: Readonly<BrandedLayoutProps>) {
   const cssVars = getBrandingCssVars(branding);
   const isWhiteLabel = shouldUseWhiteLabelBranding(branding);
 
@@ -111,7 +111,7 @@ export function BrandedHeader({
   subtitle,
   badge,
   badgeColor = "emerald",
-}: BrandedHeaderProps) {
+}: Readonly<BrandedHeaderProps>) {
   const isWhiteLabel = shouldUseWhiteLabelBranding(branding);
   
   const badgeColors = {
@@ -176,8 +176,9 @@ export function BrandedButton({
   variant = "primary",
   children,
   className = "",
+  type = "button",
   ...props
-}: BrandedButtonProps) {
+}: Readonly<BrandedButtonProps>) {
   const baseClasses = "px-6 py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
   
   const variantClasses = {
@@ -192,6 +193,7 @@ export function BrandedButton({
 
   return (
     <button
+      type={type}
       className={`${baseClasses} ${variantClasses[variant]} ${className}`}
       style={style}
       {...props}

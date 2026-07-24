@@ -53,8 +53,22 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 | --- | --- | --- |
 | Stored API key (`<prefix><hex>`) | Per-app-user **API key** (hashed at rest) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
 | `app_<24hex>_<secret>` | **Presented** API key (issuance + remote-signer Bearer) | Same secret material as the stored key; `app_*` segment routes the app-scoped exchange URL |
-| Client secret (`*_cs_*`) | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
-| `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
+| Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
+| `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (device / SDK; **no** authorization-code redirects) |
+| `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
+| `web_…` | Confidential web RP sibling | `authorization_code` + secret + redirects — portal SSO (e.g. Kong Dev Portal); **not** `client_credentials` |
+
+### Client shapes (siblings under one developer app)
+
+| Shape | Client | Secret | Typical grants |
+| --- | --- | --- | --- |
+| Public interactive | `app_…`, auth method `none` | No | refresh, device (no redirect URIs) |
+| M2M backend helper | `m2m_…` | Yes | `client_credentials` |
+| Confidential web RP | `web_…` | Yes | auth code + refresh |
+
+Authorization-code (browser / portal) login is registered **only** on the confidential `web_` sibling. The public `app_` client stays secretless for device flow, SDK `client_id`, and API-key routing.
+
+Enable **Confidential web RP** on App profile (same pattern as Confidential M2M backend). Rotate the `web_` secret with `POST /api/v1/apps/{clientId}/credentials?target=web`. Do not put portal SSO credentials on the public SDK client or the M2M helper.
 
 Newly issued keys are returned as `app_<24hex>_<secret>` (RFC 6750 `token68` characters; underscore separator for copy/select UX). The remote-signer identity webhook accepts that composite Bearer, parses the `app_*` client id, and performs RFC 8693 token exchange ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) at `/api/v1/apps/{clientId}/oidc/token`. The exchange `subject_token` is the opaque hex secret (or the stored bare key when the path already supplies `{clientId}`).
 
@@ -69,7 +83,7 @@ Do not pass M2M client secrets as `subject_token` on the signer session exchange
 ### Implementation tasks
 
 - [x] Issue only `app_*_*` from key creation APIs (`formatCompositeApiKey`).
-- [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.1`).
+- [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
 - [ ] Update integrator docs / dashboard curl snippets when the package is deployed.
 
 ## Authentication
@@ -306,11 +320,15 @@ sequenceDiagram
 
 ## Interactive login and machine access
 
-### Authorization code (interactive)
+### Authorization code (interactive / portal SSO)
 
-1. Redirect the user to `{issuer}/auth` with `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state`.
-2. Exchange the code at `{issuer}/token` with `grant_type=authorization_code`, the same `redirect_uri`, and `client_id` + `client_secret` for confidential clients.
-3. Request only scopes allowed for that client. **Public clients:** PKCE is required. **Confidential clients:** client authentication is required.
+Use the confidential **`web_…`** sibling (not the public `app_…` client):
+
+1. Redirect the user to `{issuer}/auth` with `response_type=code`, `client_id` (`web_…`), `redirect_uri`, `scope`, `state`.
+2. Exchange the code at `{issuer}/token` with `grant_type=authorization_code`, the same `redirect_uri`, and `client_id` + `client_secret`.
+3. Request only scopes allowed for that client. Confidential clients must authenticate at the token endpoint.
+
+Public `app_…` clients do not register redirect URIs and do not advertise `authorization_code` — use device flow (RFC 8628) or API keys for interactive / end-user access on the public client.
 
 ### Client credentials (machine)
 
@@ -345,20 +363,25 @@ For RFC 8693 exchange after minting a user JWT, use `POST /api/v1/apps/{clientId
 
 Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT via Builder API OIDC, forward it to the remote signer DMZ, and sign there directly. The PymtHouse `/api/signer/*` signing proxy is **removed**; only `POST /api/signer/device/exchange` remains for device JWT mint. Use `GET /api/v1/apps/{clientId}/signer/routing` for the DMZ URL and webhook URL.
 
-**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence. App-owner JWTs keep bare `sub` / `external_user_id` = `{users.id}` with `user_type: "app_owner"`; the webhook maps that to `usage_subject` = `owner:{users.id}` so `auth_id` is `app_…:owner:{users.id}` for metering settlement.
+**Identity:** go-livepeer calls `POST /webhooks/remote-signer` (configured via `-remoteSignerWebhookUrl`) to verify the end-user JWT. The webhook returns `auth_id` (`client_id:usage_subject`) for go-livepeer state persistence. App-owner JWTs keep bare `sub` / `external_user_id` = `{users.id}` with `user_type: "app_owner"`; the webhook maps that to wire `usage_subject` = `owner:{users.id}` so `auth_id` is `app_…:owner:{users.id}` (transport marker for the collector). The collector strips the `owner:` prefix so CloudEvent `subject` / Konnect customer key = bare `{users.id}`.
 
 **Usage metering (signer-authoritative, async collector):**
 
 1. **Authoritative event:** go-livepeer remote signer emits `create_signed_ticket` events to Kafka (`livepeer-gateway-events`) with `computed_fee` and `auth_id` (`client_id:usage_subject`).
-2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to `network_fee_usd_micros` via `ceil(fee_wei * eth_usd / 1e12)` so sub-micro fees still count as at least 1 micro, and writes normalized CloudEvents to OpenMeter/Konnect:
-   - `subject` = compound `auth_id` for M2M end-users; **`owner:{users.id}`** when `usage_subject` starts with `owner:` (shared owner wallet / Konnect customer key)
+2. **Collector ingest:** OpenMeter collector consumes Kafka, parses `auth_id` once (first-colon split), converts Wei to **exact** `network_fee_usd_micros` via `fee_wei * eth_usd / 1e12` (no per-ticket ceil — fractional micros are allowed), and writes normalized CloudEvents to OpenMeter/Konnect:
+   - `subject` = compound `auth_id` for M2M end-users; **bare `{users.id}`** when wire `usage_subject` starts with `owner:` (shared owner wallet / Konnect customer key)
    - `data.client_id` = tenant (developer app OAuth `client_id`)
-   - `data.usage_subject` = end user or `owner:{users.id}`
-   - `data.auth_id` retained for compatibility; `data.external_user_id` mirrors `usage_subject` for existing meter `groupBy`
-   - `data.openmeter_customer_key` = billing wallet key
+   - `data.usage_subject` / `data.external_user_id` = end user id, or bare `{users.id}` for owners
+   - `data.auth_id` retained for compatibility
+   - `data.openmeter_customer_key` = billing wallet key (bare owner id or compound end-user key)
+   - `data.fee_wei` = Wei from Kafka `computed_fee` as a **number** (required for OpenMeter SUM; authoritative network cost input)
    - `data.eth_usd_price` = ETH/USD oracle rate used for that event’s Wei → USD micros conversion
+   - `data.manifest_id` = stream / remote-signer session mid; falls back to Kafka `session_id` (payment StateID) then `request_id` when missing (`"unknown"` only as last resort)
+   - `data.billable_secs` = billable duration from the signer as a **number** (required for OpenMeter SUM; prefer this over `pixels` for time analytics across LV2V and BYOC signers)
 
-**Prepaid credits:** App owners share one Konnect customer (`owner:{users.id}`) across all owned apps. Konnect billing beta clears multi-subject `usageAttribution` when a subscription is active, so owner CloudEvents must use `subject = owner:{id}` (customer key auto-attribution) rather than compound subjects alone. M2M end-users remain `app_…:external_user_id` (per app). Dashboard owner prepaid strip reads the shared owner wallet; subscription/spendable usage dual-reads compound and `owner:` subjects during transition. Per-app usage pages sum end-user wallets only.
+**Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.
+
+**Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
@@ -368,25 +391,55 @@ Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are p
 
 Aggregated request and fee usage for a developer application — read-only, tenant-scoped, for billing dashboards and analytics. It follows the same **`client_id`** path convention as the Builder API.
 
-Totals and `groupBy=user` / `groupBy=pipeline_model` read from OpenMeter meters (`network_fee_usd_micros`, `signed_ticket_count`). The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
+Totals and `groupBy=user` / `groupBy=pipeline_model` read from billing meters (`network_fee_usd_micros`, `signed_ticket_count`). `groupBy=manifest` reads analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) and returns `byManifest` rows with `manifestId`, `networkFeeUsdMicros` (rounded up once per session/read boundary), `networkFeeUsdExact`, `feeWei`, and `billableSecs`. The `network_fee_usd_micros` meter SUMs fees per `(client_id, external_user_id)` where `external_user_id` equals collector-emitted `usage_subject`. **`OPENMETER_URL` is required** — responses include `"source": "openmeter"`. Allowance balance is never read from Postgres.
 
 ### Session request history (Usage dashboard)
 
 **Endpoint:** `GET /api/v1/me/usage/requests`
 
-Session-authenticated (NextAuth). Lists OpenMeter `create_signed_ticket` CloudEvents for the **signed-in viewer’s own usage subject(s)** only — newest first. This is not a Builder/M2M API for listing all end users of an app.
+Session-authenticated (NextAuth). Default UI view is **sessions** (`groupBy=session`); expand a session for per-request detail, or use `groupBy=request` for the flat ticket list.
 
 | Query | Description |
 | --- | --- |
+| `groupBy` | `session` (default in UI) — one row per `manifest_id` from analytics meters (`network_fee_usd_micros_by_manifest`, `fee_wei`, `billable_secs`) with session fee rounded up once at the read boundary. `request` — flat CloudEvent list, newest first. |
+| `manifestId` | When `groupBy=request`, restrict to one session mid (used when expanding a session). |
 | `cursor` | Opaque pagination cursor from a prior response |
 | `limit` | Page size (default 25, max 50) |
-| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`) |
+| `clientId` | Optional public OIDC `app_…` id to restrict to one app (used by `/apps/{id}/usage`). Repeatable / comma-separated `clientIds` for multi-app filters. **Required for `groupBy=session`.** |
+| `scope` | `own` (default) — signed-in viewer’s usage subject(s) only. `all` — **platform admins only**; platform-wide history for the selected `clientId`(s) (All Usage tab). Non-admins receive `403`. |
 
-Do **not** pass `externalUserId` — the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, and `openMeterConfigured`.
+Do **not** pass `externalUserId` — for `scope=own` the server derives subjects from the session (`users.id` plus `app_users.external_user_id` rows matching the session email). Responses include `items`, `nextCursor`, `openMeterConfigured`, `scope`, and `groupBy`.
 
-**Balance (subscription allowance):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` returns prepaid credit balance (`balanceUsdMicros`, `hasAccess`, etc.). On Konnect this is `GET /credits/balance` (`live`); on self-hosted OpenMeter it is the entitlement grant balance.
+Per-request fees in the UI are valued exactly from `feeWei × ethUsdPrice` (full sub-micro precision). Session fees are rounded up once at the session/read boundary (same policy as Usage API `groupBy=manifest` totals).
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) separate from **Network Price** (discovery-only, not synced to OpenMeter). Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`). On Konnect, included trial allowance is a prepaid grant via `POST /customers/{id}/credits/grants` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`), not `rate_cards.discounts.usage`. New end users are auto-subscribed to Starter and granted credits when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`) if they have no credit balance yet.
+### End-user usage (Bearer subject)
+
+Integrators (e.g. Livepeer Dashboard / `@pymthouse/builder-sdk`) mint a user JWT via Builder `POST .../users/{externalUserId}/token`, then call these routes. Subject is forced from the credential — do **not** pass `userId` / `externalUserId` query params (rejected with 400).
+
+**Endpoint:** `GET /api/v1/user/usage`
+
+Same OpenMeter usage shape as `GET /api/v1/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline` / `manifest`), and `include=retail`.
+
+**Endpoint:** `GET /api/v1/user/usage/balance`
+
+Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount, `lifetimeGrantedUsdMicros` = included total for the cycle, `consumedUsdMicros` = granted − remaining, `hasAccess` from spendable). Prepaid credits settle invoices/charges and are not the meter source. Builder M2M equivalent: `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...`.
+
+**Endpoint:** `GET /api/v1/user/usage/requests`
+
+Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`).
+
+| Query | Description |
+| --- | --- |
+| `groupBy` | `session` or `request` (default `request`) |
+| `manifestId` | When `groupBy=request`, filter to one session mid |
+| `cursor` | Opaque pagination cursor from a prior response |
+| `limit` | Page size (default 25, max 50) |
+
+Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus `clientId` / `externalUserId` echoed from the credential.
+
+**Balance (Builder M2M):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` is the confidential-client equivalent when an end-user JWT is not available.
+
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** instead share one platform **Owner Starter** plan (`pymthouse_owner_starter`) on their bare `{users.id}` Konnect customer — not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
 
 **Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`.
 
@@ -412,7 +465,7 @@ Requests that fail auth or tenant match receive **`404 Not Found`** (not `401`/`
 | --- | --- | --- | --- |
 | `startDate` | ISO 8601 | — | Inclusive lower bound on `usage_records.created_at` |
 | `endDate` | ISO 8601 | — | Inclusive upper bound |
-| `groupBy` | `none` \| `user` \| `pipeline_model` \| `daily_pipeline` | `none` | `user` adds `byUser`; `pipeline_model` adds `byPipelineModel`; `daily_pipeline` adds `byDailyPipeline` (requires `userId`, OpenMeter DAY windows) |
+| `groupBy` | `none` \| `user` \| `pipeline_model` \| `daily_pipeline` \| `manifest` | `none` | `user` adds `byUser`; `pipeline_model` adds `byPipelineModel`; `daily_pipeline` adds `byDailyPipeline` (requires `userId`, OpenMeter DAY windows); `manifest` adds `byManifest` (per-stream USD / Wei / billable seconds) |
 | `userId` | string | — | Filter to one internal **`usage_records.user_id`** (not `externalUserId`) |
 | `gatewayRequestId` | string | — | When set, filters billing events to that gateway request and may include `events` detail |
 

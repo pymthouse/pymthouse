@@ -1,5 +1,5 @@
 import protobuf from "protobufjs";
-import path from "path";
+import path from "node:path";
 
 let orchestratorInfoType: protobuf.Type | null = null;
 let capabilitiesType: protobuf.Type | null = null;
@@ -70,7 +70,7 @@ export function capabilityIdToPipelineId(capId: number): string | null {
   };
   const enumName = names[capId];
   if (!enumName) return null;
-  return enumName.toLowerCase().replace(/_/g, "-");
+  return enumName.toLowerCase().replaceAll("_", "-");
 }
 
 export interface PriceInfo {

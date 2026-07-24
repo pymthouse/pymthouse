@@ -16,11 +16,17 @@ import { scopeStringFromPayload } from "@/lib/oidc/scope-string";
 async function mintFromDeviceToken(
   deviceToken: string,
   context: { scope?: string; clientId?: string },
+  onResolvedPublicClientId?: (publicClientId: string) => void,
 ) {
   try {
     const resolved = await resolveSubjectAccessToken(deviceToken, {
       expectedPublicClientId: context.clientId ?? undefined,
     });
+
+    // Report the token-verified public client id so the caller can pick the
+    // signer version (latest vs stable) for this app. Authoritative source is
+    // the subject token, not the client-supplied body clientId.
+    onResolvedPublicClientId?.(resolved.publicClientId);
 
     const scopeStr = scopeStringFromPayload(resolved.payload);
     if (!hasScope(scopeStr, "sign:job")) {
@@ -61,11 +67,17 @@ async function mintFromDeviceToken(
   }
 }
 
-const deviceExchangeHandler = createDeviceExchangeHandler({
-  mint: mintFromDeviceToken,
-  getSignerUrl: () => getClientSignerApiUrl(),
-});
-
 export async function POST(request: NextRequest) {
+  // Per-request handler: capture the token-resolved public client id during mint
+  // so the returned signer_url points at this app's signer version (latest vs
+  // stable). The SDK invokes getSignerUrl only after mint has awaited.
+  let signerAppClientId: string | undefined;
+  const deviceExchangeHandler = createDeviceExchangeHandler({
+    mint: (deviceToken, context) =>
+      mintFromDeviceToken(deviceToken, context, (publicClientId) => {
+        signerAppClientId = publicClientId;
+      }),
+    getSignerUrl: () => getClientSignerApiUrl(signerAppClientId),
+  });
   return deviceExchangeHandler(request);
 }

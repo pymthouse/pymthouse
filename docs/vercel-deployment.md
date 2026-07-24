@@ -276,6 +276,8 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 | `NEXTAUTH_SECRET` | Random secret (generate with `openssl rand -base64 32`) | `your-secret-here` |
 | `SIGNER_INTERNAL_URL` | Your deployed signer URL from Step 1 | `https://your-signer.up.railway.app` |
 | `SIGNER_CLI_URL` | Same as SIGNER_INTERNAL_URL (or separate if exposed) | `https://your-signer.up.railway.app` |
+| `SIGNER_LATEST_URL` | Optional; public URL of the `pymthouse-signer-test` (latest) DMZ. Unset ⇒ all apps use the stable signer | `https://your-signer-test.up.railway.app` |
+| `LATEST_SIGNER_APPS` | Optional; comma-separated public client ids (`app_*`) routed to the latest signer. Default: none (all apps use stable) | `app_123,app_234` |
 | `OPENMETER_URL` | Self-hosted OpenMeter on Railway (**separate project**) | `https://openmeter-xxxx.up.railway.app` |
 | `OPENMETER_API_KEY` | Optional; set if OpenMeter auth is enabled | (secret) |
 | `OPENMETER_TRIAL_FEATURE_KEY` | Trial entitlement feature | `network_spend` |

@@ -9,8 +9,8 @@
  * `when` (e.g. 0018_discovery_allowed_capabilities_repair) or repair the table.
  */
 import "./load-env-first";
-import path from "path";
-import { existsSync } from "fs";
+import path from "node:path";
+import { existsSync } from "node:fs";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";

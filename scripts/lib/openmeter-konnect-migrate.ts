@@ -141,19 +141,30 @@ export async function listActiveKonnectSubscriptions(
   const out: KonnectSubscription[] = [];
   let page = 1;
   for (;;) {
-    const body = await konnectFetch<{ data?: KonnectSubscription[] }>(
-      baseUrl,
-      apiKey,
-      "GET",
-      `/subscriptions?page=${page}&pageSize=100`,
-    );
+    const body = await konnectFetch<{
+      data?: KonnectSubscription[];
+      meta?: { page?: { size?: number; number?: number; total?: number } };
+    }>(baseUrl, apiKey, "GET", `/subscriptions?page=${page}&pageSize=100`);
     const items = body.data ?? [];
     for (const item of items) {
       if (item.status === "active" || item.status === "scheduled") {
         out.push(item);
       }
     }
-    if (items.length < 100) break;
+
+    // Konnect may ignore pageSize and return its own page.size (often 20).
+    // Stop only when we've consumed meta.total or get an empty page.
+    const pageSize = body.meta?.page?.size ?? items.length;
+    const total = body.meta?.page?.total;
+    if (items.length === 0) {
+      break;
+    }
+    if (typeof total === "number" && page * pageSize >= total) {
+      break;
+    }
+    if (typeof total !== "number" && items.length < pageSize) {
+      break;
+    }
     page += 1;
   }
   return out;
@@ -178,4 +189,51 @@ export async function changeKonnectSubscription(input: {
       timing: input.timing,
     },
   );
+}
+
+export type KonnectCustomer = {
+  id: string;
+  key: string;
+  name?: string;
+  usage_attribution?: { subject_keys?: string[] };
+};
+
+/** PUT replace subject_keys (SDK update can leave live keys alongside deprecated). */
+export async function replaceKonnectCustomerSubjectKeys(input: {
+  baseUrl: string;
+  apiKey: string;
+  customerId: string;
+  name: string;
+  subjectKeys: string[];
+}): Promise<KonnectCustomer> {
+  return konnectFetch<KonnectCustomer>(
+    input.baseUrl,
+    input.apiKey,
+    "PUT",
+    `/customers/${input.customerId}`,
+    {
+      name: input.name,
+      usage_attribution: { subject_keys: input.subjectKeys },
+    },
+  );
+}
+
+export async function getKonnectCustomer(
+  baseUrl: string,
+  apiKey: string,
+  customerId: string,
+): Promise<KonnectCustomer> {
+  return konnectFetch<KonnectCustomer>(
+    baseUrl,
+    apiKey,
+    "GET",
+    `/customers/${customerId}`,
+  );
+}
+
+export function readKonnectSubjectKeys(customer: KonnectCustomer): string[] {
+  const keys = customer.usage_attribution?.subject_keys;
+  return Array.isArray(keys)
+    ? keys.filter((key): key is string => typeof key === "string")
+    : [];
 }

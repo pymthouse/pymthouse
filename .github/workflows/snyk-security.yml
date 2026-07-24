@@ -23,10 +23,6 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-# Least-privilege default token for the whole workflow.
-permissions:
-  contents: read
-
 concurrency:
   group: snyk-security-${{ github.ref }}
   cancel-in-progress: true
@@ -37,6 +33,8 @@ jobs:
   snyk-eligibility:
     name: Snyk eligibility
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       run_snyk: ${{ steps.decide.outputs.run_snyk }}
     steps:

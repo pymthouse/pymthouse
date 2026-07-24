@@ -68,7 +68,7 @@ async function getFreshCacheRow(): Promise<EthUsdOracleResult | null> {
   if (rows.length === 0) return null;
   const row = rows[0];
   if (row.fetchedAt < cutoff) return null; // stale
-  const price = parseFloat(row.priceUsd);
+  const price = Number.parseFloat(row.priceUsd);
   if (!Number.isFinite(price) || price <= 0) return null;
   return {
     priceUsd: price,
@@ -88,7 +88,7 @@ async function getStaleCacheRow(): Promise<EthUsdOracleResult | null> {
 
   if (rows.length === 0) return null;
   const row = rows[0];
-  const price = parseFloat(row.priceUsd);
+  const price = Number.parseFloat(row.priceUsd);
   if (!Number.isFinite(price) || price <= 0) return null;
   return {
     priceUsd: price,
@@ -139,8 +139,8 @@ async function refreshLiveSpotAsync(providerKey: string): Promise<void> {
 
 function envOrDefaultResult(): EthUsdOracleResult {
   const envPrice = process.env.ETH_USD_PRICE
-    ? parseFloat(process.env.ETH_USD_PRICE)
-    : NaN;
+    ? Number.parseFloat(process.env.ETH_USD_PRICE)
+    : Number.NaN;
   if (Number.isFinite(envPrice) && envPrice > 0) {
     return {
       priceUsd: envPrice,

@@ -12,7 +12,7 @@
  */
 import "./load-env-first";
 import { eq } from "drizzle-orm";
-import { db, postgresClient } from "../src/db/index";
+import { closeDb, db } from "../src/db/index";
 import { appUsers } from "../src/db/schema";
 import {
   ensureAppUserKonnectCustomer,
@@ -133,7 +133,7 @@ async function ensureOne(input: {
       externalUserId: input.externalUserId,
     });
     console.log(
-      `[ok] ${label} provisioned appUser=${result.appUserId} starterReady=${result.starterSubscriptionReady} allowance=${result.allowance?.hasAccess ?? "n/a"}`,
+      `[ok] ${label} provisioned appUser=${result.appUserId} starterReady=${result.starterSubscriptionReady}`,
     );
     return;
   }
@@ -202,7 +202,7 @@ async function main() {
       process.exit(1);
     }
   } finally {
-    await postgresClient.end({ timeout: 5 });
+    await closeDb({ timeout: 5 });
   }
 }
 

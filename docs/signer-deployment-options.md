@@ -79,7 +79,7 @@ Expose only Apache on the internet: **mod_authnz_jwt** validates PymtHouse OIDC 
    | `OIDC_AUDIENCE` | Defaults to the same as issuer; must match token `aud`. |
    | `JWKS_URI` | Defaults to `https://pymthouse.com/api/v1/oidc/jwks`. Used at startup and on refresh. |
    | `JWKS_REFRESH_SECONDS` | Background JWKS refresh interval (default `900`). Triggers `apachectl graceful` when the PEM changes. |
-   | `JWKS_TLS_INSECURE` | Set to `1` for local/dev when `JWKS_URI` is HTTPS but the server uses a self-signed or corporate-intercepted certificate (`jwks_to_pem.py`). **Never** in production. `host.docker.internal` / `localhost` HTTPS skips verification without this flag. |
+   | `JWKS_TLS_INSECURE` | **Deprecated / ignored.** HTTPS JWKS always verifies certificates. For local/dev self-signed JWKS use `http://localhost` or `http://host.docker.internal` in `JWKS_URI`. |
    | `SIGNER_UPSTREAM` | Optional. If set (e.g. `http://signer:8081` in compose-only gateway builds), the container does **not** run livepeer and only proxies to this URL. |
    | `SIGNER_CLI_HTTP_ADDR` | Upstream for the CLI port (default `http://127.0.0.1:4935`). In compose, set to `http://signer:4935`. Apache exposes the CLI under **`/__signer_cli/`** on the same public port as the HTTP API. |
 

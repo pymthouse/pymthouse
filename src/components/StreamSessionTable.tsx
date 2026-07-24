@@ -69,7 +69,7 @@ const statusBadge: Record<string, string> = {
 
 export default function StreamSessionTable({
   sessions,
-}: StreamSessionTableProps) {
+}: Readonly<StreamSessionTableProps>) {
   const orderedSessions = useMemo(
     () => sortSessionsByLastPaymentDesc(sessions),
     [sessions],

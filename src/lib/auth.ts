@@ -1,7 +1,7 @@
 import { db } from "@/db/index";
 import { sessions, oidcClients, developerApps } from "@/db/schema";
 import { eq, and, gt, or } from "drizzle-orm";
-import { randomBytes } from "crypto";
+import { randomBytes } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import type { NextRequest } from "next/server";
 import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
@@ -21,7 +21,7 @@ const DEBUG_OIDC_LOGS = process.env.OIDC_DEBUG_LOGS === "1";
  */
 export function decodeBasicAuthComponent(value: string): string {
   try {
-    return decodeURIComponent(value.replace(/\+/g, " "));
+    return decodeURIComponent(value.replaceAll("+", " "));
   } catch {
     return value;
   }
@@ -327,11 +327,12 @@ export async function authenticateAppClient(request: Request): Promise<{
       or(
         eq(developerApps.oidcClientId, clientRow.id),
         eq(developerApps.m2mOidcClientId, clientRow.id),
+        eq(developerApps.webOidcClientId, clientRow.id),
       ),
     )
     .limit(1);
   const app = appRows[0];
-  const oidcRowIdForAppId = app?.oidcClientId ?? app?.m2mOidcClientId;
+  const oidcRowIdForAppId = app?.oidcClientId ?? app?.m2mOidcClientId ?? app?.webOidcClientId;
   if (!app || !oidcRowIdForAppId) return null;
 
   // Prefer the public (interactive) client row for appId; if only M2M is linked, use that row.

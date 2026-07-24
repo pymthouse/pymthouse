@@ -9,7 +9,7 @@
  *   This module retains pricing helpers for pipeline/model constraint parsing.
  */
 
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { extractPipelineModelFromCapabilitiesBase64 } from "./proto";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -143,31 +143,35 @@ export function buildSignedTicketConstraintHash(params: {
   });
 }
 /**
- * Convert a wei value to USD micros (1 USD = 1,000,000 micros) using the
- * oracle ETH/USD price.
+ * Convert a wei value to exact USD micros (1 USD = 1,000,000 micros) using the
+ * oracle ETH/USD price. Returns a number that may be fractional (sub-micro).
  *
- * Uses integer arithmetic on the WEI → micros path to avoid floating-point
- * precision loss. Returns a bigint.
- *
- * Matches the OpenMeter collector mapping:
- *   fee_usd_micros = ceil(fee_wei * eth_usd / 1e12)
- * which is equivalent to ceil(wei * ethUsdMicros / 1e18) when
+ * Matches the OpenMeter collector mapping (no per-ticket ceil):
+ *   fee_usd_micros = fee_wei * eth_usd / 1e12
+ * which is equivalent to wei * ethUsdMicros / 1e18 when
  * ethUsdMicros = floor(ethUsdPriceUsd * 1e6).
  *
- * Sub-micro positive fees round up to 1 micro so tiny live-runner tickets
- * still debit the starter allowance / mint gate.
+ * Callers that need integer micros for gates/allowances must ceil at the
+ * session or read boundary (see ceilExactUsdMicros), not here.
  */
-export function computeUsdMicrosFromWei(weiAmt: bigint, ethUsdPriceUsd: number): bigint {
+export function computeUsdMicrosFromWei(weiAmt: bigint, ethUsdPriceUsd: number): number {
   if (weiAmt <= 0n || !Number.isFinite(ethUsdPriceUsd) || ethUsdPriceUsd <= 0) {
-    return 0n;
+    return 0;
   }
-  // ethUsdMicros = floor(priceUsd * 1e6)
   const ethUsdMicros = BigInt(Math.floor(ethUsdPriceUsd * 1_000_000));
   const DIVISOR = 10n ** 18n;
   const product = weiAmt * ethUsdMicros;
   const quotient = product / DIVISOR;
   const remainder = product % DIVISOR;
-  return remainder === 0n ? quotient : quotient + 1n;
+  return Number(quotient) + Number(remainder) / Number(DIVISOR);
+}
+
+/** Ceil an exact (possibly fractional) USD micros sum to an integer micro. */
+export function ceilExactUsdMicros(exactMicros: number): bigint {
+  if (!Number.isFinite(exactMicros) || exactMicros <= 0) {
+    return 0n;
+  }
+  return BigInt(Math.ceil(exactMicros));
 }
 
 /**

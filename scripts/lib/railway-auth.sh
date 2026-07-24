@@ -48,6 +48,72 @@ railway_pe_flags() {
   echo "-p $(railway_default_project_id) -e $1"
 }
 
+railway_stack_json() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  echo "${RAILWAY_STACK_JSON:-$here/config/railway/stack.json}"
+  return 0
+}
+
+# True when service is listed in stack.json previewOnlyServices.
+railway_is_preview_only_service() {
+  local service="$1"
+  local stack
+  stack="$(railway_stack_json)"
+  [[ -f "$stack" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e --arg s "$service" '(.previewOnlyServices // []) | index($s) != null' "$stack" >/dev/null 2>&1
+}
+
+# True when a service should run in the given environment. A service with no
+# services.<name>.environments key runs everywhere (kafka, collector, pymthouse);
+# one with the key runs only in the listed environments (e.g. pymthouse-signer-test).
+railway_service_in_environment() {
+  local service="$1"
+  local env="$2"
+  local stack
+  stack="$(railway_stack_json)"
+  # No stack metadata or no jq: assume the service runs everywhere.
+  [[ -f "$stack" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -e --arg s "$service" --arg e "$env" '
+    (.services[$s].environments) as $envs
+    | ($envs == null) or ($envs | index($e) != null)
+  ' "$stack" >/dev/null 2>&1
+}
+
+# Print livepeerImage for a service from stack.json, or empty.
+railway_service_livepeer_image() {
+  local service="$1"
+  local stack
+  stack="$(railway_stack_json)"
+  [[ -f "$stack" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -r --arg s "$service" '.services[$s].livepeerImage // empty' "$stack"
+}
+
+# Print services.<name>.manifest from stack.json, or empty.
+railway_service_manifest() {
+  local service="$1"
+  local stack
+  stack="$(railway_stack_json)"
+  [[ -f "$stack" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -r --arg s "$service" '.services[$s].manifest // empty' "$stack"
+}
+
+# Set LIVEPEER_IMAGE from stack.json when present (Docker build ARG for signer DMZ).
+railway_apply_livepeer_image() {
+  local service="$1"
+  local pe_flags="${2:-}"
+  local img
+  img="$(railway_service_livepeer_image "$service")"
+  [[ -n "$img" ]] || return 0
+  # shellcheck disable=SC2086
+  railway_retry railway variable set "LIVEPEER_IMAGE=${img}" --service "$service" $pe_flags --skip-deploys >/dev/null
+  echo "  $service: LIVEPEER_IMAGE=${img}"
+}
+
 # True when stderr looks like a transient network / API failure (retryable).
 railway_retryable_failure() {
   local err_file="$1"

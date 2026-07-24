@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { test, mock } from "node:test";
+import { test } from "node:test";
 
 // We need to mock global fetch before importing the module under test.
-// Using node:test's mock.method to patch globalThis.fetch.
 
 test("fetchEthUsdFromPublicExchanges: returns Binance result on success", async () => {
   const original = globalThis.fetch;

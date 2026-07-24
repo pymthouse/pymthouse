@@ -20,14 +20,57 @@ export function parseOpenMeterCustomerKey(key: string): {
   };
 }
 
-/** Platform owner OpenMeter customer key (shared across all apps they own). */
+/**
+ * Wire-only prefix for owner usage subjects inside go-livepeer `auth_id`.
+ * The collector strips this before writing the CloudEvent subject; Konnect
+ * customer keys use the bare platform user id.
+ */
 export const OWNER_CUSTOMER_KEY_PREFIX = "owner:";
 
+/**
+ * Canonical OpenMeter customer key for a platform owner: bare `{users.id}`.
+ * Credits and included usage live on this single customer across all apps.
+ */
 export function buildOwnerCustomerKey(userId: string): string {
-  return `${OWNER_CUSTOMER_KEY_PREFIX}${userId.trim()}`;
+  return normalizePlatformUserId(userId);
 }
 
+/**
+ * Transport marker for webhook → go-livepeer (`usage_subject = owner:{id}`).
+ * Not the Konnect customer key — see {@link buildOwnerCustomerKey}.
+ */
+export function buildOwnerWireSubject(userId: string): string {
+  return `${OWNER_CUSTOMER_KEY_PREFIX}${normalizePlatformUserId(userId)}`;
+}
+
+/**
+ * True when `key` is an owner wallet customer key or a legacy/wire owner subject:
+ * - bare `{users.id}` (canonical)
+ * - `owner:{users.id}` (legacy customer key / wire subject)
+ *
+ * End-user customer keys are always compound `app_…:externalUserId`.
+ */
 export function isOwnerCustomerKey(key: string): boolean {
+  const trimmed = key.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (
+    trimmed.startsWith(OWNER_CUSTOMER_KEY_PREFIX) &&
+    trimmed.length > OWNER_CUSTOMER_KEY_PREFIX.length
+  ) {
+    return true;
+  }
+  // Canonical owner key has no compound separator.
+  return !trimmed.includes(":");
+}
+
+/**
+ * True when the value is the wire/legacy `owner:{id}` form (not a bare id).
+ * Use this when classifying JWT/webhook subjects before app-owner matching —
+ * bare UUIDs are common end-user external ids and must not short-circuit.
+ */
+export function isOwnerWireSubject(key: string): boolean {
   const trimmed = key.trim();
   return (
     trimmed.startsWith(OWNER_CUSTOMER_KEY_PREFIX) &&
@@ -36,29 +79,37 @@ export function isOwnerCustomerKey(key: string): boolean {
 }
 
 export function parseOwnerCustomerKey(key: string): string | null {
-  if (!isOwnerCustomerKey(key)) {
+  const trimmed = key.trim();
+  if (!trimmed) {
     return null;
   }
-  return key.trim().slice(OWNER_CUSTOMER_KEY_PREFIX.length);
+  if (trimmed.startsWith(OWNER_CUSTOMER_KEY_PREFIX)) {
+    const id = trimmed.slice(OWNER_CUSTOMER_KEY_PREFIX.length);
+    return id || null;
+  }
+  if (!trimmed.includes(":")) {
+    return trimmed;
+  }
+  return null;
 }
 
 /**
- * Meter subjects for shared-owner usage reads: compound wire keys plus
- * transitional owner: / app_…:owner:… subjects.
+ * Meter subjects for shared-owner usage reads: bare id first, then transitional
+ * `owner:` / compound `app_…:{id}` / `app_…:owner:{id}` subjects.
  */
 export function buildOwnerMeterSubjects(
   ownerUserId: string,
   publicClientIds: string[],
 ): string[] {
-  const trimmedOwnerId = ownerUserId.trim();
-  const ownerKey = buildOwnerCustomerKey(trimmedOwnerId);
-  const subjects = [ownerKey];
+  const trimmedOwnerId = normalizePlatformUserId(ownerUserId);
+  const legacyOwnerKey = buildOwnerWireSubject(trimmedOwnerId);
+  const subjects = [trimmedOwnerId, legacyOwnerKey];
   for (const clientId of publicClientIds) {
     const trimmedClientId = clientId.trim();
     if (!trimmedClientId) continue;
     subjects.push(
       buildOpenMeterCustomerKey(trimmedClientId, trimmedOwnerId),
-      buildOpenMeterCustomerKey(trimmedClientId, ownerKey),
+      buildOpenMeterCustomerKey(trimmedClientId, legacyOwnerKey),
     );
   }
   return [...new Set(subjects)];

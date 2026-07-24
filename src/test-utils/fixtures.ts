@@ -332,7 +332,7 @@ export async function cleanupTestApp(
  * single quotes defensively to keep the SQL well-formed.
  */
 function arrayLiteral(ids: string[]): string {
-  const escaped = ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(",");
+  const escaped = ids.map((id) => `'${id.replaceAll("'", "''")}'`).join(",");
   return `ARRAY[${escaped}]::text[]`;
 }
 

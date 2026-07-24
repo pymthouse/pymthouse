@@ -61,6 +61,16 @@ const optionalVars = {
 const isVercelBuild = process.env.VERCEL === "1";
 const buildOptionalOnVercel = new Set(["DATABASE_URL", "NEXTAUTH_URL"]);
 
+/**
+ * `vercel pull` redacts Sensitive env vars as the literal "[SENSITIVE]"
+ * (or empty string). Those are not real values and must not fail format checks.
+ */
+function isUnavailableEnvValue(value) {
+  if (value == null) return true;
+  const trimmed = String(value).trim();
+  return trimmed === "" || trimmed === "[SENSITIVE]";
+}
+
 function formatSet(value) {
   return `set (${value.length} chars)`;
 }
@@ -79,7 +89,7 @@ console.log("📋 Required Variables:");
 for (const [key, config] of Object.entries(requiredVars)) {
   const value = process.env[key];
 
-  if (!value) {
+  if (isUnavailableEnvValue(value)) {
     if (isVercelBuild && buildOptionalOnVercel.has(key)) {
       console.log(`  ⚠️  ${key}: not set for build (must be in Vercel Production env for runtime)`);
       console.log(`     → ${config.desc}`);
@@ -192,7 +202,7 @@ if (
 }
 
 const dbUrl = process.env.DATABASE_URL;
-if (dbUrl && !dbUrl.includes("sslmode")) {
+if (!isUnavailableEnvValue(dbUrl) && !dbUrl.includes("sslmode")) {
   console.log(
     "  ⚠️  DATABASE_URL missing SSL mode - add '?sslmode=require' for production",
   );

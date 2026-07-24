@@ -137,9 +137,9 @@ function TurnkeyExpectedErrorGuard() {
 
 export default function TurnkeyProviderWrapper({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   const organizationId = process.env.NEXT_PUBLIC_ORGANIZATION_ID;
   const authProxyConfigId = process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID;
 

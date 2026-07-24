@@ -4,6 +4,10 @@ import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
 import {
+  OWNER_STARTER_PLAN_NAME,
+  isOwnerStarterPlanKey,
+} from "@/lib/openmeter/owner-starter-key";
+import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "@/lib/openmeter/subscription-read";
@@ -40,6 +44,7 @@ export async function GET(
     ? await db.select().from(plans).where(eq(plans.id, resolvedPlanId)).limit(1)
     : [];
   const plan = planRows[0] ?? null;
+  const isOwnerStarter = isOwnerStarterPlanKey(omSubscription.planKey);
 
   return NextResponse.json({
     externalUserId,
@@ -48,8 +53,9 @@ export async function GET(
       id: omSubscription.id,
       status: omSubscription.status,
       planId: plan?.id ?? null,
-      planName: plan?.name ?? null,
-      planType: plan?.type ?? null,
+      planName: plan?.name ?? (isOwnerStarter ? OWNER_STARTER_PLAN_NAME : null),
+      // Owner Starter is a platform plan (no Neon row); match local Starter typing.
+      planType: plan?.type ?? (isOwnerStarter ? "free" : null),
       openmeterPlanKey: omSubscription.planKey,
       currentPeriodStart: omSubscription.activeFrom,
       currentPeriodEnd: omSubscription.activeTo,

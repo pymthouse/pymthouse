@@ -39,7 +39,7 @@ export default function AppModeStep({
   data,
   onChange,
   readOnly = false,
-}: Props) {
+}: Readonly<Props>) {
   const scopes = data.allowedScopes.split(/\s+/).filter(Boolean);
   const hasDeviceCode = data.grantTypes.includes(DEVICE_CODE_GRANT);
   const hasSignJob = scopes.includes("sign:job");
@@ -121,17 +121,33 @@ export default function AppModeStep({
     }
   };
 
+  const toggleWebHelper = (checked: boolean) => {
+    if (readOnly) return;
+    if (checked) {
+      onChange({ confidentialWebHelper: true });
+    } else {
+      onChange({
+        confidentialWebHelper: false,
+        confidentialWebRedirectUris: [],
+      });
+    }
+  };
+
   return (
     <div className="space-y-4 border-t border-zinc-800 pt-8">
       <div>
         <h2 className="text-base font-semibold text-zinc-100">Capabilities</h2>
         <p className="text-sm text-zinc-500 mt-1">
-          Enable the integration features your app needs.
+          The primary <code className="font-mono text-zinc-400">app_</code> client stays
+          public. Enable confidential siblings as needed.
         </p>
       </div>
 
       <div className="space-y-2">
-        <label aria-label="Confidential M2M backend" className={capabilityRowClass(Boolean(data.backendDeviceHelper), readOnly)}>
+        <label
+          aria-label="Confidential M2M backend"
+          className={capabilityRowClass(Boolean(data.backendDeviceHelper), readOnly)}
+        >
           <input
             type="checkbox"
             checked={Boolean(data.backendDeviceHelper)}
@@ -150,7 +166,10 @@ export default function AppModeStep({
         </label>
 
         {data.backendDeviceHelper ? (
-          <label aria-label="Device / CLI login" className={capabilityRowClass(hasDeviceCode, readOnly)}>
+          <label
+            aria-label="Device / CLI login"
+            className={capabilityRowClass(hasDeviceCode, readOnly)}
+          >
             <input
               type="checkbox"
               checked={hasDeviceCode}
@@ -167,12 +186,35 @@ export default function AppModeStep({
               {hasDeviceCode ? (
                 <p className="mt-2 text-xs text-zinc-500">
                   Configure the third-party initiate login URL on{" "}
-                  <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
+                  <strong className="text-zinc-400">Credentials &amp; URLs → Public / SDK</strong>.
                 </p>
               ) : null}
             </div>
           </label>
         ) : null}
+
+        <label
+          aria-label="Confidential web RP"
+          className={capabilityRowClass(Boolean(data.confidentialWebHelper), readOnly)}
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(data.confidentialWebHelper)}
+            onChange={(e) => toggleWebHelper(e.target.checked)}
+            disabled={readOnly}
+            className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
+          />
+          <div>
+            <p className="text-sm font-medium text-zinc-200">Confidential web RP</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Provisions a confidential{" "}
+              <code className="font-mono text-zinc-400">web_</code> sibling for portal
+              SSO (auth code + secret + redirects). This is the only client that
+              registers redirect URIs — configure them on Credentials &amp; URLs →
+              Web RP.
+            </p>
+          </div>
+        </label>
 
         <label aria-label="Payment signing" className={capabilityRowClass(hasSignJob, readOnly)}>
           <input

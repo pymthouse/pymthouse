@@ -5,6 +5,7 @@ import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import { buildOpenMeterPlanKey } from "./plan-naming";
 
 const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
@@ -208,6 +209,9 @@ function isStarterOpenMeterSubscription(
   starterPlanKey: string,
   starterOpenMeterPlanId: string | null,
 ): boolean {
+  if (isOwnerStarterPlanKey(subscription.planKey)) {
+    return true;
+  }
   if (subscription.planKey === starterPlanKey) {
     return true;
   }

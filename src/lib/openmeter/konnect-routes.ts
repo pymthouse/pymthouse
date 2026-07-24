@@ -105,7 +105,84 @@ export function rewriteKonnectSearchParams(
     }
   }
 
+  // OpenMeter SDK events.list uses subject/limit/from/to; Konnect expects
+  // filter[subject][eq], page[size], and filter[time][gte|lte]. Without this,
+  // subject is ignored and the latest global events are returned — drowning out
+  // the viewer's own signed-ticket history under busy platform traffic.
+  if (method.toUpperCase() === "GET" && /\/events\/?$/.test(normalizedPath)) {
+    rewriteKonnectEventsListParams(params);
+  }
+
   return params;
+}
+
+function takeTrimmedParamValues(
+  params: URLSearchParams,
+  key: string,
+): string[] {
+  const values = params
+    .getAll(key)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  params.delete(key);
+  return values;
+}
+
+/** Map multi-value SDK params to Konnect filter[field][eq|oeq]. */
+function setKonnectEqOrOeqFilter(
+  params: URLSearchParams,
+  filterField: string,
+  values: string[],
+): void {
+  if (values.length === 1) {
+    params.set(`filter[${filterField}][eq]`, values[0]);
+    return;
+  }
+  if (values.length > 1) {
+    // Konnect supports comma-delimited exact match via oeq.
+    params.set(`filter[${filterField}][oeq]`, values.join(","));
+  }
+}
+
+function moveParamToKonnectFilter(
+  params: URLSearchParams,
+  sourceKey: string,
+  filterKey: string,
+): void {
+  if (!params.has(sourceKey)) {
+    return;
+  }
+  const value = params.get(sourceKey)?.trim();
+  params.delete(sourceKey);
+  if (value) {
+    params.set(filterKey, value);
+  }
+}
+
+function rewriteKonnectEventsListParams(params: URLSearchParams): void {
+  setKonnectEqOrOeqFilter(
+    params,
+    "subject",
+    takeTrimmedParamValues(params, "subject"),
+  );
+  setKonnectEqOrOeqFilter(
+    params,
+    "customer_id",
+    takeTrimmedParamValues(params, "customerId"),
+  );
+
+  if (params.has("limit")) {
+    const limit = params.get("limit");
+    params.delete("limit");
+    if (limit && !params.has("page[size]")) {
+      params.set("page[size]", limit);
+    }
+  }
+
+  moveParamToKonnectFilter(params, "from", "filter[time][gte]");
+  moveParamToKonnectFilter(params, "to", "filter[time][lte]");
+  moveParamToKonnectFilter(params, "ingestedAtFrom", "filter[ingested_at][gte]");
+  moveParamToKonnectFilter(params, "ingestedAtTo", "filter[ingested_at][lte]");
 }
 
 export function rewriteKonnectRequestUrl(url: URL, method: string): URL {

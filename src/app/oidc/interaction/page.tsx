@@ -1,13 +1,11 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import { IncomingMessage, ServerResponse } from "http";
-import { Socket } from "net";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import { authOptions } from "@/lib/next-auth-options";
 import { getProvider } from "@/lib/oidc/provider";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
-import { resolveHostContext } from "@/lib/oidc/host-resolution";
 import { checkAppAccess } from "@/lib/oidc/app-access";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -43,9 +41,9 @@ function buildNodeRequest(
 
 export default async function OidcInteractionPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<SearchParams>;
-}) {
+}>) {
   const params = await searchParams;
   const uid = asSingleValue(params.uid);
 

@@ -13,9 +13,9 @@ import { confirmedUsageCountByStreamSessionId } from "@/lib/stream-session-stats
 
 export default async function UserDetailPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ id: string }>;
-}) {
+}>) {
   const { id } = await params;
 
   const userRows = await db

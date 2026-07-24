@@ -16,16 +16,28 @@ import { buildOpenMeterUsageResponse } from "@/lib/usage/query-openmeter";
 import {
   aggregateDailyRequestCounts,
   aggregateDailyPipelineModelRows,
+  aggregateManifestRows,
   aggregatePipelineModelRows,
   aggregateUserPipelineModelRows,
   dateKeyFromMeterWindow,
+  meterRowValueToMillis,
+  millisToSecsString,
+  queryOpenMeterUsageByManifest,
+  readTestManifestStub,
+  __testSetOpenMeterManifestRows,
 } from "@/lib/openmeter/usage-read";
 import {
   isOpenMeterSubscriptionActive,
   verifyOpenMeterSubscriptionId,
 } from "@/lib/openmeter/subscription-read";
 import { resolveNetworkFeeMeterSlug } from "@/lib/openmeter/client-factory";
-import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
+import {
+  BILLABLE_SECS_METER,
+  FEE_WEI_METER,
+  NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "@/lib/openmeter/constants";
+import { OPENMETER_METER_DEFINITIONS, parseSafeWeiNumber } from "@/lib/openmeter/entitlements";
 
 function openMeterTestClient(mock: object): OpenMeter {
   return mock as OpenMeter;
@@ -79,16 +91,33 @@ test("buildStripeConnectInstallUrl adds state and pymthouse callback redirect_ur
   );
 });
 
-test("owner customer key helpers", async () => {
-  const { buildOwnerCustomerKey, isOwnerCustomerKey, parseOwnerCustomerKey, normalizePlatformUserId } =
-    await import("./customer-key");
-  assert.equal(buildOwnerCustomerKey("uuid-1"), "owner:uuid-1");
+test("owner customer key helpers use bare user id", async () => {
+  const {
+    buildOwnerCustomerKey,
+    buildOwnerWireSubject,
+    isOwnerCustomerKey,
+    isOwnerWireSubject,
+    parseOwnerCustomerKey,
+    normalizePlatformUserId,
+    buildOwnerMeterSubjects,
+  } = await import("./customer-key");
+  assert.equal(buildOwnerCustomerKey("uuid-1"), "uuid-1");
+  assert.equal(buildOwnerCustomerKey("owner:uuid-1"), "uuid-1");
+  assert.equal(buildOwnerWireSubject("uuid-1"), "owner:uuid-1");
+  assert.equal(isOwnerCustomerKey("uuid-1"), true);
   assert.equal(isOwnerCustomerKey("owner:uuid-1"), true);
   assert.equal(isOwnerCustomerKey("app_x:uuid-1"), false);
+  assert.equal(isOwnerWireSubject("owner:uuid-1"), true);
+  assert.equal(isOwnerWireSubject("uuid-1"), false);
   assert.equal(parseOwnerCustomerKey("owner:uuid-1"), "uuid-1");
+  assert.equal(parseOwnerCustomerKey("uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("owner:uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("user:uuid-1"), "uuid-1");
   assert.equal(normalizePlatformUserId("uuid-1"), "uuid-1");
+  assert.deepEqual(
+    buildOwnerMeterSubjects("uuid-1", ["app_aaa"]).sort(),
+    ["app_aaa:owner:uuid-1", "app_aaa:uuid-1", "owner:uuid-1", "uuid-1"].sort(),
+  );
 });
 
 test("isMintUserSignerTokenRequest detects mint scope", () => {
@@ -148,6 +177,363 @@ test("aggregatePipelineModelRows sums fee and count by pipeline/model", () => {
   assert.equal(row.pipeline, "text-to-image");
   assert.equal(row.requestCount, 2);
   assert.equal(row.networkFeeUsdMicros, "1500");
+});
+
+test("aggregateManifestRows sums micros, wei, and billable_secs by manifest_id", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 250,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-2",
+        },
+      },
+    ] as never,
+    feeWeiRows: [
+      {
+        value: "5000",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: 2000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+    billableSecsRows: [
+      {
+        value: 30,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "live-video-to-video",
+          model_id: "comfyui",
+          manifest_id: "mid-1",
+        },
+      },
+      {
+        value: "12.5",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "nano-banana",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+  });
+
+  const byId = new Map(rows.map((r) => [r.manifestId, r]));
+  assert.equal(byId.size, 2);
+  const mid1 = byId.get("mid-1");
+  assert.ok(mid1);
+  assert.equal(mid1.networkFeeUsdMicros, "1250");
+  assert.equal(mid1.networkFeeUsdExact, "1250");
+  assert.equal(mid1.feeWei, "7000");
+  assert.equal(mid1.billableSecs, "42.5");
+  const mid2 = byId.get("mid-2");
+  assert.ok(mid2);
+  assert.equal(mid2.networkFeeUsdMicros, "100");
+  assert.equal(mid2.feeWei, "0");
+  assert.equal(mid2.billableSecs, "0");
+});
+
+test("aggregateManifestRows ceils fractional micros once per session", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 0.3,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+      {
+        value: "0.3",
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+      {
+        value: 0.3,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "transcode/ffmpeg",
+          manifest_id: "mid-dust",
+        },
+      },
+    ] as never,
+    feeWeiRows: [] as never,
+    billableSecsRows: [] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.networkFeeUsdExact, "0.9");
+  assert.equal(rows[0]?.networkFeeUsdMicros, "1");
+  assert.equal(rows[0]?.pipeline, "byoc");
+  assert.equal(rows[0]?.modelId, "transcode/ffmpeg");
+});
+
+test("aggregateManifestRows filters to multi-subject allow-list", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-a",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-a",
+        },
+      },
+      {
+        value: 999,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "other-user",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-leak",
+        },
+      },
+      {
+        value: 50,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-b",
+          pipeline: "byoc",
+          model_id: "m2",
+          manifest_id: "mid-b",
+        },
+      },
+    ] as never,
+    feeWeiRows: [
+      {
+        value: 1000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "viewer-a",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-a",
+        },
+      },
+      {
+        value: 5000,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "other-user",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-leak",
+        },
+      },
+    ] as never,
+    billableSecsRows: [] as never,
+    filterExternalUserIds: new Set(["viewer-a", "viewer-b"]),
+  });
+  const byId = new Map(rows.map((r) => [r.manifestId, r]));
+  assert.equal(byId.size, 2);
+  assert.equal(byId.get("mid-a")?.networkFeeUsdMicros, "100");
+  assert.equal(byId.get("mid-a")?.feeWei, "1000");
+  assert.equal(byId.get("mid-b")?.networkFeeUsdMicros, "50");
+  assert.equal(byId.get("mid-leak"), undefined);
+});
+
+test("aggregateManifestRows empty subject set matches nothing", () => {
+  const rows = aggregateManifestRows({
+    clientId: "app_1",
+    feeMicrosRows: [
+      {
+        value: 100,
+        windowStart: new Date("2026-05-01"),
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "u1",
+          pipeline: "byoc",
+          model_id: "m1",
+          manifest_id: "mid-1",
+        },
+      },
+    ] as never,
+    feeWeiRows: [] as never,
+    billableSecsRows: [] as never,
+    filterExternalUserIds: new Set(),
+  });
+  assert.equal(rows.length, 0);
+});
+
+test("meterRowValueToMillis and millisToSecsString preserve fractional seconds", () => {
+  assert.equal(meterRowValueToMillis(null), 0n);
+  assert.equal(meterRowValueToMillis(12.5), 12500n);
+  assert.equal(meterRowValueToMillis("12.5"), 12500n);
+  assert.equal(meterRowValueToMillis(1n), 1000n);
+  assert.equal(meterRowValueToMillis("x"), 0n);
+  assert.equal(meterRowValueToMillis(Number.NaN), 0n);
+  assert.equal(millisToSecsString(42500n), "42.5");
+  assert.equal(millisToSecsString(0n), "0");
+  assert.equal(millisToSecsString(-1500n), "-1.5");
+  assert.equal(millisToSecsString(1000n), "1");
+});
+
+test("queryOpenMeterUsageByManifest returns test stub rows", async () => {
+  __testSetOpenMeterManifestRows("app_stub", [
+    {
+      manifestId: "m1",
+      networkFeeUsdMicros: "10",
+      networkFeeUsdExact: "10",
+      feeWei: "20",
+      billableSecs: "1.5",
+    },
+  ]);
+  assert.equal(readTestManifestStub("app_stub")?.length, 1);
+  assert.equal(readTestManifestStub("app_no_stub"), null);
+  const rows = await queryOpenMeterUsageByManifest({
+    clientId: "app_stub",
+    startDate: "2026-07-01T00:00:00.000Z",
+    endDate: "2026-08-01T00:00:00.000Z",
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.manifestId, "m1");
+  assert.equal(rows[0]?.billableSecs, "1.5");
+
+  const missing = await queryOpenMeterUsageByManifest({
+    clientId: "app_no_stub",
+  });
+  assert.deepEqual(missing, []);
+});
+
+test("parseSafeWeiNumber accepts safe integers and rejects invalid Wei", () => {
+  assert.equal(parseSafeWeiNumber("123"), 123);
+  assert.equal(parseSafeWeiNumber(" 42 "), 42);
+  assert.equal(parseSafeWeiNumber(""), undefined);
+  assert.equal(parseSafeWeiNumber("-1"), undefined);
+  assert.equal(parseSafeWeiNumber("1.5"), undefined);
+  assert.equal(parseSafeWeiNumber("1e18"), undefined);
+  assert.equal(parseSafeWeiNumber("NaN"), undefined);
+  assert.equal(
+    parseSafeWeiNumber(String(Number.MAX_SAFE_INTEGER + 1)),
+    undefined,
+  );
+});
+
+test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", () => {
+  const bySlug = new Map(OPENMETER_METER_DEFINITIONS.map((m) => [m.slug, m]));
+  for (const slug of [
+    FEE_WEI_METER,
+    NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER,
+    BILLABLE_SECS_METER,
+  ]) {
+    const meter = bySlug.get(slug);
+    assert.ok(meter, `missing meter ${slug}`);
+    assert.equal(meter.aggregation, "SUM");
+    assert.ok(meter.groupBy?.manifest_id);
+  }
+  assert.equal(
+    bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy?.manifest_id,
+    undefined,
+  );
+});
+
+test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () => {
+  const response = buildOpenMeterUsageResponse({
+    clientId: "app_1",
+    groupBy: "manifest",
+    rows: [
+      {
+        externalUserId: "u1",
+        requestCount: 3,
+        networkFeeUsdMicros: "1500",
+      },
+    ],
+    manifestRows: [
+      {
+        manifestId: "mid-1",
+        networkFeeUsdMicros: "1500",
+        networkFeeUsdExact: "1500",
+        feeWei: "9000",
+        billableSecs: "45",
+      },
+    ],
+  });
+  assert.equal(
+    (response.totals as { networkFeeUsdMicros: string }).networkFeeUsdMicros,
+    "1500",
+  );
+  const byManifest = response.byManifest as Array<{
+    manifestId: string;
+    feeWei: string;
+    billableSecs: string;
+    requestCount?: number;
+  }>;
+  assert.equal(byManifest.length, 1);
+  assert.equal(byManifest[0]?.manifestId, "mid-1");
+  assert.equal(byManifest[0]?.feeWei, "9000");
+  assert.equal(byManifest[0]?.billableSecs, "45");
+  assert.equal(byManifest[0]?.requestCount, undefined);
 });
 
 test("aggregatePipelineModelRows preserves sub-$0.0001 micros from string meter values", () => {
@@ -437,23 +823,98 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
   assert.deepEqual(identity, { id: "om-new", key: "app_1:user-2" });
 });
 
-test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer", async () => {
+test("ensureOwnerCustomer attaches transitional keys only on create", async () => {
   let updatedSubjectKeys: string[] | undefined;
-  const ownerKey = "owner:uuid-1";
+  let createdBody: {
+    key?: string;
+    usageAttribution?: { subjectKeys?: string[] };
+  } | undefined;
+  const ownerKey = "uuid-1";
+  const customerRecord = {
+    id: "om-owner-1",
+    key: ownerKey,
+    name: ownerKey,
+    usageAttribution: { subjectKeys: [ownerKey] },
+  };
+  let exists = false;
   const client = {
     customers: {
-      get: async (key: string) => ({
-        id: "om-owner-1",
-        key,
-        name: key,
-        usageAttribution: { subjectKeys: [ownerKey] },
-      }),
+      get: async () => {
+        if (!exists) throw new Error("not found");
+        return customerRecord;
+      },
+      list: async () => ({ items: exists ? [customerRecord] : [] }),
       update: async (
         _id: string,
         input: { usageAttribution: { subjectKeys: string[] } },
       ) => {
         updatedSubjectKeys = input.usageAttribution.subjectKeys;
-        return { id: "om-owner-1", key: ownerKey };
+        customerRecord.usageAttribution = { subjectKeys: updatedSubjectKeys };
+        return customerRecord;
+      },
+      create: async (input: {
+        key: string;
+        usageAttribution: { subjectKeys: string[] };
+      }) => {
+        createdBody = input;
+        exists = true;
+        return { id: "om-owner-1", key: input.key };
+      },
+    },
+  };
+
+  const identity = await ensureOwnerCustomerWireSubjects(
+    openMeterTestClient(client),
+    "uuid-1",
+    ["app_aaa", "app_bbb"],
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
+  assert.equal(createdBody?.key, ownerKey);
+  assert.deepEqual(createdBody?.usageAttribution?.subjectKeys, [ownerKey]);
+  assert.deepEqual(
+    [...(updatedSubjectKeys ?? [])].sort(),
+    [
+      "app_aaa:owner:uuid-1",
+      "app_aaa:uuid-1",
+      "app_bbb:owner:uuid-1",
+      "app_bbb:uuid-1",
+      "owner:uuid-1",
+      "uuid-1",
+    ].sort(),
+  );
+});
+
+test("ensureOwnerCustomer keeps settlement subject only on existing customers", async () => {
+  let updateCalls = 0;
+  let updatedSubjectKeys: string[] | undefined;
+  const ownerKey = "uuid-1";
+  const customerRecord = {
+    id: "om-owner-1",
+    key: ownerKey,
+    name: ownerKey,
+    usageAttribution: { subjectKeys: [ownerKey] },
+    metadata: {} as Record<string, string>,
+  };
+  const client = {
+    customers: {
+      get: async () => customerRecord,
+      list: async () => ({ items: [customerRecord] }),
+      update: async (
+        _id: string,
+        input: {
+          usageAttribution?: { subjectKeys: string[] };
+          metadata?: Record<string, string>;
+        },
+      ) => {
+        updateCalls += 1;
+        if (input.usageAttribution) {
+          updatedSubjectKeys = input.usageAttribution.subjectKeys;
+          customerRecord.usageAttribution = { subjectKeys: updatedSubjectKeys };
+        }
+        if (input.metadata) {
+          customerRecord.metadata = input.metadata;
+        }
+        return customerRecord;
       },
       create: async () => {
         throw new Error("should not create");
@@ -467,10 +928,11 @@ test("ensureOwnerCustomerWireSubjects adds compound app keys to owner customer",
     ["app_aaa", "app_bbb"],
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: ownerKey });
-  assert.deepEqual(
-    [...(updatedSubjectKeys ?? [])].sort(),
-    ["app_aaa:uuid-1", "app_bbb:uuid-1", ownerKey].sort(),
-  );
+  // Bare settlement key already present; update re-sends the same set (Konnect
+  // PUT is a full replace, so omitting it would wipe subject_keys).
+  assert.deepEqual(updatedSubjectKeys, [ownerKey]);
+  assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, "app_aaa,app_bbb");
+  assert.ok(updateCalls >= 1);
 });
 
 test("ensureOpenMeterCustomer soft-fails subject update when subscription is active", async () => {
@@ -482,6 +944,7 @@ test("ensureOpenMeterCustomer soft-fails subject update when subscription is act
         name: key,
         usageAttribution: { subjectKeys: [] },
       }),
+      listSubscriptions: async () => ({ items: [] }),
       update: async () => {
         throw new Error(
           "Request failed (https://us.api.konghq.com/v3/openmeter/customers/x) [400]: validation error: cannot change subject keys for customer with active subscriptions",
@@ -498,6 +961,108 @@ test("ensureOpenMeterCustomer soft-fails subject update when subscription is act
     "owner:uuid-1",
   );
   assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
+});
+
+test("ensureOpenMeterCustomer skips subject update when active sub is known", async () => {
+  let updateCalls = 0;
+  const client = {
+    customers: {
+      get: async (key: string) => ({
+        id: "om-owner-1",
+        key,
+        name: key,
+        usageAttribution: { subjectKeys: [] },
+      }),
+      listSubscriptions: async () => ({
+        items: [{ id: "sub-1", status: "active" }],
+      }),
+      update: async () => {
+        updateCalls += 1;
+        throw new Error("should not update");
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  const identity = await ensureOpenMeterCustomer(
+    openMeterTestClient(client),
+    "owner:uuid-1",
+  );
+  assert.deepEqual(identity, { id: "om-owner-1", key: "owner:uuid-1" });
+  assert.equal(updateCalls, 0);
+});
+
+test("buildUsageMeterSubjects dual-reads bare owner and compound forms", async () => {
+  const { buildUsageMeterSubjects, buildExternalUserIdMatchKeys } = await import(
+    "./usage-read"
+  );
+  const subjects = buildUsageMeterSubjects("app_aaa", "uuid-1").sort();
+  assert.deepEqual(
+    subjects,
+    [
+      "app_aaa:owner:uuid-1",
+      "app_aaa:uuid-1",
+      "owner:uuid-1",
+      "uuid-1",
+    ].sort(),
+  );
+  const keys = buildExternalUserIdMatchKeys("owner:uuid-1");
+  assert.equal(keys.has("uuid-1"), true);
+  assert.equal(keys.has("owner:uuid-1"), true);
+});
+
+test("aggregateUserRows merges transitional owner groupBy external_user_id values", async () => {
+  const { aggregateUserPipelineModelRows } = await import("./usage-read");
+  const rows = aggregateUserPipelineModelRows({
+    clientId: "app_1",
+    filterExternalUserId: "uuid-owner",
+    feeRows: [
+      {
+        value: "100",
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: "50",
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "owner:uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+    countRows: [
+      {
+        value: 2,
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+      {
+        value: 1,
+        groupBy: {
+          client_id: "app_1",
+          external_user_id: "owner:uuid-owner",
+          pipeline: "text-to-image",
+          model_id: "sdxl",
+        },
+      },
+    ] as never,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.externalUserId, "uuid-owner");
+  assert.equal(rows[0]?.requestCount, 3);
+  assert.equal(rows[0]?.networkFeeUsdMicros, "150");
 });
 
 test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", async () => {

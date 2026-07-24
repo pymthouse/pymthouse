@@ -111,6 +111,10 @@ Renaming UI to “allowance” already matches how we talk about the current mod
 - Restore Starter included usage (`discounts.usage`) + resubscribe:
   `scripts/openmeter-fix-starter-allowance.ts`
   (`npm run openmeter:fix-starter-allowance -- --owner-id <users.id> --apply`)
+- Billing consistency audit (Neon ↔ Konnect plans/subs/spendable gate):
+  `scripts/openmeter-audit-billing-consistency.ts`
+  (`npm run openmeter:audit-billing -- --owner-id <users.id>`)
+  Unit coverage: `src/lib/openmeter/billing-consistency.test.ts`
 
 ## Success criteria
 

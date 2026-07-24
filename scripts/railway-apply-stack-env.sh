@@ -97,4 +97,11 @@ export REMOTE_SIGNER_WEBHOOK_URL
 export WEBHOOK_SECRET
 railway_apply_signer_env pymthouse "$PE_FLAGS"
 
+# A/B "latest" signer shares pymthouse's signing identity and DMZ env (same
+# Turnkey wallet / eth addr / webhook secret / OIDC / Kafka). Apply the same env
+# wherever stack.json says signer-test runs (preview + production).
+if railway_service_in_environment pymthouse-signer-test "$ENV"; then
+  railway_apply_signer_env pymthouse-signer-test "$PE_FLAGS"
+fi
+
 echo "Done. Run scripts/railway-deploy-stack.sh $ENV to deploy."

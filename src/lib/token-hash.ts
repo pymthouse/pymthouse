@@ -21,7 +21,7 @@
  * manually (hard cutover, no SHA-256 fallback).
  */
 
-import { pbkdf2Sync } from "crypto";
+import { pbkdf2Sync } from "node:crypto";
 
 const TOKEN_HASH_ITERATIONS = 600_000;
 const TOKEN_HASH_KEYLEN = 32;

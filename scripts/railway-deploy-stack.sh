@@ -32,8 +32,14 @@ echo "=== Railway stack deploy: $ENV ==="
 bash "$ROOT/scripts/railway-deploy-from-manifest.sh" kafka "$ENV" deploy/kafka
 bash "$ROOT/scripts/railway-deploy-from-manifest.sh" openmeter-collector "$ENV" deploy/openmeter-collector
 
-# Signer DMZ (service name: pymthouse)
+# Signer DMZ (service name: pymthouse) — the "stable" signer.
 bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse "$ENV"
+
+# A/B "latest" signer DMZ. Runs in the environments listed in stack.json
+# (preview + production); LIVEPEER_IMAGE is pinned to a newer go-livepeer build.
+if railway_service_in_environment pymthouse-signer-test "$ENV"; then
+  bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse-signer-test "$ENV"
+fi
 
 echo "=== Stack deploy triggered for $ENV ==="
 echo "After deploy, run a signed-ticket request and confirm collector events in OpenMeter."

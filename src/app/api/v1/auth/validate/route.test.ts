@@ -1,11 +1,10 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 import type { OpenMeter } from "@openmeter/sdk";
 import { NextRequest } from "next/server";
 
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import { db } from "@/db/index";
 import { apiKeys, planCapabilityBundles, plans, subscriptions } from "@/db/schema";
@@ -88,7 +87,7 @@ test("POST validate rejects a missing key with 400 when enabled", async () => {
 
 // ---- DB-backed C0 conformance --------------------------------------------
 
-run("POST validate returns the C0-conformant reshaped body for a valid key", async (t) => {
+test("POST validate returns the C0-conformant reshaped body for a valid key", async (t) => {
   const { POST } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
@@ -123,7 +122,7 @@ run("POST validate returns the C0-conformant reshaped body for a valid key", asy
   });
 });
 
-run("POST validate rejects an unknown key with 401", async () => {
+test("POST validate rejects an unknown key with 401", async () => {
   const { POST } = await import("./route");
   await withFlag("1", async () => {
     const res = await POST(
@@ -138,7 +137,7 @@ run("POST validate rejects an unknown key with 401", async () => {
   });
 });
 
-run(
+test(
   "subscription-backed POST /auth/validate emits neutral subscriptionRef (no openmeter id leak)",
   async (t) => {
     const { POST } = await import("./route");

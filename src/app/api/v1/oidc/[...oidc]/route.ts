@@ -7,13 +7,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider } from "@/lib/oidc/provider";
-import { IncomingMessage, ServerResponse } from "http";
-import { Socket } from "net";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import { normalizeProviderPath } from "@/lib/oidc/routes";
 import {
   OIDC_MOUNT_PATH,
   getIssuer,
-  getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
 import { getRegisteredRedirectOrigins } from "@/lib/oidc/clients";
 import { isVerifiedCustomDomain } from "@/lib/oidc/custom-domains";

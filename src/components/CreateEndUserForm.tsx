@@ -43,6 +43,7 @@ export default function CreateEndUserForm() {
   return (
     <>
       <button
+        type="button"
         onClick={() => {
           setShowForm(!showForm);
           setError(null);
@@ -59,8 +60,11 @@ export default function CreateEndUserForm() {
           </h4>
           <form onSubmit={handleSubmit} className="space-y-3">
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Name</label>
+              <label htmlFor="end-user-name" className="block text-xs text-zinc-500 mb-1">
+                Name
+              </label>
               <input
+                id="end-user-name"
                 type="text"
                 value={formData.name}
                 onChange={(e) =>
@@ -71,8 +75,11 @@ export default function CreateEndUserForm() {
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Email</label>
+              <label htmlFor="end-user-email" className="block text-xs text-zinc-500 mb-1">
+                Email
+              </label>
               <input
+                id="end-user-email"
                 type="email"
                 value={formData.email}
                 onChange={(e) =>

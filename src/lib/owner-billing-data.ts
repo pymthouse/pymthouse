@@ -29,6 +29,7 @@ import {
   defaultStarterIncludedUsdMicros,
   planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
+import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   isOpenMeterSubscriptionActive,
@@ -266,6 +267,7 @@ function buildCustomerCandidates(
   ownedApps: OwnedApp[],
 ): CustomerCandidate[] {
   const ownerKey = buildOwnerCustomerKey(ownerUserId);
+  const legacyOwnerKey = `owner:${ownerUserId.trim()}`;
   const appCandidates = ownedApps.flatMap((app) => [
     {
       customerKey: buildOpenMeterCustomerKey(app.publicClientId, ownerUserId),
@@ -273,20 +275,29 @@ function buildCustomerCandidates(
       appName: app.name,
     },
     {
-      customerKey: buildOpenMeterCustomerKey(app.publicClientId, ownerKey),
+      customerKey: buildOpenMeterCustomerKey(app.publicClientId, legacyOwnerKey),
       appPublicClientId: app.publicClientId,
       appName: app.name,
     },
   ]);
 
-  return [
+  const ownerCandidates: CustomerCandidate[] = [
     {
       customerKey: ownerKey,
       appPublicClientId: null,
       appName: null,
     },
-    ...appCandidates,
   ];
+  // Dual-read transitional legacy owner:{id} customer during migration.
+  if (legacyOwnerKey !== ownerKey) {
+    ownerCandidates.push({
+      customerKey: legacyOwnerKey,
+      appPublicClientId: null,
+      appName: null,
+    });
+  }
+
+  return [...ownerCandidates, ...appCandidates];
 }
 
 async function resolvePlanName(input: {
@@ -313,7 +324,7 @@ async function resolvePlanName(input: {
   }
 
   const key = input.planKey?.toLowerCase() ?? "";
-  if (key.includes("starter")) {
+  if (key.includes("starter") || isOwnerStarterPlanKey(input.planKey)) {
     return { planName: "Starter", isStarterDefault: true };
   }
   return {

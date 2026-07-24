@@ -78,26 +78,6 @@ function coerceJsonScalarString(raw: unknown, fallback = ""): string {
   return fallback;
 }
 
-function parseOptionalNonNegativeIntString(
-  raw: unknown,
-  fieldName: string,
-): { ok: true; value: string | null } | { ok: false; error: string } {
-  if (raw === undefined || raw === null) {
-    return { ok: true, value: null };
-  }
-  const s = coerceJsonScalarString(raw).trim();
-  if (s === "") {
-    return { ok: true, value: null };
-  }
-  if (!isNonNegativeIntegerString(s)) {
-    return {
-      ok: false,
-      error: `${fieldName} must be a non-negative integer string`,
-    };
-  }
-  return { ok: true, value: s };
-}
-
 function parseOptionalRetailRateUsd(
   raw: unknown,
   fieldName: string,

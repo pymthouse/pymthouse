@@ -8,11 +8,10 @@ import { getClient } from "@/lib/oidc/clients";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
-import { resolveAppBrandingByClientId, getDefaultBranding, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
-import { resolveHostContext } from "@/lib/oidc/host-resolution";
+import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { eq } from "drizzle-orm";
-import { IncomingMessage, ServerResponse } from "http";
-import { Socket } from "net";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import ConsentForm from "./consent-form";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -44,9 +43,9 @@ function getExternalHref(value: string): string {
 
 export default async function ConsentPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<SearchParams>;
-}) {
+}>) {
   const params = await searchParams;
   const uid = asSingleValue(params.uid);
 
@@ -177,8 +176,6 @@ export default async function ConsentPage({
     : null;
 
   const primaryColorStyle = { backgroundColor: branding.primaryColor };
-  const primaryBorderStyle = { borderColor: `${branding.primaryColor}33` };
-  const primaryBgStyle = { backgroundColor: `${branding.primaryColor}1a` };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">

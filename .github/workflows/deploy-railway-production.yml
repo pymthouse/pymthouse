@@ -85,7 +85,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli@latest
+        run: npm install -g @railway/cli@5.27.1 --ignore-scripts
 
       - name: Apply production environment variables
         run: bash scripts/railway-apply-stack-env.sh
@@ -99,5 +99,5 @@ jobs:
           OPENMETER_URL: ${{ secrets.OPENMETER_URL }}
           OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run openmeter:railway:bootstrap

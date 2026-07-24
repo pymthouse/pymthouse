@@ -10,8 +10,8 @@ import { normalizeUserCode } from "@/lib/oidc/device";
 import {
   buildDeviceFlowTargetLinkUri,
   issuerMatchesExpected,
-  thirdPartyInitiateSkipCookieName,
 } from "@/lib/oidc/third-party-initiate-login";
+import { thirdPartyInitiateSkipCookieName } from "@/lib/oidc/third-party-initiate-skip-cookie";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -47,9 +47,9 @@ async function resolveAuthoritativeClientId(
 
 export default async function DeviceVerificationPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<SearchParams>;
-}) {
+}>) {
   const params = await searchParams;
   const session = await getServerSession(authOptions);
   const hostContext = await resolveHostContext();

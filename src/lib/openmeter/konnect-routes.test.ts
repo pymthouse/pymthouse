@@ -86,6 +86,42 @@ test("rewriteKonnectRequestUrl maps customer subscriptions to filtered list", ()
   assert.equal(rewritten.searchParams.get("page[size]"), "100");
 });
 
+test("rewriteKonnectRequestUrl maps events.list subject/limit/from/to to Konnect filters", () => {
+  const url = new URL(
+    "https://us.api.konghq.com/v3/openmeter/api/v1/events?subject=uuid-owner-1&limit=50&from=2026-07-01T00:00:00.000Z&to=2026-07-31T23:59:59.999Z",
+  );
+  const rewritten = rewriteKonnectRequestUrl(url, "GET");
+  assert.equal(rewritten.pathname, "/v3/openmeter/events");
+  assert.equal(rewritten.searchParams.get("filter[subject][eq]"), "uuid-owner-1");
+  assert.equal(rewritten.searchParams.get("page[size]"), "50");
+  assert.equal(
+    rewritten.searchParams.get("filter[time][gte]"),
+    "2026-07-01T00:00:00.000Z",
+  );
+  assert.equal(
+    rewritten.searchParams.get("filter[time][lte]"),
+    "2026-07-31T23:59:59.999Z",
+  );
+  assert.equal(rewritten.searchParams.get("subject"), null);
+  assert.equal(rewritten.searchParams.get("limit"), null);
+  assert.equal(rewritten.searchParams.get("from"), null);
+  assert.equal(rewritten.searchParams.get("to"), null);
+});
+
+test("rewriteKonnectRequestUrl maps multiple event subjects to oeq", () => {
+  const url = new URL("https://us.api.konghq.com/v3/openmeter/api/v1/events");
+  url.searchParams.append("subject", "uuid-1");
+  url.searchParams.append("subject", "owner:uuid-1");
+  url.searchParams.set("limit", "25");
+  const rewritten = rewriteKonnectRequestUrl(url, "GET");
+  assert.equal(
+    rewritten.searchParams.get("filter[subject][oeq]"),
+    "uuid-1,owner:uuid-1",
+  );
+  assert.equal(rewritten.searchParams.get("filter[subject][eq]"), null);
+  assert.equal(rewritten.searchParams.get("page[size]"), "25");
+});
+
 test("unwrapOpenMeterListResult accepts arrays and Konnect page envelopes", () => {
   assert.deepEqual(unwrapOpenMeterListResult([{ id: "1" }]), [{ id: "1" }]);
   assert.deepEqual(unwrapOpenMeterListResult({ data: [{ id: "2" }] }), [{ id: "2" }]);
@@ -295,6 +331,30 @@ test("buildKonnectMeterQueryBody maps query string to Konnect POST body", () => 
       dimensions: {
         subject: { eq: "app_1:user_1" },
         client_id: { eq: "app_1" },
+      },
+    },
+  });
+});
+
+test("buildKonnectMeterQueryBody scopes by clientId without subject", () => {
+  const params = new URLSearchParams();
+  params.append("groupBy", "client_id");
+  params.append("groupBy", "external_user_id");
+  params.append("groupBy", "pipeline");
+  params.append("groupBy", "model_id");
+  params.set("windowSize", "DAY");
+  params.set("from", "2026-07-01T00:00:00.000Z");
+  params.set("to", "2026-07-31T23:59:59.999Z");
+  params.set("clientId", "app_dashboard_1");
+
+  assert.deepEqual(buildKonnectMeterQueryBody(params), {
+    group_by_dimensions: ["client_id", "external_user_id", "pipeline", "model_id"],
+    granularity: "P1D",
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-07-31T23:59:59.999Z",
+    filters: {
+      dimensions: {
+        client_id: { eq: "app_dashboard_1" },
       },
     },
   });

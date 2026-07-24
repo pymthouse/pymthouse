@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export function MarketingFooter({ className = "" }: { className?: string }) {
+export function MarketingFooter({ className = "" }: Readonly<{ className?: string }>) {
   return (
     <footer
       className={`border-t border-zinc-800 pt-4 ${className}`.trim()}
@@ -50,6 +50,22 @@ export function MarketingFooter({ className = "" }: { className?: string }) {
               className="block text-zinc-400 hover:text-zinc-200 transition-colors"
             >
               GitHub
+            </a>
+            <a
+              href="https://docs.pymthouse.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Docs
+            </a>
+            <a
+              href="https://github.com/livepeer/livepeer-python-gateway"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Python SDK
             </a>
             <a
               href="mailto:john@eliteencoder.net"

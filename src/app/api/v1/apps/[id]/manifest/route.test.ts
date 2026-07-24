@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
@@ -8,7 +7,7 @@ import {
   ALLOW_ALL_MANIFEST_ETAG,
   ALLOW_ALL_MANIFEST_RESPONSE,
 } from "@/lib/discovery-allowlist-manifest";
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import {
   installNaapCatalogMock,
@@ -45,7 +44,7 @@ test.after(() => {
   uninstallProviderAppSessionAuth();
 });
 
-run("manifest GET and PUT", async (t) => {
+test("manifest GET and PUT", async (t) => {
   await t.test("GET returns allow-all manifest without catalog fetch", async (t) => {
     catalogFetchCount = 0;
     catalogThrows = false;

@@ -111,7 +111,7 @@ export default function ApiKeyCredentialSwitcher({
   apiKey: string;
   sdkToken?: string | null;
 }>): ReactNode {
-  const [format, setFormat] = useState<ApiKeyDisplayFormat>("bearer");
+  const [format, setFormat] = useState<ApiKeyDisplayFormat>("token");
   const hasToken = Boolean(sdkToken?.trim());
   const showToken = hasToken && format === "token";
   const value = showToken ? sdkToken!.trim() : apiKey;

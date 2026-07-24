@@ -13,7 +13,7 @@ export type HomeApp = {
   developerName: string | null;
 };
 
-export function AppCard({ app }: { app: HomeApp }) {
+export function AppCard({ app }: Readonly<{ app: HomeApp }>) {
   return (
     <Link
       href={`/marketplace/${app.id}`}

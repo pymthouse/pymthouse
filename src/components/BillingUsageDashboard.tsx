@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppFilterDropdown from "@/components/AppFilterDropdown";
@@ -46,16 +47,15 @@ type LoadState =
   | { status: "error"; message: string; code?: number }
   | { status: "ready"; data: BillingUsageDashboardClientPayload };
 
-function TabButton({
+function TabLink({
   active,
-  onClick,
+  href,
   children,
-}: Readonly<{ active: boolean; onClick: () => void; children: React.ReactNode }>) {
+}: Readonly<{ active: boolean; href: string; children: React.ReactNode }>) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
       className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
         active
           ? "bg-emerald-500/15 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.25)]"
@@ -63,7 +63,7 @@ function TabButton({
       }`}
     >
       {children}
-    </button>
+    </Link>
   );
 }
 
@@ -101,6 +101,7 @@ function UsageLoadingShell({
 function deriveFilteredView(
   data: BillingUsageDashboardClientPayload,
   selectedPublicClientIds: string[],
+  historyScope: "own" | "all",
 ) {
   const allIds = data.orderedApps.map((a) => a.publicClientId);
   const allSelected =
@@ -123,12 +124,23 @@ function deriveFilteredView(
   }
   filteredAppUsage = filteredAppUsage.filter((e) => e.requestCount > 0);
 
+  // Admin All Usage + all apps selected: omit clientId filter so request
+  // history uses the unrestricted platform event list (avoids a huge id-set
+  // post-filter). Session list discovers apps from those events server-side.
+  // Subset selection still passes the dropdown ids. Own scope unchanged.
+  let historyClientIds: string[];
+  if (allSelected && historyScope === "all") {
+    historyClientIds = [];
+  } else if (allSelected) {
+    historyClientIds = data.orderedApps.map((a) => a.publicClientId);
+  } else {
+    historyClientIds = selectedPublicClientIds;
+  }
+
   return {
     filteredSeries,
     filteredAppUsage,
-    historyClientIds: allSelected
-      ? data.orderedApps.map((a) => a.publicClientId)
-      : selectedPublicClientIds,
+    historyClientIds,
   };
 }
 
@@ -223,23 +235,27 @@ function chartEmptyMessage(selectedCount: number): string {
 }
 
 function SignedTicketsBlock({
-  show,
   needsSelection,
   scope,
+  historyScope,
   orderedApps,
   historyClientIds,
 }: Readonly<{
-  show: boolean;
   needsSelection: boolean;
   scope: "all" | "single";
+  /** Viewer-own vs platform-wide admin history. */
+  historyScope: "own" | "all";
   orderedApps: BillingAppRow[];
   historyClientIds: string[];
 }>) {
-  if (!show) return null;
+  const isPlatform = historyScope === "all";
+  const title = isPlatform
+    ? "Signed ticket requests"
+    : "Your signed ticket requests";
   if (needsSelection) {
     return (
       <section className="mb-6 sm:mb-8 rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
-        <h2 className="text-sm font-semibold text-zinc-200">Your signed ticket requests</h2>
+        <h2 className="text-sm font-semibold text-zinc-200">{title}</h2>
         <p className="text-sm text-zinc-500 py-6 text-center">
           Select at least one application to view request history.
         </p>
@@ -251,6 +267,7 @@ function SignedTicketsBlock({
       <SignedTicketRequestHistory
         clientId={scope === "single" ? orderedApps[0]?.publicClientId : null}
         clientIds={scope === "single" ? null : historyClientIds}
+        historyScope={historyScope}
       />
     </div>
   );
@@ -309,12 +326,10 @@ function BillingUsageBody({
   data,
   showTabs,
   activeTab,
-  onSelectTab,
 }: Readonly<{
   data: BillingUsageDashboardClientPayload;
   showTabs: boolean;
   activeTab: UsageTab;
-  onSelectTab: (tab: UsageTab) => void;
 }>) {
   const {
     scope,
@@ -356,8 +371,9 @@ function BillingUsageBody({
     setSelectedAppIds(allIdsKey.length > 0 ? allIdsKey.split("\0") : []);
   }
 
-  const derived = deriveFilteredView(data, selectedAppIds);
-  const showSignedTickets = !showTabs || activeTab === "mine";
+  const historyScope: "own" | "all" =
+    showTabs && activeTab === "all" ? "all" : "own";
+  const derived = deriveFilteredView(data, selectedAppIds, historyScope);
   const periodCopy =
     activeTab === "all" && showTabs
       ? "Platform-wide usage for the current cycle."
@@ -374,12 +390,12 @@ function BillingUsageBody({
         />
         {showTabs ? (
           <div className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5">
-            <TabButton active={activeTab === "mine"} onClick={() => onSelectTab("mine")}>
+            <TabLink active={activeTab === "mine"} href="/usage">
               My Usage
-            </TabButton>
-            <TabButton active={activeTab === "all"} onClick={() => onSelectTab("all")}>
+            </TabLink>
+            <TabLink active={activeTab === "all"} href="/usage/all">
               All Usage
-            </TabButton>
+            </TabLink>
           </div>
         ) : null}
       </div>
@@ -430,9 +446,9 @@ function BillingUsageBody({
       </div>
 
       <SignedTicketsBlock
-        show={showSignedTickets}
         needsSelection={selectedAppIds.length === 0 && isMultiApp}
         scope={scope}
+        historyScope={historyScope}
         orderedApps={orderedApps}
         historyClientIds={derived.historyClientIds}
       />
@@ -452,6 +468,7 @@ function BillingUsageBody({
 /**
  * Usage page shell that paints immediately, then loads OpenMeter-backed data.
  * Admins get My Usage / All Usage tabs; developers always see own apps.
+ * All Usage lives at `/usage/all` so refresh keeps the platform-wide view.
  */
 export default function BillingUsageDashboard({
   filterAppId,
@@ -461,16 +478,28 @@ export default function BillingUsageDashboard({
   /** Optional MoonPay / prepaid top-up panel (app owners on pay-per-use). */
   fundPanel?: ReactNode;
 }>) {
-  const { data: session } = useSession();
+  const { data: session, status: authStatus } = useSession();
+  const pathname = usePathname();
+  const router = useRouter();
   const role = (session?.user as Record<string, unknown> | undefined)?.role as
     | string
     | undefined;
   const isAdmin = role === "admin";
   const showTabs = isAdmin && !filterAppId;
+  const wantsAllUsage = !filterAppId && pathname.startsWith("/usage/all");
+  const activeTab: UsageTab = showTabs && wantsAllUsage ? "all" : "mine";
 
-  const [activeTab, setActiveTab] = useState<UsageTab>("mine");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);
+
+  // /usage/all is admin-only; bounce everyone else to /usage.
+  useEffect(() => {
+    if (!wantsAllUsage) return;
+    if (authStatus === "loading") return;
+    if (authStatus === "unauthenticated" || !isAdmin) {
+      router.replace("/usage");
+    }
+  }, [wantsAllUsage, authStatus, isAdmin, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -531,18 +560,12 @@ export default function BillingUsageDashboard({
           {showTabs ? (
             <div className="mb-4 flex justify-end">
               <div className="flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5">
-                <TabButton
-                  active={activeTab === "mine"}
-                  onClick={() => setActiveTab("mine")}
-                >
+                <TabLink active={activeTab === "mine"} href="/usage">
                   My Usage
-                </TabButton>
-                <TabButton
-                  active={activeTab === "all"}
-                  onClick={() => setActiveTab("all")}
-                >
+                </TabLink>
+                <TabLink active={activeTab === "all"} href="/usage/all">
                   All Usage
-                </TabButton>
+                </TabLink>
               </div>
             </div>
           ) : null}
@@ -576,7 +599,6 @@ export default function BillingUsageDashboard({
           data={state.data}
           showTabs={showTabs}
           activeTab={activeTab}
-          onSelectTab={setActiveTab}
         />
       ) : null}
     </DashboardLayout>

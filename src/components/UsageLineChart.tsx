@@ -80,7 +80,7 @@ export default function UsageLineChart({
   valueLabel = "Requests",
   className = "",
   height = 200,
-}: UsageLineChartProps) {
+}: Readonly<UsageLineChartProps>) {
   const width = 720;
   const padLeft = 44;
   const padRight = 12;

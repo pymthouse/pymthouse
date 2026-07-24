@@ -4,6 +4,16 @@ export const NETWORK_FEE_USD_MICROS_METER = "network_fee_usd_micros";
 /** OpenMeter meter slug for signed-ticket request counts. */
 export const SIGNED_TICKET_COUNT_METER = "signed_ticket_count";
 
+/** Analytics: SUM of fee_wei (Wei) with manifest_id groupBy. */
+export const FEE_WEI_METER = "fee_wei";
+
+/** Analytics: SUM of network fee USD micros grouped by manifest_id. */
+export const NETWORK_FEE_USD_MICROS_BY_MANIFEST_METER =
+  "network_fee_usd_micros_by_manifest";
+
+/** Analytics: SUM of billable_secs with manifest_id groupBy. */
+export const BILLABLE_SECS_METER = "billable_secs";
+
 /** CloudEvent type for go-livepeer signed tickets. */
 export const CREATE_SIGNED_TICKET_EVENT_TYPE = "create_signed_ticket";
 
@@ -35,8 +45,13 @@ export function getHostedOpenMeterUrl(): string {
 }
 
 export function isKonnectMeteringUrl(url: string, apiKey?: string): boolean {
-  if (/konghq\.com/i.test(url)) {
-    return true;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if (hostname === "konghq.com" || hostname.endsWith(".konghq.com")) {
+      return true;
+    }
+  } catch {
+    // Non-URL strings fall through to API-key heuristics.
   }
   const key = apiKey?.trim() ?? "";
   return key.startsWith("kpat_") || key.startsWith("spat_");

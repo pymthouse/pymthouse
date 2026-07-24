@@ -5,16 +5,16 @@ import { developerApps, oidcClients } from "@/db/schema";
 import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
-  isOwnerCustomerKey,
+  isOwnerWireSubject,
   normalizePlatformUserId,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
 export type ResolvedBillingIdentity = {
   /**
-   * Konnect customer key for credits/Starter (`owner:{users.id}` for owners;
-   * compound `app_…:externalUserId` for end-users). Metering wire subject is
-   * always compound — linked via usageAttribution.subjectKeys for owners.
+   * Konnect customer key for credits/Starter (bare `{users.id}` for owners;
+   * compound `app_…:externalUserId` for end-users). Metering wire subject for
+   * owners is `owner:{id}` inside auth_id; the collector strips the prefix.
    */
   customerKey: string;
   isOwner: boolean;
@@ -77,7 +77,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
 
 /**
  * Resolve the OpenMeter billing customer for an (app, external user) pair.
- * App owners map to a single `owner:{users.id}` customer across all apps;
+ * App owners map to a single bare `{users.id}` customer across all apps;
  * M2M end-users stay on `app_…:externalUserId`.
  */
 export async function resolveOpenMeterBillingIdentity(input: {
@@ -92,22 +92,29 @@ export async function resolveOpenMeterBillingIdentity(input: {
   const app = await loadAppIdentity(input.clientId);
   if (!app) {
     // Fall back: treat input clientId as public id (tests / scripts).
-    const customerKey = isOwnerCustomerKey(externalUserId)
-      ? externalUserId
-      : buildOpenMeterCustomerKey(input.clientId.trim(), externalUserId);
+    // Only wire `owner:{id}` marks owners here — bare UUIDs are common end-user ids.
+    if (isOwnerWireSubject(externalUserId)) {
+      const ownerUserId = parseOwnerCustomerKey(externalUserId)!;
+      return {
+        customerKey: buildOwnerCustomerKey(ownerUserId),
+        isOwner: true,
+        ownerUserId,
+        publicClientId: input.clientId.trim(),
+        developerAppId: input.clientId.trim(),
+      };
+    }
     return {
-      customerKey,
-      isOwner: isOwnerCustomerKey(customerKey),
-      ownerUserId: parseOwnerCustomerKey(customerKey) ?? undefined,
+      customerKey: buildOpenMeterCustomerKey(input.clientId.trim(), externalUserId),
+      isOwner: false,
       publicClientId: input.clientId.trim(),
       developerAppId: input.clientId.trim(),
     };
   }
 
-  if (isOwnerCustomerKey(externalUserId)) {
+  if (isOwnerWireSubject(externalUserId)) {
     const ownerUserId = parseOwnerCustomerKey(externalUserId)!;
     return {
-      customerKey: externalUserId,
+      customerKey: buildOwnerCustomerKey(ownerUserId),
       isOwner: true,
       ownerUserId,
       publicClientId: app.publicClientId,
