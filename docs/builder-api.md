@@ -53,8 +53,20 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 | --- | --- | --- |
 | Stored API key (`<prefix><hex>`) | Per-app-user **API key** (hashed at rest) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
 | `app_<24hex>_<secret>` | **Presented** API key (issuance + remote-signer Bearer) | Same secret material as the stored key; `app_*` segment routes the app-scoped exchange URL |
-| Client secret (`*_cs_*`) | Confidential **M2M client secret** | HTTP Basic with `m2m_…` client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
-| `app_…` / `m2m_…` | Public / confidential OAuth client ids | Path params and token endpoint `client_id` |
+| Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
+| `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (PKCE) |
+| `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
+| `web_…` | Confidential web RP sibling | `authorization_code` + secret + redirects — portal SSO (e.g. Kong Dev Portal); **not** `client_credentials` |
+
+### Client shapes (siblings under one developer app)
+
+| Shape | Client | Secret | Typical grants |
+| --- | --- | --- | --- |
+| Public interactive | `app_…`, auth method `none` | No | auth code (PKCE), refresh, device |
+| M2M backend helper | `m2m_…` | Yes | `client_credentials` |
+| Confidential web RP | `web_…` | Yes | auth code + refresh |
+
+Enable **Confidential web RP** on App profile (same pattern as Confidential M2M backend). Rotate the `web_` secret with `POST /api/v1/apps/{clientId}/credentials?target=web`. Do not put portal SSO credentials on the public SDK client or the M2M helper.
 
 Newly issued keys are returned as `app_<24hex>_<secret>` (RFC 6750 `token68` characters; underscore separator for copy/select UX). The remote-signer identity webhook accepts that composite Bearer, parses the `app_*` client id, and performs RFC 8693 token exchange ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)) at `/api/v1/apps/{clientId}/oidc/token`. The exchange `subject_token` is the opaque hex secret (or the stored bare key when the path already supplies `{clientId}`).
 

@@ -327,11 +327,12 @@ export async function authenticateAppClient(request: Request): Promise<{
       or(
         eq(developerApps.oidcClientId, clientRow.id),
         eq(developerApps.m2mOidcClientId, clientRow.id),
+        eq(developerApps.webOidcClientId, clientRow.id),
       ),
     )
     .limit(1);
   const app = appRows[0];
-  const oidcRowIdForAppId = app?.oidcClientId ?? app?.m2mOidcClientId;
+  const oidcRowIdForAppId = app?.oidcClientId ?? app?.m2mOidcClientId ?? app?.webOidcClientId;
   if (!app || !oidcRowIdForAppId) return null;
 
   // Prefer the public (interactive) client row for appId; if only M2M is linked, use that row.

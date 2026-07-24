@@ -84,6 +84,20 @@ export async function PUT(
     );
   }
   if (body.tokenEndpointAuthMethod !== undefined) {
+    // Primary stays public when confidential siblings exist.
+    if (
+      (app.m2mOidcClientId || app.webOidcClientId) &&
+      body.tokenEndpointAuthMethod !== "none"
+    ) {
+      return NextResponse.json(
+        {
+          error: "public_client_no_secret",
+          error_description:
+            "The public app_ client must remain public while M2M or confidential web siblings exist.",
+        },
+        { status: 400 },
+      );
+    }
     clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
   }
 
@@ -141,10 +155,26 @@ export async function PUT(
 
   await updateClientConfig(client.clientId, clientUpdates);
 
-  // Auto-populate domain whitelist from redirect URI origins
+  // Auto-populate domain whitelist from public + confidential web redirect origins
+  let webRedirectUris: string[] = [];
+  if (app.webOidcClientId) {
+    const webRows = await db
+      .select({ redirectUris: oidcClients.redirectUris })
+      .from(oidcClients)
+      .where(eq(oidcClients.id, app.webOidcClientId))
+      .limit(1);
+    if (webRows[0]?.redirectUris) {
+      try {
+        webRedirectUris = JSON.parse(webRows[0].redirectUris) as string[];
+      } catch {
+        webRedirectUris = [];
+      }
+    }
+  }
   const allRedirects = [
     ...(clientUpdates.redirectUris ?? JSON.parse(client.redirectUris) as string[]),
     ...(clientUpdates.postLogoutRedirectUris ?? []),
+    ...webRedirectUris,
   ];
   const origins = extractOrigins(allRedirects);
 

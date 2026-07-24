@@ -6,9 +6,14 @@ import { randomBytes } from "node:crypto";
 import {
   computeBackendM2mAllowedScopes,
 } from "@/lib/oidc/backend-m2m-scopes";
+import {
+  DEFAULT_CONFIDENTIAL_WEB_GRANT_TYPES,
+  syncConfidentialWebGrantTypes,
+} from "@/lib/oidc/confidential-web";
 import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
 import {
   DEFAULT_OIDC_SCOPES,
+  ensureConfidentialWebIdentityScopes,
   ensureOpenIdScope,
 } from "@/lib/oidc/scopes";
 
@@ -257,6 +262,11 @@ export function generateM2mClientId(): string {
   return `m2m_${randomBytes(12).toString("hex")}`;
 }
 
+/** Confidential web RP sibling for portal SSO / server-side authorization_code. */
+export function generateWebClientId(): string {
+  return `web_${randomBytes(12).toString("hex")}`;
+}
+
 export function generateClientSecret(): string {
   return `pmth_cs_${randomBytes(32).toString("hex")}`;
 }
@@ -370,7 +380,7 @@ export async function syncBackendM2mAllowedScopesFromPublicApp(
 }
 
 /**
- * When a confidential m2m_ sibling exists, the primary app_ row must remain public.
+ * When a confidential m2m_ or web_ sibling exists, the primary app_ row must remain public.
  * Repairs legacy rows that still have a secret or client_credentials on app_.
  */
 export async function demotePublicClientWhenM2mSiblingExists(
@@ -382,7 +392,7 @@ export async function demotePublicClientWhenM2mSiblingExists(
     .where(eq(developerApps.id, appInternalId))
     .limit(1);
   const app = appRows[0];
-  if (!app?.oidcClientId || !app.m2mOidcClientId) {
+  if (!app?.oidcClientId || (!app.m2mOidcClientId && !app.webOidcClientId)) {
     return false;
   }
 
@@ -559,6 +569,186 @@ export async function loadM2mOidcClientSummary(
   return {
     clientId: m2m.clientId,
     hasSecret: !!m2m.clientSecretHash,
+  };
+}
+
+/**
+ * Ensures a confidential web RP OIDC row exists for portal SSO / server-side
+ * authorization_code without turning the public client confidential.
+ */
+export async function ensureConfidentialWebClient(params: {
+  appInternalId: string;
+  appDisplayName: string;
+  redirectUris?: string[];
+}): Promise<{ id: string; clientId: string } | null> {
+  const appRows = await db
+    .select()
+    .from(developerApps)
+    .where(eq(developerApps.id, params.appInternalId))
+    .limit(1);
+  const app = appRows[0];
+  if (!app?.oidcClientId) {
+    return null;
+  }
+
+  if (app.webOidcClientId) {
+    const existing = await db
+      .select()
+      .from(oidcClients)
+      .where(eq(oidcClients.id, app.webOidcClientId))
+      .limit(1);
+    if (existing[0]) {
+      const nextScopes = ensureConfidentialWebIdentityScopes(
+        existing[0].allowedScopes || DEFAULT_OIDC_SCOPES,
+      );
+      const scopeNeedsUpdate =
+        normalizeScopeListString(nextScopes) !==
+        normalizeScopeListString(existing[0].allowedScopes);
+      if (params.redirectUris !== undefined) {
+        const redirectUris = params.redirectUris
+          .map((u) => u.trim())
+          .filter(Boolean);
+        const grantTypes = syncConfidentialWebGrantTypes(
+          existing[0].grantTypes.split(",").filter(Boolean),
+          redirectUris,
+        );
+        await updateClientConfig(existing[0].clientId, {
+          redirectUris,
+          grantTypes,
+          ...(scopeNeedsUpdate ? { allowedScopes: nextScopes } : {}),
+        });
+      } else if (scopeNeedsUpdate) {
+        await updateClientConfig(existing[0].clientId, {
+          allowedScopes: nextScopes,
+        });
+      }
+      return { id: existing[0].id, clientId: existing[0].clientId };
+    }
+  }
+
+  const pubRows = await db
+    .select({ allowedScopes: oidcClients.allowedScopes })
+    .from(oidcClients)
+    .where(eq(oidcClients.id, app.oidcClientId))
+    .limit(1);
+  const publicScopes = pubRows[0]?.allowedScopes ?? DEFAULT_OIDC_SCOPES;
+
+  const redirectUris = (params.redirectUris ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean);
+  const grantTypes = syncConfidentialWebGrantTypes(
+    [...DEFAULT_CONFIDENTIAL_WEB_GRANT_TYPES],
+    redirectUris,
+  );
+
+  const id = uuidv4();
+  const clientId = generateWebClientId();
+  const display =
+    params.appDisplayName.trim().slice(0, 80) || "Provider app";
+
+  await db.insert(oidcClients).values({
+    id,
+    clientId,
+    clientSecretHash: null,
+    displayName: `${display} - confidential web`,
+    redirectUris: JSON.stringify(redirectUris),
+    allowedScopes: ensureConfidentialWebIdentityScopes(publicScopes),
+    grantTypes: grantTypes.join(","),
+    tokenEndpointAuthMethod: "client_secret_post",
+    deviceThirdPartyInitiateLogin: 0,
+    initiateLoginUri: null,
+  });
+
+  await db
+    .update(developerApps)
+    .set({ webOidcClientId: id })
+    .where(eq(developerApps.id, params.appInternalId));
+
+  // Keep the primary interactive client public when any confidential sibling exists.
+  await demotePublicClientWhenM2mSiblingExists(params.appInternalId);
+
+  return { id, clientId };
+}
+
+/**
+ * Removes the confidential web RP sibling (`web_`).
+ * Clears `developer_apps.web_oidc_client_id` and deletes the OIDC client row.
+ */
+export async function removeConfidentialWebClient(
+  appInternalId: string,
+): Promise<boolean> {
+  const appRows = await db
+    .select({ webOidcClientId: developerApps.webOidcClientId })
+    .from(developerApps)
+    .where(eq(developerApps.id, appInternalId))
+    .limit(1);
+  const webPk = appRows[0]?.webOidcClientId;
+  if (!webPk) {
+    return false;
+  }
+
+  const webRows = await db
+    .select({ clientId: oidcClients.clientId })
+    .from(oidcClients)
+    .where(eq(oidcClients.id, webPk))
+    .limit(1);
+  const oauthClientId = webRows[0]?.clientId;
+
+  await db
+    .update(developerApps)
+    .set({ webOidcClientId: null })
+    .where(eq(developerApps.id, appInternalId));
+
+  if (oauthClientId) {
+    await deleteOidcPayloadsForClientId(oauthClientId);
+  }
+  await db.delete(oidcClients).where(eq(oidcClients.id, webPk));
+
+  return true;
+}
+
+export async function loadConfidentialWebOidcClientSummary(
+  appInternalId: string,
+): Promise<{
+  clientId: string;
+  hasSecret: boolean;
+  redirectUris: string[];
+} | null> {
+  const appRows = await db
+    .select({ webOidcClientId: developerApps.webOidcClientId })
+    .from(developerApps)
+    .where(eq(developerApps.id, appInternalId))
+    .limit(1);
+  const webPk = appRows[0]?.webOidcClientId;
+  if (!webPk) {
+    return null;
+  }
+
+  const webRows = await db
+    .select({
+      clientId: oidcClients.clientId,
+      clientSecretHash: oidcClients.clientSecretHash,
+      redirectUris: oidcClients.redirectUris,
+    })
+    .from(oidcClients)
+    .where(eq(oidcClients.id, webPk))
+    .limit(1);
+  const web = webRows[0];
+  if (!web) {
+    return null;
+  }
+
+  let redirectUris: string[] = [];
+  try {
+    redirectUris = JSON.parse(web.redirectUris) as string[];
+  } catch {
+    redirectUris = [];
+  }
+
+  return {
+    clientId: web.clientId,
+    hasSecret: !!web.clientSecretHash,
+    redirectUris,
   };
 }
 

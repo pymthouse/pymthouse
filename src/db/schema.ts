@@ -236,6 +236,8 @@ export const developerApps = pgTable("developer_apps", {
   oidcClientId: text("oidc_client_id").references(() => oidcClients.id),
   /** Confidential sibling used for Builder API + device approval (RFC 8693); public interactive client stays in oidcClientId. */
   m2mOidcClientId: text("m2m_oidc_client_id").references(() => oidcClients.id),
+  /** Confidential web RP sibling (authorization_code + secret + redirects); public interactive client stays in oidcClientId. */
+  webOidcClientId: text("web_oidc_client_id").references(() => oidcClients.id),
   name: text("name").notNull(),
   subtitle: text("subtitle"), // 30 char max
   description: text("description"),

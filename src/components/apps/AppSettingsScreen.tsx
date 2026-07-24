@@ -54,6 +54,10 @@ function mergeFormData(
         : [...defaultAppFormData.grantTypes],
     allowedScopes: initial.allowedScopes ?? defaultAppFormData.allowedScopes,
     backendDeviceHelper: initial.backendDeviceHelper ?? false,
+    confidentialWebHelper: initial.confidentialWebHelper ?? false,
+    confidentialWebRedirectUris:
+      initial.confidentialWebRedirectUris ??
+      [...defaultAppFormData.confidentialWebRedirectUris],
     initiateLoginUri: initial.initiateLoginUri ?? initialInitiateLoginUri ?? "",
     deviceThirdPartyInitiateLogin:
       initial.deviceThirdPartyInitiateLogin ?? initialDeviceThirdPartyInitiateLogin,
@@ -231,17 +235,25 @@ export default function AppSettingsScreen({
     }
     const data = (await res.json()) as {
       m2mOidcClient?: { clientId: string; hasSecret: boolean } | null;
+      webOidcClient?: {
+        clientId: string;
+        hasSecret: boolean;
+        redirectUris: string[];
+      } | null;
       oidcClient?: { hasSecret?: boolean; clientId?: string } | null;
     };
     setAppState((s) => ({
       ...s,
       backendHelper: data.m2mOidcClient ?? null,
+      webHelper: data.webOidcClient ?? null,
       hasSecret: data.oidcClient?.hasSecret ?? s.hasSecret,
       clientId: data.oidcClient?.clientId ?? s.clientId,
     }));
     setFormData((prev) => ({
       ...prev,
       backendDeviceHelper: Boolean(data.m2mOidcClient),
+      confidentialWebHelper: Boolean(data.webOidcClient),
+      confidentialWebRedirectUris: data.webOidcClient?.redirectUris ?? [],
     }));
   }, [appId]);
 
@@ -266,19 +278,30 @@ export default function AppSettingsScreen({
       const putJson = (await res.json()) as {
         success?: boolean;
         m2mOidcClient?: { clientId: string; hasSecret: boolean } | null;
+        webOidcClient?: {
+          clientId: string;
+          hasSecret: boolean;
+          redirectUris: string[];
+        } | null;
         error?: string;
+        error_description?: string;
       };
       if (!res.ok) {
-        throw new Error(putJson.error || `Failed to save (${res.status})`);
+        throw new Error(
+          putJson.error_description || putJson.error || `Failed to save (${res.status})`,
+        );
       }
 
       setAppState((s) => ({
         ...s,
         backendHelper: putJson.m2mOidcClient ?? null,
+        webHelper: putJson.webOidcClient ?? null,
       }));
       setFormData((prev) => ({
         ...prev,
         backendDeviceHelper: Boolean(putJson.m2mOidcClient),
+        confidentialWebHelper: Boolean(putJson.webOidcClient),
+        confidentialWebRedirectUris: putJson.webOidcClient?.redirectUris ?? [],
       }));
 
       const settingsRes = await fetch(`/api/v1/apps/${appId}/settings`, {
@@ -500,6 +523,9 @@ export default function AppSettingsScreen({
               hasSecret={appState.hasSecret}
               backendHelper={appState.backendHelper}
               backendDeviceHelper={formData.backendDeviceHelper}
+              webHelper={appState.webHelper}
+              confidentialWebHelper={formData.confidentialWebHelper}
+              confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
               initiateLoginUri={formData.initiateLoginUri}
               deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
               domains={domains}
@@ -517,6 +543,14 @@ export default function AppSettingsScreen({
                     : s.backendHelper,
                 }));
               }}
+              onWebSecretGenerated={() => {
+                setAppState((s) => ({
+                  ...s,
+                  webHelper: s.webHelper
+                    ? { ...s.webHelper, hasSecret: true }
+                    : s.webHelper,
+                }));
+              }}
               ownerExternalUserId={ownerExternalUserId}
               readOnly={!canEdit}
               hideRedirectUriEditor
@@ -529,7 +563,9 @@ export default function AppSettingsScreen({
               <h2 className="text-lg font-semibold text-zinc-100">Sign-in URLs</h2>
               <p className="text-sm text-zinc-500 mt-1">
                 Authorization Code + PKCE is enabled automatically when at least one
-                redirect URI is registered. Device flow (CLI/SDK) works without one.
+                redirect URI is registered on the public client. Portal SSO redirect URIs
+                belong on the confidential web RP sibling. Device flow (CLI/SDK) works
+                without a public redirect URI.
               </p>
             </div>
             <AuthorizationCodeRedirectBlock
