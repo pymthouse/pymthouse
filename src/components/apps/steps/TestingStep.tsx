@@ -82,6 +82,12 @@ function getDefaultRedirectUri(redirectUris: string[]) {
   return redirectUris.find((uri) => /^https?:\/\//i.test(uri)) ?? redirectUris[0] ?? "";
 }
 
+function secretActionLabel(generating: boolean, hasSecret: boolean): string {
+  if (generating) return "Generating...";
+  if (hasSecret) return "Rotate Secret";
+  return "Generate Secret";
+}
+
 function isValidInitiateLoginUri(uri: string): boolean {
   const trimmed = uri.trim();
   if (!trimmed.length) return false;
@@ -1410,6 +1416,63 @@ function DeviceInitiateLoginUriField({
   );
 }
 
+function SiblingNotProvisionedMessage({
+  label,
+  clientPrefix,
+}: Readonly<{ label: string; clientPrefix: string }>): ReactNode {
+  return (
+    <p className="text-sm text-zinc-500">
+      <strong className="text-zinc-400">{label}</strong> is enabled but not yet provisioned. Use{" "}
+      <strong className="text-zinc-400">Save changes</strong> to create the{" "}
+      <code className="font-mono text-zinc-400">{clientPrefix}</code> client, then return here.
+    </p>
+  );
+}
+
+function SiblingDisabledMessage({
+  label,
+  detail,
+}: Readonly<{ label: string; detail: ReactNode }>): ReactNode {
+  return (
+    <p className="text-sm text-zinc-500">
+      {label} is off on <strong className="text-zinc-400">App profile</strong>. {detail}
+    </p>
+  );
+}
+
+function AuthCodeMissingRedirectHint({
+  title,
+}: Readonly<{ title: string }>): ReactNode {
+  return (
+    <div
+      className="flex gap-3 rounded-lg border border-blue-500/25 bg-blue-500/5 px-3 py-3"
+      role="status"
+    >
+      <svg
+        className="w-4 h-4 mt-0.5 shrink-0 text-blue-400"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
+      </svg>
+      <div className="min-w-0 space-y-1">
+        <p className="text-sm font-medium text-zinc-200">{title}</p>
+        <p className="text-xs text-zinc-400">
+          Add at least one redirect URI below. Once saved, you can open a live authorization
+          request in a new tab to verify sign-in end to end.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function AuthCodeFlowTestSection({
   appId,
   clientId,
@@ -1469,37 +1532,15 @@ export function AuthCodeFlowTestSection({
   if (!hasAuthCodeFlow) return null;
 
   const redirectSelectId = `testing-redirect-uri-${clientId ?? "client"}`;
+  const showEmptyRedirectHint = showRedirectUriEditor && redirectUris.length === 0;
+  const showMissingRedirectMessage =
+    !testUrl && redirectUris.length === 0 && !showRedirectUriEditor;
+  const showInitiateLoginField =
+    showInitiateLogin && backendDeviceHelper && hasDeviceCode;
 
   return (
     <div className="space-y-5 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
-      {showRedirectUriEditor && redirectUris.length === 0 ? (
-        <div
-          className="flex gap-3 rounded-lg border border-blue-500/25 bg-blue-500/5 px-3 py-3"
-          role="status"
-        >
-          <svg
-            className="w-4 h-4 mt-0.5 shrink-0 text-blue-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-          <div className="min-w-0 space-y-1">
-            <p className="text-sm font-medium text-zinc-200">{title}</p>
-            <p className="text-xs text-zinc-400">
-              Add at least one redirect URI below. Once saved, you can open a live authorization
-              request in a new tab to verify sign-in end to end.
-            </p>
-          </div>
-        </div>
-      ) : null}
+      {showEmptyRedirectHint ? <AuthCodeMissingRedirectHint title={title} /> : null}
 
       {showRedirectUriEditor ? (
         <>
@@ -1569,13 +1610,15 @@ export function AuthCodeFlowTestSection({
             <code className="text-zinc-400">{effectiveSelectedRedirectUri}</code>
           </p>
         </div>
-      ) : redirectUris.length === 0 && !showRedirectUriEditor ? (
+      ) : null}
+
+      {showMissingRedirectMessage ? (
         <p className="text-xs text-zinc-500">
           Add at least one redirect URI above to enable the live authorization test.
         </p>
       ) : null}
 
-      {showInitiateLogin && backendDeviceHelper && hasDeviceCode ? (
+      {showInitiateLoginField ? (
         <DeviceInitiateLoginUriField
           initiateLoginUri={initiateLoginUri}
           deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
@@ -1828,19 +1871,18 @@ export default function TestingStep({
   const showAdminAccessTab = showM2mPanel && Boolean(backendHelper?.clientId);
   // With client sub-tabs, remote vs admin live on separate panels — no nested switcher.
   const useClientSubTabs = activeClient != null;
-  const showAuthTestSection =
-    useClientSubTabs
-      ? showRemoteSigningTab || showAdminAccessTab
-      : showRemoteSigningTab || showAdminAccessTab;
-  const effectiveAuthTestTab = useClientSubTabs
-    ? showAdminAccessTab && activeClient === "m2m"
-      ? "admin"
-      : "remote"
-    : resolveEffectiveAuthTestTab(
-        authTestTab,
-        showAdminAccessTab,
-        showRemoteSigningTab,
-      );
+  const showAuthTestSection = showRemoteSigningTab || showAdminAccessTab;
+  let effectiveAuthTestTab: "remote" | "admin";
+  if (useClientSubTabs) {
+    effectiveAuthTestTab =
+      showAdminAccessTab && activeClient === "m2m" ? "admin" : "remote";
+  } else {
+    effectiveAuthTestTab = resolveEffectiveAuthTestTab(
+      authTestTab,
+      showAdminAccessTab,
+      showRemoteSigningTab,
+    );
+  }
 
   useEffect(() => {
     if (useClientSubTabs) return;
@@ -1856,6 +1898,18 @@ export default function TestingStep({
   const showM2mOnlyExchange = showM2mPanel && isM2MOnly && Boolean(clientId);
   // Authorization code + redirects live only on web_ (Option 1).
   const showWebAuthCode = showWebPanel && Boolean(webHelper?.clientId);
+
+  let authTestTitle = "Test authentication";
+  if (useClientSubTabs) {
+    authTestTitle =
+      effectiveAuthTestTab === "remote"
+        ? "Verify remote signing"
+        : "Verify administrative access";
+  }
+  const authTestDescription =
+    effectiveAuthTestTab === "remote"
+      ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
+      : "Client-credentials token exchange with the M2M / Builder client for Builder APIs, user provisioning, and device approval.";
 
   return (
     <div className="space-y-8">
@@ -1942,7 +1996,7 @@ export default function TestingStep({
                   disabled={readOnly || generating || !appId}
                   className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
                 >
-                  {generating ? "Generating..." : hasSecret ? "Rotate Secret" : "Generate Secret"}
+                  {secretActionLabel(generating, hasSecret)}
                 </button>
               </div>
             )}
@@ -2012,9 +2066,8 @@ export default function TestingStep({
         </section>
       ) : null}
 
-      {showM2mCredentials ? (
-        backendHelper ? (
-          <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
+      {showM2mCredentials && backendHelper ? (
+        <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
             <h3 className="text-sm font-semibold text-cyan-200/90">
               M2M / Builder{" "}
               <code className="font-mono text-cyan-300/80 font-normal">(m2m_)</code>
@@ -2070,11 +2123,7 @@ export default function TestingStep({
                     disabled={readOnly || generatingBackend || !appId}
                     className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
                   >
-                    {generatingBackend
-                      ? "Generating..."
-                      : backendHelper.hasSecret
-                        ? "Rotate Secret"
-                        : "Generate Secret"}
+                    {secretActionLabel(generatingBackend, backendHelper.hasSecret)}
                   </button>
                 </div>
               )}
@@ -2083,25 +2132,24 @@ export default function TestingStep({
               )}
             </div>
           </div>
-        ) : backendDeviceHelper ? (
-          <p className="text-sm text-zinc-500">
-            <strong className="text-zinc-400">Confidential M2M backend</strong> is enabled but not
-            yet provisioned. Use <strong className="text-zinc-400">Save changes</strong> to create
-            the <code className="font-mono text-zinc-400">m2m_</code> client, then return here.
-          </p>
-        ) : (
-          <p className="text-sm text-zinc-500">
-            Confidential M2M backend is off on{" "}
-            <strong className="text-zinc-400">App profile</strong>. Turn on{" "}
-            <strong className="text-zinc-400">Confidential M2M backend</strong> there to manage M2M
-            credentials on this tab.
-          </p>
-        )
+      ) : null}
+      {showM2mCredentials && !backendHelper && backendDeviceHelper ? (
+          <SiblingNotProvisionedMessage label="Confidential M2M backend" clientPrefix="m2m_" />
+      ) : null}
+      {showM2mCredentials && !backendHelper && !backendDeviceHelper ? (
+          <SiblingDisabledMessage
+            label="Confidential M2M backend"
+            detail={
+              <>
+                Turn on <strong className="text-zinc-400">Confidential M2M backend</strong> there to
+                manage M2M credentials on this tab.
+              </>
+            }
+          />
       ) : null}
 
-      {showWebCredentials ? (
-        webHelper ? (
-          <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
+      {showWebCredentials && webHelper ? (
+        <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
             <h3 className="text-sm font-semibold text-violet-200/90">
               Confidential web RP{" "}
               <code className="font-mono text-violet-300/80 font-normal">(web_)</code>
@@ -2239,11 +2287,7 @@ export default function TestingStep({
                     disabled={readOnly || generatingWeb || !appId}
                     className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
                   >
-                    {generatingWeb
-                      ? "Generating..."
-                      : webHelper.hasSecret
-                        ? "Rotate Secret"
-                        : "Generate Secret"}
+                    {secretActionLabel(generatingWeb, webHelper.hasSecret)}
                   </button>
                 </div>
               )}
@@ -2252,19 +2296,15 @@ export default function TestingStep({
               )}
             </div>
           </div>
-        ) : confidentialWebHelper ? (
-          <p className="text-sm text-zinc-500">
-            <strong className="text-zinc-400">Confidential web RP</strong> is enabled but not
-            yet provisioned. Use <strong className="text-zinc-400">Save changes</strong> to create
-            the <code className="font-mono text-zinc-400">web_</code> sibling, then return here.
-          </p>
-        ) : (
-          <p className="text-sm text-zinc-500">
-            Confidential web RP is off on{" "}
-            <strong className="text-zinc-400">App profile</strong>. Turn it on there for
-            portal SSO (Kong Dev Portal, etc.).
-          </p>
-        )
+      ) : null}
+      {showWebCredentials && !webHelper && confidentialWebHelper ? (
+          <SiblingNotProvisionedMessage label="Confidential web RP" clientPrefix="web_" />
+      ) : null}
+      {showWebCredentials && !webHelper && !confidentialWebHelper ? (
+          <SiblingDisabledMessage
+            label="Confidential web RP"
+            detail="Turn it on there for portal SSO (Kong Dev Portal, etc.)."
+          />
       ) : null}
 
       {showWebAuthCode ? (
@@ -2293,17 +2333,9 @@ export default function TestingStep({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-zinc-200">
-                {useClientSubTabs
-                  ? effectiveAuthTestTab === "remote"
-                    ? "Verify remote signing"
-                    : "Verify administrative access"
-                  : "Test authentication"}
+                {authTestTitle}
               </h3>
-              <p className="text-xs text-zinc-500 mt-1">
-                {effectiveAuthTestTab === "remote"
-                  ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
-                  : "Client-credentials token exchange with the M2M / Builder client for Builder APIs, user provisioning, and device approval."}
-              </p>
+              <p className="text-xs text-zinc-500 mt-1">{authTestDescription}</p>
             </div>
             {!useClientSubTabs && showRemoteSigningTab && showAdminAccessTab ? (
               <div

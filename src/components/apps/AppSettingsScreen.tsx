@@ -405,9 +405,10 @@ export default function AppSettingsScreen({
     Boolean(formData.confidentialWebHelper) || Boolean(appState.webHelper);
 
   useEffect(() => {
-    if (credentialsClient === "m2m" && !showM2mCredentialsTab) {
-      setCredentialsClient("public");
-    } else if (credentialsClient === "web" && !showWebCredentialsTab) {
+    if (
+      (credentialsClient === "m2m" && !showM2mCredentialsTab) ||
+      (credentialsClient === "web" && !showWebCredentialsTab)
+    ) {
       setCredentialsClient("public");
     }
   }, [credentialsClient, showM2mCredentialsTab, showWebCredentialsTab]);
@@ -556,114 +557,125 @@ export default function AppSettingsScreen({
             </a>
           </div>
 
-          <div
-            className="flex flex-wrap gap-1 rounded-lg bg-zinc-900/60 p-1 border border-zinc-800"
-            role="tablist"
-            aria-label="OIDC client credentials"
-          >
-            {(
-              [
-                {
-                  id: "public" as const,
-                  label: "Public / SDK",
-                  hint: "app_",
-                  show: true,
-                },
-                {
-                  id: "m2m" as const,
-                  label: "M2M / Builder",
-                  hint: "m2m_",
-                  show:
-                    Boolean(formData.backendDeviceHelper) ||
-                    Boolean(appState.backendHelper),
-                },
-                {
-                  id: "web" as const,
-                  label: "Web RP",
-                  hint: "web_",
-                  show:
-                    Boolean(formData.confidentialWebHelper) ||
-                    Boolean(appState.webHelper),
-                },
-              ] as const
-            )
-              .filter((tab) => tab.show)
-              .map((tab) => {
-                const selected = credentialsClient === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    onClick={() => selectCredentialsClient(tab.id)}
-                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                      selected
-                        ? "bg-zinc-800 text-zinc-100 shadow-[inset_0_0_0_1px_rgba(63,63,70,0.9)]"
-                        : "text-zinc-500 hover:text-zinc-300"
-                    }`}
-                  >
-                    {tab.label}{" "}
-                    <code
-                      className={`font-mono text-xs ${
-                        selected ? "text-zinc-400" : "text-zinc-600"
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 overflow-hidden">
+            <div
+              className="flex flex-wrap gap-0 border-b border-zinc-800 bg-zinc-900/50"
+              role="tablist"
+              aria-label="OIDC client credentials"
+            >
+              {(
+                [
+                  {
+                    id: "public" as const,
+                    label: "Public / SDK",
+                    hint: "app_",
+                    show: true,
+                  },
+                  {
+                    id: "m2m" as const,
+                    label: "M2M / Builder",
+                    hint: "m2m_",
+                    show:
+                      Boolean(formData.backendDeviceHelper) ||
+                      Boolean(appState.backendHelper),
+                  },
+                  {
+                    id: "web" as const,
+                    label: "Web RP",
+                    hint: "web_",
+                    show:
+                      Boolean(formData.confidentialWebHelper) ||
+                      Boolean(appState.webHelper),
+                  },
+                ] as const
+              )
+                .filter((tab) => tab.show)
+                .map((tab) => {
+                  const selected = credentialsClient === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      id={`credentials-client-tab-${tab.id}`}
+                      aria-selected={selected}
+                      aria-controls={`credentials-client-panel-${tab.id}`}
+                      onClick={() => selectCredentialsClient(tab.id)}
+                      className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                        selected
+                          ? "border-emerald-500 text-zinc-100 bg-zinc-900/80"
+                          : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/40"
                       }`}
                     >
-                      {tab.hint}
-                    </code>
-                  </button>
-                );
-              })}
-          </div>
+                      {tab.label}{" "}
+                      <code
+                        className={`font-mono text-xs ${
+                          selected ? "text-zinc-400" : "text-zinc-600"
+                        }`}
+                      >
+                        {tab.hint}
+                      </code>
+                    </button>
+                  );
+                })}
+            </div>
 
-          <TestingStep
-            appId={appId}
-            clientId={appState.clientId}
-            grantTypes={formData.grantTypes}
-            tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
-            redirectUris={formData.redirectUris}
-            allowedScopes={formData.allowedScopes}
-            hasSecret={appState.hasSecret}
-            backendHelper={appState.backendHelper}
-            backendDeviceHelper={formData.backendDeviceHelper}
-            webHelper={appState.webHelper}
-            confidentialWebHelper={formData.confidentialWebHelper}
-            confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
-            initiateLoginUri={formData.initiateLoginUri}
-            deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
-            domains={domains}
-            onChange={updateFormData}
-            onDomainsChange={setDomains}
-            onSecretGenerated={() => {
-              setAppState((s) => ({ ...s, hasSecret: true }));
-              updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
-            }}
-            onBackendSecretGenerated={() => {
-              setAppState((s) => ({
-                ...s,
-                backendHelper: s.backendHelper
-                  ? { ...s.backendHelper, hasSecret: true }
-                  : s.backendHelper,
-              }));
-            }}
-            onWebSecretGenerated={() => {
-              setAppState((s) => ({
-                ...s,
-                webHelper: s.webHelper
-                  ? { ...s.webHelper, hasSecret: true }
-                  : s.webHelper,
-              }));
-            }}
-            ownerExternalUserId={ownerExternalUserId}
-            readOnly={!canEdit}
-            activeClient={credentialsClient}
-            hideHeader
-            postLogoutRedirectUris={postLogoutRedirectUris}
-            onPostLogoutRedirectUrisChange={(uris) =>
-              updatePostLogoutRedirectUris(uris)
-            }
-            showPostLogoutRedirectUris={showPostLogoutRedirectUris}
-          />
+            <div
+              id={`credentials-client-panel-${credentialsClient}`}
+              role="tabpanel"
+              aria-labelledby={`credentials-client-tab-${credentialsClient}`}
+              className="p-5 sm:p-6 space-y-8"
+            >
+              <TestingStep
+                appId={appId}
+                clientId={appState.clientId}
+                grantTypes={formData.grantTypes}
+                tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
+                redirectUris={formData.redirectUris}
+                allowedScopes={formData.allowedScopes}
+                hasSecret={appState.hasSecret}
+                backendHelper={appState.backendHelper}
+                backendDeviceHelper={formData.backendDeviceHelper}
+                webHelper={appState.webHelper}
+                confidentialWebHelper={formData.confidentialWebHelper}
+                confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
+                initiateLoginUri={formData.initiateLoginUri}
+                deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
+                domains={domains}
+                onChange={updateFormData}
+                onDomainsChange={setDomains}
+                onSecretGenerated={() => {
+                  setAppState((s) => ({ ...s, hasSecret: true }));
+                  updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
+                }}
+                onBackendSecretGenerated={() => {
+                  setAppState((s) => ({
+                    ...s,
+                    backendHelper: s.backendHelper
+                      ? { ...s.backendHelper, hasSecret: true }
+                      : s.backendHelper,
+                  }));
+                }}
+                onWebSecretGenerated={() => {
+                  setAppState((s) => ({
+                    ...s,
+                    webHelper: s.webHelper
+                      ? { ...s.webHelper, hasSecret: true }
+                      : s.webHelper,
+                  }));
+                }}
+                ownerExternalUserId={ownerExternalUserId}
+                readOnly={!canEdit}
+                activeClient={credentialsClient}
+                hideHeader
+                postLogoutRedirectUris={postLogoutRedirectUris}
+                onPostLogoutRedirectUrisChange={(uris) =>
+                  updatePostLogoutRedirectUris(uris)
+                }
+                showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+              />
+            </div>
+          </div>
 
           <ReferenceEndpointsSection
             clientId={appState.clientId || ""}
