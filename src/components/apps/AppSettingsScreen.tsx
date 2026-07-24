@@ -4,8 +4,9 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
-import AuthorizationCodeRedirectBlock from "./steps/AuthorizationCodeRedirectBlock";
-import TestingStep, { AuthCodeFlowTestSection } from "./steps/TestingStep";
+import TestingStep, {
+  type CredentialsClientTab,
+} from "./steps/TestingStep";
 import PlansTab from "./PlansTab";
 import PaymentsTab from "./PaymentsTab";
 import {
@@ -114,7 +115,8 @@ export default function AppSettingsScreen({
   const [postLogoutRedirectUris, setPostLogoutRedirectUris] = useState<string[]>(
     initialPostLogoutRedirectUris,
   );
-  const [newPostLogoutUri, setNewPostLogoutUri] = useState("");
+  const [credentialsClient, setCredentialsClient] =
+    useState<CredentialsClientTab>("public");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -137,6 +139,9 @@ export default function AppSettingsScreen({
         } else {
           nextParams.set("tab", section);
         }
+        if (section !== "credentials") {
+          nextParams.delete("client");
+        }
         const query = nextParams.toString();
         const nextUrl = query ? `${pathname}?${query}` : pathname;
         router.replace(nextUrl, { scroll: false });
@@ -146,6 +151,30 @@ export default function AppSettingsScreen({
     },
     [pathname, router, searchParams],
   );
+
+  const selectCredentialsClient = useCallback(
+    (client: CredentialsClientTab, updateUrl = true) => {
+      setCredentialsClient(client);
+      if (!updateUrl) return;
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.set("tab", "credentials");
+      if (client === "public") {
+        nextParams.delete("client");
+      } else {
+        nextParams.set("client", client);
+      }
+      const query = nextParams.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  useEffect(() => {
+    const clientParam = searchParams.get("client");
+    if (clientParam === "m2m" || clientParam === "web" || clientParam === "public") {
+      setCredentialsClient(clientParam);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const resolvedTab = resolveInitialTab(initialTab);
@@ -359,13 +388,6 @@ export default function AppSettingsScreen({
     }
   }, [appId, canDeleteApp, router]);
 
-  const addPostLogoutUri = () => {
-    const trimmed = newPostLogoutUri.trim();
-    if (!trimmed || postLogoutRedirectUris.includes(trimmed)) return;
-    updatePostLogoutRedirectUris((u) => [...u, trimmed]);
-    setNewPostLogoutUri("");
-  };
-
   const discoveryUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}/.well-known/openid-configuration`
@@ -387,6 +409,19 @@ export default function AppSettingsScreen({
     formData.redirectUris,
     appState.clientId ?? "",
   ).includes(AUTHORIZATION_CODE_GRANT);
+
+  const showM2mCredentialsTab =
+    Boolean(formData.backendDeviceHelper) || Boolean(appState.backendHelper);
+  const showWebCredentialsTab =
+    Boolean(formData.confidentialWebHelper) || Boolean(appState.webHelper);
+
+  useEffect(() => {
+    if (credentialsClient === "m2m" && !showM2mCredentialsTab) {
+      setCredentialsClient("public");
+    } else if (credentialsClient === "web" && !showWebCredentialsTab) {
+      setCredentialsClient("public");
+    }
+  }, [credentialsClient, showM2mCredentialsTab, showWebCredentialsTab]);
 
   return (
     <div className="max-w-3xl">
@@ -510,151 +545,136 @@ export default function AppSettingsScreen({
           id="panel-credentials"
           role="tabpanel"
           aria-labelledby="tab-credentials"
-          className="space-y-10 pb-6"
+          className="space-y-8 pb-6"
         >
-          <section>
-            <TestingStep
-              appId={appId}
-              clientId={appState.clientId}
-              grantTypes={formData.grantTypes}
-              tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
-              redirectUris={formData.redirectUris}
-              allowedScopes={formData.allowedScopes}
-              hasSecret={appState.hasSecret}
-              backendHelper={appState.backendHelper}
-              backendDeviceHelper={formData.backendDeviceHelper}
-              webHelper={appState.webHelper}
-              confidentialWebHelper={formData.confidentialWebHelper}
-              confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
-              initiateLoginUri={formData.initiateLoginUri}
-              deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
-              domains={domains}
-              onChange={updateFormData}
-              onDomainsChange={setDomains}
-              onSecretGenerated={() => {
-                setAppState((s) => ({ ...s, hasSecret: true }));
-                updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
-              }}
-              onBackendSecretGenerated={() => {
-                setAppState((s) => ({
-                  ...s,
-                  backendHelper: s.backendHelper
-                    ? { ...s.backendHelper, hasSecret: true }
-                    : s.backendHelper,
-                }));
-              }}
-              onWebSecretGenerated={() => {
-                setAppState((s) => ({
-                  ...s,
-                  webHelper: s.webHelper
-                    ? { ...s.webHelper, hasSecret: true }
-                    : s.webHelper,
-                }));
-              }}
-              ownerExternalUserId={ownerExternalUserId}
-              readOnly={!canEdit}
-              hideRedirectUriEditor
-              hideAuthCodeFlowSection
-            />
-          </section>
-
-          <section className="space-y-4 border-t border-zinc-800 pt-10">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-zinc-100">Sign-in URLs</h2>
-              <p className="text-sm text-zinc-500 mt-1">
-                Authorization Code + PKCE is enabled automatically when at least one
-                redirect URI is registered on the public client. Portal SSO redirect URIs
-                belong on the confidential web RP sibling. Device flow (CLI/SDK) works
-                without a public redirect URI.
+              <h2 className="text-lg font-semibold text-zinc-100 mb-1">
+                Credentials &amp; URLs
+              </h2>
+              <p className="text-sm text-zinc-500">
+                Manage each OIDC sibling separately: public SDK, M2M / Builder, and
+                confidential web RP.
               </p>
             </div>
-            <AuthorizationCodeRedirectBlock
-              appId={appState.id}
-              redirectUris={formData.redirectUris}
-              onRedirectUrisChange={handleRedirectUrisChange}
-              domains={domains}
-              onDomainsChange={setDomains}
-              readOnly={!canEdit}
-            />
+            <a
+              href="https://pymthouse.com/api/v1/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
+            >
+              API Reference
+            </a>
+          </div>
 
-            {showPostLogoutRedirectUris ? (
-              <div className="space-y-3 pt-4 border-t border-zinc-800">
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-200">Post-logout redirects</h3>
-                  <p className="text-xs text-zinc-500 mt-1">
-                    URIs to redirect users to after sign-out. Saved with{" "}
-                    <strong className="text-zinc-400">Save changes</strong> below.
-                  </p>
-                </div>
-                <div>
-                  <label
-                    htmlFor="postLogoutUriInput"
-                    className="block text-sm font-medium text-zinc-300 mb-1.5"
+          <div
+            className="flex flex-wrap gap-1 rounded-lg bg-zinc-900/60 p-1 border border-zinc-800"
+            role="tablist"
+            aria-label="OIDC client credentials"
+          >
+            {(
+              [
+                {
+                  id: "public" as const,
+                  label: "Public / SDK",
+                  hint: "app_",
+                  show: true,
+                },
+                {
+                  id: "m2m" as const,
+                  label: "M2M / Builder",
+                  hint: "m2m_",
+                  show:
+                    Boolean(formData.backendDeviceHelper) ||
+                    Boolean(appState.backendHelper),
+                },
+                {
+                  id: "web" as const,
+                  label: "Web RP",
+                  hint: "web_",
+                  show:
+                    Boolean(formData.confidentialWebHelper) ||
+                    Boolean(appState.webHelper),
+                },
+              ] as const
+            )
+              .filter((tab) => tab.show)
+              .map((tab) => {
+                const selected = credentialsClient === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => selectCredentialsClient(tab.id)}
+                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      selected
+                        ? "bg-zinc-800 text-zinc-100 shadow-[inset_0_0_0_1px_rgba(63,63,70,0.9)]"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    }`}
                   >
-                    Post-logout redirect URIs
-                  </label>
-                  <div className="flex gap-2 mb-2">
-                    <input
-                      id="postLogoutUriInput"
-                      type="text"
-                      value={newPostLogoutUri}
-                      onChange={(e) => setNewPostLogoutUri(e.target.value)}
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && (e.preventDefault(), addPostLogoutUri())
-                      }
-                      placeholder="https://example.com/logout-complete"
-                      disabled={!canEdit}
-                      className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <button
-                      type="button"
-                      onClick={addPostLogoutUri}
-                      disabled={!canEdit}
-                      className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    {tab.label}{" "}
+                    <code
+                      className={`font-mono text-xs ${
+                        selected ? "text-zinc-400" : "text-zinc-600"
+                      }`}
                     >
-                      Add
-                    </button>
-                  </div>
-                  <div className="space-y-1.5">
-                    {postLogoutRedirectUris.map((uri) => (
-                      <div
-                        key={uri}
-                        className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
-                      >
-                        <code className="text-xs text-zinc-300">{uri}</code>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updatePostLogoutRedirectUris((items) =>
-                              items.filter((item) => item !== uri),
-                            )
-                          }
-                          disabled={!canEdit}
-                          className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </section>
+                      {tab.hint}
+                    </code>
+                  </button>
+                );
+              })}
+          </div>
 
-          <AuthCodeFlowTestSection
-            appId={appState.id}
+          <TestingStep
+            appId={appId}
             clientId={appState.clientId}
             grantTypes={formData.grantTypes}
+            tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
             redirectUris={formData.redirectUris}
             allowedScopes={formData.allowedScopes}
+            hasSecret={appState.hasSecret}
+            backendHelper={appState.backendHelper}
             backendDeviceHelper={formData.backendDeviceHelper}
+            webHelper={appState.webHelper}
+            confidentialWebHelper={formData.confidentialWebHelper}
+            confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
             initiateLoginUri={formData.initiateLoginUri}
             deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
             domains={domains}
             onChange={updateFormData}
             onDomainsChange={setDomains}
+            onSecretGenerated={() => {
+              setAppState((s) => ({ ...s, hasSecret: true }));
+              updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
+            }}
+            onBackendSecretGenerated={() => {
+              setAppState((s) => ({
+                ...s,
+                backendHelper: s.backendHelper
+                  ? { ...s.backendHelper, hasSecret: true }
+                  : s.backendHelper,
+              }));
+            }}
+            onWebSecretGenerated={() => {
+              setAppState((s) => ({
+                ...s,
+                webHelper: s.webHelper
+                  ? { ...s.webHelper, hasSecret: true }
+                  : s.webHelper,
+              }));
+            }}
+            ownerExternalUserId={ownerExternalUserId}
             readOnly={!canEdit}
+            activeClient={credentialsClient}
+            hideHeader
+            onPublicRedirectUrisChange={handleRedirectUrisChange}
+            postLogoutRedirectUris={postLogoutRedirectUris}
+            onPostLogoutRedirectUrisChange={(uris) =>
+              updatePostLogoutRedirectUris(uris)
+            }
+            showPostLogoutRedirectUris={showPostLogoutRedirectUris}
           />
 
           <ReferenceEndpointsSection
@@ -691,9 +711,9 @@ export default function AppSettingsScreen({
       {integrationSection !== "plans" && integrationSection !== "payments" && (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 max-w-sm">
-          Redirect URIs and domains update immediately. Use{" "}
-          <strong className="text-zinc-400">Save changes</strong> for metadata,
-          auth mode, scopes, and OIDC fields.
+          Redirect URIs and domains update immediately. Post-logout redirects and
+          profile fields need{" "}
+          <strong className="text-zinc-400">Save changes</strong>.
         </p>
         <div className="flex items-center gap-3 shrink-0">
           {isDirty && !saving && (
