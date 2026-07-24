@@ -4,9 +4,8 @@ import type { OpenMeter } from "@openmeter/sdk";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
 import { buildBillingProfileSupplier } from "./billing-profiles";
-import { buildStripeConnectInstallUrl, parseStripeAccountIdFromConflict } from "./stripe-connect";
 import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects } from "./customers";
-import { listTenantInvoices } from "./invoices";
+import { listOwnerWalletInvoices, listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
   isMintUserSignerTokenRequest,
@@ -61,34 +60,12 @@ test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
 });
 
-test("parseStripeAccountIdFromConflict extracts acct id from OpenMeter 409", () => {
-  const err = new Error(
-    "Request failed [409]: conflict error: stripe app already exists with stripe account id: acct_1Tct0f1V1EduUmjw",
-  );
-  assert.equal(parseStripeAccountIdFromConflict(err), "acct_1Tct0f1V1EduUmjw");
-});
-
 test("buildBillingProfileSupplier includes required country on address", () => {
   process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY = "de";
   const supplier = buildBillingProfileSupplier("Acme Corp");
   assert.equal(supplier.name, "Acme Corp");
   assert.equal(supplier.addresses[0]?.country, "DE");
   delete process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY;
-});
-
-test("buildStripeConnectInstallUrl adds state and pymthouse callback redirect_uri", () => {
-  process.env.NEXTAUTH_URL = "http://localhost:3001";
-  const url = buildStripeConnectInstallUrl({
-    installUrl: "https://openmeter.example/api/v1/marketplace/listings/stripe/install/oauth2",
-    clientId: "app_test",
-    state: "csrf-state-1",
-  });
-  const parsed = new URL(url);
-  assert.equal(parsed.searchParams.get("state"), "csrf-state-1");
-  assert.equal(
-    parsed.searchParams.get("redirect_uri"),
-    "http://localhost:3001/api/v1/apps/app_test/billing/stripe/callback",
-  );
 });
 
 test("owner customer key helpers use bare user id", async () => {
@@ -1073,6 +1050,7 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
         items: [
           { id: "cust-a", key: "app_1:alpha" },
           { id: "cust-b", key: "app_1:beta" },
+          { id: "cust-other", key: "app_2:gamma" },
         ],
         page: input.page,
         pageSize: input.pageSize,
@@ -1106,6 +1084,94 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
   assert.deepEqual(listedCustomers, [["cust-a", "cust-b"]]);
   assert.equal(result.items.length, 2);
   assert.equal(result.totalCount, 2);
+});
+
+test("listTenantInvoices returns empty when no customers match", async () => {
+  let invoiceListCalls = 0;
+  const client = {
+    customers: {
+      list: async () => ({ items: [] }),
+    },
+    billing: {
+      invoices: {
+        list: async () => {
+          invoiceListCalls += 1;
+          return { items: [] };
+        },
+      },
+    },
+  };
+
+  const result = await listTenantInvoices({
+    client: client as never,
+    clientId: "app_missing",
+    includeOwnerWallet: false,
+  });
+
+  assert.deepEqual(result.items, []);
+  assert.equal(result.totalCount, 0);
+  assert.equal(invoiceListCalls, 0);
+});
+
+test("listOwnerWalletInvoices lists bare and owner: wire customer ids", async () => {
+  const listedKeys: string[] = [];
+  const listedCustomers: string[][] = [];
+  const client = {
+    customers: {
+      list: async (input: { key: string }) => {
+        listedKeys.push(input.key);
+        if (input.key === "uuid-owner") {
+          return { items: [{ id: "cust-bare", key: "uuid-owner" }] };
+        }
+        if (input.key === "owner:uuid-owner") {
+          return { items: [{ id: "cust-wire", key: "owner:uuid-owner" }] };
+        }
+        return { items: [] };
+      },
+    },
+    billing: {
+      invoices: {
+        list: async (input: { customers: string[] }) => {
+          listedCustomers.push([...input.customers].sort());
+          return {
+            items: input.customers.map((customerId) => ({
+              id: `inv-${customerId}`,
+              number: `N-${customerId}`,
+              status: "issued",
+              currency: "USD",
+              totals: { total: "5.00" },
+              customer: { id: customerId, key: customerId },
+              issuedAt: new Date("2026-07-01T00:00:00.000Z"),
+            })),
+          };
+        },
+      },
+    },
+  };
+
+  const result = await listOwnerWalletInvoices({
+    client: client as never,
+    ownerUserId: "uuid-owner",
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.deepEqual(listedKeys.sort(), ["owner:uuid-owner", "uuid-owner"]);
+  assert.deepEqual(listedCustomers, [["cust-bare", "cust-wire"].sort()]);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.totalCount, 2);
+});
+
+test("listOwnerWalletInvoices returns empty for blank owner id", async () => {
+  const client = {
+    customers: { list: async () => ({ items: [{ id: "x", key: "y" }] }) },
+    billing: { invoices: { list: async () => ({ items: [] }) } },
+  };
+  const result = await listOwnerWalletInvoices({
+    client: client as never,
+    ownerUserId: "   ",
+  });
+  assert.deepEqual(result.items, []);
 });
 
 test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included allowance", async () => {

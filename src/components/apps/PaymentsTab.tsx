@@ -17,6 +17,7 @@ type InvoiceRow = {
   currency: string;
   totalAmount: string;
   issuedAt?: string;
+  customerKey?: string;
 };
 
 type Props = {
@@ -264,15 +265,32 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       </div>
 
       <div className="rounded-lg border p-4 space-y-3">
-        <h3 className="text-base font-semibold">Recent invoices</h3>
+        <div>
+          <h3 className="text-base font-semibold">Customer invoices</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            End users billed through this app&apos;s Stripe Connect account. Platform invoices
+            for your developer prepaid wallet are on{" "}
+            <a href="/billing" className="text-emerald-500 hover:text-emerald-400">
+              Billing
+            </a>
+            .
+          </p>
+        </div>
         {invoices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No invoices yet.</p>
+          <p className="text-sm text-muted-foreground">No customer invoices yet.</p>
         ) : (
           <ul className="divide-y text-sm">
             {invoices.map((inv) => (
               <li key={inv.id} className="py-2 flex justify-between gap-4">
-                <span className="font-mono">{inv.number ?? inv.id}</span>
-                <span>
+                <div className="min-w-0">
+                  <span className="font-mono">{inv.number ?? inv.id}</span>
+                  {inv.customerKey ? (
+                    <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                      {inv.customerKey}
+                    </p>
+                  ) : null}
+                </div>
+                <span className="shrink-0">
                   {inv.totalAmount} {inv.currency} · {inv.status}
                 </span>
               </li>

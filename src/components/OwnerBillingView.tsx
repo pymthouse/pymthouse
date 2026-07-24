@@ -116,9 +116,9 @@ export default function OwnerBillingView({
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
         <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-          Prepaid credits and active subscriptions for your account. Plan allowances are
-          tracked per billing cycle; prepaid credits burn only after the allowance is
-          exhausted.
+          Prepaid credits, active subscriptions, and platform invoices for your account.
+          Plan allowances are tracked per billing cycle; prepaid credits burn only after the
+          allowance is exhausted.
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
@@ -211,6 +211,47 @@ export default function OwnerBillingView({
                   <SubscriptionCard key={row.subscriptionId} row={row} />
                 ))}
               </div>
+            )}
+          </section>
+
+          <section className="mt-8">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-zinc-200">Platform invoices</h2>
+              <InfoTooltip
+                label="Invoices from PymtHouse to your developer account (prepaid top-ups and overage). End-user invoices billed through your Stripe Connect account appear on each app’s Payments tab."
+                wide
+              />
+            </div>
+            {data.invoices.length === 0 ? (
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+                No platform invoices yet.
+              </div>
+            ) : (
+              <ul className="divide-y divide-white/[0.06] rounded-xl border border-white/[0.06] bg-white/[0.02]">
+                {data.invoices.map((inv) => (
+                  <li
+                    key={inv.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-mono text-zinc-200">{inv.number ?? inv.id}</p>
+                      {inv.issuedAt ? (
+                        <p className="mt-0.5 text-xs text-zinc-600">
+                          {formatBillingPeriod(inv.issuedAt)}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="text-right">
+                      <p className="font-mono tabular-nums text-zinc-100">
+                        {inv.totalAmount} {inv.currency}
+                      </p>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                        {inv.status}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
         </>
