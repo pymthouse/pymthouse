@@ -70,6 +70,16 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 
 Public client must have **device third-party initiate** enabled where required (`device_third_party_initiate_login`).
 
+## Client shapes
+
+| Shape | When to use |
+| --- | --- |
+| Public `app_…` (+ optional `m2m_…` / `web_…`) | SDK / CLI / SPA + optional Builder API + optional portal SSO |
+| `m2m_…` sibling | Machine tokens only — never portal SSO redirects |
+| `web_…` sibling | Portal SSO / confidential auth-code RP (Kong Dev Portal user auth) |
+
+Shape helpers: `src/lib/oidc/confidential-web.ts`, `ensureConfidentialWebClient` in `clients.ts`.
+
 ## Key implementation files
 
 | Area | File |

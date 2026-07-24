@@ -33,12 +33,17 @@ export async function deleteDeveloperAppAndRelatedData(
       .select({
         oidcClientId: developerApps.oidcClientId,
         m2mOidcClientId: developerApps.m2mOidcClientId,
+        webOidcClientId: developerApps.webOidcClientId,
       })
       .from(developerApps)
       .where(eq(developerApps.id, appInternalId))
       .limit(1);
     const app = appRow[0];
-    const oidcPkList = [app?.oidcClientId, app?.m2mOidcClientId].filter(
+    const oidcPkList = [
+      app?.oidcClientId,
+      app?.m2mOidcClientId,
+      app?.webOidcClientId,
+    ].filter(
       (v): v is string => typeof v === "string" && v.length > 0,
     );
     const oauthClientIds: string[] = [];

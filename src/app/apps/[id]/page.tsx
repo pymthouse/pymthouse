@@ -55,6 +55,8 @@ export default function AppDetailPage() {
             tokenEndpointAuthMethod:
               data.oidcClient?.tokenEndpointAuthMethod || "none",
             backendDeviceHelper: Boolean(data.m2mOidcClient),
+            confidentialWebHelper: Boolean(data.webOidcClient),
+            confidentialWebRedirectUris: data.webOidcClient?.redirectUris || [],
           },
           state: {
             id: data.id,
@@ -62,6 +64,7 @@ export default function AppDetailPage() {
             status: data.status,
             hasSecret: data.oidcClient?.hasSecret || false,
             backendHelper: data.m2mOidcClient ?? null,
+            webHelper: data.webOidcClient ?? null,
           },
           domains: (data.domains || []).map(
             (d: { id: string; domain: string }) => ({

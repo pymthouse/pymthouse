@@ -11,8 +11,16 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 
+type CredentialsTarget = "m2m" | "web" | "primary";
+
+function parseTarget(request: NextRequest): CredentialsTarget {
+  const raw = new URL(request.url).searchParams.get("target");
+  if (raw === "web" || raw === "m2m" || raw === "primary") return raw;
+  return "m2m";
+}
+
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
@@ -39,27 +47,67 @@ export async function POST(
     );
   }
 
-  let targetOidcRowId: string | null = app.m2mOidcClientId ?? null;
+  const target = parseTarget(request);
+  let targetOidcRowId: string | null = null;
 
-  if (!targetOidcRowId) {
-    const primaryRows = await db
-      .select()
-      .from(oidcClients)
-      .where(eq(oidcClients.id, app.oidcClientId))
-      .limit(1);
-    const primary = primaryRows[0];
-    if (!primary) {
-      return NextResponse.json(
-        { error: "OIDC client not found" },
-        { status: 500 },
-      );
-    }
-    if (primary.tokenEndpointAuthMethod === "none") {
+  if (target === "web") {
+    targetOidcRowId = app.webOidcClientId ?? null;
+    if (!targetOidcRowId) {
       return NextResponse.json(
         {
-          error: "interactive_public_no_secret",
+          error: "confidential_web_not_enabled",
           error_description:
-            "Enable Confidential M2M backend on App profile, then generate a secret for the confidential client.",
+            "Enable Confidential web RP on App profile, then generate a secret for the web_ client.",
+        },
+        { status: 400 },
+      );
+    }
+  } else if (target === "m2m") {
+    targetOidcRowId = app.m2mOidcClientId ?? null;
+    if (!targetOidcRowId) {
+      // Legacy: if no M2M, allow rotating primary when it is confidential and no siblings.
+      if (app.webOidcClientId) {
+        return NextResponse.json(
+          {
+            error: "interactive_public_no_secret",
+            error_description:
+              "Public apps cannot hold a client secret. Enable Confidential M2M backend for machine credentials, or use ?target=web for the confidential web RP.",
+          },
+          { status: 400 },
+        );
+      }
+      const primaryRows = await db
+        .select()
+        .from(oidcClients)
+        .where(eq(oidcClients.id, app.oidcClientId))
+        .limit(1);
+      const primary = primaryRows[0];
+      if (!primary) {
+        return NextResponse.json(
+          { error: "OIDC client not found" },
+          { status: 500 },
+        );
+      }
+      if (primary.tokenEndpointAuthMethod === "none") {
+        return NextResponse.json(
+          {
+            error: "interactive_public_no_secret",
+            error_description:
+              "Public apps cannot hold a client secret. Enable Confidential M2M backend for machine credentials, or Confidential web RP for portal SSO (auth code + secret + redirects).",
+          },
+          { status: 400 },
+        );
+      }
+      targetOidcRowId = app.oidcClientId;
+    }
+  } else {
+    // target === primary — only when no confidential siblings
+    if (app.m2mOidcClientId || app.webOidcClientId) {
+      return NextResponse.json(
+        {
+          error: "public_client_no_secret",
+          error_description:
+            "The public app_ client cannot hold a secret while a confidential sibling exists. Use ?target=m2m or ?target=web.",
         },
         { status: 400 },
       );
@@ -86,7 +134,7 @@ export async function POST(
       {
         error: "public_client_no_secret",
         error_description:
-          "This client cannot hold a secret. Use the Backend helper client for confidential credentials.",
+          "This client cannot hold a secret. Use the M2M backend helper or confidential web RP for confidential credentials.",
       },
       { status: 400 },
     );
@@ -103,6 +151,7 @@ export async function POST(
   return NextResponse.json({
     clientId: client.clientId,
     clientSecret: secret,
+    target,
     message: "Store this secret securely. It will not be shown again.",
   });
 }
