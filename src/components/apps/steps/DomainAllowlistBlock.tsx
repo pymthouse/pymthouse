@@ -85,7 +85,8 @@ export default function DomainAllowlistBlock({
         <div>
           <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
           <p className="text-xs text-zinc-500 mt-1">
-            Shared origins for CORS and request validation.
+            Allowed origins for CORS and request validation. Browser clients (including Kong Dev
+            Portal Try It) must use an origin listed here for app-scoped Builder API calls.
           </p>
         </div>
       )}
