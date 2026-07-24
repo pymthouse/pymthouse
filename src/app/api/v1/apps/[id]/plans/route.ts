@@ -35,6 +35,7 @@ import {
   validateCapabilityFeatureKeys,
 } from "@/lib/openmeter/capability-features";
 import { validateCustomPlanName } from "@/lib/openmeter/plan-naming";
+import { parsePlanBillingCycleInput } from "@/lib/openmeter/billing-cycle";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -342,6 +343,11 @@ export async function POST(
     return NextResponse.json({ error: overageRate.error }, { status: 400 });
   }
 
+  const billingCycleParsed = parsePlanBillingCycleInput(body.billingCycle);
+  if (!billingCycleParsed.ok) {
+    return NextResponse.json({ error: billingCycleParsed.error }, { status: 400 });
+  }
+
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
   if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
@@ -380,7 +386,7 @@ export async function POST(
         status: coerceJsonScalarString(body.status, "active"),
         overageRateUsd: overageRate.value,
         includedUsdMicros,
-        billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
+        billingCycle: billingCycleParsed.value,
         discoveryProfileId,
         isNetworkDefault: false,
         isStarterDefault: false,
@@ -587,6 +593,15 @@ export async function PUT(
       return { tag: "validation" as const, error: overageRate.error };
     }
 
+    let billingCyclePut: string | undefined;
+    if (body.billingCycle !== undefined) {
+      const billingCycleParsed = parsePlanBillingCycleInput(body.billingCycle);
+      if (!billingCycleParsed.ok) {
+        return { tag: "validation" as const, error: billingCycleParsed.error };
+      }
+      billingCyclePut = billingCycleParsed.value;
+    }
+
     const rawIncludedUsdPut = body.includedUsdMicros;
     let includedUsdMicrosPut: string | null | undefined = undefined; // undefined = don't change
     if (rawIncludedUsdPut !== undefined) {
@@ -618,9 +633,7 @@ export async function PUT(
           body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
         overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
-        ...(body.billingCycle === undefined
-          ? {}
-          : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
+        ...(billingCyclePut === undefined ? {} : { billingCycle: billingCyclePut }),
         ...(discoveryProfileIdPut !== undefined
           ? { discoveryProfileId: discoveryProfileIdPut }
           : {}),

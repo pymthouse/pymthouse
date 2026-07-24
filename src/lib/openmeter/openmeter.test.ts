@@ -1222,6 +1222,69 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
   assert.equal(flatFee.type, "flat_fee");
   assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
   assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
+  assert.equal(
+    (omPlan as { billingCadence?: string }).billingCadence ??
+      (omPlan as { billing_cadence?: string }).billing_cadence,
+    "P1M",
+  );
+  assert.equal(
+    (flatFee as { billingCadence?: string; billing_cadence?: string }).billingCadence ??
+      (flatFee as { billing_cadence?: string }).billing_cadence,
+    "P1M",
+  );
+});
+
+test("mapPymthousePlanToOpenMeterCreate uses weekly billing cadence", async () => {
+  const omPlan = await mapPymthousePlanToOpenMeterCreate({
+    clientId: "app_1",
+    plan: {
+      id: "plan-weekly",
+      clientId: "app_1",
+      name: "Weekly Pro",
+      type: "subscription",
+      priceAmount: "7.00",
+      priceCurrency: "USD",
+      status: "active",
+      includedUsdMicros: "1000000",
+      overageRateUsd: "0.000001",
+      includedUnits: null,
+      billingCycle: "weekly",
+      discoveryProfileId: null,
+      isNetworkDefault: false,
+      isStarterDefault: false,
+      discoveryExcludedCapabilities: null,
+      openmeterPlanId: null,
+      openmeterPlanVersion: null,
+      lastSyncedAt: null,
+      syncError: null,
+      createdAt: "",
+      updatedAt: "",
+    },
+    capabilities: [],
+    client: {
+      features: {
+        list: async () => [],
+        create: async () => ({}),
+      },
+    } as never,
+  });
+
+  assert.ok(omPlan);
+  assert.equal(
+    (omPlan as { billingCadence?: string }).billingCadence ??
+      (omPlan as { billing_cadence?: string }).billing_cadence,
+    "P1W",
+  );
+  const phase = omPlan.phases[0];
+  assert.ok(phase);
+  const phaseCards = rateCardsFromPlanPhase(phase);
+  for (const card of phaseCards) {
+    assert.equal(
+      (card as { billingCadence?: string; billing_cadence?: string }).billingCadence ??
+        (card as { billing_cadence?: string }).billing_cadence,
+      "P1W",
+    );
+  }
 });
 
 test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", async () => {

@@ -43,7 +43,11 @@ export type KonnectCreateBillingProfileBody = {
     };
   };
   workflow: {
-    invoicing: { auto_advance: boolean; draft_period: string };
+    invoicing: {
+      auto_advance: boolean;
+      draft_period: string;
+      progressive_billing?: boolean;
+    };
     payment: { collection_method: "charge_automatically" };
   };
   apps: {
@@ -194,6 +198,7 @@ export function buildKonnectCreateBillingProfileBody(input: {
   clientId: string;
   stripeAppId: string;
   name?: string;
+  progressiveBilling?: boolean;
 }): KonnectCreateBillingProfileBody {
   const supplierName = input.name || `Tenant ${input.clientId}`;
   return {
@@ -206,7 +211,11 @@ export function buildKonnectCreateBillingProfileBody(input: {
       },
     },
     workflow: {
-      invoicing: { auto_advance: true, draft_period: "P0D" },
+      invoicing: {
+        auto_advance: true,
+        draft_period: "P0D",
+        progressive_billing: input.progressiveBilling ?? true,
+      },
       payment: { collection_method: "charge_automatically" },
     },
     apps: {
@@ -272,11 +281,13 @@ export async function createKonnectBillingProfile(input: {
   clientId: string;
   openmeterStripeAppId: string;
   name?: string;
+  progressiveBilling?: boolean;
 }): Promise<string> {
   const body = buildKonnectCreateBillingProfileBody({
     clientId: input.clientId,
     stripeAppId: input.openmeterStripeAppId,
     name: input.name,
+    progressiveBilling: input.progressiveBilling,
   });
   const profile = await billingFetch<KonnectBillingProfile>("/profiles", {
     method: "POST",
@@ -286,4 +297,45 @@ export async function createKonnectBillingProfile(input: {
     throw new Error("Failed to create Konnect billing profile");
   }
   return profile.id;
+}
+
+/** Patch invoicing.progressive_billing on an existing Konnect billing profile. */
+export async function updateKonnectBillingProfileProgressiveBilling(input: {
+  profileId: string;
+  progressiveBilling: boolean;
+}): Promise<void> {
+  const existing = await billingFetch<Record<string, unknown>>(
+    `/profiles/${encodeURIComponent(input.profileId)}`,
+  );
+  if (!existing || typeof existing !== "object") {
+    throw new Error("Konnect billing profile not found");
+  }
+
+  const workflow =
+    existing.workflow && typeof existing.workflow === "object"
+      ? { ...(existing.workflow as Record<string, unknown>) }
+      : {};
+  const invoicing =
+    workflow.invoicing && typeof workflow.invoicing === "object"
+      ? { ...(workflow.invoicing as Record<string, unknown>) }
+      : {};
+  invoicing.progressive_billing = input.progressiveBilling;
+  workflow.invoicing = invoicing;
+
+  const {
+    id: _id,
+    created_at: _createdAt,
+    updated_at: _updatedAt,
+    deleted_at: _deletedAt,
+    apps: _apps,
+    ...replaceable
+  } = existing;
+
+  await billingFetch(`/profiles/${encodeURIComponent(input.profileId)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      ...replaceable,
+      workflow,
+    }),
+  });
 }

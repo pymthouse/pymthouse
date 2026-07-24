@@ -611,12 +611,19 @@ Billable **`usage_billing_events`** rows are created when the signing request re
 
 PymtHouse uses these fields for attribution and billing-event grouping together with the negotiated ticket price from the request. The go-livepeer remote signer is not required to sign pipeline/model metadata for v1.
 
-### NaaP catalog and pricing routes
+### Catalog and pricing routes
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/v1/pipeline-catalog` | NaaP pipeline catalog (cached 5 min). Used by Plans UI dropdowns. |
+| `GET /api/v1/pipeline-catalog` | Discovery-service capability catalog adapted to `{ id, name, models[] }` (cached 5 min). Used by Plans UI dropdowns. Source: `DISCOVERY_SERVICE_URL` → `GET /v1/discovery/capabilities`. |
 | `GET /api/v1/pipeline-pricing?pipeline=...&model=...` | NaaP per-orchestrator pricing rows (proxied each request; no in-process cache). Used for UI estimates. |
+
+**Catalog adapter (discovery-service contract):** discovery returns `{ capabilities, entries[{ serviceType, capability, offeringIds? }] }`, not the retired NaaP `/dashboard/pipeline-catalog` array. PymtHouse maps:
+
+- `live-video-to-video` / `live-runner` / `batch` → one catalog row per `serviceType`, models = capability names (preserves historical `live-video-to-video` + model billing keys)
+- `modules` → one catalog row per capability, models = `offeringIds` (or the capability itself when offerings are absent)
+- Batch pipeline prefixes (`text-to-image/...`) are stripped upstream; the catalog pipeline id is `batch`
+- `serviceType=legacy` is invalid; use `live-video-to-video` (discovery defaults to live-video-to-video + live-runner when omitted)
 
 ### Usage API — pipeline/model grouping
 
@@ -753,7 +760,7 @@ Network capability availability is **`GET …/manifest`**, not this route.
 
 ### Network capability manifest (integrator pipeline / model caps)
 
-**Canonical** app-level network surface for integrators (e.g. NaaP). Each app has exactly one undeletable **Network Price** plan row (`plans.is_network_default = true`) whose **`discovery_excluded_capabilities`** JSON defines what is **not** discoverable. The live NaaP pipeline catalog minus those exclusions is the resolved list in **`capabilities`**. **Custom billing plans** only carry pricing overrides; they do **not** widen or narrow discovery.
+**Canonical** app-level network surface for integrators (e.g. NaaP). Each app has exactly one undeletable **Network Price** plan row (`plans.is_network_default = true`) whose **`discovery_excluded_capabilities`** JSON defines what is **not** discoverable. The live discovery-service catalog minus those exclusions is the resolved list in **`capabilities`**. **Custom billing plans** only carry pricing overrides; they do **not** widen or narrow discovery.
 
 #### Storage (`plans`, network-default row only)
 
@@ -929,7 +936,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
-- [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts) (NaaP catalog with TTL cache; pricing fetch is uncached)
+- [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts) (discovery-service catalog adapter with TTL cache; NaaP pricing fetch is uncached)
 - [`src/app/api/v1/prices/eth-usd/route.ts`](../src/app/api/v1/prices/eth-usd/route.ts)
 - [`src/app/api/v1/pipeline-catalog/route.ts`](../src/app/api/v1/pipeline-catalog/route.ts)
 - [`src/app/api/v1/pipeline-pricing/route.ts`](../src/app/api/v1/pipeline-pricing/route.ts)

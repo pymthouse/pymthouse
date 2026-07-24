@@ -127,6 +127,9 @@ registerAppMetadata("get", "/billing", "Billing profile", { tags: ["Billing"] })
 registerAppMetadata("post", "/billing/checkout", "Create billing checkout", { tags: ["Billing"] });
 registerAppMetadata("get", "/billing/invoices", "List invoices", { tags: ["Billing"] });
 registerAppMetadata("get", "/billing/stripe", "Stripe billing status", { tags: ["Billing"] });
+registerAppMetadata("patch", "/billing/stripe", "Update Stripe billing profile settings", {
+  tags: ["Billing"],
+});
 registerAppMetadata("delete", "/billing/stripe", "Disconnect Stripe billing", { tags: ["Billing"] });
 registerAppMetadata("post", "/billing/stripe/connect", "Stripe Connect", { tags: ["Billing"] });
 registerAppMetadata("get", "/billing/stripe/callback", "Stripe OAuth callback", { tags: ["Billing"] });

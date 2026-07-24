@@ -366,5 +366,7 @@ export async function getStripeConnectStatus(clientId: string) {
     openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
+    progressiveBilling: config?.progressiveBilling ?? true,
+    invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
   };
 }

@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  sanitizeUsdCentsInput,
+  usdCentsDisplayToMicros,
+  usdMicrosToCentsDisplay,
+} from "@/lib/format-usd-micros";
 
 type StripeStatus = {
   status: string;
@@ -8,6 +13,8 @@ type StripeStatus = {
   openmeterBillingProfileId: string | null;
   defaultCurrency: string;
   connectedAt: string | null;
+  progressiveBilling?: boolean;
+  invoiceThresholdUsdMicros?: string | null;
 };
 
 type InvoiceRow = {
@@ -34,6 +41,9 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
   const [stripeSecretKey, setStripeSecretKey] = useState("");
   const [apiKeyHint, setApiKeyHint] = useState<string | null>(null);
+  const [progressiveBilling, setProgressiveBilling] = useState(true);
+  const [thresholdDisplay, setThresholdDisplay] = useState("");
+  const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,7 +56,14 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       if (!statusRes.ok) {
         throw new Error("Failed to load billing status");
       }
-      setStatus(await statusRes.json());
+      const nextStatus = (await statusRes.json()) as StripeStatus;
+      setStatus(nextStatus);
+      setProgressiveBilling(nextStatus.progressiveBilling ?? true);
+      setThresholdDisplay(
+        nextStatus.invoiceThresholdUsdMicros
+          ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
+          : "",
+      );
       if (invoicesRes.ok) {
         const body = await invoicesRes.json();
         setInvoices(body.items ?? []);
@@ -149,6 +166,41 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         throw new Error(body.error || "Disconnect failed");
       }
       await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveBillingProfileSettings() {
+    setBusy(true);
+    setError(null);
+    setSettingsSaved(null);
+    try {
+      const trimmed = thresholdDisplay.trim();
+      let invoiceThresholdUsdMicros: string | null = null;
+      if (trimmed !== "") {
+        const micros = usdCentsDisplayToMicros(trimmed);
+        if (micros == null) {
+          throw new Error("Invoice threshold must be a valid dollar amount");
+        }
+        invoiceThresholdUsdMicros = micros;
+      }
+      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          progressiveBilling,
+          invoiceThresholdUsdMicros,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || "Failed to save billing settings");
+      }
+      setStatus((prev) => (prev ? { ...prev, ...body } : body));
+      setSettingsSaved("Saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -263,6 +315,73 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           </div>
         )}
       </div>
+
+      {connected && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <div>
+            <h3 className="text-base font-semibold">Mid-cycle invoicing</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Progressive billing allows OpenMeter to invoice unpaid usage before the
+              billing cycle ends. Set an optional dollar threshold; the clearinghouse
+              worker charges when gathering invoices reach that amount.
+            </p>
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={progressiveBilling}
+              disabled={!canManageBilling || busy}
+              onChange={(e) => {
+                setProgressiveBilling(e.target.checked);
+                setSettingsSaved(null);
+              }}
+            />
+            <span>
+              Enable progressive billing
+              <span className="block text-xs text-muted-foreground">
+                Synced to this app&apos;s OpenMeter billing profile.
+              </span>
+            </span>
+          </label>
+          <div>
+            <label htmlFor="invoice-threshold" className="block text-xs text-muted-foreground mb-1">
+              Invoice when unpaid usage reaches (USD)
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">$</span>
+              <input
+                id="invoice-threshold"
+                type="text"
+                inputMode="decimal"
+                placeholder="e.g. 10.00 (leave blank to disable)"
+                disabled={!canManageBilling || busy || !progressiveBilling}
+                value={thresholdDisplay}
+                onChange={(e) => {
+                  setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));
+                  setSettingsSaved(null);
+                }}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
+              />
+            </div>
+          </div>
+          {canManageBilling && (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void saveBillingProfileSettings()}
+              >
+                Save invoicing settings
+              </button>
+              {settingsSaved ? (
+                <span className="text-xs text-emerald-600">{settingsSaved}</span>
+              ) : null}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="rounded-lg border p-4 space-y-3">
         <div>

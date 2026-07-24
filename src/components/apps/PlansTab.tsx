@@ -32,6 +32,10 @@ import {
   usdCentsDisplayToMicros,
   usdMicrosToCentsDisplay,
 } from "@/lib/format-usd-micros";
+import {
+  normalizePlanBillingCycle,
+  type PlanBillingCycle,
+} from "@/lib/openmeter/billing-cycle";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -92,6 +96,7 @@ interface PlanDraft {
   type: string;
   priceAmount: string;
   priceCurrency: string;
+  billingCycle: PlanBillingCycle;
   includedUsdDisplay: string;
   defaultMarkupPct: string;
   capabilityKeys: string[];
@@ -103,6 +108,18 @@ const PLAN_TYPES = [
   { value: "subscription", label: "Subscription" },
   { value: "usage", label: "Pay-Per-Use" },
 ] as const;
+
+const BILLING_CYCLE_OPTIONS: Array<{ value: PlanBillingCycle; label: string }> = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+function billingCyclePriceLabel(cycle: PlanBillingCycle, currency: string): string {
+  const period =
+    cycle === "daily" ? "Daily" : cycle === "weekly" ? "Weekly" : "Monthly";
+  return `${period} price (${currency})`;
+}
 
 async function readFetchJson(res: Response): Promise<{
   ok: boolean;
@@ -291,6 +308,7 @@ function planToDraft(plan: PlanRow): PlanDraft {
     type: plan.type,
     priceAmount: plan.priceAmount,
     priceCurrency: plan.priceCurrency,
+    billingCycle: normalizePlanBillingCycle(plan.billingCycle),
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
     defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
     capabilityKeys,
@@ -304,6 +322,7 @@ function emptyDraft(): PlanDraft {
     type: "free",
     priceAmount: "0",
     priceCurrency: "USD",
+    billingCycle: "monthly",
     includedUsdDisplay: "",
     defaultMarkupPct: "",
     capabilityKeys: [],
@@ -666,6 +685,35 @@ function PlanDraftForm({
 
       {(draft.type === "subscription" || draft.type === "usage") && (
         <div>
+          <label htmlFor={`${idPrefix}-billing-cycle`} className="block text-xs text-zinc-500 mb-1">
+            Billing cycle
+          </label>
+          <select
+            id={`${idPrefix}-billing-cycle`}
+            value={draft.billingCycle}
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                billingCycle: normalizePlanBillingCycle(e.target.value),
+              })
+            }
+            disabled={!canEdit}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
+          >
+            {BILLING_CYCLE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-zinc-500 mt-1">
+            How often usage invoices close and included allowance renews.
+          </p>
+        </div>
+      )}
+
+      {(draft.type === "subscription" || draft.type === "usage") && (
+        <div>
           <label htmlFor={`${idPrefix}-default-markup`} className="block text-xs text-zinc-500 mb-1">
             Default usage markup (% over network cost)
           </label>
@@ -688,7 +736,7 @@ function PlanDraftForm({
         <>
           <div>
             <label htmlFor={`${idPrefix}-price`} className="block text-xs text-zinc-500 mb-1">
-              Monthly price ({draft.priceCurrency})
+              {billingCyclePriceLabel(draft.billingCycle, draft.priceCurrency)}
             </label>
             <input
               id={`${idPrefix}-price`}
@@ -700,7 +748,7 @@ function PlanDraftForm({
           </div>
           <div>
           <label htmlFor={`${idPrefix}-included`} className="block text-xs text-zinc-500 mb-1">
-            Included usage allowance
+            Included usage allowance (per billing cycle)
           </label>
           <DollarCentsInput
             id={`${idPrefix}-included`}
@@ -840,6 +888,7 @@ function buildPlanPayload(
     type: draft.type,
     priceAmount: draft.priceAmount,
     priceCurrency: draft.priceCurrency,
+    billingCycle: draft.billingCycle,
     ...(planId ? {} : { status: "active" }),
     capabilities,
     includedUsdMicros,
@@ -1781,7 +1830,7 @@ export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
           setCatalogError(`Pipeline catalog unavailable (HTTP ${status})`);
         }
       })
-      .catch(() => setCatalogError("NaaP catalog unavailable"));
+      .catch(() => setCatalogError("Discovery catalog unavailable"));
   }, []);
 
   const deletePlan = async (planId: string) => {

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { filterPricingRows } from "./naap-catalog";
+import {
+  filterPricingRows,
+  mapDiscoveryCapabilitiesToCatalog,
+} from "./naap-catalog";
 import type { PricingRow } from "./naap-catalog";
 
 const rows: PricingRow[] = [
@@ -44,3 +47,54 @@ test("filterPricingRows: correct model filtering", () => {
   assert.equal(result[0].model, "controlnet");
 });
 
+test("mapDiscoveryCapabilitiesToCatalog: groups live + batch under serviceType", () => {
+  const catalog = mapDiscoveryCapabilitiesToCatalog([
+    { serviceType: "live-video-to-video", capability: "streamdiffusion-sdxl" },
+    { serviceType: "live-video-to-video", capability: "streamdiffusion" },
+    { serviceType: "live-runner", capability: "transcode/ffmpeg" },
+    { serviceType: "batch", capability: "black-forest-labs/FLUX.1-dev" },
+  ]);
+  assert.deepEqual(catalog, [
+    {
+      id: "batch",
+      name: "Batch",
+      models: ["black-forest-labs/FLUX.1-dev"],
+    },
+    {
+      id: "live-runner",
+      name: "Live Runner",
+      models: ["transcode/ffmpeg"],
+    },
+    {
+      id: "live-video-to-video",
+      name: "Live Video To Video",
+      models: ["streamdiffusion", "streamdiffusion-sdxl"],
+    },
+  ]);
+});
+
+test("mapDiscoveryCapabilitiesToCatalog: modules use capability + offeringIds", () => {
+  const catalog = mapDiscoveryCapabilitiesToCatalog([
+    {
+      serviceType: "modules",
+      capability: "openai:chat-completions",
+      offeringIds: ["vllm-a", "vllm-b"],
+    },
+    {
+      serviceType: "modules",
+      capability: "rerank",
+    },
+  ]);
+  assert.deepEqual(catalog, [
+    {
+      id: "openai:chat-completions",
+      name: "Openai Chat Completions",
+      models: ["vllm-a", "vllm-b"],
+    },
+    {
+      id: "rerank",
+      name: "Rerank",
+      models: ["rerank"],
+    },
+  ]);
+});

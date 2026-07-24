@@ -218,6 +218,13 @@
       "when": 1779000000000,
       "tag": "0029_web_oidc_client",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1779100000000,
+      "tag": "0030_app_billing_progressive_threshold",
+      "breakpoints": true
     }
   ]
 }

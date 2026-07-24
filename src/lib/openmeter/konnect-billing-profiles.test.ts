@@ -28,7 +28,11 @@ test("buildKonnectCreateBillingProfileBody uses Konnect snake_case supplier addr
     },
   });
   assert.deepEqual(body.workflow, {
-    invoicing: { auto_advance: true, draft_period: "P0D" },
+    invoicing: {
+      auto_advance: true,
+      draft_period: "P0D",
+      progressive_billing: true,
+    },
     payment: { collection_method: "charge_automatically" },
   });
   assert.deepEqual(body.apps, {

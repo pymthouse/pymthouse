@@ -5,7 +5,7 @@ import { appBillingConfig } from "@/db/schema";
 import type { OpenMeter } from "@openmeter/sdk";
 import { getHostedAdminClient } from "./admin-client";
 import { assignCustomerBillingProfileOverride } from "./customers";
-import { createKonnectBillingProfile } from "./konnect-billing-profiles";
+import { createKonnectBillingProfile, updateKonnectBillingProfileProgressiveBilling } from "./konnect-billing-profiles";
 import { getHostedOpenMeterUrl } from "./constants";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
@@ -122,11 +122,14 @@ export async function ensureTenantBillingProfile(input: {
     process.env.OPENMETER_API_KEY,
   );
 
+  const progressiveBilling = existing?.progressiveBilling ?? true;
+
   const profileId = useKonnect
     ? await createKonnectBillingProfile({
         clientId: input.clientId,
         openmeterStripeAppId: input.openmeterStripeAppId,
         name: profileName,
+        progressiveBilling,
       })
     : (
         await client.billing.profiles.create({
@@ -134,7 +137,11 @@ export async function ensureTenantBillingProfile(input: {
           default: false,
           supplier: buildBillingProfileSupplier(supplierName),
           workflow: {
-            invoicing: { autoAdvance: true, draftPeriod: "P0D" },
+            invoicing: {
+              autoAdvance: true,
+              draftPeriod: "P0D",
+              progressiveBilling,
+            },
             payment: { collectionMethod: "charge_automatically" },
           },
           apps: {
@@ -238,6 +245,94 @@ export async function applyTenantBillingProfileToCustomer(input: {
     customerId: input.customerId,
     billingProfileId: config.openmeterBillingProfileId,
   });
+}
+
+/**
+ * Persist progressive-billing / threshold settings and sync progressiveBilling
+ * to the OpenMeter tenant billing profile when connected.
+ */
+export async function updateAppBillingProfileSettings(input: {
+  clientId: string;
+  progressiveBilling?: boolean;
+  invoiceThresholdUsdMicros?: string | null;
+}): Promise<{
+  progressiveBilling: boolean;
+  invoiceThresholdUsdMicros: string | null;
+}> {
+  const existing = await getAppBillingConfig(input.clientId);
+  if (!existing) {
+    throw new Error("Billing is not configured for this app");
+  }
+
+  const progressiveBilling =
+    input.progressiveBilling === undefined
+      ? existing.progressiveBilling
+      : input.progressiveBilling;
+  const invoiceThresholdUsdMicros =
+    input.invoiceThresholdUsdMicros === undefined
+      ? existing.invoiceThresholdUsdMicros
+      : input.invoiceThresholdUsdMicros;
+
+  const progressiveChanged =
+    input.progressiveBilling !== undefined &&
+    input.progressiveBilling !== existing.progressiveBilling;
+
+  if (
+    progressiveChanged &&
+    existing.stripeConnectStatus === "connected" &&
+    existing.openmeterBillingProfileId?.trim()
+  ) {
+    await syncProgressiveBillingToOpenMeterProfile({
+      profileId: existing.openmeterBillingProfileId,
+      progressiveBilling,
+    });
+  }
+
+  await upsertAppBillingConfig(input.clientId, {
+    progressiveBilling,
+    invoiceThresholdUsdMicros,
+  });
+
+  return {
+    progressiveBilling,
+    invoiceThresholdUsdMicros: invoiceThresholdUsdMicros ?? null,
+  };
+}
+
+async function syncProgressiveBillingToOpenMeterProfile(input: {
+  profileId: string;
+  progressiveBilling: boolean;
+}): Promise<void> {
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  if (useKonnect) {
+    await updateKonnectBillingProfileProgressiveBilling({
+      profileId: input.profileId,
+      progressiveBilling: input.progressiveBilling,
+    });
+    return;
+  }
+
+  const client = getHostedAdminClient();
+  const profile = await client.billing.profiles.get(input.profileId);
+  if (!profile?.id) {
+    throw new Error("OpenMeter billing profile not found");
+  }
+
+  await client.billing.profiles.update(input.profileId, {
+    name: profile.name,
+    default: profile.default ?? false,
+    supplier: profile.supplier,
+    workflow: {
+      ...(profile.workflow ?? {}),
+      invoicing: {
+        ...(profile.workflow?.invoicing ?? {}),
+        progressiveBilling: input.progressiveBilling,
+      },
+    },
+  } as Parameters<typeof client.billing.profiles.update>[1]);
 }
 
 export function resetFreeBillingProfileCacheForTests(): void {

@@ -292,6 +292,38 @@ test("plans POST accepts subscription with retail overageRateUsd", async (t) => 
   assert.equal(planRows[0].includedUsdMicros, "20000000");
 });
 
+test("plans POST accepts billingCycle and rejects invalid values", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  authorizedApp = app;
+  t.after(async () => {
+    authorizedApp = null;
+    await cleanupTestApp(app);
+  });
+
+  const weekly = await postPlan(app.clientId, {
+    name: "Weekly plan",
+    type: "subscription",
+    priceAmount: "5",
+    priceCurrency: "USD",
+    billingCycle: "weekly",
+  });
+  assert.equal(weekly.status, 201);
+  const weeklyRows = await db
+    .select()
+    .from(plans)
+    .where(eq(plans.id, weekly.body.id as string))
+    .limit(1);
+  assert.equal(weeklyRows[0]?.billingCycle, "weekly");
+
+  const invalid = await postPlan(app.clientId, {
+    name: "Bad cycle",
+    type: "usage",
+    billingCycle: "yearly",
+  });
+  assert.equal(invalid.status, 400);
+  assert.match(String(invalid.body.error), /billingCycle must be one of/);
+});
+
 test("plans POST validates capabilities and discovery policy payloads", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   authorizedApp = app;
