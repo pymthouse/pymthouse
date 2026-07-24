@@ -14,10 +14,6 @@ import {
   type AppFormData,
   type AppState,
 } from "./AppWizard";
-import {
-  AUTHORIZATION_CODE_GRANT,
-  syncPublicClientGrantTypes,
-} from "@/lib/oidc/grants";
 
 interface Props {
   appId: string;
@@ -242,21 +238,6 @@ export default function AppSettingsScreen({
     [],
   );
 
-  const handleRedirectUrisChange = useCallback(
-    (uris: string[]) => {
-      setFormData((prev) => {
-        const nextGrantTypes = syncPublicClientGrantTypes(
-          prev.grantTypes,
-          uris,
-          appState.clientId ?? "",
-        );
-        return { ...prev, redirectUris: uris, grantTypes: nextGrantTypes };
-      });
-      setIsDirty(true);
-    },
-    [appState.clientId],
-  );
-
   const syncCredentialsFromServer = useCallback(async () => {
     const res = await fetch(`/api/v1/apps/${appId}`);
     if (!res.ok) {
@@ -268,8 +249,13 @@ export default function AppSettingsScreen({
         clientId: string;
         hasSecret: boolean;
         redirectUris: string[];
+        postLogoutRedirectUris?: string[];
       } | null;
-      oidcClient?: { hasSecret?: boolean; clientId?: string } | null;
+      oidcClient?: {
+        hasSecret?: boolean;
+        clientId?: string;
+        postLogoutRedirectUris?: string[];
+      } | null;
     };
     setAppState((s) => ({
       ...s,
@@ -280,10 +266,16 @@ export default function AppSettingsScreen({
     }));
     setFormData((prev) => ({
       ...prev,
+      redirectUris: [],
       backendDeviceHelper: Boolean(data.m2mOidcClient),
       confidentialWebHelper: Boolean(data.webOidcClient),
       confidentialWebRedirectUris: data.webOidcClient?.redirectUris ?? [],
     }));
+    setPostLogoutRedirectUris(
+      data.webOidcClient?.postLogoutRedirectUris ??
+        data.oidcClient?.postLogoutRedirectUris ??
+        [],
+    );
   }, [appId]);
 
   useEffect(() => {
@@ -302,7 +294,7 @@ export default function AppSettingsScreen({
       const res = await fetch(`/api/v1/apps/${appId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData }),
+        body: JSON.stringify({ ...formData, redirectUris: [] }),
       });
       const putJson = (await res.json()) as {
         success?: boolean;
@@ -404,11 +396,8 @@ export default function AppSettingsScreen({
     typeof window !== "undefined" && appState.clientId
       ? `${window.location.origin}/api/v1/apps/${encodeURIComponent(appState.clientId)}/oidc/token`
       : "";
-  const showPostLogoutRedirectUris = syncPublicClientGrantTypes(
-    formData.grantTypes,
-    formData.redirectUris,
-    appState.clientId ?? "",
-  ).includes(AUTHORIZATION_CODE_GRANT);
+  const showPostLogoutRedirectUris =
+    Boolean(formData.confidentialWebHelper) || Boolean(appState.webHelper);
 
   const showM2mCredentialsTab =
     Boolean(formData.backendDeviceHelper) || Boolean(appState.backendHelper);
@@ -669,7 +658,6 @@ export default function AppSettingsScreen({
             readOnly={!canEdit}
             activeClient={credentialsClient}
             hideHeader
-            onPublicRedirectUrisChange={handleRedirectUrisChange}
             postLogoutRedirectUris={postLogoutRedirectUris}
             onPostLogoutRedirectUrisChange={(uris) =>
               updatePostLogoutRedirectUris(uris)
@@ -711,8 +699,8 @@ export default function AppSettingsScreen({
       {integrationSection !== "plans" && integrationSection !== "payments" && (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-zinc-800">
         <p className="text-xs text-zinc-500 max-w-sm">
-          Redirect URIs and domains update immediately. Post-logout redirects and
-          profile fields need{" "}
+          Redirect URIs (Web RP) and domains update immediately. Post-logout
+          redirects and profile fields need{" "}
           <strong className="text-zinc-400">Save changes</strong>.
         </p>
         <div className="flex items-center gap-3 shrink-0">

@@ -81,8 +81,8 @@ export default function DomainAllowlistBlock({
       <div>
         <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
         <p className="text-xs text-zinc-500 mt-1">
-          Allowed origins for CORS and request validation. Shared across public and
-          confidential web redirect URIs — adding a redirect may suggest an origin
+          Allowed origins for CORS and request validation. Shared across siblings —
+          adding a portal redirect URI on the Web RP tab may suggest an origin
           automatically.
         </p>
       </div>

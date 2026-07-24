@@ -282,8 +282,8 @@ export async function createAppClient(displayName: string): Promise<{
   const id = uuidv4();
   const clientId = generateClientId();
 
-  // New apps start with no redirect URIs, so authorization_code is absent.
-  // It will be added by syncAuthorizationCodeGrant when the first redirect URI is registered.
+  // New apps start with no redirect URIs and no authorization_code — portal
+  // SSO redirects are registered on the confidential web_ sibling instead.
   await db.insert(oidcClients).values({
     id,
     clientId,
@@ -380,8 +380,9 @@ export async function syncBackendM2mAllowedScopesFromPublicApp(
 }
 
 /**
- * When a confidential m2m_ or web_ sibling exists, the primary app_ row must remain public.
- * Repairs legacy rows that still have a secret or client_credentials on app_.
+ * Public `app_` never holds authorization_code or redirect URIs — those belong on
+ * the confidential `web_` sibling. Always strips auth-code + redirects; when a
+ * confidential sibling exists, also clears any legacy secret / client_credentials.
  */
 export async function demotePublicClientWhenM2mSiblingExists(
   appInternalId: string,
@@ -392,7 +393,7 @@ export async function demotePublicClientWhenM2mSiblingExists(
     .where(eq(developerApps.id, appInternalId))
     .limit(1);
   const app = appRows[0];
-  if (!app?.oidcClientId || (!app.m2mOidcClientId && !app.webOidcClientId)) {
+  if (!app?.oidcClientId) {
     return false;
   }
 
@@ -406,12 +407,27 @@ export async function demotePublicClientWhenM2mSiblingExists(
     return false;
   }
 
+  const hasSibling = Boolean(app.m2mOidcClientId || app.webOidcClientId);
   const grants = pub.grantTypes.split(",").filter(Boolean);
-  const nextGrants = grants.filter((g) => g !== "client_credentials");
+  let nextGrants = grants.filter((g) => g !== "authorization_code");
+  if (hasSibling) {
+    nextGrants = nextGrants.filter((g) => g !== "client_credentials");
+  }
+
+  let redirectUris: string[] = [];
+  try {
+    redirectUris = JSON.parse(pub.redirectUris ?? "[]") as string[];
+  } catch {
+    redirectUris = [];
+  }
+
   const needsUpdate =
-    pub.clientSecretHash != null ||
-    pub.tokenEndpointAuthMethod !== "none" ||
-    grants.length !== nextGrants.length;
+    redirectUris.length > 0 ||
+    grants.includes("authorization_code") ||
+    (hasSibling &&
+      (pub.clientSecretHash != null ||
+        pub.tokenEndpointAuthMethod !== "none" ||
+        grants.includes("client_credentials")));
 
   if (!needsUpdate) {
     return false;
@@ -420,8 +436,13 @@ export async function demotePublicClientWhenM2mSiblingExists(
   await db
     .update(oidcClients)
     .set({
-      clientSecretHash: null,
-      tokenEndpointAuthMethod: "none",
+      redirectUris: JSON.stringify([]),
+      ...(hasSibling
+        ? {
+            clientSecretHash: null,
+            tokenEndpointAuthMethod: "none",
+          }
+        : {}),
       grantTypes: nextGrants.join(","),
     })
     .where(eq(oidcClients.id, app.oidcClientId));
@@ -627,15 +648,36 @@ export async function ensureConfidentialWebClient(params: {
   }
 
   const pubRows = await db
-    .select({ allowedScopes: oidcClients.allowedScopes })
+    .select({
+      allowedScopes: oidcClients.allowedScopes,
+      redirectUris: oidcClients.redirectUris,
+      postLogoutRedirectUris: oidcClients.postLogoutRedirectUris,
+    })
     .from(oidcClients)
     .where(eq(oidcClients.id, app.oidcClientId))
     .limit(1);
   const publicScopes = pubRows[0]?.allowedScopes ?? DEFAULT_OIDC_SCOPES;
 
-  const redirectUris = (params.redirectUris ?? [])
-    .map((u) => u.trim())
-    .filter(Boolean);
+  let legacyPublicRedirects: string[] = [];
+  try {
+    legacyPublicRedirects = JSON.parse(pubRows[0]?.redirectUris ?? "[]") as string[];
+  } catch {
+    legacyPublicRedirects = [];
+  }
+  legacyPublicRedirects = legacyPublicRedirects.map((u) => u.trim()).filter(Boolean);
+
+  let legacyPostLogout: string[] = [];
+  try {
+    legacyPostLogout = JSON.parse(pubRows[0]?.postLogoutRedirectUris ?? "[]") as string[];
+  } catch {
+    legacyPostLogout = [];
+  }
+  legacyPostLogout = legacyPostLogout.map((u) => u.trim()).filter(Boolean);
+
+  const redirectUris =
+    params.redirectUris !== undefined
+      ? params.redirectUris.map((u) => u.trim()).filter(Boolean)
+      : legacyPublicRedirects;
   const grantTypes = syncConfidentialWebGrantTypes(
     [...DEFAULT_CONFIDENTIAL_WEB_GRANT_TYPES],
     redirectUris,
@@ -652,6 +694,8 @@ export async function ensureConfidentialWebClient(params: {
     clientSecretHash: null,
     displayName: `${display} - confidential web`,
     redirectUris: JSON.stringify(redirectUris),
+    postLogoutRedirectUris:
+      legacyPostLogout.length > 0 ? JSON.stringify(legacyPostLogout) : null,
     allowedScopes: ensureConfidentialWebIdentityScopes(publicScopes),
     grantTypes: grantTypes.join(","),
     tokenEndpointAuthMethod: "client_secret_post",
@@ -664,8 +708,14 @@ export async function ensureConfidentialWebClient(params: {
     .set({ webOidcClientId: id })
     .where(eq(developerApps.id, params.appInternalId));
 
-  // Keep the primary interactive client public when any confidential sibling exists.
+  // Keep the primary interactive client public; strip legacy auth-code redirects.
   await demotePublicClientWhenM2mSiblingExists(params.appInternalId);
+  if (legacyPostLogout.length > 0) {
+    await db
+      .update(oidcClients)
+      .set({ postLogoutRedirectUris: JSON.stringify([]) })
+      .where(eq(oidcClients.id, app.oidcClientId));
+  }
 
   return { id, clientId };
 }
@@ -713,6 +763,7 @@ export async function loadConfidentialWebOidcClientSummary(
   clientId: string;
   hasSecret: boolean;
   redirectUris: string[];
+  postLogoutRedirectUris: string[];
 } | null> {
   const appRows = await db
     .select({ webOidcClientId: developerApps.webOidcClientId })
@@ -729,6 +780,7 @@ export async function loadConfidentialWebOidcClientSummary(
       clientId: oidcClients.clientId,
       clientSecretHash: oidcClients.clientSecretHash,
       redirectUris: oidcClients.redirectUris,
+      postLogoutRedirectUris: oidcClients.postLogoutRedirectUris,
     })
     .from(oidcClients)
     .where(eq(oidcClients.id, webPk))
@@ -745,10 +797,20 @@ export async function loadConfidentialWebOidcClientSummary(
     redirectUris = [];
   }
 
+  let postLogoutRedirectUris: string[] = [];
+  try {
+    postLogoutRedirectUris = web.postLogoutRedirectUris
+      ? (JSON.parse(web.postLogoutRedirectUris) as string[])
+      : [];
+  } catch {
+    postLogoutRedirectUris = [];
+  }
+
   return {
     clientId: web.clientId,
     hasSecret: !!web.clientSecretHash,
     redirectUris,
+    postLogoutRedirectUris,
   };
 }
 

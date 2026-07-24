@@ -66,14 +66,31 @@ export async function PUT(
 
   const body = await request.json();
 
-  // Build update payload from allowed fields
+  // Build update payload from allowed fields (public app_ never stores redirects).
   const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
+  clientUpdates.redirectUris = [];
 
-  if (Array.isArray(body.redirectUris)) {
-    clientUpdates.redirectUris = body.redirectUris;
-  }
+  const webSummary = app.webOidcClientId
+    ? await (async () => {
+        const webRows = await db
+          .select()
+          .from(oidcClients)
+          .where(eq(oidcClients.id, app.webOidcClientId!))
+          .limit(1);
+        return webRows[0] ?? null;
+      })()
+    : null;
+
   if (Array.isArray(body.postLogoutRedirectUris)) {
-    clientUpdates.postLogoutRedirectUris = body.postLogoutRedirectUris;
+    if (webSummary) {
+      // Portal SSO logout belongs on the confidential web_ client.
+      await updateClientConfig(webSummary.clientId, {
+        postLogoutRedirectUris: body.postLogoutRedirectUris,
+      });
+      clientUpdates.postLogoutRedirectUris = [];
+    } else {
+      clientUpdates.postLogoutRedirectUris = body.postLogoutRedirectUris;
+    }
   }
   if (body.initiateLoginUri !== undefined) {
     clientUpdates.initiateLoginUri = body.initiateLoginUri || null;
@@ -155,11 +172,15 @@ export async function PUT(
 
   await updateClientConfig(client.clientId, clientUpdates);
 
-  // Auto-populate domain whitelist from public + confidential web redirect origins
+  // Auto-populate domain whitelist from confidential web redirect / post-logout origins
   let webRedirectUris: string[] = [];
+  let webPostLogout: string[] = [];
   if (app.webOidcClientId) {
     const webRows = await db
-      .select({ redirectUris: oidcClients.redirectUris })
+      .select({
+        redirectUris: oidcClients.redirectUris,
+        postLogoutRedirectUris: oidcClients.postLogoutRedirectUris,
+      })
       .from(oidcClients)
       .where(eq(oidcClients.id, app.webOidcClientId))
       .limit(1);
@@ -170,11 +191,19 @@ export async function PUT(
         webRedirectUris = [];
       }
     }
+    if (webRows[0]?.postLogoutRedirectUris) {
+      try {
+        webPostLogout = JSON.parse(webRows[0].postLogoutRedirectUris) as string[];
+      } catch {
+        webPostLogout = [];
+      }
+    }
   }
   const allRedirects = [
-    ...(clientUpdates.redirectUris ?? JSON.parse(client.redirectUris) as string[]),
-    ...(clientUpdates.postLogoutRedirectUris ?? []),
     ...webRedirectUris,
+    ...(Array.isArray(body.postLogoutRedirectUris)
+      ? body.postLogoutRedirectUris
+      : webPostLogout),
   ];
   const origins = extractOrigins(allRedirects);
 

@@ -135,15 +135,8 @@ export async function POST(request: NextRequest) {
   const { id: oidcRowId, clientId } = await createAppClient(name.trim());
 
   const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
-  const rawRedirectUris = body.redirectUris;
-  if (Array.isArray(rawRedirectUris) && rawRedirectUris.length > 0) {
-    const redirectUris = rawRedirectUris.filter(
-      (u: unknown): u is string => typeof u === "string" && u.trim().length > 0,
-    );
-    if (redirectUris.length > 0) {
-      clientUpdates.redirectUris = redirectUris.map((u) => u.trim());
-    }
-  }
+  // Public app_ never stores redirect URIs — authorization_code lives on web_.
+  clientUpdates.redirectUris = [];
   if (
     typeof body.tokenEndpointAuthMethod === "string" &&
     ["none", "client_secret_post", "client_secret_basic"].includes(body.tokenEndpointAuthMethod)
@@ -158,23 +151,27 @@ export async function POST(request: NextRequest) {
       .join(" ");
     clientUpdates.allowedScopes = filtered || DEFAULT_OIDC_SCOPES;
   }
-  // Resolve final redirect URIs early so we can sync authorization_code grant.
-  const finalRedirectUris = clientUpdates.redirectUris ?? [];
 
   if (Array.isArray(body.grantTypes) && body.grantTypes.length > 0) {
     const grantTypes = body.grantTypes.filter(
       (v: unknown): v is string => typeof v === "string" && v.trim().length > 0,
     );
     if (grantTypes.length > 0) {
-      clientUpdates.grantTypes = syncPublicClientGrantTypes(grantTypes, finalRedirectUris, clientId);
+      clientUpdates.grantTypes = syncPublicClientGrantTypes(grantTypes, [], clientId);
     }
   }
 
-  // Always ensure the grant list is consistent with redirect URIs.
+  // Always strip authorization_code from the public client.
   if (clientUpdates.grantTypes) {
     clientUpdates.grantTypes = syncPublicClientGrantTypes(
       clientUpdates.grantTypes,
-      finalRedirectUris,
+      [],
+      clientId,
+    );
+  } else {
+    clientUpdates.grantTypes = syncPublicClientGrantTypes(
+      ["refresh_token"],
+      [],
       clientId,
     );
   }

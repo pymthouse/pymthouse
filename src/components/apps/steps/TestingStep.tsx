@@ -72,9 +72,7 @@ interface Props {
   activeClient?: CredentialsClientTab | null;
   /** When true, omit the page title (parent renders it above client sub-tabs). */
   hideHeader?: boolean;
-  /** Public redirect URI editor (Public tab). When omitted, redirects are not shown here. */
-  onPublicRedirectUrisChange?: (uris: string[]) => void;
-  /** Post-logout redirects (saved with Save changes). */
+  /** Post-logout redirects on the web_ client (saved with Save changes). */
   postLogoutRedirectUris?: string[];
   onPostLogoutRedirectUrisChange?: (uris: string[]) => void;
   showPostLogoutRedirectUris?: boolean;
@@ -465,7 +463,7 @@ function getCredentialsIntroText(
 ): string {
   if (isM2MOnly) return "Generate your client secret, then test your M2M token request.";
   if (activeClient === "public") {
-    return "Public SDK client ID, sign-in redirect URLs, domain allowlist, and authorization-code verification.";
+    return "Public SDK client ID, shared domain allowlist, and device / remote-signing verification. Authorization-code login lives on the Web RP tab.";
   }
   if (activeClient === "m2m") {
     return "M2M / Builder credentials and client-credentials token exchange for server APIs.";
@@ -1615,7 +1613,6 @@ export default function TestingStep({
   readOnly = false,
   activeClient = null,
   hideHeader = false,
-  onPublicRedirectUrisChange,
   postLogoutRedirectUris = [],
   onPostLogoutRedirectUrisChange,
   showPostLogoutRedirectUris = false,
@@ -1857,9 +1854,7 @@ export default function TestingStep({
   const showM2mCredentials = showM2mPanel && !isM2MOnly;
   const showWebCredentials = showWebPanel && !isM2MOnly;
   const showM2mOnlyExchange = showM2mPanel && isM2MOnly && Boolean(clientId);
-  const showPublicAuthCode =
-    showPublicPanel && !isM2MOnly && activeClient != null;
-  const showLegacyAuthCode = activeClient == null;
+  // Authorization code + redirects live only on web_ (Option 1).
   const showWebAuthCode = showWebPanel && Boolean(webHelper?.clientId);
 
   return (
@@ -1986,117 +1981,35 @@ export default function TestingStep({
         </div>
       ) : null}
 
-      {showPublicPanel && onPublicRedirectUrisChange ? (
+      {showPublicPanel ? (
         <section className="space-y-4 border-t border-zinc-800 pt-8">
           <div>
-            <h3 className="text-base font-semibold text-zinc-100">Sign-in URLs</h3>
+            <h3 className="text-base font-semibold text-zinc-100">Domain allowlist</h3>
             <p className="text-sm text-zinc-500 mt-1">
-              Authorization Code + PKCE is enabled automatically when at least one
-              redirect URI is registered on the public client. Portal SSO redirect URIs
-              belong on the Web RP tab. Device flow (CLI/SDK) works without a public
-              redirect URI.
+              Shared origins for CORS and request validation across all siblings.
+              Authorization-code redirect URIs are configured on the{" "}
+              <strong className="text-zinc-400">Web RP</strong> tab (confidential{" "}
+              <code className="font-mono text-zinc-400">web_</code> client). Device
+              flow does not need a redirect URI.
             </p>
           </div>
-          <AuthorizationCodeRedirectBlock
-            appId={appId}
-            redirectUris={redirectUris}
-            onRedirectUrisChange={onPublicRedirectUrisChange}
-            domains={domains}
-            onDomainsChange={onDomainsChange}
-            readOnly={readOnly}
-            showDomains={false}
-          />
           <DomainAllowlistBlock
             appId={appId}
             domains={domains}
             onDomainsChange={onDomainsChange}
             readOnly={readOnly}
           />
-          {showPostLogoutRedirectUris && onPostLogoutRedirectUrisChange ? (
-            <div className="space-y-3 pt-4 border-t border-zinc-800">
-              <div>
-                <h4 className="text-sm font-semibold text-zinc-200">Post-logout redirects</h4>
-                <p className="text-xs text-zinc-500 mt-1">
-                  URIs to redirect users to after sign-out. Saved with{" "}
-                  <strong className="text-zinc-400">Save changes</strong> below.
-                </p>
-              </div>
-              <div className="flex gap-2 mb-2">
-                <input
-                  id="postLogoutUriInput"
-                  type="text"
-                  value={newPostLogoutUri}
-                  onChange={(e) => setNewPostLogoutUri(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    e.preventDefault();
-                    const uri = newPostLogoutUri.trim();
-                    if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
-                    onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
-                    setNewPostLogoutUri("");
-                  }}
-                  placeholder="https://example.com/logout-complete"
-                  disabled={readOnly}
-                  className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const uri = newPostLogoutUri.trim();
-                    if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
-                    onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
-                    setNewPostLogoutUri("");
-                  }}
-                  disabled={readOnly}
-                  className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Add
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {postLogoutRedirectUris.map((uri) => (
-                  <div
-                    key={uri}
-                    className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
-                  >
-                    <code className="text-xs text-zinc-300">{uri}</code>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onPostLogoutRedirectUrisChange(
-                          postLogoutRedirectUris.filter((item) => item !== uri),
-                        )
-                      }
-                      disabled={readOnly}
-                      className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {backendDeviceHelper &&
+          grantTypes.includes(DEVICE_CODE_GRANT) ? (
+            <DeviceInitiateLoginUriField
+              initiateLoginUri={initiateLoginUri}
+              deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
+              allowedScopes={allowedScopes}
+              readOnly={readOnly}
+              onChange={onChange}
+            />
           ) : null}
         </section>
-      ) : null}
-
-      {showPublicAuthCode || showLegacyAuthCode ? (
-        <AuthCodeFlowTestSection
-          appId={appId}
-          clientId={clientId}
-          grantTypes={grantTypes}
-          redirectUris={redirectUris}
-          allowedScopes={allowedScopes}
-          backendDeviceHelper={backendDeviceHelper}
-          initiateLoginUri={initiateLoginUri}
-          deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
-          domains={domains}
-          onChange={onChange}
-          onDomainsChange={onDomainsChange}
-          readOnly={readOnly}
-          showRedirectUriEditor={showLegacyAuthCode}
-          showDomainsInRedirectEditor={showLegacyAuthCode}
-        />
       ) : null}
 
       {showM2mCredentials ? (
@@ -2225,9 +2138,74 @@ export default function TestingStep({
                 persistRedirectUrisToPublicClient={false}
                 showDomains={false}
                 label="Portal redirect URIs"
-                description="Callback URLs for the confidential web RP (portal SSO). Each add or remove is saved immediately. Origins are auto-added to the shared domain allowlist on the Public tab."
+                description="Callback URLs for the confidential web_ client (portal SSO / authorization code). Each add or remove is saved immediately. Origins are auto-added to the shared domain allowlist."
               />
             </div>
+            {showPostLogoutRedirectUris && onPostLogoutRedirectUrisChange ? (
+              <div className="space-y-3 pt-2 border-t border-violet-500/15">
+                <div>
+                  <h4 className="text-xs font-semibold text-zinc-200">Post-logout redirects</h4>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    URIs to redirect users to after sign-out. Saved with{" "}
+                    <strong className="text-zinc-400">Save changes</strong> below.
+                  </p>
+                </div>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    id="postLogoutUriInput"
+                    type="text"
+                    value={newPostLogoutUri}
+                    onChange={(e) => setNewPostLogoutUri(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      const uri = newPostLogoutUri.trim();
+                      if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
+                      onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
+                      setNewPostLogoutUri("");
+                    }}
+                    placeholder="https://example.com/logout-complete"
+                    disabled={readOnly}
+                    className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const uri = newPostLogoutUri.trim();
+                      if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
+                      onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
+                      setNewPostLogoutUri("");
+                    }}
+                    disabled={readOnly}
+                    className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {postLogoutRedirectUris.map((uri) => (
+                    <div
+                      key={uri}
+                      className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+                    >
+                      <code className="text-xs text-zinc-300">{uri}</code>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onPostLogoutRedirectUrisChange(
+                            postLogoutRedirectUris.filter((item) => item !== uri),
+                          )
+                        }
+                        disabled={readOnly}
+                        className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div>
               <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
               {webSecret ? (

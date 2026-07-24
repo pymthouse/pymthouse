@@ -45,7 +45,7 @@ export default function AppDetailPage() {
             description: data.description || "",
             developerName: data.developerName || "",
             websiteUrl: data.websiteUrl || "",
-            redirectUris: data.oidcClient?.redirectUris || [],
+            redirectUris: [],
             allowedScopes: ensureOpenIdScope(
               data.oidcClient?.allowedScopes || DEFAULT_OIDC_SCOPES,
             ),
@@ -72,7 +72,10 @@ export default function AppDetailPage() {
               domain: d.domain,
             }),
           ),
-          postLogoutRedirectUris: data.oidcClient?.postLogoutRedirectUris || [],
+          postLogoutRedirectUris:
+            data.webOidcClient?.postLogoutRedirectUris ||
+            data.oidcClient?.postLogoutRedirectUris ||
+            [],
           initiateLoginUri: data.oidcClient?.initiateLoginUri ?? null,
           deviceThirdPartyInitiateLogin:
             data.oidcClient?.deviceThirdPartyInitiateLogin === true,

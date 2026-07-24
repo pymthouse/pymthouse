@@ -54,7 +54,7 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 | Stored API key (`<prefix><hex>`) | Per-app-user **API key** (hashed at rest) | `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
 | `app_<24hex>_<secret>` | **Presented** API key (issuance + remote-signer Bearer) | Same secret material as the stored key; `app_*` segment routes the app-scoped exchange URL |
 | Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
-| `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (PKCE) |
+| `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (device / SDK; **no** authorization-code redirects) |
 | `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
 | `web_…` | Confidential web RP sibling | `authorization_code` + secret + redirects — portal SSO (e.g. Kong Dev Portal); **not** `client_credentials` |
 
@@ -62,9 +62,11 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Shape | Client | Secret | Typical grants |
 | --- | --- | --- | --- |
-| Public interactive | `app_…`, auth method `none` | No | auth code (PKCE), refresh, device |
+| Public interactive | `app_…`, auth method `none` | No | refresh, device (no redirect URIs) |
 | M2M backend helper | `m2m_…` | Yes | `client_credentials` |
 | Confidential web RP | `web_…` | Yes | auth code + refresh |
+
+Authorization-code (browser / portal) login is registered **only** on the confidential `web_` sibling. The public `app_` client stays secretless for device flow, SDK `client_id`, and API-key routing.
 
 Enable **Confidential web RP** on App profile (same pattern as Confidential M2M backend). Rotate the `web_` secret with `POST /api/v1/apps/{clientId}/credentials?target=web`. Do not put portal SSO credentials on the public SDK client or the M2M helper.
 
@@ -318,11 +320,15 @@ sequenceDiagram
 
 ## Interactive login and machine access
 
-### Authorization code (interactive)
+### Authorization code (interactive / portal SSO)
 
-1. Redirect the user to `{issuer}/auth` with `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state`.
-2. Exchange the code at `{issuer}/token` with `grant_type=authorization_code`, the same `redirect_uri`, and `client_id` + `client_secret` for confidential clients.
-3. Request only scopes allowed for that client. **Public clients:** PKCE is required. **Confidential clients:** client authentication is required.
+Use the confidential **`web_…`** sibling (not the public `app_…` client):
+
+1. Redirect the user to `{issuer}/auth` with `response_type=code`, `client_id` (`web_…`), `redirect_uri`, `scope`, `state`.
+2. Exchange the code at `{issuer}/token` with `grant_type=authorization_code`, the same `redirect_uri`, and `client_id` + `client_secret`.
+3. Request only scopes allowed for that client. Confidential clients must authenticate at the token endpoint.
+
+Public `app_…` clients do not register redirect URIs and do not advertise `authorization_code` — use device flow (RFC 8628) or API keys for interactive / end-user access on the public client.
 
 ### Client credentials (machine)
 
