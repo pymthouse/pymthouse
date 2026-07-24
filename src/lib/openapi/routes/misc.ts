@@ -61,19 +61,6 @@ defineRouteMetadata("get", "/api/v1/marketplace/{id}", {
   },
 });
 
-defineRouteMetadata("get", "/api/v1/mcp", {
-  tags: ["Platform"],
-  summary: "Livepeer MCP connect metadata",
-  description:
-    "Public metadata for the hosted Livepeer MCP (URL, issuer, tools). No secrets. Tool calls require Bearer API key/JWT or Basic M2M.",
-  responses: {
-    200: {
-      description: "MCP connect metadata",
-      content: { "application/json": { schema: jsonObject } },
-    },
-  },
-});
-
 defineRouteMetadata("get", "/api/v1/pipeline-catalog", {
   tags: ["Discovery"],
   summary: "Pipeline capability catalog",
