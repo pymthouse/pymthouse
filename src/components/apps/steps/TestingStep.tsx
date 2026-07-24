@@ -25,10 +25,13 @@ import {
   syncPublicClientGrantTypes,
 } from "@/lib/oidc/grants";
 import AuthorizationCodeRedirectBlock from "./AuthorizationCodeRedirectBlock";
+import DomainAllowlistBlock from "./DomainAllowlistBlock";
 import { mintOwnerApiKey } from "../mint-owner-api-key";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 
 const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+
+export type CredentialsClientTab = "public" | "m2m" | "web";
 
 interface Props {
   appId: string | null;
@@ -62,10 +65,19 @@ interface Props {
   onWebSecretGenerated?: () => void;
   ownerExternalUserId?: string | null;
   readOnly?: boolean;
-  /** When true, the redirect URI / domain editor is omitted (managed from Credentials & URLs tab). */
-  hideRedirectUriEditor?: boolean;
-  /** When true, the authorization-code test block is omitted (rendered separately below Sign-in URLs). */
-  hideAuthCodeFlowSection?: boolean;
+  /**
+   * When set, only render that sibling’s credentials + verify UI (used by the
+   * Credentials & URLs client sub-tabs). When null, render the legacy stacked layout.
+   */
+  activeClient?: CredentialsClientTab | null;
+  /** When true, omit the page title (parent renders it above client sub-tabs). */
+  hideHeader?: boolean;
+  /** Public redirect URI editor (Public tab). When omitted, redirects are not shown here. */
+  onPublicRedirectUrisChange?: (uris: string[]) => void;
+  /** Post-logout redirects (saved with Save changes). */
+  postLogoutRedirectUris?: string[];
+  onPostLogoutRedirectUrisChange?: (uris: string[]) => void;
+  showPostLogoutRedirectUris?: boolean;
 }
 
 function getDefaultRedirectUri(redirectUris: string[]) {
@@ -447,12 +459,21 @@ function getTokenTestActionLabel(
   return loading ? "Exchanging…" : "Exchange token";
 }
 
-function getCredentialsIntroText(isM2MOnly: boolean, hideAuthCodeFlowSection: boolean): string {
+function getCredentialsIntroText(
+  isM2MOnly: boolean,
+  activeClient: CredentialsClientTab | null,
+): string {
   if (isM2MOnly) return "Generate your client secret, then test your M2M token request.";
-  if (hideAuthCodeFlowSection) {
-    return "Generate and rotate credentials for confidential siblings, then test token exchange.";
+  if (activeClient === "public") {
+    return "Public SDK client ID, sign-in redirect URLs, domain allowlist, and authorization-code verification.";
   }
-  return "Configure redirect URLs, generate and rotate credentials, try a live authorization request, and copy reference endpoints.";
+  if (activeClient === "m2m") {
+    return "M2M / Builder credentials and client-credentials token exchange for server APIs.";
+  }
+  if (activeClient === "web") {
+    return "Confidential web RP credentials, portal redirect URIs, and authorization-code verification.";
+  }
+  return "Configure credentials and URLs per OIDC sibling, then verify each client’s auth flow.";
 }
 
 function scopesForInitiateLoginUri(allowedScopes: string, isValid: boolean): string {
@@ -1327,6 +1348,14 @@ export interface AuthCodeFlowTestSectionProps {
   onDomainsChange: (domains: { id: string; domain: string }[]) => void;
   readOnly?: boolean;
   showRedirectUriEditor?: boolean;
+  /** Skip grant-type inference (confidential web RP always supports auth code). */
+  forceAuthCodeFlow?: boolean;
+  /** Hide third-party initiate login (public/device only). */
+  showInitiateLogin?: boolean;
+  /** When editing redirects inline, whether to also show the shared domain allowlist. */
+  showDomainsInRedirectEditor?: boolean;
+  title?: string;
+  description?: string;
 }
 
 function DeviceInitiateLoginUriField({
@@ -1397,6 +1426,11 @@ export function AuthCodeFlowTestSection({
   onDomainsChange,
   readOnly = false,
   showRedirectUriEditor = false,
+  forceAuthCodeFlow = false,
+  showInitiateLogin = true,
+  showDomainsInRedirectEditor = true,
+  title = "Try the authorization code flow",
+  description = "Opens a new tab with a test authorization request using your configured redirect URI.",
 }: Readonly<AuthCodeFlowTestSectionProps>) {
   const [selectedRedirectUri, setSelectedRedirectUri] = useState(() =>
     getDefaultRedirectUri(redirectUris),
@@ -1406,7 +1440,8 @@ export function AuthCodeFlowTestSection({
     () => syncPublicClientGrantTypes(grantTypes, redirectUris, clientId ?? ""),
     [grantTypes, redirectUris, clientId],
   );
-  const hasAuthCodeFlow = effectiveGrantTypes.includes(AUTHORIZATION_CODE_GRANT);
+  const hasAuthCodeFlow =
+    forceAuthCodeFlow || effectiveGrantTypes.includes(AUTHORIZATION_CODE_GRANT);
   const hasDeviceCode = effectiveGrantTypes.includes(DEVICE_CODE_GRANT);
 
   const effectiveSelectedRedirectUri =
@@ -1435,6 +1470,8 @@ export function AuthCodeFlowTestSection({
 
   if (!hasAuthCodeFlow) return null;
 
+  const redirectSelectId = `testing-redirect-uri-${clientId ?? "client"}`;
+
   return (
     <div className="space-y-5 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
       {showRedirectUriEditor && redirectUris.length === 0 ? (
@@ -1457,7 +1494,7 @@ export function AuthCodeFlowTestSection({
             />
           </svg>
           <div className="min-w-0 space-y-1">
-            <p className="text-sm font-medium text-zinc-200">Try the authorization code flow</p>
+            <p className="text-sm font-medium text-zinc-200">{title}</p>
             <p className="text-xs text-zinc-400">
               Add at least one redirect URI below. Once saved, you can open a live authorization
               request in a new tab to verify sign-in end to end.
@@ -1482,6 +1519,7 @@ export function AuthCodeFlowTestSection({
             domains={domains}
             onDomainsChange={onDomainsChange}
             readOnly={readOnly}
+            showDomains={showDomainsInRedirectEditor}
           />
         </>
       ) : null}
@@ -1489,21 +1527,19 @@ export function AuthCodeFlowTestSection({
       {testUrl ? (
         <div className={`space-y-3 ${showRedirectUriEditor ? "border-t border-zinc-800 pt-5" : ""}`}>
           <div>
-            <h4 className="text-sm font-semibold text-zinc-200">Try the authorization code flow</h4>
-            <p className="text-xs text-zinc-500 mt-1">
-              Opens a new tab with a test authorization request using your configured redirect URI.
-            </p>
+            <h4 className="text-sm font-semibold text-zinc-200">{title}</h4>
+            <p className="text-xs text-zinc-500 mt-1">{description}</p>
           </div>
           {redirectUriOptions.length > 1 ? (
             <div>
               <label
-                htmlFor="testing-redirect-uri"
+                htmlFor={redirectSelectId}
                 className="block text-xs font-medium text-zinc-400 mb-1"
               >
                 Redirect URI
               </label>
               <select
-                id="testing-redirect-uri"
+                id={redirectSelectId}
                 value={effectiveSelectedRedirectUri}
                 onChange={(e) => setSelectedRedirectUri(e.target.value)}
                 className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
@@ -1535,9 +1571,13 @@ export function AuthCodeFlowTestSection({
             <code className="text-zinc-400">{effectiveSelectedRedirectUri}</code>
           </p>
         </div>
+      ) : redirectUris.length === 0 && !showRedirectUriEditor ? (
+        <p className="text-xs text-zinc-500">
+          Add at least one redirect URI above to enable the live authorization test.
+        </p>
       ) : null}
 
-      {backendDeviceHelper && hasDeviceCode ? (
+      {showInitiateLogin && backendDeviceHelper && hasDeviceCode ? (
         <DeviceInitiateLoginUriField
           initiateLoginUri={initiateLoginUri}
           deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
@@ -1573,9 +1613,14 @@ export default function TestingStep({
   onWebSecretGenerated,
   ownerExternalUserId = null,
   readOnly = false,
-  hideRedirectUriEditor = false,
-  hideAuthCodeFlowSection = false,
+  activeClient = null,
+  hideHeader = false,
+  onPublicRedirectUrisChange,
+  postLogoutRedirectUris = [],
+  onPostLogoutRedirectUrisChange,
+  showPostLogoutRedirectUris = false,
 }: Readonly<Props>) {
+  const [newPostLogoutUri, setNewPostLogoutUri] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [backendSecret, setBackendSecret] = useState<string | null>(null);
   const [webSecret, setWebSecret] = useState<string | null>(null);
@@ -1774,51 +1819,78 @@ export default function TestingStep({
   const browserOrigin = getBrowserOrigin();
   const hasM2mBackend =
     Boolean(backendHelper?.clientId) || Boolean(clientId?.startsWith("m2m_"));
+  const showPublicPanel = activeClient == null || activeClient === "public";
+  const showM2mPanel = activeClient == null || activeClient === "m2m";
+  const showWebPanel = activeClient == null || activeClient === "web";
+
   const showRemoteSigningTab =
+    showPublicPanel &&
     !isM2MOnly &&
     Boolean(clientId?.startsWith("app_")) &&
     publicAppAllowsSignJob(allowedScopes ?? DEFAULT_OIDC_SCOPES);
-  const showAdminAccessTab = Boolean(backendHelper?.clientId);
-  const showAuthTestSection = showRemoteSigningTab || showAdminAccessTab;
-  const effectiveAuthTestTab = resolveEffectiveAuthTestTab(
-    authTestTab,
-    showAdminAccessTab,
-    showRemoteSigningTab,
-  );
+  const showAdminAccessTab = showM2mPanel && Boolean(backendHelper?.clientId);
+  // With client sub-tabs, remote vs admin live on separate panels — no nested switcher.
+  const useClientSubTabs = activeClient != null;
+  const showAuthTestSection =
+    useClientSubTabs
+      ? showRemoteSigningTab || showAdminAccessTab
+      : showRemoteSigningTab || showAdminAccessTab;
+  const effectiveAuthTestTab = useClientSubTabs
+    ? showAdminAccessTab && activeClient === "m2m"
+      ? "admin"
+      : "remote"
+    : resolveEffectiveAuthTestTab(
+        authTestTab,
+        showAdminAccessTab,
+        showRemoteSigningTab,
+      );
 
   useEffect(() => {
+    if (useClientSubTabs) return;
     if (authTestTab === "admin" && !showAdminAccessTab && showRemoteSigningTab) {
       setAuthTestTab("remote");
     }
-  }, [authTestTab, showAdminAccessTab, showRemoteSigningTab]);
+  }, [authTestTab, showAdminAccessTab, showRemoteSigningTab, useClientSubTabs]);
+
+  const showPrimaryCredentials =
+    showPublicPanel && (primaryIsConfidential || !isM2MOnly);
+  const showM2mCredentials = showM2mPanel && !isM2MOnly;
+  const showWebCredentials = showWebPanel && !isM2MOnly;
+  const showM2mOnlyExchange = showM2mPanel && isM2MOnly && Boolean(clientId);
+  const showPublicAuthCode =
+    showPublicPanel && !isM2MOnly && activeClient != null;
+  const showLegacyAuthCode = activeClient == null;
+  const showWebAuthCode = showWebPanel && Boolean(webHelper?.clientId);
 
   return (
     <div className="space-y-8">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
-          <p className="text-sm text-zinc-500">
-            {getCredentialsIntroText(isM2MOnly, hideAuthCodeFlowSection)}
-          </p>
+      {hideHeader ? null : (
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-100 mb-1">Credentials &amp; URLs</h2>
+            <p className="text-sm text-zinc-500">
+              {getCredentialsIntroText(isM2MOnly, activeClient)}
+            </p>
+          </div>
+          <a
+            href={API_REFERENCE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            API Reference
+            <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </a>
         </div>
-        <a
-          href={API_REFERENCE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/50 px-2.5 py-1.5 text-xs font-medium text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-colors"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
-          API Reference
-          <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-        </a>
-      </div>
+      )}
       {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
 
-      {primaryIsConfidential ? (
+      {showPrimaryCredentials && primaryIsConfidential ? (
         <>
           <div>
             <div className="block text-sm font-medium text-zinc-300 mb-1.5">
@@ -1884,237 +1956,378 @@ export default function TestingStep({
             )}
           </div>
         </>
-      ) : (
-        <>
+      ) : null}
+
+      {showPrimaryCredentials && !primaryIsConfidential ? (
+        <div>
+          <div className="block text-sm font-medium text-zinc-300 mb-1.5">
+            Public / SDK client ID
+          </div>
+          <p className="text-xs text-zinc-500 mb-2">
+            Use this in SDKs, CLIs, and the device authorization flow. It stays public
+            (no secret). Portal SSO needs the confidential{" "}
+            <code className="font-mono text-zinc-400">web_</code> sibling; Builder APIs
+            need the <code className="font-mono text-zinc-400">m2m_</code> sibling.
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
+              {clientId || "Create app first"}
+            </code>
+            {clientId && (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(clientId, "clientId")}
+                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+              >
+                {copied === "clientId" ? "Copied!" : "Copy"}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {showPublicPanel && onPublicRedirectUrisChange ? (
+        <section className="space-y-4 border-t border-zinc-800 pt-8">
           <div>
-            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-              Public / SDK client ID
-            </div>
-            <p className="text-xs text-zinc-500 mb-2">
-              Use this in SDKs, CLIs, and the device authorization flow. It stays public
-              (no secret). Portal SSO needs the confidential{" "}
-              <code className="font-mono text-zinc-400">web_</code> sibling; Builder APIs
-              need the <code className="font-mono text-zinc-400">m2m_</code> sibling.
+            <h3 className="text-base font-semibold text-zinc-100">Sign-in URLs</h3>
+            <p className="text-sm text-zinc-500 mt-1">
+              Authorization Code + PKCE is enabled automatically when at least one
+              redirect URI is registered on the public client. Portal SSO redirect URIs
+              belong on the Web RP tab. Device flow (CLI/SDK) works without a public
+              redirect URI.
             </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
-                {clientId || "Create app first"}
-              </code>
-              {clientId && (
+          </div>
+          <AuthorizationCodeRedirectBlock
+            appId={appId}
+            redirectUris={redirectUris}
+            onRedirectUrisChange={onPublicRedirectUrisChange}
+            domains={domains}
+            onDomainsChange={onDomainsChange}
+            readOnly={readOnly}
+            showDomains={false}
+          />
+          <DomainAllowlistBlock
+            appId={appId}
+            domains={domains}
+            onDomainsChange={onDomainsChange}
+            readOnly={readOnly}
+          />
+          {showPostLogoutRedirectUris && onPostLogoutRedirectUrisChange ? (
+            <div className="space-y-3 pt-4 border-t border-zinc-800">
+              <div>
+                <h4 className="text-sm font-semibold text-zinc-200">Post-logout redirects</h4>
+                <p className="text-xs text-zinc-500 mt-1">
+                  URIs to redirect users to after sign-out. Saved with{" "}
+                  <strong className="text-zinc-400">Save changes</strong> below.
+                </p>
+              </div>
+              <div className="flex gap-2 mb-2">
+                <input
+                  id="postLogoutUriInput"
+                  type="text"
+                  value={newPostLogoutUri}
+                  onChange={(e) => setNewPostLogoutUri(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    const uri = newPostLogoutUri.trim();
+                    if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
+                    onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
+                    setNewPostLogoutUri("");
+                  }}
+                  placeholder="https://example.com/logout-complete"
+                  disabled={readOnly}
+                  className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded-md text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
                 <button
                   type="button"
-                  onClick={() => copyToClipboard(clientId, "clientId")}
+                  onClick={() => {
+                    const uri = newPostLogoutUri.trim();
+                    if (!uri || postLogoutRedirectUris.includes(uri) || readOnly) return;
+                    onPostLogoutRedirectUrisChange([...postLogoutRedirectUris, uri]);
+                    setNewPostLogoutUri("");
+                  }}
+                  disabled={readOnly}
+                  className="px-4 py-1.5 rounded-md bg-zinc-700 text-zinc-200 text-sm hover:bg-zinc-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Add
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {postLogoutRedirectUris.map((uri) => (
+                  <div
+                    key={uri}
+                    className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
+                  >
+                    <code className="text-xs text-zinc-300">{uri}</code>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onPostLogoutRedirectUrisChange(
+                          postLogoutRedirectUris.filter((item) => item !== uri),
+                        )
+                      }
+                      disabled={readOnly}
+                      className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {showPublicAuthCode || showLegacyAuthCode ? (
+        <AuthCodeFlowTestSection
+          appId={appId}
+          clientId={clientId}
+          grantTypes={grantTypes}
+          redirectUris={redirectUris}
+          allowedScopes={allowedScopes}
+          backendDeviceHelper={backendDeviceHelper}
+          initiateLoginUri={initiateLoginUri}
+          deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
+          domains={domains}
+          onChange={onChange}
+          onDomainsChange={onDomainsChange}
+          readOnly={readOnly}
+          showRedirectUriEditor={showLegacyAuthCode}
+          showDomainsInRedirectEditor={showLegacyAuthCode}
+        />
+      ) : null}
+
+      {showM2mCredentials ? (
+        backendHelper ? (
+          <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
+            <h3 className="text-sm font-semibold text-cyan-200/90">
+              M2M / Builder{" "}
+              <code className="font-mono text-cyan-300/80 font-normal">(m2m_)</code>
+            </h3>
+            <p className="text-xs text-zinc-500">
+              Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
+            </p>
+            <div>
+              <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
+                  {backendHelper.clientId}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
                   className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
                 >
-                  {copied === "clientId" ? "Copied!" : "Copy"}
+                  {copied === "m2mClientId" ? "Copied!" : "Copy"}
                 </button>
+              </div>
+            </div>
+            <div>
+              <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
+              {backendSecret ? (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
+                      {backendSecret}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(backendSecret, "backendSecret")}
+                      className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
+                    >
+                      {copied === "backendSecret" ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-amber-400/80">
+                    Store this secret securely. It will not be shown again.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 flex-wrap">
+                  {backendHelper.hasSecret && (
+                    <p className="text-sm text-zinc-500">
+                      A secret exists. Generate a new one to rotate.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void generateBackendSecret()}
+                    disabled={readOnly || generatingBackend || !appId}
+                    className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                  >
+                    {generatingBackend
+                      ? "Generating..."
+                      : backendHelper.hasSecret
+                        ? "Rotate Secret"
+                        : "Generate Secret"}
+                  </button>
+                </div>
+              )}
+              {backendSecretFetchError && (
+                <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
               )}
             </div>
           </div>
-
-        </>
-      )}
-
-      {/*
-        Backend helper (confidential m2m_) — driven by server state
-        (`backendHelper` / `backendDeviceHelper`), refreshed when the
-        Credentials tab loads and after save.
-      */}
-      {backendHelper ? (
-        <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
-          <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
-          <p className="text-xs text-zinc-500">
-            Use Basic auth with this client for Builder APIs and server-side device approval. Never embed in public apps.
+        ) : backendDeviceHelper ? (
+          <p className="text-sm text-zinc-500">
+            <strong className="text-zinc-400">Confidential M2M backend</strong> is enabled but not
+            yet provisioned. Use <strong className="text-zinc-400">Save changes</strong> to create
+            the <code className="font-mono text-zinc-400">m2m_</code> client, then return here.
           </p>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-cyan-300 text-sm font-mono">
-                {backendHelper.clientId}
-              </code>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(backendHelper.clientId, "m2mClientId")}
-                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
-              >
-                {copied === "m2mClientId" ? "Copied!" : "Copy"}
-              </button>
-            </div>
-          </div>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
-            {backendSecret ? (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
-                    {backendSecret}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(backendSecret, "backendSecret")}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
-                  >
-                    {copied === "backendSecret" ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-                <p className="text-xs text-amber-400/80">
-                  Store this secret securely. It will not be shown again.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 flex-wrap">
-                {backendHelper.hasSecret && (
-                  <p className="text-sm text-zinc-500">
-                    A secret exists. Generate a new one to rotate.
-                  </p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void generateBackendSecret()}
-                  disabled={readOnly || generatingBackend || !appId}
-                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
-                >
-                  {generatingBackend
-                    ? "Generating..."
-                    : backendHelper.hasSecret
-                      ? "Rotate Secret"
-                      : "Generate Secret"}
-                </button>
-              </div>
-            )}
-            {backendSecretFetchError && (
-              <p className="text-xs text-red-400 mt-2">{backendSecretFetchError}</p>
-            )}
-          </div>
-        </div>
-      ) : !isM2MOnly && backendDeviceHelper ? (
-        <p className="text-sm text-zinc-500 mt-4">
-          <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
-          Save the app to provision the Backend device helper and create a confidential{" "}
-          <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
-          approval, then return here.
-        </p>
-      ) : !isM2MOnly ? (
-        <p className="text-sm text-zinc-500 mt-4">
-          Confidential M2M backend is off on{" "}
-          <strong className="text-zinc-400">App profile</strong>. Turn on{" "}
-          <strong className="text-zinc-400">Confidential M2M backend</strong>{" "}
-          there to manage M2M credentials on this tab.
-        </p>
+        ) : (
+          <p className="text-sm text-zinc-500">
+            Confidential M2M backend is off on{" "}
+            <strong className="text-zinc-400">App profile</strong>. Turn on{" "}
+            <strong className="text-zinc-400">Confidential M2M backend</strong> there to manage M2M
+            credentials on this tab.
+          </p>
+        )
       ) : null}
 
-      {webHelper ? (
-        <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
-          <h3 className="text-sm font-semibold text-violet-200/90">
-            Confidential web RP
-          </h3>
-          <p className="text-xs text-zinc-500">
-            Use this <code className="font-mono text-zinc-400">web_</code> client ID +
-            secret in external portal SSO (e.g. Kong Dev Portal User authentication). Not
-            for Builder M2M.
-          </p>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-violet-300 text-sm font-mono">
-                {webHelper.clientId}
-              </code>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(webHelper.clientId, "webClientId")}
-                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
-              >
-                {copied === "webClientId" ? "Copied!" : "Copy"}
-              </button>
-            </div>
-          </div>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">
-              Redirect URIs
-            </div>
-            <AuthorizationCodeRedirectBlock
-              appId={appId}
-              redirectUris={confidentialWebRedirectUris}
-              onRedirectUrisChange={(uris) => void persistWebRedirectUris(uris)}
-              domains={domains}
-              onDomainsChange={onDomainsChange}
-              readOnly={readOnly}
-              requireAtLeastOne={confidentialWebRedirectUris.length > 0}
-              persistRedirectUrisToPublicClient={false}
-            />
-          </div>
-          <div>
-            <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
-            {webSecret ? (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
-                    {webSecret}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(webSecret, "webSecret")}
-                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
-                  >
-                    {copied === "webSecret" ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-                <p className="text-xs text-amber-400/80">
-                  Store this secret securely. It will not be shown again.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 flex-wrap">
-                {webHelper.hasSecret && (
-                  <p className="text-sm text-zinc-500">
-                    A secret exists. Generate a new one to rotate.
-                  </p>
-                )}
+      {showWebCredentials ? (
+        webHelper ? (
+          <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
+            <h3 className="text-sm font-semibold text-violet-200/90">
+              Confidential web RP{" "}
+              <code className="font-mono text-violet-300/80 font-normal">(web_)</code>
+            </h3>
+            <p className="text-xs text-zinc-500">
+              Use this <code className="font-mono text-zinc-400">web_</code> client ID +
+              secret in external portal SSO (e.g. Kong Dev Portal User authentication). Not
+              for Builder M2M. Domain allowlist is shared — manage it on the Public / SDK tab.
+            </p>
+            <div>
+              <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-violet-300 text-sm font-mono">
+                  {webHelper.clientId}
+                </code>
                 <button
                   type="button"
-                  onClick={() => void generateWebSecret()}
-                  disabled={readOnly || generatingWeb || !appId}
-                  className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                  onClick={() => copyToClipboard(webHelper.clientId, "webClientId")}
+                  className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
                 >
-                  {generatingWeb
-                    ? "Generating..."
-                    : webHelper.hasSecret
-                      ? "Rotate Secret"
-                      : "Generate Secret"}
+                  {copied === "webClientId" ? "Copied!" : "Copy"}
                 </button>
               </div>
-            )}
-            {webSecretFetchError && (
-              <p className="text-xs text-red-400 mt-2">{webSecretFetchError}</p>
-            )}
+            </div>
+            <div>
+              <AuthorizationCodeRedirectBlock
+                appId={appId}
+                redirectUris={confidentialWebRedirectUris}
+                onRedirectUrisChange={(uris) => void persistWebRedirectUris(uris)}
+                domains={domains}
+                onDomainsChange={onDomainsChange}
+                readOnly={readOnly}
+                requireAtLeastOne={confidentialWebRedirectUris.length > 0}
+                persistRedirectUrisToPublicClient={false}
+                showDomains={false}
+                label="Portal redirect URIs"
+                description="Callback URLs for the confidential web RP (portal SSO). Each add or remove is saved immediately. Origins are auto-added to the shared domain allowlist on the Public tab."
+              />
+            </div>
+            <div>
+              <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
+              {webSecret ? (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-amber-500/30 rounded-lg text-amber-400 text-sm font-mono break-all">
+                      {webSecret}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(webSecret, "webSecret")}
+                      className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 shrink-0"
+                    >
+                      {copied === "webSecret" ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-amber-400/80">
+                    Store this secret securely. It will not be shown again.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 flex-wrap">
+                  {webHelper.hasSecret && (
+                    <p className="text-sm text-zinc-500">
+                      A secret exists. Generate a new one to rotate.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void generateWebSecret()}
+                    disabled={readOnly || generatingWeb || !appId}
+                    className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                  >
+                    {generatingWeb
+                      ? "Generating..."
+                      : webHelper.hasSecret
+                        ? "Rotate Secret"
+                        : "Generate Secret"}
+                  </button>
+                </div>
+              )}
+              {webSecretFetchError && (
+                <p className="text-xs text-red-400 mt-2">{webSecretFetchError}</p>
+              )}
+            </div>
           </div>
-        </div>
-      ) : confidentialWebHelper ? (
-        <p className="text-sm text-zinc-500 mt-4">
-          <strong className="text-zinc-400">Confidential web RP</strong> is enabled but not
-          yet provisioned. Save the app to create the{" "}
-          <code className="font-mono text-zinc-400">web_</code> sibling, then return here.
-        </p>
-      ) : (
-        <p className="text-sm text-zinc-500 mt-4">
-          Confidential web RP is off on{" "}
-          <strong className="text-zinc-400">App profile</strong>. Turn it on there for
-          portal SSO (Kong Dev Portal, etc.).
-        </p>
-      )}
+        ) : confidentialWebHelper ? (
+          <p className="text-sm text-zinc-500">
+            <strong className="text-zinc-400">Confidential web RP</strong> is enabled but not
+            yet provisioned. Use <strong className="text-zinc-400">Save changes</strong> to create
+            the <code className="font-mono text-zinc-400">web_</code> sibling, then return here.
+          </p>
+        ) : (
+          <p className="text-sm text-zinc-500">
+            Confidential web RP is off on{" "}
+            <strong className="text-zinc-400">App profile</strong>. Turn it on there for
+            portal SSO (Kong Dev Portal, etc.).
+          </p>
+        )
+      ) : null}
+
+      {showWebAuthCode ? (
+        <AuthCodeFlowTestSection
+          appId={appId}
+          clientId={webHelper!.clientId}
+          grantTypes={[AUTHORIZATION_CODE_GRANT]}
+          redirectUris={confidentialWebRedirectUris}
+          allowedScopes={allowedScopes}
+          backendDeviceHelper={false}
+          initiateLoginUri=""
+          deviceThirdPartyInitiateLogin={false}
+          domains={domains}
+          onChange={onChange}
+          onDomainsChange={onDomainsChange}
+          readOnly={readOnly}
+          forceAuthCodeFlow
+          showInitiateLogin={false}
+          title="Try the portal authorization code flow"
+          description="Opens a test authorization request using the confidential web_ client ID and a portal redirect URI."
+        />
+      ) : null}
 
       {showAuthTestSection ? (
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-zinc-200">Test authentication</h3>
+              <h3 className="text-sm font-semibold text-zinc-200">
+                {useClientSubTabs
+                  ? effectiveAuthTestTab === "remote"
+                    ? "Verify remote signing"
+                    : "Verify administrative access"
+                  : "Test authentication"}
+              </h3>
               <p className="text-xs text-zinc-500 mt-1">
                 {effectiveAuthTestTab === "remote"
                   ? "Bearer API key for direct signing, or mint + exchange for a signer JWT. Device code login remains the end-user path."
-                  : "Client-credentials token exchange with the Backend helper for Builder APIs, user provisioning, and device approval."}
+                  : "Client-credentials token exchange with the M2M / Builder client for Builder APIs, user provisioning, and device approval."}
               </p>
             </div>
-            {showRemoteSigningTab && showAdminAccessTab ? (
+            {!useClientSubTabs && showRemoteSigningTab && showAdminAccessTab ? (
               <div
                 className="flex shrink-0 items-center gap-1 self-start rounded-lg bg-black/20 p-0.5"
                 role="tablist"
@@ -2186,15 +2399,15 @@ export default function TestingStep({
         </div>
       ) : null}
 
-      {isM2MOnly && clientId ? (
+      {showM2mOnlyExchange ? (
         <div className="space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-cyan-500" />
             <h3 className="text-sm font-semibold text-zinc-200">M2M token exchange</h3>
           </div>
           <M2mTokenTestPanel
-            clientId={clientId}
-            publicClientId={clientId.startsWith("app_") ? clientId : null}
+            clientId={clientId!}
+            publicClientId={clientId!.startsWith("app_") ? clientId : null}
             ownerExternalUserId={ownerExternalUserId}
             generatedSecret={m2mSecretForTests}
             allowedScopes={allowedScopes ?? DEFAULT_OIDC_SCOPES}
@@ -2208,24 +2421,6 @@ export default function TestingStep({
         </div>
       ) : null}
 
-      {hideAuthCodeFlowSection ? null : (
-        <AuthCodeFlowTestSection
-          appId={appId}
-          clientId={clientId}
-          grantTypes={grantTypes}
-          redirectUris={redirectUris}
-          allowedScopes={allowedScopes}
-          backendDeviceHelper={backendDeviceHelper}
-          initiateLoginUri={initiateLoginUri}
-          deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
-          domains={domains}
-          onChange={onChange}
-          onDomainsChange={onDomainsChange}
-          readOnly={readOnly}
-          showRedirectUriEditor={!hideRedirectUriEditor}
-        />
-      )}
     </div>
   );
 }
-

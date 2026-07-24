@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import DomainAllowlistBlock, { parseDomainError } from "./DomainAllowlistBlock";
 
 interface Props {
   appId: string | null;
@@ -17,19 +18,15 @@ interface Props {
    * still uses `appId` when set.
    */
   persistRedirectUrisToPublicClient?: boolean;
-}
-
-async function parseDomainError(res: Response): Promise<string> {
-  const text = await res.text();
-  try {
-    const data = text ? JSON.parse(text) : {};
-    if (typeof data.error === "string" && data.error.trim()) {
-      return data.error.trim();
-    }
-  } catch {
-    /* keep fallback */
-  }
-  return text.trim() || res.statusText || `Domain request failed (${res.status})`;
+  /**
+   * When false, omit the domain allowlist editor (render it once at the Public tab).
+   * Redirect adds still auto-whitelist origins when `appId` is set.
+   */
+  showDomains?: boolean;
+  /** Optional label override (e.g. portal vs public redirects). */
+  label?: string;
+  /** Optional help text override. */
+  description?: string;
 }
 
 export default function AuthorizationCodeRedirectBlock({
@@ -41,10 +38,12 @@ export default function AuthorizationCodeRedirectBlock({
   readOnly = false,
   requireAtLeastOne = false,
   persistRedirectUrisToPublicClient = true,
+  showDomains = true,
+  label = "Redirect URIs",
+  description,
 }: Readonly<Props>) {
+  const inputId = useId();
   const [newUri, setNewUri] = useState("");
-  const [newDomain, setNewDomain] = useState("");
-  const [adding, setAdding] = useState(false);
   const [redirectPersistError, setRedirectPersistError] = useState<string | null>(null);
   const [redirectSaving, setRedirectSaving] = useState(false);
   const [domainError, setDomainError] = useState<string | null>(null);
@@ -82,6 +81,41 @@ export default function AuthorizationCodeRedirectBlock({
     }
   };
 
+  const autoWhitelistOrigin = async (uri: string) => {
+    if (!appId) return;
+    let normalizedOrigin: string;
+    try {
+      const origin = new URL(uri).origin;
+      if (origin === "null") return;
+      normalizedOrigin = origin.toLowerCase();
+    } catch {
+      /* invalid URL or wildcard — skip auto-whitelist */
+      return;
+    }
+
+    if (domains.some((d) => d.domain.toLowerCase() === normalizedOrigin)) return;
+
+    setDomainError(null);
+    try {
+      const res = await fetch(`/api/v1/apps/${appId}/domains`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: normalizedOrigin }),
+      });
+      if (!res.ok) {
+        setDomainError(await parseDomainError(res));
+        return;
+      }
+      const resData = await res.json();
+      onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
+    } catch (err) {
+      console.error("Failed to auto-whitelist redirect URI domain.", err);
+      setDomainError(
+        err instanceof Error ? err.message : "Could not auto-whitelist redirect URI domain.",
+      );
+    }
+  };
+
   const addRedirectUri = async () => {
     if (readOnly) return;
     const uri = newUri.trim();
@@ -97,40 +131,7 @@ export default function AuthorizationCodeRedirectBlock({
         onRedirectUrisChange(previous);
         return;
       }
-    }
-
-    if (appId) {
-      let normalizedOrigin: string;
-      try {
-        const origin = new URL(uri).origin;
-        if (origin === "null") return;
-        normalizedOrigin = origin.toLowerCase();
-      } catch {
-        /* invalid URL or wildcard — skip auto-whitelist */
-        return;
-      }
-
-      if (domains.some((d) => d.domain.toLowerCase() === normalizedOrigin)) return;
-
-      setDomainError(null);
-      try {
-        const res = await fetch(`/api/v1/apps/${appId}/domains`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain: normalizedOrigin }),
-        });
-        if (!res.ok) {
-          setDomainError(await parseDomainError(res));
-          return;
-        }
-        const resData = await res.json();
-        onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
-      } catch (err) {
-        console.error("Failed to auto-whitelist redirect URI domain.", err);
-        setDomainError(
-          err instanceof Error ? err.message : "Could not auto-whitelist redirect URI domain.",
-        );
-      }
+      await autoWhitelistOrigin(uri);
     }
   };
 
@@ -146,68 +147,30 @@ export default function AuthorizationCodeRedirectBlock({
     }
   };
 
-  const addDomain = async () => {
-    if (readOnly || !appId || !newDomain.trim()) return;
-    setAdding(true);
-    setDomainError(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/domains`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: newDomain.trim() }),
-      });
-      if (!res.ok) {
-        setDomainError(await parseDomainError(res));
-        return;
-      }
-      const resData = await res.json();
-      onDomainsChange([...domains, { id: resData.id, domain: resData.domain }]);
-      setNewDomain("");
-    } catch (err) {
-      setDomainError(err instanceof Error ? err.message : "Could not add domain.");
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const removeDomain = async (domainId: string) => {
-    if (readOnly || !appId) return;
-    setDomainError(null);
-    try {
-      const res = await fetch(
-        `/api/v1/apps/${appId}/domains?domainId=${encodeURIComponent(domainId)}`,
-        {
-          method: "DELETE",
-        },
-      );
-      if (!res.ok) {
-        setDomainError(await parseDomainError(res));
-        return;
-      }
-      onDomainsChange(domains.filter((d) => d.id !== domainId));
-    } catch (err) {
-      setDomainError(err instanceof Error ? err.message : "Could not remove domain.");
-    }
-  };
+  const helpText =
+    description ??
+    `URIs where PymtHouse can redirect after authorization. Wildcards (*) are supported.${
+      appId
+        ? " Each add or remove is saved immediately."
+        : " Save the app first, then add URIs here."
+    }`;
 
   return (
     <div className="space-y-5">
       <div className="space-y-2">
-        <label htmlFor="auth-code-new-redirect-uri" className="block text-sm font-medium text-zinc-300">
-          Redirect URIs
+        <label htmlFor={inputId} className="block text-sm font-medium text-zinc-300">
+          {label}
         </label>
-        <p className="text-xs text-zinc-500">
-          URIs where PymtHouse can redirect after authorization. Wildcards (*) are supported.
-          {appId
-            ? " Each add or remove is saved immediately."
-            : " Save the app first, then add URIs here."}
-        </p>
+        <p className="text-xs text-zinc-500">{helpText}</p>
         {redirectPersistError && (
           <p className="text-xs text-red-400">{redirectPersistError}</p>
         )}
+        {domainError && !showDomains ? (
+          <p className="text-xs text-red-400">{domainError}</p>
+        ) : null}
         <div className="flex gap-2 mb-2">
           <input
-            id="auth-code-new-redirect-uri"
+            id={inputId}
             type="text"
             value={newUri}
             onChange={(e) => setNewUri(e.target.value)}
@@ -245,7 +208,12 @@ export default function AuthorizationCodeRedirectBlock({
                   aria-label={`Remove ${uri}`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
                   </svg>
                 </button>
               </div>
@@ -254,66 +222,17 @@ export default function AuthorizationCodeRedirectBlock({
         )}
       </div>
 
-      <div className="space-y-4">
-        <div>
-          <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
-          <p className="text-xs text-zinc-500 mt-1">
-            Allowed origins for CORS and request validation. Redirect URIs above should match these
-            domains.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newDomain}
-            onChange={(e) => setNewDomain(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void addDomain())}
-            placeholder="example.com"
-            disabled={readOnly}
-            className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
+      {showDomains ? (
+        <div className="space-y-2">
+          {domainError ? <p className="text-xs text-red-400">{domainError}</p> : null}
+          <DomainAllowlistBlock
+            appId={appId}
+            domains={domains}
+            onDomainsChange={onDomainsChange}
+            readOnly={readOnly}
           />
-          <button
-            type="button"
-            onClick={() => void addDomain()}
-            disabled={readOnly || adding || !newDomain.trim() || !appId}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 disabled:opacity-40 transition-colors"
-          >
-            {adding ? "Adding..." : "Add domain"}
-          </button>
         </div>
-        {domainError && <p className="text-xs text-red-400">{domainError}</p>}
-        {domains.length > 0 ? (
-          <div className="space-y-2">
-            {domains.map((d) => (
-              <div
-                key={d.id}
-                className="flex items-center justify-between px-4 py-3 bg-zinc-800/50 rounded-lg border border-zinc-800"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  <code className="text-sm text-zinc-200 truncate">{d.domain}</code>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void removeDomain(d.id)}
-                  disabled={readOnly}
-                  className="text-zinc-500 hover:text-red-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                  aria-label={`Remove domain ${d.domain}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-3 text-zinc-500 text-sm">
-            No domains yet. Add your app&apos;s origins above (adding a redirect URI may suggest
-            one automatically).
-          </div>
-        )}
-      </div>
+      ) : null}
     </div>
   );
 }
