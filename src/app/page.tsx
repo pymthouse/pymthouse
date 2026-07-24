@@ -325,6 +325,7 @@ export default async function HomePage() {
         <div className="relative max-w-5xl mx-auto px-6 pt-20 pb-16 text-center">
           <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300 mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            {" "}
             Built for Livepeer builders
           </span>
           <h1 className="text-4xl sm:text-6xl font-bold tracking-tight mb-6 leading-tight">

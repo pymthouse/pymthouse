@@ -17,20 +17,20 @@ ARG LIBJWT_COMMIT=1ea509e8eab34819a490ceac595df6ea365079a3
 ARG MOD_AUTHNZ_JWT_COMMIT=ba43b3f0c7a98603eb83ccbe83a37f0d33bc0700
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    make \
-    automake \
-    git \
-    g++ \
-    libtool \
-    pkg-config \
-    autoconf \
-    libssl-dev \
-    check \
-    libjansson-dev \
-    libz-dev \
     apache2 \
     apache2-dev \
+    autoconf \
+    automake \
+    ca-certificates \
+    check \
+    g++ \
+    git \
+    libjansson-dev \
+    libssl-dev \
+    libtool \
+    libz-dev \
+    make \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -107,7 +107,7 @@ RUN chmod +x /entrypoint.sh \
     mkdir -p /var/www/static && printf "OK\n" > /var/www/static/healthz && \
     groupadd --system --gid "${APP_GID}" "${APP_USER}" && \
     useradd --system --uid "${APP_UID}" --gid "${APP_GID}" \
-      --home-dir /home/${APP_USER} --create-home --shell /usr/sbin/nologin "${APP_USER}" && \
+      --home-dir "/home/${APP_USER}" --create-home --shell /usr/sbin/nologin "${APP_USER}" && \
     mkdir -p /run/jwt /run/signer-bootstrap /run/apache2 /var/lock/apache2 /var/log/apache2 /data && \
     sed -i \
       -e "s|^export APACHE_RUN_USER=.*|export APACHE_RUN_USER=${APP_USER}|" \

@@ -375,9 +375,15 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
         if (value !== undefined) {
           if (Array.isArray(value)) {
             for (const v of value) {
-              headers.append(key, String(v));
+              if (typeof v === "string") {
+                headers.append(key, v);
+              } else if (typeof v === "number") {
+                headers.append(key, String(v));
+              }
             }
-          } else {
+          } else if (typeof value === "string") {
+            headers.set(key, value);
+          } else if (typeof value === "number") {
             headers.set(key, String(value));
           }
         }

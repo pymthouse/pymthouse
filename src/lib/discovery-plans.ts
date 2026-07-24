@@ -76,7 +76,13 @@ export function parseDiscoveryPolicyInput(
   }
 
   if (raw.sortBy !== undefined) {
-    const s = String(raw.sortBy).trim() as DiscoverySortBy;
+    if (typeof raw.sortBy !== "string") {
+      return {
+        ok: false,
+        error: `${pathPrefix}.sortBy must be one of: ${SORT_BY_VALUES.join(", ")}`,
+      };
+    }
+    const s = raw.sortBy.trim() as DiscoverySortBy;
     if (!SORT_BY_VALUES.includes(s)) {
       return {
         ok: false,

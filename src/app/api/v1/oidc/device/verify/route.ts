@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
-import { SqliteAdapter } from "@/lib/oidc/adapter";
+import { PostgresOidcAdapter } from "@/lib/oidc/adapter";
 import { getClient } from "@/lib/oidc/clients";
 import { approveDeviceCodeForAccount } from "@/lib/oidc/device-approval";
 import { db } from "@/db/index";
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Look up the device code through the adapter
-  const adapter = new SqliteAdapter("DeviceCode");
+  const adapter = new PostgresOidcAdapter("DeviceCode");
   const normalizedUserCode = normalizeUserCode(userCode);
   const deviceCode = await adapter.findByUserCode(normalizedUserCode);
 

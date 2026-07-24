@@ -132,7 +132,7 @@ export async function POST(
   }
   const record = body as Record<string, unknown>;
 
-  const name = String(record.name || "").trim();
+  const name = typeof record.name === "string" ? record.name.trim() : "";
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }

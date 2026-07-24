@@ -9,12 +9,22 @@
  * the negotiated ticket facts from the request body (python-gateway + signer).
  */
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* / */) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function resolveNaapApiBaseUrl(): string {
-  const explicit = process.env.NAAP_API_BASE_URL?.trim().replace(/\/+$/, "");
+  const explicitRaw = process.env.NAAP_API_BASE_URL?.trim();
+  const explicit = explicitRaw ? trimTrailingSlashes(explicitRaw) : "";
   if (explicit) {
     return explicit;
   }
-  const nextAuth = process.env.NEXTAUTH_URL?.trim().replace(/\/+$/, "");
+  const nextAuthRaw = process.env.NEXTAUTH_URL?.trim();
+  const nextAuth = nextAuthRaw ? trimTrailingSlashes(nextAuthRaw) : "";
   if (
     process.env.NODE_ENV === "development" &&
     nextAuth &&
