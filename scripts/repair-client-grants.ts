@@ -134,20 +134,11 @@ async function repairWebClientGrants(
   return "fixed";
 }
 
-async function main() {
-  const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (!databaseUrl) {
-    console.error("[repair-client-grants] DATABASE_URL is not set.");
-    process.exit(1);
-  }
-
-  const client = postgres(databaseUrl, { max: 1 });
-  const db = drizzle(client, { schema });
-
-  const apps = await db.select().from(schema.developerApps);
-  const clients = await db.select().from(schema.oidcClients);
-  const clientsByPk = new Map(clients.map((row) => [row.id, row]));
-
+async function repairPublicAppClients(
+  db: Db,
+  apps: (typeof schema.developerApps.$inferSelect)[],
+  clientsByPk: Map<string, ClientRow>,
+): Promise<{ fixed: number; skipped: number }> {
   let fixed = 0;
   let skipped = 0;
 
@@ -164,6 +155,27 @@ async function main() {
     if (stripResult === "fixed") fixed++;
     else skipped++;
   }
+
+  return { fixed, skipped };
+}
+
+async function main() {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    console.error("[repair-client-grants] DATABASE_URL is not set.");
+    process.exit(1);
+  }
+
+  const client = postgres(databaseUrl, { max: 1 });
+  const db = drizzle(client, { schema });
+
+  const apps = await db.select().from(schema.developerApps);
+  const clients = await db.select().from(schema.oidcClients);
+  const clientsByPk = new Map(clients.map((row) => [row.id, row]));
+
+  const publicRepair = await repairPublicAppClients(db, apps, clientsByPk);
+  let fixed = publicRepair.fixed;
+  let skipped = publicRepair.skipped;
 
   for (const row of clients) {
     const result = await repairWebClientGrants(db, row);
