@@ -1376,9 +1376,9 @@ function DeviceInitiateLoginUriField({
   onChange: (updates: Partial<AppFormData>) => void;
 }>): ReactNode {
   return (
-    <div className="border-t border-zinc-800 pt-5">
+    <div className="border-t border-emerald-500/15 pt-4">
       <div className="space-y-2">
-        <label htmlFor="device-initiate-login-uri" className="block text-sm font-medium text-zinc-300">
+        <label htmlFor="device-initiate-login-uri" className="block text-xs font-semibold text-zinc-200">
           Third-party initiate login URI
         </label>
         <input
@@ -1980,11 +1980,19 @@ export default function TestingStep({
       {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
 
       {showPrimaryCredentials && primaryIsConfidential ? (
-        <>
+        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4">
           <div>
-            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-              Client ID
-            </div>
+            <h3 className="text-sm font-semibold text-emerald-200/90">
+              Public / SDK{" "}
+              <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
+            </h3>
+            <p className="text-xs text-zinc-500 mt-1">
+              Legacy confidential primary client. Prefer enabling M2M / Web siblings on App
+              profile for new integrations.
+            </p>
+          </div>
+          <div>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
                 {clientId || "Create app first"}
@@ -2002,9 +2010,7 @@ export default function TestingStep({
           </div>
 
           <div>
-            <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-              Client Secret
-            </div>
+            <div className="block text-xs font-medium text-zinc-400 mb-1">Client Secret</div>
             {secret ? (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -2044,57 +2050,62 @@ export default function TestingStep({
               <p className="text-xs text-red-400 mt-2">{secretFetchError}</p>
             )}
           </div>
-        </>
-      ) : null}
-
-      {showPrimaryCredentials && !primaryIsConfidential ? (
-        <div>
-          <div className="block text-sm font-medium text-zinc-300 mb-1.5">
-            Public / SDK client ID
-          </div>
-          <p className="text-xs text-zinc-500 mb-2">
-            Use this in SDKs, CLIs, and the device authorization flow. It stays public
-            (no secret). Portal SSO needs the confidential{" "}
-            <code className="font-mono text-zinc-400">web_</code> sibling; Builder APIs
-            need the <code className="font-mono text-zinc-400">m2m_</code> sibling.
-          </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
-              {clientId || "Create app first"}
-            </code>
-            {clientId && (
-              <button
-                type="button"
-                onClick={() => copyToClipboard(clientId, "clientId")}
-                className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
-              >
-                {copied === "clientId" ? "Copied!" : "Copy"}
-              </button>
-            )}
-          </div>
         </div>
       ) : null}
 
-      {showPublicPanel ? (
-        <section className="space-y-4 border-t border-zinc-800 pt-8">
+      {showPublicPanel && !primaryIsConfidential ? (
+        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-5">
           <div>
-            <h3 className="text-base font-semibold text-zinc-100">Domain allowlist</h3>
-            <p className="text-sm text-zinc-500 mt-1">
-              Shared origins for CORS and request validation across all siblings.
-              Authorization-code redirect URIs are configured on the{" "}
-              <strong className="text-zinc-400">Web RP</strong> tab (confidential{" "}
-              <code className="font-mono text-zinc-400">web_</code> client). Device
-              flow does not need a redirect URI.
+            <h3 className="text-sm font-semibold text-emerald-200/90">
+              Public / SDK{" "}
+              <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
+            </h3>
+            <p className="text-xs text-zinc-500 mt-1">
+              Use this in SDKs, CLIs, and the device authorization flow. It stays public
+              (no secret). Portal SSO needs the confidential{" "}
+              <code className="font-mono text-zinc-400">web_</code> sibling; Builder APIs
+              need the <code className="font-mono text-zinc-400">m2m_</code> sibling.
             </p>
           </div>
-          <DomainAllowlistBlock
-            appId={appId}
-            domains={domains}
-            onDomainsChange={onDomainsChange}
-            readOnly={readOnly}
-          />
-          {backendDeviceHelper &&
-          grantTypes.includes(DEVICE_CODE_GRANT) ? (
+
+          {showPrimaryCredentials ? (
+            <div>
+              <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-emerald-400 text-sm font-mono">
+                  {clientId || "Create app first"}
+                </code>
+                {clientId && (
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(clientId, "clientId")}
+                    className="px-3 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 transition-colors"
+                  >
+                    {copied === "clientId" ? "Copied!" : "Copy"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="space-y-3 border-t border-emerald-500/15 pt-4">
+            <div>
+              <h4 className="text-xs font-semibold text-zinc-200">Domain allowlist</h4>
+              <p className="text-xs text-zinc-500 mt-1">
+                Shared origins for CORS and request validation. Authorization-code redirect
+                URIs live on the Web RP tab. Device flow does not need a redirect URI.
+              </p>
+            </div>
+            <DomainAllowlistBlock
+              appId={appId}
+              domains={domains}
+              onDomainsChange={onDomainsChange}
+              readOnly={readOnly}
+              hideHeading
+            />
+          </div>
+
+          {backendDeviceHelper && grantTypes.includes(DEVICE_CODE_GRANT) ? (
             <DeviceInitiateLoginUriField
               initiateLoginUri={initiateLoginUri}
               deviceThirdPartyInitiateLogin={deviceThirdPartyInitiateLogin}
@@ -2103,7 +2114,25 @@ export default function TestingStep({
               onChange={onChange}
             />
           ) : null}
-        </section>
+        </div>
+      ) : null}
+
+      {showPublicPanel && primaryIsConfidential ? (
+        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4">
+          <div>
+            <h4 className="text-xs font-semibold text-zinc-200">Domain allowlist</h4>
+            <p className="text-xs text-zinc-500 mt-1">
+              Shared origins for CORS and request validation across siblings.
+            </p>
+          </div>
+          <DomainAllowlistBlock
+            appId={appId}
+            domains={domains}
+            onDomainsChange={onDomainsChange}
+            readOnly={readOnly}
+            hideHeading
+          />
+        </div>
       ) : null}
 
       {showM2mCredentials && backendHelper ? (

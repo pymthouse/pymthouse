@@ -20,6 +20,8 @@ interface Props {
   domains: { id: string; domain: string }[];
   onDomainsChange: (domains: { id: string; domain: string }[]) => void;
   readOnly?: boolean;
+  /** When true, omit the built-in heading (parent already titled the section). */
+  hideHeading?: boolean;
 }
 
 export default function DomainAllowlistBlock({
@@ -27,6 +29,7 @@ export default function DomainAllowlistBlock({
   domains,
   onDomainsChange,
   readOnly = false,
+  hideHeading = false,
 }: Readonly<Props>) {
   const [newDomain, setNewDomain] = useState("");
   const [adding, setAdding] = useState(false);
@@ -78,14 +81,16 @@ export default function DomainAllowlistBlock({
 
   return (
     <div className="space-y-4">
-      <div>
-        <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
-        <p className="text-xs text-zinc-500 mt-1">
-          Allowed origins for CORS and request validation. Shared across siblings —
-          adding a portal redirect URI on the Web RP tab may suggest an origin
-          automatically.
-        </p>
-      </div>
+      {hideHeading ? null : (
+        <div>
+          <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
+          <p className="text-xs text-zinc-500 mt-1">
+            Allowed origins for CORS and request validation. Shared across siblings —
+            adding a portal redirect URI on the Web RP tab may suggest an origin
+            automatically.
+          </p>
+        </div>
+      )}
       <div className="flex gap-2">
         <input
           type="text"
