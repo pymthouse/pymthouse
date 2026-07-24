@@ -19,6 +19,7 @@
     "bootstrap": "npx tsx scripts/bootstrap-admin.ts",
     "db:prepare": "npx tsx scripts/db-migrate.ts",
     "api-keys:hard-cutover": "npx tsx scripts/api-keys-hard-cutover.ts",
+    "cleanup:fixture-test-apps": "npx tsx scripts/cleanup-fixture-test-apps.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
     "openmeter:ensure-customer": "npx tsx scripts/openmeter-ensure-customer.ts",
