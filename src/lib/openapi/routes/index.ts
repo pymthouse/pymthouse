@@ -6,6 +6,7 @@ import "@/lib/openapi/routes/credentials";
 import "@/lib/openapi/routes/apps";
 import "@/lib/openapi/routes/misc";
 import "@/lib/openapi/routes/platform";
+import "@/lib/openapi/routes/x402";
 import { registerOpenApiFromInventory } from "@/lib/openapi/register-from-inventory";
 
 registerOpenApiFromInventory();

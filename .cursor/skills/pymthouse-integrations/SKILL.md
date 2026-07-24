@@ -19,6 +19,7 @@ PymtHouse is the **sole OIDC issuer** for integrator apps. External backends tal
 | Topic | Path |
 | --- | --- |
 | Builder product (OIDC issuer, Builder API, Usage API, device + token exchange) | `docs/builder-api.md` || [docs.pymthouse.com](https://docs.pymthouse.com)
+| x402 facilitator (USDC on Arbitrum, payment codes, agent access) | `docs/x402-facilitator.md` |
 
 ## Two clients per interactive app
 
@@ -70,6 +71,23 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 
 Public client must have **device third-party initiate** enabled where required (`device_third_party_initiate_login`).
 
+## x402 facilitator
+
+PymtHouse is a **spec-compliant x402 v2 facilitator** (exact scheme, EIP-3009 USDC on Arbitrum). See `docs/x402-facilitator.md`.
+
+| Surface | Auth |
+| --- | --- |
+| `GET /api/v1/x402/supported` | Public |
+| `POST /api/v1/x402/verify` | M2M Basic, public `app_*` `client_id` (rate-limited), or bearer |
+| `POST /api/v1/x402/settle` | M2M Basic + `x402:settle` only |
+| `POST /api/v1/x402/payment-codes` (+ poll / approve) | Public `app_*`, bearer, or M2M; approve is NextAuth browser |
+| `POST /api/v1/apps/{clientId}/x402/wallet` | M2M + `x402:settle` |
+
+- Enable per app: `developer_apps.x402_enabled` (+ optional `onramp_enabled`).
+- Walk-up agents: seed `app_pymthouse_public` via `npm run x402:seed-public-app`.
+- Settle with `externalUserId` grants OpenMeter prepaid credits (`GrantSource: "x402"`).
+- Exhausted mint credits return HTTP 402 with `PAYMENT-REQUIRED` when x402 payTo is configured.
+
 ## Key implementation files
 
 | Area | File |
@@ -81,6 +99,7 @@ Public client must have **device third-party initiate** enabled where required (
 | App users upsert | `src/app/api/v1/apps/[id]/users/route.ts` |
 | OIDC token route (ordering: device exchange before gateway exchange) | `src/app/api/v1/oidc/[...oidc]/route.ts` |
 | Device UI verify | `src/app/api/v1/oidc/device/verify/route.ts` |
+| x402 core (verify/settle/auth) | `src/lib/x402/` |
 
 ## Integrator env (e.g. NaaP) checklist
 

@@ -10,6 +10,7 @@ const GRANT_SOURCES = new Set<GrantSource>([
   "promo",
   "plan_adjustment",
   "onramp",
+  "x402",
 ]);
 
 export async function GET(

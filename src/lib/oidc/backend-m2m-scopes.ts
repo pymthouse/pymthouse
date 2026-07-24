@@ -5,6 +5,7 @@ const BACKEND_M2M_REQUIRED_SCOPES = [
   "users:token",
   "users:write",
   "device:approve",
+  "x402:settle",
 ] as const;
 
 /** Copied from the public app when present so M2M tokens can call matching APIs (e.g. signer). */
