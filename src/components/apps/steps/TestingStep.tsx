@@ -2033,13 +2033,14 @@ export default function TestingStep({
               Redirect URIs
             </div>
             <AuthorizationCodeRedirectBlock
-              appId={null}
+              appId={appId}
               redirectUris={confidentialWebRedirectUris}
               onRedirectUrisChange={(uris) => void persistWebRedirectUris(uris)}
               domains={domains}
               onDomainsChange={onDomainsChange}
               readOnly={readOnly}
               requireAtLeastOne={confidentialWebRedirectUris.length > 0}
+              persistRedirectUrisToPublicClient={false}
             />
           </div>
           <div>

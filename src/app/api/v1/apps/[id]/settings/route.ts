@@ -155,10 +155,26 @@ export async function PUT(
 
   await updateClientConfig(client.clientId, clientUpdates);
 
-  // Auto-populate domain whitelist from redirect URI origins
+  // Auto-populate domain whitelist from public + confidential web redirect origins
+  let webRedirectUris: string[] = [];
+  if (app.webOidcClientId) {
+    const webRows = await db
+      .select({ redirectUris: oidcClients.redirectUris })
+      .from(oidcClients)
+      .where(eq(oidcClients.id, app.webOidcClientId))
+      .limit(1);
+    if (webRows[0]?.redirectUris) {
+      try {
+        webRedirectUris = JSON.parse(webRows[0].redirectUris) as string[];
+      } catch {
+        webRedirectUris = [];
+      }
+    }
+  }
   const allRedirects = [
     ...(clientUpdates.redirectUris ?? JSON.parse(client.redirectUris) as string[]),
     ...(clientUpdates.postLogoutRedirectUris ?? []),
+    ...webRedirectUris,
   ];
   const origins = extractOrigins(allRedirects);
 

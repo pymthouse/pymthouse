@@ -11,6 +11,12 @@ interface Props {
   readOnly?: boolean;
   /** When true, the last redirect URI cannot be removed (confidential web clients). */
   requireAtLeastOne?: boolean;
+  /**
+   * When false, skip PUT `{ redirectUris }` to the public client — parent persists
+   * (e.g. confidential `web_` via `confidentialWebRedirectUris`). Domain allowlist
+   * still uses `appId` when set.
+   */
+  persistRedirectUrisToPublicClient?: boolean;
 }
 
 async function parseDomainError(res: Response): Promise<string> {
@@ -34,6 +40,7 @@ export default function AuthorizationCodeRedirectBlock({
   onDomainsChange,
   readOnly = false,
   requireAtLeastOne = false,
+  persistRedirectUrisToPublicClient = true,
 }: Readonly<Props>) {
   const [newUri, setNewUri] = useState("");
   const [newDomain, setNewDomain] = useState("");
@@ -44,7 +51,7 @@ export default function AuthorizationCodeRedirectBlock({
 
   const persistRedirectUris = async (nextUris: string[]) => {
     if (readOnly) return false;
-    if (!appId) return true;
+    if (!appId || !persistRedirectUrisToPublicClient) return true;
     setRedirectSaving(true);
     setRedirectPersistError(null);
     try {
