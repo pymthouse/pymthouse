@@ -286,7 +286,8 @@ export async function PUT(
     if (client) {
       const clientUpdates: Parameters<typeof updateClientConfig>[1] = {};
       if (body.name) clientUpdates.displayName = body.name;
-      if (body.redirectUris) clientUpdates.redirectUris = body.redirectUris;
+      // Public app_ never stores redirect URIs (authorization_code is on web_).
+      clientUpdates.redirectUris = [];
       if (body.tokenEndpointAuthMethod)
         clientUpdates.tokenEndpointAuthMethod = body.tokenEndpointAuthMethod;
       if (body.allowedScopes) {
@@ -299,16 +300,11 @@ export async function PUT(
       }
       if (body.grantTypes) clientUpdates.grantTypes = body.grantTypes;
 
-      // Resolve the final redirect URIs (updated or unchanged) and enforce the
-      // authorization_code ↔ redirect_uris invariant on every write.
-      const finalRedirectUris =
-        clientUpdates.redirectUris ??
-        (JSON.parse(client.redirectUris) as string[]);
       const baseGrants =
         clientUpdates.grantTypes ?? client.grantTypes.split(",").filter(Boolean);
       clientUpdates.grantTypes = syncPublicClientGrantTypes(
         baseGrants,
-        finalRedirectUris,
+        [],
         client.clientId,
       );
 
@@ -335,10 +331,7 @@ export async function PUT(
         resetProvider();
       }
 
-      if (
-        (app.m2mOidcClientId || app.webOidcClientId) &&
-        (await demotePublicClientWhenM2mSiblingExists(app.id))
-      ) {
+      if (await demotePublicClientWhenM2mSiblingExists(app.id)) {
         resetProvider();
       }
     }

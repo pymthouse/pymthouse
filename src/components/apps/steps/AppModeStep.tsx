@@ -186,7 +186,7 @@ export default function AppModeStep({
               {hasDeviceCode ? (
                 <p className="mt-2 text-xs text-zinc-500">
                   Configure the third-party initiate login URL on{" "}
-                  <strong className="text-zinc-400">Credentials &amp; URLs</strong>.
+                  <strong className="text-zinc-400">Credentials &amp; URLs → Public / SDK</strong>.
                 </p>
               ) : null}
             </div>
@@ -209,8 +209,9 @@ export default function AppModeStep({
             <p className="text-xs text-zinc-500 mt-0.5">
               Provisions a confidential{" "}
               <code className="font-mono text-zinc-400">web_</code> sibling for portal
-              SSO (auth code + secret + redirects). Configure redirect URIs and rotate
-              the secret on Credentials &amp; URLs.
+              SSO (auth code + secret + redirects). This is the only client that
+              registers redirect URIs — configure them on Credentials &amp; URLs →
+              Web RP.
             </p>
           </div>
         </label>

@@ -198,6 +198,7 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
 
       const payload: AppFormData = {
         ...formData,
+        redirectUris: [],
         allowedScopes: ensureOpenIdScope(formData.allowedScopes),
         confidentialWebRedirectUris: webRedirects,
         tokenEndpointAuthMethod: "none",
