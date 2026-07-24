@@ -157,11 +157,12 @@ export default function MarketplacePage() {
         </div>
 
         {/* App grid */}
-        {loading ? (
+        {loading && (
           <div className="text-zinc-500 text-center py-16 animate-pulse">
             Loading apps...
           </div>
-        ) : filtered.length === 0 ? (
+        )}
+        {!loading && filtered.length === 0 && (
           <div className="text-center py-16 border border-zinc-800 rounded-xl bg-zinc-900/20">
             <div className="w-16 h-16 bg-zinc-800 rounded-xl flex items-center justify-center mx-auto mb-4">
               <svg
@@ -189,7 +190,8 @@ export default function MarketplacePage() {
                 : "Try adjusting your search or filter criteria."}
             </p>
           </div>
-        ) : (
+        )}
+        {!loading && filtered.length > 0 && (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((app) => (
               <AppCard key={app.id} app={app} />

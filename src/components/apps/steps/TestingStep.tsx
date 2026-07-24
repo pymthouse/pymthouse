@@ -445,6 +445,12 @@ function getCredentialsIntroText(isM2MOnly: boolean, hideAuthCodeFlowSection: bo
   return "Configure redirect URLs, generate and rotate credentials, try a live authorization request, and copy reference endpoints.";
 }
 
+function getSecretButtonLabel(generating: boolean, hasSecret: boolean): string {
+  if (generating) return "Generating...";
+  if (hasSecret) return "Rotate Secret";
+  return "Generate Secret";
+}
+
 function scopesForInitiateLoginUri(allowedScopes: string, isValid: boolean): string {
   const scopes = allowedScopes.split(/[,\s]+/).filter(Boolean);
   if (!isValid) return scopes.filter((scope) => scope !== "users:token").join(" ");
@@ -1806,7 +1812,7 @@ export default function TestingStep({
                   disabled={readOnly || generating || !appId}
                   className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
                 >
-                  {generating ? "Generating..." : hasSecret ? "Rotate Secret" : "Generate Secret"}
+                  {getSecretButtonLabel(generating, hasSecret)}
                 </button>
               </div>
             )}
@@ -1848,7 +1854,7 @@ export default function TestingStep({
         (`backendHelper` / `backendDeviceHelper`), refreshed when the
         Credentials tab loads and after save.
       */}
-      {backendHelper ? (
+      {backendHelper && (
         <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
           <h3 className="text-sm font-semibold text-cyan-200/90">Backend helper (confidential)</h3>
           <p className="text-xs text-zinc-500">
@@ -1902,11 +1908,7 @@ export default function TestingStep({
                   disabled={readOnly || generatingBackend || !appId}
                   className="px-4 py-2 bg-zinc-700 text-zinc-200 rounded-lg text-sm hover:bg-zinc-600 disabled:opacity-40 transition-colors"
                 >
-                  {generatingBackend
-                    ? "Generating..."
-                    : backendHelper.hasSecret
-                      ? "Rotate Secret"
-                      : "Generate Secret"}
+                  {getSecretButtonLabel(generatingBackend, backendHelper.hasSecret)}
                 </button>
               </div>
             )}
@@ -1915,21 +1917,23 @@ export default function TestingStep({
             )}
           </div>
         </div>
-      ) : !isM2MOnly && backendDeviceHelper ? (
+      )}
+      {!backendHelper && !isM2MOnly && backendDeviceHelper && (
         <p className="text-sm text-zinc-500 mt-4">
           <strong className="text-zinc-400">Backend device helper</strong> is enabled but not yet provisioned.
           Save the app to provision the Backend device helper and create a confidential{" "}
           <code className="font-mono text-zinc-400">m2m_</code> client for Builder APIs and NaaP-side device
           approval, then return here.
         </p>
-      ) : !isM2MOnly ? (
+      )}
+      {!backendHelper && !isM2MOnly && !backendDeviceHelper && (
         <p className="text-sm text-zinc-500 mt-4">
           Confidential M2M backend is off on{" "}
           <strong className="text-zinc-400">App profile</strong>. Turn on{" "}
           <strong className="text-zinc-400">Confidential M2M backend</strong>{" "}
           there to manage M2M credentials on this tab.
         </p>
-      ) : null}
+      )}
 
       {showAuthTestSection ? (
         <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">

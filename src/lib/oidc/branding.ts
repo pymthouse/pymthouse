@@ -66,7 +66,7 @@ export async function resolveAppBrandingByCustomDomain(
     .limit(1);
   const app = appRows[0];
 
-  if (!app || !app.customLoginEnabled || app.brandingMode !== "whiteLabel") {
+  if (!app?.customLoginEnabled || app?.brandingMode !== "whiteLabel") {
     return null;
   }
 

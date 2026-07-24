@@ -32,11 +32,14 @@ export default function SignerControlPanel({
       const data = await res.json();
 
       if (res.ok && data.success) {
-        setMessage(
-          action === "sync"
-            ? `Synced. Reachable: ${data.reachable}${data.ethAddress ? `, address: ${data.ethAddress}` : ""}`
-            : `${action} completed successfully`
-        );
+        let successMessage = `${action} completed successfully`;
+        if (action === "sync") {
+          const addressSuffix = data.ethAddress
+            ? `, address: ${data.ethAddress}`
+            : "";
+          successMessage = `Synced. Reachable: ${data.reachable}${addressSuffix}`;
+        }
+        setMessage(successMessage);
         router.refresh();
       } else {
         setError(data.error || `${action} failed`);

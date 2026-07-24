@@ -26,14 +26,16 @@ async function resolveAuthoritativeClientId(
       const normalized = normalizeUserCode(userCode);
       const payload = await adapter.findByUserCode(normalized);
       if (payload) {
-        const bound =
-          typeof payload.clientId === "string"
-            ? payload.clientId
-            : typeof payload.params === "object" &&
-                payload.params !== null &&
-                typeof (payload.params as Record<string, unknown>).client_id === "string"
-              ? ((payload.params as Record<string, unknown>).client_id as string)
-              : undefined;
+        let bound: string | undefined;
+        if (typeof payload.clientId === "string") {
+          bound = payload.clientId;
+        } else if (
+          typeof payload.params === "object" &&
+          payload.params !== null &&
+          typeof (payload.params as Record<string, unknown>).client_id === "string"
+        ) {
+          bound = (payload.params as Record<string, unknown>).client_id as string;
+        }
         if (bound) {
           return bound;
         }

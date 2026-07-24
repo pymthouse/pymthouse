@@ -23,7 +23,7 @@ export function normalizeIssuerUrl(iss: string): string {
 }
 
 export function issuerMatchesExpected(iss: string | null, expectedIssuer: string): boolean {
-  if (!iss || !iss.trim()) return false;
+  if (!iss?.trim()) return false;
   try {
     return normalizeIssuerUrl(iss) === normalizeIssuerUrl(expectedIssuer);
   } catch {
@@ -119,7 +119,7 @@ export function buildInitiateLoginRedirectUrl(
   const dest = new URL(initiateLoginUri);
   dest.searchParams.set("iss", args.iss);
   dest.searchParams.set("target_link_uri", args.target_link_uri);
-  if (args.login_hint && args.login_hint.trim()) {
+  if (args.login_hint?.trim()) {
     dest.searchParams.set("login_hint", args.login_hint.trim());
   }
   return dest.toString();

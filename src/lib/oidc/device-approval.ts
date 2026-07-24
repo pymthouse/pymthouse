@@ -66,14 +66,16 @@ export async function approveDeviceCodeForAccount(
     };
   }
 
-  const boundClient =
-    typeof deviceCode.clientId === "string"
-      ? deviceCode.clientId
-      : typeof deviceCode.params === "object" &&
-          deviceCode.params !== null &&
-          typeof (deviceCode.params as Record<string, unknown>).client_id === "string"
-        ? ((deviceCode.params as Record<string, unknown>).client_id as string)
-        : null;
+  let boundClient: string | null = null;
+  if (typeof deviceCode.clientId === "string") {
+    boundClient = deviceCode.clientId;
+  } else if (
+    typeof deviceCode.params === "object" &&
+    deviceCode.params !== null &&
+    typeof (deviceCode.params as Record<string, unknown>).client_id === "string"
+  ) {
+    boundClient = (deviceCode.params as Record<string, unknown>).client_id as string;
+  }
 
   if (!boundClient || boundClient !== oidcClientId) {
     return {
@@ -89,19 +91,19 @@ export async function approveDeviceCodeForAccount(
       ? (deviceCode.params as Record<string, unknown>)
       : null;
   const resourceFromParams = params?.resource;
-  const resource =
-    typeof resourceFromParams === "string" && resourceFromParams.length > 0
-      ? resourceFromParams
-      : typeof deviceCode.resource === "string" && deviceCode.resource.length > 0
-        ? deviceCode.resource
-        : getIssuer();
+  let resource = getIssuer();
+  if (typeof resourceFromParams === "string" && resourceFromParams.length > 0) {
+    resource = resourceFromParams;
+  } else if (typeof deviceCode.resource === "string" && deviceCode.resource.length > 0) {
+    resource = deviceCode.resource;
+  }
 
-  const scope =
-    typeof deviceCode.scope === "string"
-      ? deviceCode.scope
-      : params && typeof params.scope === "string"
-        ? params.scope
-        : "";
+  let scope = "";
+  if (typeof deviceCode.scope === "string") {
+    scope = deviceCode.scope;
+  } else if (params && typeof params.scope === "string") {
+    scope = params.scope;
+  }
 
   if (typeof deviceCode.jti !== "string" || deviceCode.jti.length === 0) {
     return {

@@ -32,11 +32,13 @@ export function LoginForm() {
   const accessDenied =
     authError === "AccessDenied" ||
     (typeof authError === "string" && authError.includes("AccessDenied"));
-  const oauthCallbackMessage = accessDenied
-    ? "Sign-in was denied. You can try again or use a different sign-in method."
-    : authError
-      ? "Sign-in failed. Please try again."
-      : null;
+  let oauthCallbackMessage: string | null = null;
+  if (accessDenied) {
+    oauthCallbackMessage =
+      "Sign-in was denied. You can try again or use a different sign-in method.";
+  } else if (authError) {
+    oauthCallbackMessage = "Sign-in failed. Please try again.";
+  }
 
   // Preserve legacy ?admin=1 links by sending them to the dedicated admin login.
   useEffect(() => {
