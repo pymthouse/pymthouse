@@ -593,6 +593,56 @@ export async function loadM2mOidcClientSummary(
   };
 }
 
+function parseJsonStringArray(raw: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((u): u is string => typeof u === "string")
+      .map((u) => u.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function updateExistingConfidentialWebClient(input: {
+  existing: {
+    id: string;
+    clientId: string;
+    allowedScopes: string;
+    grantTypes: string;
+  };
+  redirectUris?: string[];
+}): Promise<{ id: string; clientId: string }> {
+  const { existing } = input;
+  const nextScopes = ensureConfidentialWebIdentityScopes(
+    existing.allowedScopes || DEFAULT_OIDC_SCOPES,
+  );
+  const scopeNeedsUpdate =
+    normalizeScopeListString(nextScopes) !==
+    normalizeScopeListString(existing.allowedScopes);
+
+  if (input.redirectUris !== undefined) {
+    const redirectUris = input.redirectUris.map((u) => u.trim()).filter(Boolean);
+    const grantTypes = syncConfidentialWebGrantTypes(
+      existing.grantTypes.split(",").filter(Boolean),
+      redirectUris,
+    );
+    await updateClientConfig(existing.clientId, {
+      redirectUris,
+      grantTypes,
+      ...(scopeNeedsUpdate ? { allowedScopes: nextScopes } : {}),
+    });
+  } else if (scopeNeedsUpdate) {
+    await updateClientConfig(existing.clientId, {
+      allowedScopes: nextScopes,
+    });
+  }
+
+  return { id: existing.id, clientId: existing.clientId };
+}
+
 /**
  * Ensures a confidential web RP OIDC row exists for portal SSO / server-side
  * authorization_code without turning the public client confidential.
@@ -619,31 +669,10 @@ export async function ensureConfidentialWebClient(params: {
       .where(eq(oidcClients.id, app.webOidcClientId))
       .limit(1);
     if (existing[0]) {
-      const nextScopes = ensureConfidentialWebIdentityScopes(
-        existing[0].allowedScopes || DEFAULT_OIDC_SCOPES,
-      );
-      const scopeNeedsUpdate =
-        normalizeScopeListString(nextScopes) !==
-        normalizeScopeListString(existing[0].allowedScopes);
-      if (params.redirectUris !== undefined) {
-        const redirectUris = params.redirectUris
-          .map((u) => u.trim())
-          .filter(Boolean);
-        const grantTypes = syncConfidentialWebGrantTypes(
-          existing[0].grantTypes.split(",").filter(Boolean),
-          redirectUris,
-        );
-        await updateClientConfig(existing[0].clientId, {
-          redirectUris,
-          grantTypes,
-          ...(scopeNeedsUpdate ? { allowedScopes: nextScopes } : {}),
-        });
-      } else if (scopeNeedsUpdate) {
-        await updateClientConfig(existing[0].clientId, {
-          allowedScopes: nextScopes,
-        });
-      }
-      return { id: existing[0].id, clientId: existing[0].clientId };
+      return updateExistingConfidentialWebClient({
+        existing: existing[0],
+        redirectUris: params.redirectUris,
+      });
     }
   }
 
@@ -657,22 +686,8 @@ export async function ensureConfidentialWebClient(params: {
     .where(eq(oidcClients.id, app.oidcClientId))
     .limit(1);
   const publicScopes = pubRows[0]?.allowedScopes ?? DEFAULT_OIDC_SCOPES;
-
-  let legacyPublicRedirects: string[] = [];
-  try {
-    legacyPublicRedirects = JSON.parse(pubRows[0]?.redirectUris ?? "[]") as string[];
-  } catch {
-    legacyPublicRedirects = [];
-  }
-  legacyPublicRedirects = legacyPublicRedirects.map((u) => u.trim()).filter(Boolean);
-
-  let legacyPostLogout: string[] = [];
-  try {
-    legacyPostLogout = JSON.parse(pubRows[0]?.postLogoutRedirectUris ?? "[]") as string[];
-  } catch {
-    legacyPostLogout = [];
-  }
-  legacyPostLogout = legacyPostLogout.map((u) => u.trim()).filter(Boolean);
+  const legacyPublicRedirects = parseJsonStringArray(pubRows[0]?.redirectUris);
+  const legacyPostLogout = parseJsonStringArray(pubRows[0]?.postLogoutRedirectUris);
 
   const redirectUris =
     params.redirectUris !== undefined

@@ -1473,6 +1473,94 @@ function AuthCodeMissingRedirectHint({
   );
 }
 
+function resolveAuthCodeScopes(allowedScopes: string): {
+  effectiveScopes: string;
+  selectedScopes: string[];
+} {
+  const validScopeValues = new Set(OIDC_SCOPES.map((s) => s.value));
+  const effectiveScopes = allowedScopes
+    .split(/[,\s]+/)
+    .filter((s) => s && validScopeValues.has(s))
+    .join(" ");
+  const selectedScopes = effectiveScopes
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .map((scope) => getScopeDefinition(scope)?.label || scope);
+  return { effectiveScopes, selectedScopes };
+}
+
+function AuthCodeLiveTestPanel({
+  title,
+  description,
+  testUrl,
+  redirectUriOptions,
+  effectiveSelectedRedirectUri,
+  onSelectRedirectUri,
+  selectedScopes,
+  showTopBorder,
+  clientId,
+}: Readonly<{
+  title: string;
+  description: string;
+  testUrl: string;
+  redirectUriOptions: string[];
+  effectiveSelectedRedirectUri: string;
+  onSelectRedirectUri: (uri: string) => void;
+  selectedScopes: string[];
+  showTopBorder: boolean;
+  clientId: string | null;
+}>): ReactNode {
+  const redirectSelectId = `testing-redirect-uri-${clientId ?? "client"}`;
+  return (
+    <div className={`space-y-3 ${showTopBorder ? "border-t border-zinc-800 pt-5" : ""}`}>
+      <div>
+        <h4 className="text-sm font-semibold text-zinc-200">{title}</h4>
+        <p className="text-xs text-zinc-500 mt-1">{description}</p>
+      </div>
+      {redirectUriOptions.length > 1 ? (
+        <div>
+          <label
+            htmlFor={redirectSelectId}
+            className="block text-xs font-medium text-zinc-400 mb-1"
+          >
+            Redirect URI
+          </label>
+          <select
+            id={redirectSelectId}
+            value={effectiveSelectedRedirectUri}
+            onChange={(e) => onSelectRedirectUri(e.target.value)}
+            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+          >
+            {redirectUriOptions.map((uri) => (
+              <option key={uri} value={uri}>
+                {uri}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => {
+          const newWin = globalThis.window?.open(testUrl, "_blank", "noopener,noreferrer");
+          if (newWin) newWin.opener = null;
+        }}
+        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
+      >
+        Open Test Flow
+      </button>
+      <p className="text-xs text-zinc-500">
+        Requested scopes:{" "}
+        <span className="text-zinc-400">{selectedScopes.join(", ")}</span>
+      </p>
+      <p className="text-xs text-zinc-500">
+        Using redirect URI:{" "}
+        <code className="text-zinc-400">{effectiveSelectedRedirectUri}</code>
+      </p>
+    </div>
+  );
+}
+
 export function AuthCodeFlowTestSection({
   appId,
   clientId,
@@ -1510,19 +1598,7 @@ export function AuthCodeFlowTestSection({
       ? selectedRedirectUri
       : getDefaultRedirectUri(redirectUris);
 
-  const redirectUriOptions = useMemo(() => redirectUris, [redirectUris]);
-
-  const validScopeValues = new Set(OIDC_SCOPES.map((s) => s.value));
-  const effectiveScopes = allowedScopes
-    .split(/[,\s]+/)
-    .filter((s) => s && validScopeValues.has(s))
-    .join(" ");
-
-  const selectedScopes = effectiveScopes
-    .split(/[,\s]+/)
-    .filter(Boolean)
-    .map((scope) => getScopeDefinition(scope)?.label || scope);
-
+  const { effectiveScopes, selectedScopes } = resolveAuthCodeScopes(allowedScopes);
   const browserOrigin = getBrowserOrigin();
   const testUrl =
     clientId && effectiveSelectedRedirectUri && browserOrigin
@@ -1531,7 +1607,6 @@ export function AuthCodeFlowTestSection({
 
   if (!hasAuthCodeFlow) return null;
 
-  const redirectSelectId = `testing-redirect-uri-${clientId ?? "client"}`;
   const showEmptyRedirectHint = showRedirectUriEditor && redirectUris.length === 0;
   const showMissingRedirectMessage =
     !testUrl && redirectUris.length === 0 && !showRedirectUriEditor;
@@ -1564,52 +1639,17 @@ export function AuthCodeFlowTestSection({
       ) : null}
 
       {testUrl ? (
-        <div className={`space-y-3 ${showRedirectUriEditor ? "border-t border-zinc-800 pt-5" : ""}`}>
-          <div>
-            <h4 className="text-sm font-semibold text-zinc-200">{title}</h4>
-            <p className="text-xs text-zinc-500 mt-1">{description}</p>
-          </div>
-          {redirectUriOptions.length > 1 ? (
-            <div>
-              <label
-                htmlFor={redirectSelectId}
-                className="block text-xs font-medium text-zinc-400 mb-1"
-              >
-                Redirect URI
-              </label>
-              <select
-                id={redirectSelectId}
-                value={effectiveSelectedRedirectUri}
-                onChange={(e) => setSelectedRedirectUri(e.target.value)}
-                className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-              >
-                {redirectUriOptions.map((uri) => (
-                  <option key={uri} value={uri}>
-                    {uri}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              const newWin = globalThis.window?.open(testUrl, "_blank", "noopener,noreferrer");
-              if (newWin) newWin.opener = null;
-            }}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-500 transition-colors"
-          >
-            Open Test Flow
-          </button>
-          <p className="text-xs text-zinc-500">
-            Requested scopes:{" "}
-            <span className="text-zinc-400">{selectedScopes.join(", ")}</span>
-          </p>
-          <p className="text-xs text-zinc-500">
-            Using redirect URI:{" "}
-            <code className="text-zinc-400">{effectiveSelectedRedirectUri}</code>
-          </p>
-        </div>
+        <AuthCodeLiveTestPanel
+          title={title}
+          description={description}
+          testUrl={testUrl}
+          redirectUriOptions={redirectUris}
+          effectiveSelectedRedirectUri={effectiveSelectedRedirectUri}
+          onSelectRedirectUri={setSelectedRedirectUri}
+          selectedScopes={selectedScopes}
+          showTopBorder={showRedirectUriEditor}
+          clientId={clientId}
+        />
       ) : null}
 
       {showMissingRedirectMessage ? (

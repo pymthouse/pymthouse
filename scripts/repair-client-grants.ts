@@ -16,9 +16,13 @@ import "./load-env-first";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "../src/db/schema";
 
 const AUTHORIZATION_CODE = "authorization_code";
+
+type Db = PostgresJsDatabase<typeof schema>;
+type ClientRow = typeof schema.oidcClients.$inferSelect;
 
 function parseJsonArray(raw: string | null | undefined): string[] {
   try {
@@ -29,6 +33,105 @@ function parseJsonArray(raw: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+function parseGrants(grantTypes: string): string[] {
+  return grantTypes
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean);
+}
+
+async function migratePublicRedirectsToWeb(
+  db: Db,
+  pub: ClientRow,
+  web: ClientRow,
+): Promise<boolean> {
+  const pubRedirects = parseJsonArray(pub.redirectUris);
+  if (pubRedirects.length === 0) return false;
+  if (parseJsonArray(web.redirectUris).length > 0) return false;
+
+  const pubPostLogout = parseJsonArray(pub.postLogoutRedirectUris);
+  const nextWebGrants = parseGrants(web.grantTypes).filter((g) => g !== AUTHORIZATION_CODE);
+  nextWebGrants.unshift(AUTHORIZATION_CODE);
+
+  const webPostLogoutEmpty = parseJsonArray(web.postLogoutRedirectUris).length === 0;
+  await db
+    .update(schema.oidcClients)
+    .set({
+      redirectUris: JSON.stringify(pubRedirects),
+      grantTypes: nextWebGrants.join(","),
+      ...(pubPostLogout.length > 0 && webPostLogoutEmpty
+        ? { postLogoutRedirectUris: JSON.stringify(pubPostLogout) }
+        : {}),
+    })
+    .where(eq(schema.oidcClients.id, web.id));
+
+  console.log(
+    `[migrate] ${pub.clientId} → ${web.clientId}  redirects=${pubRedirects.length}`,
+  );
+  return true;
+}
+
+async function stripPublicAuthCode(
+  db: Db,
+  pub: ClientRow,
+  web: ClientRow | undefined,
+): Promise<"fixed" | "skipped"> {
+  const pubRedirects = parseJsonArray(pub.redirectUris);
+  const pubPostLogout = parseJsonArray(pub.postLogoutRedirectUris);
+  const pubGrants = parseGrants(pub.grantTypes);
+  const nextPubGrants = pubGrants.filter((g) => g !== AUTHORIZATION_CODE);
+  const needsPubStrip =
+    pubRedirects.length > 0 ||
+    pubGrants.includes(AUTHORIZATION_CODE) ||
+    (pubPostLogout.length > 0 && Boolean(web));
+
+  if (!needsPubStrip) return "skipped";
+
+  await db
+    .update(schema.oidcClients)
+    .set({
+      redirectUris: JSON.stringify([]),
+      grantTypes: nextPubGrants.join(","),
+      ...(web && pubPostLogout.length > 0
+        ? { postLogoutRedirectUris: JSON.stringify([]) }
+        : {}),
+    })
+    .where(eq(schema.oidcClients.id, pub.id));
+
+  console.log(
+    `[strip]  ${pub.clientId}  cleared public redirects / authorization_code`,
+  );
+  return "fixed";
+}
+
+async function repairWebClientGrants(
+  db: Db,
+  row: ClientRow,
+): Promise<"fixed" | "skipped"> {
+  if (!row.clientId.startsWith("web_")) return "skipped";
+
+  const redirectUris = parseJsonArray(row.redirectUris);
+  const grants = parseGrants(row.grantTypes);
+  const hasRedirects = redirectUris.length > 0;
+  const hasAuthCode = grants.includes(AUTHORIZATION_CODE);
+  if (hasRedirects === hasAuthCode) return "skipped";
+
+  const nextGrants = hasRedirects
+    ? [AUTHORIZATION_CODE, ...grants.filter((g) => g !== AUTHORIZATION_CODE)]
+    : grants.filter((g) => g !== AUTHORIZATION_CODE);
+
+  console.log(
+    `[web]    ${row.clientId}  redirects=${redirectUris.length}  grants: ${grants.join(",")} → ${nextGrants.join(",")}`,
+  );
+
+  await db
+    .update(schema.oidcClients)
+    .set({ grantTypes: nextGrants.join(",") })
+    .where(eq(schema.oidcClients.clientId, row.clientId));
+
+  return "fixed";
 }
 
 async function main() {
@@ -51,99 +154,21 @@ async function main() {
   for (const app of apps) {
     const pub = app.oidcClientId ? clientsByPk.get(app.oidcClientId) : undefined;
     const web = app.webOidcClientId ? clientsByPk.get(app.webOidcClientId) : undefined;
+    if (!pub?.clientId.startsWith("app_")) continue;
 
-    if (pub?.clientId.startsWith("app_")) {
-      const pubRedirects = parseJsonArray(pub.redirectUris);
-      const pubPostLogout = parseJsonArray(pub.postLogoutRedirectUris);
-      const pubGrants = pub.grantTypes
-        .split(",")
-        .map((g) => g.trim())
-        .filter(Boolean);
-
-      if (web && pubRedirects.length > 0) {
-        const webRedirects = parseJsonArray(web.redirectUris);
-        if (webRedirects.length === 0) {
-          const nextWebGrants = web.grantTypes
-            .split(",")
-            .map((g) => g.trim())
-            .filter((g) => g && g !== AUTHORIZATION_CODE);
-          nextWebGrants.unshift(AUTHORIZATION_CODE);
-          await db
-            .update(schema.oidcClients)
-            .set({
-              redirectUris: JSON.stringify(pubRedirects),
-              grantTypes: nextWebGrants.join(","),
-              ...(pubPostLogout.length > 0 && !parseJsonArray(web.postLogoutRedirectUris).length
-                ? { postLogoutRedirectUris: JSON.stringify(pubPostLogout) }
-                : {}),
-            })
-            .where(eq(schema.oidcClients.id, web.id));
-          console.log(
-            `[migrate] ${pub.clientId} → ${web.clientId}  redirects=${pubRedirects.length}`,
-          );
-          fixed++;
-        }
-      }
-
-      const nextPubGrants = pubGrants.filter((g) => g !== AUTHORIZATION_CODE);
-      const needsPubStrip =
-        pubRedirects.length > 0 ||
-        pubGrants.includes(AUTHORIZATION_CODE) ||
-        (pubPostLogout.length > 0 && Boolean(web));
-
-      if (needsPubStrip) {
-        await db
-          .update(schema.oidcClients)
-          .set({
-            redirectUris: JSON.stringify([]),
-            grantTypes: nextPubGrants.join(","),
-            ...(web && pubPostLogout.length > 0
-              ? { postLogoutRedirectUris: JSON.stringify([]) }
-              : {}),
-          })
-          .where(eq(schema.oidcClients.id, pub.id));
-        console.log(
-          `[strip]  ${pub.clientId}  cleared public redirects / authorization_code`,
-        );
-        fixed++;
-      } else {
-        skipped++;
-      }
+    if (web && (await migratePublicRedirectsToWeb(db, pub, web))) {
+      fixed++;
     }
+
+    const stripResult = await stripPublicAuthCode(db, pub, web);
+    if (stripResult === "fixed") fixed++;
+    else skipped++;
   }
 
   for (const row of clients) {
-    if (!row.clientId.startsWith("web_")) continue;
-
-    const redirectUris = parseJsonArray(row.redirectUris);
-    const grants = row.grantTypes
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean);
-    const hasRedirects = redirectUris.length > 0;
-    const hasAuthCode = grants.includes(AUTHORIZATION_CODE);
-    const needsAdd = hasRedirects && !hasAuthCode;
-    const needsRemove = !hasRedirects && hasAuthCode;
-
-    if (!needsAdd && !needsRemove) {
-      skipped++;
-      continue;
-    }
-
-    const nextGrants = needsAdd
-      ? [AUTHORIZATION_CODE, ...grants.filter((g) => g !== AUTHORIZATION_CODE)]
-      : grants.filter((g) => g !== AUTHORIZATION_CODE);
-
-    console.log(
-      `[web]    ${row.clientId}  redirects=${redirectUris.length}  grants: ${grants.join(",")} → ${nextGrants.join(",")}`,
-    );
-
-    await db
-      .update(schema.oidcClients)
-      .set({ grantTypes: nextGrants.join(",") })
-      .where(eq(schema.oidcClients.clientId, row.clientId));
-
-    fixed++;
+    const result = await repairWebClientGrants(db, row);
+    if (result === "fixed") fixed++;
+    else if (row.clientId.startsWith("web_")) skipped++;
   }
 
   console.log(
