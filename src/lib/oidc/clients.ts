@@ -13,6 +13,7 @@ import {
 import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
 import {
   DEFAULT_OIDC_SCOPES,
+  ensureConfidentialWebIdentityScopes,
   ensureOpenIdScope,
 } from "@/lib/oidc/scopes";
 
@@ -597,6 +598,12 @@ export async function ensureConfidentialWebClient(params: {
       .where(eq(oidcClients.id, app.webOidcClientId))
       .limit(1);
     if (existing[0]) {
+      const nextScopes = ensureConfidentialWebIdentityScopes(
+        existing[0].allowedScopes || DEFAULT_OIDC_SCOPES,
+      );
+      const scopeNeedsUpdate =
+        normalizeScopeListString(nextScopes) !==
+        normalizeScopeListString(existing[0].allowedScopes);
       if (params.redirectUris !== undefined) {
         const redirectUris = params.redirectUris
           .map((u) => u.trim())
@@ -608,6 +615,11 @@ export async function ensureConfidentialWebClient(params: {
         await updateClientConfig(existing[0].clientId, {
           redirectUris,
           grantTypes,
+          ...(scopeNeedsUpdate ? { allowedScopes: nextScopes } : {}),
+        });
+      } else if (scopeNeedsUpdate) {
+        await updateClientConfig(existing[0].clientId, {
+          allowedScopes: nextScopes,
         });
       }
       return { id: existing[0].id, clientId: existing[0].clientId };
@@ -640,7 +652,7 @@ export async function ensureConfidentialWebClient(params: {
     clientSecretHash: null,
     displayName: `${display} - confidential web`,
     redirectUris: JSON.stringify(redirectUris),
-    allowedScopes: normalizePublicAllowedScopes(publicScopes, clientId),
+    allowedScopes: ensureConfidentialWebIdentityScopes(publicScopes),
     grantTypes: grantTypes.join(","),
     tokenEndpointAuthMethod: "client_secret_post",
     deviceThirdPartyInitiateLogin: 0,

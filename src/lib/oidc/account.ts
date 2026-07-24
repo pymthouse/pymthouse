@@ -25,6 +25,7 @@ export const findAccount: FindAccount = async (_ctx, sub) => {
 
         if (scopes.includes("email")) {
           claims.email = user.email;
+          claims.email_verified = true;
         }
 
         if (scopes.includes("profile")) {
@@ -55,6 +56,7 @@ export const findAccount: FindAccount = async (_ctx, sub) => {
 
         if (scopes.includes("email")) {
           claims.email = endUser.email;
+          if (endUser.email) claims.email_verified = true;
         }
 
         if (scopes.includes("profile")) {
