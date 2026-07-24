@@ -426,9 +426,9 @@ function getM2mIntroText(showFlowPicker: boolean, showRemoteSigning: boolean): s
 
 function getSigningFormatHint(format: SigningTokenFormat): string {
   if (format === "bearer") {
-    return "Get API Key for a long-lived Bearer token";
+    return "Long-lived Bearer API key.";
   }
-  return "Mint an owner API key with your session, then exchange it for a short-lived signer JWT. End users can instead use device code login.";
+  return "Short-lived signer JWT via mint + exchange.";
 }
 
 function resolveOwnerSigningFormatHint(
