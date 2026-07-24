@@ -109,56 +109,7 @@ export async function resolveActiveAppApiKey(
   if (!token) {
     return null;
   }
-
-  const keyHash = hashToken(token);
-  const keyRows = await db
-    .select({
-      id: apiKeys.id,
-      clientId: apiKeys.clientId,
-      appUserId: apiKeys.appUserId,
-      label: apiKeys.label,
-      status: apiKeys.status,
-    })
-    .from(apiKeys)
-    .where(eq(apiKeys.keyHash, keyHash))
-    .limit(1);
-  const row = keyRows[0];
-  if (row?.status !== "active" || !row?.appUserId) {
-    return null;
-  }
-
-  const bindingRows = await db
-    .select({
-      appUserId: appUsers.id,
-      externalUserId: appUsers.externalUserId,
-      developerAppId: developerApps.id,
-      publicClientId: oidcClients.clientId,
-    })
-    .from(appUsers)
-    .innerJoin(developerApps, eq(appUsers.clientId, developerApps.id))
-    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(
-      and(
-        eq(appUsers.id, row.appUserId),
-        eq(developerApps.id, row.clientId),
-        eq(oidcClients.clientId, publicClientId),
-        eq(appUsers.status, "active"),
-      ),
-    )
-    .limit(1);
-  const binding = bindingRows[0];
-  if (!binding) {
-    return null;
-  }
-
-  return {
-    apiKeyId: row.id,
-    developerAppId: binding.developerAppId,
-    publicClientId: binding.publicClientId,
-    appUserId: binding.appUserId,
-    externalUserId: binding.externalUserId,
-    label: row.label,
-  };
+  return resolveActiveAppApiKeyFromStoredToken(token, publicClientId);
 }
 
 /**
@@ -182,8 +133,14 @@ export async function resolveActiveAppApiKeyByBearer(
   if (!token) {
     return null;
   }
+  return resolveActiveAppApiKeyFromStoredToken(token, null);
+}
 
-  const keyHash = hashToken(token);
+async function resolveActiveAppApiKeyFromStoredToken(
+  storedToken: string,
+  expectedPublicClientId: string | null,
+): Promise<ResolvedAppApiKey | null> {
+  const keyHash = hashToken(storedToken);
   const keyRows = await db
     .select({
       id: apiKeys.id,
@@ -200,6 +157,15 @@ export async function resolveActiveAppApiKeyByBearer(
     return null;
   }
 
+  const bindingFilter = [
+    eq(appUsers.id, row.appUserId),
+    eq(developerApps.id, row.clientId),
+    eq(appUsers.status, "active"),
+  ];
+  if (expectedPublicClientId) {
+    bindingFilter.push(eq(oidcClients.clientId, expectedPublicClientId));
+  }
+
   const bindingRows = await db
     .select({
       appUserId: appUsers.id,
@@ -210,13 +176,7 @@ export async function resolveActiveAppApiKeyByBearer(
     .from(appUsers)
     .innerJoin(developerApps, eq(appUsers.clientId, developerApps.id))
     .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(
-      and(
-        eq(appUsers.id, row.appUserId),
-        eq(developerApps.id, row.clientId),
-        eq(appUsers.status, "active"),
-      ),
-    )
+    .where(and(...bindingFilter))
     .limit(1);
   const binding = bindingRows[0];
   if (!binding) {

@@ -103,7 +103,7 @@ export async function discoveryFetch(
     ...init,
     headers: {
       Accept: "application/json",
-      ...(init?.headers ?? {}),
+      ...init?.headers,
     },
     cache: "no-store",
   });

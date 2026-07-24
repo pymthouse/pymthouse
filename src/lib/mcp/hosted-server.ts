@@ -6,6 +6,7 @@ import { z } from "zod";
 import { buildAppManifestForApp } from "@/lib/app-manifest";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import type { McpPrincipal } from "@/lib/mcp/auth";
+import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
 import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
 import { createSignerSessionForPrincipal, discoveryFetch } from "@/lib/mcp/session";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
@@ -19,37 +20,6 @@ function textResult(data: unknown) {
       },
     ],
   };
-}
-
-function capabilityAllowKeys(
-  capabilities: { pipeline: string; modelId: string }[],
-): Set<string> {
-  const keys = new Set<string>();
-  for (const { pipeline, modelId } of capabilities) {
-    keys.add(`${pipeline}|${modelId}`);
-    keys.add(`${pipeline}:${modelId}`);
-    if (modelId === "*") {
-      keys.add(`${pipeline}|*`);
-      keys.add(`${pipeline}:*`);
-    }
-  }
-  return keys;
-}
-
-function isCapabilityAllowed(capability: string, allow: Set<string>): boolean {
-  const trimmed = capability.trim();
-  if (!trimmed) return false;
-  if (allow.has(trimmed)) return true;
-  const normalized = trimmed.replace(":", "|");
-  if (allow.has(normalized)) return true;
-  const pipeIdx = normalized.indexOf("|");
-  if (pipeIdx > 0) {
-    const pipeline = normalized.slice(0, pipeIdx);
-    if (allow.has(`${pipeline}|*`) || allow.has(`${pipeline}:*`)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /**
@@ -156,8 +126,10 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     },
     async ({ capabilities, service_types, top_n }) => {
       const manifest = await buildAppManifestForApp(principal.developerAppId);
-      const allow = capabilityAllowKeys(manifest.capabilities);
-      const filtered = capabilities.filter((c) => isCapabilityAllowed(c, allow));
+      const filtered = filterAllowedCapabilities(
+        capabilities,
+        manifest.capabilities,
+      );
       if (filtered.length === 0) {
         return textResult({
           error: "none_of_requested_capabilities_allowed_for_app",
