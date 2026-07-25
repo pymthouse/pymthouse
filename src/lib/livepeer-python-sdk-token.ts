@@ -11,8 +11,7 @@ export type LivepeerPythonSdkTokenPayload = {
 
 /**
  * Discovery URL for livepeer-python-sdk `--token` payloads.
- * Always the raw endpoint (`…/v1/discovery/raw`), normalized from
- * DISCOVERY_URL / DISCOVERY_SERVICE_URL / ORCH_WEBHOOK_URL (any shape).
+ * Full raw endpoint as configured (`…/v1/discovery/raw`), unchanged.
  */
 export function getLivepeerPythonSdkDiscoveryUrl(): string | undefined {
   return getDiscoveryRawUrl();

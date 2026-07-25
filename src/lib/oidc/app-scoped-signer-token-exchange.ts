@@ -74,7 +74,6 @@ export function getSignerTokenAudienceEnv(): string | null {
 }
 
 export function getSignerDiscoveryUrl(): string | undefined {
-  // Shared with SDK tokens: always `…/v1/discovery/raw` (see discovery-service-url).
   return getDiscoveryRawUrl();
 }
 
