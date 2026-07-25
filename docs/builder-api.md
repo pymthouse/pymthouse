@@ -589,7 +589,7 @@ The previous process-local in-memory enforcement cache (`manifest_cache_unavaila
 Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
 1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Billing requires both fields for **`usage_billing_events`**.
-2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** still proxies NaaP for UIs; it uses **`fetchDashboardPricing()`** without an in-process pricing cache.
+2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** remains for UIs but discovery-service raw has no pricing rows (empty list).
 3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
 4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing still succeeds regardless.
 
@@ -611,19 +611,12 @@ Billable **`usage_billing_events`** rows are created when the signing request re
 
 PymtHouse uses these fields for attribution and billing-event grouping together with the negotiated ticket price from the request. The go-livepeer remote signer is not required to sign pipeline/model metadata for v1.
 
-### Catalog and pricing routes
+### Network catalog and pricing routes
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/v1/pipeline-catalog` | Discovery-service capability catalog adapted to `{ id, name, models[] }` (cached 5 min). Used by Plans UI dropdowns. Source: `DISCOVERY_SERVICE_URL` → `GET /v1/discovery/capabilities`. |
-| `GET /api/v1/pipeline-pricing?pipeline=...&model=...` | NaaP per-orchestrator pricing rows (proxied each request; no in-process cache). Used for UI estimates. |
-
-**Catalog adapter (discovery-service contract):** discovery returns `{ capabilities, entries[{ serviceType, capability, offeringIds? }] }`, not the retired NaaP `/dashboard/pipeline-catalog` array. PymtHouse maps:
-
-- `live-video-to-video` / `live-runner` / `batch` → one catalog row per `serviceType`, models = capability names (preserves historical `live-video-to-video` + model billing keys)
-- `modules` → one catalog row per capability, models = `offeringIds` (or the capability itself when offerings are absent)
-- Batch pipeline prefixes (`text-to-image/...`) are stripped upstream; the catalog pipeline id is `batch`
-- `serviceType=legacy` is invalid; use `live-video-to-video` (discovery defaults to live-video-to-video + live-runner when omitted)
+| `GET /api/v1/pipeline-catalog` | Network pipeline catalog from discovery-service raw (cached 5 min). Used by Plans UI dropdowns. |
+| `GET /api/v1/pipeline-pricing?pipeline=...&model=...` | Pricing rows for UI estimates (empty until a discovery-backed pricing source exists). |
 
 ### Usage API — pipeline/model grouping
 
@@ -803,7 +796,7 @@ The provider dashboard **Plans** page edits these exclusions on the Network Pric
 
 #### Resolution (server-side)
 
-1. **Start from full catalog** — Every `(pipeline, modelId)` currently in NaaP.
+1. **Start from full catalog** — Every `(pipeline, modelId)` currently in discovery-service raw.
 2. **Subtract exclusions** — Remove any member matching an exclusion row `(P, M)` or pipeline wildcard `(P, "*")`.
 3. **Prune** — Drop anything not present in the current catalog.
 
@@ -836,7 +829,7 @@ The response body matches **`GET`** (re-resolved after write).
 | `GET` | `/manifest` | **M2M Basic** or provider session | Resolved **`capabilities`**, **`excludedCapabilities`**, **`manifestVersion`**. |
 | `PUT` | `/manifest` | Provider session with edit rights | Replace exclusions on the Network Price plan; response same as `GET`. |
 
-**Implementation:** [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts).
 
 ### Discovery profiles (legacy, provider session + M2M read)
 
@@ -871,7 +864,7 @@ Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for 
 - `sortBy` — `"latency"` \| `"price"` \| `"swapRate"` \| `"avail"`  
 - `filters` — `{ gpuRamGbMin?, gpuRamGbMax?, priceMax?, maxAvgLatencyMs?, maxSwapRatio? }` (`maxSwapRatio` 0…1; `gpuRamGbMin` ≤ `gpuRamGbMax` when both set)
 
-**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts).
+**Implementation:** [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts), [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts), [`src/app/api/v1/apps/[id]/manifest/route.ts`](../src/app/api/v1/apps/[id]/manifest/route.ts), [`src/lib/discovery-plans.ts`](../src/lib/discovery-plans.ts), [`src/lib/discovery-profile-resolve.ts`](../src/lib/discovery-profile-resolve.ts), [`src/lib/discovery-allowlist.ts`](../src/lib/discovery-allowlist.ts), [`src/lib/network-default-plan.ts`](../src/lib/network-default-plan.ts), [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts).
 
 ---
 
@@ -961,7 +954,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
-- [`src/lib/naap-catalog.ts`](../src/lib/naap-catalog.ts) (discovery-service catalog adapter with TTL cache; NaaP pricing fetch is uncached)
+- [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts) (discovery-service raw → pipeline catalog; TTL cache)
 - [`src/app/api/v1/prices/eth-usd/route.ts`](../src/app/api/v1/prices/eth-usd/route.ts)
 - [`src/app/api/v1/pipeline-catalog/route.ts`](../src/app/api/v1/pipeline-catalog/route.ts)
 - [`src/app/api/v1/pipeline-pricing/route.ts`](../src/app/api/v1/pipeline-pricing/route.ts)

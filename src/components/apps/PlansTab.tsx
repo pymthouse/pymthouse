@@ -1985,7 +1985,7 @@ export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
           setCatalogError(`Pipeline catalog unavailable (HTTP ${status})`);
         }
       })
-      .catch(() => setCatalogError("Discovery catalog unavailable"));
+      .catch(() => setCatalogError("Network catalog unavailable"));
   }, []);
 
   const deletePlan = async (planId: string) => {

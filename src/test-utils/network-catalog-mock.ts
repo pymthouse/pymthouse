@@ -1,7 +1,7 @@
-import type { PipelineCatalogEntry } from "@/lib/naap-catalog";
-import { setFetchPipelineCatalogForTests } from "@/lib/naap-catalog";
+import type { PipelineCatalogEntry } from "@/lib/network-catalog";
+import { setFetchPipelineCatalogForTests } from "@/lib/network-catalog";
 
-export function installNaapCatalogMock(options: {
+export function installNetworkCatalogMock(options: {
   catalog: PipelineCatalogEntry[];
   onFetch?: () => void;
   shouldThrow?: () => boolean;
@@ -15,6 +15,6 @@ export function installNaapCatalogMock(options: {
   });
 }
 
-export function uninstallNaapCatalogMock(): void {
+export function uninstallNetworkCatalogMock(): void {
   setFetchPipelineCatalogForTests(null);
 }

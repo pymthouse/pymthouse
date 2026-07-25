@@ -11,9 +11,9 @@ import {
   type SeededDeveloperApp,
 } from "@/test-utils/fixtures";
 import {
-  installNaapCatalogMock,
-  uninstallNaapCatalogMock,
-} from "@/test-utils/naap-catalog-mock";
+  installNetworkCatalogMock,
+  uninstallNetworkCatalogMock,
+} from "@/test-utils/network-catalog-mock";
 import {
   installProviderAppSessionAuth,
   uninstallProviderAppSessionAuth,
@@ -45,9 +45,9 @@ test("plans API: network default plan rules", async (t) => {
     { id: "pipe-a", name: "A", models: ["m1", "m2"] },
     { id: "pipe-b", name: "B", models: ["only"] },
   ];
-  installNaapCatalogMock({ catalog: MOCK_CATALOG });
+  installNetworkCatalogMock({ catalog: MOCK_CATALOG });
   t.after(() => {
-    uninstallNaapCatalogMock();
+    uninstallNetworkCatalogMock();
   });
 
   await t.test("GET lists exactly one network default plan", async (t) => {
@@ -247,13 +247,13 @@ test("plans API: network default plan rules", async (t) => {
 });
 
 test("plans POST accepts subscription with retail overageRateUsd", async (t) => {
-  installNaapCatalogMock({
+  installNetworkCatalogMock({
     catalog: [
       { id: "text-to-image", name: "Text to Image", models: ["stabilityai/sdxl"] },
     ],
   });
   t.after(() => {
-    uninstallNaapCatalogMock();
+    uninstallNetworkCatalogMock();
   });
 
   const app = await seedDeveloperAppWithClient({ status: "approved" });
