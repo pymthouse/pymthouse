@@ -380,11 +380,17 @@ export async function updateAppBillingProfileSettings(input: {
   clientId: string;
   progressiveBilling?: boolean;
   invoiceThresholdUsdMicros?: string | null;
+  applicationFeeBps?: number;
 }): Promise<{
   progressiveBilling: boolean;
   invoiceThresholdUsdMicros: string | null;
+  applicationFeeBps: number;
 }> {
-  const existing = await getAppBillingConfig(input.clientId);
+  let existing = await getAppBillingConfig(input.clientId);
+  if (!existing) {
+    await upsertAppBillingConfig(input.clientId, {});
+    existing = await getAppBillingConfig(input.clientId);
+  }
   if (!existing) {
     throw new Error("Billing is not configured for this app");
   }
@@ -397,6 +403,10 @@ export async function updateAppBillingProfileSettings(input: {
     input.invoiceThresholdUsdMicros === undefined
       ? existing.invoiceThresholdUsdMicros
       : input.invoiceThresholdUsdMicros;
+  const applicationFeeBps =
+    input.applicationFeeBps === undefined
+      ? (existing.applicationFeeBps ?? 0)
+      : input.applicationFeeBps;
 
   const progressiveChanged =
     input.progressiveBilling !== undefined &&
@@ -416,11 +426,13 @@ export async function updateAppBillingProfileSettings(input: {
   await upsertAppBillingConfig(input.clientId, {
     progressiveBilling,
     invoiceThresholdUsdMicros,
+    applicationFeeBps,
   });
 
   return {
     progressiveBilling,
     invoiceThresholdUsdMicros: invoiceThresholdUsdMicros ?? null,
+    applicationFeeBps,
   };
 }
 

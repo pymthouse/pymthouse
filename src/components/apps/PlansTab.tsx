@@ -48,6 +48,8 @@ interface PlanRow {
   priceAmount: string;
   priceCurrency: string;
   status: string;
+  phaseOutAt?: string | null;
+  replacementPlanId?: string | null;
   overageRateUsd: string | null;
   includedUsdMicros: string | null;
   billingCycle: string;
@@ -103,6 +105,8 @@ interface PlanDraft {
   defaultMarkupPct: string;
   capabilityKeys: string[];
   capabilityMarkupByKey: Record<string, string>;
+  status: string;
+  replacementPlanId: string;
 }
 
 const PLAN_TYPES = [
@@ -315,6 +319,8 @@ function planToDraft(plan: PlanRow): PlanDraft {
     defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
     capabilityKeys,
     capabilityMarkupByKey: capabilitiesToMarkupByKey(caps),
+    status: plan.status || "active",
+    replacementPlanId: plan.replacementPlanId ?? "",
   };
 }
 
@@ -329,6 +335,8 @@ function emptyDraft(): PlanDraft {
     defaultMarkupPct: "",
     capabilityKeys: [],
     capabilityMarkupByKey: {},
+    status: "active",
+    replacementPlanId: "",
   };
 }
 
@@ -618,6 +626,25 @@ function TypeBadge({ type }: Readonly<{ type: string }>) {
     <span
       className={`text-[10px] font-medium uppercase tracking-wide border rounded px-1.5 py-0.5 shrink-0 ${
         styles[type] ?? "text-zinc-400 border-zinc-600"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: Readonly<{ status: string }>) {
+  const styles: Record<string, string> = {
+    active: "text-emerald-400/90 border-emerald-500/30 bg-emerald-500/10",
+    phase_out: "text-amber-400/90 border-amber-500/30 bg-amber-500/10",
+    draft: "text-zinc-400 border-zinc-600 bg-zinc-800/50",
+  };
+  const label =
+    status === "phase_out" ? "Phase-out" : status === "draft" ? "Draft" : "Active";
+  return (
+    <span
+      className={`text-[10px] font-medium uppercase tracking-wide border rounded px-1.5 py-0.5 shrink-0 ${
+        styles[status] ?? "text-zinc-400 border-zinc-600"
       }`}
     >
       {label}
@@ -934,7 +961,11 @@ function buildPlanPayload(
     overageRateUsd,
   };
 
-  if (planId) payload.id = planId;
+  if (planId) {
+    payload.id = planId;
+    payload.status = draft.status;
+    payload.replacementPlanId = draft.replacementPlanId.trim() || null;
+  }
 
   return payload;
 }
@@ -1446,6 +1477,7 @@ function CustomPlanCard({
   catalog,
   catalogError,
   blockedConcreteKeys,
+  replacementOptions,
   canEdit,
   isEditing,
   onEdit,
@@ -1458,6 +1490,7 @@ function CustomPlanCard({
   catalog: PipelineCatalogEntry[];
   catalogError: string | null;
   blockedConcreteKeys: Set<string>;
+  replacementOptions: Array<{ id: string; name: string }>;
   canEdit: boolean;
   isEditing: boolean;
   onEdit: () => void;
@@ -1542,11 +1575,26 @@ function CustomPlanCard({
           <h3 className="text-base font-semibold text-zinc-100 flex flex-wrap items-center gap-2">
             {plan.name}
             <TypeBadge type={plan.type} />
+            <StatusBadge status={plan.status} />
           </h3>
           {plan.type === "subscription" && (
             <p className="text-xs text-zinc-500 mt-1">
               {`${plan.priceAmount} ${plan.priceCurrency}`}
               {plan.billingCycle && ` · ${plan.billingCycle}`}
+            </p>
+          )}
+          {plan.status === "phase_out" && (
+            <p className="text-xs text-amber-400/90 mt-1">
+              Phasing out
+              {plan.phaseOutAt
+                ? ` · migrate by ${new Date(plan.phaseOutAt).toLocaleDateString()}`
+                : ""}
+              {plan.replacementPlanId
+                ? ` · suggested ${
+                    replacementOptions.find((o) => o.id === plan.replacementPlanId)
+                      ?.name ?? plan.replacementPlanId
+                  }`
+                : ""}
             </p>
           )}
           {plan.includedUsdMicros && (
@@ -1595,6 +1643,61 @@ function CustomPlanCard({
             canEdit={canEdit}
             idPrefix={`plan-${plan.id}`}
           />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor={`plan-${plan.id}-status`}
+                className="block text-xs font-medium text-zinc-400 mb-1"
+              >
+                Lifecycle status
+              </label>
+              <select
+                id={`plan-${plan.id}-status`}
+                value={draft.status}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    status: e.target.value,
+                  })
+                }
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              >
+                <option value="active">Active</option>
+                <option value="phase_out">Phase-out</option>
+                <option value="draft">Draft</option>
+              </select>
+            </div>
+            {draft.status === "phase_out" && (
+              <div>
+                <label
+                  htmlFor={`plan-${plan.id}-replacement`}
+                  className="block text-xs font-medium text-zinc-400 mb-1"
+                >
+                  Replacement plan
+                </label>
+                <select
+                  id={`plan-${plan.id}-replacement`}
+                  value={draft.replacementPlanId}
+                  disabled={!canEdit}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      replacementPlanId: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                >
+                  <option value="">None (use Starter when migrating)</option>
+                  {replacementOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -1616,7 +1719,9 @@ function CustomPlanCard({
           <p className="text-xs text-zinc-500">
             Saving paid plans publishes retail $/micro rate cards to OpenMeter. Use Usage API
             with <code className="text-zinc-400">?include=retail&amp;groupBy=pipeline_model</code>{" "}
-            to validate effective rates.
+            to validate effective rates. Phase-out blocks new subscribers; migrate remaining
+            users with{" "}
+            <code className="text-zinc-400">npm run openmeter:migrate-plan-subscribers</code>.
           </p>
         </>
       )}
@@ -1981,6 +2086,14 @@ export default function PlansTab({ appId, canEdit }: Readonly<PlansTabProps>) {
               catalog={catalog}
               catalogError={catalogError}
               blockedConcreteKeys={blockedConcreteKeys}
+              replacementOptions={[
+                ...(starterPlan
+                  ? [{ id: starterPlan.id, name: starterPlan.name }]
+                  : []),
+                ...customPlans
+                  .filter((p) => p.id !== plan.id && p.status !== "phase_out")
+                  .map((p) => ({ id: p.id, name: p.name })),
+              ]}
               canEdit={canEdit}
               isEditing={editingPlanId === plan.id}
               onEdit={() => setEditingPlanId(plan.id)}

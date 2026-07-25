@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   classifyOwnerSubscriptionMapping,
+  classifyPhaseOutPastDeadline,
   classifySpendableGateConsistency,
   classifyStarterPlanRemoteConsistency,
   readUsageDiscountUsdMicrosFromPlanBody,
@@ -254,5 +255,67 @@ test("summarizeFindings counts severities", () => {
       },
     ]),
     { errors: 1, warns: 1, infos: 1 },
+  );
+});
+
+test("classifyPhaseOutPastDeadline errors when past deadline with subscribers", () => {
+  const findings = classifyPhaseOutPastDeadline({
+    clientId: "app_x",
+    planId: "plan_1",
+    planName: "Pro",
+    status: "phase_out",
+    phaseOutAt: "2020-01-01T00:00:00.000Z",
+    openmeterPlanId: "01PLAN",
+    activeSubscriberCount: 3,
+    nowIso: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.code, "phase_out_subscribers_past_deadline");
+  assert.equal(findings[0]?.severity, "error");
+  assert.match(
+    findings[0]?.remediation ?? "",
+    /openmeter:migrate-plan-subscribers/,
+  );
+});
+
+test("classifyPhaseOutPastDeadline ignores before deadline or zero subscribers", () => {
+  assert.equal(
+    classifyPhaseOutPastDeadline({
+      clientId: "app_x",
+      planId: "plan_1",
+      planName: "Pro",
+      status: "phase_out",
+      phaseOutAt: "2099-01-01T00:00:00.000Z",
+      openmeterPlanId: "01PLAN",
+      activeSubscriberCount: 3,
+      nowIso: "2026-01-01T00:00:00.000Z",
+    }).length,
+    0,
+  );
+  assert.equal(
+    classifyPhaseOutPastDeadline({
+      clientId: "app_x",
+      planId: "plan_1",
+      planName: "Pro",
+      status: "phase_out",
+      phaseOutAt: "2020-01-01T00:00:00.000Z",
+      openmeterPlanId: "01PLAN",
+      activeSubscriberCount: 0,
+      nowIso: "2026-01-01T00:00:00.000Z",
+    }).length,
+    0,
+  );
+  assert.equal(
+    classifyPhaseOutPastDeadline({
+      clientId: "app_x",
+      planId: "plan_1",
+      planName: "Pro",
+      status: "active",
+      phaseOutAt: "2020-01-01T00:00:00.000Z",
+      openmeterPlanId: "01PLAN",
+      activeSubscriberCount: 3,
+      nowIso: "2026-01-01T00:00:00.000Z",
+    }).length,
+    0,
   );
 });

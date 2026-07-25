@@ -5,10 +5,7 @@ import {
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
-import {
-  startMerchantConnect,
-  type MerchantConnectMode,
-} from "@/lib/stripe/merchant-connect";
+import { refreshMerchantAccountLink } from "@/lib/stripe/merchant-connect";
 
 export async function POST(
   request: NextRequest,
@@ -31,35 +28,11 @@ export async function POST(
     );
   }
 
-  let body: Record<string, unknown> = {};
   try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    body = {};
-  }
-
-  const modeRaw = typeof body.mode === "string" ? body.mode.trim() : "account_link";
-  if (modeRaw !== "account_link" && modeRaw !== "oauth") {
-    return NextResponse.json(
-      { error: 'mode must be "account_link" or "oauth"' },
-      { status: 400 },
-    );
-  }
-  const mode = modeRaw as MerchantConnectMode;
-
-  try {
-    const result = await startMerchantConnect({
-      clientId: auth.app.id,
-      userId: auth.userId,
-      mode,
-      email: typeof body.email === "string" ? body.email : undefined,
-      displayName:
-        typeof body.displayName === "string" ? body.displayName : undefined,
-    });
+    const result = await refreshMerchantAccountLink(auth.app.id);
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("STRIPE_") ? 400 : 502;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

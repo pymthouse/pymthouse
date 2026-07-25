@@ -345,6 +345,12 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     openmeterStripeAppId: null,
     openmeterBillingProfileId: null,
     connectedAt: null,
+    stripeConnectedAccountId: null,
+    stripeOnboardingMethod: null,
+    stripeChargesEnabled: false,
+    stripePayoutsEnabled: false,
+    stripeDetailsSubmitted: false,
+    connectPaymentsOnly: false,
   });
 }
 
@@ -354,19 +360,41 @@ export async function purgeExpiredOAuthStates(): Promise<void> {
 }
 
 export async function getStripeConnectStatus(clientId: string) {
+  const { syncMerchantConnectStatus } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  try {
+    await syncMerchantConnectStatus(clientId);
+  } catch {
+    /* best-effort refresh */
+  }
   const row = await db
     .select()
     .from(appBillingConfig)
     .where(eq(appBillingConfig.clientId, clientId))
     .limit(1);
   const config = row[0];
+  const merchantReady = Boolean(
+    config?.stripeConnectedAccountId?.trim() && config.stripeChargesEnabled,
+  );
   return {
-    status: config?.stripeConnectStatus ?? "disconnected",
+    status: merchantReady
+      ? "connected"
+      : config?.stripeConnectedAccountId
+        ? "pending"
+        : (config?.stripeConnectStatus ?? "disconnected"),
     openmeterStripeAppId: config?.openmeterStripeAppId ?? null,
     openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,
     invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
+    stripeConnectedAccountId: config?.stripeConnectedAccountId ?? null,
+    stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
+    stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
+    stripePayoutsEnabled: config?.stripePayoutsEnabled ?? false,
+    stripeDetailsSubmitted: config?.stripeDetailsSubmitted ?? false,
+    applicationFeeBps: config?.applicationFeeBps ?? 0,
+    connectPaymentsOnly: config?.connectPaymentsOnly ?? false,
   };
 }

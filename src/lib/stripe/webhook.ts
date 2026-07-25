@@ -1,0 +1,145 @@
+/**
+ * Stripe Connect webhook helpers (signature verify + account.updated parse).
+ * No stripe SDK — HMAC over the raw body per Stripe docs.
+ */
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const DEFAULT_TOLERANCE_SEC = 300;
+
+export type StripeAccountUpdatedPayload = {
+  accountId: string;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+};
+
+export function requireStripeWebhookSecret(): string {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  if (!secret || !secret.startsWith("whsec_")) {
+    throw new Error(
+      "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
+    );
+  }
+  return secret;
+}
+
+/**
+ * Verify Stripe-Signature (t=…,v1=…). Returns false on any mismatch / skew.
+ */
+export function verifyStripeWebhookSignature(input: {
+  rawBody: string;
+  signatureHeader: string | null;
+  secret: string;
+  toleranceSec?: number;
+  nowSec?: number;
+}): boolean {
+  if (!input.signatureHeader?.trim()) {
+    return false;
+  }
+  const parts = Object.fromEntries(
+    input.signatureHeader.split(",").map((part) => {
+      const [k, ...rest] = part.trim().split("=");
+      return [k, rest.join("=")];
+    }),
+  ) as Record<string, string>;
+  const timestamp = parts.t;
+  const v1 = parts.v1;
+  if (!timestamp || !v1) {
+    return false;
+  }
+  const ts = Number.parseInt(timestamp, 10);
+  if (!Number.isFinite(ts)) {
+    return false;
+  }
+  const now = input.nowSec ?? Math.floor(Date.now() / 1000);
+  const tolerance = input.toleranceSec ?? DEFAULT_TOLERANCE_SEC;
+  if (Math.abs(now - ts) > tolerance) {
+    return false;
+  }
+
+  const signedPayload = `${timestamp}.${input.rawBody}`;
+  const expected = createHmac("sha256", input.secret)
+    .update(signedPayload, "utf8")
+    .digest("hex");
+
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const actualBuf = Buffer.from(v1, "utf8");
+  if (expectedBuf.length !== actualBuf.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuf, actualBuf);
+}
+
+/** Extract Connect capability flags from an account.updated event body. */
+export function parseStripeAccountUpdated(
+  rawBody: string,
+): StripeAccountUpdatedPayload | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as {
+    type?: unknown;
+    data?: { object?: Record<string, unknown> };
+  };
+  if (event.type !== "account.updated") {
+    return null;
+  }
+  const obj = event.data?.object;
+  if (!obj || typeof obj !== "object") {
+    return null;
+  }
+  const accountId =
+    typeof obj.id === "string" ? obj.id.trim() : "";
+  if (!accountId.startsWith("acct_")) {
+    return null;
+  }
+  return {
+    accountId,
+    chargesEnabled: Boolean(obj.charges_enabled),
+    payoutsEnabled: Boolean(obj.payouts_enabled),
+    detailsSubmitted: Boolean(obj.details_submitted),
+  };
+}
+
+/**
+ * Map OAuth / Connect failures to stable query codes (never raw exception text).
+ */
+export function merchantConnectOAuthErrorCode(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/Invalid or expired OAuth state/i.test(message)) {
+    return "invalid_oauth_state";
+  }
+  if (/OAuth state expired/i.test(message)) {
+    return "oauth_state_expired";
+  }
+  if (/STRIPE_CONNECT_CLIENT_ID|STRIPE_SECRET_KEY/i.test(message)) {
+    return "connect_misconfigured";
+  }
+  if (/oauth\/token|exchangeConnectOAuthCode|authorization_code/i.test(message)) {
+    return "oauth_exchange_failed";
+  }
+  return "oauth_failed";
+}
+
+/** Allowlist Stripe-provided OAuth `error` query values for redirects. */
+export function sanitizeStripeOAuthProviderError(error: string): string {
+  const code = error.trim().toLowerCase();
+  const allowed = new Set([
+    "access_denied",
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "unauthorized_client",
+    "unsupported_response_type",
+    "invalid_scope",
+    "server_error",
+    "temporarily_unavailable",
+  ]);
+  return allowed.has(code) ? code : "oauth_denied";
+}

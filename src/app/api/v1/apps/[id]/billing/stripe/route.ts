@@ -70,12 +70,13 @@ export async function PATCH(
 
   if (
     body.progressiveBilling === undefined &&
-    body.invoiceThresholdUsdMicros === undefined
+    body.invoiceThresholdUsdMicros === undefined &&
+    body.applicationFeeBps === undefined
   ) {
     return NextResponse.json(
       {
         error:
-          "Provide progressiveBilling and/or invoiceThresholdUsdMicros to update",
+          "Provide progressiveBilling, invoiceThresholdUsdMicros, and/or applicationFeeBps to update",
       },
       { status: 400 },
     );
@@ -99,11 +100,27 @@ export async function PATCH(
     invoiceThresholdUsdMicros = parsed.value;
   }
 
+  let applicationFeeBps: number | undefined;
+  if (body.applicationFeeBps !== undefined) {
+    const n =
+      typeof body.applicationFeeBps === "number"
+        ? body.applicationFeeBps
+        : Number.parseInt(String(body.applicationFeeBps), 10);
+    if (!Number.isInteger(n) || n < 0 || n > 10_000) {
+      return NextResponse.json(
+        { error: "applicationFeeBps must be an integer from 0 to 10000" },
+        { status: 400 },
+      );
+    }
+    applicationFeeBps = n;
+  }
+
   try {
     const updated = await updateAppBillingProfileSettings({
       clientId: access.auth.app.id,
       progressiveBilling,
       invoiceThresholdUsdMicros,
+      applicationFeeBps,
     });
     const status = await getStripeConnectStatus(access.auth.app.id);
     return NextResponse.json({

@@ -15,6 +15,13 @@ type StripeStatus = {
   connectedAt: string | null;
   progressiveBilling?: boolean;
   invoiceThresholdUsdMicros?: string | null;
+  stripeConnectedAccountId?: string | null;
+  stripeOnboardingMethod?: string | null;
+  stripeChargesEnabled?: boolean;
+  stripePayoutsEnabled?: boolean;
+  stripeDetailsSubmitted?: boolean;
+  applicationFeeBps?: number;
+  connectPaymentsOnly?: boolean;
 };
 
 type InvoiceRow = {
@@ -38,9 +45,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showApiKeyForm, setShowApiKeyForm] = useState(false);
-  const [stripeSecretKey, setStripeSecretKey] = useState("");
-  const [apiKeyHint, setApiKeyHint] = useState<string | null>(null);
+  const [applicationFeeBps, setApplicationFeeBps] = useState("0");
   const [progressiveBilling, setProgressiveBilling] = useState(true);
   const [thresholdDisplay, setThresholdDisplay] = useState("");
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
@@ -59,6 +64,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       const nextStatus = (await statusRes.json()) as StripeStatus;
       setStatus(nextStatus);
       setProgressiveBilling(nextStatus.progressiveBilling ?? true);
+      setApplicationFeeBps(String(nextStatus.applicationFeeBps ?? 0));
       setThresholdDisplay(
         nextStatus.invoiceThresholdUsdMicros
           ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
@@ -89,31 +95,21 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
     }
   }, [load]);
 
-  async function connectStripe() {
+  async function startMerchantOnboarding(mode: "account_link" | "oauth") {
     setBusy(true);
     setError(null);
-    setApiKeyHint(null);
     try {
       const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
       });
       const body = await res.json();
       if (!res.ok) {
         throw new Error(body.error || "Connect failed");
       }
-      if (body.method === "api_key") {
-        setShowApiKeyForm(true);
-        setApiKeyHint(body.message ?? null);
-        setBusy(false);
-        return;
-      }
-      if (body.method === "konnect" && body.connected) {
-        await load();
-        setBusy(false);
-        return;
-      }
       if (!body.url) {
-        throw new Error(body.error || "Connect failed");
+        throw new Error(body.error || "Connect URL missing");
       }
       globalThis.location.href = body.url;
     } catch (err) {
@@ -122,31 +118,21 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
     }
   }
 
-  async function connectStripeWithApiKey() {
-    const key = stripeSecretKey.trim();
-    if (!key) {
-      setError("Enter a Stripe secret key");
-      return;
-    }
+  async function refreshAccountLink() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stripeSecretKey: key }),
-      });
+      const res = await fetch(
+        `/api/v1/apps/${appId}/billing/stripe/account-link`,
+        { method: "POST" },
+      );
       const body = await res.json();
-      if (!res.ok || !body.connected) {
-        throw new Error(body.error || "Connect failed");
+      if (!res.ok || !body.url) {
+        throw new Error(body.error || "Account Link failed");
       }
-      setStripeSecretKey("");
-      setShowApiKeyForm(false);
-      setApiKeyHint(null);
-      await load();
+      globalThis.location.href = body.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
       setBusy(false);
     }
   }
@@ -193,6 +179,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         body: JSON.stringify({
           progressiveBilling,
           invoiceThresholdUsdMicros,
+          applicationFeeBps: Number.parseInt(applicationFeeBps, 10) || 0,
         }),
       });
       const body = await res.json();
@@ -213,6 +200,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   }
 
   const connected = status?.status === "connected";
+  const hasAccount = Boolean(status?.stripeConnectedAccountId);
+  const pendingOnboarding = hasAccount && !connected;
 
   return (
     <div className="space-y-6">
@@ -221,24 +210,46 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           <div>
             <h3 className="text-base font-semibold">Stripe Connect</h3>
             <p className="text-sm text-muted-foreground">
-              Stripe bills end users through this app&apos;s OpenMeter billing profile
-              (platform Stripe processor). Starter included usage works without Connect;
-              Connect ensures the profile and unlocks mid-cycle invoicing settings.
+              OpenMeter meters usage and subscriptions. End-user payments go through your
+              merchant Connected Account (direct charges). Complete onboarding for a new
+              account, or link an existing Stripe account via OAuth.
             </p>
           </div>
           <span
             className={`text-xs font-medium px-2 py-1 rounded ${
-              connected ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700"
+              connected
+                ? "bg-green-100 text-green-800"
+                : pendingOnboarding
+                  ? "bg-amber-100 text-amber-900"
+                  : "bg-gray-100 text-gray-700"
             }`}
           >
             {status?.status ?? "disconnected"}
           </span>
         </div>
 
-        {connected && (
+        {(hasAccount || connected) && (
           <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <dt className="text-muted-foreground">Billing profile</dt>
+              <dt className="text-muted-foreground">Connected account</dt>
+              <dd className="font-mono text-xs break-all">
+                {status?.stripeConnectedAccountId ?? "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Onboarding</dt>
+              <dd>{status?.stripeOnboardingMethod ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Charges</dt>
+              <dd>{status?.stripeChargesEnabled ? "Enabled" : "Paused / pending"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Payouts</dt>
+              <dd>{status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">OM billing profile</dt>
               <dd className="font-mono text-xs break-all">
                 {status?.openmeterBillingProfileId ?? "—"}
               </dd>
@@ -251,8 +262,38 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         )}
 
         {canManageBilling && (
-          <div className="flex gap-2">
-            {connected ? (
+          <div className="flex flex-wrap gap-2">
+            {!connected && (
+              <>
+                <button
+                  type="button"
+                  className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void startMerchantOnboarding("account_link")}
+                >
+                  {hasAccount ? "Continue onboarding" : "Complete onboarding"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void startMerchantOnboarding("oauth")}
+                >
+                  Link existing Stripe account
+                </button>
+              </>
+            )}
+            {pendingOnboarding && status?.stripeOnboardingMethod !== "oauth" && (
+              <button
+                type="button"
+                className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void refreshAccountLink()}
+              >
+                Refresh Account Link
+              </button>
+            )}
+            {hasAccount && (
               <button
                 type="button"
                 className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
@@ -261,58 +302,27 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
               >
                 Disconnect
               </button>
-            ) : (
-              <button
-                type="button"
-                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void connectStripe()}
-              >
-                Connect Stripe
-              </button>
             )}
           </div>
         )}
 
-        {canManageBilling && showApiKeyForm && !connected && (
-          <div className="rounded-md border border-dashed p-3 space-y-2 bg-muted/30">
-            <p className="text-sm text-muted-foreground">
-              {apiKeyHint ??
-                "Paste a restricted secret key (sk_live_… or sk_test_…) from the Stripe Dashboard for this merchant account."}
-            </p>
+        {canManageBilling && (
+          <div className="pt-2 border-t space-y-2">
             <label className="block text-sm">
-              <span className="text-muted-foreground">Stripe secret key</span>
+              <span className="text-muted-foreground">Platform application fee (bps)</span>
               <input
-                type="password"
-                autoComplete="off"
-                className="mt-1 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-                value={stripeSecretKey}
-                onChange={(e) => setStripeSecretKey(e.target.value)}
-                placeholder="sk_live_…"
+                type="number"
+                min={0}
+                max={10000}
+                className="mt-1 w-40 rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+                value={applicationFeeBps}
+                onChange={(e) => setApplicationFeeBps(e.target.value)}
+                disabled={busy}
               />
             </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void connectStripeWithApiKey()}
-              >
-                Save Stripe key
-              </button>
-              <button
-                type="button"
-                className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-                disabled={busy}
-                onClick={() => {
-                  setShowApiKeyForm(false);
-                  setStripeSecretKey("");
-                  setApiKeyHint(null);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              100 bps = 1%. Applied on Connect payment intents / invoices.
+            </p>
           </div>
         )}
       </div>

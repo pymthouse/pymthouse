@@ -256,12 +256,23 @@ export async function getKonnectCustomerBillingProfileId(
     return null;
   }
   try {
-    const data = await konnectAdminFetch<KonnectCustomerBillingData>(
-      `/customers/${encodeURIComponent(customerId)}/billing`,
-      { method: "GET" },
-      "customer-billing",
-    );
+    const data = await getKonnectCustomerBilling(customerId);
     return data.billing_profile?.id?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stripe default payment method id from Konnect customer billing app_data, if any. */
+export async function getKonnectDefaultPaymentMethodId(
+  customerId: string,
+): Promise<string | null> {
+  if (!useKonnect()) {
+    return null;
+  }
+  try {
+    const data = await getKonnectCustomerBilling(customerId);
+    return data.app_data?.stripe?.default_payment_method_id?.trim() || null;
   } catch {
     return null;
   }
