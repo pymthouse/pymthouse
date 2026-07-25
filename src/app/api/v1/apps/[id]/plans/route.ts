@@ -14,7 +14,7 @@ import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import { billingPlansApiV2Enabled } from "@/lib/billing/feature-flags";
 import { listBillingProducts } from "@/lib/billing/backend";
 import { toPlanApiRow } from "@/lib/billing/product-dto";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalog } from "@/lib/network-catalog";
 import {
   archivePlanInOpenMeter,
   syncPlanToOpenMeter,
