@@ -10,9 +10,9 @@ import {
 import { test } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import {
-  installNaapCatalogMock,
-  uninstallNaapCatalogMock,
-} from "@/test-utils/naap-catalog-mock";
+  installNetworkCatalogMock,
+  uninstallNetworkCatalogMock,
+} from "@/test-utils/network-catalog-mock";
 import {
   installProviderAppSessionAuth,
   uninstallProviderAppSessionAuth,
@@ -31,7 +31,7 @@ const MOCK_CATALOG = [
   { id: "pipe-b", name: "Pipe B", models: ["only"] },
 ];
 
-installNaapCatalogMock({
+installNetworkCatalogMock({
   catalog: MOCK_CATALOG,
   onFetch: () => {
     catalogFetchCount += 1;
@@ -40,7 +40,7 @@ installNaapCatalogMock({
 });
 
 test.after(() => {
-  uninstallNaapCatalogMock();
+  uninstallNetworkCatalogMock();
   uninstallProviderAppSessionAuth();
 });
 

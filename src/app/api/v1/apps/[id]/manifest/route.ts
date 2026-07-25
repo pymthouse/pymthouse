@@ -14,7 +14,7 @@ import {
   ALLOW_ALL_MANIFEST_ETAG,
   ALLOW_ALL_MANIFEST_RESPONSE,
 } from "@/lib/discovery-allowlist-manifest";
-import { fetchPipelineCatalog } from "@/lib/naap-catalog";
+import { fetchPipelineCatalog } from "@/lib/network-catalog";
 import {
   findCustomPlansBlockingNewExclusions,
   getOrCreateNetworkDefaultPlan,
