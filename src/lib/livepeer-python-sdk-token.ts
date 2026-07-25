@@ -1,3 +1,4 @@
+import { getDiscoveryRawUrl } from "@/lib/discovery-service-url";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export type LivepeerPythonSdkTokenPayload = {
@@ -10,13 +11,10 @@ export type LivepeerPythonSdkTokenPayload = {
 
 /**
  * Discovery URL for livepeer-python-sdk `--token` payloads.
- * Prefer DISCOVERY_URL; fall back to ORCH_WEBHOOK_URL (production orch pool).
+ * Full raw endpoint as configured (`…/v1/discovery/raw`), unchanged.
  */
 export function getLivepeerPythonSdkDiscoveryUrl(): string | undefined {
-  const discovery = process.env.DISCOVERY_URL?.trim();
-  if (discovery) return discovery;
-  const orch = process.env.ORCH_WEBHOOK_URL?.trim();
-  return orch || undefined;
+  return getDiscoveryRawUrl();
 }
 
 export function buildLivepeerPythonSdkTokenPayload(input: {

@@ -84,16 +84,34 @@ test("createLivepeerPythonSdkToken returns base64 string", () => {
   assert.equal(decoded.signer_headers.Authorization, "Bearer app_a_pmth_b");
 });
 
-test("getLivepeerPythonSdkDiscoveryUrl prefers DISCOVERY_URL over ORCH_WEBHOOK_URL", () => {
+test("getLivepeerPythonSdkDiscoveryUrl prefers DISCOVERY_URL as-is", () => {
   withEnv(
     {
-      DISCOVERY_URL: "https://discovery.example/preferred",
-      ORCH_WEBHOOK_URL: "https://orch.example/fallback",
+      DISCOVERY_URL: "https://discovery.example/v1/discovery/raw",
+      DISCOVERY_SERVICE_URL: "https://other.example/v1/discovery/raw",
+      ORCH_WEBHOOK_URL: "https://orch.example/v1/discovery/raw",
     },
     () => {
       assert.equal(
         getLivepeerPythonSdkDiscoveryUrl(),
-        "https://discovery.example/preferred",
+        "https://discovery.example/v1/discovery/raw",
+      );
+    },
+  );
+});
+
+test("getLivepeerPythonSdkDiscoveryUrl accepts DISCOVERY_SERVICE_URL", () => {
+  withEnv(
+    {
+      DISCOVERY_URL: undefined,
+      DISCOVERY_SERVICE_URL:
+        "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw",
+      ORCH_WEBHOOK_URL: undefined,
+    },
+    () => {
+      assert.equal(
+        getLivepeerPythonSdkDiscoveryUrl(),
+        "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw",
       );
     },
   );
@@ -103,6 +121,8 @@ test("getLivepeerPythonSdkDiscoveryUrl falls back to ORCH_WEBHOOK_URL", () => {
   withEnv(
     {
       DISCOVERY_URL: undefined,
+      DISCOVERY_SERVICE_URL: undefined,
+      LIVEPEER_DISCOVERY_SERVICE_URL: undefined,
       ORCH_WEBHOOK_URL:
         "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw?serviceType=legacy",
     },
