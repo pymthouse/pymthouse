@@ -2,6 +2,7 @@ import { hasScope } from "@/lib/auth";
 import {
   resolveActiveAppApiKey,
 } from "@/lib/app-api-keys";
+import { getDiscoveryRawUrl } from "@/lib/discovery-service-url";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import {
   mintSignerJwtForExternalUser,
@@ -73,8 +74,8 @@ export function getSignerTokenAudienceEnv(): string | null {
 }
 
 export function getSignerDiscoveryUrl(): string | undefined {
-  const raw = process.env.DISCOVERY_URL?.trim();
-  return raw || undefined;
+  // Shared with SDK tokens: always `…/v1/discovery/raw` (see discovery-service-url).
+  return getDiscoveryRawUrl();
 }
 
 export function acceptedSignerAudiences(): Set<string> {

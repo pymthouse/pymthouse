@@ -65,7 +65,8 @@ export const SignerSessionSchema = z
       description: "Public remote-signer base URL.",
     }),
     discovery_url: z.string().url().optional().openapi({
-      description: "Livepeer network discovery URL (not OIDC issuer metadata).",
+      description:
+        "Livepeer discovery-service raw endpoint (…/v1/discovery/raw), not OIDC issuer metadata.",
     }),
     issued_token_type: z
       .literal("urn:ietf:params:oauth:token-type:access_token")
