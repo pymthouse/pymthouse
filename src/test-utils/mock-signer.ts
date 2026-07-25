@@ -80,7 +80,6 @@ export function mockSignerFetch(opts?: {
   signByocJobResponse?: unknown;
   discoverOrchestratorsResponse?: unknown;
   generateLivePaymentResponse?: unknown;
-  dashboardPricingResponse?: unknown;
   pipelineCatalogResponse?: unknown;
 }): MockSignerController {
   const signerHost = opts?.signerHost ?? "https://test-signer.invalid";
@@ -133,14 +132,10 @@ export function mockSignerFetch(opts?: {
         `mockSignerFetch: invalid URL in test: ${method} ${url}`,
       );
     }
-    if (opts?.dashboardPricingResponse !== undefined && parsedUrl.pathname.endsWith("/dashboard/pricing")) {
-      return new Response(JSON.stringify(opts.dashboardPricingResponse), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    if (opts?.pipelineCatalogResponse !== undefined && parsedUrl.pathname.endsWith("/dashboard/pipeline-catalog")) {
+    if (
+      opts?.pipelineCatalogResponse !== undefined &&
+      parsedUrl.pathname.endsWith("/v1/discovery/raw")
+    ) {
       return new Response(JSON.stringify(opts.pipelineCatalogResponse), {
         status: 200,
         headers: { "Content-Type": "application/json" },
