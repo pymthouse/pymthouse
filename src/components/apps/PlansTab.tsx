@@ -332,7 +332,7 @@ function emptyDraft(): PlanDraft {
     priceCurrency: "USD",
     billingCycle: "monthly",
     includedUsdDisplay: "",
-    defaultMarkupPct: "",
+    defaultMarkupPct: "0",
     capabilityKeys: [],
     capabilityMarkupByKey: {},
     status: "active",
@@ -757,18 +757,34 @@ function PlanDraftForm({
           <label htmlFor={`${idPrefix}-default-markup`} className="block text-xs text-zinc-500 mb-1">
             Default usage markup (% over network cost)
           </label>
-          <input
-            id={`${idPrefix}-default-markup`}
-            type="text"
-            inputMode="decimal"
-            value={draft.defaultMarkupPct}
-            onChange={(e) =>
-              onChange({ ...draft, defaultMarkupPct: sanitizePercentInput(e.target.value) })
-            }
-            placeholder="0 = pass-through network pricing"
-            disabled={!canEdit}
-            className="w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-100 disabled:opacity-50"
-          />
+          <div className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/20">
+            <input
+              id={`${idPrefix}-default-markup`}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={draft.defaultMarkupPct}
+              onChange={(e) =>
+                onChange({ ...draft, defaultMarkupPct: sanitizePercentInput(e.target.value) })
+              }
+              onBlur={() => {
+                const trimmed = draft.defaultMarkupPct.trim();
+                if (trimmed === "" || trimmed === ".") {
+                  onChange({ ...draft, defaultMarkupPct: "0" });
+                }
+              }}
+              placeholder="0"
+              disabled={!canEdit}
+              aria-label="Default usage markup percent"
+              className="min-w-0 flex-1 bg-transparent text-sm tabular-nums text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50 focus:outline-none"
+            />
+            <span className="shrink-0 text-sm text-zinc-500" aria-hidden="true">
+              %
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            0% = pass-through network pricing
+          </p>
         </div>
       )}
 
