@@ -39,9 +39,18 @@ export async function POST(
   }
 
   const modeRaw = typeof body.mode === "string" ? body.mode.trim() : "account_link";
-  if (modeRaw !== "account_link" && modeRaw !== "oauth") {
+  if (modeRaw === "oauth") {
     return NextResponse.json(
-      { error: 'mode must be "account_link" or "oauth"' },
+      {
+        error:
+          'Standard Connect OAuth is no longer supported. Use mode "account_link" (Stripe Account Links).',
+      },
+      { status: 400 },
+    );
+  }
+  if (modeRaw !== "account_link") {
+    return NextResponse.json(
+      { error: 'mode must be "account_link"' },
       { status: 400 },
     );
   }

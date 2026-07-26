@@ -39,6 +39,24 @@ type Props = {
   canManageBilling: boolean;
 };
 
+/** Only allow redirect to Stripe-hosted Connect / Account Link URLs. */
+function sanitizeStripeConnectRedirect(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Invalid Connect URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Invalid Connect URL");
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== "connect.stripe.com" && !host.endsWith(".stripe.com")) {
+    throw new Error("Connect URL must be a Stripe host");
+  }
+  return parsed.href;
+}
+
 export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>) {
   const [status, setStatus] = useState<StripeStatus | null>(null);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
@@ -85,24 +103,23 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
     load().catch(() => undefined);
     if (globalThis.window !== undefined) {
       const params = new URLSearchParams(globalThis.location.search);
-      const oauthError = params.get("error");
-      if (oauthError) {
-        setError(oauthError);
+      if (params.get("error")) {
+        setError(params.get("error"));
       }
-      if (params.get("connected") === "1") {
+      if (params.get("connected") === "1" || params.get("connect") === "refresh") {
         load().catch(() => undefined);
       }
     }
   }, [load]);
 
-  async function startMerchantOnboarding(mode: "account_link" | "oauth") {
+  async function startMerchantOnboarding() {
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode: "account_link" }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -111,7 +128,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       if (!body.url) {
         throw new Error(body.error || "Connect URL missing");
       }
-      globalThis.location.href = body.url;
+      globalThis.location.href = sanitizeStripeConnectRedirect(body.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
@@ -130,7 +147,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       if (!res.ok || !body.url) {
         throw new Error(body.error || "Account Link failed");
       }
-      globalThis.location.href = body.url;
+      globalThis.location.href = sanitizeStripeConnectRedirect(body.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
@@ -199,9 +216,16 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
     return <p className="text-sm text-muted-foreground">Loading payments…</p>;
   }
 
-  const connected = status?.status === "connected";
-  const hasAccount = Boolean(status?.stripeConnectedAccountId);
-  const pendingOnboarding = hasAccount && !connected;
+  const hasAccount = Boolean(status?.stripeConnectedAccountId?.trim());
+  /** Merchant Connect ready (acct_… + charges). Not legacy OM Stripe-app install. */
+  const merchantReady =
+    hasAccount && Boolean(status?.stripeChargesEnabled);
+  const pendingOnboarding = hasAccount && !merchantReady;
+  const hasLegacyOmLink = Boolean(
+    status?.openmeterStripeAppId || status?.openmeterBillingProfileId,
+  );
+  /** Allow clearing legacy OM link and/or merchant Connect account. */
+  const canDisconnect = hasAccount || hasLegacyOmLink;
 
   return (
     <div className="space-y-6">
@@ -211,24 +235,30 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
             <h3 className="text-base font-semibold">Stripe Connect</h3>
             <p className="text-sm text-muted-foreground">
               OpenMeter meters usage and subscriptions. End-user payments go through your
-              merchant Connected Account (direct charges). Complete onboarding for a new
-              account, or link an existing Stripe account via OAuth.
+              merchant Connected Account (direct charges). Complete Stripe-hosted onboarding
+              (Account Links) to create and verify your Connected Account.
             </p>
           </div>
           <span
             className={`text-xs font-medium px-2 py-1 rounded ${
-              connected
+              merchantReady
                 ? "bg-green-100 text-green-800"
                 : pendingOnboarding
                   ? "bg-amber-100 text-amber-900"
                   : "bg-gray-100 text-gray-700"
             }`}
           >
-            {status?.status ?? "disconnected"}
+            {hasAccount
+              ? merchantReady
+                ? "connected"
+                : "pending"
+              : hasLegacyOmLink
+                ? "needs merchant connect"
+                : (status?.status ?? "disconnected")}
           </span>
         </div>
 
-        {(hasAccount || connected) && (
+        {(hasAccount || hasLegacyOmLink || status?.connectedAt) && (
           <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <dt className="text-muted-foreground">Connected account</dt>
@@ -263,27 +293,17 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
 
         {canManageBilling && (
           <div className="flex flex-wrap gap-2">
-            {!connected && (
-              <>
-                <button
-                  type="button"
-                  className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => void startMerchantOnboarding("account_link")}
-                >
-                  {hasAccount ? "Continue onboarding" : "Complete onboarding"}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => void startMerchantOnboarding("oauth")}
-                >
-                  Link existing Stripe account
-                </button>
-              </>
+            {!hasAccount && (
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void startMerchantOnboarding()}
+              >
+                Complete onboarding
+              </button>
             )}
-            {pendingOnboarding && status?.stripeOnboardingMethod !== "oauth" && (
+            {pendingOnboarding && (
               <button
                 type="button"
                 className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
@@ -293,7 +313,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 Refresh Account Link
               </button>
             )}
-            {hasAccount && (
+            {canDisconnect && (
               <button
                 type="button"
                 className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
@@ -327,7 +347,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         )}
       </div>
 
-      {connected && (
+      {merchantReady && (
         <div className="rounded-lg border p-4 space-y-3">
           <div>
             <h3 className="text-base font-semibold">Mid-cycle invoicing</h3>

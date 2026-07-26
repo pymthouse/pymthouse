@@ -1,6 +1,6 @@
 /**
- * PymtHouse merchant Connect profile orchestration (Account Links + OAuth).
- * Keeps OpenMeter Stripe app wiring as a side effect for Starter until cutover.
+ * PymtHouse merchant Connect orchestration via Stripe Account Links.
+ * OpenMeter Stripe app wiring remains a side effect for Starter until cutover.
  */
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
@@ -16,9 +16,7 @@ import {
   ensureAppStripeBillingReady,
 } from "@/lib/openmeter/billing-profiles";
 import {
-  buildConnectOAuthAuthorizeUrl,
   connectAccountLinkUrls,
-  connectOAuthCallbackUrl,
   createAccountOnboardingLink,
   createConnectedCheckoutSession,
   createConnectedCustomer,
@@ -28,9 +26,7 @@ import {
   type StripeOnboardingMethod,
 } from "@/lib/stripe/connect-accounts";
 
-const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
-
-export type MerchantConnectMode = "account_link" | "oauth";
+export type MerchantConnectMode = "account_link";
 
 async function persistConnectedAccountFlags(input: {
   clientId: string;
@@ -116,34 +112,15 @@ async function ensureOmStarterSideEffect(clientId: string): Promise<void> {
 
 export async function startMerchantConnect(input: {
   clientId: string;
+  /** Reserved for audit / future session binding; Account Links do not persist OAuth state. */
   userId: string;
   mode?: MerchantConnectMode;
   email?: string;
   displayName?: string;
-}): Promise<
-  | { method: "account_link"; url: string; accountId: string }
-  | { method: "oauth"; url: string }
-> {
-  const mode: MerchantConnectMode = input.mode ?? "account_link";
+}): Promise<{ method: "account_link"; url: string; accountId: string }> {
+  void input.userId;
+  void input.mode;
   await ensureOmStarterSideEffect(input.clientId);
-
-  if (mode === "oauth") {
-    const state = uuidv4();
-    const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS).toISOString();
-    await db.insert(appBillingOauthStates).values({
-      id: uuidv4(),
-      state,
-      clientId: input.clientId,
-      userId: input.userId,
-      expiresAt,
-      createdAt: new Date().toISOString(),
-    });
-    const url = buildConnectOAuthAuthorizeUrl({
-      state,
-      redirectUri: connectOAuthCallbackUrl(input.clientId),
-    });
-    return { method: "oauth", url };
-  }
 
   const existing = await getAppBillingConfig(input.clientId);
   let accountId = existing?.stripeConnectedAccountId?.trim() || "";

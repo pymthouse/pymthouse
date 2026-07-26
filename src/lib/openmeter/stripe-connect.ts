@@ -374,22 +374,23 @@ export async function getStripeConnectStatus(clientId: string) {
     .where(eq(appBillingConfig.clientId, clientId))
     .limit(1);
   const config = row[0];
-  const merchantReady = Boolean(
-    config?.stripeConnectedAccountId?.trim() && config.stripeChargesEnabled,
-  );
-  return {
-    status: merchantReady
+  const accountId = config?.stripeConnectedAccountId?.trim() || null;
+  // Merchant Connect only — do not treat legacy OpenMeter Stripe-app installs
+  // (stripe_connect_status=connected, no acct_…) as merchant-ready.
+  const status = accountId
+    ? config?.stripeChargesEnabled
       ? "connected"
-      : config?.stripeConnectedAccountId
-        ? "pending"
-        : (config?.stripeConnectStatus ?? "disconnected"),
+      : "pending"
+    : "disconnected";
+  return {
+    status,
     openmeterStripeAppId: config?.openmeterStripeAppId ?? null,
     openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,
     invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
-    stripeConnectedAccountId: config?.stripeConnectedAccountId ?? null,
+    stripeConnectedAccountId: accountId,
     stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
     stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
     stripePayoutsEnabled: config?.stripePayoutsEnabled ?? false,
