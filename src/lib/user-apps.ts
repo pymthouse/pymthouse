@@ -8,6 +8,7 @@ import {
   users,
 } from "@/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { notPlatformDefaultApp } from "@/lib/platform-default-app";
 
 export type UserAppSummary = {
   id: string;
@@ -117,10 +118,11 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
       logoLightUrl: developerApps.logoLightUrl,
       createdAt: developerApps.createdAt,
       clientId: oidcClients.clientId,
+      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(eq(developerApps.ownerId, userId));
+    .where(and(eq(developerApps.ownerId, userId), notPlatformDefaultApp()));
 
   const memberApps =
     memberIds.length === 0
@@ -135,10 +137,11 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
             logoLightUrl: developerApps.logoLightUrl,
             createdAt: developerApps.createdAt,
             clientId: oidcClients.clientId,
+            isPlatformDefault: developerApps.isPlatformDefault,
           })
           .from(developerApps)
           .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-          .where(inArray(developerApps.id, memberIds));
+          .where(and(inArray(developerApps.id, memberIds), notPlatformDefaultApp()));
 
   const ownedIds = new Set(ownedApps.map((a) => a.id).filter(Boolean));
 
@@ -146,6 +149,8 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
     .filter(
       (app, index, rows) => rows.findIndex((row) => row.id === app.id) === index,
     )
+    // Platform default is never a normal "My Apps" entry for developers.
+    .filter((app) => app.isPlatformDefault !== 1)
     .map((app) => ({
       id: app.id ?? "",
       name: app.name,

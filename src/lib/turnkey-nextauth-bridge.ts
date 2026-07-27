@@ -109,7 +109,7 @@ export async function bridgeTurnkeySessionToNextAuth(
 /** Safe relative callback path for post-login redirects. */
 export function safeCallbackUrl(
   raw: string | null | undefined,
-  fallback = "/apps",
+  fallback = "/onboarding",
 ): string {
   if (!raw) return fallback;
   return raw.startsWith("/") && !raw.startsWith("//") ? raw : fallback;

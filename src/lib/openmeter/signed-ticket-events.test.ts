@@ -525,6 +525,52 @@ test("listAdminSignedTicketSessions returns stub meter rows without network", as
   assert.equal(result.nextCursor, null);
 });
 
+test("listAdminSignedTicketSessions labels platform default as Livepeer Direct", async (t) => {
+  const { randomUUID } = await import("node:crypto");
+  const {
+    cleanupTestApp,
+    seedDeveloperAppWithClient,
+  } = await import("@/test-utils/fixtures");
+  const { withTemporaryPlatformDefault } = await import(
+    "@/test-utils/platform-default-lock"
+  );
+  const { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } = await import(
+    "@/lib/platform-default-labels"
+  );
+  const { __testSetOpenMeterManifestRows, __testClearOpenMeterUsageStubs } =
+    await import("./usage-read");
+
+  const defaultApp = await seedDeveloperAppWithClient({
+    name: `Default ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(defaultApp);
+  });
+
+  await withTemporaryPlatformDefault(defaultApp.clientId, async () => {
+    __testSetOpenMeterManifestRows(defaultApp.clientId, [
+      {
+        manifestId: "mid-default",
+        networkFeeUsdMicros: "10",
+        networkFeeUsdExact: "10",
+        feeWei: "1",
+        billableSecs: "1",
+        pipeline: "llm",
+        modelId: "m",
+      },
+    ]);
+    t.after(() => __testClearOpenMeterUsageStubs());
+
+    const result = await listAdminSignedTicketSessions({
+      clientIds: [defaultApp.clientId],
+      from: "2026-07-01T00:00:00.000Z",
+      to: "2026-08-01T00:00:00.000Z",
+    });
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]?.appName, PLATFORM_DEFAULT_USAGE_DISPLAY_NAME);
+  });
+});
+
 test("listAdminSignedTicketSessions returns empty when OpenMeter unset", async () => {
   const previous = process.env.OPENMETER_URL;
   delete process.env.OPENMETER_URL;

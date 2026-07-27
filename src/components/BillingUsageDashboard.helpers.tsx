@@ -9,6 +9,7 @@ import type {
   BillingUserUsageRow,
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
 
 type AppUsageEntry = BillingAppUsageSummary;
 type UserUsage = BillingUserUsageRow;
@@ -150,7 +151,7 @@ export function AppUsageSection({
               />
             </svg>
             <div className="min-w-0">
-              {scope === "all" ? (
+              {scope === "all" && entry.app.usageKind !== "personal" ? (
                 <h2 className="font-semibold text-zinc-100 break-words">
                   <Link
                     href={`/apps/${entry.app.id}/usage`}
@@ -164,7 +165,12 @@ export function AppUsageSection({
                 <h2 className="font-semibold text-zinc-100 break-words">{entry.app.name}</h2>
               )}
               <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{entry.app.id}</p>
-              {isAdmin && (
+              {entry.app.usageKind === "personal" && (
+                <p className="text-xs text-zinc-500 mt-1">
+                  Your {PLATFORM_DEFAULT_USAGE_DISPLAY_NAME} key usage
+                </p>
+              )}
+              {isAdmin && entry.app.usageKind !== "personal" && (
                 <p className="text-xs text-zinc-500 mt-1 break-words">
                   Owner:{" "}
                   <span className="text-zinc-300">

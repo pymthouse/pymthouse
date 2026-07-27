@@ -9,11 +9,21 @@ import {
   listOwnerActiveSubscriptions,
   type OwnerBillingSubscriptionRow,
 } from "@/lib/owner-billing-data";
-import { getAuthorizedProviderApp } from "@/lib/provider-apps";
+import {
+  getProviderApp,
+  isProviderAdmin,
+} from "@/lib/provider-apps";
 import {
   queryOpenMeterAppDashboardUsage,
   type OpenMeterAppDashboardUsage,
 } from "@/lib/usage/query-openmeter";
+import {
+  loadPlatformDefaultBillingApp,
+  viewerHasAppUserMembership,
+} from "@/lib/viewer-usage-clients";
+import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
+
+export type BillingUsageKind = "tenant" | "personal";
 
 export type BillingAppRow = {
   id: string;
@@ -27,6 +37,11 @@ export type BillingAppRow = {
    * (those can differ for legacy apps).
    */
   publicClientId: string;
+  /**
+   * `tenant` = full app aggregate (owned/administered apps, or admin All Usage).
+   * `personal` = subject-scoped Explorer / network-key usage on the platform default.
+   */
+  usageKind: BillingUsageKind;
 };
 
 export type BillingUserUsageRow = {
@@ -156,12 +171,23 @@ export async function getBillingUsageDashboardData(
   const sessionUser = session?.user as Record<string, unknown> | undefined;
   const userId = sessionUser?.id as string | undefined;
   const role = sessionUser?.role as string | undefined;
-  const isAdmin = role === "admin";
-  const ownAppsOnly = options?.ownAppsOnly === true;
 
   if (!userId) {
     return { ok: false, reason: "no_session" };
   }
+
+  return getBillingUsageDashboardDataForUser(userId, role, filterAppId, options);
+}
+
+/** Session-free entry point for tests and callers that already resolved the viewer. */
+export async function getBillingUsageDashboardDataForUser(
+  userId: string,
+  role: string | undefined,
+  filterAppId?: string | null,
+  options?: { ownAppsOnly?: boolean },
+): Promise<BillingUsageDashboardResult> {
+  const isAdmin = role === "admin";
+  const ownAppsOnly = options?.ownAppsOnly === true;
 
   const appsQuery = db
     .select({
@@ -179,29 +205,40 @@ export async function getBillingUsageDashboardData(
   let orderedApps: BillingAppRow[];
   let scope: "all" | "single";
 
-  const toBillingApp = (row: {
-    id: string;
-    name: string;
-    ownerId: string;
-    ownerName: string | null;
-    ownerEmail: string | null;
-    publicClientId: string | null;
-  }): BillingAppRow => ({
+  const toBillingApp = (
+    row: {
+      id: string;
+      name: string;
+      ownerId: string;
+      ownerName: string | null;
+      ownerEmail: string | null;
+      publicClientId: string | null;
+    },
+    usageKind: BillingUsageKind = "tenant",
+  ): BillingAppRow => ({
     id: row.id,
-    name: row.name,
+    name: usageKind === "personal" ? PLATFORM_DEFAULT_USAGE_DISPLAY_NAME : row.name,
     ownerId: row.ownerId,
     ownerName: row.ownerName,
     ownerEmail: row.ownerEmail,
     // Prefer public OIDC client_id; fall back to developer_apps.id when unset.
     publicClientId: row.publicClientId?.trim() || row.id,
+    usageKind,
   });
 
   if (filterAppId) {
-    const auth = await getAuthorizedProviderApp(filterAppId);
-    if (!auth) {
+    const app = await getProviderApp(filterAppId);
+    if (!app) {
       return { ok: false, reason: "forbidden" };
     }
-    const rows = await appsQuery.where(eq(developerApps.id, auth.app.id)).limit(1);
+    const mayView =
+      isAdmin ||
+      app.ownerId === userId ||
+      (await isProviderAdmin(userId, app.id));
+    if (!mayView) {
+      return { ok: false, reason: "forbidden" };
+    }
+    const rows = await appsQuery.where(eq(developerApps.id, app.id)).limit(1);
     const row = rows[0];
     if (!row) {
       return { ok: false, reason: "forbidden" };
@@ -209,11 +246,12 @@ export async function getBillingUsageDashboardData(
     orderedApps = [toBillingApp(row)];
     scope = "single";
   } else if (isAdmin && !ownAppsOnly) {
-    const visibleApps = (await appsQuery).map(toBillingApp);
+    const visibleApps = (await appsQuery).map((row) => toBillingApp(row));
     orderedApps = sortAppsForViewer(visibleApps, userId, true);
     scope = "all";
   } else {
-    // Match My Apps / listUserAccessibleApps: owned + administered.
+    // Match My Apps: owned + administered, then add subject-scoped personal
+    // network usage on the platform default (never full-tenant for that app).
     const memberships = await db
       .select({ clientId: providerAdmins.clientId })
       .from(providerAdmins)
@@ -223,8 +261,32 @@ export async function getBillingUsageDashboardData(
       memberIds.length === 0
         ? eq(developerApps.ownerId, userId)
         : or(eq(developerApps.ownerId, userId), inArray(developerApps.id, memberIds));
-    const visibleApps = (await appsQuery.where(ownOrAdmin!)).map(toBillingApp);
-    orderedApps = sortAppsForViewer(visibleApps, userId, false);
+    const visibleApps = (await appsQuery.where(ownOrAdmin!)).map((row) =>
+      toBillingApp(row),
+    );
+
+    const defaultApp = await loadPlatformDefaultBillingApp();
+    let tenantApps = visibleApps;
+    if (defaultApp) {
+      tenantApps = visibleApps.filter(
+        (app) =>
+          app.id !== defaultApp.id && app.publicClientId !== defaultApp.publicClientId,
+      );
+      const isMember = await viewerHasAppUserMembership(
+        userId,
+        defaultApp.publicClientId,
+      );
+      if (isMember) {
+        orderedApps = [
+          ...sortAppsForViewer(tenantApps, userId, false),
+          toBillingApp(defaultApp, "personal"),
+        ];
+      } else {
+        orderedApps = sortAppsForViewer(tenantApps, userId, false);
+      }
+    } else {
+      orderedApps = sortAppsForViewer(tenantApps, userId, false);
+    }
     scope = "all";
   }
 
@@ -260,12 +322,14 @@ function chunkApps<T>(items: T[], size: number): T[][] {
 async function queryDashboardUsageForApp(
   app: BillingAppRow,
   cycle: { start: string; end: string },
+  viewerUserId: string,
 ): Promise<OpenMeterAppDashboardUsage | null> {
   try {
     return await queryOpenMeterAppDashboardUsage({
       clientId: app.id,
       startDate: cycle.start,
       endDate: cycle.end,
+      externalUserId: app.usageKind === "personal" ? viewerUserId : null,
     });
   } catch (err) {
     console.warn(
@@ -280,11 +344,12 @@ async function queryDashboardUsageForApp(
 async function queryDashboardUsagePaged(
   apps: BillingAppRow[],
   cycle: { start: string; end: string },
+  viewerUserId: string,
 ): Promise<Array<OpenMeterAppDashboardUsage | null>> {
   const results: Array<OpenMeterAppDashboardUsage | null> = [];
   for (const page of chunkApps(apps, DASHBOARD_APP_QUERY_PAGE_SIZE)) {
     const pageResults = await Promise.all(
-      page.map((app) => queryDashboardUsageForApp(app, cycle)),
+      page.map((app) => queryDashboardUsageForApp(app, cycle, viewerUserId)),
     );
     results.push(...pageResults);
   }
@@ -301,7 +366,7 @@ async function buildOpenMeterBillingDashboard(input: {
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
   const [omResults, activeSubscriptions] = await Promise.all([
-    queryDashboardUsagePaged(input.orderedApps, input.cycle),
+    queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
     listOwnerActiveSubscriptions(input.userId).catch((err) => {
       console.warn(
         "billing-usage-dashboard: subscription summary failed",

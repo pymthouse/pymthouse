@@ -1,5 +1,6 @@
 /**
- * Bootstrap script: creates the first admin user and prints a bearer token.
+ * Bootstrap script: creates the first admin user, ensures the platform default
+ * app for Explorers, and prints a bearer token.
  *
  * Usage:
  *   npx tsx scripts/bootstrap-admin.ts [email]
@@ -17,6 +18,7 @@ import { eq } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import { users, sessions, signerConfig } from "../src/db/schema";
 import { hashToken } from "../src/lib/token-hash";
+import { ensurePlatformDefaultApp } from "../src/lib/platform-default-app";
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -66,6 +68,16 @@ async function main() {
       createdAt: now,
     });
     console.log(`\n  Created admin user: ${email} (${userId})`);
+  }
+
+  try {
+    const defaultApp = await ensurePlatformDefaultApp({ ownerId: userId });
+    console.log(
+      `\n  Platform default app: ${defaultApp.clientId}` +
+        (defaultApp.created ? " (created)" : " (existing)"),
+    );
+  } catch (err) {
+    console.warn("\n  Warning: could not ensure platform default app:", err);
   }
 
   const raw = randomBytes(32).toString("hex");

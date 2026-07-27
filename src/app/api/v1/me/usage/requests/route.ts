@@ -8,6 +8,7 @@ import {
   listViewerSignedTicketRequests,
   listViewerSignedTicketSessions,
 } from "@/lib/openmeter/signed-ticket-events";
+import { resolveViewerUsageClientIds } from "@/lib/viewer-usage-clients";
 
 type MeUsageGroupBy = "request" | "session";
 type MeUsageScope = "own" | "all";
@@ -89,13 +90,21 @@ export async function GET(request: NextRequest) {
   const { scope, groupBy } = validated;
 
   const uniqueClientIds = parseUniqueClientIds(params);
+  // scope=own with no explicit filter: authorize the viewer's owned/admin apps
+  // plus app_users memberships (including personal network on the default app).
+  // Sessions require a concrete clientId set; request history benefits too.
+  let resolvedClientIds = uniqueClientIds;
+  if (scope === "own" && resolvedClientIds.length === 0) {
+    resolvedClientIds = await resolveViewerUsageClientIds(userId);
+  }
+
   const cursor = params.get("cursor")?.trim() || undefined;
   const manifestId = params.get("manifestId")?.trim() || undefined;
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
 
   const listInput = {
-    clientIds: uniqueClientIds.length > 0 ? uniqueClientIds : undefined,
+    clientIds: resolvedClientIds.length > 0 ? resolvedClientIds : undefined,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
   };

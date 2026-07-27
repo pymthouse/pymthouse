@@ -429,7 +429,7 @@ export default function AppSettingsScreen({
           },
           {
             id: "web" as const,
-            label: "Web RP",
+            label: "Web SSO",
             hint: "web_",
             show: showWebCredentialsTab,
           },

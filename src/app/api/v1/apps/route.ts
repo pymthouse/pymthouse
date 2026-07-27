@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, oidcClients, providerAdmins } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, and } from "drizzle-orm";
 import {
   createAppClient,
   ensureConfidentialWebClient,
@@ -20,6 +20,9 @@ import { syncPlanToOpenMeter } from "@/lib/openmeter/plans-sync";
 import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { listAllAppsForAdmin, sortAppsByPriority } from "@/lib/user-apps";
+import { createCorrelationId, writeAuditLog } from "@/lib/audit";
+import { markOnboardingComplete } from "@/lib/onboarding";
+import { notPlatformDefaultApp } from "@/lib/platform-default-app";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const ADMIN_ROLES = new Set(["admin", "operator"]);
@@ -63,10 +66,11 @@ export async function GET(request: NextRequest) {
       createdAt: developerApps.createdAt,
       updatedAt: developerApps.updatedAt,
       clientId: oidcClients.clientId,
+      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(eq(developerApps.ownerId, userId));
+    .where(and(eq(developerApps.ownerId, userId), notPlatformDefaultApp()));
 
   const memberApps =
     memberIds.length === 0
@@ -85,22 +89,29 @@ export async function GET(request: NextRequest) {
           createdAt: developerApps.createdAt,
           updatedAt: developerApps.updatedAt,
           clientId: oidcClients.clientId,
+          isPlatformDefault: developerApps.isPlatformDefault,
         })
         .from(developerApps)
         .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-        .where(inArray(developerApps.id, memberIds));
+        .where(and(inArray(developerApps.id, memberIds), notPlatformDefaultApp()));
 
-  const ownedWithFlags = ownedApps.map((app) => ({
-    ...app,
-    isOwner: true,
-    ownerExternalUserId: userId,
-  }));
+  const ownedWithFlags = ownedApps.map((app) => {
+    const { isPlatformDefault: _flag, ...rest } = app;
+    return {
+      ...rest,
+      isOwner: true,
+      ownerExternalUserId: userId,
+    };
+  });
 
-  const memberWithFlags = memberApps.map((app) => ({
-    ...app,
-    isOwner: false,
-    ownerExternalUserId: null,
-  }));
+  const memberWithFlags = memberApps.map((app) => {
+    const { isPlatformDefault: _flag, ...rest } = app;
+    return {
+      ...rest,
+      isOwner: false,
+      ownerExternalUserId: null,
+    };
+  });
 
   const dedupedApps = [...ownedWithFlags, ...memberWithFlags]
     .filter((app, index, rows) => rows.findIndex((row) => row.id === app.id) === index)
@@ -241,6 +252,25 @@ export async function POST(request: NextRequest) {
 
   resetProvider();
   await ensureProviderAdminMembership(userId, appId);
+
+  await markOnboardingComplete(userId, "builder");
+  const correlationId = createCorrelationId();
+  await writeAuditLog({
+    clientId: appId,
+    actorUserId: userId,
+    action: "builder_app_created",
+    status: "ok",
+    correlationId,
+    metadata: { name: name.trim() },
+  });
+  await writeAuditLog({
+    clientId: appId,
+    actorUserId: userId,
+    action: "onboarding_completed",
+    status: "ok",
+    correlationId,
+    metadata: { persona: "builder" },
+  });
 
   return NextResponse.json(
     { id: clientId, clientId, status: "approved" },

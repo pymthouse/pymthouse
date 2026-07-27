@@ -189,35 +189,37 @@ function AppRowActions({
       {app.clientId && (
         <Link
           href={`/apps/${app.id}/usage`}
-          className={iconBtnClass}
+          className={`${iconBtnClass} gap-1.5 px-2 sm:w-auto sm:px-2.5`}
           title="Usage"
           aria-label={`Open usage for ${app.name}`}
         >
           <UsageIcon />
+          <span className="hidden text-xs sm:inline">Usage</span>
         </Link>
       )}
       <Link
         href={`/apps/${app.id}`}
-        className={iconBtnClass}
+        className={`${iconBtnClass} gap-1.5 px-2 sm:w-auto sm:px-2.5`}
         title="Settings"
         aria-label={`Open settings for ${app.name}`}
       >
         <SettingsIcon />
+        <span className="hidden text-xs sm:inline">Settings</span>
       </Link>
       {canMint ? (
         <button
           type="button"
           onClick={() => onGetApiKey(app)}
           disabled={isMinting}
-          className="inline-flex items-center gap-1 rounded-md border border-emerald-600/50 px-2 py-0.5 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-emerald-600/50 px-2.5 text-xs font-medium text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isMinting ? (
             <span
-              className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
+              className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-600/40 border-t-emerald-400"
               aria-hidden
             />
           ) : (
-            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
