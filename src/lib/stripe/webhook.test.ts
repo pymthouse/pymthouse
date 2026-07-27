@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import {
   merchantConnectOAuthErrorCode,
   parseStripeAccountUpdated,
+  paymentsTabErrorMessage,
   sanitizeStripeOAuthProviderError,
   verifyStripeWebhookSignature,
 } from "./webhook";
@@ -104,4 +105,15 @@ test("sanitizeStripeOAuthProviderError allowlists Stripe codes", () => {
     sanitizeStripeOAuthProviderError("totally_weird<script>"),
     "oauth_denied",
   );
+});
+
+test("paymentsTabErrorMessage ignores free-form phishing text", () => {
+  assert.equal(paymentsTabErrorMessage("access_denied"), "Stripe connection was cancelled.");
+  assert.equal(
+    paymentsTabErrorMessage(
+      "Your Stripe account was suspended. Re-verify at https://evil.example",
+    ),
+    null,
+  );
+  assert.equal(paymentsTabErrorMessage(null), null);
 });

@@ -25,7 +25,7 @@ function requireStripeSecretKey(): string {
   return key;
 }
 
-function useKonnect(): boolean {
+function isKonnectMode(): boolean {
   return shouldUseKonnectRoutes(
     getHostedOpenMeterUrl(),
     process.env.OPENMETER_API_KEY,
@@ -161,7 +161,7 @@ export async function ensureStripeCustomerAppData(input: {
   /** When set on Konnect, written together with stripe app data (required for persistence). */
   billingProfileId?: string;
 }): Promise<string> {
-  if (useKonnect()) {
+  if (isKonnectMode()) {
     const existing = await getKonnectStripeCustomerId(input.customerId);
     if (existing && !input.billingProfileId?.trim()) {
       return existing;
@@ -243,7 +243,7 @@ export async function getStripeCustomerAppDataId(input: {
   client: OpenMeter;
   customerId: string;
 }): Promise<string | null> {
-  if (useKonnect()) {
+  if (isKonnectMode()) {
     return getKonnectStripeCustomerId(input.customerId);
   }
   return getSelfHostedStripeCustomerId(input.client, input.customerId);
@@ -252,7 +252,7 @@ export async function getStripeCustomerAppDataId(input: {
 export async function getKonnectCustomerBillingProfileId(
   customerId: string,
 ): Promise<string | null> {
-  if (!useKonnect()) {
+  if (!isKonnectMode()) {
     return null;
   }
   try {
@@ -267,7 +267,7 @@ export async function getKonnectCustomerBillingProfileId(
 export async function getKonnectDefaultPaymentMethodId(
   customerId: string,
 ): Promise<string | null> {
-  if (!useKonnect()) {
+  if (!isKonnectMode()) {
     return null;
   }
   try {

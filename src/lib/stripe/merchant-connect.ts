@@ -110,7 +110,11 @@ async function ensureOmStarterSideEffect(clientId: string): Promise<void> {
   }
 }
 
-export async function startMerchantConnect(input: {
+export async function startMerchantConnect({
+  clientId,
+  email,
+  displayName,
+}: {
   clientId: string;
   /** Reserved for audit / future session binding; Account Links do not persist OAuth state. */
   userId: string;
@@ -118,19 +122,17 @@ export async function startMerchantConnect(input: {
   email?: string;
   displayName?: string;
 }): Promise<{ method: "account_link"; url: string; accountId: string }> {
-  void input.userId;
-  void input.mode;
-  await ensureOmStarterSideEffect(input.clientId);
+  await ensureOmStarterSideEffect(clientId);
 
-  const existing = await getAppBillingConfig(input.clientId);
+  const existing = await getAppBillingConfig(clientId);
   let accountId = existing?.stripeConnectedAccountId?.trim() || "";
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
-      clientId: input.clientId,
-      email: input.email,
-      displayName: input.displayName,
+      clientId,
+      email,
+      displayName,
     });
-    await upsertAppBillingConfig(input.clientId, {
+    await upsertAppBillingConfig(clientId, {
       stripeConnectedAccountId: accountId,
       stripeOnboardingMethod: "account_link" satisfies StripeOnboardingMethod,
       stripeConnectStatus: "pending",
@@ -140,13 +142,13 @@ export async function startMerchantConnect(input: {
     });
   }
 
-  const urls = connectAccountLinkUrls(input.clientId);
+  const urls = connectAccountLinkUrls(clientId);
   const linkUrl = await createAccountOnboardingLink({
     accountId,
     refreshUrl: urls.refreshUrl,
     returnUrl: urls.returnUrl,
   });
-  await syncConnectedAccountFlags(input.clientId, accountId);
+  await syncConnectedAccountFlags(clientId, accountId);
   return { method: "account_link", url: linkUrl, accountId };
 }
 

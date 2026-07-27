@@ -6,6 +6,7 @@ import {
   usdCentsDisplayToMicros,
   usdMicrosToCentsDisplay,
 } from "@/lib/format-usd-micros";
+import { paymentsTabErrorMessage } from "@/lib/stripe/webhook";
 
 type StripeStatus = {
   status: string;
@@ -40,7 +41,7 @@ type Props = {
 };
 
 /** Only allow redirect to Stripe-hosted Connect / Account Link URLs. */
-function sanitizeStripeConnectRedirect(url: string): string {
+function redirectToStripeConnectUrl(url: string): void {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -54,7 +55,10 @@ function sanitizeStripeConnectRedirect(url: string): string {
   if (host !== "connect.stripe.com" && !host.endsWith(".stripe.com")) {
     throw new Error("Connect URL must be a Stripe host");
   }
-  return parsed.href;
+  // Rebuild from validated host + URL-parser path/query (no open redirect).
+  globalThis.location.assign(
+    `https://${host}${parsed.pathname}${parsed.search}${parsed.hash}`,
+  );
 }
 
 export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>) {
@@ -104,7 +108,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
     if (globalThis.window !== undefined) {
       const params = new URLSearchParams(globalThis.location.search);
       if (params.get("error")) {
-        setError(params.get("error"));
+        setError(paymentsTabErrorMessage(params.get("error")));
       }
       if (params.get("connected") === "1" || params.get("connect") === "refresh") {
         load().catch(() => undefined);
@@ -128,7 +132,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       if (!body.url) {
         throw new Error(body.error || "Connect URL missing");
       }
-      globalThis.location.href = sanitizeStripeConnectRedirect(body.url);
+      redirectToStripeConnectUrl(body.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
@@ -147,7 +151,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       if (!res.ok || !body.url) {
         throw new Error(body.error || "Account Link failed");
       }
-      globalThis.location.href = sanitizeStripeConnectRedirect(body.url);
+      redirectToStripeConnectUrl(body.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);

@@ -374,10 +374,11 @@ async function main() {
         else skipped += 1;
       } catch (err) {
         errors += 1;
-        console.error(
-          `[error] owner ${ownerId}`,
-          err instanceof Error ? err.message : err,
-        );
+        console.error({
+          message: "[error] owner migrate failed",
+          ownerId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
