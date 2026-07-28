@@ -120,9 +120,13 @@ export default function DashboardLayout({
     [userRole]
   );
 
+  // Must not target "/": the home page redirects any request carrying a session
+  // cookie to /apps, so a client/server session disagreement would ping-pong
+  // /apps → / → /apps forever. /login is where the server-side guards send
+  // unauthenticated requests, and it never redirects them back out.
   useEffect(() => {
     if (status === "unauthenticated") {
-      router.push("/");
+      router.push("/login");
     }
   }, [status, router]);
 
