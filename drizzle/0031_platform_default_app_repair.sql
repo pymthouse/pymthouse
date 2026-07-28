@@ -1,18 +1,22 @@
 -- Repair duplicate platform-default / internal Explorer apps introduced during
 -- onboarding rollout. Keep one canonical default, revoke legacy credentials,
--- and reassert singleton constraints.
+-- reassign ownership to an admin when needed, and reassert singleton constraints.
 
 DO $$
 DECLARE
   canonical_id text;
+  admin_owner_id text;
 BEGIN
-  -- Prefer the currently flagged row, else newest admin-owned internal candidate.
+  -- Prefer an admin-owned flagged row, else any flagged row, else newest
+  -- admin-owned internal candidate.
   SELECT d.id
   INTO canonical_id
   FROM developer_apps d
   INNER JOIN users u ON u.id = d.owner_id
   WHERE d.is_platform_default = 1
-  ORDER BY d.created_at DESC
+  ORDER BY
+    CASE WHEN u.role = 'admin' THEN 0 ELSE 1 END,
+    d.created_at DESC
   LIMIT 1;
 
   IF canonical_id IS NULL THEN
@@ -31,6 +35,13 @@ BEGIN
       d.created_at DESC
     LIMIT 1;
   END IF;
+
+  SELECT u.id
+  INTO admin_owner_id
+  FROM users u
+  WHERE u.role = 'admin'
+  ORDER BY u.created_at ASC
+  LIMIT 1;
 
   IF canonical_id IS NOT NULL THEN
     -- Revoke keys on non-canonical internal candidates and demote them.
@@ -65,6 +76,18 @@ BEGIN
       marketplace_featured = 0,
       updated_at = to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     WHERE id = canonical_id;
+
+    -- Invariant: platform default must be owned by an admin.
+    IF admin_owner_id IS NOT NULL THEN
+      UPDATE developer_apps d
+      SET
+        owner_id = admin_owner_id,
+        updated_at = to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      FROM users u
+      WHERE d.id = canonical_id
+        AND d.owner_id = u.id
+        AND u.role <> 'admin';
+    END IF;
   END IF;
 END $$;--> statement-breakpoint
 

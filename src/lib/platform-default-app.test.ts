@@ -136,6 +136,50 @@ test("ensurePlatformDefaultApp promotes configured app to flagged singleton", as
   });
 });
 
+test("ensurePlatformDefaultApp reassigns non-admin ownership to admin", async (t) => {
+  const adminId = await createTestUser({ role: "admin" });
+  const developerId = await createTestUser({ role: "developer" });
+  const app = await seedDeveloperAppWithClient({
+    ownerId: developerId,
+    name: `NonAdminDefault ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+    await db.delete(users).where(eq(users.id, adminId));
+  });
+
+  await withTemporaryPlatformDefault(app.clientId, async () => {
+    const before = await db
+      .select({ ownerId: developerApps.ownerId })
+      .from(developerApps)
+      .where(eq(developerApps.id, app.clientId))
+      .limit(1);
+    assert.equal(before[0]?.ownerId, developerId);
+
+    const result = await ensurePlatformDefaultApp({ ownerId: adminId });
+    assert.equal(result.created, false);
+    assert.equal(result.clientId, app.clientId);
+
+    const after = await db
+      .select({
+        ownerId: developerApps.ownerId,
+        isPlatformDefault: developerApps.isPlatformDefault,
+      })
+      .from(developerApps)
+      .where(eq(developerApps.id, app.clientId))
+      .limit(1);
+    assert.equal(after[0]?.isPlatformDefault, 1);
+    assert.equal(after[0]?.ownerId, adminId);
+
+    const owner = await db
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, after[0]!.ownerId))
+      .limit(1);
+    assert.equal(owner[0]?.role, "admin");
+  });
+});
+
 test("ensurePlatformDefaultApp creates once when no default exists", async (t) => {
   await runExclusivePlatformDefaultMutation(async () => {
     const prior = await db
