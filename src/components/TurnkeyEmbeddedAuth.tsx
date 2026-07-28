@@ -16,6 +16,55 @@ import {
 } from "@/lib/turnkey-nextauth-bridge";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
+const AUTH_BUTTON_CLASS =
+  "flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium leading-5 text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-900";
+
+function GoogleMark({ className }: Readonly<{ className?: string }>) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="#4285F4"
+        d="M23.49 12.27c0-.79-.07-1.55-.2-2.27H12v4.29h6.45a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.28-2.1 3.56-5.19 3.56-8.64Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.95-1.07 7.93-2.91l-3.88-3c-1.08.73-2.46 1.16-4.05 1.16-3.12 0-5.76-2.1-6.7-4.93H1.3v3.1A12 12 0 0 0 12 24Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.3 14.32A7.2 7.2 0 0 1 4.93 12c0-.8.14-1.57.37-2.32v-3.1H1.3A12 12 0 0 0 0 12c0 1.93.46 3.76 1.3 5.42l4-3.1Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.77c1.76 0 3.33.61 4.57 1.8l3.43-3.43C17.94 1.19 15.23 0 12 0A12 12 0 0 0 1.3 6.58l4 3.1C6.23 6.87 8.88 4.77 12 4.77Z"
+      />
+    </svg>
+  );
+}
+
+function DiscordMark({ className }: Readonly<{ className?: string }>) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M20.32 4.37a19.8 19.8 0 0 0-4.9-1.52.07.07 0 0 0-.07.04l-.62 1.11a18.2 18.2 0 0 0-5.46 0l-.63-1.1a.07.07 0 0 0-.07-.05c-1.7.28-3.35.8-4.9 1.52a.06.06 0 0 0-.03.02C.53 9.08-.2 13.66.16 18.17c0 .03.02.05.04.07 2 1.48 3.95 2.38 5.87 2.98a.07.07 0 0 0 .08-.02l1.2-1.65c-1.28-.48-2.5-1.1-3.66-1.9a.07.07 0 0 1-.01-.12c.24-.18.49-.36.72-.55a.07.07 0 0 1 .08-.01c7.66 3.5 15.97 3.5 23.54 0a.07.07 0 0 1 .08.01l.72.55a.07.07 0 0 1-.01.12c-1.16.8-2.38 1.42-3.66 1.9l1.2 1.65a.07.07 0 0 0 .08.02c1.93-.6 3.88-1.5 5.87-2.98a.07.07 0 0 0 .04-.07c.43-5.2-.72-9.74-3.42-13.78a.06.06 0 0 0-.03-.02ZM8.28 15.4c-1.45 0-2.64-1.34-2.64-2.98 0-1.64 1.17-2.98 2.64-2.98 1.48 0 2.66 1.35 2.64 2.98 0 1.64-1.17 2.98-2.64 2.98Zm7.44 0c-1.45 0-2.64-1.34-2.64-2.98 0-1.64 1.17-2.98 2.64-2.98 1.48 0 2.66 1.35 2.64 2.98 0 1.64-1.16 2.98-2.64 2.98Z" />
+    </svg>
+  );
+}
+
+function applyAuthButtonLook(button: HTMLButtonElement) {
+  button.style.display = "flex";
+  button.style.width = "100%";
+  button.style.alignItems = "center";
+  button.style.justifyContent = "center";
+  button.style.gap = "0.5rem";
+  button.style.borderRadius = "0.5rem";
+  button.style.border = "1px solid rgb(63 63 70)";
+  button.style.background = "rgb(9 9 11 / 0.6)";
+  button.style.padding = "0.625rem 1rem";
+  button.style.fontSize = "0.875rem";
+  button.style.fontWeight = "500";
+  button.style.lineHeight = "1.25rem";
+  button.style.color = "rgb(244 244 245)";
+}
 
 export function TurnkeyEmbeddedAuth({
   primaryColor = "#10b981",
@@ -79,6 +128,7 @@ function TurnkeyEmbeddedAuthInner({
   const [retryNonce, setRetryNonce] = useState(0);
   const [failed, setFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasDiscordOAuthAction, setHasDiscordOAuthAction] = useState(false);
   const authSectionRef = useRef<HTMLElement | null>(null);
   // True once Turnkey has been Unauthenticated on this page — a later
   // Authenticated state is a fresh login we should bridge to NextAuth.
@@ -110,6 +160,13 @@ function TurnkeyEmbeddedAuthInner({
       const googleButton = rootElement.querySelector(
         "button[data-testid='oauth-google']",
       ) as HTMLButtonElement | null;
+      const discordButton = rootElement.querySelector(
+        "button[data-testid='oauth-discord']",
+      ) as HTMLButtonElement | null;
+      setHasDiscordOAuthAction((prev) => {
+        const next = !!discordButton;
+        return prev === next ? prev : next;
+      });
       const walletButton = rootElement.querySelector(
         "button[data-testid='wallet-auth-button']",
       ) as HTMLButtonElement | null;
@@ -117,6 +174,8 @@ function TurnkeyEmbeddedAuthInner({
 
       const googleGroup = googleButton.closest("div.w-full") as HTMLElement | null;
       if (googleGroup) googleGroup.style.display = "none";
+      const discordGroup = discordButton?.closest("div.w-full") as HTMLElement | null;
+      if (discordGroup) discordGroup.style.display = "none";
       const walletGroup = walletButton.closest("div.w-full") as HTMLElement | null;
       if (walletGroup) walletGroup.style.display = "none";
 
@@ -130,6 +189,12 @@ function TurnkeyEmbeddedAuthInner({
         if (!block.textContent?.includes("By continuing, you agree to our")) return;
         (block as HTMLElement).style.display = "none";
       });
+
+      const passkeyLoginButton = Array.from(rootElement.querySelectorAll("button")).find(
+        (button) =>
+          button.textContent?.trim().toLowerCase() === "log in with passkey",
+      ) as HTMLButtonElement | undefined;
+      if (passkeyLoginButton) applyAuthButtonLook(passkeyLoginButton);
     };
 
     applyGrouping();
@@ -262,7 +327,7 @@ function TurnkeyEmbeddedAuthInner({
       */}
       <div
         className={
-          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='wallet-auth-button']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden [&_div.text-icon-text-light\\/70.dark\\:text-icon-text-dark\\/70.text-xs.mt-4.text-center]:hidden" +
+          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='oauth-discord']]:hidden [&_button[data-testid='wallet-auth-button']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden [&_div.text-icon-text-light\\/70.dark\\:text-icon-text-dark\\/70.text-xs.mt-4.text-center]:hidden" +
           // Kit defaults logo to max-w-32/max-h-16; force a readable header size.
           // Also give no-logo spacer less empty top padding (kit uses mt-12).
           (authLogo
@@ -284,8 +349,9 @@ function TurnkeyEmbeddedAuthInner({
             onClick={() => {
               triggerEmbeddedAuthAction("oauth-google");
             }}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-900"
+            className={AUTH_BUTTON_CLASS}
           >
+            <GoogleMark className="h-4 w-4" />
             Continue with Google
           </button>
           <GitHubTurnkeyLoginButton
@@ -293,6 +359,18 @@ function TurnkeyEmbeddedAuthInner({
             sectionLabel={null}
             containerClassName="space-y-2"
           />
+          {hasDiscordOAuthAction && (
+            <button
+              type="button"
+              onClick={() => {
+                triggerEmbeddedAuthAction("oauth-discord");
+              }}
+              className={AUTH_BUTTON_CLASS}
+            >
+              <DiscordMark className="h-4 w-4" />
+              Continue with Discord
+            </button>
+          )}
         </section>
         <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
           Use your email or passkey
@@ -321,7 +399,7 @@ function TurnkeyEmbeddedAuthInner({
             onClick={() => {
               triggerEmbeddedAuthAction("wallet-auth-button");
             }}
-            className="flex w-full items-center justify-center rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-900"
+            className={AUTH_BUTTON_CLASS}
           >
             Continue with wallet
           </button>
