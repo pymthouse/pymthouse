@@ -37,7 +37,7 @@ BEGIN
     UPDATE api_keys k
     SET
       status = 'revoked',
-      revoked_at = COALESCE(k.revoked_at, NOW()::text)
+      revoked_at = COALESCE(k.revoked_at, to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
     FROM developer_apps d
     INNER JOIN users u ON u.id = d.owner_id
     WHERE k.client_id = d.id

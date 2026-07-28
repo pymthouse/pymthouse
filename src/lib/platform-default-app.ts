@@ -160,6 +160,53 @@ async function findAdminOwnerId(): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
+/** Prefer `preferredOwnerId` when that user is an admin; else the first admin. */
+async function resolveAdminOwnerId(
+  preferredOwnerId?: string,
+): Promise<string | null> {
+  if (preferredOwnerId) {
+    const rows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, preferredOwnerId), eq(users.role, "admin")))
+      .limit(1);
+    if (rows[0]?.id) return rows[0].id;
+  }
+  return findAdminOwnerId();
+}
+
+/**
+ * Invariant: the platform default app must be owned by an admin.
+ * Reassigns `owner_id` when the current owner is missing or non-admin.
+ */
+async function ensurePlatformDefaultOwnedByAdmin(
+  appId: string,
+  preferredOwnerId?: string,
+): Promise<void> {
+  const adminId = await resolveAdminOwnerId(preferredOwnerId);
+  if (!adminId) return;
+
+  const rows = await db
+    .select({
+      ownerId: developerApps.ownerId,
+      ownerRole: users.role,
+    })
+    .from(developerApps)
+    .innerJoin(users, eq(developerApps.ownerId, users.id))
+    .where(eq(developerApps.id, appId))
+    .limit(1);
+  const row = rows[0];
+  if (!row || row.ownerRole === "admin") return;
+
+  await db
+    .update(developerApps)
+    .set({
+      ownerId: adminId,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(developerApps.id, appId));
+}
+
 function isUniqueViolation(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const code = (err as { code?: unknown }).code;
@@ -188,6 +235,7 @@ export async function ensurePlatformDefaultApp(opts?: {
   const promoted = await promoteConfiguredDefaultAppIfNeeded();
   if (promoted) {
     await ensureDefaultAppSiblings(promoted);
+    await ensurePlatformDefaultOwnedByAdmin(promoted, opts?.ownerId);
     return { clientId: promoted, created: false };
   }
 
@@ -202,10 +250,11 @@ export async function ensurePlatformDefaultApp(opts?: {
         updatedAt: new Date().toISOString(),
       })
       .where(eq(developerApps.id, existing));
+    await ensurePlatformDefaultOwnedByAdmin(existing, opts?.ownerId);
     return { clientId: existing, created: false };
   }
 
-  const ownerId = opts?.ownerId ?? (await findAdminOwnerId());
+  const ownerId = await resolveAdminOwnerId(opts?.ownerId);
   if (!ownerId) {
     throw new Error(
       "Cannot create platform default app: no admin user. Run npm run bootstrap first.",
@@ -261,6 +310,7 @@ export async function ensurePlatformDefaultApp(opts?: {
     const winner = await findFlaggedDefaultClientId();
     if (!winner) throw err;
     await ensureDefaultAppSiblings(winner);
+    await ensurePlatformDefaultOwnedByAdmin(winner, opts?.ownerId);
     resetProvider();
     return { clientId: winner, created: false };
   }
