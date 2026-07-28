@@ -35,6 +35,7 @@ export function getTurnkeyGithubOidcJwksUrl(): string {
  */
 export function turnkeyOauthNonceFromPublicKey(publicKey: string): string {
   // codeql[js/insufficient-password-hash]
+  // lgtm[js/insufficient-password-hash]
   return createHash("sha256").update(publicKey, "utf8").digest("hex");
 }
 

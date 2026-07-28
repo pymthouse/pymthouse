@@ -32,31 +32,47 @@ function safeEqualString(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
+function parseGithubCallbackOrThrow(request: NextRequest): {
+  state: NonNullable<ReturnType<typeof openGithubOauthState>>;
+  code: string;
+} {
+  const rawState = request.nextUrl.searchParams.get("state");
+  if (!rawState) {
+    throw new Error("InvalidOauthState");
+  }
+  const state = openGithubOauthState(rawState.trim());
+  if (!state) {
+    throw new Error("InvalidOauthState");
+  }
+  const csrfCookie = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value;
+  if (!csrfCookie || !safeEqualString(csrfCookie, state.csrf)) {
+    throw new Error("InvalidOauthState");
+  }
+
+  const rawCode = request.nextUrl.searchParams.get("code");
+  if (!rawCode) {
+    throw new Error("InvalidGithubCallback");
+  }
+  const code = rawCode.trim();
+  if (!code) {
+    throw new Error("InvalidGithubCallback");
+  }
+
+  return {
+    state,
+    code,
+  };
+}
+
 /** GitHub OAuth callback → Turnkey oauthLogin → handoff cookie → complete page. */
 export async function GET(request: NextRequest) {
   if (!isGithubTurnkeyLoginConfigured()) {
     return redirectToLogin("GitHubLoginNotConfigured");
   }
 
-  // Validate state/CSRF before interpreting any user-controlled callback params
-  // (including GitHub's `error`), so early returns cannot bypass the binding check.
-  const stateParam = request.nextUrl.searchParams.get("state")?.trim();
-  const state = stateParam ? openGithubOauthState(stateParam) : null;
-  const csrfCookie = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value;
-  if (
-    !state ||
-    !csrfCookie ||
-    !safeEqualString(csrfCookie, state.csrf)
-  ) {
-    return redirectToLogin("InvalidOauthState");
-  }
-
-  const code = request.nextUrl.searchParams.get("code")?.trim();
-  if (!code) {
-    return redirectToLogin("InvalidGithubCallback");
-  }
-
   try {
+    // Validate state/CSRF + code before any OAuth exchange side effects.
+    const { state, code } = parseGithubCallbackOrThrow(request);
     const { accessToken } = await exchangeGithubOAuthCode(code);
     const profile = await fetchGithubUserProfile(accessToken);
     const { sessionToken } = await loginTurnkeyWithGithub({
