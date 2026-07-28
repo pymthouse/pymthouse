@@ -13,7 +13,11 @@ export default function MyAppsShortcutTiles({
   showApiKeys?: boolean;
 }>) {
   return (
-    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div
+      className={`mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+        showApiKeys ? "lg:grid-cols-3" : "lg:grid-cols-2"
+      }`}
+    >
       {showApiKeys ? (
         <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
           <div>

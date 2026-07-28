@@ -151,7 +151,15 @@ export async function getPlatformDefaultApp() {
   return rows[0] ?? null;
 }
 
-async function findAdminOwnerId(): Promise<string | null> {
+/**
+ * Resolve the canonical platform admin for owning the platform default app.
+ * Prefers `npm run bootstrap` admin, then named/email match, then non-test
+ * admins, then any admin. Optional `fallbackEmail` widens the named tier
+ * (bootstrap CLI passes its email arg).
+ */
+export async function findAdminOwnerId(
+  fallbackEmail = "admin@pymthouse.local",
+): Promise<string | null> {
   // Prefer the real bootstrap admin (`npm run bootstrap`), not leftover test
   // admins (createTestUser also uses oauthProvider=bootstrap).
   const bootstrap = await db
@@ -175,7 +183,7 @@ async function findAdminOwnerId(): Promise<string | null> {
       and(
         eq(users.role, "admin"),
         or(
-          eq(users.email, "admin@pymthouse.local"),
+          eq(users.email, fallbackEmail),
           eq(users.name, "Bootstrap Admin"),
         ),
       ),

@@ -31,7 +31,7 @@ export function requirePersonalKeysSession(
       {
         error: options?.adminRejectedMessage ?? DEFAULT_ADMIN_REJECT,
       },
-      { status: 400 },
+      { status: 403 },
     );
   }
 
