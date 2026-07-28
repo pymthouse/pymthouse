@@ -10,34 +10,46 @@ export type AppFilterOption = {
 function filterButtonLabel(
   options: AppFilterOption[],
   selectedValues: string[],
+  emptyLabel: string,
+  allLabel: string,
 ): string {
   if (options.length === 0) {
-    return "No applications";
+    return emptyLabel;
   }
   if (selectedValues.length === 0) {
-    return "No applications";
+    return emptyLabel;
   }
   if (selectedValues.length === options.length) {
-    return "All applications";
+    return allLabel;
   }
   if (selectedValues.length === 1) {
-    return options.find((o) => o.value === selectedValues[0])?.label ?? "1 app";
+    return options.find((o) => o.value === selectedValues[0])?.label ?? "1 selected";
   }
-  return `${selectedValues.length} apps`;
+  return `${selectedValues.length} selected`;
 }
 
 /**
- * Compact multi-select for filtering Dashboard usage by application.
+ * Compact multi-select for filtering Dashboard lists by application/source.
  * Defaults to all selected; "Select all" restores that state.
  */
 export default function AppFilterDropdown({
   options,
   selectedValues,
   onChange,
+  label = "Apps",
+  emptyLabel = "No applications",
+  allLabel = "All applications",
+  legendLabel,
 }: Readonly<{
   options: AppFilterOption[];
   selectedValues: string[];
   onChange: (values: string[]) => void;
+  /** Short prefix shown on the closed button (e.g. "Apps", "Source"). */
+  label?: string;
+  emptyLabel?: string;
+  allLabel?: string;
+  /** Visually hidden fieldset legend; defaults from `label`. */
+  legendLabel?: string;
 }>) {
   const listId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,8 +92,10 @@ export default function AppFilterDropdown({
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-2 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-600 hover:bg-zinc-800/80"
       >
-        <span className="text-zinc-500">Apps</span>
-        <span className="max-w-[12rem] truncate">{filterButtonLabel(options, selectedValues)}</span>
+        <span className="text-zinc-500">{label}</span>
+        <span className="max-w-[12rem] truncate">
+          {filterButtonLabel(options, selectedValues, emptyLabel, allLabel)}
+        </span>
         <svg
           className={`h-3.5 w-3.5 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
@@ -118,11 +132,11 @@ export default function AppFilterDropdown({
           </div>
 
           {options.length === 0 ? (
-            <p className="px-3 py-3 text-sm text-zinc-500">No applications</p>
+            <p className="px-3 py-3 text-sm text-zinc-500">{emptyLabel}</p>
           ) : (
             <fieldset className="relative m-0 border-0 p-0">
               <legend className="absolute h-px w-px overflow-hidden whitespace-nowrap p-0 [clip:rect(0,0,0,0)]">
-                Filter by application
+                {legendLabel ?? `Filter by ${label.toLowerCase()}`}
               </legend>
               {options.map((opt) => {
                 const selected = selectedSet.has(opt.value);

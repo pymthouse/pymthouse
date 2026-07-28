@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
+import { notPlatformDefaultApp } from "@/lib/platform-default-app";
 
 function publishedApprovedCondition() {
   return and(
     eq(developerApps.status, "approved"),
     isNotNull(developerApps.publishedAt),
+    notPlatformDefaultApp(),
   );
 }
 

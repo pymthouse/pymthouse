@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { apiKeys, appUsers, developerApps, oidcClients } from "@/db/schema";
@@ -254,4 +254,119 @@ export async function revokeAppUserApiKey(input: {
     .returning({ id: apiKeys.id });
 
   return revoked.length > 0;
+}
+
+export type SessionUserApiKey = {
+  id: string;
+  label: string | null;
+  prefix: string;
+  suffix: string;
+  status: string;
+  createdAt: string;
+  revokedAt: string | null;
+  clientId: string;
+  appName: string;
+  isPlatformDefault: boolean;
+};
+
+/**
+ * Keys the signed-in platform user may manage via /api/v1/me/keys.
+ *
+ * Authorization requires both:
+ * - app_users.external_user_id = sessionUserId (the key is bound to this user)
+ * - and either the canonical platform-default app, or an app owned by the
+ *   session user. An app-controlled external_user_id match alone is never
+ *   enough (cross-tenant spoofing).
+ */
+function sessionUserKeyOwnership(sessionUserId: string) {
+  return and(
+    eq(appUsers.externalUserId, sessionUserId),
+    or(
+      eq(developerApps.isPlatformDefault, 1),
+      eq(developerApps.ownerId, sessionUserId),
+    ),
+  );
+}
+
+/**
+ * List API keys the signed-in platform user may manage: personal keys on the
+ * platform default app, plus owner keys on apps they own.
+ */
+export async function listSessionUserApiKeys(
+  sessionUserId: string,
+): Promise<SessionUserApiKey[]> {
+  const rows = await db
+    .select({
+      id: apiKeys.id,
+      label: apiKeys.label,
+      keyPrefix: apiKeys.keyPrefix,
+      status: apiKeys.status,
+      createdAt: apiKeys.createdAt,
+      revokedAt: apiKeys.revokedAt,
+      clientId: oidcClients.clientId,
+      developerAppId: developerApps.id,
+      appName: developerApps.name,
+      isPlatformDefault: developerApps.isPlatformDefault,
+    })
+    .from(apiKeys)
+    .innerJoin(appUsers, eq(apiKeys.appUserId, appUsers.id))
+    .innerJoin(developerApps, eq(apiKeys.clientId, developerApps.id))
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(sessionUserKeyOwnership(sessionUserId));
+
+  return rows
+    .map((row) => ({
+      id: row.id,
+      label: row.label,
+      prefix: maskApiKeyPrefix(row.keyPrefix),
+      suffix: maskApiKeySuffix(row.keyPrefix),
+      status: row.status,
+      createdAt: row.createdAt,
+      revokedAt: row.revokedAt,
+      clientId: row.clientId?.trim() || row.developerAppId,
+      appName: row.appName,
+      isPlatformDefault: row.isPlatformDefault === 1,
+    }))
+    .sort((a, b) => {
+      // Active first, then newest created.
+      if (a.status === "active" && b.status !== "active") return -1;
+      if (a.status !== "active" && b.status === "active") return 1;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+
+/**
+ * Revoke a key only if it is a personal/default-app or owned-app key for the
+ * signed-in platform user.
+ */
+export async function revokeSessionUserApiKey(input: {
+  sessionUserId: string;
+  keyId: string;
+}): Promise<{ developerAppId: string } | null> {
+  const owned = await db
+    .select({
+      id: apiKeys.id,
+      developerAppId: apiKeys.clientId,
+      appUserId: apiKeys.appUserId,
+    })
+    .from(apiKeys)
+    .innerJoin(appUsers, eq(apiKeys.appUserId, appUsers.id))
+    .innerJoin(developerApps, eq(apiKeys.clientId, developerApps.id))
+    .where(
+      and(
+        eq(apiKeys.id, input.keyId),
+        sessionUserKeyOwnership(input.sessionUserId),
+      ),
+    )
+    .limit(1);
+
+  const row = owned[0];
+  if (!row?.appUserId) return null;
+
+  const ok = await revokeAppUserApiKey({
+    developerAppId: row.developerAppId,
+    appUserId: row.appUserId,
+    keyId: row.id,
+  });
+  return ok ? { developerAppId: row.developerAppId } : null;
 }

@@ -138,14 +138,14 @@ export default function AppModeStep({
       <div>
         <h2 className="text-base font-semibold text-zinc-100">Capabilities</h2>
         <p className="text-sm text-zinc-500 mt-1">
-          The primary <code className="font-mono text-zinc-400">app_</code> client stays
-          public. Enable confidential siblings as needed.
+          Your app&apos;s public <code className="font-mono text-zinc-400">app_</code>{" "}
+          client handles user sign-in. Add server-side capabilities as needed.
         </p>
       </div>
 
       <div className="space-y-2">
         <label
-          aria-label="Confidential M2M backend"
+          aria-label="Server API access (M2M)"
           className={capabilityRowClass(Boolean(data.backendDeviceHelper), readOnly)}
         >
           <input
@@ -156,18 +156,18 @@ export default function AppModeStep({
             className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
           />
           <div>
-            <p className="text-sm font-medium text-zinc-200">Confidential M2M backend</p>
+            <p className="text-sm font-medium text-zinc-200">Server API access (M2M)</p>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Provisions a confidential{" "}
-              <code className="font-mono text-zinc-400">m2m_</code> client for
-              server-to-server Builder APIs and token exchange testing.
+              Lets your backend call the Builder API and mint user tokens. Creates a
+              confidential <code className="font-mono text-zinc-400">m2m_</code>{" "}
+              client with a secret.
             </p>
           </div>
         </label>
 
         {data.backendDeviceHelper ? (
           <label
-            aria-label="Device / CLI login"
+            aria-label="CLI and device sign-in"
             className={capabilityRowClass(hasDeviceCode, readOnly)}
           >
             <input
@@ -178,10 +178,10 @@ export default function AppModeStep({
               className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
             />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-zinc-200">Device / CLI login</p>
+              <p className="text-sm font-medium text-zinc-200">CLI &amp; device sign-in</p>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Allow CLI tools, SDKs, and headless clients to authenticate via a
-                user code on a secondary device.
+                Users sign in to CLI tools, SDKs, and headless apps by entering a
+                short code in their browser.
               </p>
               {hasDeviceCode ? (
                 <p className="mt-2 text-xs text-zinc-500">
@@ -194,7 +194,7 @@ export default function AppModeStep({
         ) : null}
 
         <label
-          aria-label="Confidential web RP"
+          aria-label="Web single sign-on"
           className={capabilityRowClass(Boolean(data.confidentialWebHelper), readOnly)}
         >
           <input
@@ -205,13 +205,12 @@ export default function AppModeStep({
             className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
           />
           <div>
-            <p className="text-sm font-medium text-zinc-200">Confidential web RP</p>
+            <p className="text-sm font-medium text-zinc-200">Web single sign-on (SSO)</p>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Provisions a confidential{" "}
-              <code className="font-mono text-zinc-400">web_</code> sibling for portal
-              SSO (auth code + secret + redirects). This is the only client that
-              registers redirect URIs — configure them on Credentials &amp; URLs →
-              Web RP.
+              Sign users into a web portal with redirect-based login. Creates a
+              confidential <code className="font-mono text-zinc-400">web_</code>{" "}
+              client — the only one that registers redirect URLs (Credentials &amp;
+              URLs → Web SSO).
             </p>
           </div>
         </label>
@@ -227,12 +226,13 @@ export default function AppModeStep({
           <div>
             <p className="text-sm font-medium text-zinc-200">Payment signing</p>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Access remote signer endpoints, including discovery and payment signing.
+              Sign Livepeer payment tickets and discover orchestrators through the
+              remote signer.
             </p>
           </div>
         </label>
 
-        <label aria-label="Refresh tokens" className={capabilityRowClass(hasRefreshToken, readOnly)}>
+        <label aria-label="Stay signed in" className={capabilityRowClass(hasRefreshToken, readOnly)}>
           <input
             type="checkbox"
             checked={hasRefreshToken}
@@ -241,10 +241,10 @@ export default function AppModeStep({
             className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
           />
           <div>
-            <p className="text-sm font-medium text-zinc-200">Refresh tokens</p>
+            <p className="text-sm font-medium text-zinc-200">Stay signed in</p>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Allow direct refresh at the token endpoint after the initial interactive
-              sign-in.
+              Sessions renew automatically without asking users to sign in again
+              (issues refresh tokens).
             </p>
           </div>
         </label>

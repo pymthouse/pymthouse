@@ -4,8 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
-import CopyIdButton from "@/components/apps/CopyIdButton";
-import SidebarCreditPreview from "@/components/SidebarCreditPreview";
+import UserMenu from "@/components/UserMenu";
 
 interface NavItem {
   label: string;
@@ -24,6 +23,13 @@ const allNavItems: NavItem[] = [
     label: "My Apps",
     href: "/apps",
     icon: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4",
+  },
+  {
+    label: "API Keys",
+    href: "/keys",
+    icon: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z",
+    // Personal keys are developer-only; platform admins manage keys per app.
+    roles: ["developer"],
   },
   {
     label: "Signer Admin",
@@ -80,16 +86,6 @@ const allNavItems: NavItem[] = [
 
 const SKELETON_NAV_KEYS = ["nav-a", "nav-b", "nav-c", "nav-d", "nav-e"] as const;
 const SKELETON_CARD_KEYS = ["card-a", "card-b", "card-c"] as const;
-
-function roleBadgeClassName(role: string): string {
-  if (role === "admin") {
-    return "bg-amber-500/15 text-amber-400";
-  }
-  if (role === "operator") {
-    return "bg-blue-500/15 text-blue-400";
-  }
-  return "bg-zinc-700/60 text-zinc-400";
-}
 
 export default function DashboardLayout({
   children,
@@ -169,7 +165,7 @@ export default function DashboardLayout({
       {/* Main first so mobile flex allocates full width; sidebar is fixed/overlaid on small screens */}
       {/* Main content */}
       <main className="relative z-0 flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden lg:order-2">
-        <header className="flex shrink-0 items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 lg:hidden">
+        <header className="flex shrink-0 items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-2.5 sm:px-6 lg:hidden lg:px-8">
           <button
             type="button"
             className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
@@ -324,62 +320,37 @@ export default function DashboardLayout({
           })()}
         </nav>
 
-        {/* User info */}
-        {session?.user && (
-          <div className="p-4 border-t border-zinc-800 space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-sm font-bold shrink-0">
-                {session.user.name?.[0]?.toUpperCase() || "?"}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">
-                  {session.user.name}
-                </p>
-                {session.user.email ? (
-                  <p className="mt-0.5 text-xs text-zinc-500 truncate">
-                    {session.user.email}
-                  </p>
-                ) : null}
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  {userId ? (
-                    <>
-                      <p
-                        className="min-w-0 truncate font-mono text-[11px] text-zinc-500"
-                        title={userId}
-                      >
-                        {userId}
-                      </p>
-                      <CopyIdButton
-                        value={userId}
-                        label="Copy user id"
-                      />
-                    </>
-                  ) : null}
-                  {userRole && (
-                    <span
-                      className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${roleBadgeClassName(userRole)}`}
-                    >
-                      {userRole}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <SidebarCreditPreview />
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => signOut({ callbackUrl: "/" })}
-              className="w-full flex items-center justify-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/40 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+        <div className="shrink-0 space-y-1 border-t border-zinc-800 p-3">
+          {session?.user && (
+            <UserMenu
+              name={session.user.name ?? null}
+              email={session.user.email ?? null}
+              userId={userId}
+              role={userRole}
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => signOut({ callbackUrl: "/" })}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-400 transition-all duration-150 hover:bg-white/[0.04] hover:text-zinc-100"
+          >
+            <svg
+              className="h-5 w-5 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              Sign out
-            </button>
-          </div>
-        )}
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+              />
+            </svg>
+            Sign out
+          </button>
+        </div>
       </aside>
     </div>
   );

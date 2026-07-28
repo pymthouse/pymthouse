@@ -218,6 +218,20 @@
       "when": 1779000000000,
       "tag": "0029_web_oidc_client",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785200000000,
+      "tag": "0030_onboarding_persona_default_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785300000000,
+      "tag": "0031_platform_default_app_repair",
+      "breakpoints": true
     }
   ]
 }

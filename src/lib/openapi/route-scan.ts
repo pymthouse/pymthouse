@@ -10,6 +10,8 @@ export const OPENAPI_EXCLUDED_PREFIXES = [
   "admin/",
   "webhooks/",
   "oidc/interaction/",
+  "onboarding/",
+  "network/",
 ] as const;
 
 /** Meta routes that serve docs/spec only — not Builder API operations. */

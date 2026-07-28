@@ -1,0 +1,56 @@
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/next-auth-options";
+import { mintDefaultAppNetworkKey } from "@/lib/onboarding";
+import {
+  isPersonalKeysSessionResult,
+  requirePersonalKeysSession,
+} from "@/lib/require-personal-keys-session";
+
+/**
+ * Mint a personal network access key on the platform default app.
+ * Available to all developers (Explorer and Builder).
+ */
+export async function POST() {
+  const session = await getServerSession(authOptions);
+  const gate = requirePersonalKeysSession(session, {
+    adminRejectedMessage:
+      "Platform admins do not mint network keys on the default app",
+  });
+  if (!isPersonalKeysSessionResult(gate)) {
+    return gate;
+  }
+  const { userId } = gate;
+
+  const email =
+    typeof session?.user?.email === "string" ? session.user.email : null;
+
+  try {
+    const result = await mintDefaultAppNetworkKey({
+      userId,
+      email,
+    });
+
+    return NextResponse.json(
+      {
+        clientId: result.clientId,
+        externalUserId: result.externalUserId,
+        apiKey: result.apiKey,
+        sdkToken: result.sdkToken,
+        id: result.keyId,
+        prefix: result.prefix,
+        suffix: result.suffix,
+        label: result.label,
+        message:
+          "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer, or use sdkToken as --token with livepeer-python-sdk.",
+        correlation_id: result.correlationId,
+      },
+      { status: 201 },
+    );
+  } catch (err) {
+    console.error("Network key mint failed:", err);
+    const message =
+      err instanceof Error ? err.message : "Failed to mint network access key";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
