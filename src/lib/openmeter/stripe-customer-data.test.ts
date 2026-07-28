@@ -10,6 +10,15 @@ import {
 } from "./stripe-customer-data";
 import { resetHostedOpenMeterClientForTests } from "./client";
 
+/** Hostname check — avoids CodeQL js/incomplete-url-substring-sanitization. */
+function isStripeApiHost(url: string): boolean {
+  try {
+    return new URL(url).hostname === "api.stripe.com";
+  } catch {
+    return false;
+  }
+}
+
 function withKonnectEnv(t: test.TestContext): void {
   const savedUrl = process.env.OPENMETER_URL;
   const savedKey = process.env.OPENMETER_API_KEY;
@@ -97,7 +106,7 @@ test("ensureStripeCustomerAppData creates Stripe customer and upserts when missi
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("api.stripe.com/v1/customers")) {
+    if (isStripeApiHost(url) && new URL(url).pathname.startsWith("/v1/customers")) {
       assert.equal(init?.method, "POST");
       return new Response(JSON.stringify({ id: "cus_created_123" }), {
         status: 200,
@@ -219,7 +228,7 @@ test("ensureKonnectCustomerStripeBilling creates Stripe customer and persists bi
     const body = String(init?.body ?? "");
     calls.push({ url, method, body });
 
-    if (url.includes("api.stripe.com/v1/customers")) {
+    if (isStripeApiHost(url) && new URL(url).pathname.startsWith("/v1/customers")) {
       return new Response(JSON.stringify({ id: "cus_created_k" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -252,7 +261,7 @@ test("ensureKonnectCustomerStripeBilling creates Stripe customer and persists bi
     billingProfileId: "prof_1",
   });
   assert.equal(id, "cus_created_k");
-  assert.ok(calls.some((c) => c.url.includes("api.stripe.com")));
+  assert.ok(calls.some((c) => isStripeApiHost(c.url)));
 });
 
 test("ensureKonnectCustomerStripeBilling reuses existing Stripe customer", async (t) => {
@@ -261,7 +270,7 @@ test("ensureKonnectCustomerStripeBilling reuses existing Stripe customer", async
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url.includes("api.stripe.com")) {
+    if (isStripeApiHost(url)) {
       stripeCreates += 1;
       throw new Error("should not create stripe customer");
     }
@@ -298,7 +307,7 @@ test("ensureKonnectCustomerStripeBilling fails when app data not persisted", asy
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url.includes("api.stripe.com")) {
+    if (isStripeApiHost(url)) {
       return new Response(JSON.stringify({ id: "cus_x" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
