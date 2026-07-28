@@ -77,17 +77,26 @@ async function getAppActivityCounts(appIds: string[]): Promise<Map<string, AppAc
 }
 
 /**
- * Canonical ordering for every app listing in the product: status priority
- * (live apps first, then in-review/submitted, drafts, rejected last), then a
- * combined usage + user-count activity factor (most active apps first
- * within the same status tier), and finally creation date (newest first) as
- * a stable tie-breaker. Not user-configurable — purely internal ranking.
+ * Canonical ordering for every app listing in the product: platform default
+ * first (when present), then status priority (live apps, in-review/submitted,
+ * drafts, rejected last), then a combined usage + user-count activity factor
+ * (most active apps first within the same status tier), and finally creation
+ * date (newest first) as a stable tie-breaker. Not user-configurable.
  */
 export async function sortAppsByPriority<
-  T extends { id: string; status: string; createdAt: string },
+  T extends {
+    id: string;
+    status: string;
+    createdAt: string;
+    isPlatformDefault?: boolean;
+  },
 >(apps: T[]): Promise<T[]> {
   const activity = await getAppActivityCounts(apps.map((app) => app.id));
   return [...apps].sort((a, b) => {
+    const aDefault = a.isPlatformDefault === true ? 0 : 1;
+    const bDefault = b.isPlatformDefault === true ? 0 : 1;
+    if (aDefault !== bDefault) return aDefault - bDefault;
+
     const statusDiff = statusPriority(a.status) - statusPriority(b.status);
     if (statusDiff !== 0) return statusDiff;
 
