@@ -7,8 +7,11 @@ name: Deploy production (Vercel)
 # Enable with repository variable:
 #   VERCEL_PRODUCTION_AUTO_DEPLOY=true
 #
-# Required secret:
+# Required secrets (repo or `vercel / production` environment):
 #   VERCEL_TOKEN
+#   DATABASE_URL          — Neon production Postgres (migrations run before build)
+#   NEXTAUTH_SECRET
+#   AUTH_TOKEN_PEPPER
 #
 # Recommended: disable native Git auto-builds on the pymthouse Vercel project
 # (Settings → Git → Ignored Build Step: exit 1) so only this workflow deploys prod.
@@ -44,6 +47,7 @@ jobs:
       VERCEL_ORG_ID: team_JoeNhmK7pgiuSeOwgQASAUFl
       VERCEL_PROJECT_ID: prj_oldvnmdXcGDc7Db5ohPCOUGBZOaG
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
       AUTH_TOKEN_PEPPER: ${{ secrets.AUTH_TOKEN_PEPPER }}
 
@@ -69,6 +73,16 @@ jobs:
 
       - name: Pull Vercel project settings
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Apply database migrations
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "DATABASE_URL secret is required on the vercel / production environment."
+            echo "Set it to the Neon production Postgres URL before deploying."
+            exit 1
+          fi
+          npm run db:prepare
 
       - name: Build
         run: vercel build --prod --token="$VERCEL_TOKEN"
