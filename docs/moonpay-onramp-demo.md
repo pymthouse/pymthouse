@@ -15,15 +15,17 @@ sweep work).
 - Wallet Kit Auth Proxy enabled for your org
 - **Social logins** (so every funder gets a wallet): Embedded Wallets → Configuration
   - OAuth **on**
-  - Enable **Google** (and/or Apple / Discord / X — GitHub is not a native toggle)
+  - Enable **Google** (and/or Apple / Discord / X)
   - **Redirect URL** = your app origin (local: `http://localhost:3001`, not `example.com`)
   - **Allowed Origins** includes that same origin
   - Paste the Google OAuth **Web** client ID into the Google field (or use env below)
   - In Google Cloud Console, authorized redirect URI must match that Redirect URL
+  - **GitHub** is not an Auth Proxy toggle; use pymthouse’s **Continue with GitHub**
+    button (`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` + Turnkey API keys) — same
+    wallet + NextAuth bridge as other Turnkey methods
 
 Users who need MoonPay / deposit wallets must sign in via **Turnkey Wallet Kit**
-(`Sign In / Create Account` on `/login`). Bare NextAuth GitHub/Google does **not**
-provision a Turnkey wallet.
+(`Sign In / Create Account` on `/login`, including GitHub via BYO OIDC).
 
 ### Environment (`.env.local`)
 
