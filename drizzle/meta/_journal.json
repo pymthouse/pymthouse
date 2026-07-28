@@ -239,6 +239,13 @@
       "when": 1785400000000,
       "tag": "0032_app_billing_progressive_threshold",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0033_stripe_connect_merchant",
+      "breakpoints": true
     }
   ]
 }

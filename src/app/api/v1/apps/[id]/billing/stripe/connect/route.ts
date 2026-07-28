@@ -4,8 +4,11 @@ import {
   getAuthorizedProviderApp,
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
-import { createStripeOAuthState } from "@/lib/openmeter/stripe-connect";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
+import {
+  startMerchantConnect,
+  type MerchantConnectMode,
+} from "@/lib/stripe/merchant-connect";
 
 export async function POST(
   request: NextRequest,
@@ -28,14 +31,44 @@ export async function POST(
     );
   }
 
+  let body: Record<string, unknown> = {};
   try {
-    const { url } = await createStripeOAuthState({
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    body = {};
+  }
+
+  const modeRaw = typeof body.mode === "string" ? body.mode.trim() : "account_link";
+  if (modeRaw === "oauth") {
+    return NextResponse.json(
+      {
+        error:
+          'Standard Connect OAuth is no longer supported. Use mode "account_link" (Stripe Account Links).',
+      },
+      { status: 400 },
+    );
+  }
+  if (modeRaw !== "account_link") {
+    return NextResponse.json(
+      { error: 'mode must be "account_link"' },
+      { status: 400 },
+    );
+  }
+  const mode = modeRaw as MerchantConnectMode;
+
+  try {
+    const result = await startMerchantConnect({
       clientId: auth.app.id,
       userId: auth.userId,
+      mode,
+      email: typeof body.email === "string" ? body.email : undefined,
+      displayName:
+        typeof body.displayName === "string" ? body.displayName : undefined,
     });
-    return NextResponse.json({ url });
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 502 });
+    const status = message.includes("STRIPE_") ? 400 : 502;
+    return NextResponse.json({ error: message }, { status });
   }
 }

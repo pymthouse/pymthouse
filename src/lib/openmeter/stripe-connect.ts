@@ -345,6 +345,12 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     openmeterStripeAppId: null,
     openmeterBillingProfileId: null,
     connectedAt: null,
+    stripeConnectedAccountId: null,
+    stripeOnboardingMethod: null,
+    stripeChargesEnabled: false,
+    stripePayoutsEnabled: false,
+    stripeDetailsSubmitted: false,
+    connectPaymentsOnly: false,
   });
 }
 
@@ -354,19 +360,43 @@ export async function purgeExpiredOAuthStates(): Promise<void> {
 }
 
 export async function getStripeConnectStatus(clientId: string) {
+  const { syncMerchantConnectStatus } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  try {
+    await syncMerchantConnectStatus(clientId);
+  } catch {
+    /* best-effort refresh */
+  }
   const row = await db
     .select()
     .from(appBillingConfig)
     .where(eq(appBillingConfig.clientId, clientId))
     .limit(1);
   const config = row[0];
+  const accountId = config?.stripeConnectedAccountId?.trim() || null;
+  // Merchant Connect only — do not treat legacy OpenMeter Stripe-app installs
+  // (stripe_connect_status=connected, no acct_…) as merchant-ready.
+  const status = accountId
+    ? config?.stripeChargesEnabled
+      ? "connected"
+      : "pending"
+    : "disconnected";
+
   return {
-    status: config?.stripeConnectStatus ?? "disconnected",
+    status,
     openmeterStripeAppId: config?.openmeterStripeAppId ?? null,
     openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,
     invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
+    stripeConnectedAccountId: accountId,
+    stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
+    stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
+    stripePayoutsEnabled: config?.stripePayoutsEnabled ?? false,
+    stripeDetailsSubmitted: config?.stripeDetailsSubmitted ?? false,
+    applicationFeeBps: config?.applicationFeeBps ?? 0,
+    connectPaymentsOnly: config?.connectPaymentsOnly ?? false,
   };
 }

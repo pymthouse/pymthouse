@@ -559,6 +559,17 @@ export const appBillingConfig = pgTable(
      * clearinghouse threshold worker via invoicePendingLines — not by OpenMeter alone.
      */
     invoiceThresholdUsdMicros: text("invoice_threshold_usd_micros"),
+    /** Merchant Stripe Connected Account id (`acct_…`). */
+    stripeConnectedAccountId: text("stripe_connected_account_id"),
+    /** How the merchant linked: account_link | oauth */
+    stripeOnboardingMethod: text("stripe_onboarding_method"),
+    stripeChargesEnabled: boolean("stripe_charges_enabled").notNull().default(false),
+    stripePayoutsEnabled: boolean("stripe_payouts_enabled").notNull().default(false),
+    stripeDetailsSubmitted: boolean("stripe_details_submitted").notNull().default(false),
+    /** Platform application fee in basis points (0 = none). */
+    applicationFeeBps: integer("application_fee_bps").notNull().default(0),
+    /** After hard cutover: refuse OM Stripe checkout fallback. */
+    connectPaymentsOnly: boolean("connect_payments_only").notNull().default(false),
     connectedAt: text("connected_at"),
     createdAt: text("created_at")
       .notNull()
@@ -587,6 +598,34 @@ export const appBillingOauthStates = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [index("idx_app_billing_oauth_states_expires").on(t.expiresAt)],
+);
+
+/** Maps end-users to merchant-owned Stripe customers on Connected Accounts. */
+export const appUserStripeCustomers = pgTable(
+  "app_user_stripe_customers",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    externalUserId: text("external_user_id").notNull(),
+    stripeConnectedAccountId: text("stripe_connected_account_id").notNull(),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    openmeterCustomerId: text("openmeter_customer_id"),
+    openmeterCustomerKey: text("openmeter_customer_key"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_app_user_stripe_customers_unique").on(
+      t.clientId,
+      t.externalUserId,
+    ),
+  ],
 );
 
 /** Idempotency audit for OpenMeter signed-ticket ingest (not balance source). */
