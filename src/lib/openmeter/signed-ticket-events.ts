@@ -23,6 +23,7 @@ import {
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import { millisToSecsString } from "@/lib/openmeter/usage-read";
+import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 50;
@@ -1426,6 +1427,7 @@ async function loadAppNames(clientIds: string[]): Promise<Map<string, string>> {
       .select({
         publicClientId: oidcClients.clientId,
         name: developerApps.name,
+        isPlatformDefault: developerApps.isPlatformDefault,
       })
       .from(oidcClients)
       .innerJoin(developerApps, eq(developerApps.oidcClientId, oidcClients.id))
@@ -1434,7 +1436,12 @@ async function loadAppNames(clientIds: string[]): Promise<Map<string, string>> {
     for (const row of rows) {
       const id = row.publicClientId?.trim();
       if (id) {
-        map.set(id, row.name);
+        map.set(
+          id,
+          row.isPlatformDefault === 1
+            ? PLATFORM_DEFAULT_USAGE_DISPLAY_NAME
+            : row.name,
+        );
       }
     }
   } catch {

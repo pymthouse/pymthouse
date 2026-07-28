@@ -14,6 +14,7 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("delete", "/api/v1/apps/{clientId}/plans", "apps/[id]/plans/route.ts"),
   inventoryOp("delete", "/api/v1/apps/{clientId}/users", "apps/[id]/users/route.ts"),
   inventoryOp("delete", "/api/v1/apps/{clientId}/users/{externalUserId}/keys", "apps/[id]/users/[externalUserId]/keys/route.ts"),
+  inventoryOp("delete", "/api/v1/me/keys/{keyId}", "me/keys/[keyId]/route.ts"),
   inventoryOp("delete", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/admin/apps", "admin/apps/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("get", "/api/v1/admin/oidc-clients", "admin/oidc-clients/route.ts", true, "excluded prefix: admin/"),
@@ -24,6 +25,7 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("get", "/api/v1/apps/{clientId}/billing/invoices", "apps/[id]/billing/invoices/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/billing/stripe", "apps/[id]/billing/stripe/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/billing/stripe/callback", "apps/[id]/billing/stripe/callback/route.ts"),
+  inventoryOp("get", "/api/v1/apps/{clientId}/billing/stripe/oauth/callback", "apps/[id]/billing/stripe/oauth/callback/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/discovery-profiles", "apps/[id]/discovery-profiles/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", "apps/[id]/discovery-profiles/[profileId]/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/domains", "apps/[id]/domains/route.ts"),
@@ -48,9 +50,11 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("get", "/api/v1/marketplace", "marketplace/route.ts"),
   inventoryOp("get", "/api/v1/marketplace/{id}", "marketplace/[id]/route.ts"),
   inventoryOp("get", "/api/v1/me/credits", "me/credits/route.ts"),
+  inventoryOp("get", "/api/v1/me/keys", "me/keys/route.ts"),
   inventoryOp("get", "/api/v1/me/usage/requests", "me/usage/requests/route.ts"),
   inventoryOp("get", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/oidc/interaction/{uid}", "oidc/interaction/[uid]/route.ts", true, "excluded prefix: oidc/"),
+  inventoryOp("get", "/api/v1/onboarding", "onboarding/route.ts", true, "excluded prefix: onboarding/"),
   inventoryOp("get", "/api/v1/openapi.json", "openapi.json/route.ts", true, "meta route (docs or openapi.json)"),
   inventoryOp("get", "/api/v1/pipeline-catalog", "pipeline-catalog/route.ts"),
   inventoryOp("get", "/api/v1/pipeline-pricing", "pipeline-pricing/route.ts"),
@@ -68,6 +72,7 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("post", "/api/v1/apps", "apps/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/admins", "apps/[id]/admins/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/checkout", "apps/[id]/billing/checkout/route.ts"),
+  inventoryOp("post", "/api/v1/apps/{clientId}/billing/stripe/account-link", "apps/[id]/billing/stripe/account-link/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/stripe/connect", "apps/[id]/billing/stripe/connect/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/credentials", "apps/[id]/credentials/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/discovery-profiles", "apps/[id]/discovery-profiles/route.ts"),
@@ -81,12 +86,16 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("post", "/api/v1/apps/{clientId}/users", "apps/[id]/users/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/users/{externalUserId}/allowances", "apps/[id]/users/[externalUserId]/allowances/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/users/{externalUserId}/keys", "apps/[id]/users/[externalUserId]/keys/route.ts"),
+  inventoryOp("post", "/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change", "apps/[id]/users/[externalUserId]/subscription/change/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/users/{externalUserId}/token", "apps/[id]/users/[externalUserId]/token/route.ts"),
   inventoryOp("post", "/api/v1/auth/validate", "auth/validate/route.ts"),
   inventoryOp("post", "/api/v1/end-users", "end-users/route.ts"),
+  inventoryOp("post", "/api/v1/network/key", "network/key/route.ts", true, "excluded prefix: network/"),
   inventoryOp("post", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("post", "/api/v1/oidc/device/verify", "oidc/device/verify/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("post", "/api/v1/oidc/interaction/{uid}", "oidc/interaction/[uid]/route.ts", true, "excluded prefix: oidc/"),
+  inventoryOp("post", "/api/v1/onboarding", "onboarding/route.ts", true, "excluded prefix: onboarding/"),
+  inventoryOp("post", "/api/v1/onboarding/events", "onboarding/events/route.ts", true, "excluded prefix: onboarding/"),
   inventoryOp("post", "/api/v1/signer/control", "signer/control/route.ts"),
   inventoryOp("put", "/api/v1/apps/{clientId}", "apps/[id]/route.ts"),
   inventoryOp("put", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", "apps/[id]/discovery-profiles/[profileId]/route.ts"),
@@ -99,6 +108,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("put", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
 ];
 
-export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = ["DELETE /api/v1/apps/{clientId}","DELETE /api/v1/apps/{clientId}/admins","DELETE /api/v1/apps/{clientId}/billing/stripe","DELETE /api/v1/apps/{clientId}/discovery-profiles/{profileId}","DELETE /api/v1/apps/{clientId}/domains","DELETE /api/v1/apps/{clientId}/plans","DELETE /api/v1/apps/{clientId}/users","DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps","GET /api/v1/apps/{clientId}","GET /api/v1/apps/{clientId}/admins","GET /api/v1/apps/{clientId}/billing","GET /api/v1/apps/{clientId}/billing/invoices","GET /api/v1/apps/{clientId}/billing/stripe","GET /api/v1/apps/{clientId}/billing/stripe/callback","GET /api/v1/apps/{clientId}/discovery-profiles","GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}","GET /api/v1/apps/{clientId}/domains","GET /api/v1/apps/{clientId}/manifest","GET /api/v1/apps/{clientId}/openmeter","GET /api/v1/apps/{clientId}/plans","GET /api/v1/apps/{clientId}/signer/routing","GET /api/v1/apps/{clientId}/starter-plan","GET /api/v1/apps/{clientId}/usage","GET /api/v1/apps/{clientId}/usage/balance","GET /api/v1/apps/{clientId}/users","GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances","GET /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription","GET /api/v1/apps/branding","GET /api/v1/billing","GET /api/v1/billing/dashboard","GET /api/v1/dashboard/usage","GET /api/v1/end-users","GET /api/v1/health","GET /api/v1/marketplace","GET /api/v1/marketplace/{id}","GET /api/v1/me/credits","GET /api/v1/me/usage/requests","GET /api/v1/pipeline-catalog","GET /api/v1/pipeline-pricing","GET /api/v1/prices/eth-usd","GET /api/v1/signer","GET /api/v1/signer/cli-status","GET /api/v1/signer/logs","GET /api/v1/user/usage","GET /api/v1/user/usage/balance","GET /api/v1/user/usage/requests","PATCH /api/v1/apps/{clientId}/billing/stripe","PATCH /api/v1/signer","POST /api/v1/apps","POST /api/v1/apps/{clientId}/admins","POST /api/v1/apps/{clientId}/billing/checkout","POST /api/v1/apps/{clientId}/billing/stripe/connect","POST /api/v1/apps/{clientId}/credentials","POST /api/v1/apps/{clientId}/discovery-profiles","POST /api/v1/apps/{clientId}/domains","POST /api/v1/apps/{clientId}/oidc/token","POST /api/v1/apps/{clientId}/onramp/sessions","POST /api/v1/apps/{clientId}/onramp/sessions/{sessionId}/settle","POST /api/v1/apps/{clientId}/plans","POST /api/v1/apps/{clientId}/plans/{planId}/sync","POST /api/v1/apps/{clientId}/publish","POST /api/v1/apps/{clientId}/users","POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances","POST /api/v1/apps/{clientId}/users/{externalUserId}/keys","POST /api/v1/apps/{clientId}/users/{externalUserId}/token","POST /api/v1/auth/validate","POST /api/v1/end-users","POST /api/v1/signer/control","PUT /api/v1/apps/{clientId}","PUT /api/v1/apps/{clientId}/discovery-profiles/{profileId}","PUT /api/v1/apps/{clientId}/manifest","PUT /api/v1/apps/{clientId}/openmeter","PUT /api/v1/apps/{clientId}/plans","PUT /api/v1/apps/{clientId}/settings","PUT /api/v1/apps/{clientId}/starter-plan","PUT /api/v1/apps/{clientId}/users"];
+export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = ["DELETE /api/v1/apps/{clientId}","DELETE /api/v1/apps/{clientId}/admins","DELETE /api/v1/apps/{clientId}/billing/stripe","DELETE /api/v1/apps/{clientId}/discovery-profiles/{profileId}","DELETE /api/v1/apps/{clientId}/domains","DELETE /api/v1/apps/{clientId}/plans","DELETE /api/v1/apps/{clientId}/users","DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys","DELETE /api/v1/me/keys/{keyId}","GET /api/v1/apps","GET /api/v1/apps/{clientId}","GET /api/v1/apps/{clientId}/admins","GET /api/v1/apps/{clientId}/billing","GET /api/v1/apps/{clientId}/billing/invoices","GET /api/v1/apps/{clientId}/billing/stripe","GET /api/v1/apps/{clientId}/billing/stripe/callback","GET /api/v1/apps/{clientId}/billing/stripe/oauth/callback","GET /api/v1/apps/{clientId}/discovery-profiles","GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}","GET /api/v1/apps/{clientId}/domains","GET /api/v1/apps/{clientId}/manifest","GET /api/v1/apps/{clientId}/openmeter","GET /api/v1/apps/{clientId}/plans","GET /api/v1/apps/{clientId}/signer/routing","GET /api/v1/apps/{clientId}/starter-plan","GET /api/v1/apps/{clientId}/usage","GET /api/v1/apps/{clientId}/usage/balance","GET /api/v1/apps/{clientId}/users","GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances","GET /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription","GET /api/v1/apps/branding","GET /api/v1/billing","GET /api/v1/billing/dashboard","GET /api/v1/dashboard/usage","GET /api/v1/end-users","GET /api/v1/health","GET /api/v1/marketplace","GET /api/v1/marketplace/{id}","GET /api/v1/me/credits","GET /api/v1/me/keys","GET /api/v1/me/usage/requests","GET /api/v1/pipeline-catalog","GET /api/v1/pipeline-pricing","GET /api/v1/prices/eth-usd","GET /api/v1/signer","GET /api/v1/signer/cli-status","GET /api/v1/signer/logs","GET /api/v1/user/usage","GET /api/v1/user/usage/balance","GET /api/v1/user/usage/requests","PATCH /api/v1/apps/{clientId}/billing/stripe","PATCH /api/v1/signer","POST /api/v1/apps","POST /api/v1/apps/{clientId}/admins","POST /api/v1/apps/{clientId}/billing/checkout","POST /api/v1/apps/{clientId}/billing/stripe/account-link","POST /api/v1/apps/{clientId}/billing/stripe/connect","POST /api/v1/apps/{clientId}/credentials","POST /api/v1/apps/{clientId}/discovery-profiles","POST /api/v1/apps/{clientId}/domains","POST /api/v1/apps/{clientId}/oidc/token","POST /api/v1/apps/{clientId}/onramp/sessions","POST /api/v1/apps/{clientId}/onramp/sessions/{sessionId}/settle","POST /api/v1/apps/{clientId}/plans","POST /api/v1/apps/{clientId}/plans/{planId}/sync","POST /api/v1/apps/{clientId}/publish","POST /api/v1/apps/{clientId}/users","POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances","POST /api/v1/apps/{clientId}/users/{externalUserId}/keys","POST /api/v1/apps/{clientId}/users/{externalUserId}/subscription/change","POST /api/v1/apps/{clientId}/users/{externalUserId}/token","POST /api/v1/auth/validate","POST /api/v1/end-users","POST /api/v1/signer/control","PUT /api/v1/apps/{clientId}","PUT /api/v1/apps/{clientId}/discovery-profiles/{profileId}","PUT /api/v1/apps/{clientId}/manifest","PUT /api/v1/apps/{clientId}/openmeter","PUT /api/v1/apps/{clientId}/plans","PUT /api/v1/apps/{clientId}/settings","PUT /api/v1/apps/{clientId}/starter-plan","PUT /api/v1/apps/{clientId}/users"];
 
-export const OPENAPI_PUBLIC_ROUTE_COUNT = 78;
+export const OPENAPI_PUBLIC_ROUTE_COUNT = 83;

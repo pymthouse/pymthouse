@@ -2207,14 +2207,14 @@ export default function TestingStep({
           </div>
       ) : null}
       {showM2mCredentials && !backendHelper && backendDeviceHelper ? (
-          <SiblingNotProvisionedMessage label="Confidential M2M backend" clientPrefix="m2m_" />
+          <SiblingNotProvisionedMessage label="Server API access (M2M)" clientPrefix="m2m_" />
       ) : null}
       {showM2mCredentials && !backendHelper && !backendDeviceHelper ? (
           <SiblingDisabledMessage
-            label="Confidential M2M backend"
+            label="Server API access (M2M)"
             detail={
               <>
-                Turn on <strong className="text-zinc-400">Confidential M2M backend</strong> there to
+                Turn on <strong className="text-zinc-400">Server API access (M2M)</strong> there to
                 manage M2M credentials on this tab.
               </>
             }
@@ -2224,7 +2224,7 @@ export default function TestingStep({
       {showWebCredentials && webHelper ? (
         <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
             <h3 className="text-sm font-semibold text-violet-200/90">
-              Confidential web RP{" "}
+              Web single sign-on (SSO){" "}
               <code className="font-mono text-violet-300/80 font-normal">(web_)</code>
             </h3>
             <p className="text-xs text-zinc-500">
@@ -2366,11 +2366,11 @@ export default function TestingStep({
           </div>
       ) : null}
       {showWebCredentials && !webHelper && confidentialWebHelper ? (
-          <SiblingNotProvisionedMessage label="Confidential web RP" clientPrefix="web_" />
+          <SiblingNotProvisionedMessage label="Web single sign-on (SSO)" clientPrefix="web_" />
       ) : null}
       {showWebCredentials && !webHelper && !confidentialWebHelper ? (
           <SiblingDisabledMessage
-            label="Confidential web RP"
+            label="Web single sign-on (SSO)"
             detail="Turn it on there for portal SSO."
           />
       ) : null}

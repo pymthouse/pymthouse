@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { and, eq, isNotNull } from "drizzle-orm";
+import { notPlatformDefaultApp } from "@/lib/platform-default-app";
 
 export async function GET() {
   const rows = await db
@@ -26,6 +27,7 @@ export async function GET() {
       and(
         eq(developerApps.status, "approved"),
         isNotNull(developerApps.publishedAt),
+        notPlatformDefaultApp(),
       ),
     );
 

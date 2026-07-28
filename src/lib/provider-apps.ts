@@ -160,10 +160,14 @@ export type AuthorizedProviderApp = NonNullable<
  * Whether the session user may change app configuration (metadata, OIDC, domains,
  * credentials, plans, signer, team admins, etc.). Platform `users.role === "admin"`,
  * the app owner, and provider team members with role `owner` or `admin` may edit.
+ * Platform default app is platform-admin only.
  */
 export async function canEditProviderApp(
   auth: AuthorizedProviderApp,
 ): Promise<boolean> {
+  if (auth.app.isPlatformDefault === 1) {
+    return auth.role === "admin";
+  }
   if (auth.role === "admin") return true;
   if (auth.app.ownerId === auth.userId) return true;
 
@@ -192,13 +196,26 @@ export function appEditForbiddenResponse() {
   );
 }
 
+export function platformDefaultAppForbiddenResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "The platform default app can only be configured by a platform admin.",
+    },
+    { status: 403 },
+  );
+}
+
 /**
  * Merchant-of-record actions (Stripe connect/disconnect). Stricter than canEditProviderApp:
- * app owner or platform admin only.
+ * app owner or platform admin only. Platform default app is never merchant-editable by non-admins.
  */
 export async function canManageMerchantBilling(
   auth: AuthorizedProviderApp,
 ): Promise<boolean> {
+  if (auth.app.isPlatformDefault === 1) {
+    return auth.role === "admin";
+  }
   if (auth.role === "admin") return true;
   return auth.app.ownerId === auth.userId;
 }

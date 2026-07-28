@@ -42,7 +42,6 @@ test("resolveOpenMeterMeterClientId maps developer_apps.id to public client id",
     grantTypes: "refresh_token",
     tokenEndpointAuthMethod: "none",
     createdAt: now,
-    updatedAt: now,
   });
   await db.insert(developerApps).values({
     id: internalAppId,

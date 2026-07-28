@@ -222,22 +222,36 @@
     {
       "idx": 31,
       "version": "7",
-      "when": 1779100000000,
-      "tag": "0030_app_billing_progressive_threshold",
+      "when": 1785200000000,
+      "tag": "0030_onboarding_persona_default_app",
       "breakpoints": true
     },
     {
       "idx": 32,
       "version": "7",
-      "when": 1779200000000,
-      "tag": "0031_plans_phase_out",
+      "when": 1785300000000,
+      "tag": "0031_platform_default_app_repair",
       "breakpoints": true
     },
     {
       "idx": 33,
       "version": "7",
-      "when": 1779300000000,
-      "tag": "0032_stripe_connect_merchant",
+      "when": 1785400000000,
+      "tag": "0032_app_billing_progressive_threshold",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0033_plans_phase_out",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0034_stripe_connect_merchant",
       "breakpoints": true
     }
   ]

@@ -497,9 +497,10 @@ test("resolveSessionBillableSecs handles blank meter and fractional event sum", 
   assert.equal(resolveSessionBillableSecs("0", 1.25), "1.25");
 });
 
-test("listAdminSignedTicketSessions returns stub meter rows without network", async () => {
+test("listAdminSignedTicketSessions returns stub meter rows without network", async (t) => {
   const {
     __testSetOpenMeterManifestRows,
+    __testClearOpenMeterManifestRows,
   } = await import("./usage-read");
   __testSetOpenMeterManifestRows("app_abc", [
     {
@@ -512,6 +513,7 @@ test("listAdminSignedTicketSessions returns stub meter rows without network", as
       modelId: "m1",
     },
   ]);
+  t.after(() => __testClearOpenMeterManifestRows("app_abc"));
   const result = await listAdminSignedTicketSessions({
     clientIds: ["app_abc"],
     from: "2026-07-01T00:00:00.000Z",
@@ -523,6 +525,52 @@ test("listAdminSignedTicketSessions returns stub meter rows without network", as
   assert.equal(result.items[0]?.feeWei, "500");
   assert.equal(result.items[0]?.billableSecs, "12.5");
   assert.equal(result.nextCursor, null);
+});
+
+test("listAdminSignedTicketSessions labels platform default as Livepeer Direct", async (t) => {
+  const { randomUUID } = await import("node:crypto");
+  const {
+    cleanupTestApp,
+    seedDeveloperAppWithClient,
+  } = await import("@/test-utils/fixtures");
+  const { withTemporaryPlatformDefault } = await import(
+    "@/test-utils/platform-default-lock"
+  );
+  const { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } = await import(
+    "@/lib/platform-default-labels"
+  );
+  const { __testSetOpenMeterManifestRows, __testClearOpenMeterManifestRows } =
+    await import("./usage-read");
+
+  const defaultApp = await seedDeveloperAppWithClient({
+    name: `Default ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(defaultApp);
+  });
+
+  await withTemporaryPlatformDefault(defaultApp.clientId, async () => {
+    __testSetOpenMeterManifestRows(defaultApp.clientId, [
+      {
+        manifestId: "mid-default",
+        networkFeeUsdMicros: "10",
+        networkFeeUsdExact: "10",
+        feeWei: "1",
+        billableSecs: "1",
+        pipeline: "llm",
+        modelId: "m",
+      },
+    ]);
+    t.after(() => __testClearOpenMeterManifestRows(defaultApp.clientId));
+
+    const result = await listAdminSignedTicketSessions({
+      clientIds: [defaultApp.clientId],
+      from: "2026-07-01T00:00:00.000Z",
+      to: "2026-08-01T00:00:00.000Z",
+    });
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]?.appName, PLATFORM_DEFAULT_USAGE_DISPLAY_NAME);
+  });
 });
 
 test("listAdminSignedTicketSessions returns empty when OpenMeter unset", async () => {
@@ -546,9 +594,10 @@ test("listAdminSignedTicketSessions returns empty when OpenMeter unset", async (
   }
 });
 
-test("listEndUserSignedTicketSessions scopes to client stub rows", async () => {
+test("listEndUserSignedTicketSessions scopes to client stub rows", async (t) => {
   const {
     __testSetOpenMeterManifestRows,
+    __testClearOpenMeterManifestRows,
   } = await import("./usage-read");
   __testSetOpenMeterManifestRows("app_eu", [
     {
@@ -561,6 +610,7 @@ test("listEndUserSignedTicketSessions scopes to client stub rows", async () => {
       modelId: "m",
     },
   ]);
+  t.after(() => __testClearOpenMeterManifestRows("app_eu"));
   const result = await listEndUserSignedTicketSessions({
     externalUserId: "eu-1",
     clientId: "app_eu",

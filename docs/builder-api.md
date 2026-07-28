@@ -2,6 +2,8 @@
 
 Public docs: [docs.pymthouse.com](https://docs.pymthouse.com). Mintlify sources: [pymthouse-docs](https://github.com/eliteprox/pymthouse-docs) (`integration/user-management`, `integration/user-tokens`, Usage API); **Billing API** narrative lives in [pymtdocs](https://github.com/eliteprox/pymtdocs) under `docs/integration/` (`billing.mdx`, `plans.mdx`).
 
+For first-run **Explorer vs Builder** onboarding (dashboard wizard + curl), see [Onboarding](onboarding.md).
+
 This document defines the official PymtHouse Builder API for confidential OAuth clients. It covers machine authentication, end-user provisioning, and issuance of user-scoped JWTs to your backend.
 
 The API follows OAuth 2.0 and OIDC conventions:

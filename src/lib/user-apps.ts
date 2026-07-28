@@ -8,6 +8,7 @@ import {
   users,
 } from "@/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { notPlatformDefaultApp } from "@/lib/platform-default-app";
 
 export type UserAppSummary = {
   id: string;
@@ -20,6 +21,8 @@ export type UserAppSummary = {
   createdAt: string;
   isOwner: boolean;
   ownerExternalUserId: string | null;
+  /** True when this row is the singleton system platform-default app. */
+  isPlatformDefault: boolean;
   ownerName?: string | null;
   ownerEmail?: string | null;
 };
@@ -74,17 +77,26 @@ async function getAppActivityCounts(appIds: string[]): Promise<Map<string, AppAc
 }
 
 /**
- * Canonical ordering for every app listing in the product: status priority
- * (live apps first, then in-review/submitted, drafts, rejected last), then a
- * combined usage + user-count activity factor (most active apps first
- * within the same status tier), and finally creation date (newest first) as
- * a stable tie-breaker. Not user-configurable — purely internal ranking.
+ * Canonical ordering for every app listing in the product: platform default
+ * first (when present), then status priority (live apps, in-review/submitted,
+ * drafts, rejected last), then a combined usage + user-count activity factor
+ * (most active apps first within the same status tier), and finally creation
+ * date (newest first) as a stable tie-breaker. Not user-configurable.
  */
 export async function sortAppsByPriority<
-  T extends { id: string; status: string; createdAt: string },
+  T extends {
+    id: string;
+    status: string;
+    createdAt: string;
+    isPlatformDefault?: boolean;
+  },
 >(apps: T[]): Promise<T[]> {
   const activity = await getAppActivityCounts(apps.map((app) => app.id));
   return [...apps].sort((a, b) => {
+    const aDefault = a.isPlatformDefault === true ? 0 : 1;
+    const bDefault = b.isPlatformDefault === true ? 0 : 1;
+    if (aDefault !== bDefault) return aDefault - bDefault;
+
     const statusDiff = statusPriority(a.status) - statusPriority(b.status);
     if (statusDiff !== 0) return statusDiff;
 
@@ -99,13 +111,26 @@ export async function sortAppsByPriority<
 }
 
 /** Apps the user owns or is an admin of (same set as GET /api/v1/apps). */
-export async function listUserAccessibleApps(userId: string): Promise<UserAppSummary[]> {
+export async function listUserAccessibleApps(
+  userId: string,
+  opts?: Readonly<{ includePlatformDefault?: boolean }>,
+): Promise<UserAppSummary[]> {
+  const includePlatformDefault = opts?.includePlatformDefault === true;
   const memberships = await db
     .select({ clientId: providerAdmins.clientId })
     .from(providerAdmins)
     .where(eq(providerAdmins.userId, userId));
 
   const memberIds = memberships.map((membership) => membership.clientId);
+  const ownedFilter = includePlatformDefault
+    ? eq(developerApps.ownerId, userId)
+    : and(eq(developerApps.ownerId, userId), notPlatformDefaultApp());
+  let memberFilter = null;
+  if (memberIds.length > 0) {
+    memberFilter = includePlatformDefault
+      ? inArray(developerApps.id, memberIds)
+      : and(inArray(developerApps.id, memberIds), notPlatformDefaultApp());
+  }
 
   const ownedApps = await db
     .select({
@@ -117,13 +142,14 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
       logoLightUrl: developerApps.logoLightUrl,
       createdAt: developerApps.createdAt,
       clientId: oidcClients.clientId,
+      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(eq(developerApps.ownerId, userId));
+    .where(ownedFilter);
 
   const memberApps =
-    memberIds.length === 0
+    memberFilter == null
       ? []
       : await db
           .select({
@@ -135,10 +161,11 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
             logoLightUrl: developerApps.logoLightUrl,
             createdAt: developerApps.createdAt,
             clientId: oidcClients.clientId,
+            isPlatformDefault: developerApps.isPlatformDefault,
           })
           .from(developerApps)
           .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-          .where(inArray(developerApps.id, memberIds));
+          .where(memberFilter);
 
   const ownedIds = new Set(ownedApps.map((a) => a.id).filter(Boolean));
 
@@ -146,6 +173,8 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
     .filter(
       (app, index, rows) => rows.findIndex((row) => row.id === app.id) === index,
     )
+    // Platform default is never a normal "My Apps" entry for developers.
+    .filter((app) => includePlatformDefault || app.isPlatformDefault !== 1)
     .map((app) => ({
       id: app.id ?? "",
       name: app.name,
@@ -157,6 +186,7 @@ export async function listUserAccessibleApps(userId: string): Promise<UserAppSum
       createdAt: app.createdAt,
       isOwner: ownedIds.has(app.id ?? ""),
       ownerExternalUserId: ownedIds.has(app.id ?? "") ? userId : null,
+      isPlatformDefault: app.isPlatformDefault === 1,
     }))
     .filter((app) => app.id.length > 0);
 
@@ -182,6 +212,7 @@ export async function listAllAppsForAdmin(userId: string): Promise<UserAppSummar
       ownerId: developerApps.ownerId,
       ownerName: users.name,
       ownerEmail: users.email,
+      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -200,6 +231,7 @@ export async function listAllAppsForAdmin(userId: string): Promise<UserAppSummar
       createdAt: app.createdAt,
       isOwner: app.ownerId === userId,
       ownerExternalUserId: app.ownerId === userId ? userId : null,
+      isPlatformDefault: app.isPlatformDefault === 1,
       ownerName: app.ownerName,
       ownerEmail: app.ownerEmail,
     }));

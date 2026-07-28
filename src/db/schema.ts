@@ -25,6 +25,10 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("developer"), // admin | operator | developer
   walletAddress: text("wallet_address"),
   turnkeyUserId: text("turnkey_user_id").unique(),
+  /** Onboarding persona: explorer | builder. Null until the user picks a path. */
+  persona: text("persona"),
+  /** ISO timestamp when onboarding finished (Explorer join or Builder app create). */
+  onboardingCompletedAt: text("onboarding_completed_at"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -280,6 +284,11 @@ export const developerApps = pgTable("developer_apps", {
   publishedAt: text("published_at"),
   /** 1 = show on homepage featured strip (admin-curated); 0 = not featured */
   marketplaceFeatured: integer("marketplace_featured").notNull().default(0),
+  /**
+   * 1 = platform-wide default app for Explorers (usage/keys only).
+   * Config is platform-admin only; at most one row may be 1.
+   */
+  isPlatformDefault: integer("is_platform_default").notNull().default(0),
 });
 
 // Provider-managed application users for the MVP runtime path.

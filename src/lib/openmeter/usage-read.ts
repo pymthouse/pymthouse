@@ -333,7 +333,11 @@ async function resolveUsageMeterSubjects(input: {
     }
     return [identity.customerKey];
   } catch {
-    return buildUsageMeterSubjects(input.clientId, externalUserId);
+    // Do not invent owner-wire subjects without a verified publicClientId.
+    return [
+      buildOpenMeterCustomerKey(input.clientId, externalUserId),
+      externalUserId,
+    ];
   }
 }
 
@@ -1035,6 +1039,7 @@ export function __testClearOpenMeterUsageStubs(): void {
   testDailyByClient.clear();
   testIngestLogByClient.clear();
   testUsagePeriodByClient.clear();
+  testManifestByClient.clear();
 }
 
 function filterTestUsageRows(
@@ -1185,6 +1190,17 @@ export function __testSetOpenMeterManifestRows(
   testManifestByClient.set(clientId, rows);
 }
 
+export function __testClearOpenMeterManifestRows(clientId?: string): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testClearOpenMeterManifestRows is only available in test");
+  }
+  if (clientId) {
+    testManifestByClient.delete(clientId);
+    return;
+  }
+  testManifestByClient.clear();
+}
+
 /** Per-manifest analytics: USD micros, fee_wei, and billable_secs. */
 export async function queryOpenMeterUsageByManifest(input: {
   clientId: string;
@@ -1317,20 +1333,73 @@ export async function queryOpenMeterUsage(input: {
   });
 }
 
+function filterDashboardUsageByExternalUser(
+  dashboard: OpenMeterAppDashboardUsage,
+  externalUserId: string,
+): OpenMeterAppDashboardUsage {
+  const matchKeys = buildExternalUserIdMatchKeys(externalUserId);
+  const byUser = dashboard.byUser.filter((row) =>
+    matchesExternalUserFilter(row.externalUserId, externalUserId, matchKeys),
+  );
+  const byUserPipelineModel = dashboard.byUserPipelineModel.filter((row) =>
+    matchesExternalUserFilter(row.externalUserId, externalUserId, matchKeys),
+  );
+
+  // Rebuild pipeline aggregates from the subject-scoped detail rows so another
+  // tenant on the same app cannot leak into personal network views.
+  const byPipelineModel = new Map<string, OpenMeterPipelineModelRow>();
+  for (const row of byUserPipelineModel) {
+    const key = `${row.pipeline}|${row.modelId}`;
+    const existing = byPipelineModel.get(key);
+    if (existing) {
+      existing.requestCount += row.requestCount;
+      existing.networkFeeUsdMicros = (
+        BigInt(existing.networkFeeUsdMicros) + BigInt(row.networkFeeUsdMicros)
+      ).toString();
+    } else {
+      byPipelineModel.set(key, {
+        pipeline: row.pipeline,
+        modelId: row.modelId,
+        requestCount: row.requestCount,
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+      });
+    }
+  }
+
+  // Stub day maps are app-wide; drop them when subject-filtering in tests.
+  // Live subject-scoped queries never use this helper.
+  return {
+    byUser,
+    byPipelineModel: [...byPipelineModel.values()],
+    byUserPipelineModel,
+    byDailyPipeline: [],
+    requestsByDay: new Map(),
+  };
+}
+
 /** Per-app usage for the platform billing dashboard (users, pipeline/model, daily chart). */
 export async function queryOpenMeterAppDashboardUsage(input: {
   clientId: string;
   startDate?: string | null;
   endDate?: string | null;
+  /**
+   * When set, restrict meters to this viewer's subjects (personal / Explorer
+   * network usage). Omit for full tenant aggregates on owned apps.
+   */
+  externalUserId?: string | null;
 }): Promise<OpenMeterAppDashboardUsage | null> {
   if (!requireOpenMeterForUsageReads()) {
     return null;
   }
 
+  const externalUserId = input.externalUserId?.trim() || null;
+
   if (process.env.NODE_ENV === "test") {
     const stub = testDashboardByClient.get(input.clientId);
     if (stub) {
-      return stub;
+      return externalUserId
+        ? filterDashboardUsageByExternalUser(stub, externalUserId)
+        : stub;
     }
   }
 
@@ -1345,11 +1414,18 @@ export async function queryOpenMeterAppDashboardUsage(input: {
   }
 
   const meterSlug = await getMeterSlugForApp(input.clientId);
+  const subjects = externalUserId
+    ? await resolveUsageMeterSubjects({
+        clientId: meterClientId,
+        externalUserId,
+      })
+    : undefined;
   const periodQuery = buildMeterQuery({
     clientId: meterClientId,
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "MONTH",
+    subjects,
     groupBy: METER_GROUP_BY_DETAIL,
   });
   const dayQuery = buildMeterQuery({
@@ -1357,6 +1433,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
     startDate: input.startDate,
     endDate: input.endDate,
     windowSize: "DAY",
+    subjects,
     groupBy: METER_GROUP_BY_DETAIL,
   });
 
@@ -1377,6 +1454,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
       clientId: meterClientId,
       feeRows,
       countRows,
+      filterExternalUserId: externalUserId,
     }),
     byPipelineModel: aggregatePipelineModelRows({
       clientId: meterClientId,
@@ -1387,6 +1465,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
       clientId: meterClientId,
       feeRows,
       countRows,
+      filterExternalUserId: externalUserId,
     }),
     byDailyPipeline: aggregateDailyPipelineModelRows({
       clientId: meterClientId,

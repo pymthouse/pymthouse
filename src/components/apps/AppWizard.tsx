@@ -311,15 +311,15 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
 
         <div className="rounded-xl border border-zinc-700/80 bg-zinc-800/20 p-4 space-y-4">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-100">OAuth capabilities</h2>
+            <h2 className="text-sm font-semibold text-zinc-100">Capabilities</h2>
             <p className="text-xs text-zinc-500 mt-0.5">
-              The primary <code className="font-mono text-zinc-400">app_</code> client stays
-              public. Optional confidential siblings handle M2M and portal SSO.
+              Your app&apos;s public <code className="font-mono text-zinc-400">app_</code>{" "}
+              client handles user sign-in. Add server-side capabilities as needed.
             </p>
           </div>
 
           <label
-            aria-label="Confidential M2M backend"
+            aria-label="Server API access (M2M)"
             className="flex items-start gap-3 cursor-pointer"
           >
             <input
@@ -330,22 +330,22 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
             />
             <span>
               <span className="block text-sm font-medium text-zinc-200">
-                Confidential M2M backend{" "}
+                Server API access (M2M){" "}
                 <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
                   (client credentials)
                 </span>
               </span>
               <span className="block text-xs text-zinc-500 mt-1">
-                Provisions a confidential{" "}
-                <code className="font-mono text-zinc-400">m2m_</code> client for
-                server-to-server Builder APIs.
+                Lets your backend call the Builder API. Creates a confidential{" "}
+                <code className="font-mono text-zinc-400">m2m_</code> client with a
+                secret.
               </span>
             </span>
           </label>
 
           <div>
             <label
-              aria-label="Enable Device Flow"
+              aria-label="CLI and device sign-in"
               className={`flex items-start gap-3 ${
                 formData.backendDeviceHelper ? "cursor-pointer" : "cursor-not-allowed opacity-60"
               }`}
@@ -358,9 +358,9 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
                 className="w-4 h-4 mt-0.5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500/40 shrink-0 disabled:opacity-50"
               />
               <span>
-                <span className="block text-sm font-medium text-zinc-200">Enable Device Flow</span>
+                <span className="block text-sm font-medium text-zinc-200">CLI &amp; device sign-in</span>
                 <span className="block text-xs text-zinc-500 mt-0.5">
-                  Allow CLI tools, SDKs, and headless clients to authorize via a user code.{" "}
+                  Users sign in to CLI tools, SDKs, and headless apps by entering a short code in their browser.{" "}
                   <a
                     href={docsDeviceFlowUrl()}
                     target="_blank"
@@ -393,7 +393,7 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
           )}
 
           <label
-            aria-label="Confidential web RP"
+            aria-label="Web single sign-on"
             className="flex items-start gap-3 cursor-pointer"
           >
             <input
@@ -404,15 +404,15 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
             />
             <span>
               <span className="block text-sm font-medium text-zinc-200">
-                Confidential web RP{" "}
+                Web single sign-on (SSO){" "}
                 <span className="text-[10px] font-normal text-zinc-500 uppercase tracking-wide">
                   (auth code + secret)
                 </span>
               </span>
               <span className="block text-xs text-zinc-500 mt-1">
-                Provisions a confidential{" "}
-                <code className="font-mono text-zinc-400">web_</code> sibling for portal SSO
-                (e.g. Kong Dev Portal). Separate from M2M.
+                Sign users into a web portal with redirect-based login (e.g. Kong Dev
+                Portal). Creates a confidential{" "}
+                <code className="font-mono text-zinc-400">web_</code> client.
               </span>
             </span>
           </label>

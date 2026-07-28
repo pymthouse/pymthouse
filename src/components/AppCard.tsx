@@ -11,6 +11,8 @@ export type HomeApp = {
   description: string | null;
   category: string | null;
   developerName: string | null;
+  /** Dark-preferring marketplace logo URL, if any. */
+  logoUrl?: string | null;
 };
 
 export function AppCard({ app }: Readonly<{ app: HomeApp }>) {
