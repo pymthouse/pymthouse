@@ -112,6 +112,7 @@ function TurnkeyEmbeddedAuthInner({
   const [retryNonce, setRetryNonce] = useState(0);
   const [failed, setFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasGoogleOAuthAction, setHasGoogleOAuthAction] = useState(false);
   const [hasDiscordOAuthAction, setHasDiscordOAuthAction] = useState(false);
   const authSectionRef = useRef<HTMLElement | null>(null);
   // True once Turnkey has been Unauthenticated on this page — a later
@@ -135,39 +136,39 @@ function TurnkeyEmbeddedAuthInner({
 
   useEffect(() => {
     const applyGrouping = () => {
+      // Search the whole auth section — OAuth buttons may not live in the first
+      // `div.w-full` if Turnkey's methodOrder puts email/passkey/wallet first.
       const section = authSectionRef.current;
-      const rootElement = section?.querySelector(":scope > div > div.w-full") as
-        | HTMLElement
-        | null;
-      if (!rootElement) return;
+      if (!section) return;
 
-      const googleButton = rootElement.querySelector(
+      const googleButton = section.querySelector(
         "button[data-testid='oauth-google']",
       ) as HTMLButtonElement | null;
-      const discordButton = rootElement.querySelector(
+      const discordButton = section.querySelector(
         "button[data-testid='oauth-discord']",
       ) as HTMLButtonElement | null;
+      setHasGoogleOAuthAction((prev) => {
+        const next = !!googleButton;
+        return prev === next ? prev : next;
+      });
       setHasDiscordOAuthAction((prev) => {
         const next = !!discordButton;
         return prev === next ? prev : next;
       });
-      if (!googleButton) return;
 
-      const googleGroup = googleButton.closest("div.w-full") as HTMLElement | null;
+      const googleGroup = googleButton?.closest("div.w-full") as HTMLElement | null;
       if (googleGroup) googleGroup.style.display = "none";
       const discordGroup = discordButton?.closest("div.w-full") as HTMLElement | null;
       if (discordGroup) discordGroup.style.display = "none";
 
-      rootElement
-        .querySelectorAll("div.flex.flex-row.w-full.items-center.justify-center.my-4")
+      // Hide kit "OR" dividers between methods; keep the Terms/Privacy footer.
+      section
+        .querySelectorAll(
+          "div.flex.flex-row.w-full.items-center.justify-center.my-4",
+        )
         .forEach((divider) => {
           (divider as HTMLElement).style.display = "none";
         });
-
-      rootElement.querySelectorAll("div.text-xs.text-center").forEach((block) => {
-        if (!block.textContent?.includes("By continuing, you agree to our")) return;
-        (block as HTMLElement).style.display = "none";
-      });
     };
 
     applyGrouping();
@@ -294,13 +295,13 @@ function TurnkeyEmbeddedAuthInner({
       {/*
         Turnkey Auth styles expect the kit's design tokens. OTP / wallet
         sub-steps may still open Turnkey's modal stack; outside-click dismiss
-        is blocked by TurnkeyModalDismissGuard.
-        Kit hardcodes Terms/Privacy to turnkey.com — hide that footer and
-        render env-configurable links below.
+        is blocked by TurnkeyModalDismissGuard. Keep the kit Terms/Privacy
+        footer (stacked last via CSS order); hide only kit OAuth chrome and
+        OR dividers that we replace with custom social buttons.
       */}
       <div
         className={
-          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='oauth-discord']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden [&_div.text-icon-text-light\\/70.dark\\:text-icon-text-dark\\/70.text-xs.mt-4.text-center]:hidden" +
+          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='oauth-discord']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden" +
           // Kit defaults logo to max-w-32/max-h-16; force a readable header size.
           // Also give no-logo spacer less empty top padding (kit uses mt-12).
           (authLogo
@@ -317,16 +318,18 @@ function TurnkeyEmbeddedAuthInner({
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
             Continue with
           </p>
-          <button
-            type="button"
-            onClick={() => {
-              triggerEmbeddedAuthAction("oauth-google");
-            }}
-            className={AUTH_BUTTON_CLASS}
-          >
-            <GoogleMark className="h-4 w-4" />
-            Continue with Google
-          </button>
+          {hasGoogleOAuthAction && (
+            <button
+              type="button"
+              onClick={() => {
+                triggerEmbeddedAuthAction("oauth-google");
+              }}
+              className={AUTH_BUTTON_CLASS}
+            >
+              <GoogleMark className="h-4 w-4" />
+              Continue with Google
+            </button>
+          )}
           <GitHubTurnkeyLoginButton
             primaryColor={primaryColor}
             sectionLabel={null}

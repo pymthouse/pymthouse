@@ -14,6 +14,25 @@ import {
 } from "@/lib/turnkey-nextauth-bridge";
 
 /**
+ * Share one handoff fetch across React Strict Mode remounts. The cookie is
+ * one-shot; a second mount must reuse the in-flight result instead of POSTing
+ * again and getting 404 before storeSession finishes.
+ */
+let githubHandoffPromise: Promise<string | null> | null = null;
+
+function consumeGithubHandoffSession(): Promise<string | null> {
+  if (!githubHandoffPromise) {
+    githubHandoffPromise = (async () => {
+      const res = await fetch("/api/auth/github/session", { method: "POST" });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { sessionToken?: string };
+      return data.sessionToken ?? null;
+    })().catch(() => null);
+  }
+  return githubHandoffPromise;
+}
+
+/**
  * Completes GitHub → Turnkey login: load handoff session, store in Wallet Kit,
  * then bridge to NextAuth (same path as Google/OTP/passkey).
  */
@@ -52,15 +71,9 @@ export function GitHubCompleteClient() {
     handoffStarted.current = true;
     (async () => {
       try {
-        const res = await fetch("/api/auth/github/session", {
-          method: "POST",
-        });
-        if (res.ok) {
-          const data = (await res.json()) as { sessionToken?: string };
-          if (!data.sessionToken) {
-            throw new Error("Missing GitHub Turnkey session");
-          }
-          await storeSession({ sessionToken: data.sessionToken });
+        const sessionToken = await consumeGithubHandoffSession();
+        if (sessionToken) {
+          await storeSession({ sessionToken });
           setSessionReady(true);
           return;
         }
@@ -69,10 +82,7 @@ export function GitHubCompleteClient() {
           setSessionReady(true);
           return;
         }
-        const body = (await res.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(body?.error || "Missing GitHub Turnkey session");
+        throw new Error("Missing GitHub Turnkey session");
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to restore session",
