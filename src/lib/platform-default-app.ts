@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db/index";
 import { developerApps, oidcClients, users } from "@/db/schema";
 import {
@@ -152,15 +152,62 @@ export async function getPlatformDefaultApp() {
 }
 
 async function findAdminOwnerId(): Promise<string | null> {
+  // Prefer the real bootstrap admin (`npm run bootstrap`), not leftover test
+  // admins (createTestUser also uses oauthProvider=bootstrap).
+  const bootstrap = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.role, "admin"),
+        eq(users.oauthProvider, "bootstrap"),
+        sql`${users.oauthSubject} like 'bootstrap_%'`,
+      ),
+    )
+    .orderBy(asc(users.createdAt))
+    .limit(1);
+  if (bootstrap[0]?.id) return bootstrap[0].id;
+
+  const named = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.role, "admin"),
+        or(
+          eq(users.email, "admin@pymthouse.local"),
+          eq(users.name, "Bootstrap Admin"),
+        ),
+      ),
+    )
+    .orderBy(asc(users.createdAt))
+    .limit(1);
+  if (named[0]?.id) return named[0].id;
+
+  const nonTest = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.role, "admin"),
+        sql`${users.id} not like 'user-test-%'`,
+        sql`coalesce(${users.email}, '') not like '%@example.test'`,
+      ),
+    )
+    .orderBy(asc(users.createdAt))
+    .limit(1);
+  if (nonTest[0]?.id) return nonTest[0].id;
+
   const rows = await db
     .select({ id: users.id })
     .from(users)
     .where(eq(users.role, "admin"))
+    .orderBy(asc(users.createdAt))
     .limit(1);
   return rows[0]?.id ?? null;
 }
 
-/** Prefer `preferredOwnerId` when that user is an admin; else the first admin. */
+/** Prefer `preferredOwnerId` when that user is an admin; else the bootstrap admin. */
 async function resolveAdminOwnerId(
   preferredOwnerId?: string,
 ): Promise<string | null> {
@@ -176,8 +223,8 @@ async function resolveAdminOwnerId(
 }
 
 /**
- * Invariant: the platform default app must be owned by an admin.
- * Reassigns `owner_id` when the current owner is missing or non-admin.
+ * Invariant: the platform default app must be owned by the bootstrap admin
+ * (or an explicitly preferred admin). Reassigns when the current owner differs.
  */
 async function ensurePlatformDefaultOwnedByAdmin(
   appId: string,
@@ -187,16 +234,12 @@ async function ensurePlatformDefaultOwnedByAdmin(
   if (!adminId) return;
 
   const rows = await db
-    .select({
-      ownerId: developerApps.ownerId,
-      ownerRole: users.role,
-    })
+    .select({ ownerId: developerApps.ownerId })
     .from(developerApps)
-    .innerJoin(users, eq(developerApps.ownerId, users.id))
     .where(eq(developerApps.id, appId))
     .limit(1);
   const row = rows[0];
-  if (!row || row.ownerRole === "admin") return;
+  if (!row || row.ownerId === adminId) return;
 
   await db
     .update(developerApps)

@@ -40,7 +40,15 @@ BEGIN
   INTO admin_owner_id
   FROM users u
   WHERE u.role = 'admin'
-  ORDER BY u.created_at ASC
+  ORDER BY
+    CASE
+      WHEN u.oauth_provider = 'bootstrap' AND u.oauth_subject LIKE 'bootstrap_%' THEN 0
+      WHEN u.email = 'admin@pymthouse.local' OR u.name = 'Bootstrap Admin' THEN 1
+      WHEN u.id NOT LIKE 'user-test-%'
+        AND coalesce(u.email, '') NOT LIKE '%@example.test' THEN 2
+      ELSE 3
+    END,
+    u.created_at ASC
   LIMIT 1;
 
   IF canonical_id IS NOT NULL THEN
@@ -77,16 +85,14 @@ BEGIN
       updated_at = to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     WHERE id = canonical_id;
 
-    -- Invariant: platform default must be owned by an admin.
+    -- Invariant: platform default must be owned by the bootstrap admin.
     IF admin_owner_id IS NOT NULL THEN
-      UPDATE developer_apps d
+      UPDATE developer_apps
       SET
         owner_id = admin_owner_id,
         updated_at = to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-      FROM users u
-      WHERE d.id = canonical_id
-        AND d.owner_id = u.id
-        AND u.role <> 'admin';
+      WHERE id = canonical_id
+        AND owner_id IS DISTINCT FROM admin_owner_id;
     END IF;
   END IF;
 END $$;--> statement-breakpoint

@@ -50,13 +50,46 @@ async function main() {
   const adminRows = await db.select().from(users).where(eq(users.role, "admin"));
   const email = process.argv[2] || "admin@pymthouse.local";
 
+  function pickCanonicalAdmin(
+    rows: Array<{
+      id: string;
+      email: string | null;
+      name: string | null;
+      oauthProvider: string;
+      oauthSubject: string;
+      createdAt: string;
+    }>,
+  ): string | null {
+    if (rows.length === 0) return null;
+    const sorted = [...rows].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    );
+    const bootstrap = sorted.find(
+      (u) =>
+        u.oauthProvider === "bootstrap" &&
+        u.oauthSubject.startsWith("bootstrap_"),
+    );
+    if (bootstrap) return bootstrap.id;
+    const named = sorted.find(
+      (u) => u.email === email || u.name === "Bootstrap Admin",
+    );
+    if (named) return named.id;
+    const nonTest = sorted.find(
+      (u) =>
+        !u.id.startsWith("user-test-") &&
+        !(u.email ?? "").endsWith("@example.test"),
+    );
+    return nonTest?.id ?? sorted[0]?.id ?? null;
+  }
+
   if (adminRows.length > 0) {
     console.log("\n  Admin user(s) already exist. Issuing a new token for the first admin.\n");
   }
 
   let userId: string;
-  if (adminRows.length > 0) {
-    userId = adminRows[0].id;
+  const existingAdminId = pickCanonicalAdmin(adminRows);
+  if (existingAdminId) {
+    userId = existingAdminId;
   } else {
     userId = uuidv4();
     await db.insert(users).values({

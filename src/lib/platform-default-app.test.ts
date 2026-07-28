@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { test } from "@/test-utils/db-guard";
 import {
@@ -177,6 +177,48 @@ test("ensurePlatformDefaultApp reassigns non-admin ownership to admin", async (t
       .where(eq(users.id, after[0]!.ownerId))
       .limit(1);
     assert.equal(owner[0]?.role, "admin");
+  });
+});
+
+test("ensurePlatformDefaultApp reassigns leftover test-admin owner to bootstrap admin", async (t) => {
+  const bootstrapAdmins = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.role, "admin"),
+        eq(users.oauthProvider, "bootstrap"),
+        sql`${users.oauthSubject} like 'bootstrap_%'`,
+      ),
+    )
+    .limit(1);
+  const bootstrapAdminId = bootstrapAdmins[0]?.id;
+  if (!bootstrapAdminId) {
+    t.skip("no bootstrap admin in this database");
+    return;
+  }
+
+  const testAdminId = await createTestUser({ role: "admin" });
+  const app = await seedDeveloperAppWithClient({
+    ownerId: testAdminId,
+    name: `TestAdminDefault ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  await withTemporaryPlatformDefault(app.clientId, async () => {
+    // No preferred ownerId — must pick the real bootstrap admin, not the test admin.
+    const result = await ensurePlatformDefaultApp();
+    assert.equal(result.created, false);
+    assert.equal(result.clientId, app.clientId);
+
+    const after = await db
+      .select({ ownerId: developerApps.ownerId })
+      .from(developerApps)
+      .where(eq(developerApps.id, app.clientId))
+      .limit(1);
+    assert.equal(after[0]?.ownerId, bootstrapAdminId);
   });
 });
 
