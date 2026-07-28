@@ -50,26 +50,10 @@ function DiscordMark({ className }: Readonly<{ className?: string }>) {
   );
 }
 
-function applyAuthButtonLook(button: HTMLButtonElement) {
-  button.style.display = "flex";
-  button.style.width = "100%";
-  button.style.alignItems = "center";
-  button.style.justifyContent = "center";
-  button.style.gap = "0.5rem";
-  button.style.borderRadius = "0.5rem";
-  button.style.border = "1px solid rgb(63 63 70)";
-  button.style.background = "rgb(9 9 11 / 0.6)";
-  button.style.padding = "0.625rem 1rem";
-  button.style.fontSize = "0.875rem";
-  button.style.fontWeight = "500";
-  button.style.lineHeight = "1.25rem";
-  button.style.color = "rgb(244 244 245)";
-}
-
 export function TurnkeyEmbeddedAuth({
   primaryColor = "#10b981",
   logoUrl,
-  title = "Log in or sign up",
+  title = "Sign in or create your account",
 }: Readonly<{
   primaryColor?: string;
   /** Image URL shown inside the AuthComponent panel. */
@@ -167,17 +151,12 @@ function TurnkeyEmbeddedAuthInner({
         const next = !!discordButton;
         return prev === next ? prev : next;
       });
-      const walletButton = rootElement.querySelector(
-        "button[data-testid='wallet-auth-button']",
-      ) as HTMLButtonElement | null;
-      if (!googleButton || !walletButton) return;
+      if (!googleButton) return;
 
       const googleGroup = googleButton.closest("div.w-full") as HTMLElement | null;
       if (googleGroup) googleGroup.style.display = "none";
       const discordGroup = discordButton?.closest("div.w-full") as HTMLElement | null;
       if (discordGroup) discordGroup.style.display = "none";
-      const walletGroup = walletButton.closest("div.w-full") as HTMLElement | null;
-      if (walletGroup) walletGroup.style.display = "none";
 
       rootElement
         .querySelectorAll("div.flex.flex-row.w-full.items-center.justify-center.my-4")
@@ -189,12 +168,6 @@ function TurnkeyEmbeddedAuthInner({
         if (!block.textContent?.includes("By continuing, you agree to our")) return;
         (block as HTMLElement).style.display = "none";
       });
-
-      const passkeyLoginButton = Array.from(rootElement.querySelectorAll("button")).find(
-        (button) =>
-          button.textContent?.trim().toLowerCase() === "log in with passkey",
-      ) as HTMLButtonElement | undefined;
-      if (passkeyLoginButton) applyAuthButtonLook(passkeyLoginButton);
     };
 
     applyGrouping();
@@ -327,7 +300,7 @@ function TurnkeyEmbeddedAuthInner({
       */}
       <div
         className={
-          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='oauth-discord']]:hidden [&_button[data-testid='wallet-auth-button']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden [&_div.text-icon-text-light\\/70.dark\\:text-icon-text-dark\\/70.text-xs.mt-4.text-center]:hidden" +
+          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='oauth-discord']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden [&_div.text-icon-text-light\\/70.dark\\:text-icon-text-dark\\/70.text-xs.mt-4.text-center]:hidden" +
           // Kit defaults logo to max-w-32/max-h-16; force a readable header size.
           // Also give no-logo spacer less empty top padding (kit uses mt-12).
           (authLogo
@@ -340,9 +313,9 @@ function TurnkeyEmbeddedAuthInner({
           } as CSSProperties
         }
       >
-        <section aria-label="Sign in with" className="mb-4 space-y-2">
+        <section aria-label="Continue with" className="mb-4 space-y-2">
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
-            Sign in with
+            Continue with
           </p>
           <button
             type="button"
@@ -373,7 +346,7 @@ function TurnkeyEmbeddedAuthInner({
           )}
         </section>
         <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
-          Use your email or passkey
+          Or continue with
         </p>
         <section
           ref={authSectionRef}
@@ -389,20 +362,6 @@ function TurnkeyEmbeddedAuthInner({
                 }
               : {})}
           />
-        </section>
-        <section aria-label="Continue with wallet" className="mt-4 space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
-            Continue with wallet
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              triggerEmbeddedAuthAction("wallet-auth-button");
-            }}
-            className={AUTH_BUTTON_CLASS}
-          >
-            Continue with wallet
-          </button>
         </section>
       </div>
       {error && (

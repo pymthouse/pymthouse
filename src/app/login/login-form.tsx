@@ -155,7 +155,9 @@ function LoginBrandHeader({
           <h1 className="text-3xl font-bold tracking-tight text-zinc-100">
             {branding.displayName}
           </h1>
-          <p className="text-zinc-500 mt-2 text-sm">Log in or sign up</p>
+          <p className="text-zinc-500 mt-2 text-sm">
+            Sign in or create your account
+          </p>
         </>
       ) : (
         <>
@@ -167,7 +169,9 @@ function LoginBrandHeader({
               <span className="text-emerald-400">pymt</span>house
             </Link>
           </h1>
-          <p className="text-zinc-500 mt-2 text-sm">Log in or sign up</p>
+          <p className="text-zinc-500 mt-2 text-sm">
+            Sign in or create your account
+          </p>
         </>
       )}
     </div>
@@ -195,7 +199,7 @@ function LoginStartCtaPanel({
           href="/start"
           className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-teal-400/60 bg-teal-500/20 px-5 py-3 text-sm font-semibold text-teal-100 transition-colors hover:bg-teal-500/30 hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal-400/50 sm:w-auto sm:self-start"
         >
-          Create an account
+          See what you can build
           <svg
             className="h-4 w-4"
             fill="none"
@@ -350,7 +354,7 @@ export function LoginForm() {
                 <TurnkeyEmbeddedAuth
                   primaryColor={primaryColor}
                   logoUrl={null}
-                  title="Log in or sign up"
+                  title="Sign in or create your account"
                 />
                 {oauthCallbackMessage ? (
                   <p className="mt-4 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300/90">
