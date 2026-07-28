@@ -285,14 +285,15 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 | `SIGNER_NETWORK` | Ethereum network | `arbitrum-one-mainnet` |
 | `ETH_RPC_URL` | Ethereum RPC endpoint | `https://arb1.arbitrum.io/rpc` |
 
-### OAuth Providers (for admin login)
+### OAuth Providers
 
 | Variable Name | Value |
 |--------------|-------|
-| `GOOGLE_CLIENT_ID` | From Google Cloud Console |
-| `GOOGLE_CLIENT_SECRET` | From Google Cloud Console |
-| `GITHUB_CLIENT_ID` | From GitHub OAuth Apps |
-| `GITHUB_CLIENT_SECRET` | From GitHub OAuth Apps |
+| `GOOGLE_CLIENT_ID` | From Google Cloud Console (legacy NextAuth; optional) |
+| `GOOGLE_CLIENT_SECRET` | From Google Cloud Console (legacy NextAuth; optional) |
+| `GITHUB_CLIENT_ID` | From GitHub OAuth Apps (Turnkey wallet GitHub login) |
+| `GITHUB_CLIENT_SECRET` | From GitHub OAuth Apps (Turnkey wallet GitHub login) |
+| `TURNKEY_GITHUB_OIDC_ISSUER` | Optional public issuer override for GitHub BYO OIDC |
 
 ### Optional Variables
 
@@ -307,10 +308,15 @@ In your Vercel project dashboard, go to "Settings" → "Environment Variables" a
 
 **Turnkey social logins (wallets for all funders):** enable Google (etc.) under
 Embedded Wallets → Configuration → Social logins. Redirect URL and Google’s
-authorized redirect URI must match. GitHub is not a native Auth Proxy provider;
-use Google via Turnkey, or Auth0→GitHub / BYO-auth if you need GitHub specifically.
-NextAuth `GOOGLE_*` / `GITHUB_*` vars are separate (dashboard session without a
-Turnkey wallet).
+authorized redirect URI must match. **GitHub** uses in-app BYO OIDC (see
+[Turnkey social logins](https://docs.turnkey.com/features/authentication/social-logins)
++ [bring your own auth](https://docs.turnkey.com/features/authentication/bring-your-own-auth)):
+set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` plus Turnkey API keys
+(`TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY`). GitHub users get the same
+Turnkey wallet + NextAuth `turnkey-wallet` bridge as Auth Proxy social logins.
+The GitHub OAuth App callback must be `{NEXTAUTH_URL}/api/auth/github/callback`.
+Turnkey enclaves must reach your issuer JWKS — use a public `NEXTAUTH_URL`, or set
+`TURNKEY_GITHUB_OIDC_ISSUER` to a reachable host.
 
 **Important**: Make sure to set these for all environments (Production, Preview, Development) or at minimum for Production.
 
@@ -325,14 +331,17 @@ Turnkey wallet).
    https://your-domain.vercel.app/api/auth/callback/google
    ```
 
-### GitHub OAuth
+### GitHub OAuth (Turnkey wallet login)
 
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Click on your OAuth App
+2. Create / open your OAuth App
 3. Set Authorization callback URL:
    ```
-   https://your-domain.vercel.app/api/auth/callback/github
+   https://your-domain.vercel.app/api/auth/github/callback
    ```
+4. Copy Client ID / Client Secret into `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
+5. Ensure `TURNKEY_API_PUBLIC_KEY`, `TURNKEY_API_PRIVATE_KEY`, and Wallet Kit
+   public env vars are set so GitHub users receive embedded wallets
 
 ## Step 6: Deploy and Initialize Database
 
@@ -355,7 +364,7 @@ Turnkey wallet).
 ## Step 7: Verify Deployment
 
 1. Visit your deployed URL: `https://your-domain.vercel.app`
-2. Test admin login via Google/GitHub OAuth
+2. Test developer login via Turnkey (email OTP / Google / GitHub when configured)
 3. Navigate to signer configuration and verify connection to your deployed go-livepeer service
 4. Check remote signer DMZ health (see `GET /api/v1/health` signer probe)
 
