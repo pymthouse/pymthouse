@@ -174,15 +174,20 @@ billing app-data. Owners attach a card from **`/billing` → Add payment method*
 (`POST /api/v1/me/billing/payment-method` → OM Checkout setup) so overage invoices
 can `charge_automatically`.
 
+Sandbox billing profiles are **not** used at runtime. Migrate legacy Sandbox-linked customers:
+
+```bash
+npm run openmeter:migrate-sandbox-to-stripe          # dry-run
+npm run openmeter:migrate-sandbox-to-stripe -- --apply
+```
+
+
 **Plane B — Merchant Stripe Connect:** app **Settings → Payments → Merchant Stripe
 Connect** uses Account Links + `/webhooks/stripe` for end-user retail collection.
 Never charges through the OM Stripe app.
 
 **MoonPay:** admin-only signer-refill tooling (`POST …/onramp/sessions` requires
 platform admin). Not shown on owner `/billing` for non-admins.
-
-Sandbox billing profiles are **not** used at runtime; migrate legacy Sandbox-linked
-customers with the cutover scripts (separate PR).
 
 **Konnect (production):**
 
