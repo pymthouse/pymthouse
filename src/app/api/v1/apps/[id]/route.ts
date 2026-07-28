@@ -35,6 +35,7 @@ import {
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { authenticateAppClient } from "@/lib/auth";
+import { resolveAppActivation } from "@/lib/activation/app-activation";
 import {
   listAvailableFiatOracleProviders,
   resolveBillingOracleProviderKey,
@@ -156,6 +157,14 @@ export async function GET(
         clientInfo.allowedScopes ?? DEFAULT_OIDC_SCOPES,
       )
     : "app_level";
+
+  let activation = null;
+  try {
+    activation = await resolveAppActivation(app.id);
+  } catch {
+    activation = null;
+  }
+
   return NextResponse.json({
     ...appWithoutOidcClientId,
     billingPattern,
@@ -164,6 +173,7 @@ export async function GET(
     canEdit: await canEditProviderApp(auth),
     canDeleteApp: auth.app.ownerId === auth.userId,
     canManageBilling: auth.app.ownerId === auth.userId || auth.role === "admin",
+    activation,
     oidcClient: clientInfo
       ? {
           ...clientInfo,

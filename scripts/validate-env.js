@@ -55,6 +55,7 @@ const optionalVars = {
   NEXT_PUBLIC_ORGANIZATION_ID: "",
   NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID: "",
   SIGNER_CLI_URL: "",
+  ACTIVATION_GATE_MODE: "",
 };
 
 /** Vercel build skips db:prepare; DATABASE_URL is only required at runtime. */
@@ -175,6 +176,17 @@ if (hasTurnkeyOrg && !hasTurnkeyProxy) {
   hasWarnings = true;
 } else if (hasTurnkeyOrg && hasTurnkeyProxy) {
   console.log("  ✅ Turnkey Wallet Kit: Public IDs configured");
+}
+
+const activationMode = (process.env.ACTIVATION_GATE_MODE || "off").trim().toLowerCase();
+const allowedActivationModes = new Set(["off", "log", "enforce_revenue", "enforce"]);
+if (!allowedActivationModes.has(activationMode)) {
+  console.log(
+    `  ⚠️  ACTIVATION_GATE_MODE="${process.env.ACTIVATION_GATE_MODE}" is invalid (use off|log|enforce_revenue|enforce)`,
+  );
+  hasWarnings = true;
+} else {
+  console.log(`  ✅ ACTIVATION_GATE_MODE: ${activationMode}`);
 }
 
 const nextAuthUrl = process.env.NEXTAUTH_URL;
