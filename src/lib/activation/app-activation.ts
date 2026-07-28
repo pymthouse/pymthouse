@@ -177,11 +177,12 @@ export async function resolveAppActivation(clientId: string): Promise<AppActivat
     }
   }
 
-  const reason = !canProvisionEndUsers
-    ? provisionReason
-    : !canSellPaidPlans
-      ? sellReason
-      : null;
+  const reason = pickActivationReason({
+    canProvisionEndUsers,
+    provisionReason,
+    canSellPaidPlans,
+    sellReason,
+  });
 
   return {
     clientId: publicClientId,
@@ -193,6 +194,21 @@ export async function resolveAppActivation(clientId: string): Promise<AppActivat
     endUserCap,
     appUserCount: Number(appUserCount),
   };
+}
+
+function pickActivationReason(input: {
+  canProvisionEndUsers: boolean;
+  provisionReason: ActivationReason | null;
+  canSellPaidPlans: boolean;
+  sellReason: ActivationReason | null;
+}): ActivationReason | null {
+  if (!input.canProvisionEndUsers) {
+    return input.provisionReason;
+  }
+  if (!input.canSellPaidPlans) {
+    return input.sellReason;
+  }
+  return null;
 }
 
 async function markActivationNotified(appId: string): Promise<void> {
@@ -302,6 +318,67 @@ function shouldEnforce(kind: ActivationGateKind, mode: ActivationGateMode): bool
   return false;
 }
 
+async function evaluateActivationGate(
+  kind: ActivationGateKind,
+  clientId: string,
+  options?: { externalUserId?: string },
+): Promise<AppActivation> {
+  if (kind === "provision") {
+    const externalUserId = options?.externalUserId?.trim();
+    if (!externalUserId) {
+      throw new Error("externalUserId is required for provision gate");
+    }
+    return assertAppCanProvisionUsers(clientId, { externalUserId });
+  }
+  return assertAppCanSellPaidPlans(clientId);
+}
+
+async function handleActivationDenial(input: {
+  err: AppActivationError;
+  kind: ActivationGateKind;
+  mode: ActivationGateMode;
+}): Promise<AppActivation> {
+  const { err, kind, mode } = input;
+  await writeAuditLog({
+    clientId: err.activation.clientId,
+    action: "activation_gate_would_deny",
+    status: mode === "log" ? "logged" : "denied",
+    metadata: {
+      kind,
+      mode,
+      code: err.code,
+      billingMode: err.billingMode,
+      reason: err.activation.reason,
+      endUserCap: err.activation.endUserCap,
+      appUserCount: err.activation.appUserCount,
+    },
+  });
+
+  if (!shouldEnforce(kind, mode)) {
+    return err.activation;
+  }
+
+  if (kind === "provision") {
+    const notifiedApp = await getProviderApp(err.activation.clientId);
+    if (notifiedApp) {
+      await markActivationNotified(notifiedApp.id);
+    }
+  }
+
+  throw err;
+}
+
+async function evaluateSoft(kind: ActivationGateKind, clientId: string, options?: { externalUserId?: string }): Promise<AppActivation> {
+  try {
+    return await evaluateActivationGate(kind, clientId, options);
+  } catch (err) {
+    if (err instanceof AppActivationError) {
+      return err.activation;
+    }
+    throw err;
+  }
+}
+
 /**
  * Central gate runner: off / log / enforce_revenue / enforce.
  * Returns activation when allowed (or when soft modes skip denial).
@@ -312,64 +389,17 @@ export async function runActivationGate(
   options?: { externalUserId?: string },
 ): Promise<AppActivation> {
   const mode = getActivationGateMode();
-
-  const evaluate = async (): Promise<AppActivation> => {
-    if (kind === "provision") {
-      const externalUserId = options?.externalUserId?.trim();
-      if (!externalUserId) {
-        throw new Error("externalUserId is required for provision gate");
-      }
-      return assertAppCanProvisionUsers(clientId, { externalUserId });
-    }
-    return assertAppCanSellPaidPlans(clientId);
-  };
-
   if (mode === "off") {
-    // Still resolve for callers that want visibility; never deny.
-    try {
-      return await evaluate();
-    } catch (err) {
-      if (err instanceof AppActivationError) {
-        return err.activation;
-      }
-      throw err;
-    }
+    return evaluateSoft(kind, clientId, options);
   }
 
   try {
-    return await evaluate();
+    return await evaluateActivationGate(kind, clientId, options);
   } catch (err) {
     if (!(err instanceof AppActivationError)) {
       throw err;
     }
-
-    await writeAuditLog({
-      clientId: err.activation.clientId,
-      action: "activation_gate_would_deny",
-      status: mode === "log" ? "logged" : "denied",
-      metadata: {
-        kind,
-        mode,
-        code: err.code,
-        billingMode: err.billingMode,
-        reason: err.activation.reason,
-        endUserCap: err.activation.endUserCap,
-        appUserCount: err.activation.appUserCount,
-      },
-    });
-
-    if (!shouldEnforce(kind, mode)) {
-      return err.activation;
-    }
-
-    if (kind === "provision") {
-      const notifiedApp = await getProviderApp(clientId);
-      if (notifiedApp) {
-        await markActivationNotified(notifiedApp.id);
-      }
-    }
-
-    throw err;
+    return handleActivationDenial({ err, kind, mode });
   }
 }
 

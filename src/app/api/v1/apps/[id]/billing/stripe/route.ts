@@ -20,6 +20,18 @@ import {
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 import { isConnectReady } from "@/lib/activation/app-activation";
 
+type BillingPatchFields = {
+  progressiveBilling?: boolean;
+  invoiceThresholdUsdMicros?: string | null;
+  applicationFeeBps?: number;
+  billingMode?: "owner_rollup" | "merchant";
+  endUserCap?: number;
+};
+
+type ParseResult =
+  | { ok: true; fields: BillingPatchFields }
+  | { ok: false; response: NextResponse };
+
 async function requireHostedBillingApp(clientId: string) {
   const auth = await getAuthorizedProviderApp(clientId);
   if (!auth) {
@@ -28,9 +40,180 @@ async function requireHostedBillingApp(clientId: string) {
   const omConfig = await getAppOpenMeterConfigRow(auth.app.id);
   const mode = omConfig?.mode || "pymthouse_hosted";
   if (mode !== "pymthouse_hosted") {
-    return { auth, error: NextResponse.json({ error: "Billing connect requires pymthouse_hosted OpenMeter mode" }, { status: 400 }) };
+    return {
+      auth,
+      error: NextResponse.json(
+        { error: "Billing connect requires pymthouse_hosted OpenMeter mode" },
+        { status: 400 },
+      ),
+    };
   }
   return { auth, error: null as NextResponse | null };
+}
+
+function parseIntegerField(
+  value: unknown,
+  label: string,
+  min: number,
+  max: number,
+): { ok: true; value: number } | { ok: false; response: NextResponse } {
+  let n: number;
+  if (typeof value === "number") {
+    n = value;
+  } else if (typeof value === "string") {
+    n = Number.parseInt(value, 10);
+  } else {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: `${label} must be an integer from ${min} to ${max}` },
+        { status: 400 },
+      ),
+    };
+  }
+  if (!Number.isInteger(n) || n < min || n > max) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: `${label} must be an integer from ${min} to ${max}` },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, value: n };
+}
+
+async function applyBillingModeField(
+  value: unknown,
+  appId: string,
+  fields: BillingPatchFields,
+): Promise<ParseResult | null> {
+  if (value === undefined) {
+    return null;
+  }
+  if (value !== "owner_rollup" && value !== "merchant") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'billingMode must be "owner_rollup" or "merchant"' },
+        { status: 400 },
+      ),
+    };
+  }
+  fields.billingMode = value;
+  if (fields.billingMode === "merchant") {
+    const config = await getAppBillingConfig(appId);
+    if (!isConnectReady(config)) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error:
+              "Switching to merchant mode requires a ready Stripe Connected Account (charges enabled and details submitted)",
+          },
+          { status: 400 },
+        ),
+      };
+    }
+  }
+  return null;
+}
+
+function applyIntegerPatchField(
+  value: unknown,
+  label: string,
+  min: number,
+  max: number,
+  assign: (n: number) => void,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = parseIntegerField(value, label, min, max);
+  if (!parsed.ok) return parsed;
+  assign(parsed.value);
+  return null;
+}
+
+async function parseBillingPatchBody(
+  body: Record<string, unknown>,
+  appId: string,
+): Promise<ParseResult> {
+  if (
+    body.progressiveBilling === undefined &&
+    body.invoiceThresholdUsdMicros === undefined &&
+    body.applicationFeeBps === undefined &&
+    body.billingMode === undefined &&
+    body.endUserCap === undefined
+  ) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error:
+            "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, and/or endUserCap to update",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const fields: BillingPatchFields = {};
+
+  if (body.progressiveBilling !== undefined) {
+    const parsed = parseProgressiveBillingInput(body.progressiveBilling);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: parsed.error }, { status: 400 }),
+      };
+    }
+    fields.progressiveBilling = parsed.value;
+  }
+
+  if (body.invoiceThresholdUsdMicros !== undefined) {
+    const parsed = parseInvoiceThresholdUsdMicrosInput(body.invoiceThresholdUsdMicros);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: parsed.error }, { status: 400 }),
+      };
+    }
+    fields.invoiceThresholdUsdMicros = parsed.value;
+  }
+
+  const feeErr = applyIntegerPatchField(
+    body.applicationFeeBps,
+    "applicationFeeBps",
+    0,
+    10_000,
+    (n) => {
+      fields.applicationFeeBps = n;
+    },
+  );
+  if (feeErr) return feeErr;
+
+  const modeErr = await applyBillingModeField(body.billingMode, appId, fields);
+  if (modeErr) return modeErr;
+
+  const capErr = applyIntegerPatchField(
+    body.endUserCap,
+    "endUserCap",
+    1,
+    1_000_000,
+    (n) => {
+      fields.endUserCap = n;
+    },
+  );
+  if (capErr) return capErr;
+
+  return { ok: true, fields };
+}
+
+function openMeterPatchHttpStatus(message: string): number {
+  if (message.includes("not configured")) return 400;
+  if (message.includes("Cannot reach OpenMeter")) return 503;
+  return 502;
 }
 
 export async function GET(
@@ -73,92 +256,17 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (
-    body.progressiveBilling === undefined &&
-    body.invoiceThresholdUsdMicros === undefined &&
-    body.applicationFeeBps === undefined &&
-    body.billingMode === undefined &&
-    body.endUserCap === undefined
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, and/or endUserCap to update",
-      },
-      { status: 400 },
-    );
+  const parsed = await parseBillingPatchBody(body, access.auth.app.id);
+  if (!parsed.ok) {
+    return parsed.response;
   }
-
-  let progressiveBilling: boolean | undefined;
-  if (body.progressiveBilling !== undefined) {
-    const parsed = parseProgressiveBillingInput(body.progressiveBilling);
-    if (!parsed.ok) {
-      return NextResponse.json({ error: parsed.error }, { status: 400 });
-    }
-    progressiveBilling = parsed.value;
-  }
-
-  let invoiceThresholdUsdMicros: string | null | undefined;
-  if (body.invoiceThresholdUsdMicros !== undefined) {
-    const parsed = parseInvoiceThresholdUsdMicrosInput(body.invoiceThresholdUsdMicros);
-    if (!parsed.ok) {
-      return NextResponse.json({ error: parsed.error }, { status: 400 });
-    }
-    invoiceThresholdUsdMicros = parsed.value;
-  }
-
-  let applicationFeeBps: number | undefined;
-  if (body.applicationFeeBps !== undefined) {
-    const n =
-      typeof body.applicationFeeBps === "number"
-        ? body.applicationFeeBps
-        : Number.parseInt(String(body.applicationFeeBps), 10);
-    if (!Number.isInteger(n) || n < 0 || n > 10_000) {
-      return NextResponse.json(
-        { error: "applicationFeeBps must be an integer from 0 to 10000" },
-        { status: 400 },
-      );
-    }
-    applicationFeeBps = n;
-  }
-
-  let billingMode: "owner_rollup" | "merchant" | undefined;
-  if (body.billingMode !== undefined) {
-    if (body.billingMode !== "owner_rollup" && body.billingMode !== "merchant") {
-      return NextResponse.json(
-        { error: 'billingMode must be "owner_rollup" or "merchant"' },
-        { status: 400 },
-      );
-    }
-    billingMode = body.billingMode;
-    if (billingMode === "merchant") {
-      const config = await getAppBillingConfig(access.auth.app.id);
-      if (!isConnectReady(config)) {
-        return NextResponse.json(
-          {
-            error:
-              "Switching to merchant mode requires a ready Stripe Connected Account (charges enabled and details submitted)",
-          },
-          { status: 400 },
-        );
-      }
-    }
-  }
-
-  let endUserCap: number | undefined;
-  if (body.endUserCap !== undefined) {
-    const n =
-      typeof body.endUserCap === "number"
-        ? body.endUserCap
-        : Number.parseInt(String(body.endUserCap), 10);
-    if (!Number.isInteger(n) || n < 1 || n > 1_000_000) {
-      return NextResponse.json(
-        { error: "endUserCap must be an integer from 1 to 1000000" },
-        { status: 400 },
-      );
-    }
-    endUserCap = n;
-  }
+  const {
+    progressiveBilling,
+    invoiceThresholdUsdMicros,
+    applicationFeeBps,
+    billingMode,
+    endUserCap,
+  } = parsed.fields;
 
   try {
     if (billingMode !== undefined || endUserCap !== undefined) {
@@ -187,12 +295,10 @@ export async function PATCH(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const httpStatus = message.includes("not configured")
-      ? 400
-      : message.includes("Cannot reach OpenMeter")
-        ? 503
-        : 502;
-    return NextResponse.json({ error: message }, { status: httpStatus });
+    return NextResponse.json(
+      { error: message },
+      { status: openMeterPatchHttpStatus(message) },
+    );
   }
 }
 

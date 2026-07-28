@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { createCorrelationId } from "@/lib/audit";
-import type { ActivationReason, BillingMode } from "@/lib/activation/app-activation";
+import {
+  AppActivationError,
+  type ActivationReason,
+  type BillingMode,
+} from "@/lib/activation/app-activation";
 
 const PROBLEM_TYPE = "https://pymthouse.com/problems/app-not-activated";
 
@@ -58,5 +62,18 @@ export function activationProblemResponse(input: {
   return NextResponse.json(body, {
     status: body.status,
     headers: { "Content-Type": "application/problem+json" },
+  });
+}
+
+/** Map AppActivationError → problem response; otherwise null. */
+export function activationErrorResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof AppActivationError)) {
+    return null;
+  }
+  return activationProblemResponse({
+    reason: err.code,
+    billingMode: err.billingMode,
+    actionUrl: err.actionUrl,
+    detail: err.message,
   });
 }
