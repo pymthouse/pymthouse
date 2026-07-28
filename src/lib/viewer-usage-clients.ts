@@ -44,7 +44,7 @@ export async function resolveViewerUsageClientIds(
       .from(appUsers)
       .innerJoin(developerApps, eq(appUsers.clientId, developerApps.id))
       .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-      .where(eq(appUsers.externalUserId, trimmed)),
+      .where(and(eq(appUsers.externalUserId, trimmed), eq(appUsers.status, "active"))),
   ]);
 
   const ids = new Set<string>();
@@ -72,6 +72,7 @@ export async function viewerHasAppUserMembership(
     .where(
       and(
         eq(appUsers.externalUserId, trimmedUser),
+        eq(appUsers.status, "active"),
         or(eq(oidcClients.clientId, trimmedApp), eq(developerApps.id, trimmedApp)),
       ),
     )

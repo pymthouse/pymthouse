@@ -10,11 +10,6 @@ export default async function KeysPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
-  const role = (session.user as Record<string, unknown>)?.role as string | undefined;
-  if (role === "admin" || role === "operator") {
-    redirect("/apps");
-  }
-
   return (
     <DashboardLayout>
       <ApiKeysManager />

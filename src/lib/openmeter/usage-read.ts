@@ -333,7 +333,11 @@ async function resolveUsageMeterSubjects(input: {
     }
     return [identity.customerKey];
   } catch {
-    return buildUsageMeterSubjects(input.clientId, externalUserId);
+    // Do not invent owner-wire subjects without a verified publicClientId.
+    return [
+      buildOpenMeterCustomerKey(input.clientId, externalUserId),
+      externalUserId,
+    ];
   }
 }
 
@@ -1035,6 +1039,7 @@ export function __testClearOpenMeterUsageStubs(): void {
   testDailyByClient.clear();
   testIngestLogByClient.clear();
   testUsagePeriodByClient.clear();
+  testManifestByClient.clear();
 }
 
 function filterTestUsageRows(
@@ -1183,6 +1188,17 @@ export function __testSetOpenMeterManifestRows(
     throw new Error("__testSetOpenMeterManifestRows is only available in test");
   }
   testManifestByClient.set(clientId, rows);
+}
+
+export function __testClearOpenMeterManifestRows(clientId?: string): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testClearOpenMeterManifestRows is only available in test");
+  }
+  if (clientId) {
+    testManifestByClient.delete(clientId);
+    return;
+  }
+  testManifestByClient.clear();
 }
 
 /** Per-manifest analytics: USD micros, fee_wei, and billable_secs. */
@@ -1400,7 +1416,7 @@ export async function queryOpenMeterAppDashboardUsage(input: {
   const meterSlug = await getMeterSlugForApp(input.clientId);
   const subjects = externalUserId
     ? await resolveUsageMeterSubjects({
-        clientId: input.clientId,
+        clientId: meterClientId,
         externalUserId,
       })
     : undefined;

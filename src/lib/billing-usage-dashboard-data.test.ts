@@ -236,6 +236,8 @@ test("admin My Usage subject-scopes default app they own", async (t) => {
   });
   t.after(async () => {
     await cleanupTestApp(defaultApp);
+    // cleanupTestApp deletes the owner; keep an explicit delete for any leftover.
+    await db.delete(users).where(eq(users.id, adminId));
   });
 
   await withTemporaryPlatformDefault(defaultApp.clientId, async () => {
@@ -316,6 +318,7 @@ test("admin All Usage keeps full tenant aggregate on platform default", async (t
   });
   t.after(async () => {
     await cleanupTestApp(defaultApp);
+    await db.delete(users).where(eq(users.id, adminId));
   });
 
   await withTemporaryPlatformDefault(defaultApp.clientId, async () => {

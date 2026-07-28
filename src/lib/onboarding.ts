@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { appUsers, developerApps, users } from "@/db/schema";
@@ -66,6 +66,7 @@ export async function developerNeedsOnboarding(userId: string): Promise<boolean>
 }
 
 export async function getOnboardingStatus(userId: string): Promise<OnboardingStatus> {
+  const needsOnboarding = await developerNeedsOnboarding(userId);
   const row = await getUserOnboardingRow(userId);
   const ownsNonDefaultApp = await userOwnsNonDefaultApp(userId);
   let defaultAppClientId: string | null = null;
@@ -77,13 +78,6 @@ export async function getOnboardingStatus(userId: string): Promise<OnboardingSta
 
   const persona =
     row?.persona === "explorer" || row?.persona === "builder" ? row.persona : null;
-
-  const needsOnboarding =
-    row?.role !== "admin" &&
-    row?.role !== "operator" &&
-    !row?.onboardingCompletedAt &&
-    row?.persona !== "builder" &&
-    !ownsNonDefaultApp;
 
   return {
     persona,
@@ -115,7 +109,7 @@ export async function markOnboardingComplete(
       persona,
       onboardingCompletedAt: now,
     })
-    .where(eq(users.id, userId));
+    .where(and(eq(users.id, userId), isNull(users.onboardingCompletedAt)));
 }
 
 export async function softSkipBuilderOnboarding(userId: string): Promise<void> {

@@ -114,7 +114,7 @@ async function DeveloperMyApps({
         emptyStateBody={
           incompleteBuilder
             ? "Complete setup to create your first provider app, or resume onboarding."
-            : "Create  your first provider app to configure identity, plans, user management, and signer access."
+            : "Create your first provider app to configure identity, plans, user management, and signer access."
         }
       />
     </>
@@ -125,7 +125,9 @@ async function AdminMyApps({ userId }: Readonly<{ userId: string }>) {
   await syncSignerStatus();
 
   const [myApps, signerRows] = await Promise.all([
-    userId ? listUserAccessibleApps(userId) : Promise.resolve([]),
+    userId
+      ? listUserAccessibleApps(userId, { includePlatformDefault: true })
+      : Promise.resolve([]),
     db.select().from(signerConfig).where(eq(signerConfig.id, "default")).limit(1),
   ]);
 

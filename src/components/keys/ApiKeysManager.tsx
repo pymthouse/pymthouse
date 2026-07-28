@@ -105,8 +105,8 @@ export default function ApiKeysManager() {
     return [...seen.entries()]
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => {
-        if (a.label === "Personal") return -1;
-        if (b.label === "Personal") return 1;
+        if (a.label === PLATFORM_DEFAULT_USAGE_DISPLAY_NAME) return -1;
+        if (b.label === PLATFORM_DEFAULT_USAGE_DISPLAY_NAME) return 1;
         return a.label.localeCompare(b.label);
       });
   }, [keys]);

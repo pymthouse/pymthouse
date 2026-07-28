@@ -38,12 +38,12 @@ export default async function OnboardingPage({
   )
     ? params.persona
     : null;
-  const status = await getOnboardingStatus(userId);
 
   if (!resumeBuilder && !(await developerNeedsOnboarding(userId))) {
     redirect("/apps");
   }
 
+  const status = await getOnboardingStatus(userId);
   const initialPersona: OnboardingPersona | null =
     status.persona === "explorer" || status.persona === "builder"
       ? status.persona

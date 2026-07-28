@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { db } from "@/db/index";
 import { developerApps, oidcClients, users } from "@/db/schema";
 import {
@@ -19,7 +19,10 @@ export const PLATFORM_DEFAULT_APP_NAME = "PymtHouse App";
 
 /** Drizzle condition: exclude the canonical platform default from catalogs. */
 export function notPlatformDefaultApp() {
-  return ne(developerApps.isPlatformDefault, 1);
+  return or(
+    isNull(developerApps.isPlatformDefault),
+    ne(developerApps.isPlatformDefault, 1),
+  )!;
 }
 
 /** Optional public client_id override for the platform default app. */
@@ -78,41 +81,58 @@ async function ensureDefaultAppSiblings(clientId: string): Promise<void> {
 
 /**
  * Resolve the platform default app's public client_id (`app_…`).
- * Prefers a configured override (promoting it to the flagged singleton),
- * then the unique `is_platform_default = 1` row.
+ * Prefers a configured override when that client exists, else the unique
+ * `is_platform_default = 1` row. Read-only — does not promote or repair rows.
  */
 export async function resolvePlatformDefaultClientId(): Promise<string | null> {
   const configured = getConfiguredDefaultAppClientId();
   if (configured) {
     const byEnv = await db
       .select({
-        id: developerApps.id,
         clientId: oidcClients.clientId,
-        isPlatformDefault: developerApps.isPlatformDefault,
       })
       .from(developerApps)
       .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
       .where(eq(oidcClients.clientId, configured))
       .limit(1);
-    const row = byEnv[0];
-    if (row?.clientId) {
-      if (row.isPlatformDefault !== 1) {
-        await promoteCanonicalDefaultApp(row.id);
-      } else {
-        await db
-          .update(developerApps)
-          .set({
-            publishedAt: null,
-            marketplaceFeatured: 0,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(developerApps.id, row.id));
-      }
-      return row.clientId;
+    if (byEnv[0]?.clientId) {
+      return byEnv[0].clientId;
     }
   }
 
   return findFlaggedDefaultClientId();
+}
+
+async function promoteConfiguredDefaultAppIfNeeded(): Promise<string | null> {
+  const configured = getConfiguredDefaultAppClientId();
+  if (!configured) return null;
+
+  const byEnv = await db
+    .select({
+      id: developerApps.id,
+      clientId: oidcClients.clientId,
+      isPlatformDefault: developerApps.isPlatformDefault,
+    })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, configured))
+    .limit(1);
+  const row = byEnv[0];
+  if (!row?.clientId) return null;
+
+  if (row.isPlatformDefault !== 1) {
+    await promoteCanonicalDefaultApp(row.id);
+  } else {
+    await db
+      .update(developerApps)
+      .set({
+        publishedAt: null,
+        marketplaceFeatured: 0,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(developerApps.id, row.id));
+  }
+  return row.clientId;
 }
 
 export async function getPlatformDefaultApp() {
@@ -165,6 +185,12 @@ async function cleanupOrphanOidcClient(oidcRowId: string): Promise<void> {
 export async function ensurePlatformDefaultApp(opts?: {
   ownerId?: string;
 }): Promise<{ clientId: string; created: boolean }> {
+  const promoted = await promoteConfiguredDefaultAppIfNeeded();
+  if (promoted) {
+    await ensureDefaultAppSiblings(promoted);
+    return { clientId: promoted, created: false };
+  }
+
   const existing = await resolvePlatformDefaultClientId();
   if (existing) {
     await ensureDefaultAppSiblings(existing);

@@ -84,7 +84,7 @@ export default function UserMenu({
       <button
         type="button"
         aria-expanded={open}
-        aria-haspopup="menu"
+        aria-haspopup="true"
         aria-label="Profile"
         onClick={() => setOpen((v) => !v)}
         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 ${
@@ -112,7 +112,6 @@ export default function UserMenu({
 
       {open && (
         <div
-          role="menu"
           className="absolute bottom-full left-0 z-50 mb-2 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/40 sm:w-64"
         >
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">

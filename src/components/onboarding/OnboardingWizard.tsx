@@ -11,6 +11,7 @@ import PersonaStep from "@/components/onboarding/PersonaStep";
 import BuilderCreateStep from "@/components/onboarding/BuilderCreateStep";
 import CopyIdButton from "@/components/apps/CopyIdButton";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
+import { getDocsBaseUrl } from "@/lib/docs-base-url";
 
 type WizardStep = "persona" | "builder" | "done";
 
@@ -20,7 +21,7 @@ type MintedKey = {
   sdkToken: string | null;
 };
 
-const DOCS_ONBOARDING_HREF = "https://docs.pymthouse.com";
+const DOCS_ONBOARDING_HREF = getDocsBaseUrl();
 
 async function postJson(path: string, body?: Record<string, unknown>) {
   const res = await fetch(path, {

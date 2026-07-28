@@ -7,10 +7,10 @@ import type { ReactNode } from "react";
  */
 export default function OnboardingShell({
   children,
-  footer,
+  headerAction,
 }: Readonly<{
   children: ReactNode;
-  footer?: ReactNode;
+  headerAction?: ReactNode;
 }>) {
   return (
     <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
@@ -32,7 +32,7 @@ export default function OnboardingShell({
             <span className="text-emerald-400">pymt</span>
             <span className="text-zinc-100">house</span>
           </Link>
-          {footer}
+          {headerAction}
         </div>
       </header>
 

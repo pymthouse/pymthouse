@@ -55,7 +55,7 @@ test("listSessionUserApiKeys excludes spoofed external_user_id on foreign apps",
     sessionUserId: victimId,
     keyId: spoofedKey.id,
   });
-  assert.equal(revoked, false);
+  assert.equal(revoked, null);
 });
 
 test("list/revoke session keys allow personal default and owned-app keys", async (t) => {
@@ -112,19 +112,19 @@ test("list/revoke session keys allow personal default and owned-app keys", async
       true,
     );
 
-    assert.equal(
+    assert.deepEqual(
       await revokeSessionUserApiKey({
         sessionUserId: ownerApp.userId,
         keyId: personalKey.id,
       }),
-      true,
+      { developerAppId: defaultApp.clientId },
     );
-    assert.equal(
+    assert.deepEqual(
       await revokeSessionUserApiKey({
         sessionUserId: ownerApp.userId,
         keyId: ownerKey.id,
       }),
-      true,
+      { developerAppId: ownerApp.clientId },
     );
 
     const after = await listSessionUserApiKeys(ownerApp.userId);

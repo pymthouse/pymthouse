@@ -34,8 +34,15 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const persona = body.persona as string | undefined;
-  const softSkip = body.softSkip === true;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json(
+      { error: "persona must be explorer or builder" },
+      { status: 400 },
+    );
+  }
+  const record = body as { persona?: unknown; softSkip?: unknown };
+  const persona = record.persona as string | undefined;
+  const softSkip = record.softSkip === true;
 
   if (persona !== "explorer" && persona !== "builder") {
     return NextResponse.json(

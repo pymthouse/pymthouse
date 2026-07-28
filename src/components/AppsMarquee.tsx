@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import { Instrument_Serif } from "next/font/google";
 import type { HomeApp } from "@/components/AppCard";
+import { toSafeLogoUrl } from "@/lib/safe-logo-url";
 
 const titleFont = Instrument_Serif({
   weight: "400",
@@ -25,7 +26,7 @@ function durationForCount(n: number): string {
 }
 
 function MarqueeMark({ app }: Readonly<{ app: HomeApp }>) {
-  const logo = app.logoUrl?.trim() || null;
+  const logo = toSafeLogoUrl(app.logoUrl);
 
   if (logo) {
     return (
@@ -100,7 +101,11 @@ export default function AppsMarquee({
           aria-label="Apps on pymthouse"
         >
           {loop.map((app, i) => (
-            <li key={`${app.id}-${i}`} className="shrink-0 list-none">
+            <li
+              key={`${app.id}-${i}`}
+              className="shrink-0 list-none"
+              aria-hidden={i >= n ? true : undefined}
+            >
               <MarqueeMark app={app} />
             </li>
           ))}

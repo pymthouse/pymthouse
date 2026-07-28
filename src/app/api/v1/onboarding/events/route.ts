@@ -27,11 +27,18 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const action = typeof body.action === "string" ? body.action : "";
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  }
+  const action =
+    typeof (body as { action?: unknown }).action === "string"
+      ? (body as { action: string }).action
+      : "";
   if (!ALLOWED.has(action)) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
+  const record = body as { step?: unknown; persona?: unknown };
   const correlationId = createCorrelationId();
   await writeAuditLog({
     actorUserId: userId,
@@ -39,8 +46,8 @@ export async function POST(request: NextRequest) {
     status: "ok",
     correlationId,
     metadata: {
-      step: typeof body.step === "string" ? body.step : null,
-      persona: typeof body.persona === "string" ? body.persona : null,
+      step: typeof record.step === "string" ? record.step : null,
+      persona: typeof record.persona === "string" ? record.persona : null,
     },
   });
 

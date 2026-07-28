@@ -361,10 +361,6 @@ export default async function HomePage() {
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_50%_40%_at_90%_80%,rgba(20,184,166,0.08),transparent_50%)]"
         />
         <div className="relative mx-auto max-w-5xl px-6 pb-20 pt-16 text-center sm:pt-24">
-          {/* <p className="mb-6 text-3xl font-bold tracking-tight sm:text-4xl">
-            <span className="text-emerald-400">pymt</span>
-            <span className="text-zinc-100">house</span>
-          </p> */}
           <h1 className="mx-auto max-w-3xl text-3xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-[3.25rem]">
             The business layer for{" "}
             <span className="text-emerald-400">Livepeer</span> apps

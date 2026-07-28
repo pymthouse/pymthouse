@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import AppStatusBadge from "@/components/apps/AppStatusBadge";
+import AppStatusBadge, {
+  PlatformDefaultBadge,
+} from "@/components/apps/AppStatusBadge";
 import OwnerApiKeyMintBanner from "@/components/apps/OwnerApiKeyMintBanner";
 import {
   useOwnerApiKeyMint,
@@ -127,6 +129,7 @@ function AppRowIdentity({
             {app.name}
           </span>
           <AppStatusBadge status={app.status} />
+          {app.isPlatformDefault ? <PlatformDefaultBadge /> : null}
         </div>
         <AppListSecondaryLine app={app} showOwner={showOwner} />
       </div>

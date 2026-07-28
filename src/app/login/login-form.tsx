@@ -1,6 +1,5 @@
 "use client";
 
-import { sanitizeUrl } from "@braintree/sanitize-url";
 import {
   AuthState,
   ClientState,
@@ -12,6 +11,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { MarketingFooter } from "@/components/MarketingFooter";
 import { TurnkeyEmbeddedAuth } from "@/components/TurnkeyEmbeddedAuth";
+import { toSafeLogoUrl } from "@/lib/safe-logo-url";
+import { safeCallbackUrl as sanitizeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 
 interface AppBranding {
   mode: "blackLabel" | "whiteLabel";
@@ -22,8 +23,7 @@ interface AppBranding {
 
 /** Same-origin relative callbacks only; anything else falls back to /onboarding. */
 function toSafeCallbackUrl(callbackUrl: string): string {
-  const relative = callbackUrl.startsWith("/") && !callbackUrl.startsWith("//");
-  return relative ? callbackUrl : "/onboarding";
+  return sanitizeCallbackUrl(callbackUrl, "/onboarding");
 }
 
 function authErrorMessage(authError: string | null): string | null {
@@ -81,7 +81,7 @@ export function LoginForm() {
   const safeCallbackUrl = toSafeCallbackUrl(callbackUrl);
   const clientId = searchParams.get("client_id");
   const isAdmin = searchParams.get("admin") === "1";
-  const isOidcFlow = callbackUrl.includes("/oidc/");
+  const isOidcFlow = safeCallbackUrl.includes("/oidc/");
   const needsBranding = !!(clientId && isOidcFlow);
   const { branding, brandingResolved } = useAppBranding(clientId, needsBranding);
   /** Resume path from public /start (Explorer | Builder). Plain /login has none. */
@@ -302,16 +302,6 @@ const LOGIN_QUOTES = {
     attribution: "Paul Graham",
   },
 } as const;
-
-/** Returns a sanitized URL, or null for anything unsafe. */
-function toSafeLogoUrl(url: string | null): string | null {
-  if (!url) return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("//")) return null;
-  const safe = sanitizeUrl(trimmed);
-  return safe === "about:blank" ? null : safe;
-}
 
 function personaFromCallback(
   callback: string,

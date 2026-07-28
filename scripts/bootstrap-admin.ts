@@ -18,6 +18,7 @@ import { eq } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import { users, sessions, signerConfig } from "../src/db/schema";
 import { hashToken } from "../src/lib/token-hash";
+import { closeDb } from "../src/db/index";
 import { ensurePlatformDefaultApp } from "../src/lib/platform-default-app";
 
 async function main() {
@@ -95,8 +96,6 @@ async function main() {
     createdAt: now,
   });
 
-  await client.end({ timeout: 5 });
-
   console.log(`\n  ========================================`);
   console.log(`  pymthouse admin bearer token (admin scope)`);
   console.log(`  ========================================`);
@@ -105,6 +104,9 @@ async function main() {
   console.log(`  Session: ${sessionId}`);
   console.log(`\n  Use with API requests:`);
   console.log(`    curl -H "Authorization: Bearer ${token}" http://localhost:3001/api/v1/signer\n`);
+
+  await client.end({ timeout: 5 });
+  await closeDb({ timeout: 5 });
 }
 
 main().catch((err) => {

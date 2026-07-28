@@ -51,7 +51,7 @@ BEGIN
       is_platform_default = 0,
       published_at = NULL,
       marketplace_featured = 0,
-      updated_at = NOW()::text
+      updated_at = to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     FROM users u
     WHERE d.owner_id = u.id
       AND d.id <> canonical_id
@@ -63,10 +63,20 @@ BEGIN
       is_platform_default = 1,
       published_at = NULL,
       marketplace_featured = 0,
-      updated_at = NOW()::text
+      updated_at = to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     WHERE id = canonical_id;
   END IF;
 END $$;--> statement-breakpoint
+
+UPDATE "developer_apps"
+SET "is_platform_default" = 0
+WHERE "is_platform_default" IS NULL;--> statement-breakpoint
+
+ALTER TABLE "developer_apps"
+  ALTER COLUMN "is_platform_default" SET DEFAULT 0;--> statement-breakpoint
+
+ALTER TABLE "developer_apps"
+  ALTER COLUMN "is_platform_default" SET NOT NULL;--> statement-breakpoint
 
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_developer_apps_platform_default"
   ON "developer_apps" ("is_platform_default")

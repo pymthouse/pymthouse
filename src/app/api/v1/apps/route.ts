@@ -21,7 +21,7 @@ import { getOrCreateNetworkDefaultPlan } from "@/lib/network-default-plan";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { listAllAppsForAdmin, sortAppsByPriority } from "@/lib/user-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
-import { markOnboardingComplete } from "@/lib/onboarding";
+import { getUserOnboardingRow, markOnboardingComplete } from "@/lib/onboarding";
 import { notPlatformDefaultApp } from "@/lib/platform-default-app";
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -66,7 +66,6 @@ export async function GET(request: NextRequest) {
       createdAt: developerApps.createdAt,
       updatedAt: developerApps.updatedAt,
       clientId: oidcClients.clientId,
-      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -89,29 +88,22 @@ export async function GET(request: NextRequest) {
           createdAt: developerApps.createdAt,
           updatedAt: developerApps.updatedAt,
           clientId: oidcClients.clientId,
-          isPlatformDefault: developerApps.isPlatformDefault,
         })
         .from(developerApps)
         .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
         .where(and(inArray(developerApps.id, memberIds), notPlatformDefaultApp()));
 
-  const ownedWithFlags = ownedApps.map((app) => {
-    const { isPlatformDefault: _flag, ...rest } = app;
-    return {
-      ...rest,
-      isOwner: true,
-      ownerExternalUserId: userId,
-    };
-  });
+  const ownedWithFlags = ownedApps.map((app) => ({
+    ...app,
+    isOwner: true,
+    ownerExternalUserId: userId,
+  }));
 
-  const memberWithFlags = memberApps.map((app) => {
-    const { isPlatformDefault: _flag, ...rest } = app;
-    return {
-      ...rest,
-      isOwner: false,
-      ownerExternalUserId: null,
-    };
-  });
+  const memberWithFlags = memberApps.map((app) => ({
+    ...app,
+    isOwner: false,
+    ownerExternalUserId: null,
+  }));
 
   const dedupedApps = [...ownedWithFlags, ...memberWithFlags]
     .filter((app, index, rows) => rows.findIndex((row) => row.id === app.id) === index)
@@ -253,24 +245,40 @@ export async function POST(request: NextRequest) {
   resetProvider();
   await ensureProviderAdminMembership(userId, appId);
 
-  await markOnboardingComplete(userId, "builder");
+  const onboardingRow = await getUserOnboardingRow(userId);
+  if (!onboardingRow?.onboardingCompletedAt) {
+    try {
+      await markOnboardingComplete(userId, "builder");
+    } catch (err) {
+      console.error("Failed to mark onboarding complete after app create:", err);
+    }
+  }
+
   const correlationId = createCorrelationId();
-  await writeAuditLog({
-    clientId: appId,
-    actorUserId: userId,
-    action: "builder_app_created",
-    status: "ok",
-    correlationId,
-    metadata: { name: name.trim() },
-  });
-  await writeAuditLog({
-    clientId: appId,
-    actorUserId: userId,
-    action: "onboarding_completed",
-    status: "ok",
-    correlationId,
-    metadata: { persona: "builder" },
-  });
+  try {
+    await writeAuditLog({
+      clientId: appId,
+      actorUserId: userId,
+      action: "builder_app_created",
+      status: "ok",
+      correlationId,
+      metadata: { name: name.trim() },
+    });
+  } catch (err) {
+    console.error("Failed to write builder_app_created audit log:", err);
+  }
+  try {
+    await writeAuditLog({
+      clientId: appId,
+      actorUserId: userId,
+      action: "onboarding_completed",
+      status: "ok",
+      correlationId,
+      metadata: { persona: "builder" },
+    });
+  } catch (err) {
+    console.error("Failed to write onboarding_completed audit log:", err);
+  }
 
   return NextResponse.json(
     { id: clientId, clientId, status: "approved" },

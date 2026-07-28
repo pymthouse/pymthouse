@@ -7,12 +7,15 @@ import { db } from "@/db/index";
 import { developerApps } from "@/db/schema";
 
 const LOCK_DIR = join(tmpdir(), "pymthouse-platform-default-lock");
+const LOCK_WAIT_MS = 30_000;
+const LOCK_POLL_MS = 25;
 
 /**
  * Cross-process exclusive lock. Node's test runner may isolate files in separate
  * processes, so an in-process promise chain is not enough for the singleton flag.
  */
 async function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
+  const started = Date.now();
   for (;;) {
     try {
       mkdirSync(LOCK_DIR);
@@ -22,7 +25,12 @@ async function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
       if (code !== "EEXIST") {
         throw err;
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      if (Date.now() - started >= LOCK_WAIT_MS) {
+        throw new Error(
+          `Timed out after ${LOCK_WAIT_MS}ms waiting for platform-default lock at ${LOCK_DIR}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
     }
   }
 

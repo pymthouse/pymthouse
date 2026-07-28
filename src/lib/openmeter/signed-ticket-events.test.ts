@@ -537,7 +537,7 @@ test("listAdminSignedTicketSessions labels platform default as Livepeer Direct",
   const { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } = await import(
     "@/lib/platform-default-labels"
   );
-  const { __testSetOpenMeterManifestRows, __testClearOpenMeterUsageStubs } =
+  const { __testSetOpenMeterManifestRows, __testClearOpenMeterManifestRows } =
     await import("./usage-read");
 
   const defaultApp = await seedDeveloperAppWithClient({
@@ -559,7 +559,7 @@ test("listAdminSignedTicketSessions labels platform default as Livepeer Direct",
         modelId: "m",
       },
     ]);
-    t.after(() => __testClearOpenMeterUsageStubs());
+    t.after(() => __testClearOpenMeterManifestRows(defaultApp.clientId));
 
     const result = await listAdminSignedTicketSessions({
       clientIds: [defaultApp.clientId],

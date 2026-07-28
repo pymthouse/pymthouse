@@ -256,11 +256,13 @@ async function resolveViewerApps(userId: string): Promise<BillingAppRow[]> {
     memberIds.length === 0
       ? eq(developerApps.ownerId, userId)
       : or(eq(developerApps.ownerId, userId), inArray(developerApps.id, memberIds));
-  const visibleApps = (await billingAppsQuery().where(ownOrAdmin!)).map((row) =>
-    toBillingApp(row),
-  );
 
-  const defaultApp = await loadPlatformDefaultBillingApp();
+  const [visibleAppRows, defaultApp] = await Promise.all([
+    billingAppsQuery().where(ownOrAdmin!),
+    loadPlatformDefaultBillingApp(),
+  ]);
+  const visibleApps = visibleAppRows.map((row) => toBillingApp(row));
+
   if (!defaultApp) {
     return sortAppsForViewer(visibleApps, userId, false);
   }

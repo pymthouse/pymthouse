@@ -94,12 +94,17 @@ test("ensurePlatformDefaultApp is idempotent for an existing flagged app", async
   });
 });
 
-test("resolvePlatformDefaultClientId promotes configured app to flagged singleton", async (t) => {
+test("ensurePlatformDefaultApp promotes configured app to flagged singleton", async (t) => {
   const app = await seedDeveloperAppWithClient({
     name: `Configured ${randomUUID().slice(0, 8)}`,
   });
+  const priorEnv = process.env.PYMTHOUSE_DEFAULT_APP_CLIENT_ID;
   t.after(async () => {
-    delete process.env.PYMTHOUSE_DEFAULT_APP_CLIENT_ID;
+    if (priorEnv === undefined) {
+      delete process.env.PYMTHOUSE_DEFAULT_APP_CLIENT_ID;
+    } else {
+      process.env.PYMTHOUSE_DEFAULT_APP_CLIENT_ID = priorEnv;
+    }
     await cleanupTestApp(app);
   });
 
@@ -112,6 +117,8 @@ test("resolvePlatformDefaultClientId promotes configured app to flagged singleto
       .where(eq(developerApps.id, app.clientId));
 
     process.env.PYMTHOUSE_DEFAULT_APP_CLIENT_ID = app.clientId;
+    // Promotion is write-side (ensure), not resolve.
+    await ensurePlatformDefaultApp();
     const resolved = await resolvePlatformDefaultClientId();
     assert.equal(resolved, app.clientId);
 

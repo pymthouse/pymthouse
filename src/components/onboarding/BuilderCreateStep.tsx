@@ -23,14 +23,14 @@ export default function BuilderCreateStep({
   onSoftSkip: () => void;
   onBack?: () => void;
 }>) {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [name, setName] = useState("");
   const [developerName, setDeveloperName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmSkip, setConfirmSkip] = useState(false);
 
-  const busy = parentBusy || saving;
+  const busy = parentBusy || saving || sessionStatus === "loading";
 
   async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault();

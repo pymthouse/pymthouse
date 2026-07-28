@@ -304,13 +304,14 @@ export async function listSessionUserApiKeys(
       createdAt: apiKeys.createdAt,
       revokedAt: apiKeys.revokedAt,
       clientId: oidcClients.clientId,
+      developerAppId: developerApps.id,
       appName: developerApps.name,
       isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(apiKeys)
     .innerJoin(appUsers, eq(apiKeys.appUserId, appUsers.id))
     .innerJoin(developerApps, eq(apiKeys.clientId, developerApps.id))
-    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
     .where(sessionUserKeyOwnership(sessionUserId));
 
   return rows
@@ -322,7 +323,7 @@ export async function listSessionUserApiKeys(
       status: row.status,
       createdAt: row.createdAt,
       revokedAt: row.revokedAt,
-      clientId: row.clientId,
+      clientId: row.clientId?.trim() || row.developerAppId,
       appName: row.appName,
       isPlatformDefault: row.isPlatformDefault === 1,
     }))
@@ -341,7 +342,7 @@ export async function listSessionUserApiKeys(
 export async function revokeSessionUserApiKey(input: {
   sessionUserId: string;
   keyId: string;
-}): Promise<boolean> {
+}): Promise<{ developerAppId: string } | null> {
   const owned = await db
     .select({
       id: apiKeys.id,
@@ -360,11 +361,12 @@ export async function revokeSessionUserApiKey(input: {
     .limit(1);
 
   const row = owned[0];
-  if (!row?.appUserId) return false;
+  if (!row?.appUserId) return null;
 
-  return revokeAppUserApiKey({
+  const ok = await revokeAppUserApiKey({
     developerAppId: row.developerAppId,
     appUserId: row.appUserId,
     keyId: row.id,
   });
+  return ok ? { developerAppId: row.developerAppId } : null;
 }

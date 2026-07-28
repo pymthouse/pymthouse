@@ -39,6 +39,7 @@ export default function AppFilterDropdown({
   label = "Apps",
   emptyLabel = "No applications",
   allLabel = "All applications",
+  legendLabel,
 }: Readonly<{
   options: AppFilterOption[];
   selectedValues: string[];
@@ -47,6 +48,8 @@ export default function AppFilterDropdown({
   label?: string;
   emptyLabel?: string;
   allLabel?: string;
+  /** Visually hidden fieldset legend; defaults from `label`. */
+  legendLabel?: string;
 }>) {
   const listId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -129,11 +132,11 @@ export default function AppFilterDropdown({
           </div>
 
           {options.length === 0 ? (
-            <p className="px-3 py-3 text-sm text-zinc-500">No applications</p>
+            <p className="px-3 py-3 text-sm text-zinc-500">{emptyLabel}</p>
           ) : (
             <fieldset className="relative m-0 border-0 p-0">
               <legend className="absolute h-px w-px overflow-hidden whitespace-nowrap p-0 [clip:rect(0,0,0,0)]">
-                Filter by application
+                {legendLabel ?? `Filter by ${label.toLowerCase()}`}
               </legend>
               {options.map((opt) => {
                 const selected = selectedSet.has(opt.value);

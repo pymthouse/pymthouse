@@ -34,7 +34,7 @@ export default function StartPreview() {
 
   return (
     <OnboardingShell
-      footer={
+      headerAction={
         <Link
           href="/login"
           className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
