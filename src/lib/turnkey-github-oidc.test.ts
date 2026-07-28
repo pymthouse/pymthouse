@@ -3,7 +3,11 @@ import { createHash } from "node:crypto";
 import { describe, it, before, after } from "node:test";
 import * as jose from "jose";
 import {
+  clearCookieOptions,
   createGithubOauthCsrf,
+  githubAuthCookieOptions,
+  githubOauthStateCookieOptions,
+  githubSessionHandoffCookieOptions,
   openGithubOauthState,
   sealGithubOauthState,
 } from "@/lib/turnkey-github-cookies";
@@ -41,6 +45,7 @@ describe("githubOidcSubject", () => {
 
 describe("GitHub OAuth state cookies", () => {
   const prevSecret = process.env.NEXTAUTH_SECRET;
+  const prevNextAuthUrl = process.env.NEXTAUTH_URL;
 
   before(() => {
     process.env.NEXTAUTH_SECRET = "test-secret-for-github-oauth-state-cookies";
@@ -49,6 +54,8 @@ describe("GitHub OAuth state cookies", () => {
   after(() => {
     if (prevSecret === undefined) delete process.env.NEXTAUTH_SECRET;
     else process.env.NEXTAUTH_SECRET = prevSecret;
+    if (prevNextAuthUrl === undefined) delete process.env.NEXTAUTH_URL;
+    else process.env.NEXTAUTH_URL = prevNextAuthUrl;
   });
 
   it("round-trips sealed state and rejects tampering", () => {
@@ -67,6 +74,7 @@ describe("GitHub OAuth state cookies", () => {
 
     assert.equal(openGithubOauthState(sealed.slice(0, -2) + "xx"), null);
     assert.equal(openGithubOauthState("not-valid"), null);
+    assert.equal(openGithubOauthState("a.b.c"), null);
   });
 
   it("rejects unsafe callback URLs", () => {
@@ -80,16 +88,62 @@ describe("GitHub OAuth state cookies", () => {
     assert.ok(opened);
     assert.equal(opened.callbackUrl, "/onboarding");
   });
+
+  it("rejects expired sealed state", () => {
+    const sealed = sealGithubOauthState({
+      publicKey: "02".padEnd(66, "ef"),
+      nonce: "n",
+      callbackUrl: "/apps",
+      csrf: createGithubOauthCsrf(),
+      exp: Date.now() - 1_000,
+    });
+    assert.equal(openGithubOauthState(sealed), null);
+  });
+
+  it("sets secure cookie flags from NEXTAUTH_URL", () => {
+    process.env.NEXTAUTH_URL = "https://preview.example.com";
+    assert.equal(githubAuthCookieOptions(30).secure, true);
+    assert.equal(githubOauthStateCookieOptions().httpOnly, true);
+    assert.equal(githubSessionHandoffCookieOptions().sameSite, "lax");
+    assert.equal(clearCookieOptions().maxAge, 0);
+
+    process.env.NEXTAUTH_URL = "http://localhost:3000";
+    assert.equal(githubAuthCookieOptions(30).secure, false);
+  });
 });
 
 describe("Turnkey GitHub OIDC issuer", () => {
+  const prevIssuer = process.env.TURNKEY_GITHUB_OIDC_ISSUER;
+
+  after(() => {
+    if (prevIssuer === undefined) delete process.env.TURNKEY_GITHUB_OIDC_ISSUER;
+    else process.env.TURNKEY_GITHUB_OIDC_ISSUER = prevIssuer;
+  });
+
   it("builds discovery pointing at mount JWKS", () => {
+    delete process.env.TURNKEY_GITHUB_OIDC_ISSUER;
     const discovery = buildTurnkeyGithubOpenIdConfiguration();
     const issuer = getTurnkeyGithubOidcIssuer();
     assert.ok(issuer.endsWith(TURNKEY_GITHUB_OIDC_MOUNT));
     assert.equal(discovery.issuer, issuer);
     assert.equal(discovery.jwks_uri, `${issuer}/jwks`);
     assert.deepEqual(discovery.id_token_signing_alg_values_supported, ["RS256"]);
+  });
+
+  it("honors TURNKEY_GITHUB_OIDC_ISSUER override", async () => {
+    process.env.TURNKEY_GITHUB_OIDC_ISSUER =
+      "https://oidc.example.com/api/v1/turnkey-github-oidc/";
+    assert.equal(
+      getTurnkeyGithubOidcIssuer(),
+      "https://oidc.example.com/api/v1/turnkey-github-oidc",
+    );
+    const { getTurnkeyGithubOidcJwksUrl } = await import(
+      "@/lib/turnkey-github-oidc"
+    );
+    assert.equal(
+      getTurnkeyGithubOidcJwksUrl(),
+      "https://oidc.example.com/api/v1/turnkey-github-oidc/jwks",
+    );
   });
 });
 

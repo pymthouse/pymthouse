@@ -38,25 +38,26 @@ export async function GET(request: NextRequest) {
     return redirectToLogin("GitHubLoginNotConfigured");
   }
 
-  const errorParam = request.nextUrl.searchParams.get("error");
-  if (errorParam) {
+  // Validate state/CSRF before interpreting any user-controlled callback params
+  // (including GitHub's `error`), so early returns cannot bypass the binding check.
+  const stateParam = request.nextUrl.searchParams.get("state")?.trim();
+  const state = stateParam ? openGithubOauthState(stateParam) : null;
+  const csrfCookie = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value;
+  if (
+    !state ||
+    !csrfCookie ||
+    !safeEqualString(csrfCookie, state.csrf)
+  ) {
+    return redirectToLogin("InvalidOauthState");
+  }
+
+  if (request.nextUrl.searchParams.get("error")) {
     return redirectToLogin("AccessDenied");
   }
 
   const code = request.nextUrl.searchParams.get("code")?.trim();
-  const stateParam = request.nextUrl.searchParams.get("state")?.trim();
-  if (!code || !stateParam) {
+  if (!code) {
     return redirectToLogin("InvalidGithubCallback");
-  }
-
-  const state = openGithubOauthState(stateParam);
-  if (!state) {
-    return redirectToLogin("InvalidOauthState");
-  }
-
-  const csrfCookie = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value;
-  if (!csrfCookie || !safeEqualString(csrfCookie, state.csrf)) {
-    return redirectToLogin("InvalidOauthState");
   }
 
   try {

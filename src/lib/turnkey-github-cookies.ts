@@ -25,23 +25,20 @@ function signingSecret(): string {
 }
 
 function b64urlEncode(buf: Buffer): string {
-  return buf
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+  // Native base64url avoids regex padding-strip ReDoS (js/polynomial-redos).
+  return buf.toString("base64url");
 }
 
 function b64urlDecode(value: string): Buffer {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  return Buffer.from(padded + pad, "base64");
+  return Buffer.from(value, "base64url");
 }
 
 function signPayload(encodedBody: string): string {
-  return b64urlEncode(
-    createHmac("sha256", signingSecret()).update(encodedBody).digest(),
-  );
+  // HMAC-SHA256 authenticates OAuth state (integrity MAC), not password hashing.
+  // codeql[js/insufficient-password-hash]
+  return createHmac("sha256", signingSecret())
+    .update(encodedBody)
+    .digest("base64url");
 }
 
 export function createGithubOauthCsrf(): string {

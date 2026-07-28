@@ -29,8 +29,12 @@ export function getTurnkeyGithubOidcJwksUrl(): string {
   return `${getTurnkeyGithubOidcIssuer()}/jwks`;
 }
 
-/** Match Wallet Kit: `bytesToHex(sha256(utf8(publicKeyHex)))`. */
+/**
+ * Match Wallet Kit: `bytesToHex(sha256(utf8(publicKeyHex)))`.
+ * This is Turnkey's OAuth nonce binding (session pubkey → nonce), not password hashing.
+ */
 export function turnkeyOauthNonceFromPublicKey(publicKey: string): string {
+  // codeql[js/insufficient-password-hash]
   return createHash("sha256").update(publicKey, "utf8").digest("hex");
 }
 
