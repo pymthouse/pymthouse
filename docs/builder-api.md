@@ -591,7 +591,7 @@ The previous process-local in-memory enforcement cache (`manifest_cache_unavaila
 Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
 1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Billing requires both fields for **`usage_billing_events`**.
-2. **No catalog/pricing fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** remains for UIs but discovery-service raw has no pricing rows (empty list).
+2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** remains for UIs but discovery-service raw has no pricing rows (empty list).
 3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
 4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing still succeeds regardless.
 
@@ -670,11 +670,77 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Stripe Connect status for the app |
-| `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start Stripe Connect OAuth |
-| `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect Stripe |
+| `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Merchant Connect status (`stripeConnectedAccountId`, charges/payouts flags, `applicationFeeBps`, `billingMode`, `endUserCap`, `activation`) + OM profile ids |
+| `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start merchant Connect via Account Links: `{ mode?: "account_link" }` (default). Creates Express/Accounts v2 Connected Account if needed, returns Stripe-hosted `{ url }`. `mode: "oauth"` is rejected. |
+| `POST` | `/api/v1/apps/{clientId}/billing/stripe/account-link` | App owner/admin | Refresh Stripe Account Link for incomplete onboarding |
+| `PATCH` | `/api/v1/apps/{clientId}/billing/stripe` | App owner/admin | Update `progressiveBilling`, `invoiceThresholdUsdMicros`, `applicationFeeBps`, `billingMode`, and/or `endUserCap`. Switching to `merchant` requires Connect ready (`charges_enabled` + `details_submitted`). |
+| `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect merchant Connect (+ clear OM Stripe profile ids) |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
-| `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session | End-user checkout via OpenMeter subscription + Stripe Checkout |
+| `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (requires merchant + Connect ready when `ACTIVATION_GATE_MODE` is `enforce_revenue` or `enforce`) |
+| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl` |
+
+### App activation gate
+
+Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `enforce`, default `off`). See [`docs/activation-gate.md`](./activation-gate.md).
+
+| Mode | Behaviour |
+| --- | --- |
+| `off` | Resolve + expose `activation` on `GET /api/v1/apps/{id}`; never deny |
+| `log` | Would-deny writes `activation_gate_would_deny` audit rows; still allow |
+| `enforce_revenue` | Deny priced plan activate + checkout without merchant Connect readiness |
+| `enforce` | Also deny new end-user provisioning when owner wallet is empty or `endUserCap` is reached |
+
+`GET /api/v1/apps/{id}` includes an `activation` object:
+
+```json
+{
+  "clientId": "app_…",
+  "billingMode": "owner_rollup",
+  "connectReady": false,
+  "canProvisionEndUsers": true,
+  "canSellPaidPlans": false,
+  "reason": "stripe_connect_required",
+  "endUserCap": 25,
+  "appUserCount": 3
+}
+```
+
+Denial responses use RFC 9457 problem details (`Content-Type: application/problem+json`) with machine-readable `code`:
+
+| Condition | Status | `code` |
+| --- | --- | --- |
+| Owner wallet empty | `402` | `owner_balance_exhausted` |
+| Per-app user cap reached | `403` | `end_user_cap_reached` |
+| Paid plan / checkout without Connect | `403` | `stripe_connect_required` |
+| Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |
+
+**Hybrid billing:** OpenMeter meters usage and owns subscriptions. End-user Checkout/invoices use the merchant Connected Account (direct charges + optional `applicationFeeBps`) when `stripeChargesEnabled`. Until then, OM Stripe Checkout remains a fallback unless `connectPaymentsOnly` (or `STRIPE_CONNECT_PAYMENTS_ONLY=1`). With `ACTIVATION_GATE_MODE=enforce_revenue|enforce`, checkout requires `billingMode=merchant` and Connect readiness (`charges_enabled` + `details_submitted`).
+
+**Connect webhooks:** Point a Stripe (Connect) webhook at `POST /webhooks/stripe` with `STRIPE_WEBHOOK_SECRET` and subscribe to `account.updated` so `charges_enabled` / `payouts_enabled` / `details_submitted` stay in sync without waiting for a Payments page refresh.
+
+**Cutover:**
+```bash
+npm run stripe:connect-cutover -- --client-id app_x          # dry-run
+npm run stripe:connect-cutover -- --client-id app_x --apply
+npm run stripe:connect-cutover-audit
+```
+
+**Stripe Connect by backend (legacy OM install):**
+
+| Backend | Notes |
+| --- | --- |
+| **Konnect** | OM Stripe app still used for Starter / platform metering until cutover; merchant retail is Connect `acct_…` |
+| **Self-hosted** | Same hybrid model |
+
+**Starter billing:** Starter remains on the platform OM Stripe profile until `stripe:connect-cutover` maps merchant-owned `cus_…` rows. Payment methods are not cloned across accounts — cutover logs `needs_checkout`.
+
+**Plan phase-out:** Set `status: "phase_out"` on `PUT …/plans` (optional `replacementPlanId`, `phaseOutAt`). Existing OpenMeter subscriptions keep working; **new** checkout/change targets must be `status: "active"`. `GET …/users/{externalUserId}/subscription` returns `plan.status`, `plan.phaseOutAt`, `plan.replacementPlanId`, and `actionRequired: "choose_new_plan"` when the subscribed plan is phased out or missing locally. Integrators render their own picker and call the change endpoint. `DELETE …/plans` returns **409** while the plan still has active OpenMeter subscribers — migrate first:
+
+```bash
+npm run openmeter:migrate-plan-subscribers -- --client-id app_x --from-plan <planId> [--to-plan <planId>] [--timing next_billing_cycle] [--apply]
+```
+
+Dry-run is the default; `--to-plan` defaults to `replacementPlanId` then the app Starter plan. Billing consistency audit flags `phase_out_subscribers_past_deadline` when subscribers remain after `phaseOutAt`.
 
 **Plan → OpenMeter sync:** Publishing a paid plan (`status: active`) creates/updates an OpenMeter plan keyed `{clientId}:{planId}` with flat subscription fee, included allowance on `network_fee_usd_micros`, and usage rate cards. Plans expose `openmeterPlanId`, `lastSyncedAt`, and `syncError` in the dashboard. Sync requires `OPENMETER_URL` / `OPENMETER_API_KEY`; Stripe Connect is for invoicing/checkout, not for provisioning plans in OpenMeter. Stale `openmeterPlanId` values are recreated automatically when OpenMeter returns plan-not-found.
 
@@ -686,7 +752,8 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `POST` | `/api/v1/apps/{clientId}/plans/{planId}/sync` | Explicit OpenMeter sync command |
 | `GET` | `/api/v1/apps/{clientId}/signer/routing` | Direct DMZ signing + webhook routing config |
 | `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Unified grants (source: `trial`, `manual`, `promo`, `plan_adjustment`) |
-| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | End-user subscription read model |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | End-user subscription read model (`actionRequired`, `plan` phase-out fields) |
+| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | Switch plan (Konnect change + optional checkout) |
 
 **Retail validation:** `GET .../usage?include=retail&groupBy=pipeline_model` estimates `endUserBillableUsdMicros` from active plan retail rates (network meter × configured retail $/micro). Authoritative invoicing remains OpenMeter after plan sync.
 
@@ -747,7 +814,7 @@ Network capability availability is **`GET …/manifest`**, not this route.
 
 ### Network capability manifest (integrator pipeline / model caps)
 
-**Canonical** app-level network surface for integrators. Each app has exactly one undeletable **Network Price** plan row (`plans.is_network_default = true`) whose **`discovery_excluded_capabilities`** JSON defines what is **not** discoverable. The live discovery-service catalog minus those exclusions is the resolved list in **`capabilities`**. **Custom billing plans** only carry pricing overrides; they do **not** widen or narrow discovery.
+**Canonical** app-level network surface for integrators (e.g. NaaP). Each app has exactly one undeletable **Network Price** plan row (`plans.is_network_default = true`) whose **`discovery_excluded_capabilities`** JSON defines what is **not** discoverable. The live discovery-service catalog minus those exclusions is the resolved list in **`capabilities`**. **Custom billing plans** only carry pricing overrides; they do **not** widen or narrow discovery.
 
 #### Storage (`plans`, network-default row only)
 
@@ -824,8 +891,8 @@ Legacy **discovery_profiles** / **`discovery_profile_bundles`** APIs remain for 
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/apps/{clientId}/plans` | **M2M Basic** (same pattern as billing: path `{clientId}` = public `app_…` id, credentials must resolve to that app) **or** provider dashboard session | List plans and capability bundles. Each row includes **`isNetworkDefault`** and, on the Network Price plan, **`discoveryExcludedCapabilities`**. Optional legacy **`discoveryProfileId`** and resolved **`discoveryPolicy`** when a profile is linked. |
 | `POST` | `/api/v1/apps/{clientId}/plans` | Provider session only | Create **custom** plan (`name` required; reserved names **`Network Price`** / internal default name rejected). **`is_network_default`** cannot be set. Optional legacy **`discoveryProfileId`**. Each **`capabilities[]`** entry is billing-only: `pipeline`, `modelId` (`"*"` allowed), legacy upcharge / max price fields — must reference only **discoverable** rows (catalog minus Network Price exclusions) — **not** `discoveryPolicy`. On publish (`status: active`), syncs to OpenMeter when configured. |
-| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /manifest`** or the Plans UI. Optional **`discoveryProfileId`** (`null` clears the link). |
-| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles. Deleting the **Network Price** default plan returns **`409`**. |
+| `PUT` | `/api/v1/apps/{clientId}/plans` | Provider session only | Update plan (body must include `id`; optional **`capabilities`** replaces entire bundle set). **`is_network_default`** cannot be changed. **`PUT` on the Network Price plan id** returns **`400`** — edit exclusions via **`PUT /manifest`** or the Plans UI. Optional **`discoveryProfileId`** (`null` clears the link). Status may be **`draft`**, **`active`**, or **`phase_out`** (optional **`replacementPlanId`**, **`phaseOutAt`**). |
+| `DELETE` | `/api/v1/apps/{clientId}/plans?planId=...` | Provider session only | Delete plan and its bundles. Deleting the **Network Price** / **Starter** default plan returns **`409`**. Returns **`409`** while active OpenMeter subscribers remain — phase out + migrate first. |
 
 **`discoveryPolicy`** (optional JSON object on legacy profile-linked plans, aligned with NaaP orchestrator leaderboard plan inputs):
 
