@@ -497,9 +497,10 @@ test("resolveSessionBillableSecs handles blank meter and fractional event sum", 
   assert.equal(resolveSessionBillableSecs("0", 1.25), "1.25");
 });
 
-test("listAdminSignedTicketSessions returns stub meter rows without network", async () => {
+test("listAdminSignedTicketSessions returns stub meter rows without network", async (t) => {
   const {
     __testSetOpenMeterManifestRows,
+    __testClearOpenMeterManifestRows,
   } = await import("./usage-read");
   __testSetOpenMeterManifestRows("app_abc", [
     {
@@ -512,6 +513,7 @@ test("listAdminSignedTicketSessions returns stub meter rows without network", as
       modelId: "m1",
     },
   ]);
+  t.after(() => __testClearOpenMeterManifestRows("app_abc"));
   const result = await listAdminSignedTicketSessions({
     clientIds: ["app_abc"],
     from: "2026-07-01T00:00:00.000Z",
@@ -592,9 +594,10 @@ test("listAdminSignedTicketSessions returns empty when OpenMeter unset", async (
   }
 });
 
-test("listEndUserSignedTicketSessions scopes to client stub rows", async () => {
+test("listEndUserSignedTicketSessions scopes to client stub rows", async (t) => {
   const {
     __testSetOpenMeterManifestRows,
+    __testClearOpenMeterManifestRows,
   } = await import("./usage-read");
   __testSetOpenMeterManifestRows("app_eu", [
     {
@@ -607,6 +610,7 @@ test("listEndUserSignedTicketSessions scopes to client stub rows", async () => {
       modelId: "m",
     },
   ]);
+  t.after(() => __testClearOpenMeterManifestRows("app_eu"));
   const result = await listEndUserSignedTicketSessions({
     externalUserId: "eu-1",
     clientId: "app_eu",

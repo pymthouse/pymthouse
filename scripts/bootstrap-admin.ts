@@ -33,82 +33,84 @@ async function main() {
   const client = postgres(databaseUrl, { max: 1 });
   const db = drizzle(client, { schema });
 
-  const now = new Date().toISOString();
-  await db
-    .insert(signerConfig)
-    .values({
-      id: "default",
-      name: "pymthouse signer",
-      network: "arbitrum-one-mainnet",
-      ethRpcUrl: "https://arb1.arbitrum.io/rpc",
-      signerPort: 8080,
-      status: "stopped",
-      defaultCutPercent: 15.0,
-      billingMode: "delegated",
-      createdAt: now,
-    })
-    .onConflictDoNothing({ target: signerConfig.id });
+  try {
+    const now = new Date().toISOString();
+    await db
+      .insert(signerConfig)
+      .values({
+        id: "default",
+        name: "pymthouse signer",
+        network: "arbitrum-one-mainnet",
+        ethRpcUrl: "https://arb1.arbitrum.io/rpc",
+        signerPort: 8080,
+        status: "stopped",
+        defaultCutPercent: 15.0,
+        billingMode: "delegated",
+        createdAt: now,
+      })
+      .onConflictDoNothing({ target: signerConfig.id });
 
-  const email = process.argv[2] || "admin@pymthouse.local";
-  const existingAdminId = await findAdminOwnerId(email);
+    const email = process.argv[2] || "admin@pymthouse.local";
+    const existingAdminId = await findAdminOwnerId(email);
 
-  if (existingAdminId) {
-    console.log("\n  Admin user(s) already exist. Issuing a new token for the canonical admin.\n");
-  }
+    if (existingAdminId) {
+      console.log("\n  Admin user(s) already exist. Issuing a new token for the canonical admin.\n");
+    }
 
-  let userId: string;
-  if (existingAdminId) {
-    userId = existingAdminId;
-  } else {
-    userId = uuidv4();
-    await db.insert(users).values({
-      id: userId,
-      email,
-      name: "Bootstrap Admin",
-      oauthProvider: "bootstrap",
-      oauthSubject: `bootstrap_${userId}`,
-      role: "admin",
+    let userId: string;
+    if (existingAdminId) {
+      userId = existingAdminId;
+    } else {
+      userId = uuidv4();
+      await db.insert(users).values({
+        id: userId,
+        email,
+        name: "Bootstrap Admin",
+        oauthProvider: "bootstrap",
+        oauthSubject: `bootstrap_${userId}`,
+        role: "admin",
+        createdAt: now,
+      });
+      console.log(`\n  Created admin user: ${email} (${userId})`);
+    }
+
+    try {
+      const defaultApp = await ensurePlatformDefaultApp({ ownerId: userId });
+      console.log(
+        `\n  Platform default app: ${defaultApp.clientId}` +
+          (defaultApp.created ? " (created)" : " (existing)"),
+      );
+    } catch (err) {
+      console.warn("\n  Warning: could not ensure platform default app:", err);
+    }
+
+    const raw = randomBytes(32).toString("hex");
+    const token = `pmth_${raw}`;
+    const hash = hashToken(token);
+    const sessionId = uuidv4();
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+    await db.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hash,
+      scopes: "admin",
+      expiresAt,
       createdAt: now,
     });
-    console.log(`\n  Created admin user: ${email} (${userId})`);
+
+    console.log(`\n  ========================================`);
+    console.log(`  pymthouse admin bearer token (admin scope)`);
+    console.log(`  ========================================`);
+    console.log(`\n  ${token}\n`);
+    console.log(`  Expires: ${expiresAt}`);
+    console.log(`  Session: ${sessionId}`);
+    console.log(`\n  Use with API requests:`);
+    console.log(`    curl -H "Authorization: Bearer ${token}" http://localhost:3001/api/v1/signer\n`);
+  } finally {
+    await client.end({ timeout: 5 });
+    await closeDb({ timeout: 5 });
   }
-
-  try {
-    const defaultApp = await ensurePlatformDefaultApp({ ownerId: userId });
-    console.log(
-      `\n  Platform default app: ${defaultApp.clientId}` +
-        (defaultApp.created ? " (created)" : " (existing)"),
-    );
-  } catch (err) {
-    console.warn("\n  Warning: could not ensure platform default app:", err);
-  }
-
-  const raw = randomBytes(32).toString("hex");
-  const token = `pmth_${raw}`;
-  const hash = hashToken(token);
-  const sessionId = uuidv4();
-  const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-
-  await db.insert(sessions).values({
-    id: sessionId,
-    userId,
-    tokenHash: hash,
-    scopes: "admin",
-    expiresAt,
-    createdAt: now,
-  });
-
-  console.log(`\n  ========================================`);
-  console.log(`  pymthouse admin bearer token (admin scope)`);
-  console.log(`  ========================================`);
-  console.log(`\n  ${token}\n`);
-  console.log(`  Expires: ${expiresAt}`);
-  console.log(`  Session: ${sessionId}`);
-  console.log(`\n  Use with API requests:`);
-  console.log(`    curl -H "Authorization: Bearer ${token}" http://localhost:3001/api/v1/signer\n`);
-
-  await client.end({ timeout: 5 });
-  await closeDb({ timeout: 5 });
 }
 
 main().catch((err) => {
