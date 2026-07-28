@@ -458,12 +458,12 @@ test("OPENMETER_METER_DEFINITIONS includes analytics meters with manifest_id", (
     const meter = bySlug.get(slug);
     assert.ok(meter, `missing meter ${slug}`);
     assert.equal(meter.aggregation, "SUM");
-    assert.ok(meter.groupBy?.manifest_id);
+    assert.ok(meter.groupBy && "manifest_id" in meter.groupBy);
+    assert.equal(meter.groupBy.manifest_id, "$.manifest_id");
   }
-  assert.equal(
-    bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy?.manifest_id,
-    undefined,
-  );
+  const billingGroupBy = bySlug.get(NETWORK_FEE_USD_MICROS_METER)?.groupBy;
+  assert.ok(billingGroupBy);
+  assert.equal("manifest_id" in billingGroupBy, false);
 });
 
 test("buildOpenMeterUsageResponse includes byManifest for groupBy=manifest", () => {
