@@ -1,8 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
-import { ensureStripeCustomerAppData } from "./stripe-customer-data";
+import {
+  ensureKonnectCustomerStripeBilling,
+  ensureStripeCustomerAppData,
+  getKonnectCustomerBillingProfileId,
+  getKonnectDefaultPaymentMethodId,
+  getStripeCustomerAppDataId,
+} from "./stripe-customer-data";
 import { resetHostedOpenMeterClientForTests } from "./client";
+
+function withKonnectEnv(t: test.TestContext): void {
+  const savedUrl = process.env.OPENMETER_URL;
+  const savedKey = process.env.OPENMETER_API_KEY;
+  const savedMode = process.env.OPENMETER_ROUTE_MODE;
+  const savedStripe = process.env.STRIPE_SECRET_KEY;
+  process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
+  process.env.OPENMETER_API_KEY = "km_test_key";
+  process.env.OPENMETER_ROUTE_MODE = "hosted";
+  process.env.STRIPE_SECRET_KEY = "sk_test_unit";
+  t.after(() => {
+    if (savedUrl === undefined) delete process.env.OPENMETER_URL;
+    else process.env.OPENMETER_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.OPENMETER_API_KEY;
+    else process.env.OPENMETER_API_KEY = savedKey;
+    if (savedMode === undefined) delete process.env.OPENMETER_ROUTE_MODE;
+    else process.env.OPENMETER_ROUTE_MODE = savedMode;
+    if (savedStripe === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = savedStripe;
+    resetHostedOpenMeterClientForTests();
+  });
+}
 
 test("ensureStripeCustomerAppData returns existing self-hosted stripeCustomerId", async (t) => {
   const previousUrl = process.env.OPENMETER_URL;
@@ -141,4 +169,200 @@ test("ensureStripeCustomerAppData fails loud without STRIPE_SECRET_KEY", async (
       }),
     /STRIPE_SECRET_KEY is required/,
   );
+});
+
+test("ensureStripeCustomerAppData on Konnect returns existing cus without profile", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    assert.match(url, /\/customers\/cust_k1\/billing$/);
+    return new Response(
+      JSON.stringify({
+        app_data: { stripe: { customer_id: "cus_konnect_existing" } },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const id = await ensureStripeCustomerAppData({
+    client: {} as OpenMeter,
+    customerId: "cust_k1",
+  });
+  assert.equal(id, "cus_konnect_existing");
+});
+
+test("ensureStripeCustomerAppData on Konnect requires billingProfileId when creating", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async () =>
+    new Response("{}", {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+
+  await assert.rejects(
+    () =>
+      ensureStripeCustomerAppData({
+        client: {} as OpenMeter,
+        customerId: "cust_k2",
+      }),
+    /Konnect requires a Stripe billing profile id/,
+  );
+});
+
+test("ensureKonnectCustomerStripeBilling creates Stripe customer and persists billing", async (t) => {
+  withKonnectEnv(t);
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = String(init?.body ?? "");
+    calls.push({ url, method, body });
+
+    if (url.includes("api.stripe.com/v1/customers")) {
+      return new Response(JSON.stringify({ id: "cus_created_k" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/customers/cust_k3/billing") && method === "GET") {
+      return new Response("{}", {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/customers/cust_k3/billing") && method === "PUT") {
+      assert.match(body, /cus_created_k/);
+      assert.match(body, /prof_1/);
+      return new Response(
+        JSON.stringify({
+          billing_profile: { id: "prof_1" },
+          app_data: { stripe: { customer_id: "cus_created_k" } },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  });
+
+  const id = await ensureKonnectCustomerStripeBilling({
+    customerId: "cust_k3",
+    customerKey: "app_x:user",
+    name: "Acme",
+    billingProfileId: "prof_1",
+  });
+  assert.equal(id, "cus_created_k");
+  assert.ok(calls.some((c) => c.url.includes("api.stripe.com")));
+});
+
+test("ensureKonnectCustomerStripeBilling reuses existing Stripe customer", async (t) => {
+  withKonnectEnv(t);
+  let stripeCreates = 0;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("api.stripe.com")) {
+      stripeCreates += 1;
+      throw new Error("should not create stripe customer");
+    }
+    if (url.includes("/customers/cust_k4/billing") && method === "GET") {
+      return new Response(
+        JSON.stringify({
+          app_data: { stripe: { customer_id: "cus_reuse" } },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.includes("/customers/cust_k4/billing") && method === "PUT") {
+      return new Response(
+        JSON.stringify({
+          billing_profile: { id: "prof_2" },
+          app_data: { stripe: { customer_id: "cus_reuse" } },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  });
+
+  const id = await ensureKonnectCustomerStripeBilling({
+    customerId: "cust_k4",
+    billingProfileId: "prof_2",
+  });
+  assert.equal(id, "cus_reuse");
+  assert.equal(stripeCreates, 0);
+});
+
+test("ensureKonnectCustomerStripeBilling fails when app data not persisted", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("api.stripe.com")) {
+      return new Response(JSON.stringify({ id: "cus_x" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (method === "GET") {
+      return new Response("{}", { status: 404 });
+    }
+    return new Response(
+      JSON.stringify({ billing_profile: { id: "prof_3" }, app_data: {} }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await assert.rejects(
+    () =>
+      ensureKonnectCustomerStripeBilling({
+        customerId: "cust_k5",
+        billingProfileId: "prof_3",
+      }),
+    /did not persist Stripe customer app data/,
+  );
+});
+
+test("getStripeCustomerAppDataId and Konnect billing helpers", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    assert.match(String(input), /\/customers\/cust_helpers\/billing$/);
+    return new Response(
+      JSON.stringify({
+        billing_profile: { id: "prof_h" },
+        app_data: {
+          stripe: {
+            customer_id: "cus_h",
+            default_payment_method_id: "pm_h",
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  assert.equal(
+    await getStripeCustomerAppDataId({
+      client: {} as OpenMeter,
+      customerId: "cust_helpers",
+    }),
+    "cus_h",
+  );
+  assert.equal(await getKonnectCustomerBillingProfileId("cust_helpers"), "prof_h");
+  assert.equal(await getKonnectDefaultPaymentMethodId("cust_helpers"), "pm_h");
+});
+
+test("Konnect billing helpers return null outside Konnect mode", async (t) => {
+  const previousUrl = process.env.OPENMETER_URL;
+  const previousKey = process.env.OPENMETER_API_KEY;
+  process.env.OPENMETER_URL = "http://127.0.0.1:48888";
+  delete process.env.OPENMETER_API_KEY;
+  t.after(() => {
+    process.env.OPENMETER_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.OPENMETER_API_KEY;
+    else process.env.OPENMETER_API_KEY = previousKey;
+  });
+
+  assert.equal(await getKonnectCustomerBillingProfileId("cust_x"), null);
+  assert.equal(await getKonnectDefaultPaymentMethodId("cust_x"), null);
 });
