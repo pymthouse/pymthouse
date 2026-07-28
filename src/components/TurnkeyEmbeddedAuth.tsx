@@ -9,6 +9,7 @@ import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { AuthComponent } from "@/lib/turnkey-auth-component";
+import { GitHubTurnkeyLoginButton } from "@/components/GitHubTurnkeyLoginButton";
 import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
@@ -235,6 +236,7 @@ function TurnkeyEmbeddedAuthInner({
               }
             : {})}
         />
+        <GitHubTurnkeyLoginButton primaryColor={primaryColor} />
       </div>
       <p className="text-xs text-zinc-500 mt-4 text-center leading-relaxed">
         By continuing, you agree to our{" "}
