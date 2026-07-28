@@ -28,9 +28,9 @@ function myAppsSummaryText(count: number): string {
 
 export default async function AppsPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<{ setup?: string }>;
-}) {
+}>) {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 

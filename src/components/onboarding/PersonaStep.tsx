@@ -2,6 +2,16 @@
 
 import type { OnboardingPersona } from "@/lib/onboarding-types";
 
+const ACCENT_LABEL_CLASS = {
+  emerald: "text-emerald-400/90",
+  teal: "text-teal-400/90",
+} as const;
+
+const ACCENT_HIGHLIGHT_CLASS = {
+  emerald: "border-emerald-500/60 ring-1 ring-emerald-500/30",
+  teal: "border-teal-500/60 ring-1 ring-teal-500/30",
+} as const;
+
 export default function PersonaStep({
   busy,
   onSelect,
@@ -69,12 +79,9 @@ function PersonaCard({
   highlighted: boolean;
   onSelect: (persona: OnboardingPersona) => void;
 }>) {
-  const accentLabel =
-    accent === "emerald" ? "text-emerald-400/90" : "text-teal-400/90";
+  const accentLabel = ACCENT_LABEL_CLASS[accent];
   const accentBorder = highlighted
-    ? accent === "emerald"
-      ? "border-emerald-500/60 ring-1 ring-emerald-500/30"
-      : "border-teal-500/60 ring-1 ring-teal-500/30"
+    ? ACCENT_HIGHLIGHT_CLASS[accent]
     : "border-zinc-700/80 hover:border-emerald-500/45";
 
   return (

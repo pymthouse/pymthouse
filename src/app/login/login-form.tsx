@@ -20,42 +20,31 @@ interface AppBranding {
   primaryColor: string;
 }
 
-export function LoginForm() {
-  const { data: session, status } = useSession();
-  const { clientState, authState } = useTurnkey();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [branding, setBranding] = useState<AppBranding | null>(null);
-  const callbackUrl = searchParams.get("callbackUrl") || "/onboarding";
-  const safeCallbackUrl =
-    callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
-      ? callbackUrl
-      : "/onboarding";
-  const clientId = searchParams.get("client_id");
-  const isAdmin = searchParams.get("admin") === "1";
-  const isOidcFlow = callbackUrl.includes("/oidc/");
-  const needsBranding = !!(clientId && isOidcFlow);
-  const [brandingResolved, setBrandingResolved] = useState(!needsBranding);
-  /** Resume path from public /start (Explorer | Builder). Plain /login has none. */
-  const resumePersona = personaFromCallback(safeCallbackUrl);
-  const authError = searchParams.get("error");
-  const accessDenied =
-    authError === "AccessDenied" ||
-    (typeof authError === "string" && authError.includes("AccessDenied"));
-  const oauthCallbackMessage = accessDenied
-    ? "Sign-in was denied. You can try again or use a different sign-in method."
-    : authError
-      ? "Sign-in failed. Please try again."
-      : null;
+/** Same-origin relative callbacks only; anything else falls back to /onboarding. */
+function toSafeCallbackUrl(callbackUrl: string): string {
+  const relative = callbackUrl.startsWith("/") && !callbackUrl.startsWith("//");
+  return relative ? callbackUrl : "/onboarding";
+}
 
-  // Preserve legacy ?admin=1 links by sending them to the dedicated admin login.
-  useEffect(() => {
-    if (!isAdmin) return;
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("admin");
-    const qs = params.toString();
-    router.replace(qs ? `/login/admin?${qs}` : "/login/admin");
-  }, [isAdmin, router, searchParams]);
+function authErrorMessage(authError: string | null): string | null {
+  if (!authError) return null;
+  if (authError.includes("AccessDenied")) {
+    return "Sign-in was denied. You can try again or use a different sign-in method.";
+  }
+  return "Sign-in failed. Please try again.";
+}
+
+/** Full-screen placeholder text while redirecting or resolving the session. */
+function splashMessage(isAdmin: boolean, status: string): string | null {
+  if (isAdmin || status === "authenticated") return "Redirecting...";
+  if (status === "loading") return "Loading...";
+  return null;
+}
+
+/** Tenant branding for OIDC sign-in; resolves immediately when not needed. */
+function useAppBranding(clientId: string | null, needsBranding: boolean) {
+  const [branding, setBranding] = useState<AppBranding | null>(null);
+  const [brandingResolved, setBrandingResolved] = useState(!needsBranding);
 
   useEffect(() => {
     if (!clientId || !needsBranding) {
@@ -67,8 +56,7 @@ export function LoginForm() {
     fetch(`/api/v1/apps/branding?client_id=${encodeURIComponent(clientId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (cancelled) return;
-        if (data?.branding) {
+        if (!cancelled && data?.branding) {
           setBranding(data.branding);
         }
       })
@@ -81,6 +69,34 @@ export function LoginForm() {
     };
   }, [clientId, needsBranding]);
 
+  return { branding, brandingResolved };
+}
+
+export function LoginForm() {
+  const { data: session, status } = useSession();
+  const { clientState, authState } = useTurnkey();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl") || "/onboarding";
+  const safeCallbackUrl = toSafeCallbackUrl(callbackUrl);
+  const clientId = searchParams.get("client_id");
+  const isAdmin = searchParams.get("admin") === "1";
+  const isOidcFlow = callbackUrl.includes("/oidc/");
+  const needsBranding = !!(clientId && isOidcFlow);
+  const { branding, brandingResolved } = useAppBranding(clientId, needsBranding);
+  /** Resume path from public /start (Explorer | Builder). Plain /login has none. */
+  const resumePersona = personaFromCallback(safeCallbackUrl);
+  const oauthCallbackMessage = authErrorMessage(searchParams.get("error"));
+
+  // Preserve legacy ?admin=1 links by sending them to the dedicated admin login.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("admin");
+    const qs = params.toString();
+    router.replace(qs ? `/login/admin?${qs}` : "/login/admin");
+  }, [isAdmin, router, searchParams]);
+
   const isWhiteLabel = branding?.mode === "whiteLabel";
   const primaryColor = branding?.primaryColor || "#10b981";
   const logoUrl = toSafeLogoUrl(branding?.logoUrl ?? null);
@@ -90,12 +106,7 @@ export function LoginForm() {
   const authLogoUrl = null;
   const authTitle = "Log in or sign up";
   /** Path-specific quote from a secular business leader; main login uses a default. */
-  const pathQuote =
-    resumePersona === "explorer"
-      ? LOGIN_QUOTES.explorer
-      : resumePersona === "builder"
-        ? LOGIN_QUOTES.builder
-        : LOGIN_QUOTES.default;
+  const pathQuote = LOGIN_QUOTES[resumePersona ?? "default"];
 
   useEffect(() => {
     if (status === "authenticated" && session) {
@@ -103,26 +114,11 @@ export function LoginForm() {
     }
   }, [session, status, router, safeCallbackUrl]);
 
-  if (isAdmin) {
+  const splash = splashMessage(isAdmin, status);
+  if (splash) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-zinc-950">
-        <div className="animate-pulse text-zinc-500">Redirecting...</div>
-      </div>
-    );
-  }
-
-  if (status === "authenticated") {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-zinc-950">
-        <div className="animate-pulse text-zinc-500">Redirecting...</div>
-      </div>
-    );
-  }
-
-  if (status === "loading") {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-zinc-950">
-        <div className="animate-pulse text-zinc-500">Loading...</div>
+        <div className="animate-pulse text-zinc-500">{splash}</div>
       </div>
     );
   }

@@ -142,9 +142,10 @@ async function findAdminOwnerId(): Promise<string | null> {
 
 function isUniqueViolation(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
-  const code = "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
-  if (code === "23505") return true;
-  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: unknown }).code;
+  if (code === "23505" || code === 23505) return true;
+  const rawMessage = (err as { message?: unknown }).message;
+  const message = typeof rawMessage === "string" ? rawMessage : "";
   return /unique|duplicate key/i.test(message);
 }
 

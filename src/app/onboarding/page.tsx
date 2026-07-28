@@ -12,9 +12,9 @@ export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<{ resume?: string; persona?: string }>;
-}) {
+}>) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     const params = await searchParams;

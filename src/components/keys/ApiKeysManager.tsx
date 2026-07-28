@@ -39,6 +39,50 @@ function sourceLabel(key: ApiKeyRow): string {
     : key.appName;
 }
 
+function activeKeyCountLabel(count: number): string {
+  return count === 1 ? "1 active key" : `${count} active keys`;
+}
+
+function KeysSkeleton() {
+  return (
+    <div className="divide-y divide-zinc-800/60 animate-pulse">
+      {["a", "b", "c"].map((k) => (
+        <div key={k} className="flex items-center gap-4 px-5 py-4">
+          <div className="h-3 w-40 rounded bg-zinc-800" />
+          <div className="h-3 w-24 rounded bg-zinc-800/70" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NoKeysState() {
+  return (
+    <div className="px-5 py-12 text-center">
+      <p className="text-sm text-zinc-400">No API keys yet.</p>
+      <p className="mt-1 text-xs text-zinc-500">
+        Create a personal key to call the Livepeer network, or mint one from an
+        app you own.
+      </p>
+    </div>
+  );
+}
+
+function NoFilterMatchState({ onShowAll }: Readonly<{ onShowAll: () => void }>) {
+  return (
+    <div className="px-5 py-12 text-center">
+      <p className="text-sm text-zinc-400">No keys match this filter.</p>
+      <button
+        type="button"
+        onClick={onShowAll}
+        className="mt-3 text-xs font-medium text-emerald-400 hover:text-emerald-300"
+      >
+        Show all sources
+      </button>
+    </div>
+  );
+}
+
 /**
  * Self-service API key list: create personal keys, view metadata, revoke.
  */
@@ -143,6 +187,33 @@ export default function ApiKeysManager() {
     }
   }
 
+  function renderKeysBody() {
+    if (loading) return <KeysSkeleton />;
+    if (keys.length === 0) return <NoKeysState />;
+    if (filteredKeys.length === 0) {
+      return (
+        <NoFilterMatchState
+          onShowAll={() => setSelectedSources(sourceOptions.map((o) => o.value))}
+        />
+      );
+    }
+    return (
+      <ul className="divide-y divide-zinc-800/60">
+        {filteredKeys.map((row) => (
+          <KeyRow
+            key={row.id}
+            keyRow={row}
+            confirming={confirmId === row.id}
+            revoking={revokingId === row.id}
+            onRequestConfirm={() => setConfirmId(row.id)}
+            onCancelConfirm={() => setConfirmId(null)}
+            onRevoke={() => void handleRevoke(row.id)}
+          />
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -232,11 +303,7 @@ export default function ApiKeysManager() {
       <section className="overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02]">
         <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-zinc-500">
-            {loading
-              ? "Loading…"
-              : filteredActiveCount === 1
-                ? "1 active key"
-                : `${filteredActiveCount} active keys`}
+            {loading ? "Loading…" : activeKeyCountLabel(filteredActiveCount)}
             {!loading && filteredKeys.length > filteredActiveCount
               ? ` · ${filteredKeys.length - filteredActiveCount} revoked`
               : null}
@@ -253,119 +320,100 @@ export default function ApiKeysManager() {
           )}
         </div>
 
-        {loading ? (
-          <div className="divide-y divide-zinc-800/60 animate-pulse">
-            {["a", "b", "c"].map((k) => (
-              <div key={k} className="flex items-center gap-4 px-5 py-4">
-                <div className="h-3 w-40 rounded bg-zinc-800" />
-                <div className="h-3 w-24 rounded bg-zinc-800/70" />
-              </div>
-            ))}
-          </div>
-        ) : keys.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <p className="text-sm text-zinc-400">No API keys yet.</p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Create a personal key to call the Livepeer network, or mint one
-              from an app you own.
-            </p>
-          </div>
-        ) : filteredKeys.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <p className="text-sm text-zinc-400">No keys match this filter.</p>
-            <button
-              type="button"
-              onClick={() => setSelectedSources(sourceOptions.map((o) => o.value))}
-              className="mt-3 text-xs font-medium text-emerald-400 hover:text-emerald-300"
-            >
-              Show all sources
-            </button>
-          </div>
-        ) : (
-          <ul className="divide-y divide-zinc-800/60">
-            {filteredKeys.map((key) => {
-              const isActive = key.status === "active";
-              const confirming = confirmId === key.id;
-              const revoking = revokingId === key.id;
-              return (
-                <li key={key.id} className="px-5 py-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 space-y-1.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <code className="font-mono text-sm text-zinc-200">
-                          {maskedKey(key.prefix, key.suffix)}
-                        </code>
-                        <span
-                          className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                            isActive
-                              ? "bg-emerald-500/15 text-emerald-400"
-                              : "bg-zinc-700/60 text-zinc-400"
-                          }`}
-                        >
-                          {isActive ? "Active" : "Revoked"}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-                        <span>{sourceLabel(key)}</span>
-                        {key.label && (
-                          <span className="text-zinc-600">·</span>
-                        )}
-                        {key.label && <span>{key.label}</span>}
-                        <span className="text-zinc-600">·</span>
-                        <span title={key.createdAt}>
-                          Created {formatCreatedAt(key.createdAt)}
-                        </span>
-                        {key.revokedAt && (
-                          <>
-                            <span className="text-zinc-600">·</span>
-                            <span title={key.revokedAt}>
-                              Revoked {formatCreatedAt(key.revokedAt)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {isActive && (
-                      <div className="flex shrink-0 items-center gap-2">
-                        {confirming ? (
-                          <>
-                            <span className="text-xs text-zinc-400">Revoke this key?</span>
-                            <button
-                              type="button"
-                              disabled={revoking}
-                              onClick={() => void handleRevoke(key.id)}
-                              className="rounded-lg border border-red-500/40 px-2.5 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/15 disabled:opacity-60"
-                            >
-                              {revoking ? "Revoking…" : "Confirm"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={revoking}
-                              onClick={() => setConfirmId(null)}
-                              className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmId(key.id)}
-                            className="rounded-lg border border-zinc-700/80 px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300"
-                          >
-                            Revoke
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        {renderKeysBody()}
       </section>
     </div>
+  );
+}
+
+function KeyRow({
+  keyRow,
+  confirming,
+  revoking,
+  onRequestConfirm,
+  onCancelConfirm,
+  onRevoke,
+}: Readonly<{
+  keyRow: ApiKeyRow;
+  confirming: boolean;
+  revoking: boolean;
+  onRequestConfirm: () => void;
+  onCancelConfirm: () => void;
+  onRevoke: () => void;
+}>) {
+  const isActive = keyRow.status === "active";
+
+  return (
+    <li className="px-5 py-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="font-mono text-sm text-zinc-200">
+              {maskedKey(keyRow.prefix, keyRow.suffix)}
+            </code>
+            <span
+              className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                isActive
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-zinc-700/60 text-zinc-400"
+              }`}
+            >
+              {isActive ? "Active" : "Revoked"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+            <span>{sourceLabel(keyRow)}</span>
+            {keyRow.label && <span className="text-zinc-600">·</span>}
+            {keyRow.label && <span>{keyRow.label}</span>}
+            <span className="text-zinc-600">·</span>
+            <span title={keyRow.createdAt}>
+              Created {formatCreatedAt(keyRow.createdAt)}
+            </span>
+            {keyRow.revokedAt && (
+              <>
+                <span className="text-zinc-600">·</span>
+                <span title={keyRow.revokedAt}>
+                  Revoked {formatCreatedAt(keyRow.revokedAt)}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {isActive && (
+          <div className="flex shrink-0 items-center gap-2">
+            {confirming ? (
+              <>
+                <span className="text-xs text-zinc-400">Revoke this key?</span>
+                <button
+                  type="button"
+                  disabled={revoking}
+                  onClick={onRevoke}
+                  className="rounded-lg border border-red-500/40 px-2.5 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/15 disabled:opacity-60"
+                >
+                  {revoking ? "Revoking…" : "Confirm"}
+                </button>
+                <button
+                  type="button"
+                  disabled={revoking}
+                  onClick={onCancelConfirm}
+                  className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={onRequestConfirm}
+                className="rounded-lg border border-zinc-700/80 px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300"
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </li>
   );
 }

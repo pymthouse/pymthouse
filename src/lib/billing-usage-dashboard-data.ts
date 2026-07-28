@@ -179,17 +179,17 @@ export async function getBillingUsageDashboardData(
   return getBillingUsageDashboardDataForUser(userId, role, filterAppId, options);
 }
 
-/** Session-free entry point for tests and callers that already resolved the viewer. */
-export async function getBillingUsageDashboardDataForUser(
-  userId: string,
-  role: string | undefined,
-  filterAppId?: string | null,
-  options?: { ownAppsOnly?: boolean },
-): Promise<BillingUsageDashboardResult> {
-  const isAdmin = role === "admin";
-  const ownAppsOnly = options?.ownAppsOnly === true;
+type BillingAppQueryRow = {
+  id: string;
+  name: string;
+  ownerId: string;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  publicClientId: string | null;
+};
 
-  const appsQuery = db
+function billingAppsQuery() {
+  return db
     .select({
       id: developerApps.id,
       name: developerApps.name,
@@ -201,21 +201,13 @@ export async function getBillingUsageDashboardDataForUser(
     .from(developerApps)
     .leftJoin(users, eq(developerApps.ownerId, users.id))
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id));
+}
 
-  let orderedApps: BillingAppRow[];
-  let scope: "all" | "single";
-
-  const toBillingApp = (
-    row: {
-      id: string;
-      name: string;
-      ownerId: string;
-      ownerName: string | null;
-      ownerEmail: string | null;
-      publicClientId: string | null;
-    },
-    usageKind: BillingUsageKind = "tenant",
-  ): BillingAppRow => ({
+function toBillingApp(
+  row: BillingAppQueryRow,
+  usageKind: BillingUsageKind = "tenant",
+): BillingAppRow {
+  return {
     id: row.id,
     name: usageKind === "personal" ? PLATFORM_DEFAULT_USAGE_DISPLAY_NAME : row.name,
     ownerId: row.ownerId,
@@ -224,69 +216,95 @@ export async function getBillingUsageDashboardDataForUser(
     // Prefer public OIDC client_id; fall back to developer_apps.id when unset.
     publicClientId: row.publicClientId?.trim() || row.id,
     usageKind,
-  });
+  };
+}
+
+/** Single-app scope; null when the viewer may not see it. */
+async function resolveFilteredApp(
+  filterAppId: string,
+  userId: string,
+  isAdmin: boolean,
+): Promise<BillingAppRow[] | null> {
+  const app = await getProviderApp(filterAppId);
+  if (!app) return null;
+
+  const mayView =
+    isAdmin || app.ownerId === userId || (await isProviderAdmin(userId, app.id));
+  if (!mayView) return null;
+
+  const rows = await billingAppsQuery().where(eq(developerApps.id, app.id)).limit(1);
+  const row = rows[0];
+  return row ? [toBillingApp(row)] : null;
+}
+
+async function resolveAllApps(userId: string): Promise<BillingAppRow[]> {
+  const visibleApps = (await billingAppsQuery()).map((row) => toBillingApp(row));
+  return sortAppsForViewer(visibleApps, userId, true);
+}
+
+/**
+ * Match My Apps: owned + administered, then add subject-scoped personal
+ * network usage on the platform default (never full-tenant for that app).
+ */
+async function resolveViewerApps(userId: string): Promise<BillingAppRow[]> {
+  const memberships = await db
+    .select({ clientId: providerAdmins.clientId })
+    .from(providerAdmins)
+    .where(eq(providerAdmins.userId, userId));
+  const memberIds = memberships.map((m) => m.clientId);
+  const ownOrAdmin =
+    memberIds.length === 0
+      ? eq(developerApps.ownerId, userId)
+      : or(eq(developerApps.ownerId, userId), inArray(developerApps.id, memberIds));
+  const visibleApps = (await billingAppsQuery().where(ownOrAdmin!)).map((row) =>
+    toBillingApp(row),
+  );
+
+  const defaultApp = await loadPlatformDefaultBillingApp();
+  if (!defaultApp) {
+    return sortAppsForViewer(visibleApps, userId, false);
+  }
+
+  const tenantApps = visibleApps.filter(
+    (app) =>
+      app.id !== defaultApp.id && app.publicClientId !== defaultApp.publicClientId,
+  );
+  const sortedTenantApps = sortAppsForViewer(tenantApps, userId, false);
+
+  const isMember = await viewerHasAppUserMembership(
+    userId,
+    defaultApp.publicClientId,
+  );
+  return isMember
+    ? [...sortedTenantApps, toBillingApp(defaultApp, "personal")]
+    : sortedTenantApps;
+}
+
+/** Session-free entry point for tests and callers that already resolved the viewer. */
+export async function getBillingUsageDashboardDataForUser(
+  userId: string,
+  role: string | undefined,
+  filterAppId?: string | null,
+  options?: { ownAppsOnly?: boolean },
+): Promise<BillingUsageDashboardResult> {
+  const isAdmin = role === "admin";
+  const ownAppsOnly = options?.ownAppsOnly === true;
+
+  let orderedApps: BillingAppRow[];
+  let scope: "all" | "single";
 
   if (filterAppId) {
-    const app = await getProviderApp(filterAppId);
-    if (!app) {
+    const filtered = await resolveFilteredApp(filterAppId, userId, isAdmin);
+    if (!filtered) {
       return { ok: false, reason: "forbidden" };
     }
-    const mayView =
-      isAdmin ||
-      app.ownerId === userId ||
-      (await isProviderAdmin(userId, app.id));
-    if (!mayView) {
-      return { ok: false, reason: "forbidden" };
-    }
-    const rows = await appsQuery.where(eq(developerApps.id, app.id)).limit(1);
-    const row = rows[0];
-    if (!row) {
-      return { ok: false, reason: "forbidden" };
-    }
-    orderedApps = [toBillingApp(row)];
+    orderedApps = filtered;
     scope = "single";
-  } else if (isAdmin && !ownAppsOnly) {
-    const visibleApps = (await appsQuery).map((row) => toBillingApp(row));
-    orderedApps = sortAppsForViewer(visibleApps, userId, true);
-    scope = "all";
   } else {
-    // Match My Apps: owned + administered, then add subject-scoped personal
-    // network usage on the platform default (never full-tenant for that app).
-    const memberships = await db
-      .select({ clientId: providerAdmins.clientId })
-      .from(providerAdmins)
-      .where(eq(providerAdmins.userId, userId));
-    const memberIds = memberships.map((m) => m.clientId);
-    const ownOrAdmin =
-      memberIds.length === 0
-        ? eq(developerApps.ownerId, userId)
-        : or(eq(developerApps.ownerId, userId), inArray(developerApps.id, memberIds));
-    const visibleApps = (await appsQuery.where(ownOrAdmin!)).map((row) =>
-      toBillingApp(row),
-    );
-
-    const defaultApp = await loadPlatformDefaultBillingApp();
-    let tenantApps = visibleApps;
-    if (defaultApp) {
-      tenantApps = visibleApps.filter(
-        (app) =>
-          app.id !== defaultApp.id && app.publicClientId !== defaultApp.publicClientId,
-      );
-      const isMember = await viewerHasAppUserMembership(
-        userId,
-        defaultApp.publicClientId,
-      );
-      if (isMember) {
-        orderedApps = [
-          ...sortAppsForViewer(tenantApps, userId, false),
-          toBillingApp(defaultApp, "personal"),
-        ];
-      } else {
-        orderedApps = sortAppsForViewer(tenantApps, userId, false);
-      }
-    } else {
-      orderedApps = sortAppsForViewer(tenantApps, userId, false);
-    }
+    orderedApps =
+      isAdmin && !ownAppsOnly
+        ? await resolveAllApps(userId)
+        : await resolveViewerApps(userId);
     scope = "all";
   }
 

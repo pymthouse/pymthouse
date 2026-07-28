@@ -32,7 +32,7 @@ export default function BuilderCreateStep({
 
   const busy = parentBusy || saving;
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return;

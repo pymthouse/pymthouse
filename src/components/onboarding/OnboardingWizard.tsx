@@ -40,6 +40,11 @@ async function postJson(path: string, body?: Record<string, unknown>) {
   return data;
 }
 
+function stringField(data: Record<string, unknown>, key: string): string {
+  const value = data[key];
+  return typeof value === "string" ? value : "";
+}
+
 export default function OnboardingWizard({
   initialPersona,
   resumeBuilder,
@@ -117,8 +122,8 @@ export default function OnboardingWizard({
 
       const data = await postJson("/api/v1/network/key");
       setMinted({
-        clientId: String(data.clientId ?? ""),
-        apiKey: String(data.apiKey ?? ""),
+        clientId: stringField(data, "clientId"),
+        apiKey: stringField(data, "apiKey"),
         sdkToken: typeof data.sdkToken === "string" ? data.sdkToken : null,
       });
       setStep("done");
