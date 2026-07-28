@@ -113,6 +113,8 @@ export function toPlanApiRow(input: {
     priceAmount: plan.priceAmount,
     priceCurrency: plan.priceCurrency,
     status: plan.status,
+    phaseOutAt: plan.phaseOutAt ?? null,
+    replacementPlanId: plan.replacementPlanId ?? null,
     includedUnits:
       plan.includedUnits !== null && plan.includedUnits !== undefined
         ? plan.includedUnits.toString()

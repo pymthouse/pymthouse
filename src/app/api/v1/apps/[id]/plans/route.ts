@@ -19,6 +19,7 @@ import {
   archivePlanInOpenMeter,
   syncPlanToOpenMeter,
 } from "@/lib/openmeter/plans-sync";
+import { countActiveKonnectSubscriptionsForPlan } from "@/lib/openmeter/konnect-subscriptions";
 import {
   assertCapabilityRowsDiscoverable,
   loadDiscoverableSetForApp,
@@ -35,6 +36,7 @@ import {
   validateCapabilityFeatureKeys,
 } from "@/lib/openmeter/capability-features";
 import { validateCustomPlanName } from "@/lib/openmeter/plan-naming";
+import { parsePlanBillingCycleInput } from "@/lib/openmeter/billing-cycle";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -342,6 +344,11 @@ export async function POST(
     return NextResponse.json({ error: overageRate.error }, { status: 400 });
   }
 
+  const billingCycleParsed = parsePlanBillingCycleInput(body.billingCycle);
+  if (!billingCycleParsed.ok) {
+    return NextResponse.json({ error: billingCycleParsed.error }, { status: 400 });
+  }
+
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
   if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
@@ -353,6 +360,8 @@ export async function POST(
   }
 
   const planId = uuidv4();
+  const planStatus = coerceJsonScalarString(body.status, "active");
+  const priceAmount = coerceJsonScalarString(body.priceAmount, "0");
   if (planType !== "free" && parsedCapabilities.capabilities.length > 0) {
     const featureKeys = validateCapabilityFeatureKeys({
       clientId: appId,
@@ -375,12 +384,12 @@ export async function POST(
         clientId: appId,
         name,
         type: planType,
-        priceAmount: coerceJsonScalarString(body.priceAmount, "0"),
+        priceAmount,
         priceCurrency: coerceJsonScalarString(body.priceCurrency, "USD"),
-        status: coerceJsonScalarString(body.status, "active"),
+        status: planStatus,
         overageRateUsd: overageRate.value,
         includedUsdMicros,
-        billingCycle: typeof body.billingCycle === "string" ? body.billingCycle : "monthly",
+        billingCycle: billingCycleParsed.value,
         discoveryProfileId,
         isNetworkDefault: false,
         isStarterDefault: false,
@@ -422,8 +431,8 @@ export async function POST(
     throw e;
   }
 
-  const planStatus = coerceJsonScalarString(body.status, "active");
-  if (planStatus === "active") {
+  const planStatusAfterInsert = planStatus;
+  if (planStatusAfterInsert === "active") {
     const sync = await syncPlanToOpenMeter(planId);
     if (!sync.ok) {
       return NextResponse.json({ id: planId, syncError: sync.error }, { status: 201 });
@@ -555,6 +564,7 @@ export async function PUT(
   }
 
   const now = new Date().toISOString();
+
   const txnResult = await db.transaction(async (tx) => {
     const existingRows = await tx
       .select()
@@ -587,6 +597,15 @@ export async function PUT(
       return { tag: "validation" as const, error: overageRate.error };
     }
 
+    let billingCyclePut: string | undefined;
+    if (body.billingCycle !== undefined) {
+      const billingCycleParsed = parsePlanBillingCycleInput(body.billingCycle);
+      if (!billingCycleParsed.ok) {
+        return { tag: "validation" as const, error: billingCycleParsed.error };
+      }
+      billingCyclePut = billingCycleParsed.value;
+    }
+
     const rawIncludedUsdPut = body.includedUsdMicros;
     let includedUsdMicrosPut: string | null | undefined = undefined; // undefined = don't change
     if (rawIncludedUsdPut !== undefined) {
@@ -599,6 +618,94 @@ export async function PUT(
         }
         includedUsdMicrosPut = s || null;
       }
+    }
+
+    const nextStatus =
+      body.status === undefined
+        ? existing.status
+        : coerceJsonScalarString(body.status);
+    if (
+      nextStatus !== "draft" &&
+      nextStatus !== "active" &&
+      nextStatus !== "phase_out"
+    ) {
+      return {
+        tag: "validation" as const,
+        error: 'status must be "draft", "active", or "phase_out"',
+      };
+    }
+
+    let phaseOutAtPut: string | null | undefined = undefined;
+    if (body.phaseOutAt !== undefined) {
+      if (body.phaseOutAt === null || body.phaseOutAt === "") {
+        phaseOutAtPut = null;
+      } else if (typeof body.phaseOutAt === "string" && body.phaseOutAt.trim()) {
+        const parsed = Date.parse(body.phaseOutAt.trim());
+        if (Number.isNaN(parsed)) {
+          return {
+            tag: "validation" as const,
+            error: "phaseOutAt must be a valid ISO timestamp",
+          };
+        }
+        phaseOutAtPut = new Date(parsed).toISOString();
+      } else {
+        return {
+          tag: "validation" as const,
+          error: "phaseOutAt must be an ISO string or null",
+        };
+      }
+    }
+
+    let replacementPlanIdPut: string | null | undefined = undefined;
+    if (body.replacementPlanId !== undefined) {
+      if (body.replacementPlanId === null || body.replacementPlanId === "") {
+        replacementPlanIdPut = null;
+      } else if (
+        typeof body.replacementPlanId === "string" &&
+        body.replacementPlanId.trim()
+      ) {
+        replacementPlanIdPut = body.replacementPlanId.trim();
+        if (replacementPlanIdPut === planId) {
+          return {
+            tag: "validation" as const,
+            error: "replacementPlanId cannot reference the same plan",
+          };
+        }
+        const replacementRows = await tx
+          .select({ id: plans.id, status: plans.status })
+          .from(plans)
+          .where(
+            and(
+              eq(plans.id, replacementPlanIdPut),
+              eq(plans.clientId, appId),
+            ),
+          )
+          .limit(1);
+        if (!replacementRows[0]) {
+          return {
+            tag: "validation" as const,
+            error: "replacementPlanId not found for this app",
+          };
+        }
+        if (replacementRows[0].status === "phase_out") {
+          return {
+            tag: "validation" as const,
+            error: "replacementPlanId must not be a phase_out plan",
+          };
+        }
+      } else {
+        return {
+          tag: "validation" as const,
+          error: "replacementPlanId must be a string or null",
+        };
+      }
+    }
+
+    if (nextStatus === "phase_out") {
+      phaseOutAtPut =
+        phaseOutAtPut === undefined
+          ? (existing.phaseOutAt ?? new Date().toISOString())
+          : phaseOutAtPut;
     }
 
     const updated = await tx
@@ -614,15 +721,16 @@ export async function PUT(
           body.priceCurrency === undefined
             ? existing.priceCurrency
             : coerceJsonScalarString(body.priceCurrency),
-        status:
-          body.status === undefined ? existing.status : coerceJsonScalarString(body.status),
+        status: nextStatus,
         overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
-        ...(body.billingCycle === undefined
-          ? {}
-          : { billingCycle: coerceJsonScalarString(body.billingCycle) }),
+        ...(billingCyclePut === undefined ? {} : { billingCycle: billingCyclePut }),
         ...(discoveryProfileIdPut !== undefined
           ? { discoveryProfileId: discoveryProfileIdPut }
+          : {}),
+        ...(phaseOutAtPut !== undefined ? { phaseOutAt: phaseOutAtPut } : {}),
+        ...(replacementPlanIdPut !== undefined
+          ? { replacementPlanId: replacementPlanIdPut }
           : {}),
         updatedAt: now,
       })
@@ -693,8 +801,10 @@ export async function PUT(
 
   const updatedStatus =
     body.status === undefined ? undefined : coerceJsonScalarString(body.status);
+  // Keep OpenMeter plan published while phase_out so existing subscribers continue.
   const shouldSync =
-    (updatedStatus ?? "active") === "active" &&
+    ((updatedStatus ?? "active") === "active" ||
+      updatedStatus === "phase_out") &&
     txnResult.tag === "ok";
   if (shouldSync) {
     const sync = await syncPlanToOpenMeter(planId);
@@ -733,19 +843,36 @@ export async function DELETE(
         id: plans.id,
         isNetworkDefault: plans.isNetworkDefault,
         isStarterDefault: plans.isStarterDefault,
+        openmeterPlanId: plans.openmeterPlanId,
       })
       .from(plans)
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
       .limit(1);
 
     if (!planRows[0]) {
-      return false;
+      return false as const;
     }
     if (planRows[0].isNetworkDefault) {
       return "network_default" as const;
     }
     if (planRows[0].isStarterDefault) {
       return "starter_default" as const;
+    }
+
+    const openmeterPlanId = planRows[0].openmeterPlanId?.trim();
+    if (openmeterPlanId) {
+      try {
+        const activeCount =
+          await countActiveKonnectSubscriptionsForPlan(openmeterPlanId);
+        if (activeCount > 0) {
+          return { tag: "has_subscribers" as const, activeCount };
+        }
+      } catch (err) {
+        return {
+          tag: "subscriber_check_failed" as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
 
     await tx
@@ -760,7 +887,7 @@ export async function DELETE(
       .delete(plans)
       .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
       .returning({ id: plans.id });
-    return removed.length > 0;
+    return removed.length > 0 ? ("ok" as const) : (false as const);
   });
 
   if (!deleted) {
@@ -776,6 +903,24 @@ export async function DELETE(
     return NextResponse.json(
       { error: "The Starter default plan cannot be deleted" },
       { status: 409 },
+    );
+  }
+  if (typeof deleted === "object" && deleted.tag === "has_subscribers") {
+    return NextResponse.json(
+      {
+        error:
+          "Plan still has active OpenMeter subscribers; phase out the plan and migrate subscribers first",
+        activeSubscribers: deleted.activeCount,
+      },
+      { status: 409 },
+    );
+  }
+  if (typeof deleted === "object" && deleted.tag === "subscriber_check_failed") {
+    return NextResponse.json(
+      {
+        error: `Unable to verify OpenMeter subscribers before delete: ${deleted.error}`,
+      },
+      { status: 503 },
     );
   }
 
