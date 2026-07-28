@@ -6,6 +6,7 @@ import { developerApps, oidcClients } from "@/db/schema";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
+import { AppActivationError } from "@/lib/activation/app-activation";
 import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
@@ -220,6 +221,9 @@ export async function mintSignerJwtForExternalUser(input: {
       externalUserId: provisionExternalUserId,
     });
   } catch (err) {
+    if (err instanceof AppActivationError) {
+      throw new MintUserSignerTokenError(err.code, err.message, err.status);
+    }
     if (isHostedAdminClientAvailable()) {
       throw new MintUserSignerTokenError(
         "billing_unavailable",

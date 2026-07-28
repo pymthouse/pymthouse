@@ -11,6 +11,11 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
+import {
+  AppActivationError,
+  runActivationGate,
+} from "@/lib/activation/app-activation";
+import { activationProblemResponse } from "@/lib/activation/problem";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
@@ -85,6 +90,20 @@ export async function POST(
     return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
   }
 
+  try {
+    await runActivationGate("provision", access.app.id, { externalUserId });
+  } catch (err) {
+    if (err instanceof AppActivationError) {
+      return activationProblemResponse({
+        reason: err.code,
+        billingMode: err.billingMode,
+        actionUrl: err.actionUrl,
+        detail: err.message,
+      });
+    }
+    throw err;
+  }
+
   const status = hasStatus ? body.status : "active";
   const newUser = {
     id: uuidv4(),
@@ -118,6 +137,14 @@ export async function POST(
       externalUserId,
     });
   } catch (err) {
+    if (err instanceof AppActivationError) {
+      return activationProblemResponse({
+        reason: err.code,
+        billingMode: err.billingMode,
+        actionUrl: err.actionUrl,
+        detail: err.message,
+      });
+    }
     console.error(
       "provisionAppUserBilling failed on user upsert:",
       sanitizeForLog(err instanceof Error ? err.message : err),

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAppClient } from "@/lib/auth";
+import {
+  AppActivationError,
+  runActivationGate,
+} from "@/lib/activation/app-activation";
+import { activationProblemResponse } from "@/lib/activation/problem";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
 import { createEndUserCheckout } from "@/lib/openmeter/subscriptions-billing";
 
@@ -37,6 +42,20 @@ export async function POST(
       { error: "planId and externalUserId are required" },
       { status: 400 },
     );
+  }
+
+  try {
+    await runActivationGate("sell_paid_plans", app.id);
+  } catch (err) {
+    if (err instanceof AppActivationError) {
+      return activationProblemResponse({
+        reason: err.code,
+        billingMode: err.billingMode,
+        actionUrl: err.actionUrl,
+        detail: err.message,
+      });
+    }
+    throw err;
   }
 
   try {

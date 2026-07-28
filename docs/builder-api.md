@@ -670,16 +670,51 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Merchant Connect status (`stripeConnectedAccountId`, charges/payouts flags, `applicationFeeBps`) + OM profile ids |
+| `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Merchant Connect status (`stripeConnectedAccountId`, charges/payouts flags, `applicationFeeBps`, `billingMode`, `endUserCap`, `activation`) + OM profile ids |
 | `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start merchant Connect via Account Links: `{ mode?: "account_link" }` (default). Creates Express/Accounts v2 Connected Account if needed, returns Stripe-hosted `{ url }`. `mode: "oauth"` is rejected. |
 | `POST` | `/api/v1/apps/{clientId}/billing/stripe/account-link` | App owner/admin | Refresh Stripe Account Link for incomplete onboarding |
-| `PATCH` | `/api/v1/apps/{clientId}/billing/stripe` | App owner/admin | Update `progressiveBilling`, `invoiceThresholdUsdMicros`, and/or `applicationFeeBps` |
+| `PATCH` | `/api/v1/apps/{clientId}/billing/stripe` | App owner/admin | Update `progressiveBilling`, `invoiceThresholdUsdMicros`, `applicationFeeBps`, `billingMode`, and/or `endUserCap`. Switching to `merchant` requires Connect ready (`charges_enabled` + `details_submitted`). |
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect merchant Connect (+ clear OM Stripe profile ids) |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
-| `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (OM subscription + Connect Checkout when ready) |
+| `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (requires merchant + Connect ready when `ACTIVATION_GATE_MODE` is `enforce_revenue` or `enforce`) |
 | `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl` |
 
-**Hybrid billing:** OpenMeter meters usage and owns subscriptions. End-user Checkout/invoices use the merchant Connected Account (direct charges + optional `applicationFeeBps`) when `stripeChargesEnabled`. Until then, OM Stripe Checkout remains a fallback unless `connectPaymentsOnly` (or `STRIPE_CONNECT_PAYMENTS_ONLY=1`).
+### App activation gate
+
+Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `enforce`, default `off`). See [`docs/activation-gate.md`](./activation-gate.md).
+
+| Mode | Behaviour |
+| --- | --- |
+| `off` | Resolve + expose `activation` on `GET /api/v1/apps/{id}`; never deny |
+| `log` | Would-deny writes `activation_gate_would_deny` audit rows; still allow |
+| `enforce_revenue` | Deny priced plan activate + checkout without merchant Connect readiness |
+| `enforce` | Also deny new end-user provisioning when owner wallet is empty or `endUserCap` is reached |
+
+`GET /api/v1/apps/{id}` includes an `activation` object:
+
+```json
+{
+  "clientId": "app_…",
+  "billingMode": "owner_rollup",
+  "connectReady": false,
+  "canProvisionEndUsers": true,
+  "canSellPaidPlans": false,
+  "reason": "stripe_connect_required",
+  "endUserCap": 25,
+  "appUserCount": 3
+}
+```
+
+Denial responses use RFC 9457 problem details (`Content-Type: application/problem+json`) with machine-readable `code`:
+
+| Condition | Status | `code` |
+| --- | --- | --- |
+| Owner wallet empty | `402` | `owner_balance_exhausted` |
+| Per-app user cap reached | `403` | `end_user_cap_reached` |
+| Paid plan / checkout without Connect | `403` | `stripe_connect_required` |
+| Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |
+
+**Hybrid billing:** OpenMeter meters usage and owns subscriptions. End-user Checkout/invoices use the merchant Connected Account (direct charges + optional `applicationFeeBps`) when `stripeChargesEnabled`. Until then, OM Stripe Checkout remains a fallback unless `connectPaymentsOnly` (or `STRIPE_CONNECT_PAYMENTS_ONLY=1`). With `ACTIVATION_GATE_MODE=enforce_revenue|enforce`, checkout requires `billingMode=merchant` and Connect readiness (`charges_enabled` + `details_submitted`).
 
 **Connect webhooks:** Point a Stripe (Connect) webhook at `POST /webhooks/stripe` with `STRIPE_WEBHOOK_SECRET` and subscribe to `account.updated` so `charges_enabled` / `payouts_enabled` / `details_submitted` stay in sync without waiting for a Payments page refresh.
 

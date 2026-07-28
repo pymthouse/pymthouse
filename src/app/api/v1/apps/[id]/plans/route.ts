@@ -3,6 +3,12 @@ import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { discoveryProfiles, planCapabilityBundles, plans } from "@/db/schema";
+import {
+  AppActivationError,
+  planRequiresSellGate,
+  runActivationGate,
+} from "@/lib/activation/app-activation";
+import { activationProblemResponse } from "@/lib/activation/problem";
 import { authenticateAppClient } from "@/lib/auth";
 import {
   canEditProviderApp,
@@ -360,6 +366,23 @@ export async function POST(
   }
 
   const planId = uuidv4();
+  const planStatus = coerceJsonScalarString(body.status, "active");
+  const priceAmount = coerceJsonScalarString(body.priceAmount, "0");
+  if (planRequiresSellGate({ status: planStatus, priceAmount })) {
+    try {
+      await runActivationGate("sell_paid_plans", appId);
+    } catch (err) {
+      if (err instanceof AppActivationError) {
+        return activationProblemResponse({
+          reason: err.code,
+          billingMode: err.billingMode,
+          actionUrl: err.actionUrl,
+          detail: err.message,
+        });
+      }
+      throw err;
+    }
+  }
   if (planType !== "free" && parsedCapabilities.capabilities.length > 0) {
     const featureKeys = validateCapabilityFeatureKeys({
       clientId: appId,
@@ -382,9 +405,9 @@ export async function POST(
         clientId: appId,
         name,
         type: planType,
-        priceAmount: coerceJsonScalarString(body.priceAmount, "0"),
+        priceAmount,
         priceCurrency: coerceJsonScalarString(body.priceCurrency, "USD"),
-        status: coerceJsonScalarString(body.status, "active"),
+        status: planStatus,
         overageRateUsd: overageRate.value,
         includedUsdMicros,
         billingCycle: billingCycleParsed.value,
@@ -429,8 +452,8 @@ export async function POST(
     throw e;
   }
 
-  const planStatus = coerceJsonScalarString(body.status, "active");
-  if (planStatus === "active") {
+  const planStatusAfterInsert = planStatus;
+  if (planStatusAfterInsert === "active") {
     const sync = await syncPlanToOpenMeter(planId);
     if (!sync.ok) {
       return NextResponse.json({ id: planId, syncError: sync.error }, { status: 201 });
@@ -562,6 +585,45 @@ export async function PUT(
   }
 
   const now = new Date().toISOString();
+
+  const existingForGate = await db
+    .select()
+    .from(plans)
+    .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+    .limit(1);
+  const existingGateRow = existingForGate[0];
+  if (existingGateRow && !existingGateRow.isNetworkDefault && !existingGateRow.isStarterDefault) {
+    const nextStatusForGate =
+      body.status === undefined
+        ? existingGateRow.status
+        : coerceJsonScalarString(body.status);
+    const nextPriceForGate =
+      body.priceAmount === undefined
+        ? existingGateRow.priceAmount
+        : coerceJsonScalarString(body.priceAmount);
+    if (
+      planRequiresSellGate({
+        status: nextStatusForGate,
+        priceAmount: nextPriceForGate,
+        isStarterDefault: existingGateRow.isStarterDefault,
+      })
+    ) {
+      try {
+        await runActivationGate("sell_paid_plans", appId);
+      } catch (err) {
+        if (err instanceof AppActivationError) {
+          return activationProblemResponse({
+            reason: err.code,
+            billingMode: err.billingMode,
+            actionUrl: err.actionUrl,
+            detail: err.message,
+          });
+        }
+        throw err;
+      }
+    }
+  }
+
   const txnResult = await db.transaction(async (tx) => {
     const existingRows = await tx
       .select()

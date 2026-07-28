@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { paymentsTabErrorMessage } from "./payments-tab-errors";
 import {
   merchantConnectOAuthErrorCode,
   parseStripeAccountUpdated,
-  paymentsTabErrorMessage,
   sanitizeStripeOAuthProviderError,
   verifyStripeWebhookSignature,
 } from "./webhook";

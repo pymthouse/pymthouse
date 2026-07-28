@@ -1,3 +1,4 @@
+import { runActivationGate } from "@/lib/activation/app-activation";
 import { findOrCreateAppEndUser } from "@/lib/billing";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import {
@@ -44,6 +45,8 @@ export async function provisionAppUserBilling(input: {
   externalUserId: string;
 }): Promise<ProvisionAppUserBillingResult> {
   const externalUserId = input.externalUserId.trim();
+  // Defence-in-depth cost-rail floor (creation-only; existing users pass).
+  await runActivationGate("provision", input.clientId, { externalUserId });
   const appUser = await resolveOrCreateAppUser({
     clientId: input.clientId,
     externalUserId,

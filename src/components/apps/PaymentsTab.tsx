@@ -6,7 +6,18 @@ import {
   usdCentsDisplayToMicros,
   usdMicrosToCentsDisplay,
 } from "@/lib/format-usd-micros";
-import { paymentsTabErrorMessage } from "@/lib/stripe/webhook";
+import { paymentsTabErrorMessage } from "@/lib/stripe/payments-tab-errors";
+
+type ActivationInfo = {
+  clientId: string;
+  billingMode: "owner_rollup" | "merchant";
+  connectReady: boolean;
+  canProvisionEndUsers: boolean;
+  canSellPaidPlans: boolean;
+  reason: string | null;
+  endUserCap: number;
+  appUserCount: number;
+};
 
 type StripeStatus = {
   status: string;
@@ -23,6 +34,9 @@ type StripeStatus = {
   stripeDetailsSubmitted?: boolean;
   applicationFeeBps?: number;
   connectPaymentsOnly?: boolean;
+  billingMode?: "owner_rollup" | "merchant";
+  endUserCap?: number;
+  activation?: ActivationInfo | null;
 };
 
 type InvoiceRow = {
@@ -70,6 +84,10 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   const [applicationFeeBps, setApplicationFeeBps] = useState("0");
   const [progressiveBilling, setProgressiveBilling] = useState(true);
   const [thresholdDisplay, setThresholdDisplay] = useState("");
+  const [billingMode, setBillingMode] = useState<"owner_rollup" | "merchant">(
+    "owner_rollup",
+  );
+  const [endUserCap, setEndUserCap] = useState("25");
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -87,6 +105,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       setStatus(nextStatus);
       setProgressiveBilling(nextStatus.progressiveBilling ?? true);
       setApplicationFeeBps(String(nextStatus.applicationFeeBps ?? 0));
+      setBillingMode(nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup");
+      setEndUserCap(String(nextStatus.endUserCap ?? 25));
       setThresholdDisplay(
         nextStatus.invoiceThresholdUsdMicros
           ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
@@ -201,6 +221,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           progressiveBilling,
           invoiceThresholdUsdMicros,
           applicationFeeBps: Number.parseInt(applicationFeeBps, 10) || 0,
+          billingMode,
+          endUserCap: Number.parseInt(endUserCap, 10) || 25,
         }),
       });
       const body = await res.json();
@@ -221,6 +243,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   }
 
   const hasAccount = Boolean(status?.stripeConnectedAccountId?.trim());
+  /** Merchant Connect ready (acct_… + charges + details). */
+  const connectReadyForMerchant = Boolean(status?.activation?.connectReady);
   /** Merchant Connect ready (acct_… + charges). Not legacy OM Stripe-app install. */
   const merchantReady =
     hasAccount && Boolean(status?.stripeChargesEnabled);
@@ -233,6 +257,39 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
 
   return (
     <div className="space-y-6">
+      {status?.activation && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
+          <h3 className="text-sm font-semibold text-amber-950">Activation</h3>
+          <p className="text-sm text-amber-900">
+            Mode:{" "}
+            <span className="font-mono">
+              {status.activation.billingMode === "merchant" ? "merchant" : "owner roll-up"}
+            </span>
+            {" · "}
+            Provision end users:{" "}
+            {status.activation.canProvisionEndUsers ? "allowed" : "blocked"}
+            {" · "}
+            Sell paid plans: {status.activation.canSellPaidPlans ? "allowed" : "blocked"}
+            {" · "}
+            Users {status.activation.appUserCount}/{status.activation.endUserCap}
+          </p>
+          {!status.activation.canSellPaidPlans && (
+            <p className="text-sm text-amber-900">
+              {status.activation.connectReady
+                ? "Switch billing mode to merchant to unlock paid plan checkout."
+                : "Connect Stripe and complete onboarding to sell paid plans."}
+            </p>
+          )}
+          {!status.activation.canProvisionEndUsers && (
+            <p className="text-sm text-amber-900">
+              {status.activation.reason === "end_user_cap_reached"
+                ? "End-user cap reached — raise the cap or switch to merchant mode."
+                : "Owner wallet has no spendable balance — top up credits to provision more users."}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="rounded-lg border p-4 space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -331,7 +388,37 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         )}
 
         {canManageBilling && (
-          <div className="pt-2 border-t space-y-2">
+          <div className="pt-2 border-t space-y-3">
+            <label className="block text-sm">
+              <span className="text-muted-foreground">Billing mode</span>
+              <select
+                className="mt-1 w-full max-w-xs rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+                value={billingMode}
+                onChange={(e) =>
+                  setBillingMode(
+                    e.target.value === "merchant" ? "merchant" : "owner_rollup",
+                  )
+                }
+                disabled={busy}
+              >
+                <option value="owner_rollup">Owner roll-up (default)</option>
+                <option value="merchant" disabled={!connectReadyForMerchant}>
+                  Merchant (requires Connect ready)
+                </option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground">End-user cap (owner roll-up)</span>
+              <input
+                type="number"
+                min={1}
+                max={1000000}
+                className="mt-1 w-40 rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+                value={endUserCap}
+                onChange={(e) => setEndUserCap(e.target.value)}
+                disabled={busy}
+              />
+            </label>
             <label className="block text-sm">
               <span className="text-muted-foreground">Platform application fee (bps)</span>
               <input
@@ -347,6 +434,19 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
             <p className="text-xs text-muted-foreground">
               100 bps = 1%. Applied on Connect payment intents / invoices.
             </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void saveBillingProfileSettings()}
+              >
+                Save billing settings
+              </button>
+              {settingsSaved ? (
+                <span className="text-xs text-emerald-600">{settingsSaved}</span>
+              ) : null}
+            </div>
           </div>
         )}
       </div>

@@ -4,7 +4,11 @@ import {
   getAuthorizedProviderApp,
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
-import { updateAppBillingProfileSettings } from "@/lib/openmeter/billing-profiles";
+import {
+  getAppBillingConfig,
+  updateAppBillingProfileSettings,
+  upsertAppBillingConfig,
+} from "@/lib/openmeter/billing-profiles";
 import {
   parseInvoiceThresholdUsdMicrosInput,
   parseProgressiveBillingInput,
@@ -14,6 +18,7 @@ import {
   getStripeConnectStatus,
 } from "@/lib/openmeter/stripe-connect";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
+import { isConnectReady } from "@/lib/activation/app-activation";
 
 async function requireHostedBillingApp(clientId: string) {
   const auth = await getAuthorizedProviderApp(clientId);
@@ -71,12 +76,14 @@ export async function PATCH(
   if (
     body.progressiveBilling === undefined &&
     body.invoiceThresholdUsdMicros === undefined &&
-    body.applicationFeeBps === undefined
+    body.applicationFeeBps === undefined &&
+    body.billingMode === undefined &&
+    body.endUserCap === undefined
   ) {
     return NextResponse.json(
       {
         error:
-          "Provide progressiveBilling, invoiceThresholdUsdMicros, and/or applicationFeeBps to update",
+          "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, and/or endUserCap to update",
       },
       { status: 400 },
     );
@@ -115,13 +122,63 @@ export async function PATCH(
     applicationFeeBps = n;
   }
 
+  let billingMode: "owner_rollup" | "merchant" | undefined;
+  if (body.billingMode !== undefined) {
+    if (body.billingMode !== "owner_rollup" && body.billingMode !== "merchant") {
+      return NextResponse.json(
+        { error: 'billingMode must be "owner_rollup" or "merchant"' },
+        { status: 400 },
+      );
+    }
+    billingMode = body.billingMode;
+    if (billingMode === "merchant") {
+      const config = await getAppBillingConfig(access.auth.app.id);
+      if (!isConnectReady(config)) {
+        return NextResponse.json(
+          {
+            error:
+              "Switching to merchant mode requires a ready Stripe Connected Account (charges enabled and details submitted)",
+          },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
+  let endUserCap: number | undefined;
+  if (body.endUserCap !== undefined) {
+    const n =
+      typeof body.endUserCap === "number"
+        ? body.endUserCap
+        : Number.parseInt(String(body.endUserCap), 10);
+    if (!Number.isInteger(n) || n < 1 || n > 1_000_000) {
+      return NextResponse.json(
+        { error: "endUserCap must be an integer from 1 to 1000000" },
+        { status: 400 },
+      );
+    }
+    endUserCap = n;
+  }
+
   try {
-    const updated = await updateAppBillingProfileSettings({
-      clientId: access.auth.app.id,
-      progressiveBilling,
-      invoiceThresholdUsdMicros,
-      applicationFeeBps,
-    });
+    if (billingMode !== undefined || endUserCap !== undefined) {
+      await upsertAppBillingConfig(access.auth.app.id, {
+        ...(billingMode !== undefined ? { billingMode } : {}),
+        ...(endUserCap !== undefined ? { endUserCap } : {}),
+      });
+    }
+
+    const updated =
+      progressiveBilling !== undefined ||
+      invoiceThresholdUsdMicros !== undefined ||
+      applicationFeeBps !== undefined
+        ? await updateAppBillingProfileSettings({
+            clientId: access.auth.app.id,
+            progressiveBilling,
+            invoiceThresholdUsdMicros,
+            applicationFeeBps,
+          })
+        : {};
     const status = await getStripeConnectStatus(access.auth.app.id);
     return NextResponse.json({
       clientId: access.auth.app.id,

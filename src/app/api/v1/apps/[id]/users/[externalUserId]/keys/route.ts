@@ -11,6 +11,11 @@ import {
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import {
+  AppActivationError,
+  runActivationGate,
+} from "@/lib/activation/app-activation";
+import { activationProblemResponse } from "@/lib/activation/problem";
+import {
   createAppUserApiKey,
   listAppUserApiKeys,
   revokeAppUserApiKey,
@@ -105,6 +110,20 @@ export async function POST(
   const appUser = await resolveAppUser(access.app.id, externalUserId);
   if (appUser?.status !== "active") {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  try {
+    await runActivationGate("provision", access.app.id, { externalUserId });
+  } catch (err) {
+    if (err instanceof AppActivationError) {
+      return activationProblemResponse({
+        reason: err.code,
+        billingMode: err.billingMode,
+        actionUrl: err.actionUrl,
+        detail: err.message,
+      });
+    }
+    throw err;
   }
 
   const body = await request.json().catch(() => ({}));
