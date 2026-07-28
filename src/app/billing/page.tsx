@@ -26,6 +26,7 @@ export default async function BillingPage() {
           cycle: { start: new Date().toISOString(), end: new Date().toISOString() },
           creditAllowance: null,
           subscriptions: [],
+          invoices: [],
           openMeterConfigured: false,
           fundingClientId: null,
         }}

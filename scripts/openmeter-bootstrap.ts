@@ -15,6 +15,7 @@ import {
   resolveKonnectMeterId,
   unwrapOpenMeterListResult,
 } from "../src/lib/openmeter/konnect-catalog";
+import { resolveKonnectStripeAppId } from "../src/lib/openmeter/konnect-billing-profiles";
 import { defaultStarterIncludedUsdMicros } from "../src/lib/starter-default-plan-display";
 
 const DEFAULT_LOCAL_OPENMETER_URL = "http://127.0.0.1:48888";
@@ -115,6 +116,14 @@ async function bootstrapKonnect(baseUrl: string, apiKey: string, featureKey: str
   console.log(
     "  - network_spend feature must stay meter-backed (no unit_cost / LLM pricing)",
   );
+  try {
+    await resolveKonnectStripeAppId();
+    console.log("[openmeter-bootstrap] Konnect Stripe app is ready");
+  } catch {
+    console.warn(
+      "[openmeter-bootstrap] Konnect Stripe app not ready — install Stripe in Konnect → Metering & Billing → Settings → Stripe",
+    );
+  }
 }
 
 async function ensureSelfHostedMeters(

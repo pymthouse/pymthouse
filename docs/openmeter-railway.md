@@ -162,6 +162,32 @@ Redeploy Vercel. Usage, balance, and allowances return **503** without `OPENMETE
 
 Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMeter directly.
 
+### Stripe billing (per developer app)
+
+Starter is a **real synced OpenMeter plan** on a **Stripe billing profile**. Included usage/credits let users start without a payment method. PymtHouse provisions a Stripe Customer (`cus_…`) via `STRIPE_SECRET_KEY` (same Stripe account as Konnect) and upserts Konnect customer billing app-data — no card required for Starter.
+
+Sandbox billing profiles are **not** used at runtime; migrate legacy Sandbox-linked customers with the cutover scripts (separate PR).
+
+PymtHouse **Payments** tab → **Connect Stripe** (optional; Starter auto-ensures the app Stripe profile) stores a per-app billing profile in `app_billing_config`.
+
+**Konnect (production):**
+
+1. Install Stripe once in [Konnect → Metering & Billing → Settings → Stripe](https://developer.konghq.com/metering-and-billing/stripe-integration/) (API key + billing profile wizard).
+2. Set `OPENMETER_URL`, `OPENMETER_API_KEY`, and `STRIPE_SECRET_KEY` (same Stripe account) on Vercel.
+3. Bootstrap should log `Konnect Stripe app is ready` (not a missing-app warning).
+4. Starter provision auto-creates the per-app Stripe billing profile when missing. Optional: **Settings → Payments → Connect Stripe** or mid-cycle invoicing settings.
+5. Optional: `OPENMETER_STRIPE_APP_ID` when multiple Stripe apps exist in the org.
+
+**Self-hosted (Railway/OSS):**
+
+1. Ensure `OPENMETER_APPS_BASE_URL` is set on Railway OpenMeter (see §3) and redeploy **openmeter**.
+2. Bootstrap should log `Stripe marketplace OAuth is available` (not a 501 warning).
+3. Set `STRIPE_SECRET_KEY` for customer provisioning. Install Stripe via Connect (OAuth or `{ "stripeSecretKey": "sk_…" }`) so a Stripe app exists in OpenMeter.
+4. After the Stripe app exists, Starter provision auto-ensures the per-app billing profile; invoices/checkout use that profile.
+5. Publish paid plans (OpenMeter plan sync) and use checkout via `POST …/billing/checkout` for end users (collects payment method).
+
+Stripe redirect URI for each app: `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/callback`.
+
 ## 8. Signer (`pymthouse` Railway service)
 
 The **`pymthouse`** service runs the signer DMZ ([`deploy/pymthouse/railway.json`](../deploy/pymthouse/railway.json) → `docker/signer-dmz/Dockerfile`). Point the **Vercel** app at its public domain:
