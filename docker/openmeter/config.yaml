@@ -37,6 +37,17 @@ telemetry:
   log:
     level: info
 
+# Required for Stripe marketplace OAuth, billing profiles, and invoicing apps.
+billing:
+  advancementStrategy: foreground
+
+credits:
+  enabled: true
+
+apps:
+  # Local compose publishes API on host port 48888 (see docker-compose.openmeter.yml).
+  baseURL: http://127.0.0.1:48888
+
 meters:
   - slug: network_fee_usd_micros
     description: Livepeer signed-ticket network fee (USD micros)
