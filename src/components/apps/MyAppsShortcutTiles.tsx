@@ -5,24 +5,31 @@ import { getDocsBaseUrl } from "@/lib/docs-base-url";
 
 /**
  * API Keys + Usage + Documentation shortcuts on My Apps.
+ * Platform admins omit API Keys (they manage keys per app, not personal keys).
  */
-export default function MyAppsShortcutTiles() {
+export default function MyAppsShortcutTiles({
+  showApiKeys = true,
+}: Readonly<{
+  showApiKeys?: boolean;
+}>) {
   return (
     <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
-        <div>
-          <h3 className="font-semibold text-zinc-100">API Keys</h3>
-          <p className="mt-1 text-xs text-zinc-500">
-            Create and revoke tokens for personal network access and your apps.
-          </p>
+      {showApiKeys ? (
+        <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
+          <div>
+            <h3 className="font-semibold text-zinc-100">API Keys</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              Create and revoke tokens for personal network access and your apps.
+            </p>
+          </div>
+          <Link
+            href="/keys"
+            className="self-start text-sm font-medium text-emerald-400 transition-colors hover:text-emerald-300"
+          >
+            Manage keys →
+          </Link>
         </div>
-        <Link
-          href="/keys"
-          className="self-start text-sm font-medium text-emerald-400 transition-colors hover:text-emerald-300"
-        >
-          Manage keys →
-        </Link>
-      </div>
+      ) : null}
       <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
         <div>
           <h3 className="font-semibold text-zinc-100">Usage</h3>
