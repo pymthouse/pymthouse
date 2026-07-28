@@ -21,6 +21,11 @@ import {
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "./subscription-read";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
+import {
+  connectPaymentsOnlyEnabled,
+  createMerchantConnectCheckoutForUser,
+  isMerchantConnectPaymentsReady,
+} from "@/lib/stripe/merchant-connect";
 
 function parsePlanPriceAmount(raw: string | null | undefined): number {
   const n = Number.parseFloat(String(raw ?? "0").trim() || "0");
@@ -185,18 +190,35 @@ export async function createEndUserCheckout(input: {
   let checkoutUrl: string;
   let stripeCheckoutSessionId: string | null = null;
 
-  const checkout = await client.apps.stripe.createCheckoutSession({
-    customer: { id: customer.id },
-    options: {
-      successURL: success,
-      cancelURL: cancel,
-    },
-  });
-  if (!checkout?.url) {
-    throw new Error("Stripe checkout session URL unavailable");
+  if (isMerchantConnectPaymentsReady(billingConfig)) {
+    const connectCheckout = await createMerchantConnectCheckoutForUser({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      successUrl: success,
+      cancelUrl: cancel,
+      openmeterCustomerId: customer.id,
+      openmeterCustomerKey: customer.key,
+    });
+    checkoutUrl = connectCheckout.checkoutUrl;
+    stripeCheckoutSessionId = connectCheckout.sessionId;
+  } else if (connectPaymentsOnlyEnabled(billingConfig)) {
+    throw new Error(
+      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
+    );
+  } else {
+    const checkout = await client.apps.stripe.createCheckoutSession({
+      customer: { id: customer.id },
+      options: {
+        successURL: success,
+        cancelURL: cancel,
+      },
+    });
+    if (!checkout?.url) {
+      throw new Error("Stripe checkout session URL unavailable");
+    }
+    checkoutUrl = checkout.url;
+    stripeCheckoutSessionId = checkout.sessionId ?? null;
   }
-  checkoutUrl = checkout.url;
-  stripeCheckoutSessionId = checkout.sessionId ?? null;
 
   await upsertNeonSubscriptionCache({
     clientId: input.clientId,
@@ -318,20 +340,38 @@ export async function changeAppUserSubscriptionPlan(input: {
       billingConfig?.checkoutCancelUrl ||
       `${origin}/apps/${input.clientId}/settings?tab=payments`;
 
-    const paymentMethodId = await getKonnectDefaultPaymentMethodId(customer.id);
-    if (!paymentMethodId) {
-      const checkout = await client.apps.stripe.createCheckoutSession({
-        customer: { id: customer.id },
-        options: {
-          successURL: success,
-          cancelURL: cancel,
-        },
+    if (isMerchantConnectPaymentsReady(billingConfig)) {
+      const connectCheckout = await createMerchantConnectCheckoutForUser({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+        successUrl: success,
+        cancelUrl: cancel,
+        openmeterCustomerId: customer.id,
+        openmeterCustomerKey: customer.key,
       });
-      if (!checkout?.url) {
-        throw new Error("Stripe checkout session URL unavailable");
+      checkoutUrl = connectCheckout.checkoutUrl;
+      stripeCheckoutSessionId = connectCheckout.sessionId;
+    } else {
+      const paymentMethodId = await getKonnectDefaultPaymentMethodId(customer.id);
+      if (!paymentMethodId) {
+        if (connectPaymentsOnlyEnabled(billingConfig)) {
+          throw new Error(
+            "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
+          );
+        }
+        const checkout = await client.apps.stripe.createCheckoutSession({
+          customer: { id: customer.id },
+          options: {
+            successURL: success,
+            cancelURL: cancel,
+          },
+        });
+        if (!checkout?.url) {
+          throw new Error("Stripe checkout session URL unavailable");
+        }
+        checkoutUrl = checkout.url;
+        stripeCheckoutSessionId = checkout.sessionId ?? null;
       }
-      checkoutUrl = checkout.url;
-      stripeCheckoutSessionId = checkout.sessionId ?? null;
     }
   }
 
