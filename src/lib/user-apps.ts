@@ -116,12 +116,12 @@ export async function listUserAccessibleApps(
   const ownedFilter = includePlatformDefault
     ? eq(developerApps.ownerId, userId)
     : and(eq(developerApps.ownerId, userId), notPlatformDefaultApp());
-  const memberFilter =
-    memberIds.length === 0
-      ? null
-      : includePlatformDefault
-        ? inArray(developerApps.id, memberIds)
-        : and(inArray(developerApps.id, memberIds), notPlatformDefaultApp());
+  let memberFilter = null;
+  if (memberIds.length > 0) {
+    memberFilter = includePlatformDefault
+      ? inArray(developerApps.id, memberIds)
+      : and(inArray(developerApps.id, memberIds), notPlatformDefaultApp());
+  }
 
   const ownedApps = await db
     .select({
