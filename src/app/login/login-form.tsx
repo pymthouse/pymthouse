@@ -186,7 +186,7 @@ function LoginStartCtaPanel({
           New here?
         </p>
         <p className="mt-2 text-xl font-semibold text-zinc-50 sm:text-2xl">
-          Explore or Build
+          Explore and Build
         </p>
         <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-300 sm:text-base">
           Explore the Livepeer network and build your own AI platform!
