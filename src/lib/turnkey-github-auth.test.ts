@@ -48,6 +48,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function testClientSecretValue(): string {
+  return `test-${Math.random().toString(36).slice(2)}`;
+}
+
 describe("isGithubTurnkeyLoginConfigured", () => {
   const snapshot = snapshotEnv();
 
@@ -129,7 +133,8 @@ describe("exchangeGithubOAuthCode", () => {
   it("exchanges a code for an access token", async () => {
     process.env.NEXTAUTH_URL = "https://app.example.com";
     process.env.GITHUB_CLIENT_ID = "cid";
-    process.env.GITHUB_CLIENT_SECRET = "fixture-client-secret";
+    const clientSecret = testClientSecretValue();
+    process.env.GITHUB_CLIENT_SECRET = clientSecret;
     originalFetch = globalThis.fetch;
     let posted: unknown;
     globalThis.fetch = async (_input, init) => {
@@ -141,7 +146,7 @@ describe("exchangeGithubOAuthCode", () => {
     assert.equal(result.accessToken, "gho_token");
     assert.deepEqual(posted, {
       client_id: "cid",
-      client_secret: "fixture-client-secret",
+      client_secret: clientSecret,
       code: "code-abc",
       redirect_uri: "https://app.example.com/api/auth/github/callback",
     });
@@ -160,7 +165,7 @@ describe("exchangeGithubOAuthCode", () => {
   it("throws on HTTP failure and missing access_token", async () => {
     process.env.NEXTAUTH_URL = "https://app.example.com";
     process.env.GITHUB_CLIENT_ID = "cid";
-    process.env.GITHUB_CLIENT_SECRET = "fixture-client-secret";
+    process.env.GITHUB_CLIENT_SECRET = testClientSecretValue();
     originalFetch = globalThis.fetch;
 
     globalThis.fetch = async () => jsonResponse({}, 503);
@@ -248,14 +253,21 @@ describe("fetchGithubUserProfile", () => {
 
 describe("loginTurnkeyWithGithub", () => {
   const snapshot = snapshotEnv();
+  const publicKey =
+    "0394e549c71fa99dd5cf752fba623090be314949b74e4cdf7ca72031dd638e281a";
+  const nonce = createHash("sha256").update(publicKey, "utf8").digest("hex");
+  const profile = {
+    id: 42,
+    login: "octocat",
+    name: "The Octocat",
+    email: "octo@example.com",
+  } as const;
 
   afterEach(() => {
     restoreEnv(snapshot);
   });
 
   it("rejects when nonce does not match the session public key", async () => {
-    const publicKey =
-      "0394e549c71fa99dd5cf752fba623090be314949b74e4cdf7ca72031dd638e281a";
     await assert.rejects(
       () =>
         loginTurnkeyWithGithub({
@@ -275,9 +287,6 @@ describe("loginTurnkeyWithGithub", () => {
   it("rejects when parent organization id is missing", async () => {
     delete process.env.TURNKEY_ORG_ID;
     delete process.env.NEXT_PUBLIC_ORGANIZATION_ID;
-    const publicKey =
-      "0394e549c71fa99dd5cf752fba623090be314949b74e4cdf7ca72031dd638e281a";
-    const nonce = createHash("sha256").update(publicKey, "utf8").digest("hex");
     await assert.rejects(
       () =>
         loginTurnkeyWithGithub({
@@ -291,6 +300,194 @@ describe("loginTurnkeyWithGithub", () => {
           },
         }),
       /Missing TURNKEY_ORG_ID/,
+    );
+  });
+
+  it("reuses an existing sub-organization and returns trimmed session token", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    let mintCalls = 0;
+    const getSubOrgIdsCalls: Array<{
+      organizationId: string;
+      filterType: "OIDC_TOKEN";
+      filterValue: string;
+    }> = [];
+    const oauthLoginCalls: Array<{
+      organizationId: string;
+      oidcToken: string;
+      publicKey: string;
+    }> = [];
+
+    const result = await loginTurnkeyWithGithub(
+      {
+        publicKey,
+        nonce,
+        profile: { ...profile },
+      },
+      {
+        mintOidcToken: async () => {
+          mintCalls += 1;
+          return `oidc-${mintCalls}`;
+        },
+        getClient: () => ({
+          getSubOrgIds: async (input) => {
+            getSubOrgIdsCalls.push(input);
+            return { organizationIds: ["sub_existing"] };
+          },
+          createSubOrganization: async () => ({ subOrganizationId: "unused" }),
+          oauthLogin: async (input) => {
+            oauthLoginCalls.push(input);
+            return { session: "  session.jwt  " };
+          },
+        }),
+        nowMs: () => 1700000000000,
+      },
+    );
+
+    assert.equal(result.subOrganizationId, "sub_existing");
+    assert.equal(result.sessionToken, "session.jwt");
+    assert.equal(mintCalls, 2);
+    assert.deepEqual(getSubOrgIdsCalls, [
+      {
+        organizationId: "org_parent",
+        filterType: "OIDC_TOKEN",
+        filterValue: "oidc-1",
+      },
+    ]);
+    assert.deepEqual(oauthLoginCalls, [
+      {
+        organizationId: "sub_existing",
+        oidcToken: "oidc-2",
+        publicKey,
+      },
+    ]);
+  });
+
+  it("creates a sub-organization when no existing one is found", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    const createCalls: Array<{
+      organizationId: string;
+      subOrganizationName: string;
+      rootUsers: Array<{ userName: string; userEmail?: string }>;
+    }> = [];
+
+    const result = await loginTurnkeyWithGithub(
+      {
+        publicKey,
+        nonce,
+        profile: { ...profile },
+      },
+      {
+        mintOidcToken: async () => "oidc-token",
+        getClient: () => ({
+          getSubOrgIds: async () => ({ organizationIds: [] }),
+          createSubOrganization: async (input) => {
+            createCalls.push({
+              organizationId: input.organizationId,
+              subOrganizationName: input.subOrganizationName,
+              rootUsers: input.rootUsers.map((u) => ({
+                userName: u.userName,
+                userEmail: u.userEmail,
+              })),
+            });
+            return { subOrganizationId: "sub_new" };
+          },
+          oauthLogin: async () => ({ session: "session-new" }),
+        }),
+        nowMs: () => 1700000000000,
+      },
+    );
+
+    assert.equal(result.subOrganizationId, "sub_new");
+    assert.deepEqual(createCalls, [
+      {
+        organizationId: "org_parent",
+        subOrganizationName: "github-42-1700000000000",
+        rootUsers: [{ userName: "octo@example.com", userEmail: "octo@example.com" }],
+      },
+    ]);
+  });
+
+  it("falls back to GitHub id when login/email are unavailable", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    let createdUserName = "";
+    await loginTurnkeyWithGithub(
+      {
+        publicKey,
+        nonce,
+        profile: {
+          id: 77,
+          login: "",
+          name: null,
+          email: null,
+        },
+      },
+      {
+        mintOidcToken: async () => "oidc-token",
+        getClient: () => ({
+          getSubOrgIds: async () => ({ organizationIds: [] }),
+          createSubOrganization: async (input) => {
+            createdUserName = input.rootUsers[0]?.userName ?? "";
+            return { subOrganizationId: "sub_new" };
+          },
+          oauthLogin: async () => ({ session: "ok" }),
+        }),
+        nowMs: () => 1700000000000,
+      },
+    );
+
+    assert.equal(createdUserName, "github-77");
+  });
+
+  it("throws when sub-organization cannot be resolved", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    await assert.rejects(
+      () =>
+        loginTurnkeyWithGithub(
+          {
+            publicKey,
+            nonce,
+            profile: { ...profile },
+          },
+          {
+            mintOidcToken: async () => "oidc-token",
+            getClient: () => ({
+              getSubOrgIds: async () => ({ organizationIds: [] }),
+              createSubOrganization: async () => ({ subOrganizationId: undefined }),
+              oauthLogin: async () => ({ session: "never" }),
+            }),
+            nowMs: () => 1700000000000,
+          },
+        ),
+      /Failed to resolve Turnkey sub-organization/,
+    );
+  });
+
+  it("throws when Turnkey oauthLogin returns no session", async () => {
+    process.env.TURNKEY_ORG_ID = "org_parent";
+
+    await assert.rejects(
+      () =>
+        loginTurnkeyWithGithub(
+          {
+            publicKey,
+            nonce,
+            profile: { ...profile },
+          },
+          {
+            mintOidcToken: async () => "oidc-token",
+            getClient: () => ({
+              getSubOrgIds: async () => ({ organizationIds: ["sub_existing"] }),
+              createSubOrganization: async () => ({ subOrganizationId: "unused" }),
+              oauthLogin: async () => ({ session: "   " }),
+            }),
+            nowMs: () => 1700000000000,
+          },
+        ),
+      /Turnkey oauthLogin returned no session/,
     );
   });
 });

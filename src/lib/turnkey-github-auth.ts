@@ -18,6 +18,56 @@ export type GithubUserProfile = {
   email: string | null;
 };
 
+type TurnkeyGithubServerClient = {
+  getSubOrgIds(input: {
+    organizationId: string;
+    filterType: "OIDC_TOKEN";
+    filterValue: string;
+  }): Promise<{ organizationIds?: string[] }>;
+  createSubOrganization(input: {
+    organizationId: string;
+    subOrganizationName: string;
+    rootQuorumThreshold: number;
+    rootUsers: Array<{
+      userName: string;
+      userEmail?: string;
+      apiKeys: unknown[];
+      authenticators: unknown[];
+      oauthProviders: Array<{
+        providerName: string;
+        oidcToken: string;
+      }>;
+    }>;
+    wallet: {
+      walletName: string;
+      accounts: unknown[];
+    };
+  }): Promise<{ subOrganizationId?: string }>;
+  oauthLogin(input: {
+    organizationId: string;
+    oidcToken: string;
+    publicKey: string;
+  }): Promise<{ session?: string | null }>;
+};
+
+type LoginTurnkeyWithGithubDeps = {
+  mintOidcToken(input: {
+    githubUserId: string | number;
+    nonce: string;
+    email?: string | null;
+    name?: string | null;
+    login?: string | null;
+  }): Promise<string>;
+  getClient(): TurnkeyGithubServerClient;
+  nowMs(): number;
+};
+
+const defaultLoginTurnkeyWithGithubDeps: LoginTurnkeyWithGithubDeps = {
+  mintOidcToken: mintTurnkeyGithubOidcToken,
+  getClient: () => getTurnkeyServerApiClient() as TurnkeyGithubServerClient,
+  nowMs: () => Date.now(),
+};
+
 function trimEnv(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed || undefined;
@@ -183,7 +233,7 @@ export async function loginTurnkeyWithGithub(input: {
   publicKey: string;
   nonce: string;
   profile: GithubUserProfile;
-}): Promise<{ sessionToken: string; subOrganizationId: string }> {
+}, deps: LoginTurnkeyWithGithubDeps = defaultLoginTurnkeyWithGithubDeps): Promise<{ sessionToken: string; subOrganizationId: string }> {
   const expectedNonce = turnkeyOauthNonceFromPublicKey(input.publicKey);
   if (expectedNonce !== input.nonce) {
     throw new Error("OAuth nonce does not match session public key");
@@ -194,7 +244,7 @@ export async function loginTurnkeyWithGithub(input: {
     throw new Error("Missing TURNKEY_ORG_ID / NEXT_PUBLIC_ORGANIZATION_ID");
   }
 
-  const oidcToken = await mintTurnkeyGithubOidcToken({
+  const oidcToken = await deps.mintOidcToken({
     githubUserId: input.profile.id,
     nonce: input.nonce,
     email: input.profile.email,
@@ -202,7 +252,7 @@ export async function loginTurnkeyWithGithub(input: {
     login: input.profile.login,
   });
 
-  const client = getTurnkeyServerApiClient();
+  const client = deps.getClient();
 
   const existing = await client.getSubOrgIds({
     organizationId,
@@ -218,7 +268,7 @@ export async function loginTurnkeyWithGithub(input: {
       `github-${input.profile.id}`;
     const created = await client.createSubOrganization({
       organizationId,
-      subOrganizationName: `github-${input.profile.id}-${Date.now()}`,
+      subOrganizationName: `github-${input.profile.id}-${deps.nowMs()}`,
       rootQuorumThreshold: 1,
       rootUsers: [
         {
@@ -252,7 +302,7 @@ export async function loginTurnkeyWithGithub(input: {
   }
 
   // Fresh token for oauthLogin (registration token may already be near expiry).
-  const loginOidcToken = await mintTurnkeyGithubOidcToken({
+  const loginOidcToken = await deps.mintOidcToken({
     githubUserId: input.profile.id,
     nonce: input.nonce,
     email: input.profile.email,

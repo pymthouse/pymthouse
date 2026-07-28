@@ -16,8 +16,6 @@ import {
 } from "@/lib/turnkey-nextauth-bridge";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
-const DEFAULT_TERMS_URL = "https://www.turnkey.com/legal/terms";
-const DEFAULT_PRIVACY_URL = "https://www.turnkey.com/legal/privacy";
 
 export function TurnkeyEmbeddedAuth({
   primaryColor = "#10b981",
@@ -81,6 +79,7 @@ function TurnkeyEmbeddedAuthInner({
   const [retryNonce, setRetryNonce] = useState(0);
   const [failed, setFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const authSectionRef = useRef<HTMLElement | null>(null);
   // True once Turnkey has been Unauthenticated on this page — a later
   // Authenticated state is a fresh login we should bridge to NextAuth.
   const sawUnauthenticated = useRef(false);
@@ -93,16 +92,66 @@ function TurnkeyEmbeddedAuthInner({
     logoUrl === undefined
       ? DEFAULT_AUTH_LOGO
       : logoUrl?.trim() || undefined;
-  const termsUrl =
-    process.env.NEXT_PUBLIC_TERMS_URL?.trim() || DEFAULT_TERMS_URL;
-  const privacyUrl =
-    process.env.NEXT_PUBLIC_PRIVACY_URL?.trim() || DEFAULT_PRIVACY_URL;
 
   useEffect(() => {
     if (authState === AuthState.Unauthenticated) {
       sawUnauthenticated.current = true;
     }
   }, [authState]);
+
+  useEffect(() => {
+    const applyGrouping = () => {
+      const section = authSectionRef.current;
+      const rootElement = section?.querySelector(":scope > div > div.w-full") as
+        | HTMLElement
+        | null;
+      if (!rootElement) return;
+
+      const googleButton = rootElement.querySelector(
+        "button[data-testid='oauth-google']",
+      ) as HTMLButtonElement | null;
+      const walletButton = rootElement.querySelector(
+        "button[data-testid='wallet-auth-button']",
+      ) as HTMLButtonElement | null;
+      if (!googleButton || !walletButton) return;
+
+      const googleGroup = googleButton.closest("div.w-full") as HTMLElement | null;
+      if (googleGroup) googleGroup.style.display = "none";
+      const walletGroup = walletButton.closest("div.w-full") as HTMLElement | null;
+      if (walletGroup) walletGroup.style.display = "none";
+
+      rootElement
+        .querySelectorAll("div.flex.flex-row.w-full.items-center.justify-center.my-4")
+        .forEach((divider) => {
+          (divider as HTMLElement).style.display = "none";
+        });
+
+      rootElement.querySelectorAll("div.text-xs.text-center").forEach((block) => {
+        if (!block.textContent?.includes("By continuing, you agree to our")) return;
+        (block as HTMLElement).style.display = "none";
+      });
+    };
+
+    applyGrouping();
+    const observer = new MutationObserver(() => {
+      applyGrouping();
+    });
+    const section = authSectionRef.current;
+    if (section) {
+      observer.observe(section, {
+        childList: true,
+        subtree: true,
+      });
+    }
+    return () => observer.disconnect();
+  }, [clientState, authState, retryNonce]);
+
+  const triggerEmbeddedAuthAction = (testId: string) => {
+    const target = authSectionRef.current?.querySelector(
+      `button[data-testid='${testId}']`,
+    ) as HTMLButtonElement | null;
+    target?.click();
+  };
 
   // On first Ready tick: clear a leftover Turnkey session so the form is usable.
   // Must not run again after a fresh OTP/passkey login or it races the bridge.
@@ -213,7 +262,7 @@ function TurnkeyEmbeddedAuthInner({
       */}
       <div
         className={
-          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden" +
+          "dark tk-embedded-auth w-full overflow-hidden rounded-lg [&_.w-96]:!w-full [&_>div_>div:last-child]:hidden [&_button[data-testid='oauth-google']]:hidden [&_button[data-testid='wallet-auth-button']]:hidden [&_div.flex.flex-row.w-full.items-center.justify-center.my-4]:hidden [&_div.text-icon-text-light\\/70.dark\\:text-icon-text-dark\\/70.text-xs.mt-4.text-center]:hidden" +
           // Kit defaults logo to max-w-32/max-h-16; force a readable header size.
           // Also give no-logo spacer less empty top padding (kit uses mt-12).
           (authLogo
@@ -226,39 +275,58 @@ function TurnkeyEmbeddedAuthInner({
           } as CSSProperties
         }
       >
-        <AuthComponent
-          title={title}
-          {...(authLogo
-            ? {
-                logo: authLogo,
-                logoClassName:
-                  "!max-w-[min(100%,14rem)] !max-h-12 !h-12 !w-auto !min-h-12",
-              }
-            : {})}
-        />
-        <GitHubTurnkeyLoginButton primaryColor={primaryColor} />
+        <section aria-label="Sign in with" className="mb-4 space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+            Sign in with
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              triggerEmbeddedAuthAction("oauth-google");
+            }}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-900"
+          >
+            Continue with Google
+          </button>
+          <GitHubTurnkeyLoginButton
+            primaryColor={primaryColor}
+            sectionLabel={null}
+            containerClassName="space-y-2"
+          />
+        </section>
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+          Use your email or passkey
+        </p>
+        <section
+          ref={authSectionRef}
+          aria-label="Email, passkey, and wallet sign-in"
+        >
+          <AuthComponent
+            title={title}
+            {...(authLogo
+              ? {
+                  logo: authLogo,
+                  logoClassName:
+                    "!max-w-[min(100%,14rem)] !max-h-12 !h-12 !w-auto !min-h-12",
+                }
+              : {})}
+          />
+        </section>
+        <section aria-label="Continue with wallet" className="mt-4 space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+            Continue with wallet
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              triggerEmbeddedAuthAction("wallet-auth-button");
+            }}
+            className="flex w-full items-center justify-center rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-100 transition-colors hover:border-zinc-500 hover:bg-zinc-900"
+          >
+            Continue with wallet
+          </button>
+        </section>
       </div>
-      <p className="text-xs text-zinc-500 mt-4 text-center leading-relaxed">
-        By continuing, you agree to our{" "}
-        <a
-          href={termsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-        >
-          Terms of Service
-        </a>
-        {" & "}
-        <a
-          href={privacyUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-        >
-          Privacy Policy
-        </a>
-        {"."}
-      </p>
       {error && (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">

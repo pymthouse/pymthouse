@@ -51,10 +51,6 @@ export async function GET(request: NextRequest) {
     return redirectToLogin("InvalidOauthState");
   }
 
-  if (request.nextUrl.searchParams.get("error")) {
-    return redirectToLogin("AccessDenied");
-  }
-
   const code = request.nextUrl.searchParams.get("code")?.trim();
   if (!code) {
     return redirectToLogin("InvalidGithubCallback");

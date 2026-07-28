@@ -24,8 +24,12 @@ function GitHubMark({ className }: Readonly<{ className?: string }>) {
  */
 export function GitHubTurnkeyLoginButton({
   primaryColor = "#10b981",
+  sectionLabel = "Wallet and social",
+  containerClassName = "mt-4 space-y-2",
 }: Readonly<{
   primaryColor?: string;
+  sectionLabel?: string | null;
+  containerClassName?: string;
 }>) {
   const { createApiKeyPair, clientState } = useTurnkey();
   const searchParams = useSearchParams();
@@ -74,12 +78,12 @@ export function GitHubTurnkeyLoginButton({
   const disabled = busy || clientState === undefined;
 
   return (
-    <div className="mt-4 space-y-2">
-      <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-zinc-600">
-        <span className="h-px flex-1 bg-zinc-800" />
-        or
-        <span className="h-px flex-1 bg-zinc-800" />
-      </div>
+    <div className={containerClassName}>
+      {sectionLabel ? (
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
+          {sectionLabel}
+        </p>
+      ) : null}
       <button
         type="button"
         onClick={() => {
