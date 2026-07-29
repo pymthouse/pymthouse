@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  getOwnerDefaultPaymentMethod,
-  resolvePreferredCard,
-  summarizeStripePaymentMethod,
+  buildOwnerPaymentMethodList,
+  collapseDuplicateLinkMethods,
+  listOwnerPaymentMethods,
+  toOwnerPaymentMethodItem,
 } from "./owner-payment-method";
 
 type StripeRoute = Record<string, unknown>;
@@ -37,125 +38,180 @@ function withStripeKey(run: () => Promise<void>): Promise<void> {
 }
 
 const CARD = {
-  id: "pm_default",
+  id: "pm_card",
+  type: "card",
   card: { brand: "visa", last4: "4242", exp_month: 8, exp_year: 2028 },
 };
 
-test("summarizeStripePaymentMethod maps card fields", () => {
-  assert.deepEqual(
-    summarizeStripePaymentMethod({
-      id: "pm_1",
-      card: {
-        brand: "visa",
-        last4: "4242",
-        exp_month: 8,
-        exp_year: 2028,
-      },
-    }),
+/** Checkout attaches these with no card object; the funding card lives in Link. */
+const LINK = { id: "pm_link", type: "link", link: { email: "o@example.test" } };
+
+const BANK = {
+  id: "pm_bank",
+  type: "us_bank_account",
+  us_bank_account: { bank_name: "Chase", last4: "6789" },
+};
+
+test("toOwnerPaymentMethodItem maps card fields", () => {
+  assert.deepEqual(toOwnerPaymentMethodItem(CARD, "pm_card"), {
+    id: "pm_card",
+    type: "card",
+    brand: "visa",
+    last4: "4242",
+    expMonth: 8,
+    expYear: 2028,
+    isDefault: true,
+  });
+});
+
+test("toOwnerPaymentMethodItem labels Link as brand-only (no last4 from Stripe)", () => {
+  assert.deepEqual(toOwnerPaymentMethodItem(LINK, null), {
+    id: "pm_link",
+    type: "link",
+    brand: "link",
+    last4: null,
+    expMonth: null,
+    expYear: null,
+    isDefault: false,
+  });
+});
+
+test("toOwnerPaymentMethodItem labels a bank account with bank name and last4", () => {
+  assert.deepEqual(toOwnerPaymentMethodItem(BANK, null), {
+    id: "pm_bank",
+    type: "us_bank_account",
+    brand: "Chase",
+    last4: "6789",
+    expMonth: null,
+    expYear: null,
+    isDefault: false,
+  });
+});
+
+test("toOwnerPaymentMethodItem returns null without id", () => {
+  assert.equal(toOwnerPaymentMethodItem({ card: { last4: "4242" } }, null), null);
+});
+
+test("collapseDuplicateLinkMethods keeps the default Link and orphans the rest", () => {
+  const { kept, orphanLinkIds } = collapseDuplicateLinkMethods([
     {
-      id: "pm_1",
+      id: "pm_link_a",
+      type: "link",
+      brand: "link",
+      last4: null,
+      expMonth: null,
+      expYear: null,
+      isDefault: false,
+    },
+    {
+      id: "pm_link_b",
+      type: "link",
+      brand: "link",
+      last4: null,
+      expMonth: null,
+      expYear: null,
+      isDefault: true,
+    },
+    {
+      id: "pm_card",
+      type: "card",
       brand: "visa",
       last4: "4242",
       expMonth: 8,
       expYear: 2028,
+      isDefault: false,
     },
+  ]);
+  assert.deepEqual(
+    kept.map((item) => item.id),
+    ["pm_link_b", "pm_card"],
   );
+  assert.deepEqual(orphanLinkIds, ["pm_link_a"]);
 });
 
-test("summarizeStripePaymentMethod returns null without id", () => {
-  assert.equal(summarizeStripePaymentMethod({ card: { last4: "4242" } }), null);
-});
-
-test("resolvePreferredCard uses the expanded customer default in one call", async () => {
+test("buildOwnerPaymentMethodList collapses duplicate Links to one", async () => {
   await withStripeKey(async () => {
+    const duplicateLink = { ...LINK, id: "pm_link_2" };
     const stripe = fakeStripe({
-      "/v1/customers/cus_1?": {
-        invoice_settings: { default_payment_method: CARD },
-      },
+      "/payment_methods?limit=100": { data: [LINK, duplicateLink, CARD] },
+      "/v1/customers/cus_1": { invoice_settings: {} },
     });
-    const card = await resolvePreferredCard({
-      stripeCustomerId: "cus_1",
-      konnectDefaultPaymentMethodId: "pm_default",
-      deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
-    });
-    assert.equal(card?.card?.last4, "4242");
-    assert.equal(stripe.calls.length, 1);
-  });
-});
-
-test("resolvePreferredCard retrieves the Konnect default when Stripe has none", async () => {
-  await withStripeKey(async () => {
-    const stripe = fakeStripe({
-      "/v1/customers/cus_1?": { invoice_settings: {} },
-      "/v1/payment_methods/pm_konnect": { ...CARD, id: "pm_konnect" },
-    });
-    const card = await resolvePreferredCard({
-      stripeCustomerId: "cus_1",
-      konnectDefaultPaymentMethodId: "pm_konnect",
-      deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
-    });
-    assert.equal(card?.id, "pm_konnect");
-  });
-});
-
-test("resolvePreferredCard falls back to the card list when no default is on file", async () => {
-  await withStripeKey(async () => {
-    const stripe = fakeStripe({
-      "/v1/customers/cus_1?": { invoice_settings: {} },
-      "/payment_methods?type=card": {
-        data: [{ id: "pm_no_card" }, { ...CARD, id: "pm_listed" }],
-      },
-    });
-    const card = await resolvePreferredCard({
+    const { items, orphanLinkIds } = await buildOwnerPaymentMethodList({
       stripeCustomerId: "cus_1",
       konnectDefaultPaymentMethodId: null,
       deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
     });
-    assert.equal(card?.id, "pm_listed");
+    assert.deepEqual(
+      items.map((item) => item.id),
+      ["pm_link", "pm_card"],
+    );
+    assert.deepEqual(orphanLinkIds, ["pm_link_2"]);
   });
 });
 
-// The regression: the card list was preferred over the Konnect default, so an
-// empty list rendered the "no payment method" state for an owner with a card.
-test("resolvePreferredCard prefers the Konnect default over an empty list", async () => {
+test("buildOwnerPaymentMethodList flags Stripe's invoice default", async () => {
   await withStripeKey(async () => {
     const stripe = fakeStripe({
-      "/v1/customers/cus_1?": { invoice_settings: {} },
-      "/v1/payment_methods/pm_konnect": { ...CARD, id: "pm_konnect" },
-      "/payment_methods?type=card": { data: [] },
+      "/payment_methods?limit=100": { data: [LINK, CARD] },
+      "/v1/customers/cus_1": {
+        invoice_settings: { default_payment_method: "pm_card" },
+      },
     });
-    const card = await resolvePreferredCard({
+    const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: "cus_1",
-      konnectDefaultPaymentMethodId: "pm_konnect",
+      konnectDefaultPaymentMethodId: "pm_link",
       deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
     });
-    assert.equal(card?.id, "pm_konnect");
-    assert.equal(card?.card?.last4, "4242");
+    assert.deepEqual(
+      items.filter((item) => item.isDefault).map((item) => item.id),
+      ["pm_card"],
+    );
+    // Default leads even when Stripe returned Link first.
+    assert.equal(items[0]?.id, "pm_card");
   });
 });
 
-test("resolvePreferredCard returns null when Stripe knows no card", async () => {
+test("buildOwnerPaymentMethodList falls back to the Konnect default", async () => {
   await withStripeKey(async () => {
     const stripe = fakeStripe({
-      "/v1/customers/cus_1?": { invoice_settings: {} },
-      "/payment_methods?type=card": { data: [] },
+      "/payment_methods?limit=100": { data: [LINK, CARD] },
+      "/v1/customers/cus_1": { invoice_settings: {} },
     });
-    const card = await resolvePreferredCard({
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: "cus_1",
+      konnectDefaultPaymentMethodId: "pm_link",
+      deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
+    });
+    assert.deepEqual(
+      items.filter((item) => item.isDefault).map((item) => item.id),
+      ["pm_link"],
+    );
+  });
+});
+
+test("buildOwnerPaymentMethodList returns [] when nothing is attached", async () => {
+  await withStripeKey(async () => {
+    const stripe = fakeStripe({
+      "/payment_methods?limit=100": { data: [] },
+      "/v1/customers/cus_1": { invoice_settings: {} },
+    });
+    const { items, orphanLinkIds } = await buildOwnerPaymentMethodList({
       stripeCustomerId: "cus_1",
       konnectDefaultPaymentMethodId: null,
       deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
     });
-    assert.equal(card, null);
+    assert.deepEqual(items, []);
+    assert.deepEqual(orphanLinkIds, []);
   });
 });
 
-test("getOwnerDefaultPaymentMethod returns null without Stripe key", async () => {
+test("listOwnerPaymentMethods returns [] without Stripe key", async () => {
   const previousSecret = process.env.STRIPE_SECRET_KEY;
   const previousApi = process.env.STRIPE_API_KEY;
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.STRIPE_API_KEY;
   try {
-    assert.equal(await getOwnerDefaultPaymentMethod("user_1"), null);
+    assert.deepEqual(await listOwnerPaymentMethods("user_1"), []);
   } finally {
     if (previousSecret === undefined) {
       delete process.env.STRIPE_SECRET_KEY;

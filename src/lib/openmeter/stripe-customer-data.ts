@@ -104,15 +104,27 @@ async function upsertKonnectCustomerBilling(input: {
   customerId: string;
   stripeCustomerId: string;
   billingProfileId?: string;
+  defaultPaymentMethodId?: string;
 }): Promise<KonnectCustomerBillingData> {
   const existing = await getKonnectCustomerBilling(input.customerId);
   const profileId =
     input.billingProfileId?.trim() || existing.billing_profile?.id?.trim();
+  // The PUT replaces app_data.stripe wholesale, so carry the existing default
+  // pointer forward when the caller is not changing it.
+  const defaultPaymentMethodId =
+    input.defaultPaymentMethodId?.trim() ||
+    existing.app_data?.stripe?.default_payment_method_id?.trim();
+  const stripe: { customer_id: string; default_payment_method_id?: string } = {
+    customer_id: input.stripeCustomerId,
+  };
+  if (defaultPaymentMethodId) {
+    stripe.default_payment_method_id = defaultPaymentMethodId;
+  }
   const body: {
-    app_data: { stripe: { customer_id: string } };
+    app_data: { stripe: typeof stripe };
     billing_profile?: { id: string };
   } = {
-    app_data: { stripe: { customer_id: input.stripeCustomerId } },
+    app_data: { stripe },
   };
   if (profileId) {
     body.billing_profile = { id: profileId };
@@ -125,6 +137,25 @@ async function upsertKonnectCustomerBilling(input: {
     },
     "customer-billing",
   );
+}
+
+/**
+ * Point Konnect app_data at a new default payment method so OpenMeter
+ * invoicing charges the method the owner picked. No-op outside Konnect mode.
+ */
+export async function setKonnectStripeDefaultPaymentMethod(input: {
+  customerId: string;
+  stripeCustomerId: string;
+  paymentMethodId: string;
+}): Promise<void> {
+  if (!isKonnectMode()) {
+    return;
+  }
+  await upsertKonnectCustomerBilling({
+    customerId: input.customerId,
+    stripeCustomerId: input.stripeCustomerId,
+    defaultPaymentMethodId: input.paymentMethodId,
+  });
 }
 
 async function getSelfHostedStripeCustomerId(

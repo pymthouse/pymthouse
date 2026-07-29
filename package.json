@@ -7,7 +7,7 @@
   },
   "scripts": {
     "predev": "npm run db:prepare",
-    "dev": "next dev -p 3001 --webpack",
+    "dev": "next dev -p 3001 --webpack --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
     "prebuild": "[ \"$VERCEL\" = '1' ] && echo 'Skipping db:prepare on Vercel' || npm run db:prepare",
     "build": "next build --webpack",
     "start": "next start",

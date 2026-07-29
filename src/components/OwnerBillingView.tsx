@@ -5,7 +5,7 @@ import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
-import OwnerPaymentMethodCard from "@/components/OwnerPaymentMethodCard";
+import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
@@ -161,8 +161,8 @@ export default function OwnerBillingView({
               {billingActions}
             </div>
             <div className="space-y-3">
-              {data.paymentMethod ? (
-                <OwnerPaymentMethodCard paymentMethod={data.paymentMethod} />
+              {data.paymentMethods.length > 0 ? (
+                <OwnerPaymentMethodsCard paymentMethods={data.paymentMethods} />
               ) : null}
               {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
                 <AllowanceStrip
@@ -175,7 +175,7 @@ export default function OwnerBillingView({
                   )}
                 />
               ) : null}
-              {!data.paymentMethod &&
+              {data.paymentMethods.length === 0 &&
               !hasDisplayablePrepaidCredit(data.creditAllowance) ? (
                 <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
                   <p>

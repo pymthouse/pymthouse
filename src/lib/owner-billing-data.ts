@@ -43,9 +43,9 @@ import {
   type TenantInvoiceDto,
 } from "@/lib/openmeter/invoices";
 import {
-  getOwnerDefaultPaymentMethod,
+  listOwnerPaymentMethods,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
-  type OwnerPaymentMethodSummary,
+  type OwnerPaymentMethodListItem,
 } from "@/lib/openmeter/owner-payment-method";
 
 export type OwnerBillingSubscriptionRow = {
@@ -73,8 +73,8 @@ export type OwnerBillingPayload = {
   userId: string;
   cycle: { start: string; end: string };
   creditAllowance: CreditAllowanceSummary | null;
-  /** Default Stripe payment method for Plane A overage invoices, if attached. */
-  paymentMethod: OwnerPaymentMethodSummary | null;
+  /** Every attached Stripe payment method (Plane A), default flagged. */
+  paymentMethods: OwnerPaymentMethodListItem[];
   subscriptions: OwnerBillingSubscriptionRow[];
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
@@ -620,7 +620,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   const emptyInvoices = { items: [] as TenantInvoiceDto[] };
   const [
     creditAllowance,
-    paymentMethod,
+    paymentMethods,
     subscriptions,
     ownedApps,
     invoicesResult,
@@ -633,11 +633,11 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         return null;
       }),
       withSoftTimeout(
-        getOwnerDefaultPaymentMethod(userId),
+        listOwnerPaymentMethods(userId),
         // Above the lookup's own budget, so its deadline fires first and we
-        // keep whatever it resolved instead of falling back to null.
+        // keep whatever it resolved instead of falling back to empty.
         OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
-        null as OwnerPaymentMethodSummary | null,
+        [] as OwnerPaymentMethodListItem[],
         "payment method lookup",
       ),
       withSoftTimeout(
@@ -666,7 +666,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       userId,
       cycle,
       creditAllowance,
-      paymentMethod,
+      paymentMethods,
       subscriptions,
       invoices: invoicesResult.items,
       openMeterConfigured: true,

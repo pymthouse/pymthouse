@@ -10,6 +10,7 @@ import {
   getKonnectDefaultPaymentMethodId,
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
+  setKonnectStripeDefaultPaymentMethod,
 } from "./stripe-customer-data";
 
 export type OwnerPaymentMethodCheckoutResult = {
@@ -20,13 +21,19 @@ export type OwnerPaymentMethodCheckoutResult = {
   hasDefaultPaymentMethod: boolean;
 };
 
-/** Display summary of the owner's default Stripe payment method (Plane A). */
-export type OwnerPaymentMethodSummary = {
+/**
+ * One attached Stripe payment method, labelled for self-service management.
+ * Only brand + last4 are returned — no billing name/email/ZIP. Stripe Link
+ * never exposes the funding card's last4, so those rows are brand-only.
+ */
+export type OwnerPaymentMethodListItem = {
   id: string;
+  type: string;
   brand: string | null;
   last4: string | null;
   expMonth: number | null;
   expYear: number | null;
+  isDefault: boolean;
 };
 
 function stripeSecretKeyOrNull(): string | null {
@@ -39,14 +46,14 @@ function stripeSecretKeyOrNull(): string | null {
 }
 
 /**
- * Total budget for one payment-method resolution, shared by every Stripe and
+ * Total budget for one payment-method listing, shared by every Stripe and
  * Konnect call it makes. Callers on a render path must allow more than this so
  * the inner deadline wins and a partial answer is still returned.
  */
 export const OWNER_PAYMENT_METHOD_BUDGET_MS = 6_000;
 
-/** Budget for the owner-initiated unlink, which is not on a paint path. */
-const UNLINK_BUDGET_MS = 15_000;
+/** Budget for owner-initiated mutations, which are not on a paint path. */
+const MUTATION_BUDGET_MS = 15_000;
 
 type StripeFetch = (
   input: string,
@@ -58,6 +65,10 @@ type StripeDeps = {
   fetchImpl: StripeFetch;
   signal: AbortSignal;
 };
+
+function liveStripeDeps(budgetMs: number): StripeDeps {
+  return { fetchImpl: fetch, signal: AbortSignal.timeout(budgetMs) };
+}
 
 async function stripeRequestJson<T>(input: {
   method: string;
@@ -113,91 +124,92 @@ async function stripeRequestJson<T>(input: {
   }
 }
 
-type StripeCardPaymentMethod = {
+type StripePaymentMethod = {
   id?: string;
   type?: string;
+  customer?: string | null;
   card?: {
     brand?: string | null;
     last4?: string | null;
     exp_month?: number | null;
     exp_year?: number | null;
+  } | null;
+  /** Checkout attaches Link methods with no card object (the funding card lives in Link). */
+  link?: { email?: string | null } | null;
+  us_bank_account?: {
+    bank_name?: string | null;
+    last4?: string | null;
   } | null;
 };
 
 /** @internal Exported for unit tests. */
-export function summarizeStripePaymentMethod(pm: {
-  id?: string;
-  card?: {
-    brand?: string | null;
-    last4?: string | null;
-    exp_month?: number | null;
-    exp_year?: number | null;
-  } | null;
-}): OwnerPaymentMethodSummary | null {
+export function toOwnerPaymentMethodItem(
+  pm: StripePaymentMethod,
+  defaultPaymentMethodId: string | null,
+): OwnerPaymentMethodListItem | null {
   const id = pm.id?.trim();
   if (!id) {
     return null;
   }
+  const type = pm.type?.trim().toLowerCase() || "unknown";
+  let brand = pm.card?.brand?.trim() || null;
+  if (!brand && type === "link") {
+    brand = "link";
+  }
+  if (!brand && pm.us_bank_account) {
+    brand = pm.us_bank_account.bank_name?.trim() || "bank";
+  }
   return {
     id,
-    brand: pm.card?.brand?.trim() || null,
-    last4: pm.card?.last4?.trim() || null,
+    type,
+    brand,
+    last4:
+      pm.card?.last4?.trim() || pm.us_bank_account?.last4?.trim() || null,
     expMonth:
       typeof pm.card?.exp_month === "number" ? pm.card.exp_month : null,
     expYear: typeof pm.card?.exp_year === "number" ? pm.card.exp_year : null,
+    isDefault: id === defaultPaymentMethodId,
   };
-}
-
-function asCard(value: unknown): StripeCardPaymentMethod | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const pm = value as StripeCardPaymentMethod;
-  return pm.id?.trim() ? pm : null;
 }
 
 function asPaymentMethodId(value: unknown): string | null {
   if (typeof value === "string") {
     return value.trim() || null;
   }
-  return asCard(value)?.id?.trim() || null;
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return (value as StripePaymentMethod).id?.trim() || null;
 }
 
-function hasCardLast4(pm: StripeCardPaymentMethod | null | undefined): boolean {
-  return Boolean(pm?.card?.last4?.trim());
-}
-
-/**
- * Expanding invoice_settings.default_payment_method returns the whole payment
- * method inline, so the common case costs one request and already carries
- * brand/last4 — no follow-up retrieve.
- */
-async function getCustomerDefaultCard(
+/** Stripe's own invoice default, when set on the customer. */
+async function getCustomerDefaultPaymentMethodId(
   stripeCustomerId: string,
   deps: StripeDeps,
-): Promise<{ card: StripeCardPaymentMethod | null; id: string | null }> {
+): Promise<string | null> {
   const customer = await stripeRequestJson<{
     invoice_settings?: { default_payment_method?: unknown };
   }>({
     method: "GET",
-    path:
-      `/v1/customers/${encodeURIComponent(stripeCustomerId)}` +
-      `?expand[]=invoice_settings.default_payment_method`,
+    path: `/v1/customers/${encodeURIComponent(stripeCustomerId)}`,
     deps,
   });
-  const value = customer?.invoice_settings?.default_payment_method;
-  return { card: asCard(value), id: asPaymentMethodId(value) };
+  return asPaymentMethodId(customer?.invoice_settings?.default_payment_method);
 }
 
-async function listStripeCustomerCards(
+/**
+ * Unfiltered on purpose: a `type=card` filter hides the Link payment methods
+ * Checkout attaches, which is what left owners on the "no payment method" state.
+ */
+async function listStripeCustomerPaymentMethods(
   stripeCustomerId: string,
   deps: StripeDeps,
-): Promise<StripeCardPaymentMethod[]> {
+): Promise<StripePaymentMethod[]> {
   const listed = await stripeRequestJson<{
-    data?: StripeCardPaymentMethod[];
+    data?: StripePaymentMethod[];
   }>({
     method: "GET",
-    path: `/v1/customers/${encodeURIComponent(stripeCustomerId)}/payment_methods?type=card&limit=10`,
+    path: `/v1/customers/${encodeURIComponent(stripeCustomerId)}/payment_methods?limit=100`,
     deps,
   });
   return (listed?.data ?? []).filter((pm) => Boolean(pm.id?.trim()));
@@ -206,8 +218,8 @@ async function listStripeCustomerCards(
 async function retrieveStripePaymentMethod(
   paymentMethodId: string,
   deps: StripeDeps,
-): Promise<StripeCardPaymentMethod | null> {
-  return stripeRequestJson<StripeCardPaymentMethod>({
+): Promise<StripePaymentMethod | null> {
+  return stripeRequestJson<StripePaymentMethod>({
     method: "GET",
     path: `/v1/payment_methods/${encodeURIComponent(paymentMethodId)}`,
     deps,
@@ -215,40 +227,65 @@ async function retrieveStripePaymentMethod(
 }
 
 /**
- * @internal Exported for unit tests: the resolution order is the part that
- * regressed, and it depends only on the injected Stripe fetch.
+ * Link payment methods are indistinguishable (Stripe never returns last4), so
+ * keep at most one: the default if it is Link, otherwise the first Link seen.
+ * @internal Exported for unit tests.
  */
-export async function resolvePreferredCard(input: {
+export function collapseDuplicateLinkMethods(
+  items: OwnerPaymentMethodListItem[],
+): {
+  kept: OwnerPaymentMethodListItem[];
+  orphanLinkIds: string[];
+} {
+  const links = items.filter((item) => item.type === "link");
+  if (links.length <= 1) {
+    return { kept: items, orphanLinkIds: [] };
+  }
+  const keepId = (links.find((item) => item.isDefault) ?? links[0]).id;
+  return {
+    kept: items.filter(
+      (item) => item.type !== "link" || item.id === keepId,
+    ),
+    orphanLinkIds: links
+      .filter((item) => item.id !== keepId)
+      .map((item) => item.id),
+  };
+}
+
+/**
+ * @internal Exported for unit tests: everything attached to the Stripe
+ * customer, with the default flagged. Stripe's invoice default wins over the
+ * Konnect app_data pointer when both exist. Duplicate Link methods are
+ * collapsed to one (see collapseDuplicateLinkMethods).
+ */
+export async function buildOwnerPaymentMethodList(input: {
   stripeCustomerId: string;
   /** Default payment method Konnect has on file, when it knows one. */
   konnectDefaultPaymentMethodId: string | null;
   deps: StripeDeps;
-}): Promise<StripeCardPaymentMethod | null> {
-  const { deps } = input;
-  const stripeDefault = await getCustomerDefaultCard(
-    input.stripeCustomerId,
-    deps,
+}): Promise<{
+  items: OwnerPaymentMethodListItem[];
+  orphanLinkIds: string[];
+}> {
+  const [stripeDefaultId, listed] = await Promise.all([
+    getCustomerDefaultPaymentMethodId(input.stripeCustomerId, input.deps),
+    listStripeCustomerPaymentMethods(input.stripeCustomerId, input.deps),
+  ]);
+  const defaultId = stripeDefaultId ?? input.konnectDefaultPaymentMethodId;
+  const mapped = listed
+    .map((pm) => toOwnerPaymentMethodItem(pm, defaultId))
+    .filter((item): item is OwnerPaymentMethodListItem => item !== null);
+  const { kept, orphanLinkIds } = collapseDuplicateLinkMethods(mapped);
+  // Default always leads; relative order of the rest is unchanged.
+  const items = kept.toSorted(
+    (a, b) => Number(b.isDefault) - Number(a.isDefault),
   );
-  if (hasCardLast4(stripeDefault.card)) {
-    return stripeDefault.card;
-  }
-
-  const preferredId =
-    input.konnectDefaultPaymentMethodId ?? stripeDefault.id;
-  if (preferredId && preferredId !== stripeDefault.card?.id) {
-    const retrieved = await retrieveStripePaymentMethod(preferredId, deps);
-    if (hasCardLast4(retrieved)) {
-      return retrieved;
-    }
-  }
-
-  // Anything without card fields (a bank account, a stale pointer) is dropped
-  // rather than rendered as an unlabelled "Card ···· ····".
-  const cards = await listStripeCustomerCards(input.stripeCustomerId, deps);
-  return cards.find(hasCardLast4) ?? cards[0] ?? null;
+  return { items, orphanLinkIds };
 }
 
 type OwnerStripeRefs = {
+  /** OpenMeter/Konnect customer id (for app_data writes). */
+  customerId: string;
   stripeCustomerId: string;
   konnectDefaultPaymentMethodId: string | null;
 };
@@ -278,82 +315,95 @@ async function resolveOwnerStripeRefs(
     return null;
   }
   return {
+    customerId: customer.id,
     stripeCustomerId,
     konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
   };
 }
 
-async function resolveOwnerCard(
-  ownerUserId: string,
-  budgetMs: number,
-): Promise<{
-  refs: OwnerStripeRefs;
-  card: StripeCardPaymentMethod | null;
-} | null> {
-  const signal = AbortSignal.timeout(budgetMs);
-  const refs = await resolveOwnerStripeRefs(ownerUserId, signal);
-  if (!refs) {
-    return null;
-  }
-  const card = await resolvePreferredCard({
-    stripeCustomerId: refs.stripeCustomerId,
-    konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-    deps: { fetchImpl: fetch, signal },
-  });
-  return { refs, card };
-}
-
 /**
- * Best-effort read of the owner's default Stripe card for the billing page.
- * Returns null when OpenMeter/Stripe is unavailable or no PM is on file.
+ * Best-effort list of payment methods for the billing page. Duplicate Stripe
+ * Link methods are collapsed to one (default preferred) and the extras are
+ * detached so the customer cannot accumulate indistinguishable Links.
+ * Returns [] when OpenMeter/Stripe is unavailable or none is on file.
  */
-export async function getOwnerDefaultPaymentMethod(
+export async function listOwnerPaymentMethods(
   ownerUserId: string,
-): Promise<OwnerPaymentMethodSummary | null> {
+): Promise<OwnerPaymentMethodListItem[]> {
   const trimmed = ownerUserId.trim();
   if (!trimmed) {
-    return null;
+    return [];
   }
 
   try {
-    const resolved = await resolveOwnerCard(
-      trimmed,
-      OWNER_PAYMENT_METHOD_BUDGET_MS,
+    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+    const refs = await resolveOwnerStripeRefs(trimmed, signal);
+    if (!refs) {
+      return [];
+    }
+    const deps: StripeDeps = { fetchImpl: fetch, signal };
+    const { items, orphanLinkIds } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: refs.stripeCustomerId,
+      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+      deps,
+    });
+    // Best-effort cleanup; listing must still succeed if detach fails.
+    await Promise.all(
+      orphanLinkIds.map((id) =>
+        stripeRequestJson({
+          method: "POST",
+          path: `/v1/payment_methods/${encodeURIComponent(id)}/detach`,
+          deps,
+        }),
+      ),
     );
-    return resolved?.card
-      ? summarizeStripePaymentMethod(resolved.card)
-      : null;
+    return items;
   } catch (err) {
     console.warn(
       "owner-payment-method: lookup failed",
       err instanceof Error ? err.message : String(err),
     );
-    return null;
+    return [];
   }
 }
 
 /**
- * Detach the owner's default Stripe card so overage invoices stop charging it.
- * Clears Stripe's customer default; Konnect app_data refreshes on the next OM sync.
+ * The payment method, but only when it is attached to this owner's Stripe
+ * customer — a session must not be able to manage someone else's method by id.
+ */
+async function requireOwnedPaymentMethod(
+  refs: OwnerStripeRefs,
+  paymentMethodId: string,
+  deps: StripeDeps,
+): Promise<StripePaymentMethod | null> {
+  const pm = await retrieveStripePaymentMethod(paymentMethodId, deps);
+  if (!pm?.id || pm.customer !== refs.stripeCustomerId) {
+    return null;
+  }
+  return pm;
+}
+
+/**
+ * Detach one payment method so overage invoices stop charging it. When it was
+ * the default, Stripe's invoice default is cleared as well; Konnect app_data
+ * refreshes on the next OM sync.
  */
 export async function unlinkOwnerPaymentMethod(
   ownerUserId: string,
+  paymentMethodId: string,
 ): Promise<{ unlinked: boolean; paymentMethodId: string | null }> {
   const trimmed = ownerUserId.trim();
-  if (!trimmed) {
-    throw new Error("ownerUserId is required");
+  const pmId = paymentMethodId.trim();
+  if (!trimmed || !pmId) {
+    throw new Error("ownerUserId and paymentMethodId are required");
   }
 
-  const resolved = await resolveOwnerCard(trimmed, UNLINK_BUDGET_MS);
-  const pmId = resolved?.card?.id?.trim();
-  if (!resolved || !pmId) {
+  const deps = liveStripeDeps(MUTATION_BUDGET_MS);
+  const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
+  if (!refs || !(await requireOwnedPaymentMethod(refs, pmId, deps))) {
     return { unlinked: false, paymentMethodId: null };
   }
 
-  const deps: StripeDeps = {
-    fetchImpl: fetch,
-    signal: AbortSignal.timeout(UNLINK_BUDGET_MS),
-  };
   const detached = await stripeRequestJson<{ id?: string }>({
     method: "POST",
     path: `/v1/payment_methods/${encodeURIComponent(pmId)}/detach`,
@@ -363,17 +413,72 @@ export async function unlinkOwnerPaymentMethod(
     throw new Error("Stripe could not detach the payment method");
   }
 
-  // Best-effort: clear invoice default so Stripe does not keep a dangling pointer.
-  await stripeRequestJson({
+  // Best-effort: when the default was removed, do not leave a dangling pointer.
+  const stripeDefaultId = await getCustomerDefaultPaymentMethodId(
+    refs.stripeCustomerId,
+    deps,
+  );
+  if (stripeDefaultId === pmId) {
+    await stripeRequestJson({
+      method: "POST",
+      path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
+      body: new URLSearchParams({
+        "invoice_settings[default_payment_method]": "",
+      }),
+      deps,
+    });
+  }
+
+  return { unlinked: true, paymentMethodId: pmId };
+}
+
+/**
+ * Make one attached payment method the default for overage invoices: sets
+ * Stripe's customer invoice default and mirrors the pointer into Konnect
+ * app_data so OpenMeter invoicing agrees with what the billing page shows.
+ */
+export async function setOwnerDefaultPaymentMethod(
+  ownerUserId: string,
+  paymentMethodId: string,
+): Promise<{ updated: boolean; paymentMethodId: string | null }> {
+  const trimmed = ownerUserId.trim();
+  const pmId = paymentMethodId.trim();
+  if (!trimmed || !pmId) {
+    throw new Error("ownerUserId and paymentMethodId are required");
+  }
+
+  const deps = liveStripeDeps(MUTATION_BUDGET_MS);
+  const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
+  if (!refs || !(await requireOwnedPaymentMethod(refs, pmId, deps))) {
+    return { updated: false, paymentMethodId: null };
+  }
+
+  const updated = await stripeRequestJson<{ id?: string }>({
     method: "POST",
-    path: `/v1/customers/${encodeURIComponent(resolved.refs.stripeCustomerId)}`,
+    path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
     body: new URLSearchParams({
-      "invoice_settings[default_payment_method]": "",
+      "invoice_settings[default_payment_method]": pmId,
     }),
     deps,
   });
+  if (!updated?.id) {
+    throw new Error("Stripe could not set the default payment method");
+  }
 
-  return { unlinked: true, paymentMethodId: pmId };
+  try {
+    await setKonnectStripeDefaultPaymentMethod({
+      customerId: refs.customerId,
+      stripeCustomerId: refs.stripeCustomerId,
+      paymentMethodId: pmId,
+    });
+  } catch (err) {
+    console.warn(
+      "owner-payment-method: Konnect default sync failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  return { updated: true, paymentMethodId: pmId };
 }
 
 /**
