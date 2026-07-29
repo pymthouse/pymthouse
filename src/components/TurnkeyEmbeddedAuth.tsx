@@ -14,6 +14,7 @@ import {
   bridgeTurnkeySessionToNextAuth,
   safeCallbackUrl,
 } from "@/lib/turnkey-nextauth-bridge";
+import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 const DEFAULT_AUTH_LOGO = "/pymthouse-mark.svg";
 const AUTH_BUTTON_CLASS =
@@ -60,11 +61,7 @@ export function TurnkeyEmbeddedAuth({
   logoUrl?: string | null;
   title?: string;
 }>) {
-  const turnkeyConfigured =
-    !!process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
-    !!process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim();
-
-  if (!turnkeyConfigured) {
+  if (!isTurnkeyWalletConfigured()) {
     return (
       <p className="text-xs text-zinc-500 leading-relaxed">
         Turnkey Wallet Kit is not configured. Set{" "}

@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 import { SANDBOX_ONRAMP_USD_AMOUNT } from "@/lib/onramp/amount";
+import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 type FundAccountOnRampPanelProps = Readonly<{
   clientId: string;
@@ -235,9 +236,7 @@ export default function FundAccountOnRampPanel({
   ownerExternalUserId,
 }: FundAccountOnRampPanelProps) {
   const router = useRouter();
-  const turnkeyConfigured =
-    !!process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
-    !!process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim();
+  const turnkeyConfigured = isTurnkeyWalletConfigured();
 
   const {
     authState,

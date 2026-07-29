@@ -13,6 +13,7 @@ import { MarketingFooter } from "@/components/MarketingFooter";
 import { TurnkeyEmbeddedAuth } from "@/components/TurnkeyEmbeddedAuth";
 import { toSafeLogoUrl } from "@/lib/safe-logo-url";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
+import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 interface AppBranding {
   mode: "blackLabel" | "whiteLabel";
@@ -62,13 +63,10 @@ function shouldShowStartCta(input: {
   isWhiteLabel: boolean;
   resumePersona: "explorer" | "builder" | null;
 }): boolean {
-  const turnkeyConfigured =
-    !!process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
-    !!process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim();
   const loginUiReady =
     input.status === "unauthenticated" &&
     input.brandingResolved &&
-    (!turnkeyConfigured ||
+    (!isTurnkeyWalletConfigured() ||
       (input.clientState === ClientState.Ready &&
         input.authState === AuthState.Unauthenticated));
   return (

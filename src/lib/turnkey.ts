@@ -34,15 +34,10 @@ function parseCompactJwsPayloadObject(jwt: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-/**
- * True when public Turnkey Wallet Kit env is set (client can show embedded wallet UI).
- */
-export function isTurnkeyWalletConfigured(): boolean {
-  return !!(
-    process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
-    process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim()
-  );
-}
+export {
+  getTurnkeyWalletConfigId,
+  isTurnkeyWalletConfigured,
+} from "@/lib/turnkey-wallet-config";
 
 /**
  * Verify Turnkey session JWT signature and decode claims.
