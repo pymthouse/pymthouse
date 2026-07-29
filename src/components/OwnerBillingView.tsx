@@ -8,6 +8,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
+import type { OwnerPaymentMethodSummary } from "@/lib/openmeter/owner-payment-method";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
 
 function hasDisplayablePrepaidCredit(
@@ -21,6 +22,56 @@ function hasDisplayablePrepaidCredit(
   } catch {
     return false;
   }
+}
+
+function formatCardBrand(brand: string | null): string {
+  if (!brand?.trim()) return "Card";
+  const trimmed = brand.trim();
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+}
+
+function formatCardExpiry(
+  expMonth: number | null,
+  expYear: number | null,
+): string | null {
+  if (expMonth == null || expYear == null) return null;
+  const month = String(expMonth).padStart(2, "0");
+  const year = String(expYear).slice(-2);
+  return `${month}/${year}`;
+}
+
+function PaymentMethodCard({
+  paymentMethod,
+}: Readonly<{
+  paymentMethod: OwnerPaymentMethodSummary;
+}>) {
+  const brand = formatCardBrand(paymentMethod.brand);
+  const last4 = paymentMethod.last4?.trim() || "••••";
+  const expiry = formatCardExpiry(paymentMethod.expMonth, paymentMethod.expYear);
+
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-zinc-100">
+            {brand} ···· {last4}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Default payment method for platform overage invoices
+            {expiry ? (
+              <>
+                <span className="mx-1.5 text-zinc-700">·</span>
+                Expires {expiry}
+              </>
+            ) : null}
+          </p>
+        </div>
+        <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-400">
+          Linked
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function SubscriptionCard({
@@ -159,25 +210,32 @@ export default function OwnerBillingView({
               </div>
               {billingActions}
             </div>
-            {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
-              <AllowanceStrip
-                balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
-                lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
-                consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
-                requestCount={data.subscriptions.reduce(
-                  (sum, row) => sum + row.requestCount,
-                  0,
-                )}
-              />
-            ) : (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                <p>
-                  No prepaid credit balance yet. Starter included usage comes from your plan
-                  allowance. Attach a payment method so usage beyond the allowance can be
-                  invoiced on Stripe.
-                </p>
-              </div>
-            )}
+            <div className="space-y-3">
+              {data.paymentMethod ? (
+                <PaymentMethodCard paymentMethod={data.paymentMethod} />
+              ) : null}
+              {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
+                <AllowanceStrip
+                  balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
+                  lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
+                  consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
+                  requestCount={data.subscriptions.reduce(
+                    (sum, row) => sum + row.requestCount,
+                    0,
+                  )}
+                />
+              ) : null}
+              {!data.paymentMethod &&
+              !hasDisplayablePrepaidCredit(data.creditAllowance) ? (
+                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+                  <p>
+                    No prepaid credit balance yet. Starter included usage comes from your plan
+                    allowance. Attach a payment method so usage beyond the allowance can be
+                    invoiced on Stripe.
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </section>
 
           <section>

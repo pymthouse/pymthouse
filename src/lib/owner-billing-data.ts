@@ -42,6 +42,10 @@ import {
   listOwnerWalletInvoices,
   type TenantInvoiceDto,
 } from "@/lib/openmeter/invoices";
+import {
+  getOwnerDefaultPaymentMethod,
+  type OwnerPaymentMethodSummary,
+} from "@/lib/openmeter/owner-payment-method";
 
 export type OwnerBillingSubscriptionRow = {
   subscriptionId: string;
@@ -68,6 +72,8 @@ export type OwnerBillingPayload = {
   userId: string;
   cycle: { start: string; end: string };
   creditAllowance: CreditAllowanceSummary | null;
+  /** Default Stripe payment method for Plane A overage invoices, if attached. */
+  paymentMethod: OwnerPaymentMethodSummary | null;
   subscriptions: OwnerBillingSubscriptionRow[];
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
@@ -611,8 +617,13 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
   // first paint is not blocked when the invoice index is large or slow.
   const emptyInvoices = { items: [] as TenantInvoiceDto[] };
-  const [creditAllowance, subscriptions, ownedApps, invoicesResult] =
-    await Promise.all([
+  const [
+    creditAllowance,
+    paymentMethod,
+    subscriptions,
+    ownedApps,
+    invoicesResult,
+  ] = await Promise.all([
       getOwnerPrepaidCreditBalance(userId).catch((err) => {
         console.warn(
           "owner-billing: credit lookup failed",
@@ -620,6 +631,12 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         );
         return null;
       }),
+      withSoftTimeout(
+        getOwnerDefaultPaymentMethod(userId),
+        2_500,
+        null as OwnerPaymentMethodSummary | null,
+        "payment method lookup",
+      ),
       withSoftTimeout(
         listOwnerActiveSubscriptions(userId),
         8_000,
@@ -646,6 +663,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       userId,
       cycle,
       creditAllowance,
+      paymentMethod,
       subscriptions,
       invoices: invoicesResult.items,
       openMeterConfigured: true,

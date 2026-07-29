@@ -26,6 +26,7 @@ export default async function BillingPage() {
           userId: "",
           cycle: { start: new Date().toISOString(), end: new Date().toISOString() },
           creditAllowance: null,
+          paymentMethod: null,
           subscriptions: [],
           invoices: [],
           openMeterConfigured: false,
@@ -55,7 +56,9 @@ export default async function BillingPage() {
     <OwnerBillingView
       data={data}
       paymentMethodPanel={
-        data.openMeterConfigured ? <OwnerPaymentMethodButton /> : null
+        data.openMeterConfigured ? (
+          <OwnerPaymentMethodButton hasPaymentMethod={Boolean(data.paymentMethod)} />
+        ) : null
       }
       adminFundPanel={adminFundPanel}
     />
