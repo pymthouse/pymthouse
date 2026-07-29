@@ -22,6 +22,7 @@ import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "./subscription-read";
+import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
 import {
   connectPaymentsOnlyEnabled,
@@ -221,18 +222,14 @@ export async function createEndUserCheckout(input: {
     checkoutUrl = connectCheckout.checkoutUrl;
     stripeCheckoutSessionId = connectCheckout.sessionId;
   } else {
-    const checkout = await client.apps.stripe.createCheckoutSession({
-      customer: { id: customer.id },
-      options: {
-        successURL: success,
-        cancelURL: cancel,
-      },
+    const checkout = await createOpenMeterStripeCheckoutSession({
+      client,
+      customerId: customer.id,
+      successUrl: success,
+      cancelUrl: cancel,
     });
-    if (!checkout?.url) {
-      throw new Error("Stripe checkout session URL unavailable");
-    }
-    checkoutUrl = checkout.url;
-    stripeCheckoutSessionId = checkout.sessionId ?? null;
+    checkoutUrl = checkout.checkoutUrl;
+    stripeCheckoutSessionId = checkout.sessionId;
   }
 
   await upsertNeonSubscriptionCache({
@@ -386,18 +383,14 @@ export async function changeAppUserSubscriptionPlan(input: {
             "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
           );
         }
-        const checkout = await client.apps.stripe.createCheckoutSession({
-          customer: { id: customer.id },
-          options: {
-            successURL: success,
-            cancelURL: cancel,
-          },
+        const checkout = await createOpenMeterStripeCheckoutSession({
+          client,
+          customerId: customer.id,
+          successUrl: success,
+          cancelUrl: cancel,
         });
-        if (!checkout?.url) {
-          throw new Error("Stripe checkout session URL unavailable");
-        }
-        checkoutUrl = checkout.url;
-        stripeCheckoutSessionId = checkout.sessionId ?? null;
+        checkoutUrl = checkout.checkoutUrl;
+        stripeCheckoutSessionId = checkout.sessionId;
       }
     }
   }

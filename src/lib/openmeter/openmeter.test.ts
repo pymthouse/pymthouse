@@ -653,7 +653,8 @@ test("aggregateDailyPipelineModelRows sums fee and count by pipeline/model/day",
   assert.equal(rows.length, 2);
   const first = rows[0];
   const second = rows[1];
-  assert.ok(first && second);
+  assert.ok(first);
+  assert.ok(second);
   assert.equal(first.date, "2026-06-02");
   assert.equal(first.requestCount, 5);
   assert.equal(second.date, "2026-06-03");
@@ -1185,6 +1186,8 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
       priceAmount: "29.00",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: "5000000",
       overageRateUsd: "0.0000015",
       includedUnits: null,
@@ -1218,7 +1221,8 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
   assert.equal(phaseCards.length, 2);
   const flatFee = phaseCards[0];
   const usage = phaseCards[1];
-  assert.ok(flatFee && usage);
+  assert.ok(flatFee);
+  assert.ok(usage);
   assert.equal(flatFee.type, "flat_fee");
   assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
   assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
@@ -1245,6 +1249,8 @@ test("mapPymthousePlanToOpenMeterCreate uses weekly billing cadence", async () =
       priceAmount: "7.00",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: "1000000",
       overageRateUsd: "0.000001",
       includedUnits: null,
@@ -1299,6 +1305,8 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
       priceAmount: "0",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: null,
       overageRateUsd: "0.000001",
       includedUnits: null,
@@ -1397,6 +1405,8 @@ test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () =
       priceAmount: "0",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: null,
       overageRateUsd: null,
       includedUnits: null,
@@ -1428,6 +1438,8 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
       priceAmount: "0",
       priceCurrency: "USD",
       status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
       includedUsdMicros: "5000000",
       overageRateUsd: null,
       includedUnits: null,

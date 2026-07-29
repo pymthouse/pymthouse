@@ -46,9 +46,46 @@ export async function GET(
   const plan = planRows[0] ?? null;
   const isOwnerStarter = isOwnerStarterPlanKey(omSubscription.planKey);
 
+  const planStatus = plan?.status ?? null;
+  const actionRequired =
+    (!plan && !isOwnerStarter) || planStatus === "phase_out"
+      ? "choose_new_plan"
+      : null;
+
+  let planPayload: {
+    id: string | null;
+    status: string;
+    phaseOutAt: string | null;
+    replacementPlanId: string | null;
+  };
+  if (plan) {
+    planPayload = {
+      id: plan.id,
+      status: plan.status,
+      phaseOutAt: plan.phaseOutAt ?? null,
+      replacementPlanId: plan.replacementPlanId ?? null,
+    };
+  } else if (isOwnerStarter) {
+    planPayload = {
+      id: null,
+      status: "active",
+      phaseOutAt: null,
+      replacementPlanId: null,
+    };
+  } else {
+    planPayload = {
+      id: null,
+      status: "missing",
+      phaseOutAt: null,
+      replacementPlanId: null,
+    };
+  }
+
   return NextResponse.json({
     externalUserId,
     source: "openmeter",
+    actionRequired,
+    plan: planPayload,
     subscription: {
       id: omSubscription.id,
       status: omSubscription.status,

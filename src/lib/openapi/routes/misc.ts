@@ -63,7 +63,7 @@ defineRouteMetadata("get", "/api/v1/marketplace/{id}", {
 
 defineRouteMetadata("get", "/api/v1/pipeline-catalog", {
   tags: ["Discovery"],
-  summary: "Pipeline capability catalog",
+  summary: "Pipeline capability catalog (discovery-service)",
   responses: {
     200: { description: "Catalog", content: { "application/json": { schema: jsonObject } } },
   },

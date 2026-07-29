@@ -871,11 +871,10 @@ async function auditPhaseOutPlans(
     : await db.select().from(plans).where(eq(plans.status, "phase_out"));
 
   for (const plan of rows) {
-    if (!(plan as { phaseOutAt?: string | null }).phaseOutAt?.trim()) {
+    if (!plan.phaseOutAt?.trim()) {
       continue;
     }
-    const phaseOutAt = (plan as { phaseOutAt?: string | null }).phaseOutAt;
-    const deadline = Date.parse(phaseOutAt ?? "");
+    const deadline = Date.parse(plan.phaseOutAt);
     if (Number.isNaN(deadline) || Date.now() < deadline) {
       continue;
     }
@@ -906,7 +905,7 @@ async function auditPhaseOutPlans(
         planId: plan.id,
         planName: plan.name,
         status: plan.status,
-        phaseOutAt: (plan as { phaseOutAt?: string | null }).phaseOutAt ?? null,
+        phaseOutAt: plan.phaseOutAt,
         openmeterPlanId: plan.openmeterPlanId,
         activeSubscriberCount,
       }),

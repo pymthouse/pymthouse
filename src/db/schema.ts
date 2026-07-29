@@ -388,7 +388,15 @@ export const plans = pgTable(
     type: text("type").notNull().default("free"),
     priceAmount: text("price_amount").notNull().default("0"),
     priceCurrency: text("price_currency").notNull().default("USD"),
+    /**
+     * draft | active | phase_out
+     * phase_out: existing subscribers keep working; new subscribe/change-to blocked.
+     */
     status: text("status").notNull().default("draft"),
+    /** ISO timestamp when forced migration should complete (typically next cycle). */
+    phaseOutAt: text("phase_out_at"),
+    /** Suggested replacement plan id when status is phase_out. */
+    replacementPlanId: text("replacement_plan_id"),
     /** Pixel-unit quota included per billing cycle (legacy; optional). */
     includedUnits: bigint("included_units", { mode: "bigint" }),
     /** Retail USD per network USD-micro for plan-level usage (decimal string). */

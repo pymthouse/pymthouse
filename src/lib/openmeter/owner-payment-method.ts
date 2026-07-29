@@ -5,6 +5,7 @@ import {
   ensureOwnerCustomer,
   listOwnedPublicClientIds,
 } from "./customers";
+import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
 
 export type OwnerPaymentMethodCheckoutResult = {
@@ -48,21 +49,17 @@ export async function createOwnerPaymentMethodCheckout(input: {
     input.successUrl?.trim() || `${origin}/billing?pm=attached`;
   const cancel = input.cancelUrl?.trim() || `${origin}/billing`;
 
-  const checkout = await client.apps.stripe.createCheckoutSession({
-    customer: { id: customer.id },
-    options: {
-      successURL: success,
-      cancelURL: cancel,
-      currency: "USD",
-    },
+  const checkout = await createOpenMeterStripeCheckoutSession({
+    client,
+    customerId: customer.id,
+    successUrl: success,
+    cancelUrl: cancel,
+    currency: "USD",
   });
-  if (!checkout?.url) {
-    throw new Error("Stripe checkout session URL unavailable");
-  }
 
   return {
-    checkoutUrl: checkout.url,
-    sessionId: checkout.sessionId ?? null,
+    checkoutUrl: checkout.checkoutUrl,
+    sessionId: checkout.sessionId,
     customerId: customer.id,
     hasDefaultPaymentMethod: Boolean(defaultPm),
   };
