@@ -17,7 +17,7 @@ import {
   getStripeConnectStatus,
   parseStripeAccountIdFromConflict,
   purgeExpiredOAuthStates,
-} from "./stripe-connect";
+} from "./stripe-app-install";
 import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -150,7 +150,9 @@ test("connectStripeWithApiKey installs Stripe app and writes billing config", as
 
   assert.equal(installedName, `pymthouse-${seeded.clientId}`);
   const status = await getStripeConnectStatus(seeded.clientId);
-  assert.equal(status.status, "connected");
+  // Legacy OM Stripe-app install is not merchant Connect-ready.
+  assert.equal(status.status, "disconnected");
+  assert.equal(status.stripeConnectedAccountId, null);
   assert.equal(status.openmeterStripeAppId, "om_stripe_1");
   assert.equal(status.openmeterBillingProfileId, "om_profile_1");
   assert.ok(status.connectedAt);
@@ -195,7 +197,8 @@ test("connectStripeWithApiKey reuses existing Stripe app on OpenMeter conflict",
 
   const status = await getStripeConnectStatus(seeded.clientId);
   assert.equal(status.openmeterStripeAppId, "om_existing_stripe");
-  assert.equal(status.status, "connected");
+  assert.equal(status.status, "disconnected");
+  assert.equal(status.stripeConnectedAccountId, null);
 });
 
 test("disconnectStripeConnect clears config and uninstalls on self-hosted", async (t) => {
@@ -246,10 +249,11 @@ test("getStripeConnectStatus defaults to disconnected when no config row", async
   t.after(() => cleanupTestApp(seeded));
   const status = await getStripeConnectStatus(seeded.clientId);
   assert.equal(status.status, "disconnected");
+  assert.equal(status.billingReady, false);
   assert.equal(status.defaultCurrency, "USD");
 });
 
-test("getStripeConnectStatus returns OpenMeter billing profile connection status", async (t) => {
+test("getStripeConnectStatus uses merchant account flags, not legacy OM status", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(() => cleanupTestApp(seeded));
 
@@ -266,11 +270,33 @@ test("getStripeConnectStatus returns OpenMeter billing profile connection status
     updatedAt: now,
   });
 
-  const status = await getStripeConnectStatus(seeded.clientId);
-  assert.equal(status.status, "connected");
+  let status = await getStripeConnectStatus(seeded.clientId);
+  assert.equal(status.status, "disconnected");
+  assert.equal(status.billingReady, true);
+  assert.equal(status.stripeConnectedAccountId, null);
   assert.equal(status.openmeterStripeAppId, "om_legacy");
-  assert.equal(status.openmeterBillingProfileId, "om_profile_legacy");
-  assert.equal(status.progressiveBilling, true);
+
+  await db
+    .update(appBillingConfig)
+    .set({
+      stripeConnectedAccountId: "acct_pending",
+      stripeChargesEnabled: false,
+      stripeOnboardingMethod: "account_link",
+    })
+    .where(eq(appBillingConfig.clientId, seeded.clientId));
+
+  status = await getStripeConnectStatus(seeded.clientId);
+  assert.equal(status.status, "pending");
+  assert.equal(status.stripeConnectedAccountId, "acct_pending");
+
+  await db
+    .update(appBillingConfig)
+    .set({ stripeChargesEnabled: true })
+    .where(eq(appBillingConfig.clientId, seeded.clientId));
+
+  status = await getStripeConnectStatus(seeded.clientId);
+  assert.equal(status.status, "connected");
+  assert.equal(status.stripeChargesEnabled, true);
 });
 
 test("purgeExpiredOAuthStates deletes only expired rows", async (t) => {
@@ -393,7 +419,8 @@ test("connectStripeOnKonnect finalizes via org Stripe app id", async (t) => {
 
   await connectStripeOnKonnect({ clientId: seeded.clientId, name: "Acme" });
   const status = await getStripeConnectStatus(seeded.clientId);
-  assert.equal(status.status, "connected");
+  assert.equal(status.status, "disconnected");
+  assert.equal(status.stripeConnectedAccountId, null);
   assert.equal(status.openmeterStripeAppId, "01KONNECTSTRIPE000000000001");
   assert.equal(status.openmeterBillingProfileId, "01KONNECTPROFILE0000000001");
 });

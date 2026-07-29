@@ -15,6 +15,14 @@ import { isOpenMeterConflictError } from "./plan-errors";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import type { OpenMeter } from "@openmeter/sdk";
 
+/**
+ * OpenMeter / Konnect Stripe **app** install helpers (Plane A — platform cost rail).
+ *
+ * Renamed from `stripe-connect.ts` to avoid conflating this with merchant Stripe
+ * Connect Account Links (Plane B — `src/lib/stripe/merchant-connect.ts`).
+ * HTTP routes under `/billing/stripe/connect` remain for Connect onboarding.
+ */
+
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
 
 function stripeConnectCallbackUrl(clientId: string): string {
@@ -345,6 +353,12 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     openmeterStripeAppId: null,
     openmeterBillingProfileId: null,
     connectedAt: null,
+    stripeConnectedAccountId: null,
+    stripeOnboardingMethod: null,
+    stripeChargesEnabled: false,
+    stripePayoutsEnabled: false,
+    stripeDetailsSubmitted: false,
+    connectPaymentsOnly: false,
   });
 }
 
@@ -354,19 +368,51 @@ export async function purgeExpiredOAuthStates(): Promise<void> {
 }
 
 export async function getStripeConnectStatus(clientId: string) {
+  const { syncMerchantConnectStatus } = await import(
+    "@/lib/stripe/merchant-connect"
+  );
+  try {
+    await syncMerchantConnectStatus(clientId);
+  } catch {
+    /* best-effort refresh */
+  }
   const row = await db
     .select()
     .from(appBillingConfig)
     .where(eq(appBillingConfig.clientId, clientId))
     .limit(1);
   const config = row[0];
+  const accountId = config?.stripeConnectedAccountId?.trim() || null;
+  // Merchant Connect only — do not treat legacy OpenMeter Stripe-app installs
+  // (stripe_connect_status=connected, no acct_…) as merchant-ready.
+  const status = accountId
+    ? config?.stripeChargesEnabled
+      ? "connected"
+      : "pending"
+    : "disconnected";
+
+  const openmeterStripeAppId = config?.openmeterStripeAppId ?? null;
+  const openmeterBillingProfileId = config?.openmeterBillingProfileId ?? null;
+  // Plane A readiness — independent of merchant Connect (Plane B).
+  const billingReady = Boolean(
+    openmeterStripeAppId?.trim() && openmeterBillingProfileId?.trim(),
+  );
+
   return {
-    status: config?.stripeConnectStatus ?? "disconnected",
-    openmeterStripeAppId: config?.openmeterStripeAppId ?? null,
-    openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
+    status,
+    billingReady,
+    openmeterStripeAppId,
+    openmeterBillingProfileId,
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,
     invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
+    stripeConnectedAccountId: accountId,
+    stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
+    stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
+    stripePayoutsEnabled: config?.stripePayoutsEnabled ?? false,
+    stripeDetailsSubmitted: config?.stripeDetailsSubmitted ?? false,
+    applicationFeeBps: config?.applicationFeeBps ?? 0,
+    connectPaymentsOnly: config?.connectPaymentsOnly ?? false,
   };
 }

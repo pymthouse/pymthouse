@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  canManageMerchantBilling,
-  getAuthorizedProviderApp,
-} from "@/lib/provider-apps";
+import { getAdminUser } from "@/lib/admin-auth";
+import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { createOnRampSession } from "@/lib/onramp/sessions";
 import { SANDBOX_ONRAMP_USD_AMOUNT } from "@/lib/onramp/amount";
 
+/**
+ * MoonPay / Turnkey prepaid on-ramp — platform-admin only (signer refill tooling).
+ * Owner funding uses Stripe payment-method attach on /billing instead.
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const admin = await getAdminUser(request);
+  if (!admin) {
+    return NextResponse.json(
+      { error: "Only a platform admin can create MoonPay on-ramp sessions." },
+      { status: 403 },
+    );
+  }
+
   const { id: clientId } = await params;
   const access = await getAuthorizedProviderApp(clientId, request);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-  if (!(await canManageMerchantBilling(access))) {
-    return NextResponse.json(
-      { error: "Only the app owner or platform admin can fund prepaid credits." },
-      { status: 403 },
-    );
   }
 
   const body = await request.json().catch(() => ({}));
@@ -32,9 +36,8 @@ export async function POST(
       ? body.turnkeyOrganizationId.trim()
       : undefined;
 
-  // Owner-funding only: credit the signed-in owner, never a client-chosen subject.
-  const externalUserId = access.userId;
-  // Amount is fixed server-side for the sandbox demo (Turnkey status API has no amount).
+  // Admin refill credits the signed-in admin's owner wallet for this app context.
+  const externalUserId = admin.id;
   const fiatCurrencyCode = "USD";
   const fiatAmount = SANDBOX_ONRAMP_USD_AMOUNT;
 

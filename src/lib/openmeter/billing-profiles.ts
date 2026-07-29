@@ -149,14 +149,26 @@ export async function getAppBillingConfig(clientId: string) {
   return rows[0] ?? null;
 }
 
-/** Stripe Connect completed and wired into OpenMeter billing profiles. */
+/**
+ * Platform OpenMeter Stripe billing is ready (Plane A): org Stripe app +
+ * tenant billing profile. Distinct from merchant Stripe Connect readiness.
+ */
+export function isAppBillingReady(
+  config: {
+    openmeterStripeAppId?: string | null;
+    openmeterBillingProfileId?: string | null;
+  } | null | undefined,
+): boolean {
+  return (
+    Boolean(config?.openmeterStripeAppId?.trim()) &&
+    Boolean(config?.openmeterBillingProfileId?.trim())
+  );
+}
+
+/** @deprecated Prefer {@link isAppBillingReady}; name kept for existing call sites. */
 export async function isStripeBillingEnabledForApp(clientId: string): Promise<boolean> {
   const config = await getAppBillingConfig(clientId);
-  return (
-    config?.stripeConnectStatus === "connected" &&
-    Boolean(config.openmeterStripeAppId?.trim()) &&
-    Boolean(config.openmeterBillingProfileId?.trim())
-  );
+  return isAppBillingReady(config);
 }
 
 export async function ensureTenantBillingProfile(input: {
@@ -237,14 +249,12 @@ export async function ensureAppStripeBillingReady(input: {
   openmeterBillingProfileId: string;
 }> {
   const existing = await getAppBillingConfig(input.clientId);
-  if (
-    existing?.stripeConnectStatus === "connected" &&
-    existing.openmeterStripeAppId?.trim() &&
-    existing.openmeterBillingProfileId?.trim()
-  ) {
+  const existingStripeAppId = existing?.openmeterStripeAppId?.trim();
+  const existingProfileId = existing?.openmeterBillingProfileId?.trim();
+  if (existingStripeAppId && existingProfileId) {
     return {
-      openmeterStripeAppId: existing.openmeterStripeAppId,
-      openmeterBillingProfileId: existing.openmeterBillingProfileId,
+      openmeterStripeAppId: existingStripeAppId,
+      openmeterBillingProfileId: existingProfileId,
     };
   }
 
@@ -504,9 +514,11 @@ export async function updateAppBillingProfileSettings(input: {
   clientId: string;
   progressiveBilling?: boolean;
   invoiceThresholdUsdMicros?: string | null;
+  applicationFeeBps?: number;
 }): Promise<{
   progressiveBilling: boolean;
   invoiceThresholdUsdMicros: string | null;
+  applicationFeeBps: number;
 }> {
   let existing = await getAppBillingConfig(input.clientId);
   if (!existing) {
@@ -525,30 +537,35 @@ export async function updateAppBillingProfileSettings(input: {
     input.invoiceThresholdUsdMicros === undefined
       ? existing.invoiceThresholdUsdMicros
       : input.invoiceThresholdUsdMicros;
+  const applicationFeeBps =
+    input.applicationFeeBps === undefined
+      ? (existing.applicationFeeBps ?? 0)
+      : input.applicationFeeBps;
 
   const progressiveChanged =
     input.progressiveBilling !== undefined &&
     input.progressiveBilling !== existing.progressiveBilling;
 
-  if (
-    progressiveChanged &&
-    existing.stripeConnectStatus === "connected" &&
-    existing.openmeterBillingProfileId?.trim()
-  ) {
-    await syncProgressiveBillingToOpenMeterProfile({
-      profileId: existing.openmeterBillingProfileId,
-      progressiveBilling,
-    });
+  if (progressiveChanged && isAppBillingReady(existing)) {
+    const profileId = existing.openmeterBillingProfileId?.trim();
+    if (profileId) {
+      await syncProgressiveBillingToOpenMeterProfile({
+        profileId,
+        progressiveBilling,
+      });
+    }
   }
 
   await upsertAppBillingConfig(input.clientId, {
     progressiveBilling,
     invoiceThresholdUsdMicros,
+    applicationFeeBps,
   });
 
   return {
     progressiveBilling,
     invoiceThresholdUsdMicros: invoiceThresholdUsdMicros ?? null,
+    applicationFeeBps,
   };
 }
 

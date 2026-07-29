@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getServerSession } from "next-auth";
 import type { OpenMeter } from "@openmeter/sdk";
 
@@ -339,6 +339,54 @@ async function resolvePlanName(input: {
   };
 }
 
+async function loadPlanKeyToLocalId(
+  clientIds: string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  if (clientIds.length === 0) {
+    return index;
+  }
+  const scopedPlans = await db
+    .select({
+      id: plans.id,
+      clientId: plans.clientId,
+    })
+    .from(plans)
+    .where(inArray(plans.clientId, clientIds));
+  for (const plan of scopedPlans) {
+    index.set(buildOpenMeterPlanKey(plan.clientId, plan.id), plan.id);
+  }
+  return index;
+}
+
+function withSoftTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  fallback: T,
+  label: string,
+): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`owner-billing: ${label} timed out after ${ms}ms`);
+      resolve(fallback);
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        console.warn(
+          `owner-billing: ${label} failed`,
+          err instanceof Error ? err.message : String(err),
+        );
+        resolve(fallback);
+      },
+    );
+  });
+}
+
 async function mapSubscriptionRow(input: {
   client: OpenMeter;
   subscription: OpenMeterSubscriptionView;
@@ -346,6 +394,7 @@ async function mapSubscriptionRow(input: {
   cycle: { start: string; end: string };
   ownerUserId: string;
   ownedApps: OwnedApp[];
+  planKeyToLocalId: Map<string, string>;
 }): Promise<OwnerBillingSubscriptionRow> {
   const localPlanId = input.candidate.appPublicClientId
     ? await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -357,18 +406,8 @@ async function mapSubscriptionRow(input: {
   // Owner-wallet subscriptions may still map via plan key across owned apps.
   let resolvedLocalPlanId = localPlanId;
   if (!resolvedLocalPlanId && input.subscription.planKey) {
-    const allPlans = await db
-      .select({
-        id: plans.id,
-        clientId: plans.clientId,
-      })
-      .from(plans);
-    for (const plan of allPlans) {
-      if (buildOpenMeterPlanKey(plan.clientId, plan.id) === input.subscription.planKey) {
-        resolvedLocalPlanId = plan.id;
-        break;
-      }
-    }
+    resolvedLocalPlanId =
+      input.planKeyToLocalId.get(input.subscription.planKey) ?? null;
   }
 
   const { planName, isStarterDefault } = await resolvePlanName({
@@ -489,36 +528,55 @@ export async function listOwnerActiveSubscriptions(
   const cycleBounds = calendarMonthBoundsUtc(new Date());
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
   const ownedApps = await listOwnedApps(trimmed);
+  const planKeyToLocalId = await loadPlanKeyToLocalId(
+    ownedApps.map((app) => app.developerAppId),
+  );
   const candidates = buildCustomerCandidates(trimmed, ownedApps);
 
+  const perCandidate = await Promise.all(
+    candidates.map(async (candidate) => {
+      const customerId = await resolveCustomerIdForCandidate({ client, candidate });
+      if (!customerId) {
+        return [] as Array<{
+          candidate: CustomerCandidate;
+          subscription: OpenMeterSubscriptionView;
+        }>;
+      }
+      const active = await listActiveSubscriptionsForCustomer({
+        client,
+        customerId,
+        customerKey: candidate.customerKey,
+      });
+      return active.map((subscription) => ({ candidate, subscription }));
+    }),
+  );
+
   const seenSubscriptionIds = new Set<string>();
-  const subscriptions: OwnerBillingSubscriptionRow[] = [];
-
-  for (const candidate of candidates) {
-    const customerId = await resolveCustomerIdForCandidate({ client, candidate });
-    if (!customerId) continue;
-
-    const active = await listActiveSubscriptionsForCustomer({
-      client,
-      customerId,
-      customerKey: candidate.customerKey,
-    });
-
-    for (const subscription of active) {
-      if (seenSubscriptionIds.has(subscription.id)) continue;
-      seenSubscriptionIds.add(subscription.id);
-      subscriptions.push(
-        await mapSubscriptionRow({
-          client,
-          subscription,
-          candidate,
-          cycle,
-          ownerUserId: trimmed,
-          ownedApps,
-        }),
-      );
+  const unique: Array<{
+    candidate: CustomerCandidate;
+    subscription: OpenMeterSubscriptionView;
+  }> = [];
+  for (const group of perCandidate) {
+    for (const entry of group) {
+      if (seenSubscriptionIds.has(entry.subscription.id)) continue;
+      seenSubscriptionIds.add(entry.subscription.id);
+      unique.push(entry);
     }
   }
+
+  const subscriptions = await Promise.all(
+    unique.map(({ candidate, subscription }) =>
+      mapSubscriptionRow({
+        client,
+        subscription,
+        candidate,
+        cycle,
+        ownerUserId: trimmed,
+        ownedApps,
+        planKeyToLocalId,
+      }),
+    ),
+  );
 
   subscriptions.sort((a, b) => {
     const usedA = BigInt(a.usedUsdMicros);
@@ -550,6 +608,9 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   }
 
   const adminClient = getHostedAdminClient();
+  // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
+  // first paint is not blocked when the invoice index is large or slow.
+  const emptyInvoices = { items: [] as TenantInvoiceDto[] };
   const [creditAllowance, subscriptions, ownedApps, invoicesResult] =
     await Promise.all([
       getOwnerPrepaidCreditBalance(userId).catch((err) => {
@@ -559,20 +620,24 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         );
         return null;
       }),
-      listOwnerActiveSubscriptions(userId),
+      withSoftTimeout(
+        listOwnerActiveSubscriptions(userId),
+        8_000,
+        [] as OwnerBillingSubscriptionRow[],
+        "subscription lookup",
+      ),
       listOwnedApps(userId),
-      listOwnerWalletInvoices({
-        client: adminClient,
-        ownerUserId: userId,
-        page: 1,
-        pageSize: 10,
-      }).catch((err) => {
-        console.warn(
-          "owner-billing: invoice lookup failed",
-          err instanceof Error ? err.message : String(err),
-        );
-        return { items: [] as TenantInvoiceDto[] };
-      }),
+      withSoftTimeout(
+        listOwnerWalletInvoices({
+          client: adminClient,
+          ownerUserId: userId,
+          page: 1,
+          pageSize: 10,
+        }),
+        2_500,
+        emptyInvoices,
+        "invoice lookup",
+      ),
     ]);
 
   return {

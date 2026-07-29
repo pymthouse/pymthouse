@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
-import { completeStripeOAuthCallback } from "@/lib/openmeter/stripe-connect";
+import { completeStripeOAuthCallback } from "@/lib/openmeter/stripe-app-install";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
 export async function GET(
