@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   defaultSubscriptionChangeTiming,
+  neonSubscriptionStatusAfterPlanChange,
   planRequiresPaymentMethod,
 } from "./subscriptions-billing";
 
@@ -72,5 +73,19 @@ test("defaultSubscriptionChangeTiming upgrades immediate, else next cycle", () =
       targetPriceAmount: "1",
     }),
     "immediate",
+  );
+});
+
+test("neonSubscriptionStatusAfterPlanChange is pending when checkout is required", () => {
+  assert.equal(
+    neonSubscriptionStatusAfterPlanChange({
+      checkoutUrl: "https://checkout.stripe.com/c/pay_test",
+    }),
+    "pending",
+  );
+  assert.equal(neonSubscriptionStatusAfterPlanChange({}), "active");
+  assert.equal(
+    neonSubscriptionStatusAfterPlanChange({ checkoutUrl: undefined }),
+    "active",
   );
 });

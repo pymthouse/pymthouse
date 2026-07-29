@@ -9,6 +9,7 @@ import {
   getAppBillingConfig,
   prepareAppCustomerStripeBilling,
 } from "./billing-profiles";
+import { getHostedOpenMeterUrl } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
@@ -16,6 +17,7 @@ import {
   type SubscriptionChangeTiming,
 } from "./konnect-subscriptions";
 import { buildOpenMeterPlanKey } from "./plans-sync";
+import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
@@ -52,6 +54,17 @@ export function defaultSubscriptionChangeTiming(input: {
   const current = parsePlanPriceAmount(input.currentPriceAmount);
   const target = parsePlanPriceAmount(input.targetPriceAmount);
   return target > current ? "immediate" : "next_billing_cycle";
+}
+
+/**
+ * Neon subscription cache status after a plan change.
+ * When Checkout is required to collect a payment method, keep the row pending
+ * until Stripe completes (mirrors createEndUserCheckout).
+ */
+export function neonSubscriptionStatusAfterPlanChange(input: {
+  checkoutUrl?: string;
+}): "pending" | "active" {
+  return input.checkoutUrl ? "pending" : "active";
 }
 
 async function upsertNeonSubscriptionCache(input: {
@@ -292,6 +305,18 @@ export async function changeAppUserSubscriptionPlan(input: {
     throw new Error("User is already on this plan");
   }
 
+  if (
+    !shouldUseKonnectRoutes(
+      getHostedOpenMeterUrl(),
+      process.env.OPENMETER_API_KEY,
+    )
+  ) {
+    throw new Error(
+      "Plan change requires Konnect routes (set OPENMETER_ROUTE_MODE=hosted " +
+        "or point OPENMETER_URL at a Konnect metering endpoint).",
+    );
+  }
+
   const timing =
     input.timing ??
     defaultSubscriptionChangeTiming({
@@ -380,7 +405,7 @@ export async function changeAppUserSubscriptionPlan(input: {
     externalUserId: input.externalUserId,
     planId: targetPlan.id,
     openmeterSubscriptionId: nextSubscriptionId,
-    status: "active",
+    status: neonSubscriptionStatusAfterPlanChange({ checkoutUrl }),
     stripeCheckoutSessionId,
   });
 
