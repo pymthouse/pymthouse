@@ -2,7 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/next-auth-options";
-import { createOwnerPaymentMethodCheckout } from "@/lib/openmeter/owner-payment-method";
+import {
+  createOwnerPaymentMethodCheckout,
+  unlinkOwnerPaymentMethod,
+} from "@/lib/openmeter/owner-payment-method";
+
+function sessionUserId(session: unknown): string | undefined {
+  if (!session || typeof session !== "object") {
+    return undefined;
+  }
+  const user = (session as { user?: unknown }).user;
+  if (!user || typeof user !== "object") {
+    return undefined;
+  }
+  const id = (user as { id?: unknown }).id;
+  return typeof id === "string" ? id : undefined;
+}
 
 /**
  * Start Stripe Checkout (setup) so the signed-in owner can attach a payment
@@ -10,8 +25,7 @@ import { createOwnerPaymentMethodCheckout } from "@/lib/openmeter/owner-payment-
  */
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  const sessionUser = session?.user as Record<string, unknown> | undefined;
-  const userId = typeof sessionUser?.id === "string" ? sessionUser.id : undefined;
+  const userId = sessionUserId(session);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -45,5 +59,28 @@ export async function POST(request: NextRequest) {
       status = 503;
     }
     return NextResponse.json({ error: message }, { status });
+  }
+}
+
+/** Detach the owner's default Stripe payment method (Plane A). */
+export async function DELETE() {
+  const session = await getServerSession(authOptions);
+  const userId = sessionUserId(session);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const result = await unlinkOwnerPaymentMethod(userId);
+    if (!result.unlinked) {
+      return NextResponse.json(
+        { error: "No payment method on file", ...result },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }

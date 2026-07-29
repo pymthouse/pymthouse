@@ -633,7 +633,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       }),
       withSoftTimeout(
         getOwnerDefaultPaymentMethod(userId),
-        2_500,
+        4_000,
         null as OwnerPaymentMethodSummary | null,
         "payment method lookup",
       ),

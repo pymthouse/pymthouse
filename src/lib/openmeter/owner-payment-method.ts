@@ -37,14 +37,25 @@ function stripeSecretKeyOrNull(): string | null {
   return key;
 }
 
-async function stripeGetJson<T>(path: string): Promise<T | null> {
+async function stripeRequestJson<T>(input: {
+  method: string;
+  path: string;
+  body?: URLSearchParams;
+}): Promise<T | null> {
   const apiKey = stripeSecretKeyOrNull();
   if (!apiKey) {
     return null;
   }
-  const response = await fetch(`https://api.stripe.com${path}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}` },
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (input.body) {
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+  }
+  const response = await fetch(`https://api.stripe.com${input.path}`, {
+    method: input.method,
+    headers,
+    body: input.body?.toString(),
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
@@ -56,6 +67,17 @@ async function stripeGetJson<T>(path: string): Promise<T | null> {
     return null;
   }
 }
+
+type StripeCardPaymentMethod = {
+  id?: string;
+  type?: string;
+  card?: {
+    brand?: string | null;
+    last4?: string | null;
+    exp_month?: number | null;
+    exp_year?: number | null;
+  } | null;
+};
 
 /** @internal Exported for unit tests. */
 export function summarizeStripePaymentMethod(pm: {
@@ -81,33 +103,81 @@ export function summarizeStripePaymentMethod(pm: {
   };
 }
 
-async function resolveDefaultPaymentMethodId(input: {
+async function listStripeCustomerCards(
+  stripeCustomerId: string,
+): Promise<StripeCardPaymentMethod[]> {
+  const listed = await stripeRequestJson<{
+    data?: StripeCardPaymentMethod[];
+  }>({
+    method: "GET",
+    path: `/v1/customers/${encodeURIComponent(stripeCustomerId)}/payment_methods?type=card&limit=10`,
+  });
+  return (listed?.data ?? []).filter((pm) => Boolean(pm.id?.trim()));
+}
+
+async function resolvePreferredCard(input: {
   openMeterCustomerId: string;
   stripeCustomerId: string;
-}): Promise<string | null> {
+}): Promise<StripeCardPaymentMethod | null> {
+  const cards = await listStripeCustomerCards(input.stripeCustomerId);
+  if (cards.length === 0) {
+    return null;
+  }
+
+  const preferredIds: string[] = [];
   const fromKonnect = await getKonnectDefaultPaymentMethodId(
     input.openMeterCustomerId,
   );
   if (fromKonnect) {
-    return fromKonnect;
+    preferredIds.push(fromKonnect);
   }
 
-  const customer = await stripeGetJson<{
+  const customer = await stripeRequestJson<{
     invoice_settings?: { default_payment_method?: string | null };
-    default_source?: string | null;
-  }>(`/v1/customers/${encodeURIComponent(input.stripeCustomerId)}`);
+  }>({
+    method: "GET",
+    path: `/v1/customers/${encodeURIComponent(input.stripeCustomerId)}`,
+  });
   const fromInvoice =
     customer?.invoice_settings?.default_payment_method?.trim() || null;
   if (fromInvoice?.startsWith("pm_")) {
-    return fromInvoice;
+    preferredIds.push(fromInvoice);
   }
 
-  const listed = await stripeGetJson<{
-    data?: Array<{ id?: string }>;
-  }>(
-    `/v1/customers/${encodeURIComponent(input.stripeCustomerId)}/payment_methods?type=card&limit=1`,
+  for (const preferredId of preferredIds) {
+    const match = cards.find((pm) => pm.id === preferredId);
+    if (match) {
+      return match;
+    }
+  }
+  return cards[0] ?? null;
+}
+
+async function resolveOwnerStripeCustomer(ownerUserId: string): Promise<{
+  openMeterCustomerId: string;
+  stripeCustomerId: string;
+} | null> {
+  if (!isHostedAdminClientAvailable() || !stripeSecretKeyOrNull()) {
+    return null;
+  }
+  const client = getHostedAdminClient();
+  const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
+  const customer = await ensureOwnerCustomer(
+    client,
+    ownerUserId,
+    publicClientIds,
   );
-  return listed?.data?.[0]?.id?.trim() || null;
+  const stripeCustomerId = await getStripeCustomerAppDataId({
+    client,
+    customerId: customer.id,
+  });
+  if (!stripeCustomerId) {
+    return null;
+  }
+  return {
+    openMeterCustomerId: customer.id,
+    stripeCustomerId,
+  };
 }
 
 /**
@@ -118,44 +188,17 @@ export async function getOwnerDefaultPaymentMethod(
   ownerUserId: string,
 ): Promise<OwnerPaymentMethodSummary | null> {
   const trimmed = ownerUserId.trim();
-  if (!trimmed || !isHostedAdminClientAvailable() || !stripeSecretKeyOrNull()) {
+  if (!trimmed) {
     return null;
   }
 
   try {
-    const client = getHostedAdminClient();
-    const publicClientIds = await listOwnedPublicClientIds(trimmed);
-    const customer = await ensureOwnerCustomer(
-      client,
-      trimmed,
-      publicClientIds,
-    );
-    const stripeCustomerId = await getStripeCustomerAppDataId({
-      client,
-      customerId: customer.id,
-    });
-    if (!stripeCustomerId) {
+    const resolved = await resolveOwnerStripeCustomer(trimmed);
+    if (!resolved) {
       return null;
     }
-
-    const pmId = await resolveDefaultPaymentMethodId({
-      openMeterCustomerId: customer.id,
-      stripeCustomerId,
-    });
-    if (!pmId) {
-      return null;
-    }
-
-    const pm = await stripeGetJson<{
-      id?: string;
-      card?: {
-        brand?: string | null;
-        last4?: string | null;
-        exp_month?: number | null;
-        exp_year?: number | null;
-      } | null;
-    }>(`/v1/payment_methods/${encodeURIComponent(pmId)}`);
-    return pm ? summarizeStripePaymentMethod(pm) : null;
+    const card = await resolvePreferredCard(resolved);
+    return card ? summarizeStripePaymentMethod(card) : null;
   } catch (err) {
     console.warn(
       "owner-payment-method: lookup failed",
@@ -163,6 +206,49 @@ export async function getOwnerDefaultPaymentMethod(
     );
     return null;
   }
+}
+
+/**
+ * Detach the owner's default Stripe card so overage invoices stop charging it.
+ * Clears Stripe's customer default; Konnect app_data refreshes on the next OM sync.
+ */
+export async function unlinkOwnerPaymentMethod(
+  ownerUserId: string,
+): Promise<{ unlinked: boolean; paymentMethodId: string | null }> {
+  const trimmed = ownerUserId.trim();
+  if (!trimmed) {
+    throw new Error("ownerUserId is required");
+  }
+
+  const resolved = await resolveOwnerStripeCustomer(trimmed);
+  if (!resolved) {
+    return { unlinked: false, paymentMethodId: null };
+  }
+
+  const card = await resolvePreferredCard(resolved);
+  const pmId = card?.id?.trim();
+  if (!pmId) {
+    return { unlinked: false, paymentMethodId: null };
+  }
+
+  const detached = await stripeRequestJson<{ id?: string }>({
+    method: "POST",
+    path: `/v1/payment_methods/${encodeURIComponent(pmId)}/detach`,
+  });
+  if (!detached?.id) {
+    throw new Error("Stripe could not detach the payment method");
+  }
+
+  // Best-effort: clear invoice default so Stripe does not keep a dangling pointer.
+  await stripeRequestJson({
+    method: "POST",
+    path: `/v1/customers/${encodeURIComponent(resolved.stripeCustomerId)}`,
+    body: new URLSearchParams({
+      "invoice_settings[default_payment_method]": "",
+    }),
+  });
+
+  return { unlinked: true, paymentMethodId: pmId };
 }
 
 /**
