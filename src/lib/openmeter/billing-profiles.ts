@@ -3,31 +3,12 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { appBillingConfig } from "@/db/schema";
 import type { OpenMeter } from "@openmeter/sdk";
-import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getHostedAdminClient } from "./admin-client";
 import { assignCustomerBillingProfileOverride } from "./customers";
 
 const FREE_BILLING_PROFILE_NAME = "pymthouse-free";
 
 let cachedFreeBillingProfileId: string | null = null;
-
-/**
- * The free-profile override PUT is idempotent and the override persists in
- * Konnect, yet the signer hot path re-applied it on every Starter ensure.
- * Remember applied (customer, profile) pairs per process so warm requests
- * skip the PUT.
- */
-let appliedOverrideCache: ReturnType<typeof createAsyncTtlCache<true>> | null = null;
-
-function getAppliedOverrideCache() {
-  appliedOverrideCache ??= createAsyncTtlCache<true>({
-    ttlSeconds: resolveCacheTtlSeconds(
-      "OPENMETER_BILLING_OVERRIDE_CACHE_TTL_SECONDS",
-      3600,
-    ),
-  });
-  return appliedOverrideCache;
-}
 
 function billingProfileAppId(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) {
@@ -198,22 +179,24 @@ export async function ensureFreeBillingProfile(client?: OpenMeter): Promise<stri
   return profile.id;
 }
 
+/**
+ * Point a customer at the sandbox free billing profile. Callers should only
+ * invoke this when subscription create fails with
+ * {@link isOpenMeterStripeBillingError} — the default Stripe-backed profile
+ * rejects customers without Stripe app data, and this override is the fix.
+ * The override persists in Konnect, so once applied it does not need to run
+ * again for that customer.
+ */
 export async function applyFreeBillingProfileToCustomer(input: {
   client: OpenMeter;
   customerId: string;
 }): Promise<void> {
   const profileId = await ensureFreeBillingProfile(input.client);
-  await getAppliedOverrideCache().get(
-    `${input.customerId}\u0000${profileId}`,
-    async () => {
-      await assignCustomerBillingProfileOverride({
-        client: input.client,
-        customerId: input.customerId,
-        billingProfileId: profileId,
-      });
-      return true;
-    },
-  );
+  await assignCustomerBillingProfileOverride({
+    client: input.client,
+    customerId: input.customerId,
+    billingProfileId: profileId,
+  });
 }
 
 export async function applyTenantBillingProfileToCustomer(input: {
@@ -238,7 +221,6 @@ export async function applyTenantBillingProfileToCustomer(input: {
 
 export function resetFreeBillingProfileCacheForTests(): void {
   cachedFreeBillingProfileId = null;
-  appliedOverrideCache = null;
 }
 
 export async function upsertAppBillingConfig(
