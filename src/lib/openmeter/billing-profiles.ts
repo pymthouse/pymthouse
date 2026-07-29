@@ -179,6 +179,14 @@ export async function ensureFreeBillingProfile(client?: OpenMeter): Promise<stri
   return profile.id;
 }
 
+/**
+ * Point a customer at the sandbox free billing profile. Callers should only
+ * invoke this when subscription create fails with
+ * {@link isOpenMeterStripeBillingError} — the default Stripe-backed profile
+ * rejects customers without Stripe app data, and this override is the fix.
+ * The override persists in Konnect, so once applied it does not need to run
+ * again for that customer.
+ */
 export async function applyFreeBillingProfileToCustomer(input: {
   client: OpenMeter;
   customerId: string;

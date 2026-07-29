@@ -28,6 +28,7 @@ import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-disp
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
+  resolveOpenMeterPlanKey,
 } from "@/lib/openmeter/subscription-read";
 import {
   ceilExactUsdMicrosSum,
@@ -141,12 +142,10 @@ async function resolveSubscriptionWithPlanKey(subscription: {
 }) {
   let planKey = subscription.planKey;
   if (!planKey && subscription.planId && isHostedAdminClientAvailable()) {
-    try {
-      const remote = await getHostedAdminClient().plans.get(subscription.planId);
-      planKey = remote?.key?.trim() || null;
-    } catch {
-      planKey = null;
-    }
+    planKey = await resolveOpenMeterPlanKey(
+      getHostedAdminClient(),
+      subscription.planId,
+    );
   }
   return planKey ? { ...subscription, planKey } : subscription;
 }

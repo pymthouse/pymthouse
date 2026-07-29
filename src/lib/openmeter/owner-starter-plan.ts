@@ -1,5 +1,6 @@
 import type { OpenMeter } from "@openmeter/sdk";
 
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
@@ -20,6 +21,7 @@ import {
   isOpenMeterConflictError,
   isOpenMeterPlanAlreadyPublishedError,
   isOpenMeterPlanNotFoundError,
+  isOpenMeterStripeBillingError,
 } from "./plan-errors";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
@@ -157,10 +159,39 @@ async function publishOwnerStarterPlanBestEffort(
 }
 
 /**
+ * The Owner Starter plan is a single platform-global Konnect plan; once it is
+ * verified/published, re-checking it costs a features + plans list per call.
+ * Cache the resolved reference per process.
+ */
+let ownerStarterPlanCache: ReturnType<
+  typeof createAsyncTtlCache<OwnerStarterPlanRef>
+> | null = null;
+
+function getOwnerStarterPlanCache() {
+  ownerStarterPlanCache ??= createAsyncTtlCache<OwnerStarterPlanRef>({
+    ttlSeconds: resolveCacheTtlSeconds("OWNER_STARTER_PLAN_CACHE_TTL_SECONDS", 600),
+  });
+  return ownerStarterPlanCache;
+}
+
+export function resetOwnerStarterPlanCacheForTests(): void {
+  ownerStarterPlanCache = null;
+}
+
+const OWNER_STARTER_PLAN_CACHE_KEY = "owner-starter-plan";
+
+/**
  * Ensure the platform Owner Starter plan exists and is published in Konnect.
  * Not a Neon `plans` row — owners share one Konnect plan across all apps.
  */
 export async function ensureOwnerStarterPlanSynced(): Promise<OwnerStarterPlanRef> {
+  return getOwnerStarterPlanCache().get(
+    OWNER_STARTER_PLAN_CACHE_KEY,
+    ensureOwnerStarterPlanSyncedUncached,
+  );
+}
+
+async function ensureOwnerStarterPlanSyncedUncached(): Promise<OwnerStarterPlanRef> {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
@@ -327,11 +358,6 @@ export async function ensureOwnerStarterSubscription(input: {
     input.publicClientIds ?? [],
   );
 
-  await applyFreeBillingProfileToCustomer({
-    client,
-    customerId: customer.id,
-  });
-
   const existing = await findExistingOwnerWalletSubscription({
     client,
     customerId: customer.id,
@@ -348,7 +374,8 @@ export async function ensureOwnerStarterSubscription(input: {
     };
   }
 
-  // Plan key is the SDK PlanReferenceInput contract.
+  // Plan key is the SDK PlanReferenceInput contract. Free billing-profile
+  // override is applied only when create fails with the Stripe-setup 409.
   try {
     const createdSub = await client.subscriptions.create({
       customerId: customer.id,
@@ -365,14 +392,14 @@ export async function ensureOwnerStarterSubscription(input: {
     };
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
+      // Konnect lost the plan the cached ref points at — force a real resync.
+      getOwnerStarterPlanCache().delete(OWNER_STARTER_PLAN_CACHE_KEY);
       const resynced = await ensureOwnerStarterPlanSynced();
-      const createdSub = await client.subscriptions.create({
+      const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
+        client,
         customerId: customer.id,
-        plan: { key: resynced.key },
+        planKey: resynced.key,
       });
-      if (!createdSub?.id) {
-        throw new Error("Failed to create Owner Starter subscription after plan sync");
-      }
       return {
         openmeterSubscriptionId: createdSub.id,
         planKey: resynced.key,
@@ -396,6 +423,67 @@ export async function ensureOwnerStarterSubscription(input: {
         };
       }
     }
+    if (isOpenMeterStripeBillingError(err)) {
+      await applyFreeBillingProfileToCustomer({
+        client,
+        customerId: customer.id,
+      });
+      const createdSub = await client.subscriptions.create({
+        customerId: customer.id,
+        plan: { key: plan.key },
+      });
+      if (!createdSub?.id) {
+        throw new Error(
+          "Failed to create Owner Starter subscription after billing profile apply",
+        );
+      }
+      return {
+        openmeterSubscriptionId: createdSub.id,
+        planKey: plan.key,
+        openmeterPlanId: plan.openmeterPlanId,
+        created: true,
+      };
+    }
     throw err;
+  }
+}
+
+/**
+ * Create an Owner Starter subscription, applying the free billing profile if
+ * Konnect rejects for missing Stripe app data. Used after a plan-not-found
+ * resync so that path still recovers from the Stripe-setup 409.
+ */
+async function createOwnerStarterSubscriptionWithBillingRecovery(input: {
+  client: OpenMeter;
+  customerId: string;
+  planKey: string;
+}): Promise<{ id: string }> {
+  try {
+    const createdSub = await input.client.subscriptions.create({
+      customerId: input.customerId,
+      plan: { key: input.planKey },
+    });
+    if (!createdSub?.id) {
+      throw new Error("Failed to create Owner Starter subscription after plan sync");
+    }
+    return createdSub;
+  } catch (err) {
+    if (!isOpenMeterStripeBillingError(err)) {
+      throw err;
+    }
+    await applyFreeBillingProfileToCustomer({
+      client: input.client,
+      customerId: input.customerId,
+    });
+    const createdSub = await input.client.subscriptions.create({
+      customerId: input.customerId,
+      plan: { key: input.planKey },
+    });
+    if (!createdSub?.id) {
+      throw new Error(
+        "Failed to create Owner Starter subscription after plan sync and billing profile apply",
+      );
+    }
+    return createdSub;
   }
 }

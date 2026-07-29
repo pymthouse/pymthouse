@@ -2,6 +2,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
@@ -75,13 +76,34 @@ function mapSubscriptionItem(item: OpenMeterSubscriptionSourceItem): OpenMeterSu
   };
 }
 
-async function resolveOpenMeterPlanKey(
+/** Plan id → key is immutable in OpenMeter; cache resolved keys aggressively. */
+let planKeyCache: ReturnType<typeof createAsyncTtlCache<string>> | null = null;
+
+function getPlanKeyCache() {
+  planKeyCache ??= createAsyncTtlCache<string>({
+    ttlSeconds: resolveCacheTtlSeconds("OPENMETER_PLAN_KEY_CACHE_TTL_SECONDS", 3600),
+  });
+  return planKeyCache;
+}
+
+export function resetPlanKeyCacheForTests(): void {
+  planKeyCache = null;
+}
+
+export async function resolveOpenMeterPlanKey(
   client: OpenMeter,
   planId: string,
 ): Promise<string | null> {
   try {
-    const plan = await client.plans.get(planId);
-    return plan?.key?.trim() || null;
+    // Failed lookups reject inside the loader so they are never cached.
+    return await getPlanKeyCache().get(planId, async () => {
+      const plan = await client.plans.get(planId);
+      const key = plan?.key?.trim();
+      if (!key) {
+        throw new Error(`OpenMeter plan ${planId} has no key`);
+      }
+      return key;
+    });
   } catch {
     return null;
   }
