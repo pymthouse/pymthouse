@@ -157,7 +157,8 @@ Verify `Stripe-Signature` over the raw body (`src/lib/stripe/webhook.ts`).
 | `invoice.paid` (Connect) | Recurring retail on connected account | Advance local subscription cache; do **not** also charge via OM Stripe app |
 | `customer.subscription.deleted` (optional) | Merchant cancelled retail sub | Align OM subscription cancel / phase-out |
 
-**Readiness predicate** (activation gate): `charges_enabled && details_submitted`.
+**Readiness predicate** (merchant checkout / activation gate): Connected Account id
+present, `charges_enabled`, and `details_submitted`.
 `payouts_enabled` is recorded but **not** required (see activation-gate.md).
 
 **Idempotency:** store processed Stripe `event.id` (or rely on natural upserts keyed

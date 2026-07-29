@@ -5,10 +5,12 @@ import {
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import {
   startMerchantConnect,
   type MerchantConnectMode,
 } from "@/lib/stripe/merchant-connect";
+import { merchantConnectOAuthErrorCode } from "@/lib/stripe/webhook";
 
 export async function POST(
   request: NextRequest,
@@ -68,7 +70,13 @@ export async function POST(
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("STRIPE_") ? 400 : 502;
-    return NextResponse.json({ error: message }, { status });
+    console.error(
+      "[stripe-connect]",
+      "startMerchantConnect failed:",
+      sanitizeForLog(message),
+    );
+    const code = merchantConnectOAuthErrorCode(err);
+    const status = code === "connect_misconfigured" ? 400 : 502;
+    return NextResponse.json({ error: code }, { status });
   }
 }

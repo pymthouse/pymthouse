@@ -40,6 +40,7 @@ async function stripeFormRequest<T>(input: {
   body?: URLSearchParams;
   stripeAccount?: string;
   stripeVersion?: string;
+  idempotencyKey?: string;
 }): Promise<T> {
   const apiKey = requireStripeSecretKey();
   const headers: Record<string, string> = {
@@ -52,14 +53,23 @@ async function stripeFormRequest<T>(input: {
   if (input.stripeVersion) {
     headers["Stripe-Version"] = input.stripeVersion;
   }
+  if (input.idempotencyKey?.trim()) {
+    headers["Idempotency-Key"] = input.idempotencyKey.trim();
+  }
   const response = await fetch(`https://api.stripe.com${input.path}`, {
     method: input.method,
     headers,
     body: input.body?.toString(),
+    signal: AbortSignal.timeout(30_000),
   });
-  const json = (await response.json()) as T & {
-    error?: { message?: string };
-  };
+  let json: T & { error?: { message?: string } };
+  try {
+    json = (await response.json()) as T & { error?: { message?: string } };
+  } catch {
+    throw new Error(
+      `Stripe ${input.method} ${input.path} failed (${response.status}): non-JSON body`,
+    );
+  }
   if (!response.ok) {
     throw new Error(
       `Stripe ${input.method} ${input.path} failed (${response.status}): ${
@@ -85,10 +95,16 @@ async function stripeJsonRequest<T>(input: {
       "Stripe-Version": input.stripeVersion,
     },
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
+    signal: AbortSignal.timeout(30_000),
   });
-  const json = (await response.json()) as T & {
-    error?: { message?: string };
-  };
+  let json: T & { error?: { message?: string } };
+  try {
+    json = (await response.json()) as T & { error?: { message?: string } };
+  } catch {
+    throw new Error(
+      `Stripe ${input.method} ${input.path} failed (${response.status}): non-JSON body`,
+    );
+  }
   if (!response.ok) {
     throw new Error(
       `Stripe ${input.method} ${input.path} failed (${response.status}): ${
@@ -135,7 +151,6 @@ export async function createMerchantConnectedAccount(input: {
         dashboard: "full",
         identity: {
           country: country.toLowerCase(),
-          entity_type: "company",
         },
         configuration: {
           merchant: {
@@ -303,6 +318,7 @@ export async function createConnectedCheckoutSession(input: {
   amountCents?: number;
   currency?: string;
   productName?: string;
+  metadata?: Record<string, string>;
 }): Promise<{ url: string; sessionId: string }> {
   const body = new URLSearchParams();
   const mode = input.mode ?? "setup";
@@ -313,7 +329,10 @@ export async function createConnectedCheckoutSession(input: {
   if (mode === "setup") {
     body.set("payment_method_types[0]", "card");
   } else {
-    const amount = input.amountCents ?? 0;
+    const amount = input.amountCents;
+    if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
+      throw new Error("amountCents must be a positive integer for payment mode");
+    }
     body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
     body.set("line_items[0][price_data][unit_amount]", String(amount));
     body.set(
@@ -327,6 +346,11 @@ export async function createConnectedCheckoutSession(input: {
     });
     if (fee > 0) {
       body.set("payment_intent_data[application_fee_amount]", String(fee));
+    }
+  }
+  for (const [key, value] of Object.entries(input.metadata ?? {})) {
+    if (key.trim() && value.trim()) {
+      body.set(`metadata[${key.trim()}]`, value.trim());
     }
   }
   const session = await stripeFormRequest<{ id?: string; url?: string }>({
@@ -349,8 +373,10 @@ export async function createConnectedInvoice(input: {
   description?: string;
   applicationFeeBps?: number;
   autoAdvance?: boolean;
+  idempotencyKey?: string;
 }): Promise<{ invoiceId: string; hostedInvoiceUrl: string | null }> {
   const currency = (input.currency ?? "usd").toLowerCase();
+  const idempotencyBase = input.idempotencyKey?.trim();
   const itemBody = new URLSearchParams();
   itemBody.set("customer", input.customerId);
   itemBody.set("amount", String(input.amountCents));
@@ -358,11 +384,12 @@ export async function createConnectedInvoice(input: {
   if (input.description?.trim()) {
     itemBody.set("description", input.description.trim());
   }
-  await stripeFormRequest({
+  const item = await stripeFormRequest<{ id?: string }>({
     method: "POST",
     path: "/v1/invoiceitems",
     body: itemBody,
     stripeAccount: input.accountId,
+    idempotencyKey: idempotencyBase ? `${idempotencyBase}:item` : undefined,
   });
 
   const invoiceBody = new URLSearchParams();
@@ -377,22 +404,38 @@ export async function createConnectedInvoice(input: {
   if (fee > 0) {
     invoiceBody.set("application_fee_amount", String(fee));
   }
-  const invoice = await stripeFormRequest<{
-    id?: string;
-    hosted_invoice_url?: string | null;
-  }>({
-    method: "POST",
-    path: "/v1/invoices",
-    body: invoiceBody,
-    stripeAccount: input.accountId,
-  });
-  if (!invoice.id) {
-    throw new Error("Stripe invoice create failed on Connected Account");
+  try {
+    const invoice = await stripeFormRequest<{
+      id?: string;
+      hosted_invoice_url?: string | null;
+    }>({
+      method: "POST",
+      path: "/v1/invoices",
+      body: invoiceBody,
+      stripeAccount: input.accountId,
+      idempotencyKey: idempotencyBase ? `${idempotencyBase}:invoice` : undefined,
+    });
+    if (!invoice.id) {
+      throw new Error("Stripe invoice create failed on Connected Account");
+    }
+    return {
+      invoiceId: invoice.id,
+      hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+    };
+  } catch (err) {
+    if (item.id?.trim()) {
+      try {
+        await stripeFormRequest({
+          method: "DELETE",
+          path: `/v1/invoiceitems/${item.id.trim()}`,
+          stripeAccount: input.accountId,
+        });
+      } catch {
+        // Best-effort cleanup; surface the original invoice failure.
+      }
+    }
+    throw err;
   }
-  return {
-    invoiceId: invoice.id,
-    hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
-  };
 }
 
 export function connectAccountLinkUrls(clientId: string): {

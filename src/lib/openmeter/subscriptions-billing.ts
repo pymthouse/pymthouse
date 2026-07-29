@@ -180,6 +180,12 @@ export async function createEndUserCheckout(input: {
   });
 
   const billingConfig = await getAppBillingConfig(input.clientId);
+  const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
+  if (!merchantReady && connectPaymentsOnlyEnabled(billingConfig)) {
+    throw new Error(
+      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
+    );
+  }
 
   const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
   const subscription = await client.subscriptions.create({
@@ -203,7 +209,7 @@ export async function createEndUserCheckout(input: {
   let checkoutUrl: string;
   let stripeCheckoutSessionId: string | null = null;
 
-  if (isMerchantConnectPaymentsReady(billingConfig)) {
+  if (merchantReady) {
     const connectCheckout = await createMerchantConnectCheckoutForUser({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
@@ -214,10 +220,6 @@ export async function createEndUserCheckout(input: {
     });
     checkoutUrl = connectCheckout.checkoutUrl;
     stripeCheckoutSessionId = connectCheckout.sessionId;
-  } else if (connectPaymentsOnlyEnabled(billingConfig)) {
-    throw new Error(
-      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
-    );
   } else {
     const checkout = await client.apps.stripe.createCheckoutSession({
       customer: { id: customer.id },
