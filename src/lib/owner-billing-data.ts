@@ -44,6 +44,7 @@ import {
 } from "@/lib/openmeter/invoices";
 import {
   getOwnerDefaultPaymentMethod,
+  OWNER_PAYMENT_METHOD_BUDGET_MS,
   type OwnerPaymentMethodSummary,
 } from "@/lib/openmeter/owner-payment-method";
 
@@ -633,7 +634,9 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       }),
       withSoftTimeout(
         getOwnerDefaultPaymentMethod(userId),
-        4_000,
+        // Above the lookup's own budget, so its deadline fires first and we
+        // keep whatever it resolved instead of falling back to null.
+        OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
         null as OwnerPaymentMethodSummary | null,
         "payment method lookup",
       ),

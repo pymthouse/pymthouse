@@ -71,11 +71,12 @@ async function createStripeCustomer(input: {
 
 async function getKonnectCustomerBilling(
   customerId: string,
+  signal?: AbortSignal,
 ): Promise<KonnectCustomerBillingData> {
   try {
     return await konnectAdminFetch<KonnectCustomerBillingData>(
       `/customers/${encodeURIComponent(customerId)}/billing`,
-      { method: "GET" },
+      { method: "GET", signal },
       "customer-billing",
     );
   } catch (err) {
@@ -267,13 +268,36 @@ export async function getKonnectCustomerBillingProfileId(
 export async function getKonnectDefaultPaymentMethodId(
   customerId: string,
 ): Promise<string | null> {
+  return (await getKonnectStripeBillingRefs(customerId)).defaultPaymentMethodId;
+}
+
+export type KonnectStripeBillingRefs = {
+  stripeCustomerId: string | null;
+  defaultPaymentMethodId: string | null;
+};
+
+/**
+ * Both Stripe ids from a single Konnect /billing read. Callers that need the
+ * customer and its default payment method must use this rather than pairing
+ * getKonnectStripeCustomerId + getKonnectDefaultPaymentMethodId, which fetch
+ * the same uncached document twice.
+ */
+export async function getKonnectStripeBillingRefs(
+  customerId: string,
+  signal?: AbortSignal,
+): Promise<KonnectStripeBillingRefs> {
   if (!isKonnectMode()) {
-    return null;
+    return { stripeCustomerId: null, defaultPaymentMethodId: null };
   }
   try {
-    const data = await getKonnectCustomerBilling(customerId);
-    return data.app_data?.stripe?.default_payment_method_id?.trim() || null;
+    const data = await getKonnectCustomerBilling(customerId, signal);
+    const stripe = data.app_data?.stripe;
+    return {
+      stripeCustomerId: stripe?.customer_id?.trim() || null,
+      defaultPaymentMethodId:
+        stripe?.default_payment_method_id?.trim() || null,
+    };
   } catch {
-    return null;
+    return { stripeCustomerId: null, defaultPaymentMethodId: null };
   }
 }
