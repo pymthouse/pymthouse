@@ -5,6 +5,7 @@ import {
   type TurnkeyProviderConfig,
 } from "@turnkey/react-wallet-kit";
 import { useEffect } from "react";
+import { getTurnkeyWalletConfigId } from "@/lib/turnkey-wallet-config";
 import { TurnkeyModalDismissGuard } from "./TurnkeyModalDismissGuard";
 
 // Wallet Kit auto-calls fetchUser/fetchWallets on mount whenever it thinks
@@ -140,8 +141,8 @@ export default function TurnkeyProviderWrapper({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const organizationId = process.env.NEXT_PUBLIC_ORGANIZATION_ID;
-  const authProxyConfigId = process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID;
+  const organizationId = process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim();
+  const authProxyConfigId = getTurnkeyWalletConfigId();
 
   if (!organizationId || !authProxyConfigId) {
     return <>{children}</>;

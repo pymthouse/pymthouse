@@ -8,12 +8,10 @@ import OwnerBillingView from "@/components/OwnerBillingView";
 import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
+import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 function isTurnkeyFundingConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
-      process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim(),
-  );
+  return isTurnkeyWalletConfigured();
 }
 
 export default async function BillingPage() {
