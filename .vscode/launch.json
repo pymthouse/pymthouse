@@ -5,7 +5,7 @@
       "name": "pymthouse: Next dev",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev -- --inspect --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
+      "command": "npm run dev -- --inspect",
       "cwd": "${workspaceFolder}"
     }
   ]
