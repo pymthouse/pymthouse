@@ -546,15 +546,14 @@ export async function updateAppBillingProfileSettings(input: {
     input.progressiveBilling !== undefined &&
     input.progressiveBilling !== existing.progressiveBilling;
 
-  if (
-    progressiveChanged &&
-    existing.stripeConnectStatus === "connected" &&
-    existing.openmeterBillingProfileId?.trim()
-  ) {
-    await syncProgressiveBillingToOpenMeterProfile({
-      profileId: existing.openmeterBillingProfileId,
-      progressiveBilling,
-    });
+  if (progressiveChanged && isAppBillingReady(existing)) {
+    const profileId = existing.openmeterBillingProfileId?.trim();
+    if (profileId) {
+      await syncProgressiveBillingToOpenMeterProfile({
+        profileId,
+        progressiveBilling,
+      });
+    }
   }
 
   await upsertAppBillingConfig(input.clientId, {

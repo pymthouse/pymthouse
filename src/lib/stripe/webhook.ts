@@ -26,7 +26,8 @@ export function requireStripeWebhookSecret(): string {
 }
 
 /**
- * Verify Stripe-Signature (t=…,v1=…). Returns false on any mismatch / skew.
+ * Verify Stripe-Signature (t=…,v1=…). Accepts any matching v1 (rotation can
+ * send multiple). Returns false on any mismatch / skew.
  */
 export function verifyStripeWebhookSignature(input: {
   rawBody: string;
@@ -38,15 +39,18 @@ export function verifyStripeWebhookSignature(input: {
   if (!input.signatureHeader?.trim()) {
     return false;
   }
-  const parts = Object.fromEntries(
-    input.signatureHeader.split(",").map((part) => {
-      const [k, ...rest] = part.trim().split("=");
-      return [k, rest.join("=")];
-    }),
-  ) as Record<string, string>;
-  const timestamp = parts.t;
-  const v1 = parts.v1;
-  if (!timestamp || !v1) {
+  let timestamp: string | undefined;
+  const v1Signatures: string[] = [];
+  for (const part of input.signatureHeader.split(",")) {
+    const [k, ...rest] = part.trim().split("=");
+    const value = rest.join("=");
+    if (k === "t") {
+      timestamp = value;
+    } else if (k === "v1" && value) {
+      v1Signatures.push(value);
+    }
+  }
+  if (!timestamp || v1Signatures.length === 0) {
     return false;
   }
   const ts = Number.parseInt(timestamp, 10);
@@ -60,16 +64,25 @@ export function verifyStripeWebhookSignature(input: {
   }
 
   const signedPayload = `${timestamp}.${input.rawBody}`;
-  const expected = createHmac("sha256", input.secret)
+  const expectedBuf = createHmac("sha256", input.secret)
     .update(signedPayload, "utf8")
-    .digest("hex");
+    .digest();
 
-  const expectedBuf = Buffer.from(expected, "utf8");
-  const actualBuf = Buffer.from(v1, "utf8");
-  if (expectedBuf.length !== actualBuf.length) {
-    return false;
+  for (const v1 of v1Signatures) {
+    let actualBuf: Buffer;
+    try {
+      actualBuf = Buffer.from(v1, "hex");
+    } catch {
+      continue;
+    }
+    if (
+      expectedBuf.length === actualBuf.length &&
+      timingSafeEqual(expectedBuf, actualBuf)
+    ) {
+      return true;
+    }
   }
-  return timingSafeEqual(expectedBuf, actualBuf);
+  return false;
 }
 
 /** Extract Connect capability flags from an account.updated event body. */

@@ -37,12 +37,13 @@ async function persistConnectedAccountFlags(input: {
 }): Promise<void> {
   const ready = input.chargesEnabled && input.detailsSubmitted;
   const existing = await getAppBillingConfig(input.clientId);
+  // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
+  // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
   await upsertAppBillingConfig(input.clientId, {
     stripeConnectedAccountId: input.accountId,
     stripeChargesEnabled: input.chargesEnabled,
     stripePayoutsEnabled: input.payoutsEnabled,
     stripeDetailsSubmitted: input.detailsSubmitted,
-    stripeConnectStatus: ready ? "connected" : "pending",
     connectedAt: ready
       ? (existing?.connectedAt ?? new Date().toISOString())
       : (existing?.connectedAt ?? null),
@@ -135,7 +136,6 @@ export async function startMerchantConnect({
     await upsertAppBillingConfig(clientId, {
       stripeConnectedAccountId: accountId,
       stripeOnboardingMethod: "account_link" satisfies StripeOnboardingMethod,
-      stripeConnectStatus: "pending",
       stripeChargesEnabled: false,
       stripePayoutsEnabled: false,
       stripeDetailsSubmitted: false,
