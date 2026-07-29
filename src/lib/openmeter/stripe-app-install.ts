@@ -136,6 +136,15 @@ export function parseStripeAccountIdFromConflict(err: unknown): string | null {
   return match?.[0] ?? null;
 }
 
+function normalizeOAuthErrorCode(rawCode: string): string {
+  const normalized = rawCode.trim().toLowerCase();
+  if (!normalized) {
+    return "oauth_error";
+  }
+  const safeCode = normalized.replace(/[^a-z0-9_]/g, "");
+  return safeCode || "oauth_error";
+}
+
 async function findExistingStripeAppForTenant(
   client: OpenMeter,
   clientId: string,
@@ -282,7 +291,12 @@ export async function completeStripeOAuthCallback(input: {
   clientId: string;
   state: string;
   userId: string;
-  oauthQuery: string;
+  oauthParams: {
+    code: string;
+    state: string;
+    error?: string;
+    errorDescription?: string;
+  };
 }): Promise<void> {
   const now = new Date().toISOString();
   const stateRows = await db
@@ -301,11 +315,27 @@ export async function completeStripeOAuthCallback(input: {
   if (!stateRow || stateRow.expiresAt < now) {
     throw new Error("Invalid or expired OAuth state");
   }
+  const callbackState = input.oauthParams.state.trim();
+  if (callbackState !== stateRow.state) {
+    throw new Error("Invalid or expired OAuth state");
+  }
+  const oauthError = input.oauthParams.error?.trim() || "";
+  if (oauthError) {
+    const safeErrorCode = normalizeOAuthErrorCode(oauthError);
+    throw new Error(`Stripe OAuth provider error: ${safeErrorCode}`);
+  }
+  const code = input.oauthParams.code.trim();
+  if (!code) {
+    throw new Error("Missing Stripe OAuth code");
+  }
 
   const client = getHostedAdminClient();
   const baseUrl = process.env.OPENMETER_URL?.replace(/\/$/, "") || "http://127.0.0.1:48888";
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
-  const authorizeUrl = `${baseUrl}/api/v1/marketplace/listings/stripe/install/oauth2/authorize?${input.oauthQuery}`;
+  const authorizeQuery = new URLSearchParams();
+  authorizeQuery.set("code", code);
+  authorizeQuery.set("state", stateRow.state);
+  const authorizeUrl = `${baseUrl}/api/v1/marketplace/listings/stripe/install/oauth2/authorize?${authorizeQuery.toString()}`;
   const authorizeResp = await fetch(authorizeUrl, {
     method: "GET",
     redirect: "manual",

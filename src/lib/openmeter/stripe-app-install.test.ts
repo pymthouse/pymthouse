@@ -9,6 +9,7 @@ import {
 } from "@/lib/openmeter/client";
 import {
   buildStripeConnectInstallUrl,
+  completeStripeOAuthCallback,
   connectStripeOnKonnect,
   connectStripeWithApiKey,
   createStripeOAuthState,
@@ -372,6 +373,80 @@ test("createStripeOAuthState returns install URL on self-hosted OpenMeter", asyn
     parsed.searchParams.get("redirect_uri") ?? "",
     new RegExp(`/api/v1/apps/${seeded.clientId}/billing/stripe/callback`),
   );
+});
+
+test("completeStripeOAuthCallback rejects provider error without authorizing", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(() => cleanupTestApp(seeded));
+
+  const state = `oauth-error-${seeded.clientId}`;
+  await db.insert(appBillingOauthStates).values({
+    id: crypto.randomUUID(),
+    state,
+    clientId: seeded.clientId,
+    userId: seeded.userId,
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    createdAt: new Date().toISOString(),
+  });
+
+  let fetchCalls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    fetchCalls += 1;
+    return new Response("", { status: 200 });
+  });
+
+  await assert.rejects(
+    () =>
+      completeStripeOAuthCallback({
+        clientId: seeded.clientId,
+        state,
+        userId: seeded.userId,
+        oauthParams: {
+          code: "",
+          state,
+          error: "access_denied",
+          errorDescription: "User denied",
+        },
+      }),
+    /Stripe OAuth provider error: access_denied/,
+  );
+  assert.equal(fetchCalls, 0);
+});
+
+test("completeStripeOAuthCallback rejects missing code before authorize call", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(() => cleanupTestApp(seeded));
+
+  const state = `oauth-missing-code-${seeded.clientId}`;
+  await db.insert(appBillingOauthStates).values({
+    id: crypto.randomUUID(),
+    state,
+    clientId: seeded.clientId,
+    userId: seeded.userId,
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    createdAt: new Date().toISOString(),
+  });
+
+  let fetchCalls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    fetchCalls += 1;
+    return new Response("", { status: 200 });
+  });
+
+  await assert.rejects(
+    () =>
+      completeStripeOAuthCallback({
+        clientId: seeded.clientId,
+        state,
+        userId: seeded.userId,
+        oauthParams: {
+          code: "",
+          state,
+        },
+      }),
+    /Missing Stripe OAuth code/,
+  );
+  assert.equal(fetchCalls, 0);
 });
 
 test("connectStripeOnKonnect finalizes via org Stripe app id", async (t) => {
