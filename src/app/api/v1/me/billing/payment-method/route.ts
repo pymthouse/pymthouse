@@ -33,15 +33,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status =
+    let status = 502;
+    if (
       message.includes("STRIPE_") ||
       message.includes("OPENMETER_") ||
       message.includes("No ready Stripe") ||
       message.includes("No Stripe app")
-        ? 400
-        : message.includes("Cannot reach OpenMeter")
-          ? 503
-          : 502;
+    ) {
+      status = 400;
+    } else if (message.includes("Cannot reach OpenMeter")) {
+      status = 503;
+    }
     return NextResponse.json({ error: message }, { status });
   }
 }
