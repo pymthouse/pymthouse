@@ -38,6 +38,7 @@ import {
 } from "../src/lib/openmeter/stripe-customer-data";
 import { getHostedOpenMeterUrl } from "../src/lib/openmeter/constants";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
+import { sanitizeForLog } from "../src/lib/sanitize-for-log";
 
 type Args = {
   apply: boolean;
@@ -246,13 +247,13 @@ async function migrateOwner(input: {
   });
   if (!status.needs) {
     console.log(
-      `[skip] owner ${key} customer=${customer.id} stripe=${status.stripeCus} profile=${status.profileId ?? "n/a"}`,
+      `[skip] owner ${sanitizeForLog(key)} customer=${sanitizeForLog(customer.id)} stripe=${sanitizeForLog(status.stripeCus)} profile=${sanitizeForLog(status.profileId ?? "n/a")}`,
     );
     return "skipped";
   }
 
   console.log(
-    `[${input.apply ? "apply" : "dry-run"}] owner ${key} reason=${status.reason} customer=${customer.id} oldProfile=${status.profileId ?? "n/a"}`,
+    `[${input.apply ? "apply" : "dry-run"}] owner ${sanitizeForLog(key)} reason=${sanitizeForLog(status.reason)} customer=${sanitizeForLog(customer.id)} oldProfile=${sanitizeForLog(status.profileId ?? "n/a")}`,
   );
   if (!input.apply) {
     return "migrated";
@@ -272,7 +273,7 @@ async function migrateOwner(input: {
       `Migration did not persist Stripe app data for owner ${key} (${customer.id})`,
     );
   }
-  console.log(`[ok] owner ${key} stripe=${after}`);
+  console.log(`[ok] owner ${sanitizeForLog(key)} stripe=${sanitizeForLog(after)}`);
   return "migrated";
 }
 
