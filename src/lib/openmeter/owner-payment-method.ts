@@ -32,7 +32,7 @@ export type OwnerPaymentMethodSummary = {
 function stripeSecretKeyOrNull(): string | null {
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key || !key.startsWith("sk_")) {
+  if (!key?.startsWith("sk_")) {
     return null;
   }
   return key;
