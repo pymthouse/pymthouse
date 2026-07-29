@@ -8,8 +8,15 @@ import {
   KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
   normalizeKonnectMeteringUrl,
 } from "../../src/lib/openmeter/constants";
+import {
+  changeKonnectSubscription as changeKonnectSubscriptionLib,
+  listActiveKonnectSubscriptions as listActiveKonnectSubscriptionsLib,
+  type KonnectSubscription,
+  type SubscriptionChangeTiming,
+} from "../../src/lib/openmeter/konnect-subscriptions";
 
-export type SubscriptionChangeTiming = "immediate" | "next_billing_cycle";
+export type { KonnectSubscription, SubscriptionChangeTiming };
+export { cancelKonnectSubscription } from "../../src/lib/openmeter/konnect-subscriptions";
 
 export type KonnectPlan = {
   id: string;
@@ -25,14 +32,6 @@ export type KonnectPlan = {
     name?: string;
     rate_cards?: Array<Record<string, unknown>>;
   }>;
-};
-
-export type KonnectSubscription = {
-  id: string;
-  status: string;
-  customer_id: string;
-  plan_id?: string;
-  settlement_mode?: string;
 };
 
 export function takeArgValue(argv: string[], index: number, flag: string): string {
@@ -134,61 +133,29 @@ export async function getKonnectPlan(
   return konnectFetch<KonnectPlan>(baseUrl, apiKey, "GET", `/plans/${planId}`);
 }
 
+/** Script-compatible wrapper; baseUrl/apiKey are unused (lib reads env). */
 export async function listActiveKonnectSubscriptions(
-  baseUrl: string,
-  apiKey: string,
+  _baseUrl?: string,
+  _apiKey?: string,
 ): Promise<KonnectSubscription[]> {
-  const out: KonnectSubscription[] = [];
-  let page = 1;
-  for (;;) {
-    const body = await konnectFetch<{
-      data?: KonnectSubscription[];
-      meta?: { page?: { size?: number; number?: number; total?: number } };
-    }>(baseUrl, apiKey, "GET", `/subscriptions?page=${page}&pageSize=100`);
-    const items = body.data ?? [];
-    for (const item of items) {
-      if (item.status === "active" || item.status === "scheduled") {
-        out.push(item);
-      }
-    }
-
-    // Konnect may ignore pageSize and return its own page.size (often 20).
-    // Stop only when we've consumed meta.total or get an empty page.
-    const pageSize = body.meta?.page?.size ?? items.length;
-    const total = body.meta?.page?.total;
-    if (items.length === 0) {
-      break;
-    }
-    if (typeof total === "number" && page * pageSize >= total) {
-      break;
-    }
-    if (typeof total !== "number" && items.length < pageSize) {
-      break;
-    }
-    page += 1;
-  }
-  return out;
+  return listActiveKonnectSubscriptionsLib();
 }
 
+/** Script-compatible wrapper; baseUrl/apiKey are unused (lib reads env). */
 export async function changeKonnectSubscription(input: {
-  baseUrl: string;
-  apiKey: string;
+  baseUrl?: string;
+  apiKey?: string;
   subscriptionId: string;
   customerId: string;
   planId: string;
   timing: SubscriptionChangeTiming;
 }): Promise<{ current?: KonnectSubscription; next?: KonnectSubscription }> {
-  return konnectFetch(
-    input.baseUrl,
-    input.apiKey,
-    "POST",
-    `/subscriptions/${input.subscriptionId}/change`,
-    {
-      customer: { id: input.customerId },
-      plan: { id: input.planId },
-      timing: input.timing,
-    },
-  );
+  return changeKonnectSubscriptionLib({
+    subscriptionId: input.subscriptionId,
+    customerId: input.customerId,
+    planId: input.planId,
+    timing: input.timing,
+  });
 }
 
 export type KonnectCustomer = {

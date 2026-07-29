@@ -36,9 +36,20 @@ import {
   listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
-import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
+import {
+  getHostedOpenMeterUrl,
+  NETWORK_FEE_USD_MICROS_METER,
+} from "@/lib/openmeter/constants";
 import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import {
+  getKonnectCustomerBillingProfileId,
+  getStripeCustomerAppDataId,
+} from "@/lib/openmeter/stripe-customer-data";
+import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
+import {
+  countActiveKonnectSubscriptionsForPlan,
+} from "@/lib/openmeter/konnect-subscriptions";
 
 export type FindingSeverity = "error" | "warn" | "info";
 
@@ -77,6 +88,10 @@ const FIX_DEDUPE =
   "npm run openmeter:dedupe-owner-subscriptions -- --owner-id <users.id> --apply";
 const FIX_MIGRATE =
   "npm run openmeter:migrate-owner-customers -- --owner-id <users.id> --provision --transfer-balances --cancel-legacy";
+const FIX_SANDBOX_TO_STRIPE =
+  "npm run openmeter:migrate-sandbox-to-stripe -- --apply";
+const FIX_MIGRATE_PLAN_SUBSCRIBERS =
+  "npm run openmeter:migrate-plan-subscribers -- --client-id <app_…> --from-plan <planId> --apply";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -665,6 +680,35 @@ async function auditOwnerSubscriptions(
     ];
   }
 
+  const stripeCus = await getStripeCustomerAppDataId({ client, customerId });
+  if (!stripeCus) {
+    findings.push({
+      code: "owner_missing_stripe_app_data",
+      severity: "error",
+      ownerId,
+      message: `Owner customer ${customerKey} has no Stripe customer app data (cus_…)`,
+      details: { customerId, customerKey },
+      remediation: FIX_SANDBOX_TO_STRIPE,
+    });
+  }
+
+  if (
+    shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+  ) {
+    const profileId = await getKonnectCustomerBillingProfileId(customerId);
+    const sandboxId = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
+    if (profileId && sandboxId && profileId === sandboxId) {
+      findings.push({
+        code: "owner_sandbox_billing_profile",
+        severity: "error",
+        ownerId,
+        message: `Owner customer ${customerKey} still uses sandbox billing profile ${profileId}`,
+        details: { customerId, profileId },
+        remediation: FIX_SANDBOX_TO_STRIPE,
+      });
+    }
+  }
+
   const subs = await listOpenMeterSubscriptionsForCustomer(client, customerId);
   const active = subs.filter((s) => isOpenMeterSubscriptionActive(s.status));
 
@@ -762,6 +806,116 @@ async function auditOwnerSpendableGates(input: {
 }
 
 /**
+ * Active subscriptions remaining on a phase_out / deleted plan past phaseOutAt.
+ * Pure — no I/O.
+ */
+export function classifyPhaseOutPastDeadline(input: {
+  clientId: string;
+  planId: string;
+  planName: string;
+  status: string;
+  phaseOutAt: string | null;
+  openmeterPlanId: string | null;
+  activeSubscriberCount: number;
+  nowIso?: string;
+}): BillingConsistencyFinding[] {
+  const findings: BillingConsistencyFinding[] = [];
+  if (input.status !== "phase_out" && input.status !== "deleted") {
+    return findings;
+  }
+  if (!input.phaseOutAt?.trim()) {
+    return findings;
+  }
+  const deadline = Date.parse(input.phaseOutAt);
+  if (Number.isNaN(deadline)) {
+    return findings;
+  }
+  const now = Date.parse(input.nowIso ?? new Date().toISOString());
+  if (now < deadline) {
+    return findings;
+  }
+  if (input.activeSubscriberCount <= 0) {
+    return findings;
+  }
+
+  findings.push({
+    code: "phase_out_subscribers_past_deadline",
+    severity: "error",
+    clientId: input.clientId,
+    message: `Plan "${input.planName}" is past phaseOutAt with ${input.activeSubscriberCount} active subscriber(s)`,
+    details: {
+      planId: input.planId,
+      phaseOutAt: input.phaseOutAt,
+      openmeterPlanId: input.openmeterPlanId,
+      activeSubscriberCount: input.activeSubscriberCount,
+    },
+    remediation: FIX_MIGRATE_PLAN_SUBSCRIBERS,
+  });
+  return findings;
+}
+
+async function auditPhaseOutPlans(
+  clientIdFilter?: string,
+): Promise<BillingConsistencyFinding[]> {
+  const findings: BillingConsistencyFinding[] = [];
+  const rows = clientIdFilter?.trim()
+    ? await db
+        .select()
+        .from(plans)
+        .where(
+          and(
+            eq(plans.clientId, clientIdFilter.trim()),
+            eq(plans.status, "phase_out"),
+          ),
+        )
+    : await db.select().from(plans).where(eq(plans.status, "phase_out"));
+
+  for (const plan of rows) {
+    if (!(plan as { phaseOutAt?: string | null }).phaseOutAt?.trim()) {
+      continue;
+    }
+    const phaseOutAt = (plan as { phaseOutAt?: string | null }).phaseOutAt;
+    const deadline = Date.parse(phaseOutAt ?? "");
+    if (Number.isNaN(deadline) || Date.now() < deadline) {
+      continue;
+    }
+    let activeSubscriberCount = 0;
+    if (plan.openmeterPlanId?.trim()) {
+      try {
+        activeSubscriberCount = await countActiveKonnectSubscriptionsForPlan(
+          plan.openmeterPlanId,
+        );
+      } catch (err) {
+        findings.push({
+          code: "phase_out_subscriber_check_failed",
+          severity: "warn",
+          clientId: plan.clientId,
+          message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
+          details: {
+            planId: plan.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          remediation: FIX_MIGRATE_PLAN_SUBSCRIBERS,
+        });
+        continue;
+      }
+    }
+    findings.push(
+      ...classifyPhaseOutPastDeadline({
+        clientId: plan.clientId,
+        planId: plan.id,
+        planName: plan.name,
+        status: plan.status,
+        phaseOutAt: (plan as { phaseOutAt?: string | null }).phaseOutAt ?? null,
+        openmeterPlanId: plan.openmeterPlanId,
+        activeSubscriberCount,
+      }),
+    );
+  }
+  return findings;
+}
+
+/**
  * Live audit: Neon Starter rows ↔ Konnect plans/subscriptions ↔ spendable gate.
  */
 export async function auditBillingConsistency(
@@ -807,6 +961,8 @@ export async function auditBillingConsistency(
       ...(await auditOwnerSpendableGates({ ownerId, starters, options })),
     );
   }
+
+  findings.push(...(await auditPhaseOutPlans(options.clientId)));
 
   return findings;
 }

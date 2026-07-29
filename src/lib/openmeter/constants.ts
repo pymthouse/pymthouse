@@ -78,3 +78,14 @@ export function requireOpenMeterForUsageReads(): boolean {
 export function openMeterUsesLiveNetworkInTests(): boolean {
   return process.env.OPENMETER_TEST_LIVE === "1";
 }
+
+/** Kong Konnect Metering & Billing docs linked from plan form field help icons. */
+export const OPENMETER_DOCS = {
+  billingCadence:
+    "https://developer.konghq.com/metering-and-billing/product-catalog/#billing-cadence",
+  flatFee:
+    "https://developer.konghq.com/metering-and-billing/pricing-models/#flat-fee",
+  usageDiscount:
+    "https://developer.konghq.com/metering-and-billing/product-catalog/#usage-discounts",
+} as const;
+

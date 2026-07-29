@@ -57,6 +57,25 @@ async function findCustomerIdByExactKey(
   }
 }
 
+async function resolveOwnerCustomerIdsByUserId(
+  client: OpenMeter,
+  ownerUserId: string,
+): Promise<string[]> {
+  const ownerId = ownerUserId.trim();
+  if (!ownerId) return [];
+
+  const keys = [
+    buildOwnerCustomerKey(ownerId),
+    buildOwnerWireSubject(ownerId),
+  ];
+  const ids: string[] = [];
+  for (const key of keys) {
+    const id = await findCustomerIdByExactKey(client, key);
+    if (id) ids.push(id);
+  }
+  return [...new Set(ids)];
+}
+
 async function resolveOwnerCustomerIdsForApp(
   client: OpenMeter,
   clientId: string,
@@ -85,43 +104,23 @@ async function resolveOwnerCustomerIdsForApp(
     return [];
   }
   if (!ownerId) return [];
-
-  const keys = [
-    buildOwnerCustomerKey(ownerId),
-    buildOwnerWireSubject(ownerId),
-  ];
-  const ids: string[] = [];
-  for (const key of keys) {
-    const id = await findCustomerIdByExactKey(client, key);
-    if (id) ids.push(id);
-  }
-  return [...new Set(ids)];
+  return resolveOwnerCustomerIdsByUserId(client, ownerId);
 }
 
-export async function listTenantInvoices(input: {
+async function listInvoicesForCustomerIds(input: {
   client: OpenMeter;
-  clientId: string;
-  page?: number;
-  pageSize?: number;
-  /** When true (default), also include the app owner's shared wallet invoices. */
-  includeOwnerWallet?: boolean;
+  customerIds: string[];
+  page: number;
+  pageSize: number;
 }): Promise<{ items: TenantInvoiceDto[]; page: number; pageSize: number; totalCount: number }> {
-  const page = input.page ?? 1;
-  const pageSize = input.pageSize ?? 20;
-  const endUserIds = await listTenantCustomerIds(input.client, input.clientId);
-  const ownerIds =
-    input.includeOwnerWallet === false
-      ? []
-      : await resolveOwnerCustomerIdsForApp(input.client, input.clientId);
-  const customerIds = [...new Set([...endUserIds, ...ownerIds])];
-
+  const { client, customerIds, page, pageSize } = input;
   if (customerIds.length === 0) {
     return { items: [], page, pageSize, totalCount: 0 };
   }
 
   const allItems: TenantInvoiceDto[] = [];
   for (const idChunk of chunk(customerIds, 50)) {
-    const result = await input.client.billing.invoices.list({
+    const result = await client.billing.invoices.list({
       customers: idChunk,
       page: 1,
       pageSize: 100,
@@ -150,4 +149,55 @@ export async function listTenantInvoices(input: {
   const items = allItems.slice(offset, offset + pageSize);
 
   return { items, page, pageSize, totalCount };
+}
+
+/**
+ * Merchant invoices for an app's end users (`{publicClientId}:{externalUserId}`).
+ *
+ * `clientId` must be the public OIDC `app_…` client id (not developer_apps.id).
+ * Owner-wallet invoices (platform → developer) belong on `/billing`, not here —
+ * pass `includeOwnerWallet: true` only for legacy/admin mixed views.
+ */
+export async function listTenantInvoices(input: {
+  client: OpenMeter;
+  clientId: string;
+  page?: number;
+  pageSize?: number;
+  /** When true, also include the app owner's shared wallet invoices. Default false. */
+  includeOwnerWallet?: boolean;
+}): Promise<{ items: TenantInvoiceDto[]; page: number; pageSize: number; totalCount: number }> {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 20;
+  const endUserIds = await listTenantCustomerIds(input.client, input.clientId);
+  const ownerIds = input.includeOwnerWallet
+    ? await resolveOwnerCustomerIdsForApp(input.client, input.clientId)
+    : [];
+  const customerIds = [...new Set([...endUserIds, ...ownerIds])];
+  return listInvoicesForCustomerIds({
+    client: input.client,
+    customerIds,
+    page,
+    pageSize,
+  });
+}
+
+/** Platform invoices for a developer owner's shared prepaid wallet. */
+export async function listOwnerWalletInvoices(input: {
+  client: OpenMeter;
+  ownerUserId: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<{ items: TenantInvoiceDto[]; page: number; pageSize: number; totalCount: number }> {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 20;
+  const customerIds = await resolveOwnerCustomerIdsByUserId(
+    input.client,
+    input.ownerUserId,
+  );
+  return listInvoicesForCustomerIds({
+    client: input.client,
+    customerIds,
+    page,
+    pageSize,
+  });
 }

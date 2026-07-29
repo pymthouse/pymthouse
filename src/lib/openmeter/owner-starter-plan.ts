@@ -4,7 +4,10 @@ import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cac
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
+import {
+  applyFreeBillingProfileToCustomer,
+  prepareOwnerCustomerStripeBilling,
+} from "./billing-profiles";
 import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
@@ -357,6 +360,12 @@ export async function ensureOwnerStarterSubscription(input: {
     input.ownerUserId,
     input.publicClientIds ?? [],
   );
+
+  await prepareOwnerCustomerStripeBilling({
+    client,
+    customerId: customer.id,
+    customerKey: customer.key,
+  });
 
   const existing = await findExistingOwnerWalletSubscription({
     client,

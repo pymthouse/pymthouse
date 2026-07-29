@@ -13,6 +13,7 @@ import {
   findKonnectFeatureIdByKey,
   unwrapOpenMeterListResult,
 } from "./konnect-catalog";
+import { billingCycleToOpenMeterCadence } from "./billing-cycle";
 import {
   buildKonnectFlatFeeRateCard,
   buildKonnectUsageRateCard,
@@ -107,6 +108,7 @@ function buildUsageRateCard(input: {
   name: string;
   featureKey: string;
   unitAmount: string;
+  billingCadence: string;
   includedMicros?: number;
   includeEntitlement?: boolean;
 }): Record<string, unknown> {
@@ -115,7 +117,7 @@ function buildUsageRateCard(input: {
     key: input.key,
     name: input.name,
     featureKey: input.featureKey,
-    billingCadence: "P1M",
+    billingCadence: input.billingCadence,
     price: {
       type: "unit",
       amount: input.unitAmount,
@@ -140,6 +142,7 @@ async function appendDefaultTrialUsageRateCard(input: {
   rateCards: Array<Record<string, unknown>>;
   useKonnectBody: boolean;
 }): Promise<void> {
+  const billingCadence = billingCycleToOpenMeterCadence(input.plan.billingCycle);
   if (input.useKonnectBody) {
     const featureId = await resolveOpenMeterFeatureId(input.omClient, DEFAULT_TRIAL_FEATURE_KEY);
     // Included allowance syncs as discounts.usage; prepaid credits cover overage only.
@@ -149,6 +152,7 @@ async function appendDefaultTrialUsageRateCard(input: {
         name: "Network usage",
         featureId,
         unitAmount: input.planRetail,
+        billingCadence,
         includedUsdMicros: input.includedMicros,
       }),
     );
@@ -161,6 +165,7 @@ async function appendDefaultTrialUsageRateCard(input: {
       name: "Network usage",
       featureKey: DEFAULT_TRIAL_FEATURE_KEY,
       unitAmount: input.planRetail,
+      billingCadence,
       includedMicros: input.includedMicros,
       includeEntitlement: true,
     }),
@@ -178,6 +183,7 @@ async function appendCapabilityRateCards(input: {
   useKonnectBody: boolean;
 }): Promise<void> {
   let entitlementAssigned = false;
+  const billingCadence = billingCycleToOpenMeterCadence(input.plan.billingCycle);
   for (const cap of input.capabilityRows) {
     const retail = resolveCapabilityRetailRateUsd({
       plan: input.plan,
@@ -207,6 +213,7 @@ async function appendCapabilityRateCards(input: {
           }),
           featureId,
           unitAmount: retail,
+          billingCadence,
           includedUsdMicros: entitlementAssigned ? undefined : input.includedMicros,
         }),
       );
@@ -220,6 +227,7 @@ async function appendCapabilityRateCards(input: {
           }),
           featureKey,
           unitAmount: retail,
+          billingCadence,
           includedMicros: entitlementAssigned ? undefined : input.includedMicros,
           includeEntitlement: !entitlementAssigned,
         }),
@@ -249,6 +257,8 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
     process.env.OPENMETER_API_KEY,
   );
 
+  const billingCadence = billingCycleToOpenMeterCadence(plan.billingCycle);
+
   if (plan.type === "subscription") {
     const flatAmount = parsePriceAmount(plan.priceAmount);
     if (flatAmount !== "0") {
@@ -258,12 +268,13 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
               key: "subscription_fee",
               name: `${toOpenMeterDisplayName(plan.name)} subscription`,
               amount: flatAmount,
+              billingCadence,
             })
           : {
               type: "flat_fee",
               key: "subscription_fee",
               name: `${toOpenMeterDisplayName(plan.name)} subscription`,
-              billingCadence: "P1M",
+              billingCadence,
               price: {
                 type: "flat",
                 amount: flatAmount,
@@ -307,7 +318,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
       key: planKey,
       name: planName,
       currency,
-      billing_cadence: "P1M",
+      billing_cadence: billingCadence,
       settlement_mode: KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
       phases: [
         {
@@ -328,7 +339,7 @@ export async function mapPymthousePlanToOpenMeterCreate(input: {
     key: planKey,
     name: planName,
     currency,
-    billingCadence: "P1M",
+    billingCadence,
     phases: [
       {
         key: "default",

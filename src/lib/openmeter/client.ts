@@ -38,3 +38,11 @@ export function getHostedOpenMeterClient(): OpenMeter | null {
 export function resetHostedOpenMeterClientForTests(): void {
   hostedClient = null;
 }
+
+/** Inject a mock OpenMeter client for unit tests (NODE_ENV=test only). */
+export function __testSetHostedOpenMeterClient(client: OpenMeter | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__testSetHostedOpenMeterClient is only available in test");
+  }
+  hostedClient = client;
+}

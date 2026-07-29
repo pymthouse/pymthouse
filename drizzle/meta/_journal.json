@@ -232,6 +232,13 @@
       "when": 1785300000000,
       "tag": "0031_platform_default_app_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1785400000000,
+      "tag": "0032_app_billing_progressive_threshold",
+      "breakpoints": true
     }
   ]
 }

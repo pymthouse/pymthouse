@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
+import { buildBillingProfileSupplier } from "./billing-profiles";
 import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects } from "./customers";
-import { listTenantInvoices } from "./invoices";
+import { listOwnerWalletInvoices, listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
   isMintUserSignerTokenRequest,
@@ -57,6 +58,14 @@ test("buildOpenMeterCustomerKey encodes client and user", () => {
 
 test("parseOpenMeterCustomerKey rejects malformed keys", () => {
   assert.equal(parseOpenMeterCustomerKey("no-colon"), null);
+});
+
+test("buildBillingProfileSupplier includes required country on address", () => {
+  process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY = "de";
+  const supplier = buildBillingProfileSupplier("Acme Corp");
+  assert.equal(supplier.name, "Acme Corp");
+  assert.equal(supplier.addresses[0]?.country, "DE");
+  delete process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY;
 });
 
 test("owner customer key helpers use bare user id", async () => {
@@ -1041,6 +1050,7 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
         items: [
           { id: "cust-a", key: "app_1:alpha" },
           { id: "cust-b", key: "app_1:beta" },
+          { id: "cust-other", key: "app_2:gamma" },
         ],
         page: input.page,
         pageSize: input.pageSize,
@@ -1074,6 +1084,94 @@ test("listTenantInvoices scopes billing.invoices.list to tenant customer ids", a
   assert.deepEqual(listedCustomers, [["cust-a", "cust-b"]]);
   assert.equal(result.items.length, 2);
   assert.equal(result.totalCount, 2);
+});
+
+test("listTenantInvoices returns empty when no customers match", async () => {
+  let invoiceListCalls = 0;
+  const client = {
+    customers: {
+      list: async () => ({ items: [] }),
+    },
+    billing: {
+      invoices: {
+        list: async () => {
+          invoiceListCalls += 1;
+          return { items: [] };
+        },
+      },
+    },
+  };
+
+  const result = await listTenantInvoices({
+    client: client as never,
+    clientId: "app_missing",
+    includeOwnerWallet: false,
+  });
+
+  assert.deepEqual(result.items, []);
+  assert.equal(result.totalCount, 0);
+  assert.equal(invoiceListCalls, 0);
+});
+
+test("listOwnerWalletInvoices lists bare and owner: wire customer ids", async () => {
+  const listedKeys: string[] = [];
+  const listedCustomers: string[][] = [];
+  const client = {
+    customers: {
+      list: async (input: { key: string }) => {
+        listedKeys.push(input.key);
+        if (input.key === "uuid-owner") {
+          return { items: [{ id: "cust-bare", key: "uuid-owner" }] };
+        }
+        if (input.key === "owner:uuid-owner") {
+          return { items: [{ id: "cust-wire", key: "owner:uuid-owner" }] };
+        }
+        return { items: [] };
+      },
+    },
+    billing: {
+      invoices: {
+        list: async (input: { customers: string[] }) => {
+          listedCustomers.push([...input.customers].sort());
+          return {
+            items: input.customers.map((customerId) => ({
+              id: `inv-${customerId}`,
+              number: `N-${customerId}`,
+              status: "issued",
+              currency: "USD",
+              totals: { total: "5.00" },
+              customer: { id: customerId, key: customerId },
+              issuedAt: new Date("2026-07-01T00:00:00.000Z"),
+            })),
+          };
+        },
+      },
+    },
+  };
+
+  const result = await listOwnerWalletInvoices({
+    client: client as never,
+    ownerUserId: "uuid-owner",
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.deepEqual(listedKeys.sort(), ["owner:uuid-owner", "uuid-owner"]);
+  assert.deepEqual(listedCustomers, [["cust-bare", "cust-wire"].sort()]);
+  assert.equal(result.items.length, 2);
+  assert.equal(result.totalCount, 2);
+});
+
+test("listOwnerWalletInvoices returns empty for blank owner id", async () => {
+  const client = {
+    customers: { list: async () => ({ items: [{ id: "x", key: "y" }] }) },
+    billing: { invoices: { list: async () => ({ items: [] }) } },
+  };
+  const result = await listOwnerWalletInvoices({
+    client: client as never,
+    ownerUserId: "   ",
+  });
+  assert.deepEqual(result.items, []);
 });
 
 test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included allowance", async () => {
@@ -1124,6 +1222,69 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
   assert.equal(flatFee.type, "flat_fee");
   assert.equal((flatFee as { price: { amount: string } }).price.amount, "29.00");
   assert.equal((usage as { price: { amount: string } }).price.amount, "0.0000015");
+  assert.equal(
+    (omPlan as { billingCadence?: string }).billingCadence ??
+      (omPlan as { billing_cadence?: string }).billing_cadence,
+    "P1M",
+  );
+  assert.equal(
+    (flatFee as { billingCadence?: string; billing_cadence?: string }).billingCadence ??
+      (flatFee as { billing_cadence?: string }).billing_cadence,
+    "P1M",
+  );
+});
+
+test("mapPymthousePlanToOpenMeterCreate uses weekly billing cadence", async () => {
+  const omPlan = await mapPymthousePlanToOpenMeterCreate({
+    clientId: "app_1",
+    plan: {
+      id: "plan-weekly",
+      clientId: "app_1",
+      name: "Weekly Pro",
+      type: "subscription",
+      priceAmount: "7.00",
+      priceCurrency: "USD",
+      status: "active",
+      includedUsdMicros: "1000000",
+      overageRateUsd: "0.000001",
+      includedUnits: null,
+      billingCycle: "weekly",
+      discoveryProfileId: null,
+      isNetworkDefault: false,
+      isStarterDefault: false,
+      discoveryExcludedCapabilities: null,
+      openmeterPlanId: null,
+      openmeterPlanVersion: null,
+      lastSyncedAt: null,
+      syncError: null,
+      createdAt: "",
+      updatedAt: "",
+    },
+    capabilities: [],
+    client: {
+      features: {
+        list: async () => [],
+        create: async () => ({}),
+      },
+    } as never,
+  });
+
+  assert.ok(omPlan);
+  assert.equal(
+    (omPlan as { billingCadence?: string }).billingCadence ??
+      (omPlan as { billing_cadence?: string }).billing_cadence,
+    "P1W",
+  );
+  const phase = omPlan.phases[0];
+  assert.ok(phase);
+  const phaseCards = rateCardsFromPlanPhase(phase);
+  for (const card of phaseCards) {
+    assert.equal(
+      (card as { billingCadence?: string; billing_cadence?: string }).billingCadence ??
+        (card as { billing_cadence?: string }).billing_cadence,
+      "P1W",
+    );
+  }
 });
 
 test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", async () => {

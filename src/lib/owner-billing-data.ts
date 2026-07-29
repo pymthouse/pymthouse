@@ -38,6 +38,10 @@ import {
   type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
 import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
+import {
+  listOwnerWalletInvoices,
+  type TenantInvoiceDto,
+} from "@/lib/openmeter/invoices";
 
 export type OwnerBillingSubscriptionRow = {
   subscriptionId: string;
@@ -65,6 +69,8 @@ export type OwnerBillingPayload = {
   cycle: { start: string; end: string };
   creditAllowance: CreditAllowanceSummary | null;
   subscriptions: OwnerBillingSubscriptionRow[];
+  /** Platform → developer invoices for the shared owner prepaid wallet. */
+  invoices: TenantInvoiceDto[];
   openMeterConfigured: boolean;
   /**
    * First owned app id for app-scoped on-ramp APIs. Credits still settle on the
@@ -543,17 +549,31 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     return { ok: false, reason: "openmeter_unconfigured" };
   }
 
-  const [creditAllowance, subscriptions, ownedApps] = await Promise.all([
-    getOwnerPrepaidCreditBalance(userId).catch((err) => {
-      console.warn(
-        "owner-billing: credit lookup failed",
-        err instanceof Error ? err.message : String(err),
-      );
-      return null;
-    }),
-    listOwnerActiveSubscriptions(userId),
-    listOwnedApps(userId),
-  ]);
+  const adminClient = getHostedAdminClient();
+  const [creditAllowance, subscriptions, ownedApps, invoicesResult] =
+    await Promise.all([
+      getOwnerPrepaidCreditBalance(userId).catch((err) => {
+        console.warn(
+          "owner-billing: credit lookup failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      }),
+      listOwnerActiveSubscriptions(userId),
+      listOwnedApps(userId),
+      listOwnerWalletInvoices({
+        client: adminClient,
+        ownerUserId: userId,
+        page: 1,
+        pageSize: 10,
+      }).catch((err) => {
+        console.warn(
+          "owner-billing: invoice lookup failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return { items: [] as TenantInvoiceDto[] };
+      }),
+    ]);
 
   return {
     ok: true,
@@ -562,6 +582,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       cycle,
       creditAllowance,
       subscriptions,
+      invoices: invoicesResult.items,
       openMeterConfigured: true,
       fundingClientId: ownedApps[0]?.developerAppId ?? null,
     },

@@ -1,116 +1,102 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
-
 import {
-  ensureFreeBillingProfile,
-  resetFreeBillingProfileCacheForTests,
+  ensureOwnersBillingProfile,
+  resetOwnersBillingProfileCacheForTests,
 } from "./billing-profiles";
+import { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } from "./client";
 
-function openMeterTestClient(mock: object): OpenMeter {
-  return mock as OpenMeter;
-}
+test("ensureOwnersBillingProfile returns OPENMETER_OWNERS_BILLING_PROFILE_ID when set", async (t) => {
+  resetOwnersBillingProfileCacheForTests();
+  const previous = process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+  process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID = "profile_owners_env";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+    else process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID = previous;
+    resetOwnersBillingProfileCacheForTests();
+  });
 
-test("ensureFreeBillingProfile returns OPENMETER_FREE_BILLING_PROFILE_ID when set", async () => {
-  resetFreeBillingProfileCacheForTests();
-  const previous = process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
-  process.env.OPENMETER_FREE_BILLING_PROFILE_ID = "profile_from_env";
-  try {
-    const profileId = await ensureFreeBillingProfile();
-    assert.equal(profileId, "profile_from_env");
-  } finally {
-    if (previous === undefined) {
-      delete process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
-    } else {
-      process.env.OPENMETER_FREE_BILLING_PROFILE_ID = previous;
-    }
-    resetFreeBillingProfileCacheForTests();
-  }
+  const profileId = await ensureOwnersBillingProfile();
+  assert.equal(profileId, "profile_owners_env");
 });
 
-test("ensureFreeBillingProfile reuses existing sandbox billing profile", async () => {
-  resetFreeBillingProfileCacheForTests();
-  const previous = process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
-  delete process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
+test("ensureOwnersBillingProfile reuses existing profile by name", async (t) => {
+  resetOwnersBillingProfileCacheForTests();
+  const previous = process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+  const previousUrl = process.env.OPENMETER_URL;
+  delete process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+  process.env.OPENMETER_URL = "http://127.0.0.1:48888";
 
-  const sandboxAppId = "app_sandbox_1";
-  let createCalls = 0;
-  const client = openMeterTestClient({
-    apps: {
-      list: async () => ({
-        items: [{ id: sandboxAppId, type: "sandbox" }],
-      }),
-    },
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+    else process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID = previous;
+    process.env.OPENMETER_URL = previousUrl;
+    resetOwnersBillingProfileCacheForTests();
+    resetHostedOpenMeterClientForTests();
+  });
+
+  const client = {
     billing: {
       profiles: {
         list: async () => ({
-          items: [
-            {
-              id: "profile_sandbox_existing",
-              apps: {
-                tax: sandboxAppId,
-                invoicing: sandboxAppId,
-                payment: sandboxAppId,
-              },
-            },
-          ],
+          items: [{ id: "prof_owners", name: "pymthouse-owners" }],
         }),
         create: async () => {
-          createCalls += 1;
-          return { id: "profile_should_not_be_created" };
+          throw new Error("should not create");
         },
       },
     },
-  });
+    apps: {
+      list: async () => ({ items: [{ id: "stripe_1", type: "stripe" }] }),
+    },
+  } as unknown as OpenMeter;
 
-  try {
-    const profileId = await ensureFreeBillingProfile(client);
-    assert.equal(profileId, "profile_sandbox_existing");
-    assert.equal(createCalls, 0);
-  } finally {
-    if (previous === undefined) {
-      delete process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
-    } else {
-      process.env.OPENMETER_FREE_BILLING_PROFILE_ID = previous;
-    }
-    resetFreeBillingProfileCacheForTests();
-  }
+  __testSetHostedOpenMeterClient(client);
+  const profileId = await ensureOwnersBillingProfile(client);
+  assert.equal(profileId, "prof_owners");
 });
 
-test("ensureFreeBillingProfile creates sandbox billing profile when missing", async () => {
-  resetFreeBillingProfileCacheForTests();
-  const previous = process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
-  delete process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
+test("ensureOwnersBillingProfile creates Stripe profile when missing", async (t) => {
+  resetOwnersBillingProfileCacheForTests();
+  const previous = process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+  const previousUrl = process.env.OPENMETER_URL;
+  delete process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+  process.env.OPENMETER_URL = "http://127.0.0.1:48888";
 
-  const sandboxAppId = "app_sandbox_1";
-  const client = openMeterTestClient({
-    apps: {
-      list: async () => ({
-        items: [{ id: sandboxAppId, type: "sandbox" }],
-      }),
-    },
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID;
+    else process.env.OPENMETER_OWNERS_BILLING_PROFILE_ID = previous;
+    process.env.OPENMETER_URL = previousUrl;
+    resetOwnersBillingProfileCacheForTests();
+    resetHostedOpenMeterClientForTests();
+  });
+
+  let createdApps: unknown;
+  const client = {
     billing: {
       profiles: {
         list: async () => ({ items: [] }),
-        create: async (body: { apps?: { tax?: string } }) => {
-          assert.equal(body.apps?.tax, sandboxAppId);
-          return { id: "profile_sandbox_created" };
+        create: async (body: { name: string; apps: unknown }) => {
+          createdApps = body.apps;
+          assert.equal(body.name, "pymthouse-owners");
+          return { id: "prof_new_owners" };
         },
       },
     },
-  });
+    apps: {
+      list: async () => ({ items: [{ id: "stripe_app", type: "stripe" }] }),
+    },
+  } as unknown as OpenMeter;
 
-  try {
-    const profileId = await ensureFreeBillingProfile(client);
-    assert.equal(profileId, "profile_sandbox_created");
-    const cachedAgain = await ensureFreeBillingProfile(client);
-    assert.equal(cachedAgain, "profile_sandbox_created");
-  } finally {
-    if (previous === undefined) {
-      delete process.env.OPENMETER_FREE_BILLING_PROFILE_ID;
-    } else {
-      process.env.OPENMETER_FREE_BILLING_PROFILE_ID = previous;
-    }
-    resetFreeBillingProfileCacheForTests();
-  }
+  __testSetHostedOpenMeterClient(client);
+  const profileId = await ensureOwnersBillingProfile(client);
+  assert.equal(profileId, "prof_new_owners");
+  assert.deepEqual(createdApps, {
+    tax: "stripe_app",
+    invoicing: "stripe_app",
+    payment: "stripe_app",
+  });
+  const cachedAgain = await ensureOwnersBillingProfile(client);
+  assert.equal(cachedAgain, "prof_new_owners");
 });

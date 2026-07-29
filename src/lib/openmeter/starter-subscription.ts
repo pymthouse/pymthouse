@@ -4,7 +4,10 @@ import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
+import {
+  applyFreeBillingProfileToCustomer,
+  prepareAppCustomerStripeBilling,
+} from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomer } from "./customers";
 import {
@@ -339,6 +342,14 @@ export async function ensureStarterSubscriptionForAppUser(input: {
 
   const client = getHostedAdminClient();
   const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
+  // Starter is a real synced plan on the Stripe billing profile. Included usage
+  // works without a payment method; we only need Stripe customer app data (cus_…).
+  await prepareAppCustomerStripeBilling({
+    client,
+    clientId: identity.developerAppId,
+    customerId: customer.id,
+    customerKey: identity.customerKey,
+  });
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
 
@@ -354,7 +365,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   let activeStarter = starter;
   if (!omSubscription) {
     // Free billing-profile override is applied only inside
-    // createStarterSubscriptionWithRecovery when Konnect returns the
+    // createStarterSubscriptionWithBillingRecovery when Konnect returns the
     // Stripe-setup 409 (isOpenMeterStripeBillingError) — not eagerly.
     const provisioned = await createStarterSubscriptionWithRecovery({
       client,

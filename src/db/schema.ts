@@ -395,7 +395,7 @@ export const plans = pgTable(
     overageRateUsd: text("overage_rate_usd"),
     /** USD usage allowance included per billing cycle, in micros (1 USD = 1 000 000). */
     includedUsdMicros: text("included_usd_micros"),
-    /** Billing period length; currently only "monthly" is supported. */
+    /** Billing period length: daily | weekly | monthly (maps to OpenMeter P1D/P1W/P1M). */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
       onDelete: "set null",
@@ -549,6 +549,16 @@ export const appBillingConfig = pgTable(
     defaultCurrency: text("default_currency").notNull().default("USD"),
     checkoutSuccessUrl: text("checkout_success_url"),
     checkoutCancelUrl: text("checkout_cancel_url"),
+    /**
+     * When true, OpenMeter may create mid-cycle invoices (progressive billing).
+     * Synced to the tenant billing profile workflow.invoicing.progressiveBilling.
+     */
+    progressiveBilling: boolean("progressive_billing").notNull().default(true),
+    /**
+     * Optional unpaid gathering-invoice threshold (USD micros). Enforced by the
+     * clearinghouse threshold worker via invoicePendingLines — not by OpenMeter alone.
+     */
+    invoiceThresholdUsdMicros: text("invoice_threshold_usd_micros"),
     connectedAt: text("connected_at"),
     createdAt: text("created_at")
       .notNull()
