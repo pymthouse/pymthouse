@@ -121,10 +121,14 @@ const BILLING_CYCLE_OPTIONS: Array<{ value: PlanBillingCycle; label: string }> =
   { value: "monthly", label: "Monthly" },
 ];
 
+function billingCyclePeriodLabel(cycle: PlanBillingCycle): string {
+  if (cycle === "daily") return "Daily";
+  if (cycle === "weekly") return "Weekly";
+  return "Monthly";
+}
+
 function billingCyclePriceLabel(cycle: PlanBillingCycle, currency: string): string {
-  const period =
-    cycle === "daily" ? "Daily" : cycle === "weekly" ? "Weekly" : "Monthly";
-  return `${period} price (${currency})`;
+  return `${billingCyclePeriodLabel(cycle)} price (${currency})`;
 }
 
 async function readFetchJson(res: Response): Promise<{
@@ -639,8 +643,12 @@ function StatusBadge({ status }: Readonly<{ status: string }>) {
     phase_out: "text-amber-400/90 border-amber-500/30 bg-amber-500/10",
     draft: "text-zinc-400 border-zinc-600 bg-zinc-800/50",
   };
-  const label =
-    status === "phase_out" ? "Phase-out" : status === "draft" ? "Draft" : "Active";
+  const labels: Record<string, string> = {
+    active: "Active",
+    phase_out: "Phase-out",
+    draft: "Draft",
+  };
+  const label = labels[status] ?? "Active";
   return (
     <span
       className={`text-[10px] font-medium uppercase tracking-wide border rounded px-1.5 py-0.5 shrink-0 ${
