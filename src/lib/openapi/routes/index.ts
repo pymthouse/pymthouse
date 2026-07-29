@@ -7,6 +7,7 @@ import "@/lib/openapi/routes/apps";
 import "@/lib/openapi/routes/end-user";
 import "@/lib/openapi/routes/internal";
 import "@/lib/openapi/routes/misc";
+import "@/lib/openapi/routes/network";
 import "@/lib/openapi/routes/platform";
 import { registerOpenApiFromInventory } from "@/lib/openapi/register-from-inventory";
 
