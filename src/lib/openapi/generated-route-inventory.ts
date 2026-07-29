@@ -6,6 +6,7 @@ import { inventoryOp } from "@/lib/openapi/route-scan";
 import type { ScannedRouteOperation } from "@/lib/openapi/route-scan";
 
 export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
+  inventoryOp("delete", "/api/v1/admin/billing/owner-tiers/{id}", "admin/billing/owner-tiers/[id]/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("delete", "/api/v1/apps/{clientId}", "apps/[id]/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("delete", "/api/v1/apps/{clientId}/admins", "apps/[id]/admins/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("delete", "/api/v1/apps/{clientId}/billing/stripe", "apps/[id]/billing/stripe/route.ts", true, "not in Builder/End-user/Internal contract"),
@@ -18,6 +19,10 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("delete", "/api/v1/me/keys/{keyId}", "me/keys/[keyId]/route.ts", true, "excluded prefix: me/"),
   inventoryOp("delete", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/admin/apps", "admin/apps/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("get", "/api/v1/admin/billing/owner-tiers", "admin/billing/owner-tiers/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("get", "/api/v1/admin/billing/owners", "admin/billing/owners/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("get", "/api/v1/admin/billing/owners/{userId}", "admin/billing/owners/[userId]/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("get", "/api/v1/admin/billing/platform", "admin/billing/platform/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("get", "/api/v1/admin/oidc-clients", "admin/oidc-clients/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("get", "/api/v1/apps", "apps/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("get", "/api/v1/apps/{clientId}", "apps/[id]/route.ts"),
@@ -62,10 +67,12 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("get", "/api/v1/internal/openapi.json", "internal/openapi.json/route.ts", true, "excluded from OpenAPI contracts (docs/meta or legacy alias)"),
   inventoryOp("get", "/api/v1/marketplace", "marketplace/route.ts"),
   inventoryOp("get", "/api/v1/marketplace/{id}", "marketplace/[id]/route.ts"),
+  inventoryOp("get", "/api/v1/me/billing/owner-tiers", "me/billing/owner-tiers/route.ts", true, "excluded prefix: me/"),
   inventoryOp("get", "/api/v1/me/billing/payment-method", "me/billing/payment-method/route.ts", true, "excluded prefix: me/"),
   inventoryOp("get", "/api/v1/me/credits", "me/credits/route.ts", true, "excluded prefix: me/"),
   inventoryOp("get", "/api/v1/me/keys", "me/keys/route.ts", true, "excluded prefix: me/"),
   inventoryOp("get", "/api/v1/me/usage/requests", "me/usage/requests/route.ts", true, "excluded prefix: me/"),
+  inventoryOp("get", "/api/v1/network/register/challenge", "network/register/challenge/route.ts"),
   inventoryOp("get", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/oidc/interaction/{uid}", "oidc/interaction/[uid]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/onboarding", "onboarding/route.ts", true, "excluded prefix: onboarding/"),
@@ -82,10 +89,14 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("get", "/api/v1/user/usage/balance", "user/usage/balance/route.ts"),
   inventoryOp("get", "/api/v1/user/usage/requests", "user/usage/requests/route.ts"),
   inventoryOp("patch", "/api/v1/admin/apps/{clientId}/marketplace-featured", "admin/apps/[id]/marketplace-featured/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("patch", "/api/v1/admin/billing/owner-tiers/{id}", "admin/billing/owner-tiers/[id]/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("patch", "/api/v1/admin/billing/owners/{userId}", "admin/billing/owners/[userId]/route.ts", true, "excluded prefix: admin/"),
+  inventoryOp("patch", "/api/v1/admin/billing/platform", "admin/billing/platform/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("patch", "/api/v1/admin/oidc-clients", "admin/oidc-clients/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("patch", "/api/v1/apps/{clientId}/billing/stripe", "apps/[id]/billing/stripe/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("patch", "/api/v1/me/billing/payment-method", "me/billing/payment-method/route.ts", true, "excluded prefix: me/"),
   inventoryOp("patch", "/api/v1/signer", "signer/route.ts", true, "excluded prefix: signer/"),
+  inventoryOp("post", "/api/v1/admin/billing/owner-tiers", "admin/billing/owner-tiers/route.ts", true, "excluded prefix: admin/"),
   inventoryOp("post", "/api/v1/apps", "apps/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("post", "/api/v1/apps/{clientId}/admins", "apps/[id]/admins/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/checkout", "apps/[id]/billing/checkout/route.ts"),
@@ -107,8 +118,12 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("post", "/api/v1/apps/{clientId}/users/{externalUserId}/token", "apps/[id]/users/[externalUserId]/token/route.ts"),
   inventoryOp("post", "/api/v1/auth/validate", "auth/validate/route.ts"),
   inventoryOp("post", "/api/v1/end-users", "end-users/route.ts"),
+  inventoryOp("post", "/api/v1/me/billing/downgrade-to-starter", "me/billing/downgrade-to-starter/route.ts", true, "excluded prefix: me/"),
   inventoryOp("post", "/api/v1/me/billing/payment-method", "me/billing/payment-method/route.ts", true, "excluded prefix: me/"),
-  inventoryOp("post", "/api/v1/network/key", "network/key/route.ts", true, "excluded prefix: network/"),
+  inventoryOp("post", "/api/v1/me/billing/resume-paid-plan", "me/billing/resume-paid-plan/route.ts", true, "excluded prefix: me/"),
+  inventoryOp("post", "/api/v1/me/billing/upgrade-paid", "me/billing/upgrade-paid/route.ts", true, "excluded prefix: me/"),
+  inventoryOp("post", "/api/v1/network/key", "network/key/route.ts", true, "excluded prefix: network/key/"),
+  inventoryOp("post", "/api/v1/network/register", "network/register/route.ts"),
   inventoryOp("post", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("post", "/api/v1/oidc/device/verify", "oidc/device/verify/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("post", "/api/v1/oidc/interaction/{uid}", "oidc/interaction/[uid]/route.ts", true, "excluded prefix: oidc/"),
@@ -126,6 +141,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("put", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
 ];
 
-export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = ["DELETE /api/v1/apps/{clientId}/users","DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}","GET /api/v1/apps/{clientId}/billing","GET /api/v1/apps/{clientId}/discovery-profiles","GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}","GET /api/v1/apps/{clientId}/manifest","GET /api/v1/apps/{clientId}/me/usage","GET /api/v1/apps/{clientId}/me/usage/balance","GET /api/v1/apps/{clientId}/me/usage/requests","GET /api/v1/apps/{clientId}/plans","GET /api/v1/apps/{clientId}/users","GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances","GET /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription","GET /api/v1/builder/apps/{clientId}/usage","GET /api/v1/builder/apps/{clientId}/usage/balance","GET /api/v1/end-users","GET /api/v1/health","GET /api/v1/marketplace","GET /api/v1/marketplace/{id}","GET /api/v1/pipeline-catalog","GET /api/v1/pipeline-pricing","GET /api/v1/prices/eth-usd","GET /api/v1/user/usage","GET /api/v1/user/usage/balance","GET /api/v1/user/usage/requests","POST /api/v1/apps/{clientId}/billing/checkout","POST /api/v1/apps/{clientId}/oidc/token","POST /api/v1/apps/{clientId}/users","POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances","POST /api/v1/apps/{clientId}/users/{externalUserId}/keys","POST /api/v1/apps/{clientId}/users/{externalUserId}/token","POST /api/v1/auth/validate","POST /api/v1/end-users","PUT /api/v1/apps/{clientId}/users"];
+export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = ["DELETE /api/v1/apps/{clientId}/users","DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}","GET /api/v1/apps/{clientId}/billing","GET /api/v1/apps/{clientId}/discovery-profiles","GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}","GET /api/v1/apps/{clientId}/manifest","GET /api/v1/apps/{clientId}/me/usage","GET /api/v1/apps/{clientId}/me/usage/balance","GET /api/v1/apps/{clientId}/me/usage/requests","GET /api/v1/apps/{clientId}/plans","GET /api/v1/apps/{clientId}/users","GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances","GET /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription","GET /api/v1/builder/apps/{clientId}/usage","GET /api/v1/builder/apps/{clientId}/usage/balance","GET /api/v1/end-users","GET /api/v1/health","GET /api/v1/marketplace","GET /api/v1/marketplace/{id}","GET /api/v1/network/register/challenge","GET /api/v1/pipeline-catalog","GET /api/v1/pipeline-pricing","GET /api/v1/prices/eth-usd","GET /api/v1/user/usage","GET /api/v1/user/usage/balance","GET /api/v1/user/usage/requests","POST /api/v1/apps/{clientId}/billing/checkout","POST /api/v1/apps/{clientId}/oidc/token","POST /api/v1/apps/{clientId}/users","POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances","POST /api/v1/apps/{clientId}/users/{externalUserId}/keys","POST /api/v1/apps/{clientId}/users/{externalUserId}/token","POST /api/v1/auth/validate","POST /api/v1/end-users","POST /api/v1/network/register","PUT /api/v1/apps/{clientId}/users"];
 
-export const OPENAPI_PUBLIC_ROUTE_COUNT = 36;
+export const OPENAPI_PUBLIC_ROUTE_COUNT = 38;

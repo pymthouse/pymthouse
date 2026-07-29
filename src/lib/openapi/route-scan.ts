@@ -17,7 +17,8 @@ export const OPENAPI_EXCLUDED_PREFIXES = [
   "webhooks/",
   "oidc/interaction/",
   "onboarding/",
-  "network/",
+  /** Session-cookie mint for dashboard humans — not Builder OpenAPI. */
+  "network/key/",
   "me/",
   "dashboard/",
   "signer/",
