@@ -10,6 +10,7 @@ export const OPENAPI_TAGS = {
   marketplace: "Marketplace",
   platform: "Platform",
   oidc: "OIDC",
+  network: "Network",
   // Internal
   appsAdmin: "Apps",
   team: "Team",
@@ -58,6 +59,8 @@ const BUILDER_OPERATION_KEYS = new Set([
   "GET /api/v1/apps/{clientId}/manifest",
   "GET /api/v1/apps/{clientId}/discovery-profiles",
   "GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}",
+  "GET /api/v1/network/register/challenge",
+  "POST /api/v1/network/register",
 ]);
 
 const END_USER_OPERATION_KEYS = new Set([
@@ -204,6 +207,11 @@ export const BUILDER_TAG_DEFINITIONS: Array<{
     name: OPENAPI_TAGS.oidc,
     description: "OIDC provider token endpoint (issuer protocol).",
   },
+  {
+    name: OPENAPI_TAGS.network,
+    description:
+      "Headless agent network registration (Ed25519 challenge) on the platform default app.",
+  },
 ];
 
 export const BUILDER_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }> = [
@@ -229,6 +237,10 @@ export const BUILDER_TAG_GROUPS: Array<{ name: string; tags: OpenApiTagName[] }>
   {
     name: "OIDC",
     tags: [OPENAPI_TAGS.oidc],
+  },
+  {
+    name: "Network",
+    tags: [OPENAPI_TAGS.network],
   },
 ];
 
