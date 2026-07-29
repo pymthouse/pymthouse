@@ -1,5 +1,6 @@
 import type { OpenMeter } from "@openmeter/sdk";
 
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
@@ -157,10 +158,39 @@ async function publishOwnerStarterPlanBestEffort(
 }
 
 /**
+ * The Owner Starter plan is a single platform-global Konnect plan; once it is
+ * verified/published, re-checking it costs a features + plans list per call.
+ * Cache the resolved reference per process.
+ */
+let ownerStarterPlanCache: ReturnType<
+  typeof createAsyncTtlCache<OwnerStarterPlanRef>
+> | null = null;
+
+function getOwnerStarterPlanCache() {
+  ownerStarterPlanCache ??= createAsyncTtlCache<OwnerStarterPlanRef>({
+    ttlSeconds: resolveCacheTtlSeconds("OWNER_STARTER_PLAN_CACHE_TTL_SECONDS", 600),
+  });
+  return ownerStarterPlanCache;
+}
+
+export function resetOwnerStarterPlanCacheForTests(): void {
+  ownerStarterPlanCache = null;
+}
+
+const OWNER_STARTER_PLAN_CACHE_KEY = "owner-starter-plan";
+
+/**
  * Ensure the platform Owner Starter plan exists and is published in Konnect.
  * Not a Neon `plans` row — owners share one Konnect plan across all apps.
  */
 export async function ensureOwnerStarterPlanSynced(): Promise<OwnerStarterPlanRef> {
+  return getOwnerStarterPlanCache().get(
+    OWNER_STARTER_PLAN_CACHE_KEY,
+    ensureOwnerStarterPlanSyncedUncached,
+  );
+}
+
+async function ensureOwnerStarterPlanSyncedUncached(): Promise<OwnerStarterPlanRef> {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
@@ -365,6 +395,8 @@ export async function ensureOwnerStarterSubscription(input: {
     };
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
+      // Konnect lost the plan the cached ref points at — force a real resync.
+      getOwnerStarterPlanCache().delete(OWNER_STARTER_PLAN_CACHE_KEY);
       const resynced = await ensureOwnerStarterPlanSynced();
       const createdSub = await client.subscriptions.create({
         customerId: customer.id,

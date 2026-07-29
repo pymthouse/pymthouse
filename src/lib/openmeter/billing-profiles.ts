@@ -3,12 +3,31 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { appBillingConfig } from "@/db/schema";
 import type { OpenMeter } from "@openmeter/sdk";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getHostedAdminClient } from "./admin-client";
 import { assignCustomerBillingProfileOverride } from "./customers";
 
 const FREE_BILLING_PROFILE_NAME = "pymthouse-free";
 
 let cachedFreeBillingProfileId: string | null = null;
+
+/**
+ * The free-profile override PUT is idempotent and the override persists in
+ * Konnect, yet the signer hot path re-applied it on every Starter ensure.
+ * Remember applied (customer, profile) pairs per process so warm requests
+ * skip the PUT.
+ */
+let appliedOverrideCache: ReturnType<typeof createAsyncTtlCache<true>> | null = null;
+
+function getAppliedOverrideCache() {
+  appliedOverrideCache ??= createAsyncTtlCache<true>({
+    ttlSeconds: resolveCacheTtlSeconds(
+      "OPENMETER_BILLING_OVERRIDE_CACHE_TTL_SECONDS",
+      3600,
+    ),
+  });
+  return appliedOverrideCache;
+}
 
 function billingProfileAppId(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) {
@@ -184,11 +203,17 @@ export async function applyFreeBillingProfileToCustomer(input: {
   customerId: string;
 }): Promise<void> {
   const profileId = await ensureFreeBillingProfile(input.client);
-  await assignCustomerBillingProfileOverride({
-    client: input.client,
-    customerId: input.customerId,
-    billingProfileId: profileId,
-  });
+  await getAppliedOverrideCache().get(
+    `${input.customerId}\u0000${profileId}`,
+    async () => {
+      await assignCustomerBillingProfileOverride({
+        client: input.client,
+        customerId: input.customerId,
+        billingProfileId: profileId,
+      });
+      return true;
+    },
+  );
 }
 
 export async function applyTenantBillingProfileToCustomer(input: {
@@ -213,6 +238,7 @@ export async function applyTenantBillingProfileToCustomer(input: {
 
 export function resetFreeBillingProfileCacheForTests(): void {
   cachedFreeBillingProfileId = null;
+  appliedOverrideCache = null;
 }
 
 export async function upsertAppBillingConfig(

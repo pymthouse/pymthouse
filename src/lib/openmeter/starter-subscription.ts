@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
@@ -29,7 +30,35 @@ async function refreshStarterPlan(planId: string): Promise<typeof plans.$inferSe
   return refreshed[0];
 }
 
+/**
+ * A verified Starter plan sync is stable (plan rows and their OpenMeter ids
+ * change only on publish flows), so remember it per app instead of re-reading
+ * Neon and re-verifying the OpenMeter plan on every mint/provision call.
+ */
+let starterPlanSyncedCache: ReturnType<
+  typeof createAsyncTtlCache<typeof plans.$inferSelect>
+> | null = null;
+
+function getStarterPlanSyncedCache() {
+  starterPlanSyncedCache ??= createAsyncTtlCache<typeof plans.$inferSelect>({
+    ttlSeconds: resolveCacheTtlSeconds("STARTER_PLAN_SYNC_CACHE_TTL_SECONDS", 300),
+  });
+  return starterPlanSyncedCache;
+}
+
+export function resetStarterPlanSyncedCacheForTests(): void {
+  starterPlanSyncedCache = null;
+}
+
 export async function ensureStarterPlanSynced(clientId: string): Promise<typeof plans.$inferSelect> {
+  return getStarterPlanSyncedCache().get(clientId, () =>
+    ensureStarterPlanSyncedUncached(clientId),
+  );
+}
+
+async function ensureStarterPlanSyncedUncached(
+  clientId: string,
+): Promise<typeof plans.$inferSelect> {
   const starter = await getOrCreateStarterPlan(clientId);
   if (!isHostedAdminClientAvailable()) {
     return starter;
@@ -150,6 +179,9 @@ async function createStarterSubscriptionWithRecovery(input: {
         throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
       }
       activeStarter = await refreshStarterPlan(activeStarter.id);
+      // Replace any cached pre-resync plan row so later ensures see the new
+      // OpenMeter plan id immediately.
+      getStarterPlanSyncedCache().seed(input.clientId, activeStarter);
       const createdSub = await createStarterOpenMeterSubscription({
         client: input.client,
         customerId: input.customerId,
