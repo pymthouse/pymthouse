@@ -32,8 +32,69 @@ export function buildBillingProfileSupplier(displayName: string) {
 
 const OWNERS_BILLING_PROFILE_NAME = "pymthouse-owners";
 const OWNERS_PROFILE_CLIENT_KEY = "owners";
+const FREE_BILLING_PROFILE_NAME = "pymthouse-free";
 
 let cachedOwnersBillingProfileId: string | null = null;
+let cachedFreeBillingProfileId: string | null = null;
+
+function billingProfileAppId(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (value && typeof value === "object" && "id" in value) {
+    const id = (value as { id?: unknown }).id;
+    if (typeof id === "string" && id.trim()) {
+      return id.trim();
+    }
+  }
+  return null;
+}
+
+function profileUsesApp(profile: { apps?: unknown }, appId: string): boolean {
+  const apps = profile.apps as Record<string, unknown> | undefined;
+  if (!apps) {
+    return false;
+  }
+  for (const slot of ["tax", "invoicing", "payment"] as const) {
+    if (billingProfileAppId(apps[slot]) !== appId) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function findInstalledSandboxAppId(client: OpenMeter): Promise<string> {
+  const listed = await client.apps.list({ page: 1, pageSize: 100 });
+  const sandbox = listed?.items?.find((app) => app.type === "sandbox");
+  if (!sandbox?.id) {
+    throw new Error(
+      "OpenMeter sandbox app is not installed; install it in Konnect or set OPENMETER_FREE_BILLING_PROFILE_ID",
+    );
+  }
+  return sandbox.id;
+}
+
+async function findBillingProfileForSandboxApp(
+  client: OpenMeter,
+  sandboxAppId: string,
+): Promise<string | null> {
+  let page = 1;
+  const pageSize = 100;
+  for (;;) {
+    const listed = await client.billing.profiles.list({ page, pageSize });
+    const items = listed?.items ?? [];
+    for (const profile of items) {
+      if (profile.id && profileUsesApp(profile, sandboxAppId)) {
+        return profile.id;
+      }
+    }
+    if (!listed || items.length < pageSize) {
+      break;
+    }
+    page += 1;
+  }
+  return null;
+}
 
 async function findBillingProfileByName(
   client: OpenMeter,
@@ -88,14 +149,26 @@ export async function getAppBillingConfig(clientId: string) {
   return rows[0] ?? null;
 }
 
-/** Stripe Connect completed and wired into OpenMeter billing profiles. */
+/**
+ * Platform OpenMeter Stripe billing is ready (Plane A): org Stripe app +
+ * tenant billing profile. Distinct from merchant Stripe Connect readiness.
+ */
+export function isAppBillingReady(
+  config: {
+    openmeterStripeAppId?: string | null;
+    openmeterBillingProfileId?: string | null;
+  } | null | undefined,
+): boolean {
+  return (
+    Boolean(config?.openmeterStripeAppId?.trim()) &&
+    Boolean(config?.openmeterBillingProfileId?.trim())
+  );
+}
+
+/** @deprecated Prefer {@link isAppBillingReady}; name kept for existing call sites. */
 export async function isStripeBillingEnabledForApp(clientId: string): Promise<boolean> {
   const config = await getAppBillingConfig(clientId);
-  return (
-    config?.stripeConnectStatus === "connected" &&
-    Boolean(config.openmeterStripeAppId?.trim()) &&
-    Boolean(config.openmeterBillingProfileId?.trim())
-  );
+  return isAppBillingReady(config);
 }
 
 export async function ensureTenantBillingProfile(input: {
@@ -176,14 +249,12 @@ export async function ensureAppStripeBillingReady(input: {
   openmeterBillingProfileId: string;
 }> {
   const existing = await getAppBillingConfig(input.clientId);
-  if (
-    existing?.stripeConnectStatus === "connected" &&
-    existing.openmeterStripeAppId?.trim() &&
-    existing.openmeterBillingProfileId?.trim()
-  ) {
+  const existingStripeAppId = existing?.openmeterStripeAppId?.trim();
+  const existingProfileId = existing?.openmeterBillingProfileId?.trim();
+  if (existingStripeAppId && existingProfileId) {
     return {
-      openmeterStripeAppId: existing.openmeterStripeAppId,
-      openmeterBillingProfileId: existing.openmeterBillingProfileId,
+      openmeterStripeAppId: existingStripeAppId,
+      openmeterBillingProfileId: existingProfileId,
     };
   }
 
@@ -344,6 +415,69 @@ export async function prepareOwnerCustomerStripeBilling(input: {
   });
 }
 
+/**
+ * Namespace-level sandbox billing profile for free Starter subscriptions.
+ * Avoids Konnect's default Stripe-backed profile, which rejects customers
+ * without Stripe app data.
+ */
+export async function ensureFreeBillingProfile(client?: OpenMeter): Promise<string> {
+  const fromEnv = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  if (cachedFreeBillingProfileId) {
+    return cachedFreeBillingProfileId;
+  }
+
+  const omClient = client ?? getHostedAdminClient();
+  const sandboxAppId = await findInstalledSandboxAppId(omClient);
+  const existing = await findBillingProfileForSandboxApp(omClient, sandboxAppId);
+  if (existing) {
+    cachedFreeBillingProfileId = existing;
+    return existing;
+  }
+
+  const profile = await omClient.billing.profiles.create({
+    name: FREE_BILLING_PROFILE_NAME,
+    default: false,
+    supplier: buildBillingProfileSupplier("PymtHouse Free"),
+    workflow: {
+      invoicing: { autoAdvance: true, draftPeriod: "P0D" },
+      payment: { collectionMethod: "charge_automatically" },
+    },
+    apps: {
+      tax: sandboxAppId,
+      invoicing: sandboxAppId,
+      payment: sandboxAppId,
+    },
+  });
+  if (!profile?.id) {
+    throw new Error("Failed to create OpenMeter free (sandbox) billing profile");
+  }
+  cachedFreeBillingProfileId = profile.id;
+  return profile.id;
+}
+
+/**
+ * Point a customer at the sandbox free billing profile. Callers should only
+ * invoke this when subscription create fails with
+ * {@link isOpenMeterStripeBillingError} — the default Stripe-backed profile
+ * rejects customers without Stripe app data, and this override is the fix.
+ * The override persists in Konnect, so once applied it does not need to run
+ * again for that customer.
+ */
+export async function applyFreeBillingProfileToCustomer(input: {
+  client: OpenMeter;
+  customerId: string;
+}): Promise<void> {
+  const profileId = await ensureFreeBillingProfile(input.client);
+  await assignCustomerBillingProfileOverride({
+    client: input.client,
+    customerId: input.customerId,
+    billingProfileId: profileId,
+  });
+}
+
 export async function applyTenantBillingProfileToCustomer(input: {
   client: OpenMeter;
   clientId: string;
@@ -474,6 +608,10 @@ async function syncProgressiveBillingToOpenMeterProfile(input: {
 
 export function resetOwnersBillingProfileCacheForTests(): void {
   cachedOwnersBillingProfileId = null;
+}
+
+export function resetFreeBillingProfileCacheForTests(): void {
+  cachedFreeBillingProfileId = null;
 }
 
 export async function upsertAppBillingConfig(

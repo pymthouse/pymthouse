@@ -17,7 +17,7 @@ import {
   getStripeConnectStatus,
   parseStripeAccountIdFromConflict,
   purgeExpiredOAuthStates,
-} from "./stripe-connect";
+} from "./stripe-app-install";
 import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
@@ -249,6 +249,7 @@ test("getStripeConnectStatus defaults to disconnected when no config row", async
   t.after(() => cleanupTestApp(seeded));
   const status = await getStripeConnectStatus(seeded.clientId);
   assert.equal(status.status, "disconnected");
+  assert.equal(status.billingReady, false);
   assert.equal(status.defaultCurrency, "USD");
 });
 
@@ -271,6 +272,7 @@ test("getStripeConnectStatus uses merchant account flags, not legacy OM status",
 
   let status = await getStripeConnectStatus(seeded.clientId);
   assert.equal(status.status, "disconnected");
+  assert.equal(status.billingReady, true);
   assert.equal(status.stripeConnectedAccountId, null);
   assert.equal(status.openmeterStripeAppId, "om_legacy");
 

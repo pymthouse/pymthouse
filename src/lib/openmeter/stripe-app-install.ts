@@ -15,6 +15,14 @@ import { isOpenMeterConflictError } from "./plan-errors";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import type { OpenMeter } from "@openmeter/sdk";
 
+/**
+ * OpenMeter / Konnect Stripe **app** install helpers (Plane A — platform cost rail).
+ *
+ * Renamed from `stripe-connect.ts` to avoid conflating this with merchant Stripe
+ * Connect Account Links (Plane B — `src/lib/stripe/merchant-connect.ts`).
+ * HTTP routes under `/billing/stripe/connect` remain for Connect onboarding.
+ */
+
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
 
 function stripeConnectCallbackUrl(clientId: string): string {
@@ -383,10 +391,18 @@ export async function getStripeConnectStatus(clientId: string) {
       : "pending"
     : "disconnected";
 
+  const openmeterStripeAppId = config?.openmeterStripeAppId ?? null;
+  const openmeterBillingProfileId = config?.openmeterBillingProfileId ?? null;
+  // Plane A readiness — independent of merchant Connect (Plane B).
+  const billingReady = Boolean(
+    openmeterStripeAppId?.trim() && openmeterBillingProfileId?.trim(),
+  );
+
   return {
     status,
-    openmeterStripeAppId: config?.openmeterStripeAppId ?? null,
-    openmeterBillingProfileId: config?.openmeterBillingProfileId ?? null,
+    billingReady,
+    openmeterStripeAppId,
+    openmeterBillingProfileId,
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,

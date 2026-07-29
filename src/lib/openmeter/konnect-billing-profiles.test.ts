@@ -17,7 +17,7 @@ import {
 import {
   createStripeOAuthState,
   StripeOAuthUnavailableError,
-} from "./stripe-connect";
+} from "./stripe-app-install";
 
 test("buildKonnectCreateBillingProfileBody uses Konnect snake_case supplier address", () => {
   const body = buildKonnectCreateBillingProfileBody({

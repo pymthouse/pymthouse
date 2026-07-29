@@ -3,6 +3,7 @@ import type {
   UsageIdentity,
 } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { createBalanceGate } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
+import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 
@@ -30,12 +31,6 @@ function resolveReauthTtlSeconds(): number {
   return ttl > 0 ? ttl : DEFAULT_REAUTH_TTL_SECONDS;
 }
 
-type BalanceCacheEntry = {
-  expiresAtMs: number;
-  value?: string | null;
-  inflight?: Promise<string | null>;
-};
-
 export type SpendableBalanceCache = {
   get: (identity: UsageIdentity) => Promise<string | null>;
   seed: (clientId: string, usageSubject: string, value: string) => void;
@@ -58,64 +53,20 @@ export function createSpendableBalanceCache(options: {
   /** Override for tests; production uses {@link BALANCE_CACHE_MAX_ENTRIES}. */
   maxEntries?: number;
 }): SpendableBalanceCache {
-  const { ttlSeconds, getBalance } = options;
-  const now = options.now ?? Date.now;
-  const maxEntries = options.maxEntries ?? BALANCE_CACHE_MAX_ENTRIES;
-
-  if (ttlSeconds <= 0) {
-    return { get: getBalance, seed: () => undefined };
-  }
-
-  const entries = new Map<string, BalanceCacheEntry>();
-
-  /** Insert/update while keeping `entries.size <= maxEntries` (evicts oldest first). */
-  function setBounded(key: string, entry: BalanceCacheEntry): void {
-    if (entries.has(key)) {
-      entries.delete(key);
-    }
-    while (entries.size >= maxEntries) {
-      const oldestKey = entries.keys().next().value;
-      if (oldestKey === undefined) {
-        break;
-      }
-      entries.delete(oldestKey);
-    }
-    entries.set(key, entry);
-  }
+  const cache = createAsyncTtlCache<string | null>({
+    ttlSeconds: options.ttlSeconds,
+    maxEntries: options.maxEntries ?? BALANCE_CACHE_MAX_ENTRIES,
+    now: options.now,
+  });
 
   return {
     seed(clientId, usageSubject, value) {
-      setBounded(cacheKey(clientId, usageSubject), {
-        expiresAtMs: now() + ttlSeconds * 1000,
-        value,
-      });
+      cache.seed(cacheKey(clientId, usageSubject), value);
     },
     get(identity) {
-      const key = cacheKey(identity.client_id, identity.usage_subject);
-      const existing = entries.get(key);
-      if (existing) {
-        if (existing.inflight) {
-          return existing.inflight;
-        }
-        if (existing.expiresAtMs > now()) {
-          return Promise.resolve(existing.value ?? null);
-        }
-        entries.delete(key);
-      }
-
-      const inflight = getBalance(identity).then(
-        (value) => {
-          setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, value });
-          return value;
-        },
-        (err) => {
-          entries.delete(key);
-          throw err;
-        },
+      return cache.get(cacheKey(identity.client_id, identity.usage_subject), () =>
+        options.getBalance(identity),
       );
-
-      setBounded(key, { expiresAtMs: now() + ttlSeconds * 1000, inflight });
-      return inflight;
     },
   };
 }

@@ -14,7 +14,7 @@ import {
 import {
   disconnectStripeConnect,
   getStripeConnectStatus,
-} from "@/lib/openmeter/stripe-connect";
+} from "@/lib/openmeter/stripe-app-install";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 
 async function requireHostedBillingApp(clientId: string) {

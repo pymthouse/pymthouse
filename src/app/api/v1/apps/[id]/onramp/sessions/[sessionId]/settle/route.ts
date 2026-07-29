@@ -1,24 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  canManageMerchantBilling,
-  getAuthorizedProviderApp,
-} from "@/lib/provider-apps";
+import { getAdminUser } from "@/lib/admin-auth";
+import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { settleOnRampSession } from "@/lib/onramp/sessions";
 
+/**
+ * MoonPay settle — platform-admin only (signer refill tooling).
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; sessionId: string }> },
 ) {
+  const admin = await getAdminUser(request);
+  if (!admin) {
+    return NextResponse.json(
+      { error: "Only a platform admin can settle MoonPay on-ramp sessions." },
+      { status: 403 },
+    );
+  }
+
   const { id: clientId, sessionId } = await params;
   const access = await getAuthorizedProviderApp(clientId, request);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-  if (!(await canManageMerchantBilling(access))) {
-    return NextResponse.json(
-      { error: "Only the app owner or platform admin can settle prepaid credits." },
-      { status: 403 },
-    );
   }
 
   try {

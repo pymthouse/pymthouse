@@ -68,12 +68,10 @@ async function resolveOwnerCustomerIdsByUserId(
     buildOwnerCustomerKey(ownerId),
     buildOwnerWireSubject(ownerId),
   ];
-  const ids: string[] = [];
-  for (const key of keys) {
-    const id = await findCustomerIdByExactKey(client, key);
-    if (id) ids.push(id);
-  }
-  return [...new Set(ids)];
+  const ids = await Promise.all(
+    keys.map((key) => findCustomerIdByExactKey(client, key)),
+  );
+  return [...new Set(ids.filter((id): id is string => Boolean(id)))];
 }
 
 async function resolveOwnerCustomerIdsForApp(
