@@ -17,18 +17,17 @@ export async function GET(
 
   const code = request.nextUrl.searchParams.get("code")?.trim() || "";
   const state = request.nextUrl.searchParams.get("state")?.trim() || "";
-  const oauthError = request.nextUrl.searchParams.get("error")?.trim();
+  const oauthError = request.nextUrl.searchParams.get("error")?.trim() || "";
 
-  if (oauthError) {
-    return NextResponse.redirect(
-      `${paymentsUrl}&error=${encodeURIComponent(
-        sanitizeStripeOAuthProviderError(oauthError),
-      )}`,
-    );
-  }
+  // Authorization is the server-side OAuth state + Stripe code exchange inside
+  // completeMerchantConnectOAuth — not the absence of a provider `error` param.
+  // Only use `error` for UX when code/state are missing (OAuth denial / cancel).
   if (!code || !state) {
+    const errorCode = oauthError
+      ? sanitizeStripeOAuthProviderError(oauthError)
+      : "missing_oauth_params";
     return NextResponse.redirect(
-      `${paymentsUrl}&error=${encodeURIComponent("missing_oauth_params")}`,
+      `${paymentsUrl}&error=${encodeURIComponent(errorCode)}`,
     );
   }
 
