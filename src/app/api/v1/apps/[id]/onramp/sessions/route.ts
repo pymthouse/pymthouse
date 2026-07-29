@@ -37,7 +37,7 @@ export async function POST(
       : undefined;
 
   // Admin refill credits the signed-in admin's owner wallet for this app context.
-  const externalUserId = access.userId;
+  const externalUserId = admin.id;
   const fiatCurrencyCode = "USD";
   const fiatAmount = SANDBOX_ONRAMP_USD_AMOUNT;
 

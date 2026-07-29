@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getServerSession } from "next-auth";
 import type { OpenMeter } from "@openmeter/sdk";
 
@@ -339,15 +339,21 @@ async function resolvePlanName(input: {
   };
 }
 
-async function loadPlanKeyToLocalId(): Promise<Map<string, string>> {
-  const allPlans = await db
+async function loadPlanKeyToLocalId(
+  clientIds: string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  if (clientIds.length === 0) {
+    return index;
+  }
+  const scopedPlans = await db
     .select({
       id: plans.id,
       clientId: plans.clientId,
     })
-    .from(plans);
-  const index = new Map<string, string>();
-  for (const plan of allPlans) {
+    .from(plans)
+    .where(inArray(plans.clientId, clientIds));
+  for (const plan of scopedPlans) {
     index.set(buildOpenMeterPlanKey(plan.clientId, plan.id), plan.id);
   }
   return index;
@@ -521,10 +527,10 @@ export async function listOwnerActiveSubscriptions(
   const client = getHostedAdminClient();
   const cycleBounds = calendarMonthBoundsUtc(new Date());
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
-  const [ownedApps, planKeyToLocalId] = await Promise.all([
-    listOwnedApps(trimmed),
-    loadPlanKeyToLocalId(),
-  ]);
+  const ownedApps = await listOwnedApps(trimmed);
+  const planKeyToLocalId = await loadPlanKeyToLocalId(
+    ownedApps.map((app) => app.developerAppId),
+  );
   const candidates = buildCustomerCandidates(trimmed, ownedApps);
 
   const perCandidate = await Promise.all(

@@ -37,12 +37,13 @@ async function persistConnectedAccountFlags(input: {
 }): Promise<void> {
   const ready = input.chargesEnabled && input.detailsSubmitted;
   const existing = await getAppBillingConfig(input.clientId);
+  // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
+  // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
   await upsertAppBillingConfig(input.clientId, {
     stripeConnectedAccountId: input.accountId,
     stripeChargesEnabled: input.chargesEnabled,
     stripePayoutsEnabled: input.payoutsEnabled,
     stripeDetailsSubmitted: input.detailsSubmitted,
-    stripeConnectStatus: ready ? "connected" : "pending",
     connectedAt: ready
       ? (existing?.connectedAt ?? new Date().toISOString())
       : (existing?.connectedAt ?? null),
@@ -135,7 +136,6 @@ export async function startMerchantConnect({
     await upsertAppBillingConfig(clientId, {
       stripeConnectedAccountId: accountId,
       stripeOnboardingMethod: "account_link" satisfies StripeOnboardingMethod,
-      stripeConnectStatus: "pending",
       stripeChargesEnabled: false,
       stripePayoutsEnabled: false,
       stripeDetailsSubmitted: false,
@@ -158,7 +158,7 @@ export async function refreshMerchantAccountLink(clientId: string): Promise<{
 }> {
   const config = await getAppBillingConfig(clientId);
   const accountId = config?.stripeConnectedAccountId?.trim();
-  if (!accountId) {
+  if (!config || !accountId) {
     throw new Error("No Connected Account yet — start onboarding first");
   }
   if (config.stripeOnboardingMethod === "oauth" && config.stripeChargesEnabled) {
@@ -180,28 +180,21 @@ export async function completeMerchantConnectOAuth(input: {
   code: string;
 }): Promise<void> {
   const rows = await db
-    .select()
-    .from(appBillingOauthStates)
+    .delete(appBillingOauthStates)
     .where(
       and(
         eq(appBillingOauthStates.state, input.state),
         eq(appBillingOauthStates.clientId, input.clientId),
       ),
     )
-    .limit(1);
+    .returning();
   const row = rows[0];
   if (!row) {
     throw new Error("Invalid or expired OAuth state");
   }
   if (row.expiresAt < new Date().toISOString()) {
-    await db
-      .delete(appBillingOauthStates)
-      .where(eq(appBillingOauthStates.id, row.id));
     throw new Error("OAuth state expired");
   }
-  await db
-    .delete(appBillingOauthStates)
-    .where(eq(appBillingOauthStates.id, row.id));
 
   const accountId = await exchangeConnectOAuthCode(input.code);
   await upsertAppBillingConfig(input.clientId, {
@@ -225,7 +218,9 @@ export function isMerchantConnectPaymentsReady(
   config: typeof appBillingConfig.$inferSelect | null | undefined,
 ): boolean {
   return Boolean(
-    config?.stripeConnectedAccountId?.trim() && config.stripeChargesEnabled,
+    config?.stripeConnectedAccountId?.trim() &&
+      config.stripeChargesEnabled &&
+      config.stripeDetailsSubmitted,
   );
 }
 
@@ -370,6 +365,10 @@ export async function createMerchantConnectCheckoutForUser(input: {
     cancelUrl: input.cancelUrl,
     mode: "setup",
     applicationFeeBps: config!.applicationFeeBps ?? 0,
+    metadata: {
+      pymthouse_client_id: input.clientId,
+      external_user_id: input.externalUserId,
+    },
   });
   return { checkoutUrl: session.url, sessionId: session.sessionId };
 }

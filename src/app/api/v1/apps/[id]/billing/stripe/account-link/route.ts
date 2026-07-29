@@ -5,7 +5,9 @@ import {
   merchantBillingForbiddenResponse,
 } from "@/lib/provider-apps";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { refreshMerchantAccountLink } from "@/lib/stripe/merchant-connect";
+import { merchantConnectOAuthErrorCode } from "@/lib/stripe/webhook";
 
 export async function POST(
   request: NextRequest,
@@ -33,6 +35,14 @@ export async function POST(
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 400 });
+    console.error(
+      "[stripe-account-link]",
+      "refreshMerchantAccountLink failed:",
+      sanitizeForLog(message),
+    );
+    return NextResponse.json(
+      { error: merchantConnectOAuthErrorCode(err) },
+      { status: 400 },
+    );
   }
 }

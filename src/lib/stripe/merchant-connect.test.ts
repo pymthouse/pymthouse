@@ -5,12 +5,13 @@ import {
   isMerchantConnectPaymentsReady,
 } from "./merchant-connect";
 
-test("isMerchantConnectPaymentsReady requires connected account and charges", () => {
+test("isMerchantConnectPaymentsReady requires account, charges, and details", () => {
   assert.equal(isMerchantConnectPaymentsReady(null), false);
   assert.equal(
     isMerchantConnectPaymentsReady({
       stripeConnectedAccountId: "acct_1",
       stripeChargesEnabled: false,
+      stripeDetailsSubmitted: true,
     } as never),
     false,
   );
@@ -18,6 +19,7 @@ test("isMerchantConnectPaymentsReady requires connected account and charges", ()
     isMerchantConnectPaymentsReady({
       stripeConnectedAccountId: "  ",
       stripeChargesEnabled: true,
+      stripeDetailsSubmitted: true,
     } as never),
     false,
   );
@@ -25,6 +27,15 @@ test("isMerchantConnectPaymentsReady requires connected account and charges", ()
     isMerchantConnectPaymentsReady({
       stripeConnectedAccountId: "acct_1",
       stripeChargesEnabled: true,
+      stripeDetailsSubmitted: false,
+    } as never),
+    false,
+  );
+  assert.equal(
+    isMerchantConnectPaymentsReady({
+      stripeConnectedAccountId: "acct_1",
+      stripeChargesEnabled: true,
+      stripeDetailsSubmitted: true,
     } as never),
     true,
   );

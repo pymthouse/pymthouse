@@ -16,5 +16,13 @@ CREATE TABLE IF NOT EXISTS "app_user_stripe_customers" (
   "created_at" text NOT NULL,
   "updated_at" text NOT NULL
 );--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "app_user_stripe_customers"
+    ADD CONSTRAINT "app_user_stripe_customers_client_id_developer_apps_id_fk"
+    FOREIGN KEY ("client_id") REFERENCES "public"."developer_apps"("id")
+    ON DELETE no action ON UPDATE no action;
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_app_user_stripe_customers_unique"
   ON "app_user_stripe_customers" ("client_id","external_user_id");

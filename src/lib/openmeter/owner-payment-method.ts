@@ -53,6 +53,7 @@ export async function createOwnerPaymentMethodCheckout(input: {
     options: {
       successURL: success,
       cancelURL: cancel,
+      currency: "USD",
     },
   });
   if (!checkout?.url) {

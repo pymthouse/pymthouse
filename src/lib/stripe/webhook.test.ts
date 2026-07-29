@@ -31,6 +31,23 @@ test("verifyStripeWebhookSignature accepts valid v1 signature", () => {
   );
 });
 
+test("verifyStripeWebhookSignature accepts any matching v1 when multiple are present", () => {
+  const secret = "whsec_test_secret";
+  const rawBody = '{"type":"account.updated"}';
+  const now = 1_700_000_000;
+  const good = signBody(secret, now, rawBody);
+  const header = `${good},v1=${"00".repeat(32)}`;
+  assert.equal(
+    verifyStripeWebhookSignature({
+      rawBody,
+      signatureHeader: header,
+      secret,
+      nowSec: now,
+    }),
+    true,
+  );
+});
+
 test("verifyStripeWebhookSignature rejects tampered body and skew", () => {
   const secret = "whsec_test_secret";
   const rawBody = '{"type":"account.updated"}';
