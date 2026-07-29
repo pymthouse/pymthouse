@@ -2,13 +2,18 @@ import { eq } from "drizzle-orm";
 import type { OpenMeter, PlanReferenceInput } from "@openmeter/sdk";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import { prepareAppCustomerStripeBilling } from "./billing-profiles";
+import {
+  applyFreeBillingProfileToCustomer,
+  prepareAppCustomerStripeBilling,
+} from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomer } from "./customers";
 import {
   isOpenMeterConflictError,
   isOpenMeterPlanNotFoundError,
+  isOpenMeterStripeBillingError,
 } from "./plan-errors";
 import {
   buildOpenMeterPlanKey,
@@ -29,7 +34,35 @@ async function refreshStarterPlan(planId: string): Promise<typeof plans.$inferSe
   return refreshed[0];
 }
 
+/**
+ * A verified Starter plan sync is stable (plan rows and their OpenMeter ids
+ * change only on publish flows), so remember it per app instead of re-reading
+ * Neon and re-verifying the OpenMeter plan on every mint/provision call.
+ */
+let starterPlanSyncedCache: ReturnType<
+  typeof createAsyncTtlCache<typeof plans.$inferSelect>
+> | null = null;
+
+function getStarterPlanSyncedCache() {
+  starterPlanSyncedCache ??= createAsyncTtlCache<typeof plans.$inferSelect>({
+    ttlSeconds: resolveCacheTtlSeconds("STARTER_PLAN_SYNC_CACHE_TTL_SECONDS", 300),
+  });
+  return starterPlanSyncedCache;
+}
+
+export function resetStarterPlanSyncedCacheForTests(): void {
+  starterPlanSyncedCache = null;
+}
+
 export async function ensureStarterPlanSynced(clientId: string): Promise<typeof plans.$inferSelect> {
+  return getStarterPlanSyncedCache().get(clientId, () =>
+    ensureStarterPlanSyncedUncached(clientId),
+  );
+}
+
+async function ensureStarterPlanSyncedUncached(
+  clientId: string,
+): Promise<typeof plans.$inferSelect> {
   const starter = await getOrCreateStarterPlan(clientId);
   if (!isHostedAdminClientAvailable()) {
     return starter;
@@ -112,11 +145,92 @@ function subscriptionViewFromCreateResult(
   };
 }
 
+/**
+ * Create a Starter subscription. On the Konnect Stripe-setup 409
+ * ({@link isOpenMeterStripeBillingError}), apply the sandbox free billing
+ * profile once and retry. On a plain conflict with an existing sub, return
+ * that sub. Does not eagerly apply the profile — it only exists to recover
+ * from that specific error.
+ */
+async function createStarterSubscriptionWithBillingRecovery(input: {
+  client: OpenMeter;
+  customerId: string;
+  starter: typeof plans.$inferSelect;
+  planKey: string;
+}): Promise<{
+  subscription: OpenMeterSubscriptionView;
+  created: boolean;
+}> {
+  try {
+    const createdSub = await createStarterOpenMeterSubscription(input);
+    if (!createdSub?.id) {
+      throw new Error("Failed to create OpenMeter Starter subscription");
+    }
+    return {
+      subscription: subscriptionViewFromCreateResult(
+        createdSub,
+        input.planKey,
+        input.starter.openmeterPlanId,
+      ),
+      created: true,
+    };
+  } catch (err) {
+    if (isOpenMeterConflictError(err)) {
+      const existing = await findOpenMeterSubscriptionByPlanKey(
+        input.client,
+        input.customerId,
+        input.planKey,
+        { openmeterPlanId: input.starter.openmeterPlanId },
+      );
+      if (existing) {
+        return { subscription: existing, created: false };
+      }
+    }
+
+    if (!isOpenMeterStripeBillingError(err)) {
+      throw err;
+    }
+
+    await applyFreeBillingProfileToCustomer({
+      client: input.client,
+      customerId: input.customerId,
+    });
+    try {
+      const createdSub = await createStarterOpenMeterSubscription(input);
+      if (!createdSub?.id) {
+        throw new Error(
+          "Failed to create OpenMeter Starter subscription after billing profile apply",
+        );
+      }
+      return {
+        subscription: subscriptionViewFromCreateResult(
+          createdSub,
+          input.planKey,
+          input.starter.openmeterPlanId,
+        ),
+        created: true,
+      };
+    } catch (retryErr) {
+      if (isOpenMeterConflictError(retryErr)) {
+        const existingAfterRetry = await findOpenMeterSubscriptionByPlanKey(
+          input.client,
+          input.customerId,
+          input.planKey,
+          { openmeterPlanId: input.starter.openmeterPlanId },
+        );
+        if (existingAfterRetry) {
+          return { subscription: existingAfterRetry, created: false };
+        }
+      }
+      throw retryErr;
+    }
+  }
+}
+
 async function createStarterSubscriptionWithRecovery(input: {
   client: OpenMeter;
   customerId: string;
   clientId: string;
-  customerKey: string;
   starter: typeof plans.$inferSelect;
   planKey: string;
 }): Promise<{
@@ -126,104 +240,42 @@ async function createStarterSubscriptionWithRecovery(input: {
 }> {
   let activeStarter = input.starter;
   try {
-    const createdSub = await createStarterOpenMeterSubscription({
+    const provisioned = await createStarterSubscriptionWithBillingRecovery({
       client: input.client,
       customerId: input.customerId,
       starter: activeStarter,
       planKey: input.planKey,
     });
-    if (!createdSub?.id) {
-      throw new Error("Failed to create OpenMeter Starter subscription");
-    }
     return {
-      subscription: subscriptionViewFromCreateResult(
-        createdSub,
-        input.planKey,
-        activeStarter.openmeterPlanId,
-      ),
+      subscription: provisioned.subscription,
       starter: activeStarter,
-      created: true,
+      created: provisioned.created,
     };
   } catch (err) {
-    if (isOpenMeterPlanNotFoundError(err)) {
-      const sync = await syncPlanToOpenMeter(activeStarter.id);
-      if (!sync.ok) {
-        throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
-      }
-      activeStarter = await refreshStarterPlan(activeStarter.id);
-      const createdSub = await createStarterOpenMeterSubscription({
-        client: input.client,
-        customerId: input.customerId,
-        starter: activeStarter,
-        planKey: input.planKey,
-      });
-      if (!createdSub?.id) {
-        throw new Error("Failed to create OpenMeter Starter subscription after plan sync");
-      }
-      return {
-        subscription: subscriptionViewFromCreateResult(
-          createdSub,
-          input.planKey,
-          activeStarter.openmeterPlanId,
-        ),
-        starter: activeStarter,
-        created: true,
-      };
-    }
-    if (isOpenMeterConflictError(err)) {
-      const existing = await findOpenMeterSubscriptionByPlanKey(
-        input.client,
-        input.customerId,
-        input.planKey,
-        { openmeterPlanId: activeStarter.openmeterPlanId },
-      );
-      if (existing) {
-        return { subscription: existing, starter: activeStarter, created: false };
-      }
-
-      await prepareAppCustomerStripeBilling({
-        client: input.client,
-        clientId: input.clientId,
-        customerId: input.customerId,
-        customerKey: input.customerKey,
-      });
-      try {
-        const createdSub = await createStarterOpenMeterSubscription({
-          client: input.client,
-          customerId: input.customerId,
-          starter: activeStarter,
-          planKey: input.planKey,
-        });
-        if (createdSub?.id) {
-          return {
-            subscription: subscriptionViewFromCreateResult(
-              createdSub,
-              input.planKey,
-              activeStarter.openmeterPlanId,
-            ),
-            starter: activeStarter,
-            created: true,
-          };
-        }
-      } catch (retryErr) {
-        const existingAfterRetry = await findOpenMeterSubscriptionByPlanKey(
-          input.client,
-          input.customerId,
-          input.planKey,
-          { openmeterPlanId: activeStarter.openmeterPlanId },
-        );
-        if (existingAfterRetry) {
-          return {
-            subscription: existingAfterRetry,
-            starter: activeStarter,
-            created: false,
-          };
-        }
-        throw retryErr;
-      }
+    if (!isOpenMeterPlanNotFoundError(err)) {
       throw err;
     }
-    throw err;
+
+    const sync = await syncPlanToOpenMeter(activeStarter.id);
+    if (!sync.ok) {
+      throw new Error(sync.error ?? "Failed to sync Starter plan to OpenMeter");
+    }
+    activeStarter = await refreshStarterPlan(activeStarter.id);
+    // Replace any cached pre-resync plan row so later ensures see the new
+    // OpenMeter plan id immediately.
+    getStarterPlanSyncedCache().seed(input.clientId, activeStarter);
+
+    const provisioned = await createStarterSubscriptionWithBillingRecovery({
+      client: input.client,
+      customerId: input.customerId,
+      starter: activeStarter,
+      planKey: input.planKey,
+    });
+    return {
+      subscription: provisioned.subscription,
+      starter: activeStarter,
+      created: provisioned.created,
+    };
   }
 }
 
@@ -312,11 +364,13 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   let created = false;
   let activeStarter = starter;
   if (!omSubscription) {
+    // Free billing-profile override is applied only inside
+    // createStarterSubscriptionWithBillingRecovery when Konnect returns the
+    // Stripe-setup 409 (isOpenMeterStripeBillingError) — not eagerly.
     const provisioned = await createStarterSubscriptionWithRecovery({
       client,
       customerId: customer.id,
       clientId: identity.developerAppId,
-      customerKey: identity.customerKey,
       starter: activeStarter,
       planKey,
     });

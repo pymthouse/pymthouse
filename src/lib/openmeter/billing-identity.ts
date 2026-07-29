@@ -2,6 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
@@ -76,6 +77,27 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
 }
 
 /**
+ * App→client→owner mappings change only on rare admin operations, but the
+ * remote-signer hot path resolves them many times per request across mint,
+ * provisioning, and balance reads. Cache per (clientId, externalUserId) so a
+ * webhook invocation costs at most one Neon identity round-trip.
+ */
+let identityCache: ReturnType<
+  typeof createAsyncTtlCache<ResolvedBillingIdentity>
+> | null = null;
+
+function getIdentityCache() {
+  identityCache ??= createAsyncTtlCache<ResolvedBillingIdentity>({
+    ttlSeconds: resolveCacheTtlSeconds("BILLING_IDENTITY_CACHE_TTL_SECONDS", 300),
+  });
+  return identityCache;
+}
+
+export function resetBillingIdentityCacheForTests(): void {
+  identityCache = null;
+}
+
+/**
  * Resolve the OpenMeter billing customer for an (app, external user) pair.
  * App owners map to a single bare `{users.id}` customer across all apps;
  * M2M end-users stay on `app_…:externalUserId`.
@@ -88,7 +110,17 @@ export async function resolveOpenMeterBillingIdentity(input: {
   if (!externalUserId) {
     throw new Error("externalUserId is required");
   }
+  const clientId = input.clientId.trim();
+  return getIdentityCache().get(`${clientId}\u0000${externalUserId}`, () =>
+    resolveOpenMeterBillingIdentityUncached({ clientId, externalUserId }),
+  );
+}
 
+async function resolveOpenMeterBillingIdentityUncached(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<ResolvedBillingIdentity> {
+  const externalUserId = input.externalUserId;
   const app = await loadAppIdentity(input.clientId);
   if (!app) {
     // Fall back: treat input clientId as public id (tests / scripts).

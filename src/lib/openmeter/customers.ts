@@ -3,6 +3,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import {
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
@@ -16,6 +17,28 @@ export type OpenMeterCustomerIdentity = {
   id: string;
   key: string;
 };
+
+/**
+ * Customer ensures are idempotent Konnect round-trips (list + attribution
+ * check + optional PUT) that the signer hot path repeats several times per
+ * request. Remember successful ensures per customer key so warm requests skip
+ * the Konnect traffic entirely; the TTL bounds how long an externally deleted
+ * customer could be assumed to exist.
+ */
+let ensuredCustomerCache: ReturnType<
+  typeof createAsyncTtlCache<OpenMeterCustomerIdentity>
+> | null = null;
+
+function getEnsuredCustomerCache() {
+  ensuredCustomerCache ??= createAsyncTtlCache<OpenMeterCustomerIdentity>({
+    ttlSeconds: resolveCacheTtlSeconds("OPENMETER_CUSTOMER_ENSURE_CACHE_TTL_SECONDS", 300),
+  });
+  return ensuredCustomerCache;
+}
+
+export function resetEnsuredCustomerCacheForTests(): void {
+  ensuredCustomerCache = null;
+}
 
 type OpenMeterCustomerRecord = {
   id: string;
@@ -162,6 +185,19 @@ export async function ensureOwnerCustomer(
   ownerUserId: string,
   publicClientIds: string[],
 ): Promise<OpenMeterCustomerIdentity> {
+  // Owner and end-user ensures apply different attribution/metadata for the
+  // same customer key, so they cache under distinct namespaces.
+  return getEnsuredCustomerCache().get(
+    `owner\u0000${buildOwnerCustomerKey(ownerUserId.trim())}`,
+    () => ensureOwnerCustomerUncached(client, ownerUserId, publicClientIds),
+  );
+}
+
+async function ensureOwnerCustomerUncached(
+  client: OpenMeter,
+  ownerUserId: string,
+  publicClientIds: string[],
+): Promise<OpenMeterCustomerIdentity> {
   const trimmedOwnerId = ownerUserId.trim();
   const ownerKey = buildOwnerCustomerKey(trimmedOwnerId);
   const uniqueClientIds = [
@@ -269,6 +305,16 @@ export async function findOpenMeterCustomerByKey(
 }
 
 export async function ensureOpenMeterCustomer(
+  client: OpenMeter,
+  customerKey: string,
+  displayName?: string,
+): Promise<OpenMeterCustomerIdentity> {
+  return getEnsuredCustomerCache().get(`customer\u0000${customerKey}`, () =>
+    ensureOpenMeterCustomerUncached(client, customerKey, displayName),
+  );
+}
+
+async function ensureOpenMeterCustomerUncached(
   client: OpenMeter,
   customerKey: string,
   displayName?: string,
