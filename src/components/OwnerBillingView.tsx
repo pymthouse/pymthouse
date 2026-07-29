@@ -77,7 +77,7 @@ function SubscriptionCard({
       ) : (
         <p className="mt-3 text-xs text-zinc-600">
           No included usage allowance on this plan — cycle usage settles against prepaid
-          credits.
+          credits or your Stripe payment method.
         </p>
       )}
 
@@ -87,7 +87,7 @@ function SubscriptionCard({
           <span className="font-mono tabular-nums">
             {formatUsdMicrosDisplay(overage.toString())}
           </span>{" "}
-          overage burns prepaid credits
+          overage burns prepaid credits, then invoices your Stripe payment method
         </p>
       ) : null}
 
@@ -102,23 +102,30 @@ function SubscriptionCard({
 
 export default function OwnerBillingView({
   data,
-  fundPanel,
-  fundingAvailable = false,
+  paymentMethodPanel,
+  adminFundPanel,
 }: Readonly<{
   data: OwnerBillingPayload;
-  /** MoonPay on-ramp (credits prepaid balance for your account). */
-  fundPanel?: ReactNode;
-  /** True when Turnkey is configured and an owned app can host on-ramp APIs. */
-  fundingAvailable?: boolean;
+  /** Stripe Checkout (setup) to attach a card for platform overage invoices. */
+  paymentMethodPanel?: ReactNode;
+  /** Admin-only MoonPay signer refill tooling (hidden from normal owners). */
+  adminFundPanel?: ReactNode;
 }>) {
+  const billingActions =
+    paymentMethodPanel || adminFundPanel ? (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {paymentMethodPanel}
+        {adminFundPanel}
+      </div>
+    ) : null;
+
   return (
     <DashboardLayout>
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
         <p className="mt-1 text-xs sm:text-sm text-zinc-500">
           Prepaid credits, active subscriptions, and platform invoices for your account.
-          Plan allowances are tracked per billing cycle; prepaid credits burn only after the
-          allowance is exhausted.
+          Attach a Stripe payment method so overage invoices can charge automatically.
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
@@ -142,12 +149,15 @@ export default function OwnerBillingView({
       {!data.openMeterConfigured ? null : (
         <>
           <section className="mb-8">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold text-zinc-200">Prepaid credits</h2>
-              <InfoTooltip
-                label="Credits for your account — usable across all apps you own. Separate from per-cycle plan allowances."
-                wide
-              />
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold text-zinc-200">Payment &amp; credits</h2>
+                <InfoTooltip
+                  label="Add a Stripe card for automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement."
+                  wide
+                />
+              </div>
+              {billingActions}
             </div>
             {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
               <AllowanceStrip
@@ -158,35 +168,14 @@ export default function OwnerBillingView({
                   (sum, row) => sum + row.requestCount,
                   0,
                 )}
-                actions={fundPanel}
               />
             ) : (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1 text-sm text-zinc-500">
-                    <p>
-                      No prepaid credit balance yet. Starter included usage comes from your
-                      plan allowance; this balance stays empty until you top up.
-                    </p>
-                    <p className="mt-2">
-                      {fundingAvailable ? (
-                        <>
-                          Use <span className="text-zinc-300">Fund with MoonPay</span> to add
-                          sandbox prepaid credits — they cover pay-per-use plans with no
-                          allowance, and burn after any plan allowance is exhausted.
-                        </>
-                      ) : (
-                        <>
-                          Prepaid credits appear here after a top-up. MoonPay funding requires
-                          Turnkey Wallet Kit configuration and at least one owned app.
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  {fundPanel ? (
-                    <div className="shrink-0 sm:pt-0.5">{fundPanel}</div>
-                  ) : null}
-                </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+                <p>
+                  No prepaid credit balance yet. Starter included usage comes from your plan
+                  allowance. Attach a payment method so usage beyond the allowance can be
+                  invoiced on Stripe.
+                </p>
               </div>
             )}
           </section>
@@ -195,7 +184,8 @@ export default function OwnerBillingView({
             <h2 className="mb-3 text-sm font-semibold text-zinc-200">Active subscriptions</h2>
             <p className="mb-4 text-xs text-zinc-600">
               Usage toward each plan&apos;s included allowance for the current cycle. Overage
-              after the allowance burns prepaid credits.
+              after the allowance burns prepaid credits, then charges your Stripe payment
+              method.
             </p>
             {data.subscriptions.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
@@ -218,7 +208,7 @@ export default function OwnerBillingView({
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold text-zinc-200">Platform invoices</h2>
               <InfoTooltip
-                label="Invoices from PymtHouse to your developer account (prepaid top-ups and overage). End-user invoices billed through your Stripe Connect account appear on each app’s Payments tab."
+                label="Invoices from PymtHouse to your developer account (overage and top-ups). End-user invoices billed through your Merchant Stripe Connect account appear on each app’s Payments tab."
                 wide
               />
             </div>

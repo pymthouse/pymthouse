@@ -1,9 +1,12 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
 
 import FundAccountOnRampPanel from "@/components/apps/FundAccountOnRampPanel";
 import OwnerBillingView from "@/components/OwnerBillingView";
+import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
+import { authOptions } from "@/lib/next-auth-options";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 function isTurnkeyFundingConfigured(): boolean {
@@ -35,12 +38,15 @@ export default async function BillingPage() {
   }
 
   const { data } = result;
+  const session = await getServerSession(authOptions);
+  const sessionUser = session?.user as Record<string, unknown> | undefined;
+  const isAdmin = sessionUser?.role === "admin";
   const fundingClientId = data.fundingClientId?.trim() || null;
-  const fundingAvailable = Boolean(
-    isTurnkeyFundingConfigured() && fundingClientId && data.userId,
+  const adminFundAvailable = Boolean(
+    isAdmin && isTurnkeyFundingConfigured() && fundingClientId && data.userId,
   );
-  const fundPanel =
-    fundingAvailable && fundingClientId ? (
+  const adminFundPanel =
+    adminFundAvailable && fundingClientId ? (
       <FundAccountOnRampPanel
         clientId={fundingClientId}
         ownerExternalUserId={data.userId}
@@ -50,8 +56,10 @@ export default async function BillingPage() {
   return (
     <OwnerBillingView
       data={data}
-      fundPanel={fundPanel}
-      fundingAvailable={fundingAvailable}
+      paymentMethodPanel={
+        data.openMeterConfigured ? <OwnerPaymentMethodButton /> : null
+      }
+      adminFundPanel={adminFundPanel}
     />
   );
 }

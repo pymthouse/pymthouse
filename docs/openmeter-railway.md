@@ -162,31 +162,47 @@ Redeploy Vercel. Usage, balance, and allowances return **503** without `OPENMETE
 
 Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMeter directly.
 
-### Stripe billing (per developer app)
+### Stripe billing (dual plane)
 
-Starter is a **real synced OpenMeter plan** on a **Stripe billing profile**. Included usage/credits let users start without a payment method. PymtHouse provisions a Stripe Customer (`cus_…`) via `STRIPE_SECRET_KEY` (same Stripe account as Konnect) and upserts Konnect customer billing app-data — no card required for Starter.
+See [`adr-stripe-connect-openmeter-webhooks.md`](./adr-stripe-connect-openmeter-webhooks.md).
 
-Sandbox billing profiles are **not** used at runtime; migrate legacy Sandbox-linked customers with the cutover scripts (separate PR).
+**Plane A — OpenMeter Stripe app (platform cost rail):** Starter is a real synced
+OpenMeter plan on a Stripe billing profile. Included usage/credits let users start
+without a payment method. PymtHouse provisions a Stripe Customer (`cus_…`) via
+`STRIPE_SECRET_KEY` (same Stripe account as Konnect) and upserts Konnect customer
+billing app-data. Owners attach a card from **`/billing` → Add payment method**
+(`POST /api/v1/me/billing/payment-method` → OM Checkout setup) so overage invoices
+can `charge_automatically`.
 
-PymtHouse **Payments** tab → **Connect Stripe** (optional; Starter auto-ensures the app Stripe profile) stores a per-app billing profile in `app_billing_config`.
+**Plane B — Merchant Stripe Connect:** app **Settings → Payments → Merchant Stripe
+Connect** uses Account Links + `/webhooks/stripe` for end-user retail collection.
+Never charges through the OM Stripe app.
+
+**MoonPay:** admin-only signer-refill tooling (`POST …/onramp/sessions` requires
+platform admin). Not shown on owner `/billing` for non-admins.
+
+Sandbox billing profiles are **not** used at runtime; migrate legacy Sandbox-linked
+customers with the cutover scripts (separate PR).
 
 **Konnect (production):**
 
 1. Install Stripe once in [Konnect → Metering & Billing → Settings → Stripe](https://developer.konghq.com/metering-and-billing/stripe-integration/) (API key + billing profile wizard).
 2. Set `OPENMETER_URL`, `OPENMETER_API_KEY`, and `STRIPE_SECRET_KEY` (same Stripe account) on Vercel.
 3. Bootstrap should log `Konnect Stripe app is ready` (not a missing-app warning).
-4. Starter provision auto-creates the per-app Stripe billing profile when missing. Optional: **Settings → Payments → Connect Stripe** or mid-cycle invoicing settings.
+4. Starter provision auto-creates the per-app Stripe billing profile when missing.
 5. Optional: `OPENMETER_STRIPE_APP_ID` when multiple Stripe apps exist in the org.
+6. Configure a Connect webhook (connected-account events) → `/webhooks/stripe` with `STRIPE_WEBHOOK_SECRET`.
 
 **Self-hosted (Railway/OSS):**
 
 1. Ensure `OPENMETER_APPS_BASE_URL` is set on Railway OpenMeter (see §3) and redeploy **openmeter**.
 2. Bootstrap should log `Stripe marketplace OAuth is available` (not a 501 warning).
-3. Set `STRIPE_SECRET_KEY` for customer provisioning. Install Stripe via Connect (OAuth or `{ "stripeSecretKey": "sk_…" }`) so a Stripe app exists in OpenMeter.
-4. After the Stripe app exists, Starter provision auto-ensures the per-app billing profile; invoices/checkout use that profile.
-5. Publish paid plans (OpenMeter plan sync) and use checkout via `POST …/billing/checkout` for end users (collects payment method).
+3. Set `STRIPE_SECRET_KEY` for customer provisioning. Install the OM Stripe app via marketplace API key or OAuth so a Stripe app exists in OpenMeter.
+4. After the Stripe app exists, Starter provision auto-ensures the per-app billing profile; owner PM attach and invoices use that profile.
+5. Publish paid plans (OpenMeter plan sync). Merchant end-user checkout uses Connect (Plane B), not OM Checkout on the platform account.
 
-Stripe redirect URI for each app: `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/callback`.
+Legacy OM Stripe app OAuth callback (self-hosted install): `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/callback`.
+Merchant Connect Account Links use `{NEXTAUTH_URL}/api/v1/apps/{clientId}/billing/stripe/…` Account Link routes.
 
 ## 8. Signer (`pymthouse` Railway service)
 

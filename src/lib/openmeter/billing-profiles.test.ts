@@ -3,9 +3,28 @@ import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
 import {
   ensureOwnersBillingProfile,
+  isAppBillingReady,
   resetOwnersBillingProfileCacheForTests,
 } from "./billing-profiles";
 import { __testSetHostedOpenMeterClient, resetHostedOpenMeterClientForTests } from "./client";
+
+test("isAppBillingReady requires Stripe app id and billing profile id", () => {
+  assert.equal(isAppBillingReady(null), false);
+  assert.equal(
+    isAppBillingReady({
+      openmeterStripeAppId: "app",
+      openmeterBillingProfileId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    isAppBillingReady({
+      openmeterStripeAppId: "app",
+      openmeterBillingProfileId: "profile",
+    }),
+    true,
+  );
+});
 
 test("ensureOwnersBillingProfile returns OPENMETER_OWNERS_BILLING_PROFILE_ID when set", async (t) => {
   resetOwnersBillingProfileCacheForTests();

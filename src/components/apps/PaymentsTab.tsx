@@ -10,6 +10,7 @@ import { paymentsTabErrorMessage } from "@/lib/stripe/payments-tab-errors";
 
 type StripeStatus = {
   status: string;
+  billingReady?: boolean;
   openmeterStripeAppId: string | null;
   openmeterBillingProfileId: string | null;
   defaultCurrency: string;
@@ -236,11 +237,12 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       <div className="rounded-lg border p-4 space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold">Stripe Connect</h3>
+            <h3 className="text-base font-semibold">Merchant Stripe Connect</h3>
             <p className="text-sm text-muted-foreground">
-              OpenMeter meters usage and subscriptions. End-user payments go through your
-              merchant Connected Account (direct charges). Complete Stripe-hosted onboarding
-              (Account Links) to create and verify your Connected Account.
+              Collect from your end users on a Stripe Connected Account (Plane B).
+              OpenMeter Stripe billing (Plane A) meters usage and invoices you for
+              network cost separately. Complete Stripe-hosted onboarding (Account Links)
+              to create and verify your Connected Account.
             </p>
           </div>
           <span
@@ -281,6 +283,16 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
             <div>
               <dt className="text-muted-foreground">Payouts</dt>
               <dd>{status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">OpenMeter Stripe billing</dt>
+              <dd>
+                {status?.billingReady
+                  ? "Ready"
+                  : status?.openmeterBillingProfileId
+                    ? "Partial"
+                    : "Not provisioned"}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">OM billing profile</dt>
