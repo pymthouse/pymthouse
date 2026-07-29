@@ -109,8 +109,38 @@ export async function resolveActiveAppApiKey(
   if (!token) {
     return null;
   }
+  return resolveActiveAppApiKeyFromStoredToken(token, publicClientId);
+}
 
-  const keyHash = hashToken(token);
+/**
+ * Resolve an API key Bearer without a caller-supplied public client id.
+ * Composite `app_*_*` keys carry the client id; bare keys are looked up by hash.
+ */
+export async function resolveActiveAppApiKeyByBearer(
+  bearerToken: string,
+): Promise<ResolvedAppApiKey | null> {
+  const trimmed = bearerToken.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    return resolveActiveAppApiKey(trimmed, composite.publicClientId);
+  }
+
+  const token = rehydrateStoredApiKey(trimmed);
+  if (!token) {
+    return null;
+  }
+  return resolveActiveAppApiKeyFromStoredToken(token, null);
+}
+
+async function resolveActiveAppApiKeyFromStoredToken(
+  storedToken: string,
+  expectedPublicClientId: string | null,
+): Promise<ResolvedAppApiKey | null> {
+  const keyHash = hashToken(storedToken);
   const keyRows = await db
     .select({
       id: apiKeys.id,
@@ -127,6 +157,15 @@ export async function resolveActiveAppApiKey(
     return null;
   }
 
+  const bindingFilter = [
+    eq(appUsers.id, row.appUserId),
+    eq(developerApps.id, row.clientId),
+    eq(appUsers.status, "active"),
+  ];
+  if (expectedPublicClientId) {
+    bindingFilter.push(eq(oidcClients.clientId, expectedPublicClientId));
+  }
+
   const bindingRows = await db
     .select({
       appUserId: appUsers.id,
@@ -137,14 +176,7 @@ export async function resolveActiveAppApiKey(
     .from(appUsers)
     .innerJoin(developerApps, eq(appUsers.clientId, developerApps.id))
     .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
-    .where(
-      and(
-        eq(appUsers.id, row.appUserId),
-        eq(developerApps.id, row.clientId),
-        eq(oidcClients.clientId, publicClientId),
-        eq(appUsers.status, "active"),
-      ),
-    )
+    .where(and(...bindingFilter))
     .limit(1);
   const binding = bindingRows[0];
   if (!binding) {

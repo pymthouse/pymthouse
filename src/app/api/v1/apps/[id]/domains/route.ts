@@ -3,6 +3,7 @@ import { db } from "@/db/index";
 import { appAllowedDomains } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { invalidateAppCorsCache } from "@/lib/api-cors";
 import { normalizeDomainWhitelist } from "@/lib/domain-whitelist";
 import {
   canEditProviderApp,
@@ -100,6 +101,7 @@ export async function POST(
     throw err;
   }
 
+  invalidateAppCorsCache();
   return NextResponse.json({ id: domainId, domain: normalizedDomain }, { status: 201 });
 }
 
@@ -135,5 +137,6 @@ export async function DELETE(
     ),
   );
 
+  invalidateAppCorsCache();
   return NextResponse.json({ success: true });
 }
