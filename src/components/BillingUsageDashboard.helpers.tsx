@@ -77,7 +77,8 @@ export function BillingDashboardHeader({
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 mt-1">
             Usage and per-identity breakdown for this application in the current billing
-            cycle.
+            cycle. End users have their own Starter allowance — it does not change your
+            account bar on Billing.
           </p>
           {cycleLine}
         </div>
@@ -96,10 +97,77 @@ export function BillingDashboardHeader({
       <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Usage</h1>
       <p className="text-xs sm:text-sm text-zinc-500 mt-1">
         Applications are ordered by requests this billing cycle; apps owned by Test User appear
-        after all others, with per-user billing breakdowns.
+        after all others. Expand an app for end-user spend and remaining spendable balance.
       </p>
       {cycleLine}
     </>
+  );
+}
+
+function AppUsageHeaderStats({
+  entry,
+  isOpenMeter,
+}: Readonly<{
+  entry: AppUsageEntry;
+  isOpenMeter: boolean;
+}>) {
+  const showWalletSplit = isOpenMeter && entry.app.usageKind === "tenant";
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 text-right shrink-0 w-full min-w-0 sm:w-auto sm:max-w-full pl-6 sm:pl-0">
+      <div className="min-w-0">
+        <p className="text-[11px] uppercase tracking-wider text-zinc-500">Requests</p>
+        <p className="text-sm font-semibold text-zinc-200 tabular-nums">
+          {entry.requestCount}
+        </p>
+      </div>
+      {showWalletSplit ? (
+        <>
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500">
+              End-user usage
+            </p>
+            <p className="text-sm font-semibold font-mono break-all text-emerald-400">
+              {formatUsdMicrosString(entry.endUserNetworkFeeUsdMicros, 4) ?? "$0"}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500">Your usage</p>
+            <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
+              {formatUsdMicrosString(entry.ownerNetworkFeeUsdMicros, 4) ?? "$0"}
+            </p>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500">
+              {isOpenMeter ? "Network fee (USD)" : "Network fee (ETH)"}
+            </p>
+            <p
+              className={`text-sm font-semibold font-mono break-all ${
+                isOpenMeter ? "text-emerald-400" : "text-zinc-200"
+              }`}
+            >
+              {isOpenMeter
+                ? formatUsdMicrosString(entry.networkFeeUsdMicros, 4) ?? "—"
+                : formatBillingWei(entry.totalFeeWei)}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500">
+              {isOpenMeter ? "Billable (USD est.)" : "Network fee (USD)"}
+            </p>
+            <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
+              {formatUsdMicrosString(
+                isOpenMeter ? entry.endUserBillableUsdMicros : entry.networkFeeUsdMicros,
+                4,
+              ) ?? "—"}
+            </p>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -181,39 +249,7 @@ export function AppUsageSection({
               )}
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 text-right shrink-0 w-full min-w-0 sm:w-auto sm:max-w-full pl-6 sm:pl-0">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-wider text-zinc-500">Requests</p>
-              <p className="text-sm font-semibold text-zinc-200 tabular-nums">
-                {entry.requestCount}
-              </p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-wider text-zinc-500">
-                {isOpenMeter ? "Network fee (USD)" : "Network fee (ETH)"}
-              </p>
-              <p
-                className={`text-sm font-semibold font-mono break-all ${
-                  isOpenMeter ? "text-emerald-400" : "text-zinc-200"
-                }`}
-              >
-                {isOpenMeter
-                  ? formatUsdMicrosString(entry.networkFeeUsdMicros, 4) ?? "—"
-                  : formatBillingWei(entry.totalFeeWei)}
-              </p>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-wider text-zinc-500">
-                {isOpenMeter ? "Billable (USD est.)" : "Network fee (USD)"}
-              </p>
-              <p className="text-sm font-semibold text-zinc-200 font-mono break-all">
-                {formatUsdMicrosString(
-                  isOpenMeter ? entry.endUserBillableUsdMicros : entry.networkFeeUsdMicros,
-                  4,
-                ) ?? "—"}
-              </p>
-            </div>
-          </div>
+          <AppUsageHeaderStats entry={entry} isOpenMeter={isOpenMeter} />
         </div>
       </button>
 
@@ -234,7 +270,26 @@ export function AppUsageSection({
             </div>
           ) : null}
           {entry.byUser.length > 0 ? (
-            <AppUsageUserTable entry={entry} isOpenMeter={isOpenMeter} />
+            <>
+              {isOpenMeter && entry.app.usageKind === "tenant" ? (
+                <p className="px-4 sm:px-5 py-2 text-xs text-zinc-600 border-b border-zinc-800/60">
+                  End users have their own Starter allowance and prepaid credits. This does
+                  not change your account bar on{" "}
+                  <Link
+                    href="/billing"
+                    className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Billing
+                  </Link>
+                  .
+                  {entry.balancesTruncated
+                    ? " Showing spendable balances for top spenders this cycle."
+                    : null}
+                </p>
+              ) : null}
+              <AppUsageUserTable entry={entry} isOpenMeter={isOpenMeter} />
+            </>
           ) : (
             <div className="p-5 text-center">
               <p className="text-sm text-zinc-500">
@@ -261,6 +316,9 @@ function AppUsageUserTable({
   entry: AppUsageEntry;
   isOpenMeter: boolean;
 }>) {
+  const showBalances = isOpenMeter && entry.app.usageKind === "tenant";
+  const pipelineLabelColSpan = 2;
+
   return (
     <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
       <table className="w-full text-sm min-w-[32rem]">
@@ -278,6 +336,12 @@ function AppUsageUserTable({
             {isOpenMeter && (
               <th className="text-right px-4 sm:px-5 py-3 font-medium">Network fee (USD)</th>
             )}
+            {showBalances && (
+              <>
+                <th className="text-right px-4 sm:px-5 py-3 font-medium">Spendable</th>
+                <th className="text-right px-4 sm:px-5 py-3 font-medium">Plan remaining</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -290,11 +354,17 @@ function AppUsageUserTable({
                 <td className="px-4 sm:px-5 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <code className="text-xs text-zinc-300">{userUsage.userLabel}</code>
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
-                    >
-                      {userTypeLabel(userUsage.userType)}
-                    </span>
+                    {userUsage.isOwnerWallet ? (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-300">
+                        owner
+                      </span>
+                    ) : (
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
+                      >
+                        {userTypeLabel(userUsage.userType)}
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="px-4 sm:px-5 py-3">
@@ -320,6 +390,20 @@ function AppUsageUserTable({
                     {formatUsdMicrosString(userUsage.networkFeeUsdMicros, 4) ?? "—"}
                   </td>
                 )}
+                {showBalances && (
+                  <>
+                    <td className="px-4 sm:px-5 py-3 text-right text-zinc-200 font-mono text-xs break-all">
+                      {formatUsdMicrosString(userUsage.spendableUsdMicros ?? undefined, 4) ??
+                        "—"}
+                    </td>
+                    <td className="px-4 sm:px-5 py-3 text-right text-zinc-400 font-mono text-xs break-all">
+                      {formatUsdMicrosString(
+                        userUsage.planRemainingUsdMicros ?? undefined,
+                        4,
+                      ) ?? "—"}
+                    </td>
+                  </>
+                )}
               </tr>
             );
 
@@ -328,7 +412,10 @@ function AppUsageUserTable({
                 key={`${entry.app.id}:${userUsage.endUserId}:${pm.pipeline}|${pm.modelId}`}
                 className="border-b border-zinc-800/30 bg-zinc-950/30 hover:bg-zinc-800/10"
               >
-                <td className="px-4 sm:px-5 py-2 pl-8 sm:pl-10" colSpan={2}>
+                <td
+                  className="px-4 sm:px-5 py-2 pl-8 sm:pl-10"
+                  colSpan={pipelineLabelColSpan}
+                >
                   <span className="text-xs text-zinc-500">
                     {formatPipelineModelLabel(pm.pipeline, pm.modelId)}
                   </span>
@@ -350,6 +437,16 @@ function AppUsageUserTable({
                   <td className="px-4 sm:px-5 py-2 text-right text-zinc-400 tabular-nums text-xs break-all">
                     {formatUsdMicrosString(pm.networkFeeUsdMicros, 4) ?? "—"}
                   </td>
+                )}
+                {showBalances && (
+                  <>
+                    <td className="px-4 sm:px-5 py-2 text-right text-zinc-600 font-mono text-xs">
+                      —
+                    </td>
+                    <td className="px-4 sm:px-5 py-2 text-right text-zinc-600 font-mono text-xs">
+                      —
+                    </td>
+                  </>
                 )}
               </tr>
             ));

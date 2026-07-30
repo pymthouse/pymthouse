@@ -383,7 +383,11 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 
 **Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.
 
-**Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
+**Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans.
+
+**Wallet boundary (UI):** Owner **`/billing`** shows only the shared **owner wallet** (prepaid strip + Owner Starter progress) — end-user Starter spend does **not** roll into that bar. The Usage dashboard (`/usage`, `/apps/{id}/usage`, powered by `GET /api/v1/billing/dashboard`) aggregates tenant meter usage with a per-identity table that includes end-user **spendable** and **plan remaining** (same mint-gate inputs). App cards split **End-user usage** vs **Your usage**. Builder M2M balance for one user remains `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...`.
+
+Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 

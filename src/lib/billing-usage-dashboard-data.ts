@@ -4,7 +4,16 @@ import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
+import {
+  applyWalletClassification,
+  enrichByUserBalanceFields,
+  withWalletRollups,
+} from "@/lib/billing-usage-balance-enrich";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import {
+  getPrepaidCreditBalancesByClientId,
+  type CreditAllowanceSummary,
+} from "@/lib/openmeter/credit-allowance-summary";
 import {
   listOwnerActiveSubscriptions,
   type OwnerBillingSubscriptionRow,
@@ -55,6 +64,16 @@ export type BillingUserUsageRow = {
   totalUnits: string;
   networkFeeUsdMicros?: string;
   byPipelineModel: BillingPipelineModelSummary[];
+  /** True when this meter subject is the app owner's shared wallet. */
+  isOwnerWallet?: boolean;
+  /** Plan included allowance granted for the cycle (USD micros). Null if lookup skipped/failed. */
+  planGrantedUsdMicros?: string | null;
+  /** Remaining plan usage discount (USD micros). */
+  planRemainingUsdMicros?: string | null;
+  /** Consumed plan discount this cycle (USD micros). */
+  planConsumedUsdMicros?: string | null;
+  /** Credits + remaining plan discount (mint gate). Null if lookup skipped/failed. */
+  spendableUsdMicros?: string | null;
 };
 
 export type BillingPipelineModelSummary = {
@@ -74,6 +93,14 @@ export type BillingAppUsageSummary = {
   endUserBillableUsdMicros: string;
   byUser: BillingUserUsageRow[];
   byPipelineModel: BillingPipelineModelSummary[];
+  /** Sum of network fee for non-owner (M2M end-user) rows. */
+  endUserNetworkFeeUsdMicros: string;
+  /** Sum of network fee for owner-wallet rows. */
+  ownerNetworkFeeUsdMicros: string;
+  /** Aggregated prepaid credits across end-user wallets for this public client. */
+  endUserCreditAllowance: CreditAllowanceSummary | null;
+  /** True when balance enrichment was capped to top spenders. */
+  balancesTruncated: boolean;
 };
 
 export { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
@@ -385,7 +412,16 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const [omResults, activeSubscriptions] = await Promise.all([
+  const tenantPublicClientIds = [
+    ...new Set(
+      input.orderedApps
+        .filter((app) => app.usageKind === "tenant")
+        .map((app) => app.publicClientId.trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  const [omResults, activeSubscriptions, endUserCreditsByClient] = await Promise.all([
     queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
     listOwnerActiveSubscriptions(input.userId).catch((err) => {
       console.warn(
@@ -394,6 +430,13 @@ async function buildOpenMeterBillingDashboard(input: {
       );
       return [] as OwnerBillingSubscriptionRow[];
     }),
+    getPrepaidCreditBalancesByClientId(tenantPublicClientIds).catch((err) => {
+      console.warn(
+        "billing-usage-dashboard: end-user credit summary failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return {} as Record<string, CreditAllowanceSummary>;
+    }),
   ]);
 
   const requestsByDay = new Map<string, number>();
@@ -401,116 +444,155 @@ async function buildOpenMeterBillingDashboard(input: {
   const seriesDayCounts = new Map<string, Map<string, number>>();
   const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
 
-  const appUsage: BillingAppUsageSummary[] = sortAppUsageByMostUsed(
-    input.orderedApps.map((app, index) => {
-      const om = omResults[index];
-      if (!om) {
-        return {
-          app,
-          requestCount: 0,
-          totalFeeWei: "0",
-          totalUnits: "0",
-          networkFeeUsdMicros: "0",
-          endUserBillableUsdMicros: "0",
-          byUser: [],
-          byPipelineModel: [],
-        };
-      }
-
-      for (const [day, count] of om.requestsByDay) {
-        requestsByDay.set(day, (requestsByDay.get(day) ?? 0) + count);
-      }
-
-      for (const row of om.byDailyPipeline ?? []) {
-        const pipeline = row.pipeline || "unknown";
-        const modelId = row.modelId || "unknown";
-        const jobType = formatUsageJobTypeLabel(pipeline, modelId);
-        const chartAppId = app.publicClientId;
-        // Key by both dimensions so distinct constraints do not collapse under one pipeline.
-        const seriesKey = `${chartAppId}|${pipeline}|${modelId}`;
-        if (!seriesMeta.has(seriesKey)) {
-          seriesMeta.set(seriesKey, {
-            appId: chartAppId,
-            appName: app.name,
-            jobType,
-          });
-        }
-        const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
-        dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
-        seriesDayCounts.set(seriesKey, dayMap);
-      }
-
-      let networkFeeUsdMicros = 0n;
-      let requestCount = 0;
-      for (const row of om.byUser) {
-        networkFeeUsdMicros += BigInt(row.networkFeeUsdMicros);
-        requestCount += row.requestCount;
-      }
-
-      const byUserPipelineModel = new Map<string, BillingPipelineModelSummary[]>();
-      for (const row of om.byUserPipelineModel ?? []) {
-        const list = byUserPipelineModel.get(row.externalUserId) ?? [];
-        list.push({
-          pipeline: row.pipeline,
-          modelId: row.modelId,
-          requestCount: row.requestCount,
-          networkFeeUsdMicros: row.networkFeeUsdMicros,
-          endUserBillableUsdMicros: row.networkFeeUsdMicros,
-        });
-        byUserPipelineModel.set(row.externalUserId, list);
-      }
-
-      const byUser: BillingUserUsageRow[] = [...om.byUser]
-        .sort((a, b) => {
-          if (b.requestCount !== a.requestCount) {
-            return b.requestCount - a.requestCount;
-          }
-          const feeA = BigInt(a.networkFeeUsdMicros);
-          const feeB = BigInt(b.networkFeeUsdMicros);
-          if (feeA === feeB) return 0;
-          return feeB > feeA ? 1 : -1;
-        })
-        .map((row) => ({
-          endUserId: row.externalUserId,
-          externalUserId: row.externalUserId,
-          userType: "system_managed" as const,
-          userLabel: row.externalUserId,
-          identifier: row.externalUserId,
-          requestCount: row.requestCount,
-          totalFeeWei: "0",
-          totalUnits: "0",
-          networkFeeUsdMicros: row.networkFeeUsdMicros,
-          byPipelineModel: [...(byUserPipelineModel.get(row.externalUserId) ?? [])].sort(
-            (a, b) => {
-              if (b.requestCount !== a.requestCount) {
-                return b.requestCount - a.requestCount;
-              }
-              const feeA = BigInt(a.networkFeeUsdMicros);
-              const feeB = BigInt(b.networkFeeUsdMicros);
-              if (feeA === feeB) return 0;
-              return feeB > feeA ? 1 : -1;
-            },
-          ),
-        }));
-
-      return {
+  const baseAppUsage: BillingAppUsageSummary[] = input.orderedApps.map((app, index) => {
+    const om = omResults[index];
+    if (!om) {
+      return withWalletRollups({
         app,
-        requestCount,
+        requestCount: 0,
         totalFeeWei: "0",
         totalUnits: "0",
-        networkFeeUsdMicros: networkFeeUsdMicros.toString(),
-        endUserBillableUsdMicros: networkFeeUsdMicros.toString(),
-        byUser,
-        byPipelineModel: om.byPipelineModel.map((pm) => ({
-          pipeline: pm.pipeline,
-          modelId: pm.modelId,
-          requestCount: pm.requestCount,
-          networkFeeUsdMicros: pm.networkFeeUsdMicros,
-          endUserBillableUsdMicros: pm.networkFeeUsdMicros,
-        })),
-      };
+        networkFeeUsdMicros: "0",
+        endUserBillableUsdMicros: "0",
+        byUser: [],
+        byPipelineModel: [],
+      });
+    }
+
+    for (const [day, count] of om.requestsByDay) {
+      requestsByDay.set(day, (requestsByDay.get(day) ?? 0) + count);
+    }
+
+    for (const row of om.byDailyPipeline ?? []) {
+      const pipeline = row.pipeline || "unknown";
+      const modelId = row.modelId || "unknown";
+      const jobType = formatUsageJobTypeLabel(pipeline, modelId);
+      const chartAppId = app.publicClientId;
+      // Key by both dimensions so distinct constraints do not collapse under one pipeline.
+      const seriesKey = `${chartAppId}|${pipeline}|${modelId}`;
+      if (!seriesMeta.has(seriesKey)) {
+        seriesMeta.set(seriesKey, {
+          appId: chartAppId,
+          appName: app.name,
+          jobType,
+        });
+      }
+      const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
+      dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
+      seriesDayCounts.set(seriesKey, dayMap);
+    }
+
+    let networkFeeUsdMicros = 0n;
+    let requestCount = 0;
+    for (const row of om.byUser) {
+      networkFeeUsdMicros += BigInt(row.networkFeeUsdMicros);
+      requestCount += row.requestCount;
+    }
+
+    const byUserPipelineModel = new Map<string, BillingPipelineModelSummary[]>();
+    for (const row of om.byUserPipelineModel ?? []) {
+      const list = byUserPipelineModel.get(row.externalUserId) ?? [];
+      list.push({
+        pipeline: row.pipeline,
+        modelId: row.modelId,
+        requestCount: row.requestCount,
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+        endUserBillableUsdMicros: row.networkFeeUsdMicros,
+      });
+      byUserPipelineModel.set(row.externalUserId, list);
+    }
+
+    const byUserBase: BillingUserUsageRow[] = [...om.byUser]
+      .sort((a, b) => {
+        if (b.requestCount !== a.requestCount) {
+          return b.requestCount - a.requestCount;
+        }
+        const feeA = BigInt(a.networkFeeUsdMicros);
+        const feeB = BigInt(b.networkFeeUsdMicros);
+        if (feeA === feeB) return 0;
+        return feeB > feeA ? 1 : -1;
+      })
+      .map((row) => ({
+        endUserId: row.externalUserId,
+        externalUserId: row.externalUserId,
+        userType: "system_managed" as const,
+        userLabel: row.externalUserId,
+        identifier: row.externalUserId,
+        requestCount: row.requestCount,
+        totalFeeWei: "0",
+        totalUnits: "0",
+        networkFeeUsdMicros: row.networkFeeUsdMicros,
+        byPipelineModel: [...(byUserPipelineModel.get(row.externalUserId) ?? [])].sort(
+          (a, b) => {
+            if (b.requestCount !== a.requestCount) {
+              return b.requestCount - a.requestCount;
+            }
+            const feeA = BigInt(a.networkFeeUsdMicros);
+            const feeB = BigInt(b.networkFeeUsdMicros);
+            if (feeA === feeB) return 0;
+            return feeB > feeA ? 1 : -1;
+          },
+        ),
+      }));
+
+    const byUser = applyWalletClassification(
+      byUserBase,
+      app.ownerId,
+      app.publicClientId,
+    );
+
+    return withWalletRollups({
+      app,
+      requestCount,
+      totalFeeWei: "0",
+      totalUnits: "0",
+      networkFeeUsdMicros: networkFeeUsdMicros.toString(),
+      endUserBillableUsdMicros: networkFeeUsdMicros.toString(),
+      byUser,
+      byPipelineModel: om.byPipelineModel.map((pm) => ({
+        pipeline: pm.pipeline,
+        modelId: pm.modelId,
+        requestCount: pm.requestCount,
+        networkFeeUsdMicros: pm.networkFeeUsdMicros,
+        endUserBillableUsdMicros: pm.networkFeeUsdMicros,
+      })),
+    });
+  });
+
+  // Enrich tenant apps with per-user spendable (personal scope is viewer-only).
+  const enrichedAppUsage = await Promise.all(
+    baseAppUsage.map(async (summary) => {
+      const endUserCreditAllowance =
+        summary.app.usageKind === "tenant"
+          ? (endUserCreditsByClient[summary.app.publicClientId] ?? null)
+          : null;
+
+      if (summary.app.usageKind !== "tenant" || summary.byUser.length === 0) {
+        return withWalletRollups(summary, {
+          endUserCreditAllowance,
+          balancesTruncated: false,
+        });
+      }
+
+      const { byUser, balancesTruncated } = await enrichByUserBalanceFields({
+        publicClientId: summary.app.publicClientId,
+        byUser: summary.byUser,
+      });
+
+      return withWalletRollups(
+        {
+          ...summary,
+          byUser,
+        },
+        {
+          endUserCreditAllowance,
+          balancesTruncated,
+        },
+      );
     }),
   );
+
+  const appUsage = sortAppUsageByMostUsed(enrichedAppUsage);
 
   const totalRequests = appUsage.reduce((sum, row) => sum + row.requestCount, 0);
   const totalNetworkFeeUsdMicros = appUsage.reduce(

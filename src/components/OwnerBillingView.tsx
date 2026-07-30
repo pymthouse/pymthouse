@@ -124,8 +124,10 @@ export default function OwnerBillingView({
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
         <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-          Prepaid credits, active subscriptions, and platform invoices for your account.
-          Attach a Stripe payment method so overage invoices can charge automatically.
+          Prepaid credits, active subscriptions, and platform invoices for{" "}
+          <span className="text-zinc-400">your shared owner wallet</span> — not end-user
+          (M2M) Starter balances. Attach a Stripe payment method so overage invoices can
+          charge automatically.
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
@@ -136,7 +138,7 @@ export default function OwnerBillingView({
               href="/usage"
               className="text-emerald-400 hover:text-emerald-300 transition-colors"
             >
-              View usage →
+              View app &amp; end-user usage →
             </Link>
           </p>
         ) : (
@@ -183,9 +185,17 @@ export default function OwnerBillingView({
           <section>
             <h2 className="mb-3 text-sm font-semibold text-zinc-200">Active subscriptions</h2>
             <p className="mb-4 text-xs text-zinc-600">
-              Usage toward each plan&apos;s included allowance for the current cycle. Overage
-              after the allowance burns prepaid credits, then charges your Stripe payment
-              method.
+              Usage toward each plan&apos;s included allowance for{" "}
+              <span className="text-zinc-400">your owner wallet</span> this cycle. App
+              end-user (M2M) spend is separate — see{" "}
+              <Link
+                href="/usage"
+                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+              >
+                Usage
+              </Link>
+              . Overage after the allowance burns prepaid credits, then charges your Stripe
+              payment method.
             </p>
             {data.subscriptions.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
