@@ -14,6 +14,10 @@ export async function GET(
   }
 
   const state = request.nextUrl.searchParams.get("state")?.trim();
+  const code = request.nextUrl.searchParams.get("code")?.trim() || "";
+  const oauthError = request.nextUrl.searchParams.get("error")?.trim() || "";
+  const oauthErrorDescription =
+    request.nextUrl.searchParams.get("error_description")?.trim() || "";
   if (!state) {
     return NextResponse.json({ error: "Missing state" }, { status: 400 });
   }
@@ -23,7 +27,12 @@ export async function GET(
       clientId: auth.app.id,
       state,
       userId: auth.userId,
-      oauthQuery: request.nextUrl.searchParams.toString(),
+      oauthParams: {
+        code,
+        state,
+        error: oauthError,
+        errorDescription: oauthErrorDescription,
+      },
     });
     const redirect = `${getPublicOrigin()}/apps/${encodeURIComponent(clientId)}/settings?tab=payments&connected=1`;
     return NextResponse.redirect(redirect);
