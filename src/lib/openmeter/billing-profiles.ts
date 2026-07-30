@@ -357,6 +357,22 @@ export async function prepareAppCustomerStripeBilling(input: {
   customerKey?: string;
   name?: string;
 }): Promise<void> {
+  const config = await getAppBillingConfig(input.clientId);
+  const merchantProfileId =
+    config?.openmeterMerchantBillingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+    null;
+
+  // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
+  if (config?.billingMode === "merchant" && merchantProfileId) {
+    await assignMerchantCustomInvoicingProfile({
+      client: input.client,
+      customerId: input.customerId,
+      billingProfileId: merchantProfileId,
+    });
+    return;
+  }
+
   const ready = await ensureAppStripeBillingReady({ clientId: input.clientId });
   const useKonnect = shouldUseKonnectRoutes(
     getHostedOpenMeterUrl(),
@@ -657,4 +673,29 @@ export async function upsertAppBillingConfig(
     updatedAt: now,
     ...values,
   });
+}
+
+/**
+ * Pin an end-user OM customer to the shared merchant Custom Invoicing billing
+ * profile (never the org default). Requires OPENMETER_MERCHANT_BILLING_PROFILE_ID.
+ */
+export async function assignMerchantCustomInvoicingProfile(input: {
+  client: OpenMeter;
+  customerId: string;
+  billingProfileId?: string;
+}): Promise<string> {
+  const profileId =
+    input.billingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim();
+  if (!profileId) {
+    throw new Error(
+      "OPENMETER_MERCHANT_BILLING_PROFILE_ID is required to assign merchant Custom Invoicing overrides",
+    );
+  }
+  await assignCustomerBillingProfileOverride({
+    client: input.client,
+    customerId: input.customerId,
+    billingProfileId: profileId,
+  });
+  return profileId;
 }

@@ -48,7 +48,7 @@ export type KonnectCreateBillingProfileBody = {
       draft_period: string;
       progressive_billing?: boolean;
     };
-    payment: { collection_method: "charge_automatically" };
+    payment: { collection_method: "charge_automatically" | "send_invoice" };
   };
   apps: {
     tax: { id: string };
@@ -81,9 +81,20 @@ export function isKonnectStripeAppUnauthorized(app: KonnectBillingApp): boolean 
   return konnectAppType(app) === "stripe" && app.status === "unauthorized";
 }
 
+export function isKonnectCustomInvoicingApp(app: KonnectBillingApp): boolean {
+  return konnectAppType(app) === "custom_invoicing";
+}
+
 export function selectReadyKonnectStripeApp(apps: KonnectBillingApp[]): string | null {
   const stripe = apps.find((app) => isKonnectStripeAppReady(app));
   return stripe?.id ?? null;
+}
+
+export function selectKonnectCustomInvoicingApp(
+  apps: KonnectBillingApp[],
+): string | null {
+  const custom = apps.find((app) => isKonnectCustomInvoicingApp(app));
+  return custom?.id ?? null;
 }
 
 function uniqueAppIdsFromProfiles(profiles: KonnectBillingProfileListItem[]): string[] {
@@ -224,6 +235,92 @@ export function buildKonnectCreateBillingProfileBody(input: {
       payment: { id: input.stripeAppId },
     },
   };
+}
+
+/**
+ * Merchant-plane profile: tax / invoicing / payment all point at the Custom
+ * Invoicing app so OM pauses for pymthouse Connect collection.
+ */
+export function buildKonnectMerchantCustomInvoicingProfileBody(input: {
+  customInvoicingAppId: string;
+  name?: string;
+  progressiveBilling?: boolean;
+  collectionMethod?: "charge_automatically" | "send_invoice";
+}): KonnectCreateBillingProfileBody {
+  const appId = input.customInvoicingAppId;
+  return {
+    name: input.name || "pymthouse-merchant-custom-invoicing",
+    default: false,
+    supplier: {
+      name: input.name || "PymtHouse Merchant",
+      addresses: {
+        billing_address: { country: billingSupplierCountryCode() },
+      },
+    },
+    workflow: {
+      invoicing: {
+        auto_advance: true,
+        draft_period: "P0D",
+        progressive_billing: input.progressiveBilling ?? true,
+      },
+      payment: {
+        collection_method: input.collectionMethod ?? "charge_automatically",
+      },
+    },
+    apps: {
+      tax: { id: appId },
+      invoicing: { id: appId },
+      payment: { id: appId },
+    },
+  };
+}
+
+export async function resolveKonnectCustomInvoicingAppId(): Promise<string> {
+  const override = process.env.OPENMETER_CUSTOM_INVOICING_APP_ID?.trim();
+  if (override) {
+    const app = await getKonnectApp(override);
+    if (!app) {
+      throw new Error(
+        `OPENMETER_CUSTOM_INVOICING_APP_ID=${override} was not found. ` +
+          "Install Custom Invoicing in Konnect → Metering & Billing → Settings → Apps.",
+      );
+    }
+    if (!isKonnectCustomInvoicingApp(app)) {
+      throw new Error(
+        `OPENMETER_CUSTOM_INVOICING_APP_ID=${override} is type=${konnectAppType(app)}, expected custom_invoicing.`,
+      );
+    }
+    return override;
+  }
+
+  const apps = await listKonnectApps();
+  const fromApps = selectKonnectCustomInvoicingApp(apps);
+  if (fromApps) {
+    return fromApps;
+  }
+
+  throw new Error(
+    "No Custom Invoicing app found in Konnect. Install it via Marketplace " +
+      "(type=custom_invoicing) or set OPENMETER_CUSTOM_INVOICING_APP_ID. " +
+      `Listed apps: ${formatKonnectAppSummary(apps)}.`,
+  );
+}
+
+export async function createKonnectMerchantCustomInvoicingProfile(input: {
+  customInvoicingAppId: string;
+  name?: string;
+  progressiveBilling?: boolean;
+  collectionMethod?: "charge_automatically" | "send_invoice";
+}): Promise<string> {
+  const body = buildKonnectMerchantCustomInvoicingProfileBody(input);
+  const profile = await billingFetch<KonnectBillingProfile>("/profiles", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!profile?.id) {
+    throw new Error("Failed to create Konnect merchant Custom Invoicing billing profile");
+  }
+  return profile.id;
 }
 
 export async function resolveKonnectStripeAppId(): Promise<string> {
