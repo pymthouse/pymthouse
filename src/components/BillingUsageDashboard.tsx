@@ -473,10 +473,16 @@ function BillingUsageBody({
 export default function BillingUsageDashboard({
   filterAppId,
   fundPanel,
+  embedded = false,
+  headerSlot,
 }: Readonly<{
   filterAppId?: string | null;
   /** Optional MoonPay / prepaid top-up panel (app owners on pay-per-use). */
   fundPanel?: ReactNode;
+  /** Skip DashboardLayout when nested under another shell (e.g. app usage tabs). */
+  embedded?: boolean;
+  /** Optional controls above the usage body (e.g. Usage | All Users). */
+  headerSlot?: ReactNode;
 }>) {
   const { data: session, status: authStatus } = useSession();
   const pathname = usePathname();
@@ -552,9 +558,10 @@ export default function BillingUsageDashboard({
     };
   }, [filterAppId, activeTab, retryToken, showTabs]);
 
-  return (
-    <DashboardLayout>
+  const body = (
+    <>
       {fundPanel}
+      {headerSlot}
       {state.status === "loading" ? (
         <>
           {showTabs ? (
@@ -601,6 +608,12 @@ export default function BillingUsageDashboard({
           activeTab={activeTab}
         />
       ) : null}
-    </DashboardLayout>
+    </>
   );
+
+  if (embedded) {
+    return body;
+  }
+
+  return <DashboardLayout>{body}</DashboardLayout>;
 }

@@ -122,6 +122,36 @@ defineRouteMetadata("post", appPath("/credentials"), {
 registerAppMetadata("get", "/usage", "Usage summary", { tags: ["Usage"] });
 registerAppMetadata("get", "/usage/balance", "Usage balance (M2M)", { tags: ["Usage"] });
 
+defineRouteMetadata("get", appPath("/customers"), {
+  tags: ["Usage"],
+  summary: "List app customers (session dashboard)",
+  description:
+    "Owner / provider-admin / platform-admin session view of provisioned app users with cycle spend and spendable summaries.",
+  security: adminSecurity,
+  request: {
+    params: z.object({ clientId }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+  },
+});
+
+defineRouteMetadata("get", appPath("/customers/{externalUserId}"), {
+  tags: ["Usage"],
+  summary: "App customer detail (session dashboard)",
+  description:
+    "Owner / provider-admin / platform-admin session detail for one provisioned app user (profile, spendable, subscription, cycle usage).",
+  security: adminSecurity,
+  request: {
+    params: z.object({ clientId, externalUserId }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+  },
+});
+
 // Billing & plans
 registerAppMetadata("get", "/billing", "Billing profile", { tags: ["Billing"] });
 registerAppMetadata("post", "/billing/checkout", "Create billing checkout", { tags: ["Billing"] });
