@@ -31,6 +31,7 @@ export default async function BillingPage() {
           paymentMethods: [],
           subscriptions: [],
           invoices: [],
+          ledger: [],
           openMeterConfigured: false,
           fundingClientId: null,
         }}

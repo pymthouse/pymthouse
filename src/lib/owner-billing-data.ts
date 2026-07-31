@@ -17,7 +17,9 @@ import {
 } from "@/lib/openmeter/constants";
 import {
   getOwnerPrepaidCreditBalance,
+  listOwnerCreditGrants,
   type CreditAllowanceSummary,
+  type OwnerCreditGrant,
 } from "@/lib/openmeter/credit-allowance-summary";
 import {
   buildOpenMeterCustomerKey,
@@ -37,7 +39,14 @@ import {
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
-import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
+import {
+  dateKeyFromMeterWindow,
+  meterRowValueToBigInt,
+} from "@/lib/openmeter/usage-read";
+import {
+  buildLedgerEntries,
+  type LedgerEntry,
+} from "@/lib/billing/transactions-ledger";
 import {
   listOwnerWalletInvoices,
   type TenantInvoiceDto,
@@ -78,6 +87,11 @@ export type OwnerBillingPayload = {
   subscriptions: OwnerBillingSubscriptionRow[];
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
+  /**
+   * Chronological credit/usage/invoice history with a running prepaid balance.
+   * Usage rows are derived from meter data — see transactions-ledger.
+   */
+  ledger: LedgerEntry[];
   openMeterConfigured: boolean;
   /**
    * First owned app id for app-scoped on-ramp APIs. Credits still settle on the
@@ -241,6 +255,70 @@ async function querySubjectCycleUsage(input: {
       err instanceof Error ? err.message : String(err),
     );
     return { usedUsdMicros: 0n, requestCount: 0 };
+  }
+}
+
+/**
+ * Konnect invoice totals arrive as decimal dollar strings ("5.00", "-2.5").
+ * Convert to signed USD micros for the ledger; unparseable totals become 0
+ * rather than breaking the page.
+ */
+function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
+  const raw = invoice.totalAmount?.trim();
+  if (!raw) return "0";
+  const match = /^(-?)(\d*)(?:\.(\d*))?$/.exec(raw);
+  if (!match) return "0";
+  const [, sign, wholePart = "", fracPart = ""] = match;
+  try {
+    const whole = BigInt(wholePart || "0");
+    const micros = BigInt((fracPart + "000000").slice(0, 6));
+    const total = whole * 1_000_000n + micros;
+    return (sign === "-" ? -total : total).toString();
+  } catch {
+    return "0";
+  }
+}
+
+/**
+ * Daily metered spend for the owner wallet, used to synthesize credit
+ * consumption in the transactions ledger (OpenMeter has no consumption feed).
+ */
+async function querySubjectDailyUsage(input: {
+  client: OpenMeter;
+  subjects: string[];
+  start: string;
+  end: string;
+}): Promise<Array<{ date: string; usedUsdMicros: string }>> {
+  const subjects = [...new Set(input.subjects.map((s) => s.trim()).filter(Boolean))];
+  if (subjects.length === 0) {
+    return [];
+  }
+
+  try {
+    const feeResult = await input.client.meters.query(NETWORK_FEE_USD_MICROS_METER, {
+      windowSize: "DAY" as const,
+      from: new Date(input.start),
+      to: new Date(input.end),
+      subject: subjects,
+    });
+
+    const byDay = new Map<string, bigint>();
+    for (const row of feeResult.data || []) {
+      const dateKey = dateKeyFromMeterWindow(row);
+      if (!dateKey) continue;
+      byDay.set(dateKey, (byDay.get(dateKey) ?? 0n) + meterRowValueToBigInt(row.value));
+    }
+
+    return [...byDay.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, used]) => ({ date, usedUsdMicros: used.toString() }));
+  } catch (err) {
+    console.warn(
+      "owner-billing: daily meter query failed",
+      subjects.join(","),
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
   }
 }
 
@@ -624,6 +702,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     subscriptions,
     ownedApps,
     invoicesResult,
+    creditGrants,
   ] = await Promise.all([
       getOwnerPrepaidCreditBalance(userId).catch((err) => {
         console.warn(
@@ -658,7 +737,45 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         emptyInvoices,
         "invoice lookup",
       ),
+      withSoftTimeout(
+        listOwnerCreditGrants(userId),
+        2_500,
+        [] as OwnerCreditGrant[],
+        "credit grant lookup",
+      ),
     ]);
+
+  const dailyUsage = await withSoftTimeout(
+    querySubjectDailyUsage({
+      client: adminClient,
+      subjects: buildOwnerWalletUsageSubjects(userId, ownedApps),
+      start: cycle.start,
+      end: cycle.end,
+    }),
+    3_000,
+    [] as Array<{ date: string; usedUsdMicros: string }>,
+    "daily usage lookup",
+  );
+
+  // Allowance from the owner-wallet subscription (the one credits settle against).
+  const walletSubscription =
+    subscriptions.find((row) => row.appPublicClientId == null) ?? subscriptions[0];
+
+  const ledger = buildLedgerEntries({
+    grants: creditGrants,
+    dailyUsage,
+    invoices: invoicesResult.items.map((invoice) => ({
+      id: invoice.id,
+      number: invoice.number,
+      status: invoice.status,
+      totalAmountUsdMicros: invoiceTotalToUsdMicros(invoice),
+      issuedAt: invoice.issuedAt,
+      periodStart: invoice.periodStart,
+      periodEnd: invoice.periodEnd,
+    })),
+    planIncludedUsdMicros: walletSubscription?.discountUsdMicros ?? null,
+    endingCreditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
+  });
 
   return {
     ok: true,
@@ -669,6 +786,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       paymentMethods,
       subscriptions,
       invoices: invoicesResult.items,
+      ledger,
       openMeterConfigured: true,
       fundingClientId: ownedApps[0]?.developerAppId ?? null,
     },

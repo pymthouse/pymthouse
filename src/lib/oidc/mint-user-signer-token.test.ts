@@ -122,7 +122,7 @@ test("mintAllowanceGateDecision rejects exhausted allowance when hosted billing 
     ),
     {
       code: "trial_credits_exhausted",
-      message: "Starter allowance exhausted",
+      message: "Payment method required",
     },
   );
 });
@@ -182,7 +182,7 @@ test("mintAllowanceGateDecision rejects zero micros even when hasAccess is stale
     ),
     {
       code: "trial_credits_exhausted",
-      message: "Starter allowance exhausted",
+      message: "Payment method required",
     },
   );
 });

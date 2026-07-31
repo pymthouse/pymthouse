@@ -1,0 +1,214 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  buildLedgerEntries,
+  filterLedgerEntries,
+  formatInvoicePeriodLabel,
+  splitDailyUsageAgainstAllowance,
+} from "@/lib/billing/transactions-ledger";
+
+test("splitDailyUsageAgainstAllowance drains the allowance before credits", () => {
+  const split = splitDailyUsageAgainstAllowance(
+    [
+      { date: "2026-07-01", usedUsdMicros: "3000000" },
+      { date: "2026-07-02", usedUsdMicros: "3000000" },
+      { date: "2026-07-03", usedUsdMicros: "1000000" },
+    ],
+    "5000000",
+  );
+
+  // Day 1 fits entirely in the allowance.
+  assert.equal(split[0].creditBurnUsdMicros, 0n);
+  // Day 2 straddles the boundary: $2 of allowance left, so $1 burns credits.
+  assert.equal(split[1].creditBurnUsdMicros, 1000000n);
+  // Day 3 is fully past the allowance.
+  assert.equal(split[2].creditBurnUsdMicros, 1000000n);
+});
+
+test("splitDailyUsageAgainstAllowance treats every day as credit burn with no allowance", () => {
+  const split = splitDailyUsageAgainstAllowance(
+    [{ date: "2026-07-01", usedUsdMicros: "250000" }],
+    null,
+  );
+  assert.equal(split[0].creditBurnUsdMicros, 250000n);
+});
+
+test("splitDailyUsageAgainstAllowance orders days chronologically before splitting", () => {
+  // Out-of-order input must not change which day straddles the allowance.
+  const split = splitDailyUsageAgainstAllowance(
+    [
+      { date: "2026-07-03", usedUsdMicros: "4000000" },
+      { date: "2026-07-01", usedUsdMicros: "4000000" },
+    ],
+    "5000000",
+  );
+
+  assert.equal(split[0].date, "2026-07-01");
+  assert.equal(split[0].creditBurnUsdMicros, 0n);
+  assert.equal(split[1].date, "2026-07-03");
+  assert.equal(split[1].creditBurnUsdMicros, 3000000n);
+});
+
+test("ledger running balance ends at the live prepaid balance", () => {
+  const entries = buildLedgerEntries({
+    grants: [
+      { id: "g1", amountUsdMicros: "25000000", date: "2026-07-01T00:00:00Z" },
+    ],
+    dailyUsage: [{ date: "2026-07-05", usedUsdMicros: "6000000" }],
+    invoices: [],
+    planIncludedUsdMicros: "5000000",
+    endingCreditBalanceUsdMicros: "24000000",
+  });
+
+  // Newest first — the top row must equal the balance shown elsewhere.
+  assert.equal(entries[0].balanceUsdMicros, "24000000");
+  // Walking back over the $1 burn returns the post-grant balance.
+  assert.equal(entries[1].balanceUsdMicros, "25000000");
+});
+
+test("ledger records credit burn only for usage past the allowance", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [
+      { date: "2026-07-01", usedUsdMicros: "1000000" },
+      { date: "2026-07-20", usedUsdMicros: "6000000" },
+    ],
+    invoices: [],
+    planIncludedUsdMicros: "5000000",
+    endingCreditBalanceUsdMicros: "18000000",
+  });
+
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  assert.equal(byId.get("usage:2026-07-01")?.creditDeltaUsdMicros, "0");
+  assert.equal(byId.get("usage:2026-07-01")?.description, "Usage — covered by plan");
+  assert.equal(byId.get("usage:2026-07-20")?.creditDeltaUsdMicros, "-2000000");
+  // Gross amount stays the full day's spend even when partly plan-covered.
+  assert.equal(byId.get("usage:2026-07-20")?.amountUsdMicros, "6000000");
+});
+
+test("ledger marks synthesized usage rows as derived", () => {
+  const entries = buildLedgerEntries({
+    grants: [{ id: "g1", amountUsdMicros: "1000000", date: "2026-07-01T00:00:00Z" }],
+    dailyUsage: [{ date: "2026-07-02", usedUsdMicros: "500000" }],
+    invoices: [],
+    endingCreditBalanceUsdMicros: "500000",
+  });
+
+  const usage = entries.find((e) => e.type === "usage");
+  const grant = entries.find((e) => e.type === "credit_purchased");
+  assert.equal(usage?.derived, true);
+  assert.equal(grant?.derived, false);
+});
+
+test("ledger skips undated grants rather than mis-ordering them", () => {
+  const entries = buildLedgerEntries({
+    grants: [
+      { id: "dated", amountUsdMicros: "1000000", date: "2026-07-01T00:00:00Z" },
+      { id: "undated", amountUsdMicros: "9000000", date: null },
+    ],
+    dailyUsage: [],
+    invoices: [],
+    endingCreditBalanceUsdMicros: "1000000",
+  });
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].id, "grant:dated");
+});
+
+test("ledger treats invoices as non-credit events", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [],
+    invoices: [
+      {
+        id: "inv_1",
+        status: "paid",
+        totalAmountUsdMicros: "2500000",
+        issuedAt: "2026-07-31T00:00:00Z",
+        periodStart: "2026-07-01T00:00:00Z",
+        periodEnd: "2026-07-31T00:00:00Z",
+      },
+    ],
+    endingCreditBalanceUsdMicros: "5000000",
+  });
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].type, "invoice");
+  assert.equal(entries[0].creditDeltaUsdMicros, "0");
+  assert.equal(entries[0].status, "paid");
+  // Label is human-readable, never a raw internal identifier.
+  assert.equal(entries[0].description, "Invoice · Jul 2026");
+  assert.equal(entries[0].balanceUsdMicros, "5000000");
+});
+
+test("ledger classifies negative invoice totals as refunds", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [],
+    invoices: [
+      {
+        id: "inv_refund",
+        status: "paid",
+        totalAmountUsdMicros: "-1500000",
+        issuedAt: "2026-07-15T00:00:00Z",
+      },
+    ],
+    endingCreditBalanceUsdMicros: "0",
+  });
+
+  assert.equal(entries[0].type, "refund");
+  // Gross amount is displayed positive.
+  assert.equal(entries[0].amountUsdMicros, "1500000");
+});
+
+test("ledger is ordered newest first", () => {
+  const entries = buildLedgerEntries({
+    grants: [
+      { id: "old", amountUsdMicros: "1000000", date: "2026-07-01T00:00:00Z" },
+      { id: "new", amountUsdMicros: "1000000", date: "2026-07-20T00:00:00Z" },
+    ],
+    dailyUsage: [],
+    invoices: [],
+    endingCreditBalanceUsdMicros: "2000000",
+  });
+
+  assert.deepEqual(
+    entries.map((e) => e.id),
+    ["grant:new", "grant:old"],
+  );
+});
+
+test("filterLedgerEntries filters by type and date range", () => {
+  const entries = buildLedgerEntries({
+    grants: [{ id: "g1", amountUsdMicros: "1000000", date: "2026-07-01T00:00:00Z" }],
+    dailyUsage: [{ date: "2026-07-20", usedUsdMicros: "500000" }],
+    invoices: [],
+    endingCreditBalanceUsdMicros: "500000",
+  });
+
+  assert.equal(filterLedgerEntries(entries, { types: ["usage"] }).length, 1);
+  assert.equal(
+    filterLedgerEntries(entries, { types: ["credit_purchased"] }).length,
+    1,
+  );
+  assert.equal(
+    filterLedgerEntries(entries, { from: "2026-07-10" }).length,
+    1,
+    "entries before the from-date are excluded",
+  );
+  assert.equal(filterLedgerEntries(entries, {}).length, 2);
+  // The UI extends `to` to end-of-day; the same-day usage row must stay in.
+  assert.equal(
+    filterLedgerEntries(entries, { to: "2026-07-20T23:59:59.999Z" }).length,
+    2,
+  );
+  assert.equal(filterLedgerEntries(entries, { to: "2026-07-02" }).length, 1);
+});
+
+test("formatInvoicePeriodLabel prefers the period start and falls back safely", () => {
+  assert.equal(formatInvoicePeriodLabel("2026-07-01T00:00:00Z", null), "Jul 2026");
+  assert.equal(formatInvoicePeriodLabel(null, "2026-08-31T00:00:00Z"), "Aug 2026");
+  assert.equal(formatInvoicePeriodLabel(null, null), null);
+  assert.equal(formatInvoicePeriodLabel("nonsense", null), null);
+});

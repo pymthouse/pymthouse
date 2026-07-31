@@ -3,11 +3,16 @@ import type { ReactNode } from "react";
 
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
+import CostWaterfall from "@/components/billing/CostWaterfall";
+import PlatformInvoicesTable from "@/components/billing/PlatformInvoicesTable";
+import TransactionsLedger from "@/components/billing/TransactionsLedger";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import { formatBillingPeriod } from "@/lib/billing-format";
-import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
+import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
 
@@ -26,13 +31,18 @@ function hasDisplayablePrepaidCredit(
 
 function SubscriptionCard({
   row,
+  creditBalanceUsdMicros,
+  defaultPaymentMethod,
+  needsPaymentMethod,
 }: Readonly<{
   row: OwnerBillingPayload["subscriptions"][number];
+  creditBalanceUsdMicros: string | null;
+  defaultPaymentMethod: OwnerBillingPayload["paymentMethods"][number] | null;
+  needsPaymentMethod: boolean;
 }>) {
   const hasAllowance =
     row.discountUsdMicros != null && BigInt(row.discountUsdMicros) > 0n;
-  const overage = BigInt(row.overageUsdMicros || "0");
-  const usedLabel = formatUsdMicrosString(row.usedUsdMicros, 4) ?? "$0";
+  const usedLabel = formatUsdMicrosSummary(row.usedUsdMicros);
 
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
@@ -75,29 +85,165 @@ function SubscriptionCard({
           usedUsdMicros={row.usedUsdMicros}
           allowanceUsdMicros={row.discountUsdMicros!}
         />
-      ) : (
-        <p className="mt-3 text-xs text-zinc-600">
-          No included usage allowance on this plan — cycle usage settles against prepaid
-          credits or your Stripe payment method.
-        </p>
-      )}
-
-      {hasAllowance && overage > 0n ? (
-        <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Allowance exhausted ·{" "}
-          <span className="font-mono tabular-nums">
-            {formatUsdMicrosDisplay(overage.toString())}
-          </span>{" "}
-          overage burns prepaid credits, then invoices your Stripe payment method
-        </p>
       ) : null}
 
-      {hasAllowance && overage === 0n && BigInt(row.usedUsdMicros) > 0n ? (
-        <p className="mt-3 text-xs text-zinc-600">
-          Usage is covered by the plan allowance; prepaid credits are not charged yet.
-        </p>
-      ) : null}
+      <CostWaterfall
+        className="mt-4"
+        usedUsdMicros={row.usedUsdMicros}
+        planIncludedUsdMicros={row.discountUsdMicros}
+        creditBalanceUsdMicros={creditBalanceUsdMicros}
+        paymentMethod={defaultPaymentMethod}
+        needsPaymentMethod={needsPaymentMethod}
+      />
     </div>
+  );
+}
+
+function billingIntroCopy(
+  pressure: ReturnType<typeof resolveOwnerBillingPressure>,
+): string {
+  if (pressure === "blocked") {
+    return "Starter allowance is used up. Usage is paused until you attach a payment method.";
+  }
+  if (pressure === "chargeable") {
+    return "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
+  }
+  return "Prepaid credits, active subscriptions, and platform invoices for your account. Attach a Stripe payment method so overage invoices can charge automatically.";
+}
+
+function PaymentMethodRequiredBanner({
+  paymentMethodPanel,
+}: Readonly<{
+  paymentMethodPanel?: ReactNode;
+}>) {
+  return (
+    <output className="mb-6 block w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-amber-100">
+            Payment method required
+          </h2>
+          <p className="mt-1 text-sm text-amber-200/90">
+            Starter allowance used up. Usage is paused until you attach a
+            payment method so overage can invoice on Stripe.
+          </p>
+        </div>
+        {paymentMethodPanel ? (
+          <div className="shrink-0">{paymentMethodPanel}</div>
+        ) : null}
+      </div>
+    </output>
+  );
+}
+
+function OwnerPaymentCreditsSection({
+  data,
+  needsPaymentMethod,
+  paymentMethodPanel,
+  adminFundPanel,
+}: Readonly<{
+  data: OwnerBillingPayload;
+  needsPaymentMethod: boolean;
+  paymentMethodPanel?: ReactNode;
+  adminFundPanel?: ReactNode;
+}>) {
+  const billingActions =
+    paymentMethodPanel || adminFundPanel ? (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {paymentMethodPanel}
+        {adminFundPanel}
+      </div>
+    ) : null;
+  const showEmptyHint =
+    data.paymentMethods.length === 0 &&
+    !hasDisplayablePrepaidCredit(data.creditAllowance) &&
+    !needsPaymentMethod;
+
+  return (
+    <section className="mb-8">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold text-zinc-200">Payment &amp; credits</h2>
+          <InfoTooltip
+            label="Add a Stripe card for automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement."
+            wide
+          />
+        </div>
+        {needsPaymentMethod ? adminFundPanel : billingActions}
+      </div>
+      <div className="space-y-3">
+        {data.paymentMethods.length > 0 ? (
+          <OwnerPaymentMethodsCard paymentMethods={data.paymentMethods} />
+        ) : null}
+        {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
+          <AllowanceStrip
+            balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
+            lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
+            consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
+            requestCount={data.subscriptions.reduce(
+              (sum, row) => sum + row.requestCount,
+              0,
+            )}
+          />
+        ) : null}
+        {showEmptyHint ? (
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+            <p>
+              No prepaid credit balance yet. Starter included usage comes from your plan
+              allowance. Attach a payment method so usage beyond the allowance can be
+              invoiced on Stripe.
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function OwnerSubscriptionsSection({
+  data,
+  defaultPaymentMethod,
+  needsPaymentMethod,
+}: Readonly<{
+  data: OwnerBillingPayload;
+  defaultPaymentMethod: OwnerBillingPayload["paymentMethods"][number] | null;
+  needsPaymentMethod: boolean;
+}>) {
+  const creditBySubscription = allocateCreditBalancesForSubscriptions(
+    data.subscriptions,
+    data.creditAllowance?.balanceUsdMicros ?? null,
+  );
+
+  return (
+    <section>
+      <h2 className="mb-3 text-sm font-semibold text-zinc-200">Active subscriptions</h2>
+      <p className="mb-4 text-xs text-zinc-600">
+        Each card shows where this cycle&apos;s usage settled.
+      </p>
+      {data.subscriptions.length === 0 ? (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
+          <p className="font-medium text-zinc-300">No active subscriptions</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Create an app or subscribe an end user to a plan to see allowance progress
+            here.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {data.subscriptions.map((row) => (
+            <SubscriptionCard
+              key={row.subscriptionId}
+              row={row}
+              creditBalanceUsdMicros={
+                creditBySubscription.get(row.subscriptionId) ?? "0"
+              }
+              defaultPaymentMethod={defaultPaymentMethod}
+              needsPaymentMethod={needsPaymentMethod}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -112,21 +258,23 @@ export default function OwnerBillingView({
   /** Admin-only MoonPay signer refill tooling (hidden from normal owners). */
   adminFundPanel?: ReactNode;
 }>) {
-  const billingActions =
-    paymentMethodPanel || adminFundPanel ? (
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {paymentMethodPanel}
-        {adminFundPanel}
-      </div>
-    ) : null;
+  const pressure = resolveOwnerBillingPressure({
+    hasPaymentMethod: data.paymentMethods.length > 0,
+    creditBalanceUsdMicros: data.creditAllowance?.balanceUsdMicros ?? null,
+    subscriptions: data.subscriptions,
+  });
+  const needsPaymentMethod = pressure === "blocked";
+  const defaultPaymentMethod =
+    data.paymentMethods.find((m) => m.isDefault) ??
+    data.paymentMethods[0] ??
+    null;
 
   return (
     <DashboardLayout>
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
         <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-          Prepaid credits, active subscriptions, and platform invoices for your account.
-          Attach a Stripe payment method so overage invoices can charge automatically.
+          {billingIntroCopy(pressure)}
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
@@ -147,70 +295,24 @@ export default function OwnerBillingView({
         )}
       </div>
 
-      {!data.openMeterConfigured ? null : (
+      {data.openMeterConfigured ? (
         <>
-          <section className="mb-8">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold text-zinc-200">Payment &amp; credits</h2>
-                <InfoTooltip
-                  label="Add a Stripe card for automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement."
-                  wide
-                />
-              </div>
-              {billingActions}
-            </div>
-            <div className="space-y-3">
-              {data.paymentMethods.length > 0 ? (
-                <OwnerPaymentMethodsCard paymentMethods={data.paymentMethods} />
-              ) : null}
-              {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
-                <AllowanceStrip
-                  balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
-                  lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
-                  consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
-                  requestCount={data.subscriptions.reduce(
-                    (sum, row) => sum + row.requestCount,
-                    0,
-                  )}
-                />
-              ) : null}
-              {data.paymentMethods.length === 0 &&
-              !hasDisplayablePrepaidCredit(data.creditAllowance) ? (
-                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                  <p>
-                    No prepaid credit balance yet. Starter included usage comes from your plan
-                    allowance. Attach a payment method so usage beyond the allowance can be
-                    invoiced on Stripe.
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          </section>
+          {needsPaymentMethod ? (
+            <PaymentMethodRequiredBanner paymentMethodPanel={paymentMethodPanel} />
+          ) : null}
 
-          <section>
-            <h2 className="mb-3 text-sm font-semibold text-zinc-200">Active subscriptions</h2>
-            <p className="mb-4 text-xs text-zinc-600">
-              Usage toward each plan&apos;s included allowance for the current cycle. Overage
-              after the allowance burns prepaid credits, then charges your Stripe payment
-              method.
-            </p>
-            {data.subscriptions.length === 0 ? (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
-                <p className="font-medium text-zinc-300">No active subscriptions</p>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Create an app or subscribe an end user to a plan to see allowance progress
-                  here.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {data.subscriptions.map((row) => (
-                  <SubscriptionCard key={row.subscriptionId} row={row} />
-                ))}
-              </div>
-            )}
-          </section>
+          <OwnerPaymentCreditsSection
+            data={data}
+            needsPaymentMethod={needsPaymentMethod}
+            paymentMethodPanel={paymentMethodPanel}
+            adminFundPanel={adminFundPanel}
+          />
+
+          <OwnerSubscriptionsSection
+            data={data}
+            defaultPaymentMethod={defaultPaymentMethod}
+            needsPaymentMethod={needsPaymentMethod}
+          />
 
           <section className="mt-8">
             <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -220,40 +322,14 @@ export default function OwnerBillingView({
                 wide
               />
             </div>
-            {data.invoices.length === 0 ? (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                No platform invoices yet.
-              </div>
-            ) : (
-              <ul className="divide-y divide-white/[0.06] rounded-xl border border-white/[0.06] bg-white/[0.02]">
-                {data.invoices.map((inv) => (
-                  <li
-                    key={inv.id}
-                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-mono text-zinc-200">{inv.number ?? inv.id}</p>
-                      {inv.issuedAt ? (
-                        <p className="mt-0.5 text-xs text-zinc-600">
-                          {formatBillingPeriod(inv.issuedAt)}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono tabular-nums text-zinc-100">
-                        {inv.totalAmount} {inv.currency}
-                      </p>
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                        {inv.status}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <PlatformInvoicesTable invoices={data.invoices} />
+          </section>
+
+          <section className="mt-8">
+            <TransactionsLedger entries={data.ledger} />
           </section>
         </>
-      )}
+      ) : null}
     </DashboardLayout>
   );
 }

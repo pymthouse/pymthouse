@@ -141,6 +141,30 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
+    // Removing the only method would leave overage invoices with nothing to
+    // charge. Enforced here as well as in the UI so the API cannot be used to
+    // reach that state. Empty list is treated as unverifiable (lookup errors
+    // also return []) — fail closed rather than detach blindly.
+    const existing = await listOwnerPaymentMethods(userId);
+    if (existing.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Unable to verify payment methods right now. Try again shortly.",
+        },
+        { status: 503 },
+      );
+    }
+    if (existing.length === 1 && existing[0]?.id === paymentMethodId) {
+      return NextResponse.json(
+        {
+          error:
+            "This is your only payment method. Add another before removing this one.",
+        },
+        { status: 409 },
+      );
+    }
+
     const result = await unlinkOwnerPaymentMethod(userId, paymentMethodId);
     if (!result.unlinked) {
       return NextResponse.json(
@@ -151,6 +175,9 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("only payment method")) {
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

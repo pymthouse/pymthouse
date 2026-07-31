@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -115,7 +116,12 @@ function requestFeeTitle(row: SignedTicketRequestRow): string {
 function RequestRow({
   row,
   compact,
-}: Readonly<{ row: SignedTicketRequestRow; compact?: boolean }>) {
+  showIdentity,
+}: Readonly<{
+  row: SignedTicketRequestRow;
+  compact?: boolean;
+  showIdentity?: boolean;
+}>) {
   const feeLabel = requestFeeLabel(row);
   const pipelineLabel = pipelineModelLabel(row.pipeline, row.modelId);
   return (
@@ -128,6 +134,21 @@ function RequestRow({
           <div className="truncate max-w-[10rem]" title={row.appName || row.clientId}>
             {row.appName || row.clientId}
           </div>
+        </td>
+      ) : null}
+      {showIdentity ? (
+        <td className="px-2 py-3 align-top">
+          {row.externalUserId ? (
+            <Link
+              href={`/apps/${encodeURIComponent(row.clientId)}/identities/${encodeURIComponent(row.externalUserId)}`}
+              className="block max-w-[10rem] truncate font-mono text-xs text-zinc-400 transition-colors hover:text-emerald-400"
+              title={row.externalUserId}
+            >
+              {row.externalUserId}
+            </Link>
+          ) : (
+            <span className="text-xs text-zinc-600">—</span>
+          )}
         </td>
       ) : null}
       <td className="px-2 py-3 font-mono text-xs text-zinc-400 align-top">
@@ -149,18 +170,21 @@ function RequestRow({
   );
 }
 
-function RequestTable({
+export function RequestTable({
   items,
   nextCursor,
   loadingMore,
   onLoadMore,
   compact,
+  showIdentity,
 }: Readonly<{
   items: SignedTicketRequestRow[];
   nextCursor: string | null;
   loadingMore: boolean;
   onLoadMore: () => void;
   compact?: boolean;
+  /** Render the identity column (hidden when every row is one known identity). */
+  showIdentity?: boolean;
 }>) {
   return (
     <>
@@ -170,6 +194,9 @@ function RequestTable({
             <tr className="border-b border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
               <th className="px-2 py-2 font-medium">Time</th>
               {!compact ? <th className="px-2 py-2 font-medium">App</th> : null}
+              {showIdentity ? (
+                <th className="px-2 py-2 font-medium">Identity</th>
+              ) : null}
               <th className="px-2 py-2 font-medium">Request ID</th>
               <th className="px-2 py-2 font-medium">Pipeline / Model</th>
               <th className="px-2 py-2 font-medium text-right">Network fee</th>
@@ -177,7 +204,12 @@ function RequestTable({
           </thead>
           <tbody>
             {items.map((row) => (
-              <RequestRow key={row.eventId} row={row} compact={compact} />
+              <RequestRow
+                key={row.eventId}
+                row={row}
+                compact={compact}
+                showIdentity={showIdentity}
+              />
             ))}
           </tbody>
         </table>
@@ -664,6 +696,7 @@ export default function SignedTicketRequestHistory({
           nextCursor={nextCursor}
           loadingMore={loadingMore}
           onLoadMore={() => void onLoadMore()}
+          showIdentity
         />
       ) : null}
     </section>

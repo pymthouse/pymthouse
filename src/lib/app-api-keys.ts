@@ -109,8 +109,33 @@ export async function resolveActiveAppApiKey(
   if (!token) {
     return null;
   }
+  return resolveActiveAppApiKeyByStoredToken(token, publicClientId);
+}
 
-  const keyHash = hashToken(token);
+/**
+ * Resolve a Bearer API key without a path `clientId`.
+ * Supports composite `app_*_*` (client id from the token) and bare `pmth_*` keys.
+ */
+export async function resolveActiveAppApiKeyFromBearer(
+  bearerToken: string,
+): Promise<ResolvedAppApiKey | null> {
+  const trimmed = bearerToken.trim();
+  const composite = splitCompositeApiKey(trimmed);
+  if (composite) {
+    return resolveActiveAppApiKey(trimmed, composite.publicClientId);
+  }
+  const stored = rehydrateStoredApiKey(trimmed);
+  if (!stored) {
+    return null;
+  }
+  return resolveActiveAppApiKeyByStoredToken(stored);
+}
+
+async function resolveActiveAppApiKeyByStoredToken(
+  storedToken: string,
+  expectedPublicClientId?: string | null,
+): Promise<ResolvedAppApiKey | null> {
+  const keyHash = hashToken(storedToken);
   const keyRows = await db
     .select({
       id: apiKeys.id,
@@ -141,13 +166,18 @@ export async function resolveActiveAppApiKey(
       and(
         eq(appUsers.id, row.appUserId),
         eq(developerApps.id, row.clientId),
-        eq(oidcClients.clientId, publicClientId),
         eq(appUsers.status, "active"),
       ),
     )
     .limit(1);
   const binding = bindingRows[0];
   if (!binding) {
+    return null;
+  }
+  if (
+    expectedPublicClientId?.trim() &&
+    binding.publicClientId !== expectedPublicClientId.trim()
+  ) {
     return null;
   }
 

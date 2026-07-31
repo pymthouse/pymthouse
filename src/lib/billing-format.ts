@@ -1,5 +1,25 @@
 /** Client-safe billing display helpers (no Node/DB imports). */
 
+const BILLING_DATE_LOCALE = "en-US";
+
+/**
+ * Calendar date for billing UI — fixed locale + UTC so SSR and the browser
+ * hydrate to the same string.
+ */
+export function formatBillingUtcDate(
+  iso: string,
+  opts?: Readonly<{ month?: "short" | "long"; day?: "numeric"; year?: "numeric" }>,
+): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleDateString(BILLING_DATE_LOCALE, {
+    month: opts?.month ?? "short",
+    day: opts?.day ?? "numeric",
+    year: opts?.year,
+    timeZone: "UTC",
+  });
+}
+
 export function formatBillingWei(wei: string): string {
   if (!wei || !/^\d+$/.test(wei)) return "0";
   const value = BigInt(wei);
@@ -21,6 +41,31 @@ export function formatBillingPeriod(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/**
+ * Compact duration from a `billable_secs` meter total (e.g. `4m 12s`, `1h 03m`).
+ * Sub-second totals render as `<1s` so metered work never displays as zero.
+ */
+export function formatBillableDuration(billableSecs: string | null | undefined): string {
+  if (billableSecs == null || billableSecs === "") return "—";
+  const secs = Number(billableSecs);
+  if (!Number.isFinite(secs) || secs < 0) return "—";
+  if (secs === 0) return "—";
+  if (secs < 1) return "<1s";
+
+  const total = Math.floor(secs);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
 }
 
 /** Short label for when the current billing period resets (e.g. "Jul 31"). */

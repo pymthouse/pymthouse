@@ -5,6 +5,8 @@ import {
   formatExactUsdMicrosString,
   formatUsdFromWei,
   formatUsdMicrosDisplay,
+  formatUsdMicrosSummary,
+  formatUsdMicrosExactTitle,
   formatUsdMicrosString,
   hasPositiveUsdMicrosBalance,
   normalizeUsdCentsDisplay,
@@ -101,4 +103,29 @@ test("ceilUsdMicrosToCents covers remainder and exact-cent paths", () => {
   assert.equal(ceilUsdMicrosToCents("10000"), "10000");
   assert.equal(ceilUsdMicrosToCents("1"), "10000");
   assert.equal(ceilUsdMicrosToCents("10001"), "20000");
+});
+
+test("formatUsdMicrosSummary rounds to cents instead of truncating", () => {
+  // formatUsdMicrosDisplay truncates this to $0.65; summaries must round.
+  assert.equal(formatUsdMicrosSummary("655482"), "$0.66");
+  assert.equal(formatUsdMicrosSummary("654999"), "$0.65");
+  assert.equal(formatUsdMicrosSummary("5000000"), "$5.00");
+  assert.equal(formatUsdMicrosSummary("25000000"), "$25.00");
+});
+
+test("formatUsdMicrosSummary always renders two decimals", () => {
+  assert.equal(formatUsdMicrosSummary("0"), "$0.00");
+  assert.equal(formatUsdMicrosSummary("1000000"), "$1.00");
+  assert.equal(formatUsdMicrosSummary("1100000"), "$1.10");
+});
+
+test("formatUsdMicrosSummary handles negatives and bad input", () => {
+  assert.equal(formatUsdMicrosSummary("-1500000"), "-$1.50");
+  assert.equal(formatUsdMicrosSummary(null), "$0.00");
+  assert.equal(formatUsdMicrosSummary("not-a-number"), "$0.00");
+});
+
+test("formatUsdMicrosExactTitle exposes full precision for hover", () => {
+  assert.equal(formatUsdMicrosExactTitle("655482"), "$0.655482");
+  assert.equal(formatUsdMicrosExactTitle("0"), undefined);
 });

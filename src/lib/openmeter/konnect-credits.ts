@@ -15,14 +15,44 @@ type KonnectCreditBalanceResponse = {
   retrieved_at?: string;
 };
 
-type KonnectCreditGrantRow = {
+export type KonnectCreditGrantRow = {
   id?: string;
   amount?: string;
   currency?: string;
   status?: string;
   name?: string;
   key?: string;
+  /**
+   * Konnect has used both snake_case and camelCase for grant timestamps across
+   * revisions; accept either so the ledger can place grants chronologically.
+   * All optional — an undated grant is skipped rather than mis-ordered.
+   */
+  effective_at?: string;
+  effectiveAt?: string;
+  created_at?: string;
+  createdAt?: string;
 };
+
+/** First usable ISO timestamp on a grant row, or null when undated. */
+export function konnectGrantTimestamp(
+  grant: KonnectCreditGrantRow,
+): string | null {
+  const candidates = [
+    grant.effective_at,
+    grant.effectiveAt,
+    grant.created_at,
+    grant.createdAt,
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) continue;
+    const ms = Date.parse(trimmed);
+    if (Number.isNaN(ms)) continue;
+    // Normalize so localeCompare ordering against ISO usage/invoice dates works.
+    return new Date(ms).toISOString();
+  }
+  return null;
+}
 
 type KonnectCreditGrantsListResponse = {
   data?: KonnectCreditGrantRow[];
@@ -118,21 +148,34 @@ export async function listKonnectCreditGrants(input: {
     return [];
   }
 
-  const response = await konnectCreditsFetch(
-    `/customers/${encodeURIComponent(customerId)}/credits/grants?page[size]=100`,
-    { method: "GET" },
-    apiKey,
-  );
-  if (response.status === 404) {
-    return [];
-  }
-  if (!response.ok) {
-    throw new Error(
-      `Konnect credits/grants list failed (${response.url}) [${response.status}]: ${await response.text()}`,
+  const pageSize = 100;
+  const maxPages = 50;
+  const grants: KonnectCreditGrantRow[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const params = new URLSearchParams();
+    params.set("page[size]", String(pageSize));
+    params.set("page[number]", String(page));
+    const response = await konnectCreditsFetch(
+      `/customers/${encodeURIComponent(customerId)}/credits/grants?${params}`,
+      { method: "GET" },
+      apiKey,
     );
+    if (response.status === 404) {
+      return grants;
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Konnect credits/grants list failed (${response.url}) [${response.status}]: ${await response.text()}`,
+      );
+    }
+    const body = (await response.json()) as KonnectCreditGrantsListResponse;
+    const batch = body.data ?? [];
+    grants.push(...batch);
+    if (batch.length < pageSize) {
+      break;
+    }
   }
-  const body = (await response.json()) as KonnectCreditGrantsListResponse;
-  return body.data ?? [];
+  return grants;
 }
 
 export async function getKonnectCreditBalance(input: {

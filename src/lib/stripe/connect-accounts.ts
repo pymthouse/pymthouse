@@ -438,6 +438,34 @@ export async function createConnectedInvoice(input: {
   }
 }
 
+/**
+ * Hosted invoice page / PDF for a platform (non-Connect) Stripe invoice.
+ *
+ * OpenMeter only stores the Stripe invoice id (`externalIds.invoicing`); the
+ * hosted URL is signed and must be read from Stripe. Resolved on demand rather
+ * than per-row at page load, which would be an N+1 against Stripe.
+ */
+export async function retrievePlatformInvoiceLinks(invoiceId: string): Promise<{
+  hostedInvoiceUrl: string | null;
+  invoicePdf: string | null;
+}> {
+  const trimmed = invoiceId.trim();
+  if (!trimmed) {
+    return { hostedInvoiceUrl: null, invoicePdf: null };
+  }
+  const invoice = await stripeFormRequest<{
+    hosted_invoice_url?: string | null;
+    invoice_pdf?: string | null;
+  }>({
+    method: "GET",
+    path: `/v1/invoices/${encodeURIComponent(trimmed)}`,
+  });
+  return {
+    hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+    invoicePdf: invoice.invoice_pdf ?? null,
+  };
+}
+
 export function connectAccountLinkUrls(clientId: string): {
   refreshUrl: string;
   returnUrl: string;
