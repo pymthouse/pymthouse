@@ -7,7 +7,13 @@ import {
   formatExactUsdMicrosString,
   formatUsdFromWei,
   formatUsdMicrosString,
+  formatUsdMicrosSummary,
 } from "@/lib/format-usd-micros";
+import {
+  buildRequestsCsv,
+  buildRequestsCsvFilename,
+  sumRequestFeeUsdMicros,
+} from "@/lib/usage/requests-csv";
 import type {
   SignedTicketRequestRow,
   SignedTicketSessionRow,
@@ -68,28 +74,24 @@ function normalizeClientIds(
 
 function historyCopy(scope: HistoryScope): {
   title: string;
-  subtitle: string;
+  /** Scope shown as a chip beside the title, not as prose. */
+  scopeChip: string;
   emptySessions: string;
   emptyRequests: string;
 } {
   if (scope === "all") {
     return {
-      title: "Signed ticket requests",
-      subtitle:
-        "Platform-wide signed ticket sessions (and requests), newest first. Filtered by the application selector when a subset is selected.",
-      emptySessions:
-        "No signed ticket sessions for the selected apps in this billing cycle.",
-      emptyRequests:
-        "No signed ticket requests for the selected apps in this billing cycle.",
+      title: "Requests",
+      scopeChip: "All identities",
+      emptySessions: "No sessions for the selected apps in this billing cycle.",
+      emptyRequests: "No requests for the selected apps in this billing cycle.",
     };
   }
   return {
-    title: "Your signed ticket requests",
-    subtitle: "Only sessions and requests billed to your usage identity.",
-    emptySessions:
-      "No signed ticket sessions for your usage identity in this billing cycle.",
-    emptyRequests:
-      "No signed ticket requests for your usage identity in this billing cycle.",
+    title: "Requests",
+    scopeChip: "Your usage identity",
+    emptySessions: "No sessions for your usage identity in this billing cycle.",
+    emptyRequests: "No requests for your usage identity in this billing cycle.",
   };
 }
 
@@ -170,6 +172,12 @@ function RequestRow({
   );
 }
 
+/** Columns before Request ID, so the footer can span them correctly. */
+function leadingColumnCount(compact?: boolean, showIdentity?: boolean): number {
+  // Time is always present; App and Identity are conditional.
+  return 1 + (compact ? 0 : 1) + (showIdentity ? 1 : 0);
+}
+
 export function RequestTable({
   items,
   nextCursor,
@@ -212,6 +220,28 @@ export function RequestTable({
               />
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t border-zinc-700 text-xs">
+              <th
+                scope="row"
+                className="px-2 py-2.5 text-left font-medium text-zinc-400"
+                colSpan={leadingColumnCount(compact, showIdentity) + 2}
+              >
+                {items.length.toLocaleString("en-US")} request
+                {items.length === 1 ? "" : "s"}
+                {nextCursor ? (
+                  <span className="ml-1.5 text-zinc-600">
+                    loaded — load more to include the rest of the cycle
+                  </span>
+                ) : (
+                  <span className="ml-1.5 text-zinc-600">· complete for this range</span>
+                )}
+              </th>
+              <td className="px-2 py-2.5 text-right font-mono tabular-nums text-zinc-200">
+                {formatUsdMicrosSummary(sumRequestFeeUsdMicros(items))}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
@@ -515,14 +545,29 @@ export default function SignedTicketRequestHistory({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   const copy = historyCopy(historyScope);
+  // Both bounds are required together; the API rejects a half-open range.
+  const rangeActive = Boolean(fromDate && toDate);
 
   const resolvedClientIds = useMemo(
     () => normalizeClientIds(clientId, clientIds),
     [clientId, clientIds],
   );
   const clientIdsKey = resolvedClientIds.join(",");
+
+  const downloadCsv = useCallback(() => {
+    const csv = buildRequestsCsv(requests);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = buildRequestsCsvFilename();
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [requests]);
 
   const fetchPage = useCallback(
     async (cursor: string | null, mode: ViewMode) => {
@@ -532,6 +577,10 @@ export default function SignedTicketRequestHistory({
       params.set("groupBy", mode);
       if (cursor) {
         params.set("cursor", cursor);
+      }
+      if (fromDate && toDate) {
+        params.set("from", fromDate);
+        params.set("to", toDate);
       }
       for (const id of resolvedClientIds) {
         params.append("clientId", id);
@@ -558,7 +607,7 @@ export default function SignedTicketRequestHistory({
         mode,
       };
     },
-    [resolvedClientIds, historyScope],
+    [resolvedClientIds, historyScope, fromDate, toDate],
   );
 
   useEffect(() => {
@@ -594,7 +643,7 @@ export default function SignedTicketRequestHistory({
     return () => {
       cancelled = true;
     };
-  }, [fetchPage, clientIdsKey, historyScope, viewMode]);
+  }, [fetchPage, clientIdsKey, historyScope, viewMode, fromDate, toDate]);
 
   async function onLoadMore() {
     if (!nextCursor || loadingMore) {
@@ -632,9 +681,61 @@ export default function SignedTicketRequestHistory({
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
-          <p className="text-xs text-zinc-500 mt-1">{copy.subtitle}</p>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-400"
+              title="Rows are limited to this identity scope. Change it with the identity filter above."
+            >
+              <span className="text-zinc-600">Scope</span>
+              {copy.scopeChip}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+              <span className="sr-only">From date</span>
+              <input
+                type="date"
+                value={fromDate}
+                max={toDate || undefined}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
+              />
+            </label>
+            <span className="text-[11px] text-zinc-600">→</span>
+            <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+              <span className="sr-only">To date</span>
+              <input
+                type="date"
+                value={toDate}
+                min={fromDate || undefined}
+                onChange={(e) => setToDate(e.target.value)}
+                className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
+              />
+            </label>
+            {rangeActive ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setFromDate("");
+                  setToDate("");
+                }}
+                className="text-[11px] text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+              >
+                Clear range
+              </button>
+            ) : null}
+            {viewMode === "request" && requests.length > 0 ? (
+              <button
+                type="button"
+                onClick={downloadCsv}
+                className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+              >
+                Export CSV
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="inline-flex rounded-lg border border-zinc-700 p-0.5 self-start">
           <button

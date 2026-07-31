@@ -20,7 +20,7 @@ import type {
   BillingChartSeries,
 } from "@/lib/billing-usage-dashboard-data";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
-import { formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { OwnerBillingSubscriptionRow } from "@/lib/owner-billing-data";
 
 /** Client-safe dashboard payload (bigints as strings). */
@@ -215,13 +215,18 @@ function ActiveSubscriptionSummary({
 
   const primary = subscriptions[0];
   const extras = subscriptions.length - 1;
-  const usedLabel = formatUsdMicrosString(primary.usedUsdMicros, 4) ?? "$0";
   const allowanceMicros = primary.discountUsdMicros;
   const hasAllowance =
     allowanceMicros != null && BigInt(allowanceMicros) > 0n;
-  const usageLine = hasAllowance
-    ? `${primary.requestCount.toLocaleString()} requests this cycle`
-    : `${usedLabel} this cycle · ${primary.requestCount.toLocaleString()} requests`;
+  // Requests and dollars are separate quantities — render both explicitly
+  // rather than letting one percentage stand in for the other.
+  const requestsLabel = `${primary.requestCount.toLocaleString("en-US")} request${
+    primary.requestCount === 1 ? "" : "s"
+  }`;
+  const usageLine =
+    hasAllowance && allowanceMicros
+      ? `${requestsLabel} · ${formatUsdMicrosSummary(primary.usedUsdMicros)} of ${formatUsdMicrosSummary(allowanceMicros)} allowance used`
+      : `${requestsLabel} · ${formatUsdMicrosSummary(primary.usedUsdMicros)} this cycle`;
   const pressure = resolveOwnerBillingPressure({
     hasPaymentMethod: Boolean(defaultPaymentMethod),
     creditBalanceUsdMicros,
@@ -529,8 +534,8 @@ function BillingPeriodPanel({
         </div>
         <p className="text-xs text-zinc-500 mb-4">
           {chartDimension === "identity"
-            ? "Each series is one app × identity (requests per day)."
-            : "Each series is one app × pipeline/model (requests per day)."}
+            ? "Each bar segment is one app × identity."
+            : "Each bar segment is one app × pipeline/model."}
         </p>
         {filteredSeries.length === 0 ? (
           <p className="text-sm text-zinc-500">
@@ -539,7 +544,7 @@ function BillingPeriodPanel({
         ) : (
           <UsageBreakdownChart
             series={filteredSeries}
-            valueLabel="Requests / day"
+            valueLabel="Usage"
             height={220}
             maxSeries={12}
           />

@@ -9,6 +9,10 @@ import {
   listViewerSignedTicketSessions,
 } from "@/lib/openmeter/signed-ticket-events";
 import { resolveViewerUsageClientIds } from "@/lib/viewer-usage-clients";
+import {
+  isValidBoundedDateRange,
+  MAX_DATE_RANGE_DAYS,
+} from "@/lib/billing-utils";
 
 type MeUsageGroupBy = "request" | "session";
 type MeUsageScope = "own" | "all";
@@ -103,10 +107,29 @@ export async function GET(request: NextRequest) {
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
 
+  // Optional date range for the requests table's range picker. Both bounds are
+  // required together and are span-limited before hitting OpenMeter.
+  const from = params.get("from")?.trim() || undefined;
+  const to = params.get("to")?.trim() || undefined;
+  if ((from && !to) || (to && !from)) {
+    return NextResponse.json(
+      { error: "from and to must be supplied together" },
+      { status: 400 },
+    );
+  }
+  if (from && to && !isValidBoundedDateRange(from, to)) {
+    return NextResponse.json(
+      { error: `Invalid range; supply from <= to within ${MAX_DATE_RANGE_DAYS} days` },
+      { status: 400 },
+    );
+  }
+
   const listInput = {
     clientIds: resolvedClientIds.length > 0 ? resolvedClientIds : undefined,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
+    from,
+    to,
   };
 
   if (groupBy === "session") {

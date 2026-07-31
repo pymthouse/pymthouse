@@ -131,7 +131,10 @@ export type BillingChartSeries = {
   /** Display label: pipeline capability + model/constraint (e.g. `byoc / transcode/ffmpeg`). */
   jobType: string;
   totalRequests: number;
-  points: { date: string; value: number }[];
+  /** Total network fee across the series (USD micros), for the cost metric. */
+  totalFeeUsdMicros?: string;
+  /** `value` is the request count; `feeUsdMicros` backs the $ metric. */
+  points: { date: string; value: number; feeUsdMicros?: string }[];
 };
 
 /** Chart legend label from OpenMeter pipeline + model_id (signer constraint). */
@@ -430,9 +433,12 @@ async function buildOpenMeterBillingDashboard(input: {
   const requestsByDay = new Map<string, number>();
   /** appId|pipeline|modelId → day → count */
   const seriesDayCounts = new Map<string, Map<string, number>>();
+  /** seriesKey -> day -> network fee (USD micros), for the chart's $ metric. */
+  const seriesDayFees = new Map<string, Map<string, bigint>>();
   const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
   /** appId|externalUserId → day → count */
   const identitySeriesDayCounts = new Map<string, Map<string, number>>();
+  const identitySeriesDayFees = new Map<string, Map<string, bigint>>();
   const identitySeriesMeta = new Map<
     string,
     { appId: string; appName: string; jobType: string }
@@ -475,6 +481,13 @@ async function buildOpenMeterBillingDashboard(input: {
         const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
         dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
         seriesDayCounts.set(seriesKey, dayMap);
+
+        const feeMap = seriesDayFees.get(seriesKey) ?? new Map<string, bigint>();
+        feeMap.set(
+          row.date,
+          (feeMap.get(row.date) ?? 0n) + BigInt(row.networkFeeUsdMicros || "0"),
+        );
+        seriesDayFees.set(seriesKey, feeMap);
       }
 
       for (const row of om.byDailyUser ?? []) {
@@ -491,6 +504,14 @@ async function buildOpenMeterBillingDashboard(input: {
           identitySeriesDayCounts.get(seriesKey) ?? new Map<string, number>();
         dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
         identitySeriesDayCounts.set(seriesKey, dayMap);
+
+        const feeMap =
+          identitySeriesDayFees.get(seriesKey) ?? new Map<string, bigint>();
+        feeMap.set(
+          row.date,
+          (feeMap.get(row.date) ?? 0n) + BigInt(row.networkFeeUsdMicros || "0"),
+        );
+        identitySeriesDayFees.set(seriesKey, feeMap);
       }
 
       let networkFeeUsdMicros = 0n;
@@ -583,20 +604,27 @@ async function buildOpenMeterBillingDashboard(input: {
   const buildChartSeries = (
     meta: Map<string, { appId: string; appName: string; jobType: string }>,
     dayCounts: Map<string, Map<string, number>>,
+    dayFees: Map<string, Map<string, bigint>>,
   ): BillingChartSeries[] =>
     [...meta.entries()]
       .map(([seriesKey, seriesMetaEntry]) => {
         const dayMap = dayCounts.get(seriesKey) ?? new Map<string, number>();
+        const feeMap = dayFees.get(seriesKey) ?? new Map<string, bigint>();
         const points = dateKeys.map((date) => ({
           date,
           value: dayMap.get(date) ?? 0,
+          feeUsdMicros: (feeMap.get(date) ?? 0n).toString(),
         }));
         const totalRequests = points.reduce((sum, point) => sum + point.value, 0);
+        const totalFeeUsdMicros = points
+          .reduce((sum, point) => sum + BigInt(point.feeUsdMicros), 0n)
+          .toString();
         return {
           appId: seriesMetaEntry.appId,
           appName: seriesMetaEntry.appName,
           jobType: seriesMetaEntry.jobType,
           totalRequests,
+          totalFeeUsdMicros,
           points,
         };
       })
@@ -608,12 +636,13 @@ async function buildOpenMeterBillingDashboard(input: {
         return a.jobType.localeCompare(b.jobType);
       });
 
-  const chartSeries = buildChartSeries(seriesMeta, seriesDayCounts);
+  const chartSeries = buildChartSeries(seriesMeta, seriesDayCounts, seriesDayFees);
   // Identity cardinality is unbounded — cap before serializing to the client.
   const MAX_IDENTITY_CHART_SERIES = 50;
   const chartSeriesByIdentity = buildChartSeries(
     identitySeriesMeta,
     identitySeriesDayCounts,
+    identitySeriesDayFees,
   ).slice(0, MAX_IDENTITY_CHART_SERIES);
 
   return {
