@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   sanitizeUsdCentsInput,
   usdCentsDisplayToMicros,
   usdMicrosToCentsDisplay,
 } from "@/lib/format-usd-micros";
 import { paymentsTabErrorMessage } from "@/lib/stripe/payments-tab-errors";
-import { resolvedInvoicingBehavior } from "@/lib/billing/invoicing-behavior";
 
 type ActivationInfo = {
   clientId: string;
@@ -39,8 +38,6 @@ type StripeStatus = {
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
   activation?: ActivationInfo | null;
-  /** True when the viewer may edit platform-controlled fields. */
-  isPlatformAdmin?: boolean;
 };
 
 type InvoiceRow = {
@@ -57,46 +54,6 @@ type Props = {
   appId: string;
   canManageBilling: boolean;
 };
-
-/**
- * Cost-rail values PymtHouse sets, shown read-only and attributed to the
- * platform so they do not read as app configuration the Builder forgot to fill
- * in. See docs/adr-owner-vs-app-billing.md.
- */
-function PlatformLimits({
-  endUserCap,
-  applicationFeeBps,
-}: Readonly<{ endUserCap: string; applicationFeeBps: string }>) {
-  return (
-    <div className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-3">
-      <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
-        Platform limits
-      </p>
-      <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">End-user cap</dt>
-          <dd className="font-mono text-sm tabular-nums text-zinc-300">
-            {endUserCap}
-          </dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">Platform fee</dt>
-          <dd className="font-mono text-sm tabular-nums text-zinc-300">
-            {applicationFeeBps} bps
-          </dd>
-        </div>
-      </dl>
-      <p className="mt-2 text-[11px] text-zinc-600">
-        Set by PymtHouse. The cap protects against unbilled network spend; the fee
-        applies to Connect payments. Contact support to request a change.
-      </p>
-    </div>
-  );
-}
-
-/** Primary action styling for this tab's save buttons. */
-const BUTTON_CLASS =
-  "inline-flex items-center rounded-md bg-emerald-500/15 px-3 py-2 text-sm font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/30 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-emerald-500/15";
 
 /** Only allow redirect to Stripe-hosted Connect / Account Link URLs. */
 function redirectToStripeConnectUrl(url: string): void {
@@ -119,81 +76,229 @@ function redirectToStripeConnectUrl(url: string): void {
   );
 }
 
-function CapabilityValue({ allowed }: Readonly<{ allowed: boolean }>) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 text-sm ${
-        allowed ? "text-emerald-400" : "text-zinc-400"
-      }`}
-    >
-      <span aria-hidden>{allowed ? "✓" : "—"}</span>
-      {allowed ? "Allowed" : "Blocked"}
-    </span>
-  );
-}
-
-/**
- * Activation status as a neutral definition grid, matching the Stripe Connect
- * block above it.
- *
- * Warning styling is reserved for the blocked cases that need an action; a
- * healthy app reads as information, not as a problem. The end-user count lives
- * here only — the duplicate "End-user cap" field below was removed.
- */
-function PaymentsActivationCard({
+function PaymentsActivationBanner({
   activation,
 }: Readonly<{ activation: ActivationInfo }>) {
   const modeLabel =
-    activation.billingMode === "merchant" ? "Merchant" : "Owner roll-up";
-  const blocked = !activation.canProvisionEndUsers || !activation.canSellPaidPlans;
+    activation.billingMode === "merchant" ? "merchant" : "owner roll-up";
   const sellHint = activation.connectReady
     ? "Switch billing mode to merchant to unlock paid plan checkout."
     : "Connect Stripe and complete onboarding to sell paid plans.";
   const provisionHint =
     activation.reason === "end_user_cap_reached"
       ? "End-user cap reached — raise the cap or switch to merchant mode."
-      : "Owner wallet is empty and no payment method is on file — add a card on the billing page or top up credits.";
+      : "Owner wallet has no spendable balance — top up credits to provision more users.";
 
   return (
-    <section className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
-      <h3 className="text-sm font-semibold text-zinc-200">Activation</h3>
-      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">Billing mode</dt>
-          <dd className="text-sm text-zinc-200">{modeLabel}</dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">End users</dt>
-          <dd className="font-mono text-sm tabular-nums text-zinc-200">
-            {activation.appUserCount.toLocaleString("en-US")} /{" "}
-            {activation.endUserCap.toLocaleString("en-US")}
-          </dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">Provision end users</dt>
-          <dd>
-            <CapabilityValue allowed={activation.canProvisionEndUsers} />
-          </dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">Sell paid plans</dt>
-          <dd>
-            <CapabilityValue allowed={activation.canSellPaidPlans} />
-          </dd>
-        </div>
-      </dl>
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
+      <h3 className="text-sm font-semibold text-amber-950">Activation</h3>
+      <p className="text-sm text-amber-900">
+        Mode: <span className="font-mono">{modeLabel}</span>
+        {" · "}
+        Provision end users: {activation.canProvisionEndUsers ? "allowed" : "blocked"}
+        {" · "}
+        Sell paid plans: {activation.canSellPaidPlans ? "allowed" : "blocked"}
+        {" · "}
+        Users {activation.appUserCount}/{activation.endUserCap}
+      </p>
+      {!activation.canSellPaidPlans && (
+        <p className="text-sm text-amber-900">{sellHint}</p>
+      )}
+      {!activation.canProvisionEndUsers && (
+        <p className="text-sm text-amber-900">{provisionHint}</p>
+      )}
+    </div>
+  );
+}
 
-      {blocked ? (
-        <div className="mt-3 space-y-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
-          {!activation.canProvisionEndUsers ? (
-            <p className="text-xs text-amber-300">{provisionHint}</p>
-          ) : null}
-          {!activation.canSellPaidPlans ? (
-            <p className="text-xs text-amber-300">{sellHint}</p>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+function applyStatusToForm(
+  nextStatus: StripeStatus,
+  set: {
+    progressiveBilling: (v: boolean) => void;
+    applicationFeeBps: (v: string) => void;
+    billingMode: (v: "owner_rollup" | "merchant") => void;
+    endUserCap: (v: string) => void;
+    thresholdDisplay: (v: string) => void;
+  },
+): void {
+  set.progressiveBilling(nextStatus.progressiveBilling ?? true);
+  set.applicationFeeBps(String(nextStatus.applicationFeeBps ?? 0));
+  set.billingMode(nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup");
+  set.endUserCap(String(nextStatus.endUserCap ?? 25));
+  set.thresholdDisplay(
+    nextStatus.invoiceThresholdUsdMicros
+      ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
+      : "",
+  );
+}
+
+function parseThresholdMicros(display: string): string | null {
+  const trimmed = display.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const micros = usdCentsDisplayToMicros(trimmed);
+  if (micros == null) {
+    throw new Error("Invoice threshold must be a valid dollar amount");
+  }
+  return micros;
+}
+
+function connectUiFlags(status: StripeStatus | null) {
+  const hasAccount = Boolean(status?.stripeConnectedAccountId?.trim());
+  // Match backend isConnectReady: charges + details submitted.
+  const merchantReady =
+    hasAccount &&
+    Boolean(status?.stripeChargesEnabled) &&
+    Boolean(status?.stripeDetailsSubmitted);
+  const pendingOnboarding = hasAccount && !merchantReady;
+  const hasLegacyOmLink = Boolean(
+    status?.openmeterStripeAppId || status?.openmeterBillingProfileId,
+  );
+  return {
+    hasAccount,
+    merchantReady,
+    pendingOnboarding,
+    hasLegacyOmLink,
+    canDisconnect: hasAccount || hasLegacyOmLink,
+  };
+}
+
+function connectBadgeClass(flags: ReturnType<typeof connectUiFlags>): string {
+  if (flags.merchantReady) return "bg-green-100 text-green-800";
+  if (flags.pendingOnboarding) return "bg-amber-100 text-amber-900";
+  return "bg-gray-100 text-gray-700";
+}
+
+function connectBadgeLabel(
+  flags: ReturnType<typeof connectUiFlags>,
+  fallbackStatus: string | undefined,
+): string {
+  if (flags.hasAccount) {
+    return flags.merchantReady ? "connected" : "pending";
+  }
+  if (flags.hasLegacyOmLink) {
+    return "needs merchant connect";
+  }
+  return fallbackStatus ?? "disconnected";
+}
+
+type BusySetters = {
+  setBusy: (v: boolean) => void;
+  setError: (v: string | null) => void;
+};
+
+async function postConnectRedirect(
+  url: string,
+  init: RequestInit,
+  setters: BusySetters,
+  failLabel: string,
+): Promise<void> {
+  setters.setBusy(true);
+  setters.setError(null);
+  try {
+    const res = await fetch(url, init);
+    const body = await res.json();
+    if (!res.ok || !body.url) {
+      throw new Error(body.error || failLabel);
+    }
+    redirectToStripeConnectUrl(body.url);
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+    setters.setBusy(false);
+  }
+}
+
+async function requestDisconnectStripe(
+  appId: string,
+  setters: BusySetters,
+  reload: () => Promise<void>,
+): Promise<void> {
+  if (!globalThis.confirm("Disconnect Stripe from this app?")) {
+    return;
+  }
+  setters.setBusy(true);
+  setters.setError(null);
+  try {
+    const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(body.error || "Disconnect failed");
+    }
+    await reload();
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setters.setBusy(false);
+  }
+}
+
+async function requestSaveBillingSettings(input: {
+  appId: string;
+  progressiveBilling: boolean;
+  thresholdDisplay: string;
+  applicationFeeBps: string;
+  billingMode: "owner_rollup" | "merchant";
+  endUserCap: string;
+  setters: BusySetters & {
+    setSettingsSaved: (v: string | null) => void;
+    setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  };
+}): Promise<void> {
+  const { setters } = input;
+  setters.setBusy(true);
+  setters.setError(null);
+  setters.setSettingsSaved(null);
+  try {
+    const invoiceThresholdUsdMicros = parseThresholdMicros(input.thresholdDisplay);
+    const res = await fetch(`/api/v1/apps/${input.appId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        progressiveBilling: input.progressiveBilling,
+        invoiceThresholdUsdMicros,
+        applicationFeeBps: Number.parseInt(input.applicationFeeBps, 10) || 0,
+        billingMode: input.billingMode,
+        endUserCap: Number.parseInt(input.endUserCap, 10) || 25,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(body.error || "Failed to save billing settings");
+    }
+    setters.setStatus((prev) => (prev ? { ...prev, ...body } : body));
+    setters.setSettingsSaved("Saved");
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setters.setBusy(false);
+  }
+}
+
+function PaymentsInvoicesList({ invoices }: Readonly<{ invoices: InvoiceRow[] }>) {
+  if (invoices.length === 0) {
+    return <p className="text-sm text-muted-foreground">No customer invoices yet.</p>;
+  }
+  return (
+    <ul className="divide-y text-sm">
+      {invoices.map((inv) => (
+        <li key={inv.id} className="py-2 flex justify-between gap-4">
+          <div className="min-w-0">
+            <span className="font-mono">{inv.number ?? inv.id}</span>
+            {inv.customerKey ? (
+              <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                {inv.customerKey}
+              </p>
+            ) : null}
+          </div>
+          <span className="shrink-0">
+            {inv.totalAmount} {inv.currency} · {inv.status}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -211,26 +316,6 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   );
   const [endUserCap, setEndUserCap] = useState("25");
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  /** Last persisted form values; save stays disabled until these change. */
-  const [savedForm, setSavedForm] = useState({
-    progressiveBilling: true,
-    thresholdDisplay: "",
-    applicationFeeBps: "0",
-    billingMode: "owner_rollup" as "owner_rollup" | "merchant",
-    endUserCap: "25",
-  });
-
-  const isPlatformAdmin = status?.isPlatformAdmin === true;
-
-  const isDirty =
-    savedForm.progressiveBilling !== progressiveBilling ||
-    savedForm.thresholdDisplay !== thresholdDisplay ||
-    savedForm.billingMode !== billingMode ||
-    // Only admins can move these, so only they can make the form dirty with them.
-    (isPlatformAdmin &&
-      (savedForm.applicationFeeBps !== applicationFeeBps ||
-        savedForm.endUserCap !== endUserCap));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -245,23 +330,12 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       }
       const nextStatus = (await statusRes.json()) as StripeStatus;
       setStatus(nextStatus);
-      setProgressiveBilling(nextStatus.progressiveBilling ?? true);
-      setApplicationFeeBps(String(nextStatus.applicationFeeBps ?? 0));
-      setBillingMode(
-        nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup",
-      );
-      setEndUserCap(String(nextStatus.endUserCap ?? 25));
-      const loadedThreshold = nextStatus.invoiceThresholdUsdMicros
-        ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
-        : "";
-      setThresholdDisplay(loadedThreshold);
-      setSavedForm({
-        progressiveBilling: nextStatus.progressiveBilling ?? true,
-        thresholdDisplay: loadedThreshold,
-        applicationFeeBps: String(nextStatus.applicationFeeBps ?? 0),
-        billingMode:
-          nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup",
-        endUserCap: String(nextStatus.endUserCap ?? 25),
+      applyStatusToForm(nextStatus, {
+        progressiveBilling: setProgressiveBilling,
+        applicationFeeBps: setApplicationFeeBps,
+        billingMode: setBillingMode,
+        endUserCap: setEndUserCap,
+        thresholdDisplay: setThresholdDisplay,
       });
       if (invoicesRes.ok) {
         const body = await invoicesRes.json();
@@ -276,188 +350,399 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
 
   useEffect(() => {
     load().catch(() => undefined);
-    if (globalThis.window !== undefined) {
-      const params = new URLSearchParams(globalThis.location.search);
-      if (params.get("error")) {
-        setError(paymentsTabErrorMessage(params.get("error")));
-      }
-      if (params.get("connected") === "1" || params.get("connect") === "refresh") {
-        load().catch(() => undefined);
-      }
+    if (globalThis.window === undefined) {
+      return;
+    }
+    const params = new URLSearchParams(globalThis.location.search);
+    if (params.get("error")) {
+      setError(paymentsTabErrorMessage(params.get("error")));
+    }
+    if (params.get("connected") === "1" || params.get("connect") === "refresh") {
+      load().catch(() => undefined);
     }
   }, [load]);
 
-  async function startMerchantOnboarding() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe/connect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "account_link" }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        throw new Error(body.error || "Connect failed");
-      }
-      if (!body.url) {
-        throw new Error(body.error || "Connect URL missing");
-      }
-      redirectToStripeConnectUrl(body.url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
-    }
-  }
-
-  async function refreshAccountLink() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/v1/apps/${appId}/billing/stripe/account-link`,
-        { method: "POST" },
-      );
-      const body = await res.json();
-      if (!res.ok || !body.url) {
-        throw new Error(body.error || "Account Link failed");
-      }
-      redirectToStripeConnectUrl(body.url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
-    }
-  }
-
-  async function disconnectStripe() {
-    if (!globalThis.confirm("Disconnect Stripe from this app?")) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error || "Disconnect failed");
-      }
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveBillingProfileSettings() {
-    setBusy(true);
-    setError(null);
-    setSaveError(null);
-    setSettingsSaved(null);
-    try {
-      const trimmed = thresholdDisplay.trim();
-      let invoiceThresholdUsdMicros: string | null = null;
-      if (trimmed !== "") {
-        const micros = usdCentsDisplayToMicros(trimmed);
-        if (micros == null) {
-          throw new Error("Invoice threshold must be a valid dollar amount");
-        }
-        invoiceThresholdUsdMicros = micros;
-      }
-      // Platform-controlled fields are admin-only server-side; sending them as
-      // an owner would be rejected with 403, so omit them entirely.
-      const payload: Record<string, unknown> = {
-        progressiveBilling,
-        invoiceThresholdUsdMicros,
-      };
-      // Only send billingMode when it changed — re-sending "merchant" re-runs
-      // Connect readiness validation and fails unrelated saves if Connect later
-      // becomes non-ready.
-      if (billingMode !== savedForm.billingMode) {
-        payload.billingMode = billingMode;
-      }
-      if (isPlatformAdmin) {
-        const parsedCap = Number.parseInt(endUserCap, 10);
-        if (
-          !Number.isFinite(parsedCap) ||
-          parsedCap < 1 ||
-          parsedCap > 1_000_000
-        ) {
-          throw new Error("End-user cap must be an integer between 1 and 1000000");
-        }
-        payload.endUserCap = parsedCap;
-        const parsedFee = Number.parseInt(applicationFeeBps, 10);
-        if (
-          !Number.isFinite(parsedFee) ||
-          parsedFee < 0 ||
-          parsedFee > 10_000
-        ) {
-          throw new Error(
-            "Platform application fee must be an integer between 0 and 10000",
-          );
-        }
-        payload.applicationFeeBps = parsedFee;
-      }
-      const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        throw new Error(body.error || "Failed to save billing settings");
-      }
-      setStatus((prev) => (prev ? { ...prev, ...body } : body));
-      setSavedForm({
-        progressiveBilling,
-        thresholdDisplay,
-        applicationFeeBps,
-        billingMode,
-        endUserCap,
-      });
-      setSettingsSaved("Saved");
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   if (loading) {
-    return <p className="text-sm text-zinc-500">Loading payments…</p>;
+    return <p className="text-sm text-muted-foreground">Loading payments…</p>;
   }
 
-  const hasAccount = Boolean(status?.stripeConnectedAccountId?.trim());
-  /** Merchant Connect ready (acct_… + charges). Not legacy OM Stripe-app install. */
-  const merchantReady =
-    hasAccount && Boolean(status?.stripeChargesEnabled);
-  const pendingOnboarding = hasAccount && !merchantReady;
-  const hasLegacyOmLink = Boolean(
-    status?.openmeterStripeAppId || status?.openmeterBillingProfileId,
+  return (
+    <PaymentsTabLoaded
+      appId={appId}
+      canManageBilling={canManageBilling}
+      status={status}
+      invoices={invoices}
+      error={error}
+      busy={busy}
+      applicationFeeBps={applicationFeeBps}
+      progressiveBilling={progressiveBilling}
+      thresholdDisplay={thresholdDisplay}
+      billingMode={billingMode}
+      endUserCap={endUserCap}
+      settingsSaved={settingsSaved}
+      setBusy={setBusy}
+      setError={setError}
+      setStatus={setStatus}
+      setSettingsSaved={setSettingsSaved}
+      setBillingMode={setBillingMode}
+      setEndUserCap={setEndUserCap}
+      setApplicationFeeBps={setApplicationFeeBps}
+      setProgressiveBilling={setProgressiveBilling}
+      setThresholdDisplay={setThresholdDisplay}
+      reload={load}
+    />
   );
-  /** Allow clearing legacy OM link and/or merchant Connect account. */
-  const canDisconnect = hasAccount || hasLegacyOmLink;
-  // Prefer activation.connectReady when present; fall back to flat status fields
-  // so the merchant option stays selectable if activation was omitted.
-  const connectReadyForMode =
-    status?.activation?.connectReady ??
-    (hasAccount &&
-      Boolean(status?.stripeChargesEnabled) &&
-      Boolean(status?.stripeDetailsSubmitted));
+}
+
+function PaymentsConnectActions(props: Readonly<{
+  appId: string;
+  busy: boolean;
+  flags: ReturnType<typeof connectUiFlags>;
+  busySetters: BusySetters;
+  reload: () => Promise<void>;
+}>) {
+  const { appId, busy, flags, busySetters, reload } = props;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {!flags.hasAccount && (
+        <button
+          type="button"
+          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+          disabled={busy}
+          onClick={() =>
+            void postConnectRedirect(
+              `/api/v1/apps/${appId}/billing/stripe/connect`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "account_link" }),
+              },
+              busySetters,
+              "Connect failed",
+            )
+          }
+        >
+          Complete onboarding
+        </button>
+      )}
+      {flags.pendingOnboarding && (
+        <button
+          type="button"
+          className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+          disabled={busy}
+          onClick={() =>
+            void postConnectRedirect(
+              `/api/v1/apps/${appId}/billing/stripe/account-link`,
+              { method: "POST" },
+              busySetters,
+              "Account Link failed",
+            )
+          }
+        >
+          Refresh Account Link
+        </button>
+      )}
+      {flags.canDisconnect && (
+        <button
+          type="button"
+          className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void requestDisconnectStripe(appId, busySetters, reload)}
+        >
+          Disconnect
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PaymentsBillingModeForm(props: Readonly<{
+  busy: boolean;
+  billingMode: "owner_rollup" | "merchant";
+  endUserCap: string;
+  applicationFeeBps: string;
+  connectReadyForMerchant: boolean;
+  settingsSaved: string | null;
+  setBillingMode: (v: "owner_rollup" | "merchant") => void;
+  setEndUserCap: (v: string) => void;
+  setApplicationFeeBps: (v: string) => void;
+  onSave: () => void;
+}>) {
+  const {
+    busy,
+    billingMode,
+    endUserCap,
+    applicationFeeBps,
+    connectReadyForMerchant,
+    settingsSaved,
+    setBillingMode,
+    setEndUserCap,
+    setApplicationFeeBps,
+    onSave,
+  } = props;
+  return (
+    <div className="pt-2 border-t space-y-3">
+      <label className="block text-sm">
+        <span className="text-muted-foreground">Billing mode</span>
+        <select
+          className="mt-1 w-full max-w-xs rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          value={billingMode}
+          onChange={(e) =>
+            setBillingMode(e.target.value === "merchant" ? "merchant" : "owner_rollup")
+          }
+          disabled={busy}
+        >
+          <option value="owner_rollup">Owner roll-up (default)</option>
+          <option value="merchant" disabled={!connectReadyForMerchant}>
+            Merchant (requires Connect ready)
+          </option>
+        </select>
+      </label>
+      <label className="block text-sm">
+        <span className="text-muted-foreground">End-user cap (owner roll-up)</span>
+        <input
+          type="number"
+          min={1}
+          max={1000000}
+          className="mt-1 w-40 rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          value={endUserCap}
+          onChange={(e) => setEndUserCap(e.target.value)}
+          disabled={busy}
+        />
+      </label>
+      <label className="block text-sm">
+        <span className="text-muted-foreground">Platform application fee (bps)</span>
+        <input
+          type="number"
+          min={0}
+          max={10000}
+          className="mt-1 w-40 rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          value={applicationFeeBps}
+          onChange={(e) => setApplicationFeeBps(e.target.value)}
+          disabled={busy}
+        />
+      </label>
+      <p className="text-xs text-muted-foreground">
+        100 bps = 1%. Applied on Connect payment intents / invoices.
+      </p>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+          disabled={busy}
+          onClick={onSave}
+        >
+          Save billing settings
+        </button>
+        {settingsSaved ? (
+          <span className="text-xs text-emerald-600">{settingsSaved}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PaymentsProgressiveBillingForm(props: Readonly<{
+  canManageBilling: boolean;
+  busy: boolean;
+  progressiveBilling: boolean;
+  thresholdDisplay: string;
+  settingsSaved: string | null;
+  setProgressiveBilling: (v: boolean) => void;
+  setThresholdDisplay: (v: string) => void;
+  setSettingsSaved: (v: string | null) => void;
+  onSave: () => void;
+}>) {
+  const {
+    canManageBilling,
+    busy,
+    progressiveBilling,
+    thresholdDisplay,
+    settingsSaved,
+    setProgressiveBilling,
+    setThresholdDisplay,
+    setSettingsSaved,
+    onSave,
+  } = props;
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div>
+        <h3 className="text-base font-semibold">Mid-cycle invoicing</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Progressive billing allows OpenMeter to invoice unpaid usage before the
+          billing cycle ends. Set an optional dollar threshold; the clearinghouse
+          worker charges when gathering invoices reach that amount.
+        </p>
+      </div>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={progressiveBilling}
+          disabled={!canManageBilling || busy}
+          onChange={(e) => {
+            setProgressiveBilling(e.target.checked);
+            setSettingsSaved(null);
+          }}
+        />
+        <span>
+          Enable progressive billing
+          <span className="block text-xs text-muted-foreground">
+            Synced to this app&apos;s OpenMeter billing profile.
+          </span>
+        </span>
+      </label>
+      <div>
+        <label htmlFor="invoice-threshold" className="block text-xs text-muted-foreground mb-1">
+          Invoice when unpaid usage reaches (USD)
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">$</span>
+          <input
+            id="invoice-threshold"
+            type="text"
+            inputMode="decimal"
+            placeholder="e.g. 10.00 (leave blank to disable)"
+            disabled={!canManageBilling || busy || !progressiveBilling}
+            value={thresholdDisplay}
+            onChange={(e) => {
+              setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));
+              setSettingsSaved(null);
+            }}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
+          />
+        </div>
+      </div>
+      {canManageBilling && (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            disabled={busy}
+            onClick={onSave}
+          >
+            Save invoicing settings
+          </button>
+          {settingsSaved ? (
+            <span className="text-xs text-emerald-600">{settingsSaved}</span>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaymentsStatusDetails({ status }: Readonly<{ status: StripeStatus | null }>) {
+  return (
+    <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div>
+        <dt className="text-muted-foreground">Connected account</dt>
+        <dd className="font-mono text-xs break-all">
+          {status?.stripeConnectedAccountId ?? "—"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Onboarding</dt>
+        <dd>{status?.stripeOnboardingMethod ?? "—"}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Charges</dt>
+        <dd>{status?.stripeChargesEnabled ? "Enabled" : "Paused / pending"}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Payouts</dt>
+        <dd>{status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}</dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">OM billing profile</dt>
+        <dd className="font-mono text-xs break-all">
+          {status?.openmeterBillingProfileId ?? "—"}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-muted-foreground">Connected</dt>
+        <dd>{status?.connectedAt ?? "—"}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function PaymentsTabLoaded(props: Readonly<{
+  appId: string;
+  canManageBilling: boolean;
+  status: StripeStatus | null;
+  invoices: InvoiceRow[];
+  error: string | null;
+  busy: boolean;
+  applicationFeeBps: string;
+  progressiveBilling: boolean;
+  thresholdDisplay: string;
+  billingMode: "owner_rollup" | "merchant";
+  endUserCap: string;
+  settingsSaved: string | null;
+  setBusy: (v: boolean) => void;
+  setError: (v: string | null) => void;
+  setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  setSettingsSaved: (v: string | null) => void;
+  setBillingMode: (v: "owner_rollup" | "merchant") => void;
+  setEndUserCap: (v: string) => void;
+  setApplicationFeeBps: (v: string) => void;
+  setProgressiveBilling: (v: boolean) => void;
+  setThresholdDisplay: (v: string) => void;
+  reload: () => Promise<void>;
+}>) {
+  const {
+    appId,
+    canManageBilling,
+    status,
+    invoices,
+    error,
+    busy,
+    applicationFeeBps,
+    progressiveBilling,
+    thresholdDisplay,
+    billingMode,
+    endUserCap,
+    settingsSaved,
+    setBusy,
+    setError,
+    setStatus,
+    setSettingsSaved,
+    setBillingMode,
+    setEndUserCap,
+    setApplicationFeeBps,
+    setProgressiveBilling,
+    setThresholdDisplay,
+    reload,
+  } = props;
+
+  const flags = connectUiFlags(status);
+  const busySetters = { setBusy, setError };
+  const connectReadyForMerchant = Boolean(status?.activation?.connectReady);
+  const save = () =>
+    void requestSaveBillingSettings({
+      appId,
+      progressiveBilling,
+      thresholdDisplay,
+      applicationFeeBps,
+      billingMode,
+      endUserCap,
+      setters: { setBusy, setError, setSettingsSaved, setStatus },
+    });
+  const showDetails =
+    flags.hasAccount || flags.hasLegacyOmLink || Boolean(status?.connectedAt);
 
   return (
     <div className="space-y-6">
       {status?.activation && (
-        <PaymentsActivationCard activation={status.activation} />
+        <PaymentsActivationBanner activation={status.activation} />
       )}
 
-      <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
+      <div className="rounded-lg border p-4 space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h3 className="text-base font-semibold">Merchant Stripe Connect</h3>
-            <p className="text-sm text-zinc-500">
+            <p className="text-sm text-muted-foreground">
               Collect from your end users on a Stripe Connected Account (Plane B).
               OpenMeter Stripe billing (Plane A) meters usage and invoices you for
               network cost separately. Complete Stripe-hosted onboarding (Account Links)
@@ -465,278 +750,58 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
             </p>
           </div>
           <span
-            className={`text-xs font-medium px-2 py-1 rounded ${
-              merchantReady
-                ? "bg-green-100 text-green-800"
-                : pendingOnboarding
-                  ? "bg-amber-100 text-amber-900"
-                  : "bg-gray-100 text-gray-700"
-            }`}
+            className={`text-xs font-medium px-2 py-1 rounded ${connectBadgeClass(flags)}`}
           >
-            {hasAccount
-              ? merchantReady
-                ? "connected"
-                : "pending"
-              : hasLegacyOmLink
-                ? "needs merchant connect"
-                : (status?.status ?? "disconnected")}
+            {connectBadgeLabel(flags, status?.status)}
           </span>
         </div>
 
-        {(hasAccount || hasLegacyOmLink || status?.connectedAt) && (
-          <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
-              <dt className="text-zinc-500">Connected account</dt>
-              <dd className="font-mono text-xs break-all">
-                {status?.stripeConnectedAccountId ?? "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Onboarding</dt>
-              <dd>{status?.stripeOnboardingMethod ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Charges</dt>
-              <dd>{status?.stripeChargesEnabled ? "Enabled" : "Paused / pending"}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Payouts</dt>
-              <dd>{status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">OpenMeter Stripe billing</dt>
-              <dd>
-                {status?.billingReady
-                  ? "Ready"
-                  : status?.openmeterBillingProfileId
-                    ? "Partial"
-                    : "Not provisioned"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">OM billing profile</dt>
-              <dd className="font-mono text-xs break-all">
-                {status?.openmeterBillingProfileId ?? "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Connected</dt>
-              <dd>{status?.connectedAt ?? "—"}</dd>
-            </div>
-          </dl>
+        {showDetails && <PaymentsStatusDetails status={status} />}
+
+        {canManageBilling && (
+          <PaymentsConnectActions
+            appId={appId}
+            busy={busy}
+            flags={flags}
+            busySetters={busySetters}
+            reload={reload}
+          />
         )}
 
         {canManageBilling && (
-          <div className="flex flex-wrap gap-2">
-            {!hasAccount && (
-              <button
-                type="button"
-                className="rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void startMerchantOnboarding()}
-              >
-                Complete onboarding
-              </button>
-            )}
-            {pendingOnboarding && (
-              <button
-                type="button"
-                className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void refreshAccountLink()}
-              >
-                Refresh Account Link
-              </button>
-            )}
-            {canDisconnect && (
-              <button
-                type="button"
-                className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
-                disabled={busy}
-                onClick={() => void disconnectStripe()}
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-        )}
-
-        {canManageBilling && (
-          <div className="pt-2 border-t space-y-3">
-            <label className="block text-sm">
-              <span className="text-zinc-500">Billing mode</span>
-              <select
-                className="mt-1 w-full max-w-xs rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-                value={billingMode}
-                onChange={(e) =>
-                  setBillingMode(
-                    e.target.value === "merchant" ? "merchant" : "owner_rollup",
-                  )
-                }
-                disabled={busy}
-              >
-                <option value="owner_rollup">Owner roll-up (default)</option>
-                <option
-                  value="merchant"
-                  disabled={!connectReadyForMode}
-                >
-                  Merchant (requires Connect ready)
-                </option>
-              </select>
-            </label>
-            {isPlatformAdmin ? (
-              <>
-                <label className="block text-sm">
-                  <span className="text-zinc-400">End-user cap</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={1000000}
-                    className="mt-1 w-40 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-                    value={endUserCap}
-                    onChange={(e) => setEndUserCap(e.target.value)}
-                    disabled={busy}
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="text-zinc-500">Platform application fee (bps)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={10000}
-                    className="mt-1 w-40 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-                    value={applicationFeeBps}
-                    onChange={(e) => setApplicationFeeBps(e.target.value)}
-                    disabled={busy}
-                  />
-                </label>
-                <p className="text-xs text-zinc-500">
-                  100 bps = 1%. Applied on Connect payment intents / invoices.
-                  Platform-controlled — visible here because you are an admin.
-                </p>
-              </>
-            ) : (
-              <PlatformLimits
-                endUserCap={endUserCap}
-                applicationFeeBps={applicationFeeBps}
-              />
-            )}
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                className={BUTTON_CLASS}
-                disabled={busy || !isDirty}
-                onClick={() => void saveBillingProfileSettings()}
-              >
-                {busy ? "Saving…" : "Save billing settings"}
-              </button>
-              {!isDirty && settingsSaved ? (
-                <output className="text-xs text-emerald-400">
-                  {settingsSaved}
-                </output>
-              ) : null}
-              {isDirty && !busy ? (
-                <span className="text-xs text-zinc-500">Unsaved changes</span>
-              ) : null}
-              {saveError ? (
-                <span className="text-xs text-rose-400" role="alert">
-                  {saveError}
-                </span>
-              ) : null}
-            </div>
-          </div>
+          <PaymentsBillingModeForm
+            busy={busy}
+            billingMode={billingMode}
+            endUserCap={endUserCap}
+            applicationFeeBps={applicationFeeBps}
+            connectReadyForMerchant={connectReadyForMerchant}
+            settingsSaved={settingsSaved}
+            setBillingMode={setBillingMode}
+            setEndUserCap={setEndUserCap}
+            setApplicationFeeBps={setApplicationFeeBps}
+            onSave={save}
+          />
         )}
       </div>
 
-      {merchantReady && (
-        <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
-          <div>
-            <h3 className="text-base font-semibold">Mid-cycle invoicing</h3>
-            <p className="mt-1 text-xs text-zinc-500">
-              Progressive billing allows OpenMeter to invoice unpaid usage before the
-              billing cycle ends. Set an optional dollar threshold; the clearinghouse
-              worker charges when gathering invoices reach that amount.
-            </p>
-          </div>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={progressiveBilling}
-              disabled={!canManageBilling || busy}
-              onChange={(e) => {
-                setProgressiveBilling(e.target.checked);
-                setSettingsSaved(null);
-              }}
-            />
-            <span className="block">
-              <span className="block">Enable progressive billing</span>
-              <span className="block text-xs text-zinc-500">
-                Synced to this app&apos;s OpenMeter billing profile.
-              </span>
-            </span>
-          </label>
-          {/*
-            Checked with a blank threshold is a valid but ambiguous state, so
-            state the behaviour it actually resolves to rather than leaving the
-            reader to infer it from an empty field.
-          */}
-          <p className="rounded-md border border-white/[0.06] bg-black/20 px-3 py-2 text-xs text-zinc-400">
-            {resolvedInvoicingBehavior(progressiveBilling, thresholdDisplay)}
-          </p>
-          <div>
-            <label htmlFor="invoice-threshold" className="block text-xs text-zinc-500 mb-1">
-              Invoice when unpaid usage reaches (USD)
-            </label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-zinc-500">$</span>
-              <input
-                id="invoice-threshold"
-                type="text"
-                inputMode="decimal"
-                placeholder="e.g. 10.00 (leave blank to disable)"
-                disabled={!canManageBilling || busy || !progressiveBilling}
-                value={thresholdDisplay}
-                onChange={(e) => {
-                  setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));
-                  setSettingsSaved(null);
-                }}
-                className="w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
-              />
-            </div>
-          </div>
-          {canManageBilling && (
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                className={BUTTON_CLASS}
-                disabled={busy || !isDirty}
-                onClick={() => void saveBillingProfileSettings()}
-              >
-                {busy ? "Saving…" : "Save invoicing settings"}
-              </button>
-              {!isDirty && settingsSaved ? (
-                <output className="text-xs text-emerald-400">
-                  {settingsSaved}
-                </output>
-              ) : null}
-              {isDirty && !busy ? (
-                <span className="text-xs text-zinc-500">Unsaved changes</span>
-              ) : null}
-              {saveError ? (
-                <span className="text-xs text-rose-400" role="alert">
-                  {saveError}
-                </span>
-              ) : null}
-            </div>
-          )}
-        </div>
+      {flags.merchantReady && (
+        <PaymentsProgressiveBillingForm
+          canManageBilling={canManageBilling}
+          busy={busy}
+          progressiveBilling={progressiveBilling}
+          thresholdDisplay={thresholdDisplay}
+          settingsSaved={settingsSaved}
+          setProgressiveBilling={setProgressiveBilling}
+          setThresholdDisplay={setThresholdDisplay}
+          setSettingsSaved={setSettingsSaved}
+          onSave={save}
+        />
       )}
 
-      <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
+      <div className="rounded-lg border p-4 space-y-3">
         <div>
           <h3 className="text-base font-semibold">Customer invoices</h3>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-muted-foreground">
             End users billed through this app&apos;s Stripe Connect account. Platform invoices
             for your developer prepaid wallet are on{" "}
             <a href="/billing" className="text-emerald-500 hover:text-emerald-400">
@@ -745,30 +810,10 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
             .
           </p>
         </div>
-        {invoices.length === 0 ? (
-          <p className="text-sm text-zinc-500">No customer invoices yet.</p>
-        ) : (
-          <ul className="divide-y text-sm">
-            {invoices.map((inv) => (
-              <li key={inv.id} className="py-2 flex justify-between gap-4">
-                <div className="min-w-0">
-                  <span className="font-mono">{inv.number ?? inv.id}</span>
-                  {inv.customerKey ? (
-                    <p className="mt-0.5 truncate font-mono text-xs text-zinc-500">
-                      {inv.customerKey}
-                    </p>
-                  ) : null}
-                </div>
-                <span className="shrink-0">
-                  {inv.totalAmount} {inv.currency} · {inv.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PaymentsInvoicesList invoices={invoices} />
       </div>
 
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
     </div>
   );
 }
