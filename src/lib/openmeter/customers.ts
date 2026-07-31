@@ -177,8 +177,15 @@ export async function ensureOwnerCustomerWireSubjects(
  * simply avoids attaching more. Transitional wire/compound subjects
  * (`owner:…`, `app_…:…`) are attached best-effort once at create time;
  * Konnect rejects later changes while a subscription is active (400) or when
- * a legacy wallet still claims them (409). Meter dual-read for usage does not
- * require those keys on the customer record.
+ * a legacy wallet still claims them (409).
+ *
+ * These keys are what OpenMeter bills over, and since
+ * `resolveCustomerSubjectKeys` they are also what PymtHouse reads. A subject
+ * missing here is therefore neither invoiced nor displayed —
+ * `classifyUsageAttributionConsistency` reports any that still carry usage.
+ * (This previously read "meter dual-read for usage does not require those keys
+ * on the customer record", which was true of reads and false of billing: usage
+ * on an unattributed subject was shown but never charged.)
  */
 export async function ensureOwnerCustomer(
   client: OpenMeter,

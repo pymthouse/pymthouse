@@ -1,6 +1,9 @@
 # ADR: Owner subscriptions vs. app subscriptions
 
-Status: **proposed**.
+Status: **accepted** — partially implemented. See
+[Implementation status](#implementation-status) for what has shipped and what
+is outstanding; this ADR stays until the deferred items land, because it also
+records why rules now enforced in code exist.
 Companion to [`activation-gate.md`](./activation-gate.md) and
 [`adr-stripe-connect-openmeter-webhooks.md`](./adr-stripe-connect-openmeter-webhooks.md),
 which established the cost/revenue rail split. This ADR applies that split to
@@ -198,6 +201,39 @@ irreversible:
 
 Step 5 is severable and should not wait for the model change — it closes a live
 revenue and exposure hole.
+
+## Implementation status
+
+Shipped (PR #348):
+
+- Symptom 3 — `applicationFeeBps` and `endUserCap` are rejected with `403` on
+  the owner path; the Payments tab renders them read-only and attributed to the
+  platform, and omits them from the PATCH body for non-admins.
+  `scripts/audit-platform-billing-fields.ts` reports current values.
+- Rule 1 — already satisfied before this ADR:
+  `resolveOpenMeterBillingIdentity` routes an owner on their own app to the
+  shared owner wallet, and the customer and starter-subscription paths honour
+  it. One live gap was closed: `programmatic-tokens` hardcoded
+  `user_type: "app_user"`, so owner traffic through that path was metered to
+  `app_…:{ownerId}` and never invoiced.
+- Rule 2 / UI — `/billing` leads with the account-level plan and lists every
+  owned app with where its usage settles.
+- Usage reads follow customer id — `resolveCustomerSubjectKeys` backs the owner
+  read path, and `classifyUsageAttributionConsistency` reports unattributed
+  usage.
+
+Outstanding:
+
+- **Symptom 1 (schema)** — `end_user_cap` and `application_fee_bps` still live
+  on `app_billing_config`. Authorization is correct, so their location is now
+  cosmetic; the move is deferred, not abandoned.
+- **Symptom 4** — `subscriptions.client_id` is still `NOT NULL`, so the platform
+  subscription still has no local row and exists only in OpenMeter. This is why
+  the plan name on the billing card cannot come from PymtHouse's own database.
+- **Migration steps 1–4** — backfill, enforce, dual-read, cutover. The
+  transitional union in `buildOwnerMeterSubjects` and the three
+  `openmeter-*-owner-*` scripts remain until
+  `usage_on_unattributed_subject` reports zero across all owners.
 
 ### Risks
 
