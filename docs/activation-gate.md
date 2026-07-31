@@ -1,8 +1,12 @@
 # Builder app activation gate
 
-Status: **design**. Depends on PR #313 (platform default app) and PR #124 (Stripe
-Connect merchant accounts), both open at time of writing. No enforcement code exists
-yet.
+Status: **implemented (default off)**. Resolver and choke points live in
+`src/lib/activation/`. Controlled by `ACTIVATION_GATE_MODE`
+(`off` | `log` | `enforce_revenue` | `enforce`). Shipping with `off` does not
+change live request behaviour; flip the env to advance rollout phases.
+
+Depends on platform default app (#313) and Stripe Connect merchant accounts
+(PR #124 / `feat/configure-stripe`).
 
 This document specifies how PymtHouse decides whether a developer app may provision
 end users and whether it may sell paid plans to them.
@@ -27,7 +31,7 @@ simultaneously too strict (blocks integration before any money is at risk) and t
 
 | Rail | Who pays whom | Always on? | Gated by |
 |---|---|---|---|
-| **Cost** | App owner pays PymtHouse for all network usage their app generates | Yes | Owner solvency + end-user cap |
+| **Cost** | App owner pays PymtHouse for all network usage their app generates | Yes | Owner chargeability (balance *or* card) + end-user cap |
 | **Revenue** | Builder's end users pay the Builder | Opt-in | Stripe Connect readiness |
 
 The cost rail already exists and is proven: Explorers on the platform default app bill
@@ -60,7 +64,7 @@ checkouts.
 ```ts
 // src/lib/activation/app-activation.ts (new)
 export type ActivationReason =
-  | "owner_balance_exhausted"
+  | "owner_payment_method_required"
   | "end_user_cap_reached"
   | "stripe_connect_required"
   | "stripe_connect_pending";
@@ -83,9 +87,13 @@ connectReady =
   && stripe_charges_enabled
   && stripe_details_submitted
 
+ownerBillable =
+     ownerSpendableUsdMicros > 0
+  || ownerHasChargeablePaymentMethod
+
 canProvisionEndUsers =
      is_platform_default
-  || (ownerSpendableUsdMicros > 0 && appUserCount < end_user_cap)
+  || (ownerBillable && appUserCount < end_user_cap)
 
 canSellPaidPlans =
      billing_mode = 'merchant' && connectReady
@@ -105,6 +113,18 @@ Notes:
 - `ownerSpendableUsdMicros` reuses `getSpendableUsdMicros` — included plan allowance
   plus prepaid credits — so the gate agrees with the existing signer mint gate rather
   than introducing a second definition of solvency.
+- An empty wallet alone does **not** block. Platform billing profiles are created with
+  `payment.collectionMethod = charge_automatically`, so an owner with a card on file is
+  billable regardless of prepaid balance — OpenMeter invoices and collects. Only an owner
+  with neither a balance nor a payment method is unbillable, and that is the one thing
+  the cost rail refuses, because the usage it would authorise is uncollectable by
+  construction.
+- `ownerHasChargeablePaymentMethod` (`owner-payment-method.ts`) reads the Konnect
+  `app_data.stripe.default_payment_method_id` pointer, falling back to Stripe's customer
+  invoice default. It costs a round trip, so it runs **only after** the cheap balance read
+  has already failed — solvent owners never pay for it. It returns `null` when platform
+  billing is unconfigured or Stripe/OpenMeter is unreachable, and `null` fails open: an
+  outage must not freeze provisioning.
 
 ## Choke points
 
@@ -132,7 +152,14 @@ ingest path. Gating it would silently discard signed-ticket records for users th
 already exist, losing both revenue attribution and audit trail. Ingest must always
 record what the network actually did; solvency is enforced at mint time, before work is
 authorised. `grantAllowanceUsdMicros` is likewise ungated — crediting an account must
-never be blocked by that account being empty.
+never be blocked by that account being empty, and the onramp path relies on that to
+refill a dry wallet.
+
+The Builder route `POST …/users/{externalUserId}/allowances` is the one exception: it
+runs the provision gate before granting, because crediting an unknown end-user creates
+an `app_users` row and would otherwise be a way around the cap. Owner subjects
+(`owner:{id}`, or an id matching the app owner) skip the gate so a Builder can always
+top up their own wallet.
 
 ### Revenue rail — enforced
 
@@ -140,6 +167,7 @@ never be blocked by that account being empty.
 |---|---|---|
 | Activate a priced plan | `src/app/api/v1/apps/[id]/plans/route.ts:426` | `status = 'active' && price > 0` requires `canSellPaidPlans` |
 | End-user checkout | `src/app/api/v1/apps/[id]/billing/checkout/route.ts` | Requires `canSellPaidPlans` |
+| End-user plan change | `src/app/api/v1/apps/[id]/users/[externalUserId]/subscription/change/route.ts` | Same `planRequiresSellGate` test on the **target** plan |
 
 Free plans (`price = 0`), draft plans, and the per-app Starter plan are unaffected, so a
 Builder can model their catalogue fully before connecting Stripe.
@@ -177,23 +205,25 @@ selection follows RFC 9110 §15.5.
 
 | Condition | Status | `code` |
 |---|---|---|
-| Owner wallet empty | `402` | `owner_balance_exhausted` |
+| Owner wallet empty **and** no payment method | `402` | `owner_payment_method_required` |
 | Per-app user cap reached | `403` | `end_user_cap_reached` |
 | Paid plan / checkout without Connect | `403` | `stripe_connect_required` |
 | Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |
 
-`402 Payment Required` for an empty wallet matches the existing signer mint gate
+`402 Payment Required` matches the existing signer mint gate
 (`MintUserSignerTokenError(..., 402)`), so integrators handle one status consistently
-across provisioning and minting.
+across provisioning and minting. Its `actionUrl` points at the platform billing page,
+where the owner's payment methods are managed — the other reasons point at per-app
+settings.
 
 ```json
 {
   "type": "https://pymthouse.com/problems/app-not-activated",
-  "title": "App cannot provision end users",
+  "title": "Payment method required",
   "status": 402,
-  "code": "owner_balance_exhausted",
+  "code": "owner_payment_method_required",
   "billingMode": "owner_rollup",
-  "actionUrl": "https://pymthouse.com/apps/app_1a2b3c/settings?tab=billing",
+  "actionUrl": "https://pymthouse.com/billing",
   "correlation_id": "..."
 }
 ```
@@ -203,19 +233,22 @@ shape so the dashboard and integrator backends read the same state the gate enfo
 
 ## Rollout
 
-Controlled by `ACTIVATION_GATE_MODE` (`off` | `log` | `enforce`, default `off`).
+Controlled by `ACTIVATION_GATE_MODE` (`off` | `log` | `enforce_revenue` | `enforce`,
+default `off`).
 
 1. **Phase 0 — Observe.** Ship the resolver, the `activation` field on
-   `GET /api/v1/apps/{id}`, and the dashboard banner. No request is refused.
+   `GET /api/v1/apps/{id}`, and the dashboard banner. No request is refused
+   (`ACTIVATION_GATE_MODE=off`).
 2. **Phase 1 — Log.** `ACTIVATION_GATE_MODE=log`. Every would-be denial writes an audit
    row (`activation_gate_would_deny`). Review real traffic for false positives —
    particularly apps whose owners are solvent but whose `app_billing_config` row is
    absent.
-3. **Phase 2 — Enforce revenue rail.** Turn on plan-activation and checkout gating
-   first. It is the lowest-risk half: it cannot break a running integration, only a new
-   monetisation attempt.
-4. **Phase 3 — Enforce cost rail.** Turn on provisioning gating. Notify owners whose
-   apps would be affected via `activation_notified_at` before flipping.
+3. **Phase 2 — Enforce revenue rail.** `ACTIVATION_GATE_MODE=enforce_revenue`. Turn on
+   plan-activation and checkout gating first. It is the lowest-risk half: it cannot
+   break a running integration, only a new monetisation attempt.
+4. **Phase 3 — Enforce cost rail.** `ACTIVATION_GATE_MODE=enforce`. Turn on provisioning
+   gating. Notify owners whose apps would be affected via `activation_notified_at`
+   before flipping.
 
 Enforcement must never retroactively disable existing end users. The gate blocks
 *creation*; existing users continue until their owner's balance is exhausted, which the
@@ -269,6 +302,8 @@ mint gate already handles.
 
 - Owner wallet / subject keys: `src/lib/openmeter/customer-key.ts`
 - Solvency: `src/lib/openmeter/spendable-allowance.ts` (`getSpendableUsdMicros`)
+- Owner chargeability: `src/lib/openmeter/owner-payment-method.ts`
+  (`ownerHasChargeablePaymentMethod`)
 - Provisioning floor: `src/lib/billing/provision-app-user.ts`
 - Signer mint gate: `src/lib/oidc/mint-user-signer-token.ts`
 - Connect state + webhook (PR #124): `src/lib/stripe/merchant-connect.ts`,
@@ -280,37 +315,41 @@ mint gate already handles.
 
 ### Phase 0 — Resolver and visibility
 
-- [ ] Add `0035_app_activation_gate.sql` and the matching `appBillingConfig` columns in
+- [x] Add `0035_app_activation_gate.sql` and the matching `appBillingConfig` columns in
       `src/db/schema.ts`.
-- [ ] Create `src/lib/activation/app-activation.ts` with `resolveAppActivation` and
+- [x] Create `src/lib/activation/app-activation.ts` with `resolveAppActivation` and
       `assertAppCanProvisionUsers` / `assertAppCanSellPaidPlans`.
-- [ ] Unit tests covering: missing `app_billing_config` row, platform default exemption,
+- [x] Unit tests covering: missing `app_billing_config` row, platform default exemption,
       `charges_enabled` false, `details_submitted` false, cap boundary, zero balance.
-- [ ] Surface `activation` on `GET /api/v1/apps/{id}` and in `AppSettingsScreen`.
-- [ ] Dashboard banner on the Payments tab describing the current mode and next action.
+- [x] Surface `activation` on `GET /api/v1/apps/{id}` and in `AppSettingsScreen`.
+- [x] Dashboard banner on the Payments tab describing the current mode and next action.
 
 ### Phase 1 — Log-only
 
-- [ ] Add `ACTIVATION_GATE_MODE` to `.env.example` and `scripts/validate-env.js`.
-- [ ] Wire guards into the four enforced call sites in log mode; emit
+- [x] Add `ACTIVATION_GATE_MODE` to `.env.example` and `scripts/validate-env.js`.
+- [x] Wire guards into the four enforced call sites in log mode; emit
       `activation_gate_would_deny` audit rows.
 - [ ] Run for one full billing cycle; review denials against live traffic.
 
 ### Phase 2 — Revenue rail
 
-- [ ] Enforce `canSellPaidPlans` on plan activation and `POST .../billing/checkout`.
-- [ ] RFC 9457 problem responses with `code` and `actionUrl`.
-- [ ] Document the modes and error codes in `docs/builder-api.md`.
+- [x] Enforce `canSellPaidPlans` on plan activation and `POST .../billing/checkout`
+      (`ACTIVATION_GATE_MODE=enforce_revenue`).
+- [x] RFC 9457 problem responses with `code` and `actionUrl`.
+- [x] Document the modes and error codes in `docs/builder-api.md`.
 
 ### Phase 3 — Cost rail
 
-- [ ] Enforce `canProvisionEndUsers`; populate `activation_notified_at` on first denial.
+- [x] Enforce `canProvisionEndUsers` (`ACTIVATION_GATE_MODE=enforce`); populate
+      `activation_notified_at` on first denial.
 - [ ] Owner notification before enforcement is enabled in production.
-- [ ] Admin control to adjust `end_user_cap` and force `billing_mode`.
+- [x] Admin/owner control to adjust `end_user_cap` and force `billing_mode`
+      (`PATCH .../billing/stripe`).
 
 ## Success criteria
 
-1. No app can accrue network spend that is not attributable to a solvent owner wallet.
+1. No app can accrue network spend that is not attributable to a **billable** owner —
+   one with either a prepaid balance or a payment method OpenMeter can charge.
 2. A new Builder reaches a successful signed job without touching Stripe.
 3. No existing app changes behaviour when the migration is applied at `off` or `log`.
 4. One definition of solvency is shared by the provisioning gate and the signer mint

@@ -11,6 +11,8 @@ import {
   appEditForbiddenResponse,
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
+import { runActivationGate } from "@/lib/activation/app-activation";
+import { activationErrorResponse } from "@/lib/activation/problem";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
@@ -61,6 +63,104 @@ export async function GET(
   });
 }
 
+function parseUpsertUserBody(body: Record<string, unknown>): {
+  ok: true;
+  externalUserId: string;
+  hasEmail: boolean;
+  hasStatus: boolean;
+  email: string | null;
+  status: string;
+} | { ok: false; response: NextResponse } {
+  const externalUserId =
+    typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
+  if (!externalUserId) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "externalUserId is required" },
+        { status: 400 },
+      ),
+    };
+  }
+  const hasEmail = typeof body.email === "string";
+  const hasStatus = typeof body.status === "string";
+  return {
+    ok: true,
+    externalUserId,
+    hasEmail,
+    hasStatus,
+    email: hasEmail ? (body.email as string).trim() : null,
+    status: hasStatus ? (body.status as string) : "active",
+  };
+}
+
+async function upsertAppUserRow(input: {
+  appId: string;
+  externalUserId: string;
+  email: string | null;
+  status: string;
+  hasEmail: boolean;
+  hasStatus: boolean;
+}) {
+  const newUser = {
+    id: uuidv4(),
+    clientId: input.appId,
+    externalUserId: input.externalUserId,
+    email: input.email,
+    status: input.status,
+    role: "user" as const,
+    createdAt: new Date().toISOString(),
+  };
+  const updateSet: { email?: string | null; status?: string; role: "user" } = {
+    role: "user",
+  };
+  if (input.hasEmail) updateSet.email = input.email;
+  if (input.hasStatus) updateSet.status = input.status;
+
+  const upserted = await db
+    .insert(appUsers)
+    .values(newUser)
+    .onConflictDoUpdate({
+      target: [appUsers.clientId, appUsers.externalUserId],
+      set: updateSet,
+    })
+    .returning();
+  const row = upserted[0] ?? newUser;
+  return { row, isNew: row.id === newUser.id };
+}
+
+async function provisionAfterUpsert(
+  appId: string,
+  externalUserId: string,
+): Promise<NextResponse | null> {
+  try {
+    await provisionAppUserBilling({ clientId: appId, externalUserId });
+    return null;
+  } catch (err) {
+    const problem = activationErrorResponse(err);
+    if (problem) return problem;
+    console.error(
+      "provisionAppUserBilling failed on user upsert:",
+      sanitizeForLog(err instanceof Error ? err.message : err),
+    );
+    return null;
+  }
+}
+
+async function runProvisionGate(
+  appId: string,
+  externalUserId: string,
+): Promise<NextResponse | null> {
+  try {
+    await runActivationGate("provision", appId, { externalUserId });
+    return null;
+  } catch (err) {
+    const problem = activationErrorResponse(err);
+    if (problem) return problem;
+    throw err;
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -76,52 +176,40 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
-  const externalUserId = String(body.externalUserId || "").trim();
-  const hasEmail = typeof body.email === "string";
-  const hasStatus = typeof body.status === "string";
-  const email = hasEmail ? body.email.trim() : null;
-  if (!externalUserId) {
-    return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = parseUpsertUserBody(body);
+  if (!parsed.ok) {
+    return parsed.response;
   }
 
-  const status = hasStatus ? body.status : "active";
-  const newUser = {
-    id: uuidv4(),
-    clientId: access.app.id,
-    externalUserId,
-    email,
-    status,
-    role: "user",
-    createdAt: new Date().toISOString(),
-  };
+  const gateProblem = await runProvisionGate(
+    access.app.id,
+    parsed.externalUserId,
+  );
+  if (gateProblem) {
+    return gateProblem;
+  }
 
-  const updateSet: { email?: string | null; status?: string; role: "user" } = {
-    role: "user",
-  };
-  if (hasEmail) updateSet.email = email;
-  if (hasStatus) updateSet.status = status;
+  const { row, isNew } = await upsertAppUserRow({
+    appId: access.app.id,
+    externalUserId: parsed.externalUserId,
+    email: parsed.email,
+    status: parsed.status,
+    hasEmail: parsed.hasEmail,
+    hasStatus: parsed.hasStatus,
+  });
 
-  const upserted = await db
-    .insert(appUsers)
-    .values(newUser)
-    .onConflictDoUpdate({
-      target: [appUsers.clientId, appUsers.externalUserId],
-      set: updateSet,
-    })
-    .returning();
-  const row = upserted[0] ?? newUser;
-
-  try {
-    await provisionAppUserBilling({
-      clientId: access.app.id,
-      externalUserId,
-    });
-  } catch (err) {
-    console.error(
-      "provisionAppUserBilling failed on user upsert:",
-      sanitizeForLog(err instanceof Error ? err.message : err),
-    );
+  const provisionProblem = await provisionAfterUpsert(
+    access.app.id,
+    parsed.externalUserId,
+  );
+  if (provisionProblem) {
+    return provisionProblem;
   }
 
   await writeAuditLog({
@@ -129,10 +217,9 @@ export async function POST(
     actorUserId: access.actorUserId,
     action: "app_user_upserted",
     status: "success",
-    metadata: { externalUserId },
+    metadata: { externalUserId: parsed.externalUserId },
   });
 
-  const isNew = row.id === newUser.id;
   return NextResponse.json(
     {
       ...row,
@@ -158,7 +245,8 @@ export async function PUT(
   }
 
   const body = await request.json();
-  const externalUserId = String(body.externalUserId || "").trim();
+  const externalUserId =
+    typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
   if (!externalUserId) {
     return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
   }

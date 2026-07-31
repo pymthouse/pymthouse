@@ -6,6 +6,7 @@ import { developerApps, oidcClients } from "@/db/schema";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
+import { AppActivationError } from "@/lib/activation/app-activation";
 import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
@@ -15,6 +16,7 @@ import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowance";
+import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
@@ -186,6 +188,64 @@ export function enforceMintAllowanceGate(allowance: TrialCreditBalance | null): 
   }
 }
 
+async function provisionForMintOrThrow(input: {
+  developerAppId: string;
+  externalUserId: string;
+}): Promise<void> {
+  try {
+    await provisionAppUserBilling({
+      clientId: input.developerAppId,
+      externalUserId: input.externalUserId,
+    });
+  } catch (err) {
+    if (err instanceof AppActivationError) {
+      throw new MintUserSignerTokenError(err.code, err.message, err.status);
+    }
+    if (isHostedAdminClientAvailable()) {
+      throw new MintUserSignerTokenError(
+        "billing_unavailable",
+        err instanceof Error ? err.message : "Billing provisioning failed",
+        402,
+      );
+    }
+    throw err;
+  }
+}
+
+async function loadMintAllowance(input: {
+  provisionExternalUserId: string;
+  identity: ResolvedBillingIdentity;
+}): Promise<TrialCreditBalance | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const spendable = await getSpendableAllowanceDetails({
+    clientId: input.identity.publicClientId,
+    externalUserId: input.provisionExternalUserId,
+    identity: input.identity,
+  });
+  if (spendable == null) {
+    return null;
+  }
+  const gateSubject = input.identity.isOwner
+    ? buildOwnerWireSubject(input.provisionExternalUserId)
+    : input.provisionExternalUserId;
+  // Seed under the same client id the webhook balance gate looks up
+  // (UsageIdentity.client_id === public OIDC client id).
+  seedSignerSpendableBalance(
+    input.identity.publicClientId,
+    gateSubject,
+    spendable.spendableUsdMicros,
+  );
+  return {
+    hasAccess: BigInt(spendable.spendableUsdMicros) > 0n,
+    balanceUsdMicros: spendable.spendableUsdMicros,
+    // Not surfaced in the signer envelope; the mint gate reads balance only.
+    consumedUsdMicros: "0",
+    lifetimeGrantedUsdMicros: spendable.grantedUsdMicros,
+  };
+}
+
 export async function mintSignerJwtForExternalUser(input: {
   publicClientId: string;
   developerAppId: string;
@@ -213,50 +273,15 @@ export async function mintSignerJwtForExternalUser(input: {
     : externalUserId;
   const jwtExternalUserId = provisionExternalUserId;
 
-  let allowance: TrialCreditBalance | null = null;
-  try {
-    await provisionAppUserBilling({
-      clientId: identity.developerAppId,
-      externalUserId: provisionExternalUserId,
-    });
-  } catch (err) {
-    if (isHostedAdminClientAvailable()) {
-      throw new MintUserSignerTokenError(
-        "billing_unavailable",
-        err instanceof Error ? err.message : "Billing provisioning failed",
-        402,
-      );
-    }
-    throw err;
-  }
+  await provisionForMintOrThrow({
+    developerAppId: identity.developerAppId,
+    externalUserId: provisionExternalUserId,
+  });
 
-  // Mint gate uses credits + remaining plan discount (discount covers included usage).
-  if (isHostedAdminClientAvailable()) {
-    const spendable = await getSpendableAllowanceDetails({
-      clientId: identity.publicClientId,
-      externalUserId: provisionExternalUserId,
-      identity,
-    });
-    if (spendable != null) {
-      allowance = {
-        hasAccess: BigInt(spendable.spendableUsdMicros) > 0n,
-        balanceUsdMicros: spendable.spendableUsdMicros,
-        // Not surfaced in the signer envelope; the mint gate reads balance only.
-        consumedUsdMicros: "0",
-        lifetimeGrantedUsdMicros: spendable.grantedUsdMicros,
-      };
-      // Same-request webhook balance_check uses owner: wire subject for owners.
-      const gateSubject = identity.isOwner
-        ? buildOwnerWireSubject(provisionExternalUserId)
-        : provisionExternalUserId;
-      seedSignerSpendableBalance(
-        input.publicClientId,
-        gateSubject,
-        spendable.spendableUsdMicros,
-      );
-    }
-  }
-
+  const allowance = await loadMintAllowance({
+    provisionExternalUserId,
+    identity,
+  });
   enforceMintAllowanceGate(allowance);
 
   const issuer = getIssuer();

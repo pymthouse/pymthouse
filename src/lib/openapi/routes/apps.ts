@@ -105,6 +105,7 @@ registerUserMetadata("delete", "/keys", "Revoke user API key");
 registerUserMetadata("get", "/allowances", "List user allowances");
 registerUserMetadata("post", "/allowances", "Grant user allowance");
 registerUserMetadata("get", "/subscription", "Get user subscription");
+registerUserMetadata("post", "/subscription/change", "Change user subscription plan");
 
 defineRouteMetadata("post", appPath("/credentials"), {
   tags: ["Credentials"],
@@ -132,7 +133,19 @@ registerAppMetadata("patch", "/billing/stripe", "Update Stripe billing profile s
 });
 registerAppMetadata("delete", "/billing/stripe", "Disconnect Stripe billing", { tags: ["Billing"] });
 registerAppMetadata("post", "/billing/stripe/connect", "Stripe Connect", { tags: ["Billing"] });
-registerAppMetadata("get", "/billing/stripe/callback", "Stripe OAuth callback", { tags: ["Billing"] });
+registerAppMetadata("post", "/billing/stripe/account-link", "Create Stripe Connect account link", {
+  tags: ["Billing"],
+});
+registerAppMetadata("get", "/billing/stripe/callback", "Stripe Connect return callback", {
+  tags: ["Billing"],
+  // Browser redirect after Stripe Account Links / OAuth; auth is the dashboard
+  // session plus the signed OAuth state, not M2M credentials.
+  security: [],
+});
+registerAppMetadata("get", "/billing/stripe/oauth/callback", "Stripe OAuth callback", {
+  tags: ["Billing"],
+  security: [],
+});
 registerAppMetadata("get", "/plans", "List plans", { tags: ["Billing"] });
 registerAppMetadata("post", "/plans", "Create plan", { tags: ["Billing"] });
 registerAppMetadata("put", "/plans", "Update plan", { tags: ["Billing"] });

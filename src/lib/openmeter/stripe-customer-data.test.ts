@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
 import {
+  clearKonnectStripeDefaultPaymentMethod,
   ensureKonnectCustomerStripeBilling,
   ensureStripeCustomerAppData,
   getKonnectCustomerBillingProfileId,
@@ -359,6 +360,46 @@ test("getStripeCustomerAppDataId and Konnect billing helpers", async (t) => {
   );
   assert.equal(await getKonnectCustomerBillingProfileId("cust_helpers"), "prof_h");
   assert.equal(await getKonnectDefaultPaymentMethodId("cust_helpers"), "pm_h");
+});
+
+test("clearKonnectStripeDefaultPaymentMethod drops the stored pointer", async (t) => {
+  withKonnectEnv(t);
+  let putBody = "";
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    assert.match(url, /\/customers\/cust_clear\/billing$/);
+    if (method === "GET") {
+      return new Response(
+        JSON.stringify({
+          billing_profile: { id: "prof_c" },
+          app_data: {
+            stripe: {
+              customer_id: "cus_c",
+              default_payment_method_id: "pm_detached",
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    putBody = String(init?.body ?? "");
+    return new Response(
+      JSON.stringify({
+        billing_profile: { id: "prof_c" },
+        app_data: { stripe: { customer_id: "cus_c" } },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await clearKonnectStripeDefaultPaymentMethod({
+    customerId: "cust_clear",
+    stripeCustomerId: "cus_c",
+  });
+
+  assert.match(putBody, /cus_c/);
+  assert.doesNotMatch(putBody, /default_payment_method_id/);
 });
 
 test("Konnect billing helpers return null outside Konnect mode", async (t) => {

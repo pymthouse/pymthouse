@@ -71,11 +71,12 @@ async function createStripeCustomer(input: {
 
 async function getKonnectCustomerBilling(
   customerId: string,
+  signal?: AbortSignal,
 ): Promise<KonnectCustomerBillingData> {
   try {
     return await konnectAdminFetch<KonnectCustomerBillingData>(
       `/customers/${encodeURIComponent(customerId)}/billing`,
-      { method: "GET" },
+      { method: "GET", signal },
       "customer-billing",
     );
   } catch (err) {
@@ -103,15 +104,30 @@ async function upsertKonnectCustomerBilling(input: {
   customerId: string;
   stripeCustomerId: string;
   billingProfileId?: string;
+  /** `null` drops the stored pointer; omit it to carry the existing one forward. */
+  defaultPaymentMethodId?: string | null;
 }): Promise<KonnectCustomerBillingData> {
   const existing = await getKonnectCustomerBilling(input.customerId);
   const profileId =
     input.billingProfileId?.trim() || existing.billing_profile?.id?.trim();
+  // The PUT replaces app_data.stripe wholesale, so carry the existing default
+  // pointer forward when the caller is not changing it.
+  const defaultPaymentMethodId =
+    input.defaultPaymentMethodId === null
+      ? undefined
+      : input.defaultPaymentMethodId?.trim() ||
+        existing.app_data?.stripe?.default_payment_method_id?.trim();
+  const stripe: { customer_id: string; default_payment_method_id?: string } = {
+    customer_id: input.stripeCustomerId,
+  };
+  if (defaultPaymentMethodId) {
+    stripe.default_payment_method_id = defaultPaymentMethodId;
+  }
   const body: {
-    app_data: { stripe: { customer_id: string } };
+    app_data: { stripe: typeof stripe };
     billing_profile?: { id: string };
   } = {
-    app_data: { stripe: { customer_id: input.stripeCustomerId } },
+    app_data: { stripe },
   };
   if (profileId) {
     body.billing_profile = { id: profileId };
@@ -124,6 +140,43 @@ async function upsertKonnectCustomerBilling(input: {
     },
     "customer-billing",
   );
+}
+
+/**
+ * Point Konnect app_data at a new default payment method so OpenMeter
+ * invoicing charges the method the owner picked. No-op outside Konnect mode.
+ */
+export async function setKonnectStripeDefaultPaymentMethod(input: {
+  customerId: string;
+  stripeCustomerId: string;
+  paymentMethodId: string;
+}): Promise<void> {
+  if (!isKonnectMode()) {
+    return;
+  }
+  await upsertKonnectCustomerBilling({
+    customerId: input.customerId,
+    stripeCustomerId: input.stripeCustomerId,
+    defaultPaymentMethodId: input.paymentMethodId,
+  });
+}
+
+/**
+ * Drop the Konnect app_data pointer so OpenMeter invoicing stops charging a
+ * payment method that is no longer attached. No-op outside Konnect mode.
+ */
+export async function clearKonnectStripeDefaultPaymentMethod(input: {
+  customerId: string;
+  stripeCustomerId: string;
+}): Promise<void> {
+  if (!isKonnectMode()) {
+    return;
+  }
+  await upsertKonnectCustomerBilling({
+    customerId: input.customerId,
+    stripeCustomerId: input.stripeCustomerId,
+    defaultPaymentMethodId: null,
+  });
 }
 
 async function getSelfHostedStripeCustomerId(
@@ -267,13 +320,36 @@ export async function getKonnectCustomerBillingProfileId(
 export async function getKonnectDefaultPaymentMethodId(
   customerId: string,
 ): Promise<string | null> {
+  return (await getKonnectStripeBillingRefs(customerId)).defaultPaymentMethodId;
+}
+
+export type KonnectStripeBillingRefs = {
+  stripeCustomerId: string | null;
+  defaultPaymentMethodId: string | null;
+};
+
+/**
+ * Both Stripe ids from a single Konnect /billing read. Callers that need the
+ * customer and its default payment method must use this rather than pairing
+ * getKonnectStripeCustomerId + getKonnectDefaultPaymentMethodId, which fetch
+ * the same uncached document twice.
+ */
+export async function getKonnectStripeBillingRefs(
+  customerId: string,
+  signal?: AbortSignal,
+): Promise<KonnectStripeBillingRefs> {
   if (!isKonnectMode()) {
-    return null;
+    return { stripeCustomerId: null, defaultPaymentMethodId: null };
   }
   try {
-    const data = await getKonnectCustomerBilling(customerId);
-    return data.app_data?.stripe?.default_payment_method_id?.trim() || null;
+    const data = await getKonnectCustomerBilling(customerId, signal);
+    const stripe = data.app_data?.stripe;
+    return {
+      stripeCustomerId: stripe?.customer_id?.trim() || null,
+      defaultPaymentMethodId:
+        stripe?.default_payment_method_id?.trim() || null,
+    };
   } catch {
-    return null;
+    return { stripeCustomerId: null, defaultPaymentMethodId: null };
   }
 }

@@ -8,10 +8,12 @@ import OwnerBillingView from "@/components/OwnerBillingView";
 import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
-import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
 
 function isTurnkeyFundingConfigured(): boolean {
-  return isTurnkeyWalletConfigured();
+  return Boolean(
+    process.env.NEXT_PUBLIC_ORGANIZATION_ID?.trim() &&
+      process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID?.trim(),
+  );
 }
 
 export default async function BillingPage() {
@@ -26,6 +28,7 @@ export default async function BillingPage() {
           userId: "",
           cycle: { start: new Date().toISOString(), end: new Date().toISOString() },
           creditAllowance: null,
+          paymentMethods: [],
           subscriptions: [],
           invoices: [],
           openMeterConfigured: false,
@@ -55,7 +58,9 @@ export default async function BillingPage() {
     <OwnerBillingView
       data={data}
       paymentMethodPanel={
-        data.openMeterConfigured ? <OwnerPaymentMethodButton /> : null
+        data.openMeterConfigured ? (
+          <OwnerPaymentMethodButton hasPaymentMethod={data.paymentMethods.length > 0} />
+        ) : null
       }
       adminFundPanel={adminFundPanel}
     />

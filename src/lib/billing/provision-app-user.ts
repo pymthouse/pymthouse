@@ -1,3 +1,4 @@
+import { runActivationGate } from "@/lib/activation/app-activation";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { findOrCreateAppEndUser } from "@/lib/billing";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
@@ -61,6 +62,8 @@ async function provisionAppUserBillingUncached(input: {
   externalUserId: string;
 }): Promise<ProvisionAppUserBillingResult> {
   const externalUserId = input.externalUserId.trim();
+  // Defence-in-depth cost-rail floor (creation-only; existing users pass).
+  await runActivationGate("provision", input.clientId, { externalUserId });
   // Independent Neon upserts — run them concurrently.
   const [appUser, endUser] = await Promise.all([
     resolveOrCreateAppUser({

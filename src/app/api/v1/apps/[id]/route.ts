@@ -35,6 +35,7 @@ import {
 import { deleteDeveloperAppAndRelatedData } from "@/lib/delete-developer-app";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { authenticateAppClient } from "@/lib/auth";
+import { resolveAppActivation } from "@/lib/activation/app-activation";
 import {
   listAvailableFiatOracleProviders,
   resolveBillingOracleProviderKey,
@@ -156,6 +157,28 @@ export async function GET(
         clientInfo.allowedScopes ?? DEFAULT_OIDC_SCOPES,
       )
     : "app_level";
+
+  let activation = null;
+  try {
+    // Soft budget so a slow OpenMeter spendable lookup cannot stall the
+    // dashboard detail response. Failures stay null (activation is advisory here).
+    activation = await Promise.race([
+      resolveAppActivation(app.id),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("resolveAppActivation timed out")),
+          2_500,
+        );
+      }),
+    ]);
+  } catch (err) {
+    console.warn(
+      "apps/[id] GET: activation lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    activation = null;
+  }
+
   return NextResponse.json({
     ...appWithoutOidcClientId,
     billingPattern,
@@ -164,6 +187,7 @@ export async function GET(
     canEdit: await canEditProviderApp(auth),
     canDeleteApp: auth.app.ownerId === auth.userId,
     canManageBilling: auth.app.ownerId === auth.userId || auth.role === "admin",
+    activation,
     oidcClient: clientInfo
       ? {
           ...clientInfo,
