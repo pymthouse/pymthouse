@@ -677,7 +677,7 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect merchant Connect (+ clear OM Stripe profile ids) |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (requires merchant + Connect ready when `ACTIVATION_GATE_MODE` is `enforce_revenue` or `enforce`) |
-| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl` |
+| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl`. Gated by `sell_paid_plans` under `enforce_revenue`/`enforce` — migrate users off a phased-out plan before switching to `owner_rollup`, or the change is denied with `stripe_connect_required` |
 
 ### App activation gate
 
@@ -687,7 +687,7 @@ Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `en
 | --- | --- |
 | `off` | Resolve + expose `activation` on `GET /api/v1/apps/{id}`; never deny |
 | `log` | Would-deny writes `activation_gate_would_deny` audit rows; still allow |
-| `enforce_revenue` | Deny priced plan activate + checkout without merchant Connect readiness |
+| `enforce_revenue` | Deny priced plan activate + checkout + `subscription/change` without merchant Connect readiness |
 | `enforce` | Also deny new end-user provisioning when owner wallet is empty or `endUserCap` is reached |
 
 `GET /api/v1/apps/{id}` includes an `activation` object:
@@ -711,7 +711,7 @@ Denial responses use RFC 9457 problem details (`Content-Type: application/proble
 | --- | --- | --- |
 | Owner wallet empty | `402` | `owner_balance_exhausted` |
 | Per-app user cap reached | `403` | `end_user_cap_reached` |
-| Paid plan / checkout without Connect | `403` | `stripe_connect_required` |
+| Paid plan / checkout / plan change without Connect | `403` | `stripe_connect_required` |
 | Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |
 
 **Hybrid billing:** OpenMeter meters usage and owns subscriptions. End-user Checkout/invoices use the merchant Connected Account (direct charges + optional `applicationFeeBps`) when `stripeChargesEnabled`. Until then, OM Stripe Checkout remains a fallback unless `connectPaymentsOnly` (or `STRIPE_CONNECT_PAYMENTS_ONLY=1`). With `ACTIVATION_GATE_MODE=enforce_revenue|enforce`, checkout requires `billingMode=merchant` and Connect readiness (`charges_enabled` + `details_submitted`).

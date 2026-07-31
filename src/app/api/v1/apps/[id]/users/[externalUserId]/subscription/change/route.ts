@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runActivationGate } from "@/lib/activation/app-activation";
+import { activationErrorResponse } from "@/lib/activation/problem";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
 import { changeAppUserSubscriptionPlan } from "@/lib/openmeter/subscriptions-billing";
 import type { SubscriptionChangeTiming } from "@/lib/openmeter/konnect-subscriptions";
@@ -11,6 +13,17 @@ function parseTiming(raw: unknown): SubscriptionChangeTiming | undefined {
     return raw;
   }
   throw new Error('timing must be "immediate" or "next_billing_cycle"');
+}
+
+async function runSellGate(appId: string): Promise<NextResponse | null> {
+  try {
+    await runActivationGate("sell_paid_plans", appId);
+    return null;
+  } catch (err) {
+    const problem = activationErrorResponse(err);
+    if (problem) return problem;
+    throw err;
+  }
 }
 
 function subscriptionChangeErrorResponse(err: unknown): NextResponse {
@@ -68,6 +81,11 @@ export async function POST(
       { error: err instanceof Error ? err.message : "Invalid timing" },
       { status: 400 },
     );
+  }
+
+  const gateProblem = await runSellGate(access.app.id);
+  if (gateProblem) {
+    return gateProblem;
   }
 
   try {
