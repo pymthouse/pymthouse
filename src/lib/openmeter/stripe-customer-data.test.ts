@@ -303,6 +303,114 @@ test("ensureKonnectCustomerStripeBilling reuses existing Stripe customer", async
   assert.equal(stripeCreates, 0);
 });
 
+test("ensureKonnectCustomerStripeBilling recovers Stripe customer from label mirror", async (t) => {
+  withKonnectEnv(t);
+  let stripeCreates = 0;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (isStripeApiHost(url)) {
+      stripeCreates += 1;
+      throw new Error("should not create stripe customer");
+    }
+    // Moving to the free profile wiped app_data, so only the mirror remains.
+    if (url.includes("/customers/cust_k6/billing") && method === "GET") {
+      return new Response(JSON.stringify({ app_data: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/customers/cust_k6/billing") && method === "PUT") {
+      return new Response(
+        JSON.stringify({
+          billing_profile: { id: "prof_6" },
+          app_data: { stripe: { customer_id: "cus_mirrored" } },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.includes("/customers/cust_k6") && method === "GET") {
+      return new Response(
+        JSON.stringify({
+          id: "cust_k6",
+          key: "app_x:user",
+          name: "Acme",
+          labels: { pymthouse_stripe_customer_id: "cus_mirrored" },
+          usage_attribution: { subject_keys: ["app_x:user"] },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  });
+
+  const id = await ensureKonnectCustomerStripeBilling({
+    customerId: "cust_k6",
+    billingProfileId: "prof_6",
+  });
+  assert.equal(id, "cus_mirrored");
+  assert.equal(stripeCreates, 0);
+});
+
+test("ensureKonnectCustomerStripeBilling mirrors with snake_case subject keys intact", async (t) => {
+  withKonnectEnv(t);
+  let customerPut: Record<string, unknown> | null = null;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (isStripeApiHost(url)) {
+      return new Response(JSON.stringify({ id: "cus_fresh" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/customers/cust_k7/billing")) {
+      return new Response(
+        JSON.stringify({
+          billing_profile: { id: "prof_7" },
+          app_data: method === "PUT" ? { stripe: { customer_id: "cus_fresh" } } : {},
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.includes("/customers/cust_k7") && method === "PUT") {
+      customerPut = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(JSON.stringify({ id: "cust_k7" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/customers/cust_k7") && method === "GET") {
+      return new Response(
+        JSON.stringify({
+          id: "cust_k7",
+          name: "Acme",
+          labels: {},
+          usage_attribution: { subject_keys: ["app_x:user"] },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  });
+
+  await ensureKonnectCustomerStripeBilling({
+    customerId: "cust_k7",
+    billingProfileId: "prof_7",
+  });
+
+  assert.ok(customerPut, "expected a customer PUT mirroring the Stripe id");
+  const body = customerPut as {
+    labels?: Record<string, string>;
+    usage_attribution?: { subject_keys?: string[] };
+    usageAttribution?: unknown;
+  };
+  assert.equal(body.labels?.pymthouse_stripe_customer_id, "cus_fresh");
+  // camelCase would be ignored by Konnect and silently wipe the subject keys.
+  assert.equal(body.usageAttribution, undefined);
+  assert.deepEqual(body.usage_attribution?.subject_keys, ["app_x:user"]);
+});
+
 test("ensureKonnectCustomerStripeBilling fails when app data not persisted", async (t) => {
   withKonnectEnv(t);
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

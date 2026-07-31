@@ -4,10 +4,7 @@ import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
-import {
-  applyFreeBillingProfileToCustomer,
-  prepareAppCustomerStripeBilling,
-} from "./billing-profiles";
+import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomer } from "./customers";
 import {
@@ -342,14 +339,10 @@ export async function ensureStarterSubscriptionForAppUser(input: {
 
   const client = getHostedAdminClient();
   const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
-  // Starter is a real synced plan on the Stripe billing profile. Included usage
-  // works without a payment method; we only need Stripe customer app data (cus_…).
-  await prepareAppCustomerStripeBilling({
-    client,
-    clientId: identity.developerAppId,
-    customerId: customer.id,
-    customerKey: identity.customerKey,
-  });
+  // Starter needs no Stripe setup: end users only get a Stripe customer and a
+  // payment method when they check out into a paid plan. Pinning them to the
+  // app's Stripe billing profile here makes Konnect reject the subscription
+  // with "customers need a default payment method".
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
 

@@ -15,6 +15,7 @@ import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   ensureKonnectCustomerStripeBilling,
   ensureStripeCustomerAppData,
+  setKonnectCustomerBillingProfile,
 } from "./stripe-customer-data";
 
 /** ISO 3166-1 alpha-2; required on billing profile supplier for OpenMeter invoicing. */
@@ -471,6 +472,17 @@ export async function applyFreeBillingProfileToCustomer(input: {
   customerId: string;
 }): Promise<void> {
   const profileId = await ensureFreeBillingProfile(input.client);
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  if (useKonnect) {
+    await setKonnectCustomerBillingProfile({
+      customerId: input.customerId,
+      billingProfileId: profileId,
+    });
+    return;
+  }
   await assignCustomerBillingProfileOverride({
     client: input.client,
     customerId: input.customerId,

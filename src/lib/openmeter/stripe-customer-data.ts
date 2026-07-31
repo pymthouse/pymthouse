@@ -97,6 +97,89 @@ async function getKonnectStripeCustomerId(
 }
 
 /**
+ * Konnect drops `app_data.stripe` when a customer moves to a profile without the
+ * Stripe app (the free/Starter profile), so the `cus_…` is also mirrored into
+ * customer metadata. Re-provisioning reads it back from there instead of creating
+ * a duplicate Stripe customer.
+ */
+const STRIPE_CUSTOMER_LABEL_KEY = "pymthouse_stripe_customer_id";
+
+/**
+ * Konnect stores customer key/value data in `labels`; a `metadata` field is
+ * accepted and silently discarded.
+ */
+type KonnectCustomerRecord = {
+  name?: string;
+  labels?: Record<string, string>;
+  usage_attribution?: { subject_keys?: string[] };
+};
+
+async function getKonnectCustomer(
+  customerId: string,
+): Promise<KonnectCustomerRecord | null> {
+  try {
+    return await konnectAdminFetch<KonnectCustomerRecord>(
+      `/customers/${encodeURIComponent(customerId)}`,
+      { method: "GET" },
+      "customer",
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function recallStripeCustomerId(customerId: string): Promise<string | null> {
+  const customer = await getKonnectCustomer(customerId);
+  return customer?.labels?.[STRIPE_CUSTOMER_LABEL_KEY]?.trim() || null;
+}
+
+async function rememberStripeCustomerId(input: {
+  customerId: string;
+  stripeCustomerId: string;
+}): Promise<void> {
+  try {
+    const customer = await getKonnectCustomer(input.customerId);
+    if (!customer) {
+      throw new Error(`customer ${input.customerId} not readable`);
+    }
+    if (
+      customer.labels?.[STRIPE_CUSTOMER_LABEL_KEY]?.trim() ===
+      input.stripeCustomerId
+    ) {
+      return;
+    }
+    // The customer PUT is a full replace and expects snake_case: sending
+    // camelCase `usageAttribution` is ignored and wipes the subject keys, which
+    // then cannot be restored while a subscription is active. Echo the existing
+    // keys back unchanged so the active-subscription guard does not trip either.
+    await konnectAdminFetch(
+      `/customers/${encodeURIComponent(input.customerId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          name: customer.name,
+          usage_attribution: {
+            subject_keys: customer.usage_attribution?.subject_keys ?? [],
+          },
+          labels: {
+            ...(customer.labels ?? {}),
+            [STRIPE_CUSTOMER_LABEL_KEY]: input.stripeCustomerId,
+          },
+        }),
+      },
+      "customer",
+    );
+  } catch (err) {
+    // The Stripe pointer in app_data is already written; losing the mirror only
+    // costs us a duplicate customer on a later profile move.
+    console.warn("openmeter: failed to mirror Stripe customer id into labels", {
+      customerId: input.customerId,
+      error: err instanceof Error ? err.message : err,
+    });
+  }
+}
+
+/**
  * Konnect persists Stripe app data via PUT /customers/{id}/billing (with app_data),
  * not PUT …/billing/app-data (returns 200 but leaves app_data empty).
  */
@@ -140,6 +223,46 @@ async function upsertKonnectCustomerBilling(input: {
     },
     "customer-billing",
   );
+}
+
+/**
+ * Konnect: pin a customer to a billing profile without provisioning Stripe.
+ * `billing.customers.createOverride` does not persist on Konnect, so profile
+ * moves for Stripe-less (free / Starter) customers must go through this PUT.
+ * The PUT replaces app_data wholesale, so an existing Stripe pointer is carried
+ * forward; Konnect still drops it when the destination profile has no Stripe app
+ * installed (moving to the sandbox/free profile), which is why an upgrade back
+ * to a paid plan re-provisions the `cus_…`.
+ */
+export async function setKonnectCustomerBillingProfile(input: {
+  customerId: string;
+  billingProfileId: string;
+}): Promise<void> {
+  const existing = await getKonnectCustomerBilling(input.customerId);
+  const stripe = existing.app_data?.stripe;
+  const body: {
+    billing_profile: { id: string };
+    app_data?: { stripe: NonNullable<typeof stripe> };
+  } = {
+    billing_profile: { id: input.billingProfileId },
+  };
+  if (stripe?.customer_id?.trim()) {
+    body.app_data = { stripe };
+  }
+  const written = await konnectAdminFetch<KonnectCustomerBillingData>(
+    `/customers/${encodeURIComponent(input.customerId)}/billing`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+    "customer-billing",
+  );
+  const profile = written.billing_profile?.id?.trim();
+  if (profile !== input.billingProfileId) {
+    throw new Error(
+      `Konnect billing profile mismatch for ${input.customerId}: expected ${input.billingProfileId}, got ${profile ?? "none"}`,
+    );
+  }
 }
 
 /**
@@ -263,9 +386,12 @@ export async function ensureKonnectCustomerStripeBilling(input: {
   name?: string;
   billingProfileId: string;
 }): Promise<string> {
-  const existing = await getKonnectStripeCustomerId(input.customerId);
+  // app_data first (cheapest, and authoritative while it is present), then the
+  // label mirror, so a customer returning from the free profile keeps its
+  // original Stripe customer instead of orphaning it behind a new one.
   const stripeCustomerId =
-    existing ||
+    (await getKonnectStripeCustomerId(input.customerId)) ||
+    (await recallStripeCustomerId(input.customerId)) ||
     (await createStripeCustomer({
       openmeterCustomerId: input.customerId,
       customerKey: input.customerKey,
@@ -288,6 +414,10 @@ export async function ensureKonnectCustomerStripeBilling(input: {
       `Konnect billing profile mismatch for ${input.customerId}: expected ${input.billingProfileId}, got ${profile ?? "none"}`,
     );
   }
+  await rememberStripeCustomerId({
+    customerId: input.customerId,
+    stripeCustomerId: persisted,
+  });
   return persisted;
 }
 

@@ -2,7 +2,8 @@
  * Migrate OpenMeter customers off Sandbox billing profiles onto Stripe profiles.
  *
  * For each customer: ensure Stripe customer app data (cus_…, no card), then pin
- * to the app (or owners) Stripe billing profile.
+ * to the app (or owners) Stripe billing profile. End users without a paid
+ * subscription are left on the free profile that Starter requires.
  *
  * Usage:
  *   npx tsx scripts/openmeter-migrate-sandbox-to-stripe.ts
@@ -37,7 +38,14 @@ import {
   getStripeCustomerAppDataId,
 } from "../src/lib/openmeter/stripe-customer-data";
 import { getHostedOpenMeterUrl } from "../src/lib/openmeter/constants";
+import { buildOpenMeterPlanKey } from "../src/lib/openmeter/plans-sync";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
+import {
+  findOpenMeterSubscriptionByPlanKey,
+  isOpenMeterSubscriptionActive,
+  listOpenMeterSubscriptionsForCustomer,
+} from "../src/lib/openmeter/subscription-read";
+import { getOrCreateStarterPlan } from "../src/lib/starter-default-plan";
 import { sanitizeForLog } from "../src/lib/sanitize-for-log";
 
 type Args = {
@@ -157,6 +165,34 @@ async function customerNeedsMigration(input: {
   return { needs: false, reason: "ok", profileId, stripeCus };
 }
 
+/**
+ * Starter end users belong on the free billing profile: Konnect rejects a
+ * Starter subscription for a customer pinned to a Stripe profile without a
+ * default payment method. Only end users holding a paid subscription get moved.
+ */
+async function hasPaidSubscription(input: {
+  clientId: string;
+  customerId: string;
+}): Promise<boolean> {
+  const client = getHostedAdminClient();
+  const starter = await getOrCreateStarterPlan(input.clientId);
+  // Listed subscriptions carry only plan_id, so match Starter through the
+  // plan-key resolver and compare by subscription id.
+  const starterSub = await findOpenMeterSubscriptionByPlanKey(
+    client,
+    input.customerId,
+    buildOpenMeterPlanKey(input.clientId, starter.id),
+    { openmeterPlanId: starter.openmeterPlanId },
+  );
+  const subscriptions = await listOpenMeterSubscriptionsForCustomer(
+    client,
+    input.customerId,
+  );
+  return subscriptions.some(
+    (sub) => isOpenMeterSubscriptionActive(sub.status) && sub.id !== starterSub?.id,
+  );
+}
+
 async function migrateAppUser(input: {
   clientId: string;
   externalUserId: string;
@@ -183,6 +219,18 @@ async function migrateAppUser(input: {
     }
     const ensured = await ensureOpenMeterCustomer(client, key);
     customerId = ensured.id;
+  }
+
+  if (
+    !(await hasPaidSubscription({
+      clientId: identity.developerAppId,
+      customerId,
+    }))
+  ) {
+    console.log(
+      `[skip] ${key} customer=${customerId} starter-only (stays on free billing profile)`,
+    );
+    return "skipped";
   }
 
   const ready = await ensureAppStripeBillingReady({
