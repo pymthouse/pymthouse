@@ -26,7 +26,10 @@ import {
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
 } from "@/lib/openmeter/customer-key";
-import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import {
+  ensureOpenMeterCustomer,
+  resolveCustomerSubjectKeys,
+} from "@/lib/openmeter/customers";
 import {
   defaultStarterIncludedUsdMicros,
   planDisplayNameWithStarter,
@@ -348,6 +351,33 @@ function buildOwnerWalletUsageSubjects(
   );
 }
 
+/**
+ * Subjects to read for the owner wallet.
+ *
+ * Prefers `usageAttribution.subjectKeys` from the OpenMeter customer, because
+ * that is the exact set OpenMeter's invoicing runs over — reading anything
+ * wider shows usage the billing engine will never charge for. Falls back to the
+ * transitional union only when the customer record cannot be read, so a lookup
+ * failure degrades to the old behaviour rather than reporting zero.
+ *
+ * `classifyUsageAttributionConsistency` reports the gap between the two.
+ * See docs/adr-owner-vs-app-billing.md.
+ */
+async function resolveOwnerWalletReadSubjects(input: {
+  client: OpenMeter;
+  ownerUserId: string;
+  ownedApps: OwnedApp[];
+}): Promise<string[]> {
+  const attributed = await resolveCustomerSubjectKeys(
+    input.client,
+    buildOwnerCustomerKey(input.ownerUserId),
+  );
+  if (attributed.length > 0) {
+    return attributed;
+  }
+  return buildOwnerWalletUsageSubjects(input.ownerUserId, input.ownedApps);
+}
+
 async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
   const rows = await db
     .select({
@@ -529,8 +559,14 @@ async function mapSubscriptionRow(input: {
   });
 
   const isSharedOwnerWallet = input.candidate.appPublicClientId == null;
+  // Read the subjects OpenMeter actually bills for this customer, so the
+  // figure shown matches the invoice it explains.
   const usageSubjects = isSharedOwnerWallet
-    ? buildOwnerWalletUsageSubjects(input.ownerUserId, input.ownedApps)
+    ? await resolveOwnerWalletReadSubjects({
+        client: input.client,
+        ownerUserId: input.ownerUserId,
+        ownedApps: input.ownedApps,
+      })
     : [input.candidate.customerKey];
 
   const usage = await querySubjectCycleUsage({
@@ -769,7 +805,11 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   const dailyUsage = await withSoftTimeout(
     querySubjectDailyUsage({
       client: adminClient,
-      subjects: buildOwnerWalletUsageSubjects(userId, ownedApps),
+      subjects: await resolveOwnerWalletReadSubjects({
+        client: adminClient,
+        ownerUserId: userId,
+        ownedApps,
+      }),
       start: cycle.start,
       end: cycle.end,
     }),

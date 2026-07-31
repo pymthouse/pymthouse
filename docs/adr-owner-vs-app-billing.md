@@ -109,6 +109,47 @@ move out of owner-editable configuration entirely.
 5. **One Stripe connected account per owner**, opted into per app. A Builder
    onboards Connect once.
 
+### Usage reads follow customer id
+
+**OpenMeter must be able to charge without consulting PymtHouse.** Its billing
+automation runs per **customer**, over exactly that customer's
+`usageAttribution.subjectKeys`. Any usage query that reads a different subject
+set produces a number that cannot be reconciled with the invoice it purports to
+explain.
+
+The read path diverged from this. `buildOwnerMeterSubjects()` returns a
+hand-built union of four forms — bare `{users.id}`, `owner:{id}`,
+`app_…:{id}`, `app_…:owner:{id}` — while `ensureOwnerCustomer()` attributes only
+`[bareId]` for existing customers, attaching the transitional forms
+best-effort at create time. Its own comment records the split: *"Meter dual-read
+for usage does not require those keys on the customer record."*
+
+That divergence fails in the dangerous direction. Usage landing on an
+unattributed subject is metered, shown in the PymtHouse UI, and **never
+invoiced** — a revenue leak that looks like normal operation, because the UI
+over-reports exactly the amount the billing engine ignores.
+
+**Invariant: the subjects PymtHouse reads for a customer are the subjects
+OpenMeter attributes to that customer.**
+
+- Reads resolve subjects from the customer record
+  (`resolveCustomerSubjectKeys`), not from a hand-built union. The displayed
+  figure is therefore the billable figure by construction, and the transitional
+  union narrows automatically as migration completes rather than needing a
+  coordinated cut-over.
+- The union survives only as a fallback for a failed customer lookup, so an
+  outage degrades to the old behaviour instead of reporting zero.
+- `classifyUsageAttributionConsistency` reports any subject carrying usage that
+  no customer is attributed, as an `error`. This must reach zero before the
+  transitional forms are dropped.
+- Ingest should emit the canonical customer subject directly, so
+  `subjectKeys = [customerKey]` is sufficient and the union disappears.
+
+Consequence to expect: for an owner mid-migration, displayed usage may **fall**
+to the attributed subset. That is a correction, not a regression — the
+difference was never going to be billed. The audit surfaces the gap explicitly
+rather than letting the UI absorb it.
+
 ### Why not the alternative
 
 Letting an owner subscribe to their own app's retail plan was considered and

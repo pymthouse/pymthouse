@@ -6,6 +6,7 @@ import {
   classifyPhaseOutPastDeadline,
   classifySpendableGateConsistency,
   classifyStarterPlanRemoteConsistency,
+  classifyUsageAttributionConsistency,
   readUsageDiscountUsdMicrosFromPlanBody,
   summarizeFindings,
   type LocalStarterPlanRef,
@@ -318,4 +319,66 @@ test("classifyPhaseOutPastDeadline ignores before deadline or zero subscribers",
     }).length,
     0,
   );
+});
+
+test("usage on a subject the customer is not attributed is an error", () => {
+  // OpenMeter invoices per customer over subjectKeys, so usage on any other
+  // subject is metered, shown in the UI, and never charged.
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: ["user-1"],
+    subjectsWithUsage: ["user-1", "owner:user-1", "app_x:user-1"],
+  });
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, "usage_on_unattributed_subject");
+  assert.equal(findings[0].severity, "error");
+  assert.deepEqual(findings[0].details?.unattributed, [
+    "owner:user-1",
+    "app_x:user-1",
+  ]);
+});
+
+test("attributed subjects carrying all the usage produce no findings", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: ["user-1", "owner:user-1"],
+    subjectsWithUsage: ["user-1", "owner:user-1"],
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("attributed but idle subjects are harmless", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: ["user-1", "owner:user-1", "app_x:user-1"],
+    subjectsWithUsage: ["user-1"],
+  });
+  assert.deepEqual(findings, []);
+});
+
+test("a customer with no attribution at all cannot be billed", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: [],
+    subjectsWithUsage: ["user-1"],
+  });
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, "customer_has_no_usage_attribution");
+  assert.equal(findings[0].severity, "error");
+});
+
+test("usage attribution comparison ignores whitespace and duplicates", () => {
+  const findings = classifyUsageAttributionConsistency({
+    ownerId: "user-1",
+    customerKey: "user-1",
+    attributedSubjects: [" user-1 ", "user-1", ""],
+    subjectsWithUsage: ["user-1", " user-1"],
+  });
+  assert.deepEqual(findings, []);
 });

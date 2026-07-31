@@ -380,6 +380,68 @@ export function classifyOwnerSubscriptionMapping(input: {
  * Detect mint/signer gate mismatch: unused included allowance but spendable=0.
  * Pure — no I/O.
  */
+/**
+ * Compare the subjects a customer is *attributed* against the subjects that
+ * actually carry metered usage.
+ *
+ * OpenMeter invoices per customer over `usageAttribution.subjectKeys`. A
+ * subject carrying usage that is not attributed to any customer is metered,
+ * displayed, and **never billed** — a silent revenue leak that looks like
+ * normal operation. The reverse (attributed but idle) is harmless.
+ *
+ * See docs/adr-owner-vs-app-billing.md ("Usage reads follow customer id").
+ */
+export function classifyUsageAttributionConsistency(input: {
+  ownerId: string;
+  customerKey: string;
+  /** `usageAttribution.subjectKeys` from the OpenMeter customer record. */
+  attributedSubjects: string[];
+  /** Subjects observed carrying non-zero usage this cycle. */
+  subjectsWithUsage: string[];
+}): BillingConsistencyFinding[] {
+  const attributed = new Set(
+    input.attributedSubjects.map((key) => key.trim()).filter(Boolean),
+  );
+  const used = [
+    ...new Set(input.subjectsWithUsage.map((key) => key.trim()).filter(Boolean)),
+  ];
+
+  if (attributed.size === 0) {
+    return [
+      {
+        code: "customer_has_no_usage_attribution",
+        severity: "error",
+        ownerId: input.ownerId,
+        message: `Customer ${input.customerKey} has no attributed subjects; OpenMeter cannot bill any of its usage.`,
+        details: { customerKey: input.customerKey, subjectsWithUsage: used },
+        remediation:
+          "Re-run openmeter-migrate-owner-customers.ts to attach the settlement subject.",
+      },
+    ];
+  }
+
+  const unattributed = used.filter((subject) => !attributed.has(subject));
+  if (unattributed.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      code: "usage_on_unattributed_subject",
+      severity: "error",
+      ownerId: input.ownerId,
+      message: `Customer ${input.customerKey} has usage on ${unattributed.length} subject(s) it is not attributed: ${unattributed.join(", ")}. This usage is metered but will never be invoiced.`,
+      details: {
+        customerKey: input.customerKey,
+        unattributed,
+        attributed: [...attributed],
+      },
+      remediation:
+        "Attach the subject to the customer, or re-key ingest to the canonical customer subject. Until then PymtHouse shows usage the billing engine will not charge for.",
+    },
+  ];
+}
+
 export function classifySpendableGateConsistency(input: {
   ownerId: string;
   clientId: string;
