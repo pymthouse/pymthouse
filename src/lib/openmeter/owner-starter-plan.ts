@@ -4,10 +4,7 @@ import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cac
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
-import {
-  applyFreeBillingProfileToCustomer,
-  prepareOwnerCustomerStripeBilling,
-} from "./billing-profiles";
+import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
@@ -361,11 +358,10 @@ export async function ensureOwnerStarterSubscription(input: {
     input.publicClientIds ?? [],
   );
 
-  await prepareOwnerCustomerStripeBilling({
-    client,
-    customerId: customer.id,
-    customerKey: customer.key,
-  });
+  // Starter needs no Stripe setup: an owner gets a Stripe customer and a
+  // billing profile when they attach a payment method. Pinning them to the
+  // owners Stripe billing profile here makes Konnect reject the subscription
+  // with "customers need a default payment method".
 
   const existing = await findExistingOwnerWalletSubscription({
     client,

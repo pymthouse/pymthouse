@@ -2,8 +2,9 @@
  * Migrate OpenMeter customers off Sandbox billing profiles onto Stripe profiles.
  *
  * For each customer: ensure Stripe customer app data (cus_…, no card), then pin
- * to the app (or owners) Stripe billing profile. End users without a paid
- * subscription are left on the free profile that Starter requires.
+ * to the app (or owners) Stripe billing profile. Customers that Starter still
+ * covers are left on the free profile it requires: end users without a paid
+ * subscription, and owners with no chargeable payment method.
  *
  * Usage:
  *   npx tsx scripts/openmeter-migrate-sandbox-to-stripe.ts
@@ -38,6 +39,7 @@ import {
   getStripeCustomerAppDataId,
 } from "../src/lib/openmeter/stripe-customer-data";
 import { getHostedOpenMeterUrl } from "../src/lib/openmeter/constants";
+import { ownerHasChargeablePaymentMethod } from "../src/lib/openmeter/owner-payment-method";
 import { buildOpenMeterPlanKey } from "../src/lib/openmeter/plans-sync";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
 import {
@@ -325,6 +327,21 @@ async function migrateOwner(input: {
   const customer = await findOpenMeterCustomerByKey(client, key);
   if (!customer?.id) {
     console.log(`[skip] owner ${sanitizeForLog(key)} — no OpenMeter customer`);
+    return "skipped";
+  }
+
+  // Owners run on Starter's included usage until it is exhausted, and Konnect
+  // rejects a Starter subscription for a customer pinned to a Stripe profile
+  // without a default payment method. Only owners who already have something
+  // chargeable belong on the Stripe collection rail. An unknown answer (Stripe
+  // or OpenMeter unreachable) is treated as "not chargeable" so a lookup
+  // failure cannot strand an owner on a profile that blocks Starter.
+  const chargeable = await ownerHasChargeablePaymentMethod(input.ownerUserId);
+  if (chargeable !== true) {
+    const why = chargeable === null ? "payment method unknown" : "no payment method";
+    console.log(
+      `[skip] owner ${sanitizeForLog(key)} customer=${sanitizeForLog(customer.id)} ${why} (stays on free billing profile)`,
+    );
     return "skipped";
   }
 
