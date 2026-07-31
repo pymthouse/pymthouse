@@ -142,19 +142,28 @@ export function merchantConnectOAuthErrorCode(err: unknown): string {
   return "oauth_failed";
 }
 
-/** Allowlist Stripe-provided OAuth `error` query values for redirects. */
+/**
+ * Allowlist Stripe-provided OAuth `error` query values for redirects.
+ *
+ * Always returns a constant from this fixed map — never the caller-provided
+ * string — so user input cannot flow into redirects or control branching
+ * (CodeQL js/user-controlled-bypass). A missing/empty provider error maps to
+ * "missing_oauth_params".
+ */
+const STRIPE_OAUTH_PROVIDER_ERROR_CODES: Readonly<Record<string, string>> = {
+  "": "missing_oauth_params",
+  access_denied: "access_denied",
+  invalid_request: "invalid_request",
+  invalid_client: "invalid_client",
+  invalid_grant: "invalid_grant",
+  unauthorized_client: "unauthorized_client",
+  unsupported_response_type: "unsupported_response_type",
+  invalid_scope: "invalid_scope",
+  server_error: "server_error",
+  temporarily_unavailable: "temporarily_unavailable",
+};
+
 export function sanitizeStripeOAuthProviderError(error: string): string {
   const code = error.trim().toLowerCase();
-  const allowed = new Set([
-    "access_denied",
-    "invalid_request",
-    "invalid_client",
-    "invalid_grant",
-    "unauthorized_client",
-    "unsupported_response_type",
-    "invalid_scope",
-    "server_error",
-    "temporarily_unavailable",
-  ]);
-  return allowed.has(code) ? code : "oauth_denied";
+  return STRIPE_OAUTH_PROVIDER_ERROR_CODES[code] ?? "oauth_denied";
 }
