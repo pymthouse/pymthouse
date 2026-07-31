@@ -11,7 +11,8 @@ import {
 
 /**
  * End-user signed-ticket request history for the Bearer subject only.
- * Auth: end-user / signer JWT (subject forced from the token — not queryable).
+ * Auth: bare `pmth_*` API key, optional composite `app_*_*`, or end-user/signer JWT
+ * (subject forced from the token — not queryable).
  */
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
