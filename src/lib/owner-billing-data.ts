@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients, plans } from "@/db/schema";
+import { appBillingConfig, developerApps, oidcClients, plans } from "@/db/schema";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import { authOptions } from "@/lib/next-auth-options";
 import {
@@ -85,6 +85,15 @@ export type OwnerBillingPayload = {
   /** Every attached Stripe payment method (Plane A), default flagged. */
   paymentMethods: OwnerPaymentMethodListItem[];
   subscriptions: OwnerBillingSubscriptionRow[];
+  /**
+   * Apps this owner owns, with how each one bills its end users. Every app
+   * here rolls its network cost up to the platform subscription above.
+   */
+  ownedApps: Array<{
+    id: string;
+    name: string;
+    billingMode: "owner_rollup" | "merchant";
+  }>;
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
   /**
@@ -108,6 +117,12 @@ type OwnedApp = {
   developerAppId: string;
   publicClientId: string;
   name: string;
+  /**
+   * owner_rollup — this app's end-user usage is paid by the owner's platform
+   * plan. merchant — the Builder also bills their own end users via Connect,
+   * but the owner still pays PymtHouse for the underlying network usage.
+   */
+  billingMode: "owner_rollup" | "merchant";
 };
 
 type CustomerCandidate = {
@@ -339,9 +354,11 @@ async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
       developerAppId: developerApps.id,
       name: developerApps.name,
       publicClientId: oidcClients.clientId,
+      billingMode: appBillingConfig.billingMode,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .leftJoin(appBillingConfig, eq(appBillingConfig.clientId, developerApps.id))
     .where(eq(developerApps.ownerId, ownerUserId));
 
   return rows
@@ -349,6 +366,10 @@ async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
       developerAppId: row.developerAppId,
       name: row.name,
       publicClientId: row.publicClientId?.trim() || row.developerAppId,
+      billingMode:
+        row.billingMode === "merchant"
+          ? ("merchant" as const)
+          : ("owner_rollup" as const),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -785,6 +806,11 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       creditAllowance,
       paymentMethods,
       subscriptions,
+      ownedApps: ownedApps.map((app) => ({
+        id: app.developerAppId,
+        name: app.name,
+        billingMode: app.billingMode,
+      })),
       invoices: invoicesResult.items,
       ledger,
       openMeterConfigured: true,

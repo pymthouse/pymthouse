@@ -39,6 +39,8 @@ type StripeStatus = {
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
   activation?: ActivationInfo | null;
+  /** True when the viewer may edit platform-controlled fields. */
+  isPlatformAdmin?: boolean;
 };
 
 type InvoiceRow = {
@@ -55,6 +57,42 @@ type Props = {
   appId: string;
   canManageBilling: boolean;
 };
+
+/**
+ * Cost-rail values PymtHouse sets, shown read-only and attributed to the
+ * platform so they do not read as app configuration the Builder forgot to fill
+ * in. See docs/adr-owner-vs-app-billing.md.
+ */
+function PlatformLimits({
+  endUserCap,
+  applicationFeeBps,
+}: Readonly<{ endUserCap: string; applicationFeeBps: string }>) {
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-3">
+      <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
+        Platform limits
+      </p>
+      <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">End-user cap</dt>
+          <dd className="font-mono text-sm tabular-nums text-zinc-300">
+            {endUserCap}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Platform fee</dt>
+          <dd className="font-mono text-sm tabular-nums text-zinc-300">
+            {applicationFeeBps} bps
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-[11px] text-zinc-600">
+        Set by PymtHouse. The cap protects against unbilled network spend; the fee
+        applies to Connect payments. Contact support to request a change.
+      </p>
+    </div>
+  );
+}
 
 /** Primary action styling for this tab's save buttons. */
 const BUTTON_CLASS =
@@ -183,12 +221,16 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
     endUserCap: "25",
   });
 
+  const isPlatformAdmin = status?.isPlatformAdmin === true;
+
   const isDirty =
     savedForm.progressiveBilling !== progressiveBilling ||
     savedForm.thresholdDisplay !== thresholdDisplay ||
-    savedForm.applicationFeeBps !== applicationFeeBps ||
     savedForm.billingMode !== billingMode ||
-    savedForm.endUserCap !== endUserCap;
+    // Only admins can move these, so only they can make the form dirty with them.
+    (isPlatformAdmin &&
+      (savedForm.applicationFeeBps !== applicationFeeBps ||
+        savedForm.endUserCap !== endUserCap));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -324,24 +366,29 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         }
         invoiceThresholdUsdMicros = micros;
       }
-      const parsedCap = Number.parseInt(endUserCap, 10);
-      if (
-        !Number.isFinite(parsedCap) ||
-        parsedCap < 1 ||
-        parsedCap > 1_000_000
-      ) {
-        throw new Error("End-user cap must be an integer between 1 and 1000000");
+      // Platform-controlled fields are admin-only server-side; sending them as
+      // an owner would be rejected with 403, so omit them entirely.
+      const payload: Record<string, unknown> = {
+        progressiveBilling,
+        invoiceThresholdUsdMicros,
+        billingMode,
+      };
+      if (isPlatformAdmin) {
+        const parsedCap = Number.parseInt(endUserCap, 10);
+        if (
+          !Number.isFinite(parsedCap) ||
+          parsedCap < 1 ||
+          parsedCap > 1_000_000
+        ) {
+          throw new Error("End-user cap must be an integer between 1 and 1000000");
+        }
+        payload.endUserCap = parsedCap;
+        payload.applicationFeeBps = Number.parseInt(applicationFeeBps, 10) || 0;
       }
       const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          progressiveBilling,
-          invoiceThresholdUsdMicros,
-          applicationFeeBps: Number.parseInt(applicationFeeBps, 10) || 0,
-          billingMode,
-          endUserCap: parsedCap,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -522,33 +569,43 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 </option>
               </select>
             </label>
-            <label className="block text-sm">
-              <span className="text-zinc-400">End-user cap</span>
-              <input
-                type="number"
-                min={1}
-                max={1000000}
-                className="mt-1 w-40 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-                value={endUserCap}
-                onChange={(e) => setEndUserCap(e.target.value)}
-                disabled={busy}
+            {isPlatformAdmin ? (
+              <>
+                <label className="block text-sm">
+                  <span className="text-zinc-400">End-user cap</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000000}
+                    className="mt-1 w-40 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+                    value={endUserCap}
+                    onChange={(e) => setEndUserCap(e.target.value)}
+                    disabled={busy}
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="text-zinc-500">Platform application fee (bps)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    className="mt-1 w-40 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+                    value={applicationFeeBps}
+                    onChange={(e) => setApplicationFeeBps(e.target.value)}
+                    disabled={busy}
+                  />
+                </label>
+                <p className="text-xs text-zinc-500">
+                  100 bps = 1%. Applied on Connect payment intents / invoices.
+                  Platform-controlled — visible here because you are an admin.
+                </p>
+              </>
+            ) : (
+              <PlatformLimits
+                endUserCap={endUserCap}
+                applicationFeeBps={applicationFeeBps}
               />
-            </label>
-            <label className="block text-sm">
-              <span className="text-zinc-500">Platform application fee (bps)</span>
-              <input
-                type="number"
-                min={0}
-                max={10000}
-                className="mt-1 w-40 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-                value={applicationFeeBps}
-                onChange={(e) => setApplicationFeeBps(e.target.value)}
-                disabled={busy}
-              />
-            </label>
-            <p className="text-xs text-zinc-500">
-              100 bps = 1%. Applied on Connect payment intents / invoices.
-            </p>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"

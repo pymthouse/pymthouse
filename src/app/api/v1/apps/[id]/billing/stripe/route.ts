@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import {
+  platformControlledFieldsError,
+  platformControlledFieldsInBody,
+} from "@/lib/billing/platform-controlled-fields";
 import {
   canManageMerchantBilling,
   getAuthorizedProviderApp,
@@ -230,7 +235,13 @@ export async function GET(
   }
 
   const status = await getStripeConnectStatus(access.auth.app.id);
-  return NextResponse.json({ clientId: access.auth.app.id, ...status });
+  return NextResponse.json({
+    clientId: access.auth.app.id,
+    ...status,
+    // Drives whether the Payments tab offers the platform-controlled fields as
+    // editable inputs or as read-only, platform-attributed values.
+    isPlatformAdmin: access.auth.role === "admin",
+  });
 }
 
 export async function PATCH(
@@ -254,6 +265,18 @@ export async function PATCH(
     body = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // canManageMerchantBilling admits the app owner, which is correct for
+  // revenue-rail settings but not for the platform's own controls.
+  if (access.auth.role !== "admin") {
+    const attempted = platformControlledFieldsInBody(body);
+    if (attempted.length > 0) {
+      return NextResponse.json(
+        { error: platformControlledFieldsError(attempted) },
+        { status: 403 },
+      );
+    }
   }
 
   const parsed = await parseBillingPatchBody(body, access.auth.app.id);
