@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
+import { tryDecodeURIComponent } from "@/lib/billing-utils";
 import { authOptions } from "@/lib/next-auth-options";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
-import { listOwnerWalletInvoices } from "@/lib/openmeter/invoices";
+import { getOwnerWalletInvoice } from "@/lib/openmeter/invoices";
 import { retrievePlatformInvoiceLinks } from "@/lib/stripe/connect-accounts";
 
 /**
@@ -36,19 +37,16 @@ export async function GET(
     return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
   }
 
-  const decodedId = decodeURIComponent(invoiceId).trim();
+  const decodedId = tryDecodeURIComponent(invoiceId)?.trim() ?? "";
   if (!decodedId) {
     return NextResponse.json({ error: "Invoice id is required" }, { status: 400 });
   }
 
-  const { items } = await listOwnerWalletInvoices({
+  const invoice = await getOwnerWalletInvoice({
     client: getHostedAdminClient(),
     ownerUserId: userId,
-    page: 1,
-    pageSize: 100,
+    invoiceId: decodedId,
   });
-
-  const invoice = items.find((item) => item.id === decodedId);
   if (!invoice) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

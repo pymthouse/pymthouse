@@ -447,6 +447,19 @@ export async function unlinkOwnerPaymentMethod(
     return { unlinked: false, paymentMethodId: null };
   }
 
+  // Atomic last-method guard: re-list under the mutation budget so concurrent
+  // DELETEs cannot both pass a stale route-level check.
+  const { items: attached } = await buildOwnerPaymentMethodList({
+    stripeCustomerId: refs.stripeCustomerId,
+    konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+    deps,
+  });
+  if (attached.length <= 1 && attached.some((pm) => pm.id === pmId)) {
+    throw new Error(
+      "This is your only payment method. Add another before removing this one.",
+    );
+  }
+
   const detached = await stripeRequestJson<{ id?: string }>({
     method: "POST",
     path: `/v1/payment_methods/${encodeURIComponent(pmId)}/detach`,

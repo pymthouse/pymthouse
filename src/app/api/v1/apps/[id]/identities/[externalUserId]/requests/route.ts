@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
+import {
+  calendarMonthBoundsUtc,
+  isValidBoundedDateRange,
+} from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { listEndUserSignedTicketRequests } from "@/lib/openmeter/signed-ticket-events";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
@@ -27,7 +30,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: appId, externalUserId: rawExternalUserId } = await params;
-  const externalUserId = decodeURIComponent(rawExternalUserId).trim();
+  // Next.js already decodes dynamic segments — do not decodeURIComponent again.
+  const externalUserId = rawExternalUserId.trim();
   if (!externalUserId) {
     return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
   }
@@ -35,7 +39,12 @@ export async function GET(
   let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
   try {
     providerAuth = await getAuthorizedProviderApp(appId);
-  } catch {
+  } catch (err) {
+    console.warn(
+      "apps-identity-requests: auth resolution failed",
+      appId,
+      err instanceof Error ? err.message : String(err),
+    );
     providerAuth = null;
   }
   if (!providerAuth) {
@@ -54,7 +63,7 @@ export async function GET(
   const from = url.searchParams.get("from") || cycle.start;
   const to = url.searchParams.get("to") || cycle.end;
 
-  if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) {
+  if (!isValidBoundedDateRange(from, to)) {
     return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
   }
 

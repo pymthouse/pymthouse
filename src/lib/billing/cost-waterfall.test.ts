@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  allocateCreditBalancesForSubscriptions,
   buildCostWaterfall,
   formatPaymentMethodLabel,
 } from "@/lib/billing/cost-waterfall";
@@ -127,4 +128,39 @@ test("formatPaymentMethodLabel renders brand and last4", () => {
   assert.equal(formatPaymentMethodLabel({ brand: null, last4: "4242" }), "Card ••4242");
   assert.equal(formatPaymentMethodLabel({ brand: "amex", last4: null }), "Amex");
   assert.equal(formatPaymentMethodLabel(null), null);
+});
+
+test("allocateCreditBalancesForSubscriptions does not reuse the same balance", () => {
+  const allocated = allocateCreditBalancesForSubscriptions(
+    [
+      {
+        subscriptionId: "sub_a",
+        usedUsdMicros: "8000000",
+        discountUsdMicros: "5000000",
+      },
+      {
+        subscriptionId: "sub_b",
+        usedUsdMicros: "4000000",
+        discountUsdMicros: "0",
+      },
+    ],
+    "5000000",
+  );
+
+  // First card sees the full $5 balance; after applying $3 overage, second sees $2.
+  assert.equal(allocated.get("sub_a"), "5000000");
+  assert.equal(allocated.get("sub_b"), "2000000");
+
+  const first = buildCostWaterfall({
+    usedUsdMicros: "8000000",
+    planIncludedUsdMicros: "5000000",
+    creditBalanceUsdMicros: allocated.get("sub_a"),
+  });
+  const second = buildCostWaterfall({
+    usedUsdMicros: "4000000",
+    planIncludedUsdMicros: "0",
+    creditBalanceUsdMicros: allocated.get("sub_b"),
+  });
+  assert.equal(first.credits.appliedUsdMicros, "3000000");
+  assert.equal(second.credits.appliedUsdMicros, "2000000");
 });

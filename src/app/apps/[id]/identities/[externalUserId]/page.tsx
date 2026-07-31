@@ -78,12 +78,21 @@ export default async function AppIdentityDetailPage({
   params,
 }: Readonly<{ params: Promise<{ id: string; externalUserId: string }> }>) {
   const { id, externalUserId: rawExternalUserId } = await params;
-  const externalUserId = decodeURIComponent(rawExternalUserId);
+  // Next.js already decodes dynamic segments — do not decodeURIComponent again.
+  const externalUserId = rawExternalUserId.trim();
+  if (!externalUserId) {
+    notFound();
+  }
 
   let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
   try {
     providerAuth = await getAuthorizedProviderApp(id);
-  } catch {
+  } catch (err) {
+    console.warn(
+      "app-identity-detail: auth resolution failed",
+      id,
+      err instanceof Error ? err.message : String(err),
+    );
     providerAuth = null;
   }
   if (!providerAuth) {
@@ -100,6 +109,13 @@ export default async function AppIdentityDetailPage({
           clientId: app.id,
           startDate: cycle.start,
           endDate: cycle.end,
+        }).catch((err) => {
+          console.warn(
+            "app-identity-detail: listAppIdentities failed",
+            app.id,
+            err instanceof Error ? err.message : String(err),
+          );
+          return [];
         })
       : Promise.resolve([]),
     openMeterConfigured
@@ -118,6 +134,11 @@ export default async function AppIdentityDetailPage({
     (date) => date <= todayKeyUtc,
   );
   const series = buildIdentitySeries(dailyRows, dateKeys, app.name, app.id);
+
+  let statusLabel = "unknown";
+  if (identity) {
+    statusLabel = identity.provisioned ? identity.status : "unprovisioned";
+  }
 
   return (
     <DashboardLayout>
@@ -155,7 +176,7 @@ export default async function AppIdentityDetailPage({
         />
         <SummaryTile
           label="Status"
-          value={identity ? (identity.provisioned ? identity.status : "unprovisioned") : "unknown"}
+          value={statusLabel}
         />
       </div>
 

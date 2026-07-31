@@ -92,6 +92,32 @@ export function buildCostWaterfall(input: {
   };
 }
 
+/**
+ * Assign a prepaid credit balance to each subscription waterfall in order so
+ * the same remaining balance is not applied on every card.
+ * Returns a map of subscriptionId → creditBalanceUsdMicros to pass into each
+ * {@link buildCostWaterfall} call.
+ */
+export function allocateCreditBalancesForSubscriptions(
+  subscriptions: ReadonlyArray<{
+    subscriptionId: string;
+    usedUsdMicros: string;
+    discountUsdMicros?: string | null;
+  }>,
+  startingCreditBalanceUsdMicros: string | null | undefined,
+): Map<string, string> {
+  let remaining = parseMicros(startingCreditBalanceUsdMicros);
+  const allocated = new Map<string, string>();
+  for (const row of subscriptions) {
+    allocated.set(row.subscriptionId, remaining.toString());
+    const used = parseMicros(row.usedUsdMicros);
+    const planCapacity = parseMicros(row.discountUsdMicros);
+    const afterPlan = used - minBigInt(used, planCapacity);
+    remaining -= minBigInt(afterPlan, remaining);
+  }
+  return allocated;
+}
+
 /** Human label for the settlement target, e.g. `Visa ••5094`. */
 export function formatPaymentMethodLabel(
   method: { brand?: string | null; last4?: string | null } | null | undefined,

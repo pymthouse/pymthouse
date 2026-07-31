@@ -787,6 +787,77 @@ export type OpenMeterIdentityTotalsRow = {
   lastActiveDate: string | null;
 };
 
+function identityIdForClientRow(
+  row: MeterQueryRow,
+  clientId: string,
+): string | null {
+  const group = (row.groupBy || {}) as Record<string, unknown>;
+  if (clientIdFromGroup(group, clientId) !== clientId) return null;
+  return groupByString(group, "external_user_id", "") || null;
+}
+
+function accumulateIdentityCounts(
+  rows: MeterQueryRow[],
+  clientId: string,
+): Map<string, number> {
+  const countByUser = new Map<string, number>();
+  for (const row of rows) {
+    const id = identityIdForClientRow(row, clientId);
+    if (!id) continue;
+    countByUser.set(id, (countByUser.get(id) ?? 0) + meterRowValueToCount(row.value));
+  }
+  return countByUser;
+}
+
+function accumulateIdentityFees(
+  rows: MeterQueryRow[],
+  clientId: string,
+): Map<string, number> {
+  const feeByUser = new Map<string, number>();
+  for (const row of rows) {
+    const id = identityIdForClientRow(row, clientId);
+    if (!id) continue;
+    feeByUser.set(id, (feeByUser.get(id) ?? 0) + meterRowValueToNumber(row.value));
+  }
+  return feeByUser;
+}
+
+function accumulateIdentityBillableMillis(
+  rows: MeterQueryRow[],
+  clientId: string,
+): Map<string, bigint> {
+  const billableMillisByUser = new Map<string, bigint>();
+  for (const row of rows) {
+    const id = identityIdForClientRow(row, clientId);
+    if (!id) continue;
+    billableMillisByUser.set(
+      id,
+      (billableMillisByUser.get(id) ?? 0n) + meterRowValueToMillis(row.value),
+    );
+  }
+  return billableMillisByUser;
+}
+
+/** Last active = latest day window that carried a non-zero request count. */
+function accumulateIdentityLastActive(
+  rows: MeterQueryRow[],
+  clientId: string,
+): Map<string, string> {
+  const lastActiveByUser = new Map<string, string>();
+  for (const row of rows) {
+    const id = identityIdForClientRow(row, clientId);
+    if (!id) continue;
+    if (meterRowValueToCount(row.value) <= 0) continue;
+    const dateKey = dateKeyFromMeterWindow(row);
+    if (!dateKey) continue;
+    const current = lastActiveByUser.get(id);
+    if (!current || dateKey > current) {
+      lastActiveByUser.set(id, dateKey);
+    }
+  }
+  return lastActiveByUser;
+}
+
 /**
  * Roll up per-identity cycle totals from period-windowed fee/count/duration
  * rows plus day-windowed counts (the latter only to derive last-active).
@@ -798,49 +869,16 @@ export function aggregateIdentityTotals(input: {
   billableSecsRows: MeterQueryRow[];
   dayCountRows: MeterQueryRow[];
 }): OpenMeterIdentityTotalsRow[] {
-  const externalUserIdFor = (row: MeterQueryRow): string | null => {
-    const group = (row.groupBy || {}) as Record<string, unknown>;
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) return null;
-    return groupByString(group, "external_user_id", "") || null;
-  };
-
-  const countByUser = new Map<string, number>();
-  for (const row of input.countRows) {
-    const id = externalUserIdFor(row);
-    if (!id) continue;
-    countByUser.set(id, (countByUser.get(id) ?? 0) + meterRowValueToCount(row.value));
-  }
-
-  const feeByUser = new Map<string, number>();
-  for (const row of input.feeRows) {
-    const id = externalUserIdFor(row);
-    if (!id) continue;
-    feeByUser.set(id, (feeByUser.get(id) ?? 0) + meterRowValueToNumber(row.value));
-  }
-
-  const billableMillisByUser = new Map<string, bigint>();
-  for (const row of input.billableSecsRows) {
-    const id = externalUserIdFor(row);
-    if (!id) continue;
-    billableMillisByUser.set(
-      id,
-      (billableMillisByUser.get(id) ?? 0n) + meterRowValueToMillis(row.value),
-    );
-  }
-
-  // Last active = latest day window that carried a non-zero request count.
-  const lastActiveByUser = new Map<string, string>();
-  for (const row of input.dayCountRows) {
-    const id = externalUserIdFor(row);
-    if (!id) continue;
-    if (meterRowValueToCount(row.value) <= 0) continue;
-    const dateKey = dateKeyFromMeterWindow(row);
-    if (!dateKey) continue;
-    const current = lastActiveByUser.get(id);
-    if (!current || dateKey > current) {
-      lastActiveByUser.set(id, dateKey);
-    }
-  }
+  const countByUser = accumulateIdentityCounts(input.countRows, input.clientId);
+  const feeByUser = accumulateIdentityFees(input.feeRows, input.clientId);
+  const billableMillisByUser = accumulateIdentityBillableMillis(
+    input.billableSecsRows,
+    input.clientId,
+  );
+  const lastActiveByUser = accumulateIdentityLastActive(
+    input.dayCountRows,
+    input.clientId,
+  );
 
   // Include last-active keys: day and period windows should cover the same
   // events, but a partial meter response must not silently drop an identity.

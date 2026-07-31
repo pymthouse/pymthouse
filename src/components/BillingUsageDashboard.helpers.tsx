@@ -302,13 +302,22 @@ function AppUsageUserTable({
               >
                 <td className="px-4 sm:px-5 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/apps/${entry.app.id}/identities/${encodeURIComponent(userUsage.externalUserId ?? userUsage.endUserId)}`}
-                      className="font-mono text-xs text-zinc-300 transition-colors hover:text-emerald-400"
-                      title={userUsage.userLabel}
-                    >
-                      {userUsage.userLabel}
-                    </Link>
+                    {userUsage.externalUserId ? (
+                      <Link
+                        href={`/apps/${entry.app.id}/identities/${encodeURIComponent(userUsage.externalUserId)}`}
+                        className="font-mono text-xs text-zinc-300 transition-colors hover:text-emerald-400"
+                        title={userUsage.userLabel}
+                      >
+                        {userUsage.userLabel}
+                      </Link>
+                    ) : (
+                      <span
+                        className="font-mono text-xs text-zinc-300"
+                        title={userUsage.userLabel}
+                      >
+                        {userUsage.userLabel}
+                      </span>
+                    )}
                     <span
                       className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
                     >

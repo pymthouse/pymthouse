@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { formatInvoicePeriodLabel } from "@/lib/billing/transactions-ledger";
+import { formatBillingUtcDate } from "@/lib/billing-format";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { TenantInvoiceDto } from "@/lib/openmeter/invoices";
 
@@ -44,34 +45,21 @@ export function invoiceDisplayLabel(invoice: TenantInvoiceDto): string {
 function formatPeriodRange(invoice: TenantInvoiceDto): string {
   const { periodStart, periodEnd } = invoice;
   if (!periodStart && !periodEnd) return "—";
-  const opts: Intl.DateTimeFormatOptions = {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  };
-  const start = periodStart ? new Date(periodStart) : null;
-  const end = periodEnd ? new Date(periodEnd) : null;
   const startLabel =
-    start && !Number.isNaN(start.getTime())
-      ? start.toLocaleDateString(undefined, opts)
+    periodStart && !Number.isNaN(Date.parse(periodStart))
+      ? formatBillingUtcDate(periodStart)
       : null;
   const endLabel =
-    end && !Number.isNaN(end.getTime())
-      ? end.toLocaleDateString(undefined, { ...opts, year: "numeric" })
+    periodEnd && !Number.isNaN(Date.parse(periodEnd))
+      ? formatBillingUtcDate(periodEnd, { year: "numeric" })
       : null;
   if (startLabel && endLabel) return `${startLabel} – ${endLabel}`;
   return endLabel ?? startLabel ?? "—";
 }
 
 function formatIssuedAt(iso: string | undefined): string {
-  if (!iso) return "—";
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  if (!iso || Number.isNaN(Date.parse(iso))) return "—";
+  return formatBillingUtcDate(iso, { year: "numeric" });
 }
 
 function statusBadgeClass(status: string): string {

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
+import {
+  calendarMonthBoundsUtc,
+  isValidBoundedDateRange,
+} from "@/lib/billing-utils";
 import { authenticateAppClient } from "@/lib/auth";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
@@ -24,7 +27,12 @@ export async function GET(
     let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
     try {
       providerAuth = await getAuthorizedProviderApp(clientId);
-    } catch {
+    } catch (err) {
+      console.warn(
+        "apps-identities: auth resolution failed",
+        clientId,
+        err instanceof Error ? err.message : String(err),
+      );
       providerAuth = null;
     }
     if (!providerAuth) {
@@ -49,7 +57,7 @@ export async function GET(
   const startDate = url.searchParams.get("startDate") || cycle.start;
   const endDate = url.searchParams.get("endDate") || cycle.end;
 
-  if (Number.isNaN(Date.parse(startDate)) || Number.isNaN(Date.parse(endDate))) {
+  if (!isValidBoundedDateRange(startDate, endDate)) {
     return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
   }
 

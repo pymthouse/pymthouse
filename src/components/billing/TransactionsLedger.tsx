@@ -7,6 +7,7 @@ import {
   type LedgerEntry,
   type LedgerEntryType,
 } from "@/lib/billing/transactions-ledger";
+import { formatBillingUtcDate } from "@/lib/billing-format";
 import {
   formatUsdMicrosExactTitle,
   formatUsdMicrosSummary,
@@ -36,15 +37,9 @@ function typeLabel(type: LedgerEntryType): string {
   return "invoice";
 }
 
-/** Absolute UTC instant rendered in the viewer's local timezone. */
+/** Absolute UTC instant rendered with a fixed locale for SSR hydration. */
 function formatEntryDate(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return iso;
-  return parsed.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatBillingUtcDate(iso, { year: "numeric" });
 }
 
 function DeltaCell({ entry }: Readonly<{ entry: LedgerEntry }>) {
@@ -61,6 +56,59 @@ function DeltaCell({ entry }: Readonly<{ entry: LedgerEntry }>) {
       {positive ? "+" : "−"}
       {formatUsdMicrosSummary((positive ? delta : -delta).toString())}
     </span>
+  );
+}
+
+/** Open Stripe hosted invoice via the on-demand API (metadata has no signed URL). */
+function LedgerInvoiceDescription({ entry }: Readonly<{ entry: LedgerEntry }>) {
+  const [loading, setLoading] = useState(false);
+
+  if (entry.hostedInvoiceUrl) {
+    return (
+      <a
+        href={entry.hostedInvoiceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-emerald-400 transition-colors hover:text-emerald-300"
+      >
+        {entry.description}
+      </a>
+    );
+  }
+
+  if (!entry.invoiceId) {
+    return <>{entry.description}</>;
+  }
+
+  async function openHostedInvoice() {
+    if (!entry.invoiceId || loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/v1/billing/invoices/${encodeURIComponent(entry.invoiceId)}/hosted-url`,
+        { credentials: "same-origin" },
+      );
+      const body = (await res.json().catch(() => null)) as {
+        hostedInvoiceUrl?: string | null;
+        invoicePdf?: string | null;
+      } | null;
+      const url = body?.hostedInvoiceUrl || body?.invoicePdf;
+      if (!res.ok || !url) return;
+      globalThis.open(url, "_blank", "noopener,noreferrer");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void openHostedInvoice()}
+      disabled={loading}
+      className="text-left text-emerald-400 transition-colors hover:text-emerald-300 disabled:opacity-60"
+    >
+      {loading ? "Opening…" : entry.description}
+    </button>
   );
 }
 
@@ -89,7 +137,7 @@ export default function TransactionsLedger({
   );
 
   const page = filtered.slice(0, visible);
-  const hasDerived = page.some((entry) => entry.derived);
+  const hasDerived = filtered.some((entry) => entry.derived);
 
   return (
     <section>
@@ -179,18 +227,7 @@ export default function TransactionsLedger({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-zinc-400">
-                    {entry.hostedInvoiceUrl ? (
-                      <a
-                        href={entry.hostedInvoiceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-emerald-400 transition-colors hover:text-emerald-300"
-                      >
-                        {entry.description}
-                      </a>
-                    ) : (
-                      entry.description
-                    )}
+                    <LedgerInvoiceDescription entry={entry} />
                     {entry.derived ? (
                       <span
                         className="ml-1.5 text-[10px] text-zinc-600"

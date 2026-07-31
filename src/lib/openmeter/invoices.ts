@@ -206,3 +206,49 @@ export async function listOwnerWalletInvoices(input: {
     pageSize,
   });
 }
+
+/**
+ * Fetch one platform invoice by id, only when it belongs to the owner's wallet
+ * customers. Avoids the page-size cap on {@link listOwnerWalletInvoices}.
+ */
+export async function getOwnerWalletInvoice(input: {
+  client: OpenMeter;
+  ownerUserId: string;
+  invoiceId: string;
+}): Promise<TenantInvoiceDto | null> {
+  const invoiceId = input.invoiceId.trim();
+  if (!invoiceId) return null;
+
+  const customerIds = await resolveOwnerCustomerIdsByUserId(
+    input.client,
+    input.ownerUserId,
+  );
+  if (customerIds.length === 0) return null;
+
+  let inv: Awaited<ReturnType<typeof input.client.billing.invoices.get>>;
+  try {
+    inv = await input.client.billing.invoices.get(invoiceId);
+  } catch {
+    return null;
+  }
+  if (!inv?.id) return null;
+
+  const invoiceCustomerId = inv.customer?.id?.trim();
+  if (!invoiceCustomerId || !customerIds.includes(invoiceCustomerId)) {
+    return null;
+  }
+
+  return {
+    id: inv.id,
+    number: inv.number ?? undefined,
+    status: String(inv.status ?? "unknown"),
+    currency: String(inv.currency ?? "USD"),
+    totalAmount: String(inv.totals?.total ?? "0"),
+    customerId: inv.customer?.id,
+    customerKey: inv.customer?.key,
+    issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
+    periodStart: inv.period?.from?.toISOString?.() ?? undefined,
+    periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
+    externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
+  };
+}

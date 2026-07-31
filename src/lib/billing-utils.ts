@@ -12,7 +12,39 @@ export function calendarMonthBoundsUtc(now: Date): { start: string; end: string 
 
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const MAX_DATE_RANGE_DAYS = 365; // Safety limit for date range iteration
+/** Safety limit for inclusive date-range iteration / API query spans. */
+export const MAX_DATE_RANGE_DAYS = 365;
+
+/**
+ * True when both bounds parse and `start <= end` within {@link MAX_DATE_RANGE_DAYS}.
+ * Used by identity/usage routes before hitting OpenMeter.
+ */
+export function isValidBoundedDateRange(
+  startDate: string,
+  endDate: string,
+): boolean {
+  const startMs = Date.parse(startDate);
+  const endMs = Date.parse(endDate);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs > endMs) {
+    return false;
+  }
+  const daySpan =
+    Math.floor(
+      (new Date(`${endDate.slice(0, 10)}T12:00:00.000Z`).getTime() -
+        new Date(`${startDate.slice(0, 10)}T12:00:00.000Z`).getTime()) /
+        MS_PER_DAY,
+    ) + 1;
+  return daySpan > 0 && daySpan <= MAX_DATE_RANGE_DAYS;
+}
+
+/** Decode a route/query segment; returns null when the escape sequence is invalid. */
+export function tryDecodeURIComponent(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
 
 /** YYYY-MM-DD keys from period bounds (inclusive of both calendar days). */
 export function dateKeysInclusiveUtc(periodStartIso: string, periodEndIso: string): string[] {

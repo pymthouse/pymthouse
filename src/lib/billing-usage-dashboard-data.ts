@@ -609,10 +609,12 @@ async function buildOpenMeterBillingDashboard(input: {
       });
 
   const chartSeries = buildChartSeries(seriesMeta, seriesDayCounts);
+  // Identity cardinality is unbounded — cap before serializing to the client.
+  const MAX_IDENTITY_CHART_SERIES = 50;
   const chartSeriesByIdentity = buildChartSeries(
     identitySeriesMeta,
     identitySeriesDayCounts,
-  );
+  ).slice(0, MAX_IDENTITY_CHART_SERIES);
 
   return {
     ok: true,

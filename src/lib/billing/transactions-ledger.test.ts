@@ -198,6 +198,12 @@ test("filterLedgerEntries filters by type and date range", () => {
     "entries before the from-date are excluded",
   );
   assert.equal(filterLedgerEntries(entries, {}).length, 2);
+  // The UI extends `to` to end-of-day; the same-day usage row must stay in.
+  assert.equal(
+    filterLedgerEntries(entries, { to: "2026-07-20T23:59:59.999Z" }).length,
+    2,
+  );
+  assert.equal(filterLedgerEntries(entries, { to: "2026-07-02" }).length, 1);
 });
 
 test("formatInvoicePeriodLabel prefers the period start and falls back safely", () => {

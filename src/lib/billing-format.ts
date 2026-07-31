@@ -1,5 +1,25 @@
 /** Client-safe billing display helpers (no Node/DB imports). */
 
+const BILLING_DATE_LOCALE = "en-US";
+
+/**
+ * Calendar date for billing UI — fixed locale + UTC so SSR and the browser
+ * hydrate to the same string.
+ */
+export function formatBillingUtcDate(
+  iso: string,
+  opts?: Readonly<{ month?: "short" | "long"; day?: "numeric"; year?: "numeric" }>,
+): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleDateString(BILLING_DATE_LOCALE, {
+    month: opts?.month ?? "short",
+    day: opts?.day ?? "numeric",
+    year: opts?.year,
+    timeZone: "UTC",
+  });
+}
+
 export function formatBillingWei(wei: string): string {
   if (!wei || !/^\d+$/.test(wei)) return "0";
   const value = BigInt(wei);

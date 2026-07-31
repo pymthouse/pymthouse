@@ -19,7 +19,12 @@ export default async function AppIdentitiesPage({
   let providerAuth: Awaited<ReturnType<typeof getAuthorizedProviderApp>> | null = null;
   try {
     providerAuth = await getAuthorizedProviderApp(id);
-  } catch {
+  } catch (err) {
+    console.warn(
+      "app-identities: auth resolution failed",
+      id,
+      err instanceof Error ? err.message : String(err),
+    );
     providerAuth = null;
   }
   if (!providerAuth) {
@@ -34,6 +39,13 @@ export default async function AppIdentitiesPage({
         clientId: app.id,
         startDate: cycle.start,
         endDate: cycle.end,
+      }).catch((err) => {
+        console.warn(
+          "app-identities: listAppIdentities failed",
+          app.id,
+          err instanceof Error ? err.message : String(err),
+        );
+        return [];
       })
     : [];
 

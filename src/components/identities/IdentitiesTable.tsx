@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { formatBillableDuration } from "@/lib/billing-format";
+import { formatBillableDuration, formatBillingUtcDate } from "@/lib/billing-format";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { AppIdentityRow } from "@/lib/usage/identity-rollup";
 
@@ -48,16 +48,12 @@ function statusLabel(row: AppIdentityRow): string {
   return row.provisioned ? row.status : "unprovisioned";
 }
 
-/** Render a UTC date key in the viewer's locale; dates carry no time-of-day. */
+/** Render a UTC date key with a fixed locale so SSR and client hydrate alike. */
 function formatLastActive(dateKey: string | null): string {
   if (!dateKey) return "Never";
-  const parsed = new Date(`${dateKey}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return "Never";
-  return parsed.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  const iso = `${dateKey}T00:00:00Z`;
+  if (Number.isNaN(Date.parse(iso))) return "Never";
+  return formatBillingUtcDate(iso);
 }
 
 function SortHeader({
