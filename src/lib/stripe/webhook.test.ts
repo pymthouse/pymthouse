@@ -122,6 +122,8 @@ test("sanitizeStripeOAuthProviderError allowlists Stripe codes", () => {
     sanitizeStripeOAuthProviderError("totally_weird<script>"),
     "oauth_denied",
   );
+  assert.equal(sanitizeStripeOAuthProviderError(""), "missing_oauth_params");
+  assert.equal(sanitizeStripeOAuthProviderError("   "), "missing_oauth_params");
 });
 
 test("paymentsTabErrorMessage ignores free-form phishing text", () => {

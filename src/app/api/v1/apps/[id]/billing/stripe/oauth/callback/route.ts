@@ -22,10 +22,10 @@ export async function GET(
   // Authorization is the server-side OAuth state + Stripe code exchange inside
   // completeMerchantConnectOAuth — not the absence of a provider `error` param.
   // Only use `error` for UX when code/state are missing (OAuth denial / cancel).
+  // The sanitizer maps the provider error (including empty) to a fixed constant,
+  // so no user-controlled value branches here or reaches the redirect.
   if (!code || !state) {
-    const errorCode = oauthError
-      ? sanitizeStripeOAuthProviderError(oauthError)
-      : "missing_oauth_params";
+    const errorCode = sanitizeStripeOAuthProviderError(oauthError);
     return NextResponse.redirect(
       `${paymentsUrl}&error=${encodeURIComponent(errorCode)}`,
     );
