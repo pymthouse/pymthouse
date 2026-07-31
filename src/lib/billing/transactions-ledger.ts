@@ -29,8 +29,15 @@ export type LedgerEntry = {
   amountUsdMicros: string;
   /** Signed change to the prepaid credit balance (USD micros). */
   creditDeltaUsdMicros: string;
-  /** Prepaid credit balance after this entry (USD micros). */
-  balanceUsdMicros: string;
+  /**
+   * Prepaid credit balance after this entry (USD micros).
+   *
+   * Null when the ledger's inputs were incomplete: the running balance is
+   * derived by walking back from the live balance over the entries below it,
+   * so a missing grant or usage day makes every earlier figure wrong. Better
+   * to show nothing than a confidently incorrect balance.
+   */
+  balanceUsdMicros: string | null;
   /** True when the row is derived from meter data rather than a billing record. */
   derived: boolean;
   status?: string | null;
@@ -141,6 +148,12 @@ export function buildLedgerEntries(input: {
   invoices: LedgerInvoiceInput[];
   planIncludedUsdMicros?: string | null;
   endingCreditBalanceUsdMicros?: string | null;
+  /**
+   * False when any input source degraded (soft timeout, failed lookup), so the
+   * event chain may have holes. Running balances are suppressed rather than
+   * computed from a partial chain. Defaults to true.
+   */
+  inputsComplete?: boolean;
 }): LedgerEntry[] {
   type Draft = Omit<LedgerEntry, "balanceUsdMicros"> & {
     creditDelta: bigint;
@@ -211,6 +224,9 @@ export function buildLedgerEntries(input: {
     });
 
   // Walk backward from the live balance so the newest row reconciles exactly.
+  // This is only sound when every balance-moving event is present: a hole in
+  // the chain silently shifts every earlier balance by the missing delta.
+  const complete = input.inputsComplete !== false;
   const endingBalance = parseMicros(input.endingCreditBalanceUsdMicros);
   const balances = new Array<bigint>(ordered.length);
   let running = endingBalance;
@@ -222,7 +238,10 @@ export function buildLedgerEntries(input: {
   return ordered
     .map((draft, index) => {
       const { creditDelta: _creditDelta, ...rest } = draft;
-      return { ...rest, balanceUsdMicros: balances[index].toString() };
+      return {
+        ...rest,
+        balanceUsdMicros: complete ? balances[index].toString() : null,
+      };
     })
     .reverse();
 }

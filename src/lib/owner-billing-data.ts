@@ -495,16 +495,27 @@ async function loadPlanKeyToLocalId(
   return index;
 }
 
+/**
+ * Resolve `fallback` on timeout or failure so first paint is never blocked.
+ *
+ * The fallback is indistinguishable from a genuine result, so callers that
+ * need to know whether data is complete must pass `onDegraded`.
+ */
 function withSoftTimeout<T>(
   promise: Promise<T>,
   ms: number,
   fallback: T,
   label: string,
+  onDegraded?: () => void,
 ): Promise<T> {
   return new Promise((resolve) => {
+    const degrade = (value: T) => {
+      onDegraded?.();
+      resolve(value);
+    };
     const timer = setTimeout(() => {
       console.warn(`owner-billing: ${label} timed out after ${ms}ms`);
-      resolve(fallback);
+      degrade(fallback);
     }, ms);
     promise.then(
       (value) => {
@@ -517,7 +528,7 @@ function withSoftTimeout<T>(
           `owner-billing: ${label} failed`,
           err instanceof Error ? err.message : String(err),
         );
-        resolve(fallback);
+        degrade(fallback);
       },
     );
   });
@@ -753,6 +764,10 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
   // first paint is not blocked when the invoice index is large or slow.
   const emptyInvoices = { items: [] as TenantInvoiceDto[] };
+  // Grants and daily usage both move the prepaid balance, so a soft-timeout on
+  // either leaves holes in the ledger's event chain and its running balances
+  // cannot be trusted.
+  let ledgerInputsDegraded = false;
   const [
     creditAllowance,
     paymentMethods,
@@ -799,6 +814,9 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         2_500,
         [] as OwnerCreditGrant[],
         "credit grant lookup",
+        () => {
+          ledgerInputsDegraded = true;
+        },
       ),
     ]);
 
@@ -816,6 +834,9 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     3_000,
     [] as Array<{ date: string; usedUsdMicros: string }>,
     "daily usage lookup",
+    () => {
+      ledgerInputsDegraded = true;
+    },
   );
 
   // Allowance from the owner-wallet subscription (the one credits settle against).
@@ -836,6 +857,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     })),
     planIncludedUsdMicros: walletSubscription?.discountUsdMicros ?? null,
     endingCreditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
+    inputsComplete: !ledgerInputsDegraded,
   });
 
   return {

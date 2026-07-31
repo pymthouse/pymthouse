@@ -253,9 +253,17 @@ export default function TransactionsLedger({
                   </td>
                   <td
                     className="px-4 py-3 text-right font-mono tabular-nums text-zinc-400"
-                    title={formatUsdMicrosExactTitle(entry.balanceUsdMicros)}
+                    title={
+                      entry.balanceUsdMicros === null
+                        ? "Balance unavailable — some billing history could not be loaded."
+                        : formatUsdMicrosExactTitle(entry.balanceUsdMicros)
+                    }
                   >
-                    {formatUsdMicrosSummary(entry.balanceUsdMicros)}
+                    {entry.balanceUsdMicros === null ? (
+                      <span className="text-zinc-600">—</span>
+                    ) : (
+                      formatUsdMicrosSummary(entry.balanceUsdMicros)
+                    )}
                   </td>
                 </tr>
               ))}

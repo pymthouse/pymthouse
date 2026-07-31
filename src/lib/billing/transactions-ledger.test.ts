@@ -212,3 +212,34 @@ test("formatInvoicePeriodLabel prefers the period start and falls back safely", 
   assert.equal(formatInvoicePeriodLabel(null, null), null);
   assert.equal(formatInvoicePeriodLabel("nonsense", null), null);
 });
+
+test("incomplete inputs suppress running balances instead of guessing", () => {
+  // A soft-timeout on grants or usage leaves holes in the event chain, so every
+  // balance derived by walking back from the live balance would be wrong.
+  const entries = buildLedgerEntries({
+    grants: [{ id: "g1", amountUsdMicros: "25000000", date: "2026-07-01T00:00:00Z" }],
+    dailyUsage: [{ date: "2026-07-05", usedUsdMicros: "6000000" }],
+    invoices: [],
+    planIncludedUsdMicros: "5000000",
+    endingCreditBalanceUsdMicros: "24000000",
+    inputsComplete: false,
+  });
+
+  assert.ok(entries.length > 0, "entries are still listed");
+  assert.ok(
+    entries.every((entry) => entry.balanceUsdMicros === null),
+    "no entry claims a balance it cannot substantiate",
+  );
+  // The events themselves are still accurate; only the derived column is withheld.
+  assert.equal(entries[0].creditDeltaUsdMicros, "-1000000");
+});
+
+test("inputsComplete defaults to true so existing callers are unaffected", () => {
+  const entries = buildLedgerEntries({
+    grants: [{ id: "g1", amountUsdMicros: "1000000", date: "2026-07-01T00:00:00Z" }],
+    dailyUsage: [],
+    invoices: [],
+    endingCreditBalanceUsdMicros: "1000000",
+  });
+  assert.equal(entries[0].balanceUsdMicros, "1000000");
+});
