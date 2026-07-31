@@ -68,11 +68,13 @@ function StripeLinkMark() {
 function RemovePaymentMethodDialog({
   paymentMethod,
   busy,
+  error,
   onCancel,
   onConfirm,
 }: Readonly<{
   paymentMethod: OwnerPaymentMethodListItem;
   busy: boolean;
+  error: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }>) {
@@ -129,6 +131,11 @@ function RemovePaymentMethodDialog({
             </>
           ) : null}
         </p>
+        {error ? (
+          <p className="mt-3 text-sm text-red-400" role="alert">
+            {error}
+          </p>
+        ) : null}
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button
             ref={cancelRef}
@@ -274,11 +281,14 @@ export default function OwnerPaymentMethodsCard({
           );
         })}
       </ul>
-      {error ? <p className="mt-3 text-xs text-red-400">{error}</p> : null}
+      {error && !pendingRemove ? (
+        <p className="mt-3 text-xs text-red-400">{error}</p>
+      ) : null}
       {pendingRemove ? (
         <RemovePaymentMethodDialog
           paymentMethod={pendingRemove}
           busy={busyId === pendingRemove.id}
+          error={error}
           onCancel={cancelRemove}
           onConfirm={confirmRemove}
         />

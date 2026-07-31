@@ -146,7 +146,11 @@ function parseThresholdMicros(display: string): string | null {
 
 function connectUiFlags(status: StripeStatus | null) {
   const hasAccount = Boolean(status?.stripeConnectedAccountId?.trim());
-  const merchantReady = hasAccount && Boolean(status?.stripeChargesEnabled);
+  // Match backend isConnectReady: charges + details submitted.
+  const merchantReady =
+    hasAccount &&
+    Boolean(status?.stripeChargesEnabled) &&
+    Boolean(status?.stripeDetailsSubmitted);
   const pendingOnboarding = hasAccount && !merchantReady;
   const hasLegacyOmLink = Boolean(
     status?.openmeterStripeAppId || status?.openmeterBillingProfileId,

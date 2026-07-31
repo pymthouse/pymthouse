@@ -339,8 +339,11 @@ async function handleActivationDenial(input: {
   mode: ActivationGateMode;
 }): Promise<AppActivation> {
   const { err, kind, mode } = input;
+  // activation.clientId is the public OIDC client id; auth_audit_log.client_id
+  // FKs developer_apps.id.
+  const app = await getProviderApp(err.activation.clientId);
   await writeAuditLog({
-    clientId: err.activation.clientId,
+    clientId: app?.id ?? null,
     action: "activation_gate_would_deny",
     status: mode === "log" ? "logged" : "denied",
     metadata: {
@@ -351,6 +354,7 @@ async function handleActivationDenial(input: {
       reason: err.activation.reason,
       endUserCap: err.activation.endUserCap,
       appUserCount: err.activation.appUserCount,
+      publicClientId: err.activation.clientId,
     },
   });
 
@@ -358,11 +362,8 @@ async function handleActivationDenial(input: {
     return err.activation;
   }
 
-  if (kind === "provision") {
-    const notifiedApp = await getProviderApp(err.activation.clientId);
-    if (notifiedApp) {
-      await markActivationNotified(notifiedApp.id);
-    }
+  if (kind === "provision" && app) {
+    await markActivationNotified(app.id);
   }
 
   throw err;

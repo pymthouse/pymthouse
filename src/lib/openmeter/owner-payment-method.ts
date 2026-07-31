@@ -323,8 +323,9 @@ async function resolveOwnerStripeRefs(
 
 /**
  * Best-effort list of payment methods for the billing page. Duplicate Stripe
- * Link methods are collapsed to one (default preferred) and the extras are
- * detached so the customer cannot accumulate indistinguishable Links.
+ * Link methods are collapsed to one (default preferred); extras are hidden
+ * from the list but not detached — mutating Stripe belongs on owner-initiated
+ * PATCH/DELETE, not this read path.
  * Returns [] when OpenMeter/Stripe is unavailable or none is on file.
  */
 export async function listOwnerPaymentMethods(
@@ -342,21 +343,11 @@ export async function listOwnerPaymentMethods(
       return [];
     }
     const deps: StripeDeps = { fetchImpl: fetch, signal };
-    const { items, orphanLinkIds } = await buildOwnerPaymentMethodList({
+    const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: refs.stripeCustomerId,
       konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
       deps,
     });
-    // Best-effort cleanup; listing must still succeed if detach fails.
-    await Promise.all(
-      orphanLinkIds.map((id) =>
-        stripeRequestJson({
-          method: "POST",
-          path: `/v1/payment_methods/${encodeURIComponent(id)}/detach`,
-          deps,
-        }),
-      ),
-    );
     return items;
   } catch (err) {
     console.warn(

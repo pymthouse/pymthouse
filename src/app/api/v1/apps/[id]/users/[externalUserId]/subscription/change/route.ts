@@ -13,6 +13,30 @@ function parseTiming(raw: unknown): SubscriptionChangeTiming | undefined {
   throw new Error('timing must be "immediate" or "next_billing_cycle"');
 }
 
+function subscriptionChangeErrorResponse(err: unknown): NextResponse {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === "User is already on this plan") {
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+  if (message.includes("OPENMETER_ROUTE_MODE") || message.includes("OPENMETER_URL")) {
+    return NextResponse.json(
+      { error: "Plan change is not available for this deployment" },
+      { status: 503 },
+    );
+  }
+  if (message.includes("Merchant Stripe Connect onboarding is required")) {
+    return NextResponse.json(
+      { error: "Merchant Stripe Connect onboarding is required before checkout" },
+      { status: 403 },
+    );
+  }
+  console.error("subscription change failed:", message);
+  return NextResponse.json(
+    { error: "Subscription change failed" },
+    { status: 502 },
+  );
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
@@ -58,7 +82,6 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 400 });
+    return subscriptionChangeErrorResponse(err);
   }
 }

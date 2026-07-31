@@ -269,13 +269,8 @@ export async function PATCH(
   } = parsed.fields;
 
   try {
-    if (billingMode !== undefined || endUserCap !== undefined) {
-      await upsertAppBillingConfig(access.auth.app.id, {
-        ...(billingMode !== undefined ? { billingMode } : {}),
-        ...(endUserCap !== undefined ? { endUserCap } : {}),
-      });
-    }
-
+    // Persist OpenMeter profile settings before Neon billingMode/endUserCap so
+    // a failed OM write cannot leave the app on a new revenue plane.
     const updated =
       progressiveBilling !== undefined ||
       invoiceThresholdUsdMicros !== undefined ||
@@ -287,6 +282,14 @@ export async function PATCH(
             applicationFeeBps,
           })
         : {};
+
+    if (billingMode !== undefined || endUserCap !== undefined) {
+      await upsertAppBillingConfig(access.auth.app.id, {
+        ...(billingMode !== undefined ? { billingMode } : {}),
+        ...(endUserCap !== undefined ? { endUserCap } : {}),
+      });
+    }
+
     const status = await getStripeConnectStatus(access.auth.app.id);
     return NextResponse.json({
       clientId: access.auth.app.id,
