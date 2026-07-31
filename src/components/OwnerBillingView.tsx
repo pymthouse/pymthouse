@@ -216,41 +216,68 @@ function PlanCoverage({
   const merchant = ownedApps.filter((app) => app.billingMode === "merchant");
   const rollup = ownedApps.filter((app) => app.billingMode !== "merchant");
 
+  const summary =
+    merchant.length > 0
+      ? `${rollup.length} roll up · ${merchant.length} also bill their own users`
+      : "all usage rolls up here";
+
+  // Native <details> so the list collapses without making this server-rendered
+  // page a client component.
   return (
-    <div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-      <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
-        Covers {ownedApps.length} app{ownedApps.length === 1 ? "" : "s"}
-      </p>
-      <ul className="mt-2 space-y-1.5">
-        {ownedApps.map((app) => (
-          <li
-            key={app.id}
-            className="flex flex-wrap items-baseline justify-between gap-2 text-xs"
-          >
-            <Link
-              href={`/apps/${app.id}/usage`}
-              className="text-zinc-300 transition-colors hover:text-emerald-400"
+    <details className="group mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-4 py-3 text-xs text-zinc-400 transition-colors hover:text-zinc-200">
+        <svg
+          className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-transform group-open:rotate-180"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+        <span className="font-medium text-zinc-300">
+          Covers {ownedApps.length} app{ownedApps.length === 1 ? "" : "s"}
+        </span>
+        <span className="text-zinc-600">{summary}</span>
+      </summary>
+
+      <div className="border-t border-white/[0.06] px-4 py-3">
+        <ul className="space-y-1.5">
+          {ownedApps.map((app) => (
+            <li
+              key={app.id}
+              className="flex flex-wrap items-baseline justify-between gap-2 text-xs"
             >
-              {app.name}
-            </Link>
-            <span className="text-zinc-600">
-              {app.billingMode === "merchant"
-                ? "bills its own end users · network cost rolls up here"
-                : "usage rolls up here"}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {merchant.length > 0 ? (
-        <p className="mt-2 text-[11px] text-zinc-600">
-          {merchant.length} app{merchant.length === 1 ? "" : "s"} charge their end
-          users directly; you still pay PymtHouse for the network usage
-          {rollup.length > 0
-            ? `, as you do for the other ${rollup.length}.`
-            : "."}
-        </p>
-      ) : null}
-    </div>
+              <Link
+                href={`/apps/${app.id}/usage`}
+                className="text-zinc-300 transition-colors hover:text-emerald-400"
+              >
+                {app.name}
+              </Link>
+              <span className="text-zinc-600">
+                {app.billingMode === "merchant"
+                  ? "bills its own end users · network cost rolls up here"
+                  : "usage rolls up here"}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {merchant.length > 0 ? (
+          <p className="mt-2 text-[11px] text-zinc-600">
+            {merchant.length} app{merchant.length === 1 ? "" : "s"} charge their end
+            users directly; you still pay PymtHouse for the network usage
+            {rollup.length > 0
+              ? `, as you do for the other ${rollup.length}.`
+              : "."}
+          </p>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -277,7 +304,6 @@ function OwnerSubscriptionsSection({
         One plan for your whole account. Every app you own bills its network usage
         here — each card shows where this cycle&apos;s usage settled.
       </p>
-      <PlanCoverage ownedApps={data.ownedApps} />
       {data.subscriptions.length === 0 ? (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
           <p className="font-medium text-zinc-300">No active subscriptions</p>
@@ -301,6 +327,7 @@ function OwnerSubscriptionsSection({
           ))}
         </div>
       )}
+      <PlanCoverage ownedApps={data.ownedApps} />
     </section>
   );
 }
