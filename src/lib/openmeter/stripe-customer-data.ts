@@ -104,7 +104,8 @@ async function upsertKonnectCustomerBilling(input: {
   customerId: string;
   stripeCustomerId: string;
   billingProfileId?: string;
-  defaultPaymentMethodId?: string;
+  /** `null` drops the stored pointer; omit it to carry the existing one forward. */
+  defaultPaymentMethodId?: string | null;
 }): Promise<KonnectCustomerBillingData> {
   const existing = await getKonnectCustomerBilling(input.customerId);
   const profileId =
@@ -112,8 +113,10 @@ async function upsertKonnectCustomerBilling(input: {
   // The PUT replaces app_data.stripe wholesale, so carry the existing default
   // pointer forward when the caller is not changing it.
   const defaultPaymentMethodId =
-    input.defaultPaymentMethodId?.trim() ||
-    existing.app_data?.stripe?.default_payment_method_id?.trim();
+    input.defaultPaymentMethodId === null
+      ? undefined
+      : input.defaultPaymentMethodId?.trim() ||
+        existing.app_data?.stripe?.default_payment_method_id?.trim();
   const stripe: { customer_id: string; default_payment_method_id?: string } = {
     customer_id: input.stripeCustomerId,
   };
@@ -155,6 +158,24 @@ export async function setKonnectStripeDefaultPaymentMethod(input: {
     customerId: input.customerId,
     stripeCustomerId: input.stripeCustomerId,
     defaultPaymentMethodId: input.paymentMethodId,
+  });
+}
+
+/**
+ * Drop the Konnect app_data pointer so OpenMeter invoicing stops charging a
+ * payment method that is no longer attached. No-op outside Konnect mode.
+ */
+export async function clearKonnectStripeDefaultPaymentMethod(input: {
+  customerId: string;
+  stripeCustomerId: string;
+}): Promise<void> {
+  if (!isKonnectMode()) {
+    return;
+  }
+  await upsertKonnectCustomerBilling({
+    customerId: input.customerId,
+    stripeCustomerId: input.stripeCustomerId,
+    defaultPaymentMethodId: null,
   });
 }
 

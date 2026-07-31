@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runActivationGate } from "@/lib/activation/app-activation";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db/index";
+import { plans } from "@/db/schema";
+import {
+  planRequiresSellGate,
+  runActivationGate,
+} from "@/lib/activation/app-activation";
 import { activationErrorResponse } from "@/lib/activation/problem";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
 import { changeAppUserSubscriptionPlan } from "@/lib/openmeter/subscriptions-billing";
@@ -15,7 +21,30 @@ function parseTiming(raw: unknown): SubscriptionChangeTiming | undefined {
   throw new Error('timing must be "immediate" or "next_billing_cycle"');
 }
 
-async function runSellGate(appId: string): Promise<NextResponse | null> {
+/**
+ * Only priced targets need Connect. Free/starter switches and paid→free
+ * migrations must stay reachable while the revenue rail is enforced, otherwise
+ * an app phasing out a plan can never move its users off it. An unknown plan is
+ * left to changeAppUserSubscriptionPlan, which reports it as "Plan not found".
+ */
+async function runSellGate(
+  appId: string,
+  planId: string,
+): Promise<NextResponse | null> {
+  const rows = await db
+    .select({
+      status: plans.status,
+      priceAmount: plans.priceAmount,
+      isStarterDefault: plans.isStarterDefault,
+    })
+    .from(plans)
+    .where(and(eq(plans.id, planId), eq(plans.clientId, appId)))
+    .limit(1);
+  const target = rows[0];
+  if (!target || !planRequiresSellGate(target)) {
+    return null;
+  }
+
   try {
     await runActivationGate("sell_paid_plans", appId);
     return null;
@@ -83,7 +112,7 @@ export async function POST(
     );
   }
 
-  const gateProblem = await runSellGate(access.app.id);
+  const gateProblem = await runSellGate(access.app.id, planId);
   if (gateProblem) {
     return gateProblem;
   }

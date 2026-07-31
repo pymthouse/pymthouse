@@ -7,6 +7,7 @@ import {
 } from "./customers";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import {
+  clearKonnectStripeDefaultPaymentMethod,
   getKonnectDefaultPaymentMethodId,
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
@@ -376,8 +377,9 @@ async function requireOwnedPaymentMethod(
 
 /**
  * Detach one payment method so overage invoices stop charging it. When it was
- * the default, Stripe's invoice default is cleared as well; Konnect app_data
- * refreshes on the next OM sync.
+ * the default, both Stripe's invoice default and the Konnect app_data pointer
+ * are cleared — leaving either behind lets OpenMeter keep billing a detached
+ * method.
  */
 export async function unlinkOwnerPaymentMethod(
   ownerUserId: string,
@@ -418,6 +420,20 @@ export async function unlinkOwnerPaymentMethod(
       }),
       deps,
     });
+  }
+
+  if (stripeDefaultId === pmId || refs.konnectDefaultPaymentMethodId === pmId) {
+    try {
+      await clearKonnectStripeDefaultPaymentMethod({
+        customerId: refs.customerId,
+        stripeCustomerId: refs.stripeCustomerId,
+      });
+    } catch (err) {
+      console.warn(
+        "owner-payment-method: Konnect default clear failed",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   return { unlinked: true, paymentMethodId: pmId };

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runActivationGate } from "@/lib/activation/app-activation";
+import { activationErrorResponse } from "@/lib/activation/problem";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
 import type { GrantSource } from "@/lib/billing/types";
+import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 
@@ -11,6 +14,34 @@ const GRANT_SOURCES = new Set<GrantSource>([
   "plan_adjustment",
   "onramp",
 ]);
+
+/**
+ * Crediting is never blocked by the account being empty, but granting to an
+ * unknown end-user creates an app_user row as a side effect, so that creation
+ * has to clear the same cost rail as the other provisioning routes. Owner
+ * top-ups stay ungated — they are the recovery path out of a dry wallet.
+ */
+async function runProvisionGate(
+  appId: string,
+  externalUserId: string,
+): Promise<NextResponse | null> {
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: appId,
+    externalUserId,
+  });
+  if (identity.isOwner) {
+    return null;
+  }
+
+  try {
+    await runActivationGate("provision", appId, { externalUserId });
+    return null;
+  } catch (err) {
+    const problem = activationErrorResponse(err);
+    if (problem) return problem;
+    throw err;
+  }
+}
 
 export async function GET(
   request: NextRequest,
@@ -66,6 +97,11 @@ export async function POST(
     typeof body.featureKey === "string" && body.featureKey.trim()
       ? body.featureKey.trim()
       : undefined;
+
+  const gateProblem = await runProvisionGate(access.app.id, externalUserId);
+  if (gateProblem) {
+    return gateProblem;
+  }
 
   try {
     const result = await grantAllowanceUsdMicros({
