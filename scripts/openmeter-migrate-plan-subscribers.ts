@@ -211,6 +211,76 @@ async function upsertNeonCache(input: {
   });
 }
 
+function normalizeCustomerKey(clientId: string, customerKey: string): string {
+  return customerKey.includes(":")
+    ? customerKey
+    : buildOpenMeterCustomerKey(clientId, customerKey);
+}
+
+async function migrateOneSubscription(input: {
+  sub: { id: string; customer_id?: string; customerId?: string };
+  clientId: string;
+  toPlan: typeof plans.$inferSelect;
+  timing: SubscriptionChangeTiming;
+  apply: boolean;
+}): Promise<"migrated" | "failed"> {
+  const customerId =
+    input.sub.customer_id?.trim() || input.sub.customerId?.trim() || "";
+  if (!customerId) {
+    console.error(`skip ${input.sub.id}: missing customer id`);
+    return "failed";
+  }
+
+  const client = getHostedAdminClient();
+  let customerKey = "";
+  try {
+    const customer = await client.customers.get(customerId);
+    customerKey = customer?.key?.trim() || "";
+  } catch (err) {
+    console.error(
+      `fail ${input.sub.id}: load customer ${customerId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return "failed";
+  }
+
+  if (!input.apply) {
+    console.log(
+      `dry-run would migrate subscription=${input.sub.id} customer=${customerId} key=${customerKey || "?"}`,
+    );
+    return "migrated";
+  }
+
+  try {
+    const change = await changeKonnectSubscription({
+      subscriptionId: input.sub.id,
+      customerId,
+      planId: input.toPlan.openmeterPlanId!,
+      timing: input.timing,
+    });
+    const nextId =
+      change.next?.id?.trim() || change.current?.id?.trim() || input.sub.id;
+    if (customerKey) {
+      await upsertNeonCache({
+        clientId: input.clientId,
+        customerKey: normalizeCustomerKey(input.clientId, customerKey),
+        planId: input.toPlan.id,
+        openmeterSubscriptionId: nextId,
+      });
+    }
+    console.log(
+      `migrated subscription=${input.sub.id} -> ${nextId} customer=${customerId}`,
+    );
+    return "migrated";
+  } catch (err) {
+    console.error(
+      `fail ${input.sub.id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return "failed";
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!isHostedAdminClientAvailable()) {
@@ -239,7 +309,6 @@ async function main(): Promise<void> {
     throw new Error("from-plan and to-plan must differ");
   }
 
-  const client = getHostedAdminClient();
   const active = await listActiveKonnectSubscriptions();
   let targets = active.filter((item) =>
     subscriptionMatchesOpenMeterPlanId(item, fromPlan.openmeterPlanId!),
@@ -267,65 +336,15 @@ async function main(): Promise<void> {
   let failed = 0;
 
   for (const sub of targets) {
-    const customerId = sub.customer_id?.trim() || sub.customerId?.trim() || "";
-    if (!customerId) {
-      console.error(`skip ${sub.id}: missing customer id`);
-      failed += 1;
-      continue;
-    }
-
-    let customerKey = "";
-    try {
-      const customer = await client.customers.get(customerId);
-      customerKey = customer?.key?.trim() || "";
-    } catch (err) {
-      console.error(
-        `fail ${sub.id}: load customer ${customerId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      failed += 1;
-      continue;
-    }
-
-    if (!args.apply) {
-      console.log(
-        `dry-run would migrate subscription=${sub.id} customer=${customerId} key=${customerKey || "?"}`,
-      );
-      migrated += 1;
-      continue;
-    }
-
-    try {
-      const change = await changeKonnectSubscription({
-        subscriptionId: sub.id,
-        customerId,
-        planId: toPlan.openmeterPlanId!,
-        timing: args.timing,
-      });
-      const nextId =
-        change.next?.id?.trim() || change.current?.id?.trim() || sub.id;
-      if (customerKey) {
-        await upsertNeonCache({
-          clientId: args.clientId,
-          customerKey:
-            customerKey.includes(":")
-              ? customerKey
-              : buildOpenMeterCustomerKey(args.clientId, customerKey),
-          planId: toPlan.id,
-          openmeterSubscriptionId: nextId,
-        });
-      }
-      console.log(
-        `migrated subscription=${sub.id} -> ${nextId} customer=${customerId}`,
-      );
-      migrated += 1;
-    } catch (err) {
-      failed += 1;
-      console.error(
-        `fail ${sub.id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    const result = await migrateOneSubscription({
+      sub,
+      clientId: args.clientId,
+      toPlan,
+      timing: args.timing,
+      apply: args.apply,
+    });
+    if (result === "migrated") migrated += 1;
+    else failed += 1;
   }
 
   console.log(

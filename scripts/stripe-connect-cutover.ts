@@ -75,6 +75,22 @@ async function listClientIds(args: Args): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
+function customerKeyMatchesApp(
+  key: string,
+  clientId: string,
+  includeOwners: boolean,
+): boolean {
+  if (key.startsWith(`${clientId}:`)) return true;
+  return includeOwners && !key.includes(":");
+}
+
+function resolveExternalUserId(customerKey: string): string {
+  const parsed = parseOpenMeterCustomerKey(customerKey);
+  if (parsed?.externalUserId) return parsed.externalUserId;
+  const colon = customerKey.indexOf(":");
+  return colon >= 0 ? customerKey.slice(colon + 1) : customerKey;
+}
+
 async function listAppCustomerKeys(
   clientId: string,
   includeOwners: boolean,
@@ -86,7 +102,6 @@ async function listAppCustomerKeys(
   const out: Array<{ key: string; id: string }> = [];
   let page = 1;
   const pageSize = 100;
-  const prefix = `${clientId}:`;
   for (;;) {
     const listed = await client.customers.list({ page, pageSize });
     const items = listed?.items ?? [];
@@ -94,11 +109,7 @@ async function listAppCustomerKeys(
       const key = item.key?.trim() || "";
       const id = item.id?.trim() || "";
       if (!key || !id) continue;
-      if (key.startsWith(prefix)) {
-        out.push({ key, id });
-        continue;
-      }
-      if (includeOwners && !key.includes(":")) {
+      if (customerKeyMatchesApp(key, clientId, includeOwners)) {
         out.push({ key, id });
       }
     }
@@ -106,6 +117,41 @@ async function listAppCustomerKeys(
     page += 1;
   }
   return out;
+}
+
+async function cutoverCustomer(input: {
+  clientId: string;
+  accountId: string;
+  apply: boolean;
+  customer: { key: string; id: string };
+}): Promise<"migrated" | "error"> {
+  const externalUserId = resolveExternalUserId(input.customer.key);
+
+  if (!input.apply) {
+    console.log(
+      `dry-run would map key=${input.customer.key} -> merchant cus on ${input.accountId}`,
+    );
+    return "migrated";
+  }
+
+  try {
+    await ensureMerchantOwnedStripeCustomer({
+      clientId: input.clientId,
+      externalUserId,
+      accountId: input.accountId,
+      openmeterCustomerId: input.customer.id,
+      openmeterCustomerKey:
+        input.customer.key ||
+        buildOpenMeterCustomerKey(input.clientId, externalUserId),
+    });
+    console.log(`migrated key=${input.customer.key} needs_checkout=true`);
+    return "migrated";
+  } catch (err) {
+    console.error(
+      `fail key=${input.customer.key}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return "error";
+  }
 }
 
 async function cutoverApp(input: {
@@ -162,38 +208,17 @@ async function cutoverApp(input: {
   let errors = 0;
 
   for (const customer of customers) {
-    const parsed = parseOpenMeterCustomerKey(customer.key);
-    const externalUserId =
-      parsed?.externalUserId ||
-      (customer.key.includes(":")
-        ? customer.key.slice(customer.key.indexOf(":") + 1)
-        : customer.key);
-
-    if (!input.apply) {
-      console.log(
-        `dry-run would map key=${customer.key} -> merchant cus on ${accountId}`,
-      );
+    const result = await cutoverCustomer({
+      clientId: input.clientId,
+      accountId,
+      apply: input.apply,
+      customer,
+    });
+    if (result === "migrated") {
       migrated += 1;
       needsCheckout += 1;
-      continue;
-    }
-
-    try {
-      await ensureMerchantOwnedStripeCustomer({
-        clientId: input.clientId,
-        externalUserId,
-        accountId,
-        openmeterCustomerId: customer.id,
-        openmeterCustomerKey: customer.key || buildOpenMeterCustomerKey(input.clientId, externalUserId),
-      });
-      console.log(`migrated key=${customer.key} needs_checkout=true`);
-      migrated += 1;
-      needsCheckout += 1;
-    } catch (err) {
+    } else {
       errors += 1;
-      console.error(
-        `fail key=${customer.key}: ${err instanceof Error ? err.message : String(err)}`,
-      );
     }
   }
 

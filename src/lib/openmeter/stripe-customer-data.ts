@@ -162,7 +162,7 @@ async function rememberStripeCustomerId(input: {
             subject_keys: customer.usage_attribution?.subject_keys ?? [],
           },
           labels: {
-            ...(customer.labels ?? {}),
+            ...customer.labels,
             [STRIPE_CUSTOMER_LABEL_KEY]: input.stripeCustomerId,
           },
         }),

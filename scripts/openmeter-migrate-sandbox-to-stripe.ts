@@ -57,6 +57,21 @@ type Args = {
   limit?: number;
 };
 
+type MigrateCounters = {
+  migrated: number;
+  skipped: number;
+  errors: number;
+  processed: number;
+};
+
+function parseNonNegativeIntArg(raw: string, flag: string): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    throw new Error(`${flag} must be a non-negative integer (got ${raw})`);
+  }
+  return value;
+}
+
 function parseArgs(argv: string[]): Args {
   const args: Args = { apply: false, ownersOnly: false, appsOnly: false };
   for (let i = 0; i < argv.length; i += 1) {
@@ -79,12 +94,7 @@ function parseArgs(argv: string[]): Args {
       continue;
     }
     if (token === "--limit") {
-      const raw = takeArgValue(argv, i, token);
-      const limit = Number(raw);
-      if (!Number.isFinite(limit) || limit < 0 || !Number.isInteger(limit)) {
-        throw new Error(`--limit must be a non-negative integer (got ${raw})`);
-      }
-      args.limit = limit;
+      args.limit = parseNonNegativeIntArg(takeArgValue(argv, i, token), token);
       i += 1;
       continue;
     }
@@ -94,6 +104,26 @@ function parseArgs(argv: string[]): Args {
     throw new Error("--owners-only and --apps-only are mutually exclusive");
   }
   return args;
+}
+
+function hitLimit(counters: MigrateCounters, limit?: number): boolean {
+  return limit !== undefined && counters.processed >= limit;
+}
+
+async function recordMigrateResult(
+  run: () => Promise<"migrated" | "skipped">,
+  counters: MigrateCounters,
+  onError: (err: unknown) => void,
+): Promise<void> {
+  counters.processed += 1;
+  try {
+    const result = await run();
+    if (result === "migrated") counters.migrated += 1;
+    else counters.skipped += 1;
+  } catch (err) {
+    counters.errors += 1;
+    onError(err);
+  }
 }
 
 async function resolveSandboxProfileIds(): Promise<Set<string>> {
@@ -336,6 +366,104 @@ async function migrateOwner(input: {
   return "migrated";
 }
 
+async function migrateAppUsersPass(
+  args: Args,
+  sandboxProfileIds: Set<string>,
+  counters: MigrateCounters,
+): Promise<void> {
+  const userQuery = db
+    .select({
+      clientId: appUsers.clientId,
+      externalUserId: appUsers.externalUserId,
+    })
+    .from(appUsers);
+
+  const rows = args.clientId
+    ? await userQuery.where(eq(appUsers.clientId, args.clientId))
+    : await userQuery;
+
+  for (const row of rows) {
+    if (hitLimit(counters, args.limit)) break;
+    const subject = sanitizeForLog(`${row.clientId}:${row.externalUserId}`);
+    await recordMigrateResult(
+      () =>
+        migrateAppUser({
+          clientId: row.clientId,
+          externalUserId: row.externalUserId,
+          apply: args.apply,
+          sandboxProfileIds,
+        }),
+      counters,
+      (err) => {
+        console.error(
+          `[error] ${subject}`,
+          err instanceof Error ? err.message : err,
+        );
+      },
+    );
+  }
+}
+
+async function migrateAllOwnersPass(
+  args: Args,
+  sandboxProfileIds: Set<string>,
+  counters: MigrateCounters,
+): Promise<void> {
+  const ownerRows = await db.select({ id: users.id }).from(users);
+  for (const owner of ownerRows) {
+    if (hitLimit(counters, args.limit)) break;
+    await recordMigrateResult(
+      () =>
+        migrateOwner({
+          ownerUserId: owner.id,
+          apply: args.apply,
+          sandboxProfileIds,
+        }),
+      counters,
+      (err) => {
+        console.error(
+          `[error] owner ${owner.id}`,
+          err instanceof Error ? err.message : err,
+        );
+      },
+    );
+  }
+}
+
+async function migrateScopedOwnerPass(
+  args: Args,
+  sandboxProfileIds: Set<string>,
+  counters: MigrateCounters,
+): Promise<void> {
+  const clientId = args.clientId;
+  if (!clientId) return;
+
+  const app = await db
+    .select({ ownerId: developerApps.ownerId })
+    .from(developerApps)
+    .where(eq(developerApps.id, clientId))
+    .limit(1);
+  const ownerId = app[0]?.ownerId;
+  if (!ownerId) return;
+
+  await recordMigrateResult(
+    () =>
+      migrateOwner({
+        ownerUserId: ownerId,
+        apply: args.apply,
+        sandboxProfileIds,
+      }),
+    counters,
+    (err) => {
+      console.error({
+        message: "[error] owner migrate failed",
+        ownerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  );
+}
+
 async function main() {
   if (!isHostedAdminClientAvailable()) {
     console.error("[migrate-sandbox-to-stripe] OPENMETER_URL is not configured.");
@@ -351,100 +479,25 @@ async function main() {
   );
   console.log(args.apply ? "Mode: APPLY" : "Mode: dry-run (pass --apply to write)");
 
-  let migrated = 0;
-  let skipped = 0;
-  let errors = 0;
-  let processed = 0;
+  const counters: MigrateCounters = {
+    migrated: 0,
+    skipped: 0,
+    errors: 0,
+    processed: 0,
+  };
 
   if (!args.ownersOnly) {
-    const userQuery = db
-      .select({
-        clientId: appUsers.clientId,
-        externalUserId: appUsers.externalUserId,
-      })
-      .from(appUsers);
-
-    const rows = args.clientId
-      ? await userQuery.where(eq(appUsers.clientId, args.clientId))
-      : await userQuery;
-
-    for (const row of rows) {
-      if (args.limit !== undefined && processed >= args.limit) {
-        break;
-      }
-      processed += 1;
-      try {
-        const result = await migrateAppUser({
-          clientId: row.clientId,
-          externalUserId: row.externalUserId,
-          apply: args.apply,
-          sandboxProfileIds,
-        });
-        if (result === "migrated") migrated += 1;
-        else skipped += 1;
-      } catch (err) {
-        errors += 1;
-        console.error(
-          `[error] ${sanitizeForLog(`${row.clientId}:${row.externalUserId}`)}`,
-          err instanceof Error ? err.message : err,
-        );
-      }
-    }
+    await migrateAppUsersPass(args, sandboxProfileIds, counters);
   }
 
   if (!args.appsOnly && !args.clientId) {
-    const ownerRows = await db.select({ id: users.id }).from(users);
-    for (const owner of ownerRows) {
-      if (args.limit !== undefined && processed >= args.limit) {
-        break;
-      }
-      processed += 1;
-      try {
-        const result = await migrateOwner({
-          ownerUserId: owner.id,
-          apply: args.apply,
-          sandboxProfileIds,
-        });
-        if (result === "migrated") migrated += 1;
-        else skipped += 1;
-      } catch (err) {
-        errors += 1;
-        console.error(
-          `[error] owner ${owner.id}`,
-          err instanceof Error ? err.message : err,
-        );
-      }
-    }
+    await migrateAllOwnersPass(args, sandboxProfileIds, counters);
   } else if (!args.appsOnly && args.clientId) {
-    // App-scoped run: also migrate owners of that app
-    const app = await db
-      .select({ ownerId: developerApps.ownerId })
-      .from(developerApps)
-      .where(eq(developerApps.id, args.clientId))
-      .limit(1);
-    const ownerId = app[0]?.ownerId;
-    if (ownerId) {
-      try {
-        const result = await migrateOwner({
-          ownerUserId: ownerId,
-          apply: args.apply,
-          sandboxProfileIds,
-        });
-        if (result === "migrated") migrated += 1;
-        else skipped += 1;
-      } catch (err) {
-        errors += 1;
-        console.error({
-          message: "[error] owner migrate failed",
-          ownerId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    await migrateScopedOwnerPass(args, sandboxProfileIds, counters);
   }
 
   console.log(
-    `Done. migrated=${migrated} skipped=${skipped} errors=${errors} (dry-run counts intended migrations as migrated)`,
+    `Done. migrated=${counters.migrated} skipped=${counters.skipped} errors=${counters.errors} (dry-run counts intended migrations as migrated)`,
   );
 }
 
