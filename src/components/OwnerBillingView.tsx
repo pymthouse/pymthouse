@@ -10,6 +10,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import { formatBillingPeriod } from "@/lib/billing-format";
+import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
@@ -31,10 +32,12 @@ function SubscriptionCard({
   row,
   creditBalanceUsdMicros,
   defaultPaymentMethod,
+  needsPaymentMethod,
 }: Readonly<{
   row: OwnerBillingPayload["subscriptions"][number];
   creditBalanceUsdMicros: string | null;
   defaultPaymentMethod: OwnerBillingPayload["paymentMethods"][number] | null;
+  needsPaymentMethod: boolean;
 }>) {
   const hasAllowance =
     row.discountUsdMicros != null && BigInt(row.discountUsdMicros) > 0n;
@@ -89,6 +92,7 @@ function SubscriptionCard({
         planIncludedUsdMicros={row.discountUsdMicros}
         creditBalanceUsdMicros={creditBalanceUsdMicros}
         paymentMethod={defaultPaymentMethod}
+        needsPaymentMethod={needsPaymentMethod}
       />
     </div>
   );
@@ -105,6 +109,17 @@ export default function OwnerBillingView({
   /** Admin-only MoonPay signer refill tooling (hidden from normal owners). */
   adminFundPanel?: ReactNode;
 }>) {
+  const pressure = resolveOwnerBillingPressure({
+    hasPaymentMethod: data.paymentMethods.length > 0,
+    creditBalanceUsdMicros: data.creditAllowance?.balanceUsdMicros ?? null,
+    subscriptions: data.subscriptions,
+  });
+  const needsPaymentMethod = pressure === "blocked";
+  const defaultPaymentMethod =
+    data.paymentMethods.find((m) => m.isDefault) ??
+    data.paymentMethods[0] ??
+    null;
+
   const billingActions =
     paymentMethodPanel || adminFundPanel ? (
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -113,14 +128,21 @@ export default function OwnerBillingView({
       </div>
     ) : null;
 
+  let introCopy =
+    "Prepaid credits, active subscriptions, and platform invoices for your account. Attach a Stripe payment method so overage invoices can charge automatically.";
+  if (pressure === "blocked") {
+    introCopy =
+      "Starter allowance is used up. Usage is paused until you attach a payment method.";
+  } else if (pressure === "chargeable") {
+    introCopy =
+      "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
+  }
+
   return (
     <DashboardLayout>
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
-        <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-          Prepaid credits, active subscriptions, and platform invoices for your account.
-          Attach a Stripe payment method so overage invoices can charge automatically.
-        </p>
+        <p className="mt-1 text-xs sm:text-sm text-zinc-500">{introCopy}</p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
             Cycle: {formatBillingPeriod(data.cycle.start)} —{" "}
@@ -142,6 +164,28 @@ export default function OwnerBillingView({
 
       {!data.openMeterConfigured ? null : (
         <>
+          {needsPaymentMethod ? (
+            <section
+              className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 sm:px-5"
+              role="status"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-amber-100">
+                    Payment method required
+                  </h2>
+                  <p className="mt-1 text-sm text-amber-200/90">
+                    Starter allowance used up. Usage is paused until you attach a
+                    payment method so overage can invoice on Stripe.
+                  </p>
+                </div>
+                {paymentMethodPanel ? (
+                  <div className="shrink-0">{paymentMethodPanel}</div>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           <section className="mb-8">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -151,7 +195,7 @@ export default function OwnerBillingView({
                   wide
                 />
               </div>
-              {billingActions}
+              {needsPaymentMethod ? adminFundPanel : billingActions}
             </div>
             <div className="space-y-3">
               {data.paymentMethods.length > 0 ? (
@@ -169,7 +213,8 @@ export default function OwnerBillingView({
                 />
               ) : null}
               {data.paymentMethods.length === 0 &&
-              !hasDisplayablePrepaidCredit(data.creditAllowance) ? (
+              !hasDisplayablePrepaidCredit(data.creditAllowance) &&
+              !needsPaymentMethod ? (
                 <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
                   <p>
                     No prepaid credit balance yet. Starter included usage comes from your plan
@@ -203,11 +248,8 @@ export default function OwnerBillingView({
                     creditBalanceUsdMicros={
                       data.creditAllowance?.balanceUsdMicros ?? null
                     }
-                    defaultPaymentMethod={
-                      data.paymentMethods.find((m) => m.isDefault) ??
-                      data.paymentMethods[0] ??
-                      null
-                    }
+                    defaultPaymentMethod={defaultPaymentMethod}
+                    needsPaymentMethod={needsPaymentMethod}
                   />
                 ))}
               </div>

@@ -19,6 +19,7 @@ import type {
   BillingAppRow,
   BillingChartSeries,
 } from "@/lib/billing-usage-dashboard-data";
+import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { OwnerBillingSubscriptionRow } from "@/lib/owner-billing-data";
 
@@ -41,6 +42,7 @@ type BillingUsageDashboardClientPayload = {
   appsWithUsage: number;
   activeSubscriptions?: OwnerBillingSubscriptionRow[];
   creditBalanceUsdMicros?: string | null;
+  defaultPaymentMethod?: { brand?: string | null; last4?: string | null } | null;
 };
 
 type UsageTab = "mine" | "all";
@@ -189,9 +191,11 @@ function deriveFilteredView(
 function ActiveSubscriptionSummary({
   subscriptions,
   creditBalanceUsdMicros,
+  defaultPaymentMethod,
 }: Readonly<{
   subscriptions: OwnerBillingSubscriptionRow[];
   creditBalanceUsdMicros: string | null;
+  defaultPaymentMethod: { brand?: string | null; last4?: string | null } | null;
 }>) {
   if (subscriptions.length === 0) {
     return (
@@ -218,9 +222,24 @@ function ActiveSubscriptionSummary({
   const usageLine = hasAllowance
     ? `${primary.requestCount.toLocaleString()} requests this cycle`
     : `${usedLabel} this cycle · ${primary.requestCount.toLocaleString()} requests`;
+  const pressure = resolveOwnerBillingPressure({
+    hasPaymentMethod: Boolean(defaultPaymentMethod),
+    creditBalanceUsdMicros,
+    subscriptions,
+  });
+  const needsPaymentMethod = pressure === "blocked";
+  const billingLinkLabel = needsPaymentMethod
+    ? "Attach payment method →"
+    : "View Billing →";
 
   return (
-    <div className="rounded-lg border border-white/[0.05] bg-black/20 px-3 py-3">
+    <div
+      className={`rounded-lg border px-3 py-3 ${
+        needsPaymentMethod
+          ? "border-amber-500/30 bg-amber-500/10"
+          : "border-white/[0.05] bg-black/20"
+      }`}
+    >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-500">
@@ -239,12 +258,22 @@ function ActiveSubscriptionSummary({
             ) : null}
           </p>
           <p className="mt-0.5 font-mono text-xs text-zinc-500">{usageLine}</p>
+          {needsPaymentMethod ? (
+            <p className="mt-1 text-xs text-amber-200/90">
+              Starter allowance used up — usage is paused until you attach a payment
+              method.
+            </p>
+          ) : null}
         </div>
         <Link
           href="/billing"
-          className="shrink-0 text-sm font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+          className={`shrink-0 text-sm font-medium transition-colors ${
+            needsPaymentMethod
+              ? "text-amber-300 hover:text-amber-200"
+              : "text-emerald-400 hover:text-emerald-300"
+          }`}
         >
-          View Billing →
+          {billingLinkLabel}
         </Link>
       </div>
       {hasAllowance && allowanceMicros ? (
@@ -260,6 +289,8 @@ function ActiveSubscriptionSummary({
         usedUsdMicros={primary.usedUsdMicros}
         planIncludedUsdMicros={primary.discountUsdMicros}
         creditBalanceUsdMicros={creditBalanceUsdMicros}
+        paymentMethod={defaultPaymentMethod}
+        needsPaymentMethod={needsPaymentMethod}
       />
     </div>
   );
@@ -527,6 +558,7 @@ function BillingUsageBody({
             <ActiveSubscriptionSummary
               subscriptions={data.activeSubscriptions ?? []}
               creditBalanceUsdMicros={data.creditBalanceUsdMicros ?? null}
+              defaultPaymentMethod={data.defaultPaymentMethod ?? null}
             />
           </div>
         ) : null}

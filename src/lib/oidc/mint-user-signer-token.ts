@@ -175,7 +175,7 @@ export function mintAllowanceGateDecision(
   if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
     return {
       code: "trial_credits_exhausted",
-      message: "Starter allowance exhausted",
+      message: "Payment method required",
     };
   }
   return null;

@@ -7,6 +7,10 @@ import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-util
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
 import {
+  listOwnerPaymentMethods,
+  type OwnerPaymentMethodListItem,
+} from "@/lib/openmeter/owner-payment-method";
+import {
   listOwnerActiveSubscriptions,
   type OwnerBillingSubscriptionRow,
 } from "@/lib/owner-billing-data";
@@ -163,6 +167,11 @@ export type BillingUsageDashboardPayload = {
    * Null when unavailable — the waterfall then shows no credit headroom.
    */
   creditBalanceUsdMicros: string | null;
+  /** Default Stripe payment method on the owner wallet, if any. */
+  defaultPaymentMethod: Pick<
+    OwnerPaymentMethodListItem,
+    "brand" | "last4"
+  > | null;
 };
 
 export type BillingUsageDashboardResult =
@@ -393,24 +402,31 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const [omResults, activeSubscriptions, creditAllowance] = await Promise.all([
-    queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
-    listOwnerActiveSubscriptions(input.userId).catch((err) => {
-      console.warn(
-        "billing-usage-dashboard: subscription summary failed",
-        err instanceof Error ? err.message : String(err),
-      );
-      return [] as OwnerBillingSubscriptionRow[];
-    }),
-    getOwnerPrepaidCreditBalance(input.userId).catch((err) => {
-      console.warn(
-        "billing-usage-dashboard: prepaid credit balance failed",
-        err instanceof Error ? err.message : String(err),
-      );
-      return null;
-    }),
-  ]);
-
+  const [omResults, activeSubscriptions, creditAllowance, paymentMethods] =
+    await Promise.all([
+      queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
+      listOwnerActiveSubscriptions(input.userId).catch((err) => {
+        console.warn(
+          "billing-usage-dashboard: subscription summary failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return [] as OwnerBillingSubscriptionRow[];
+      }),
+      getOwnerPrepaidCreditBalance(input.userId).catch((err) => {
+        console.warn(
+          "billing-usage-dashboard: prepaid credit balance failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      }),
+      listOwnerPaymentMethods(input.userId).catch((err) => {
+        console.warn(
+          "billing-usage-dashboard: payment method lookup failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return [] as OwnerPaymentMethodListItem[];
+      }),
+    ]);
   const requestsByDay = new Map<string, number>();
   /** appId|pipeline|modelId → day → count */
   const seriesDayCounts = new Map<string, Map<string, number>>();
@@ -618,6 +634,12 @@ async function buildOpenMeterBillingDashboard(input: {
       appsWithUsage,
       activeSubscriptions,
       creditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
+      defaultPaymentMethod: (() => {
+        const method =
+          paymentMethods.find((item) => item.isDefault) ?? paymentMethods[0];
+        if (!method) return null;
+        return { brand: method.brand, last4: method.last4 };
+      })(),
     },
   };
 }

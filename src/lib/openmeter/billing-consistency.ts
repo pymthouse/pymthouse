@@ -418,7 +418,7 @@ export function classifySpendableGateConsistency(input: {
       message:
         `Spendable gate is 0 while cycle usage ${usedUsdMicros} < included ` +
         `${expectedIncludedUsdMicros} (discountRemaining=${discountRemainingUsdMicros}) — ` +
-        `signer will return 483 Starter allowance exhausted`,
+        `signer will return 483 Payment method required`,
       details: {
         usedUsdMicros: usedUsdMicros.toString(),
         expectedIncludedUsdMicros: expectedIncludedUsdMicros.toString(),

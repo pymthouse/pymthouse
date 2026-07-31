@@ -232,7 +232,7 @@ test("mintAllowanceGateDecision rejects zero spendable like the live 483 path", 
     true,
   );
   assert.equal(decision?.code, "trial_credits_exhausted");
-  assert.equal(decision?.message, "Starter allowance exhausted");
+  assert.equal(decision?.message, "Payment method required");
 });
 
 test("summarizeFindings counts severities", () => {
