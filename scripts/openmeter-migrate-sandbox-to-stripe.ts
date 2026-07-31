@@ -47,6 +47,7 @@ import {
 } from "../src/lib/openmeter/subscription-read";
 import { getOrCreateStarterPlan } from "../src/lib/starter-default-plan";
 import { sanitizeForLog } from "../src/lib/sanitize-for-log";
+import { takeArgValue } from "./lib/openmeter-konnect-migrate";
 
 type Args = {
   apply: boolean;
@@ -73,14 +74,24 @@ function parseArgs(argv: string[]): Args {
       continue;
     }
     if (token === "--client-id") {
-      args.clientId = argv[++i]?.trim();
+      args.clientId = takeArgValue(argv, i, token);
+      i += 1;
       continue;
     }
     if (token === "--limit") {
-      args.limit = Number(argv[++i]);
+      const raw = takeArgValue(argv, i, token);
+      const limit = Number(raw);
+      if (!Number.isFinite(limit) || limit < 0 || !Number.isInteger(limit)) {
+        throw new Error(`--limit must be a non-negative integer (got ${raw})`);
+      }
+      args.limit = limit;
+      i += 1;
       continue;
     }
     throw new Error(`Unknown argument: ${token}`);
+  }
+  if (args.ownersOnly && args.appsOnly) {
+    throw new Error("--owners-only and --apps-only are mutually exclusive");
   }
   return args;
 }
@@ -198,7 +209,7 @@ async function migrateAppUser(input: {
   externalUserId: string;
   apply: boolean;
   sandboxProfileIds: Set<string>;
-}): Promise<"migrated" | "skipped" | "error"> {
+}): Promise<"migrated" | "skipped"> {
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -214,7 +225,7 @@ async function migrateAppUser(input: {
   let customerId = found?.id?.trim() || "";
   if (!customerId) {
     if (!input.apply) {
-      console.log(`[dry-run] would ensure customer ${key}`);
+      console.log(`[dry-run] would ensure customer ${sanitizeForLog(key)}`);
       return "skipped";
     }
     const ensured = await ensureOpenMeterCustomer(client, key);
@@ -228,7 +239,7 @@ async function migrateAppUser(input: {
     }))
   ) {
     console.log(
-      `[skip] ${key} customer=${customerId} starter-only (stays on free billing profile)`,
+      `[skip] ${sanitizeForLog(key)} customer=${sanitizeForLog(customerId)} starter-only (stays on free billing profile)`,
     );
     return "skipped";
   }
@@ -243,13 +254,13 @@ async function migrateAppUser(input: {
   });
   if (!status.needs) {
     console.log(
-      `[skip] ${key} customer=${customerId} stripe=${status.stripeCus} profile=${status.profileId ?? "n/a"}`,
+      `[skip] ${sanitizeForLog(key)} customer=${sanitizeForLog(customerId)} stripe=${sanitizeForLog(status.stripeCus)} profile=${sanitizeForLog(status.profileId ?? "n/a")}`,
     );
     return "skipped";
   }
 
   console.log(
-    `[${input.apply ? "apply" : "dry-run"}] ${key} reason=${status.reason} customer=${customerId} oldProfile=${status.profileId ?? "n/a"} stripe=${status.stripeCus ?? "none"}`,
+    `[${input.apply ? "apply" : "dry-run"}] ${sanitizeForLog(key)} reason=${sanitizeForLog(status.reason)} customer=${sanitizeForLog(customerId)} oldProfile=${sanitizeForLog(status.profileId ?? "n/a")} stripe=${sanitizeForLog(status.stripeCus ?? "none")}`,
   );
   if (!input.apply) {
     return "migrated";
@@ -270,7 +281,7 @@ async function migrateAppUser(input: {
       `Migration did not persist Stripe app data for ${key} (${customerId})`,
     );
   }
-  console.log(`[ok] ${key} stripe=${after}`);
+  console.log(`[ok] ${sanitizeForLog(key)} stripe=${sanitizeForLog(after)}`);
   return "migrated";
 }
 
@@ -278,12 +289,12 @@ async function migrateOwner(input: {
   ownerUserId: string;
   apply: boolean;
   sandboxProfileIds: Set<string>;
-}): Promise<"migrated" | "skipped" | "error"> {
+}): Promise<"migrated" | "skipped"> {
   const key = buildOwnerCustomerKey(input.ownerUserId);
   const client = getHostedAdminClient();
   const customer = await findOpenMeterCustomerByKey(client, key);
   if (!customer?.id) {
-    console.log(`[skip] owner ${key} — no OpenMeter customer`);
+    console.log(`[skip] owner ${sanitizeForLog(key)} — no OpenMeter customer`);
     return "skipped";
   }
 
@@ -374,7 +385,7 @@ async function main() {
       } catch (err) {
         errors += 1;
         console.error(
-          `[error] ${row.clientId}:${row.externalUserId}`,
+          `[error] ${sanitizeForLog(`${row.clientId}:${row.externalUserId}`)}`,
           err instanceof Error ? err.message : err,
         );
       }

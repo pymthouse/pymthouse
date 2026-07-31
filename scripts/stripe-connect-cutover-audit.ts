@@ -6,7 +6,7 @@
  *   npm run stripe:connect-cutover-audit -- --client-id app_x
  */
 import "./load-env-first";
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { closeDb, db } from "../src/db/index";
 import {
   appBillingConfig,
@@ -61,8 +61,8 @@ async function main(): Promise<void> {
         Number.parseFloat(p.priceAmount || "0") > 0,
     );
 
-    const mapped = await db
-      .select()
+    const [{ value: mappedCustomerCount }] = await db
+      .select({ value: count() })
       .from(appUserStripeCustomers)
       .where(eq(appUserStripeCustomers.clientId, app.id));
 
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
         stripeConnectedAccountId: config?.stripeConnectedAccountId ?? null,
         stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
         connectPaymentsOnly: config?.connectPaymentsOnly ?? false,
-        mappedCustomerCount: mapped.length,
+        mappedCustomerCount: Number(mappedCustomerCount),
       }),
     );
   }

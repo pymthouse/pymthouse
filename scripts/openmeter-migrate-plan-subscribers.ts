@@ -182,7 +182,7 @@ async function upsertNeonCache(input: {
     .where(
       and(
         eq(subscriptions.clientId, input.clientId),
-        eq(subscriptions.openmeterCustomerKey, input.customerKey),
+        eq(subscriptions.externalUserId, externalUserId),
       ),
     )
     .limit(1);
