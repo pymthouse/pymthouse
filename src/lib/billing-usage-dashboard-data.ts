@@ -149,6 +149,8 @@ export type BillingUsageDashboardPayload = {
   appUsage: BillingAppUsageSummary[];
   chartData: { date: string; value: number }[];
   chartSeries: BillingChartSeries[];
+  /** Same days as `chartSeries`, split by app × identity instead of app × pipeline/model. */
+  chartSeriesByIdentity: BillingChartSeries[];
   totalRequests: number;
   totalFeeWei: bigint;
   totalNetworkFeeUsdMicros: bigint;
@@ -400,6 +402,12 @@ async function buildOpenMeterBillingDashboard(input: {
   /** appId|pipeline|modelId → day → count */
   const seriesDayCounts = new Map<string, Map<string, number>>();
   const seriesMeta = new Map<string, { appId: string; appName: string; jobType: string }>();
+  /** appId|externalUserId → day → count */
+  const identitySeriesDayCounts = new Map<string, Map<string, number>>();
+  const identitySeriesMeta = new Map<
+    string,
+    { appId: string; appName: string; jobType: string }
+  >();
 
   const appUsage: BillingAppUsageSummary[] = sortAppUsageByMostUsed(
     input.orderedApps.map((app, index) => {
@@ -438,6 +446,22 @@ async function buildOpenMeterBillingDashboard(input: {
         const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
         dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
         seriesDayCounts.set(seriesKey, dayMap);
+      }
+
+      for (const row of om.byDailyUser ?? []) {
+        const chartAppId = app.publicClientId;
+        const seriesKey = `${chartAppId}|${row.externalUserId}`;
+        if (!identitySeriesMeta.has(seriesKey)) {
+          identitySeriesMeta.set(seriesKey, {
+            appId: chartAppId,
+            appName: app.name,
+            jobType: row.externalUserId,
+          });
+        }
+        const dayMap =
+          identitySeriesDayCounts.get(seriesKey) ?? new Map<string, number>();
+        dayMap.set(row.date, (dayMap.get(row.date) ?? 0) + row.requestCount);
+        identitySeriesDayCounts.set(seriesKey, dayMap);
       }
 
       let networkFeeUsdMicros = 0n;
@@ -527,29 +551,39 @@ async function buildOpenMeterBillingDashboard(input: {
     value: requestsByDay.get(date) ?? 0,
   }));
 
-  const chartSeries: BillingChartSeries[] = [...seriesMeta.entries()]
-    .map(([seriesKey, meta]) => {
-      const dayMap = seriesDayCounts.get(seriesKey) ?? new Map<string, number>();
-      const points = dateKeys.map((date) => ({
-        date,
-        value: dayMap.get(date) ?? 0,
-      }));
-      const totalRequests = points.reduce((sum, point) => sum + point.value, 0);
-      return {
-        appId: meta.appId,
-        appName: meta.appName,
-        jobType: meta.jobType,
-        totalRequests,
-        points,
-      };
-    })
-    .filter((series) => series.totalRequests > 0)
-    .sort((a, b) => {
-      if (b.totalRequests !== a.totalRequests) return b.totalRequests - a.totalRequests;
-      const appCmp = a.appName.localeCompare(b.appName);
-      if (appCmp !== 0) return appCmp;
-      return a.jobType.localeCompare(b.jobType);
-    });
+  const buildChartSeries = (
+    meta: Map<string, { appId: string; appName: string; jobType: string }>,
+    dayCounts: Map<string, Map<string, number>>,
+  ): BillingChartSeries[] =>
+    [...meta.entries()]
+      .map(([seriesKey, seriesMetaEntry]) => {
+        const dayMap = dayCounts.get(seriesKey) ?? new Map<string, number>();
+        const points = dateKeys.map((date) => ({
+          date,
+          value: dayMap.get(date) ?? 0,
+        }));
+        const totalRequests = points.reduce((sum, point) => sum + point.value, 0);
+        return {
+          appId: seriesMetaEntry.appId,
+          appName: seriesMetaEntry.appName,
+          jobType: seriesMetaEntry.jobType,
+          totalRequests,
+          points,
+        };
+      })
+      .filter((series) => series.totalRequests > 0)
+      .sort((a, b) => {
+        if (b.totalRequests !== a.totalRequests) return b.totalRequests - a.totalRequests;
+        const appCmp = a.appName.localeCompare(b.appName);
+        if (appCmp !== 0) return appCmp;
+        return a.jobType.localeCompare(b.jobType);
+      });
+
+  const chartSeries = buildChartSeries(seriesMeta, seriesDayCounts);
+  const chartSeriesByIdentity = buildChartSeries(
+    identitySeriesMeta,
+    identitySeriesDayCounts,
+  );
 
   return {
     ok: true,
@@ -564,6 +598,7 @@ async function buildOpenMeterBillingDashboard(input: {
       appUsage,
       chartData,
       chartSeries,
+      chartSeriesByIdentity,
       totalRequests,
       totalFeeWei: 0n,
       totalNetworkFeeUsdMicros,
