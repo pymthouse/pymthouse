@@ -25,7 +25,7 @@
       "manifest": "deploy/pymthouse-signer-test/railway.json",
       "environments": ["preview", "production"],
       "description": "A/B 'latest' remote signer DMZ, deployed in both preview and production. Same webhook/OIDC/Kafka and signing identity as pymthouse (the 'stable' signer); LIVEPEER_IMAGE matches the prod Dockerfile default. Entrypoint defaults BYOC_PER_CAP_PRICING=on for this service name. Apps opt in via LATEST_SIGNER_APPS on the Next app.",
-      "livepeerImage": "livepeer/go-livepeer:sha-9d92ee43300fead9cbcece0867ba04814e3ed218",
+      "livepeerImage": "livepeer/go-livepeer:sha-f1439d603aab0c70c86cea47e8879d840682788a",
       "byocPerCapPricing": true
     }
   }
