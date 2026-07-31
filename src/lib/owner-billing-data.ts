@@ -42,6 +42,11 @@ import {
   listOwnerWalletInvoices,
   type TenantInvoiceDto,
 } from "@/lib/openmeter/invoices";
+import {
+  listOwnerPaymentMethods,
+  OWNER_PAYMENT_METHOD_BUDGET_MS,
+  type OwnerPaymentMethodListItem,
+} from "@/lib/openmeter/owner-payment-method";
 
 export type OwnerBillingSubscriptionRow = {
   subscriptionId: string;
@@ -68,6 +73,8 @@ export type OwnerBillingPayload = {
   userId: string;
   cycle: { start: string; end: string };
   creditAllowance: CreditAllowanceSummary | null;
+  /** Every attached Stripe payment method (Plane A), default flagged. */
+  paymentMethods: OwnerPaymentMethodListItem[];
   subscriptions: OwnerBillingSubscriptionRow[];
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
@@ -611,8 +618,13 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
   // first paint is not blocked when the invoice index is large or slow.
   const emptyInvoices = { items: [] as TenantInvoiceDto[] };
-  const [creditAllowance, subscriptions, ownedApps, invoicesResult] =
-    await Promise.all([
+  const [
+    creditAllowance,
+    paymentMethods,
+    subscriptions,
+    ownedApps,
+    invoicesResult,
+  ] = await Promise.all([
       getOwnerPrepaidCreditBalance(userId).catch((err) => {
         console.warn(
           "owner-billing: credit lookup failed",
@@ -620,6 +632,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         );
         return null;
       }),
+      withSoftTimeout(
+        listOwnerPaymentMethods(userId),
+        // Above the lookup's own budget, so its deadline fires first and we
+        // keep whatever it resolved instead of falling back to empty.
+        OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
+        [] as OwnerPaymentMethodListItem[],
+        "payment method lookup",
+      ),
       withSoftTimeout(
         listOwnerActiveSubscriptions(userId),
         8_000,
@@ -646,6 +666,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       userId,
       cycle,
       creditAllowance,
+      paymentMethods,
       subscriptions,
       invoices: invoicesResult.items,
       openMeterConfigured: true,

@@ -6,7 +6,11 @@ import { useState } from "react";
  * Owner billing: start OpenMeter Stripe Checkout (setup) to attach a card for
  * platform overage invoices.
  */
-export default function OwnerPaymentMethodButton() {
+export default function OwnerPaymentMethodButton({
+  hasPaymentMethod = false,
+}: Readonly<{
+  hasPaymentMethod?: boolean;
+}>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +40,13 @@ export default function OwnerPaymentMethodButton() {
     }
   }
 
+  let buttonLabel = "Add payment method";
+  if (busy) {
+    buttonLabel = "Opening Stripe…";
+  } else if (hasPaymentMethod) {
+    buttonLabel = "Update payment method";
+  }
+
   return (
     <div className="flex flex-col items-end gap-1">
       <button
@@ -44,7 +55,7 @@ export default function OwnerPaymentMethodButton() {
         disabled={busy}
         onClick={() => void startCheckout()}
       >
-        {busy ? "Opening Stripe…" : "Add payment method"}
+        {buttonLabel}
       </button>
       {error ? (
         <p className="max-w-xs text-right text-xs text-red-400">{error}</p>

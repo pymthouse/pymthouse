@@ -5,6 +5,7 @@ import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
+import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import { formatBillingPeriod } from "@/lib/billing-format";
 import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
@@ -159,25 +160,32 @@ export default function OwnerBillingView({
               </div>
               {billingActions}
             </div>
-            {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
-              <AllowanceStrip
-                balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
-                lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
-                consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
-                requestCount={data.subscriptions.reduce(
-                  (sum, row) => sum + row.requestCount,
-                  0,
-                )}
-              />
-            ) : (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                <p>
-                  No prepaid credit balance yet. Starter included usage comes from your plan
-                  allowance. Attach a payment method so usage beyond the allowance can be
-                  invoiced on Stripe.
-                </p>
-              </div>
-            )}
+            <div className="space-y-3">
+              {data.paymentMethods.length > 0 ? (
+                <OwnerPaymentMethodsCard paymentMethods={data.paymentMethods} />
+              ) : null}
+              {hasDisplayablePrepaidCredit(data.creditAllowance) && data.creditAllowance ? (
+                <AllowanceStrip
+                  balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
+                  lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
+                  consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
+                  requestCount={data.subscriptions.reduce(
+                    (sum, row) => sum + row.requestCount,
+                    0,
+                  )}
+                />
+              ) : null}
+              {data.paymentMethods.length === 0 &&
+              !hasDisplayablePrepaidCredit(data.creditAllowance) ? (
+                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
+                  <p>
+                    No prepaid credit balance yet. Starter included usage comes from your plan
+                    allowance. Attach a payment method so usage beyond the allowance can be
+                    invoiced on Stripe.
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </section>
 
           <section>
