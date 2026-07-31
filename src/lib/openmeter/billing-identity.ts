@@ -31,6 +31,7 @@ type AppIdentityRow = {
   developerAppId: string;
   publicClientId: string;
   ownerId: string;
+  isPlatformDefault: boolean;
 };
 
 async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow | null> {
@@ -44,6 +45,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
       developerAppId: developerApps.id,
       publicClientId: oidcClients.clientId,
       ownerId: developerApps.ownerId,
+      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -51,7 +53,12 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
     .limit(1);
 
   if (byPublic[0]?.publicClientId) {
-    return byPublic[0];
+    return {
+      developerAppId: byPublic[0].developerAppId,
+      publicClientId: byPublic[0].publicClientId,
+      ownerId: byPublic[0].ownerId,
+      isPlatformDefault: byPublic[0].isPlatformDefault === 1,
+    };
   }
 
   const byAppId = await db
@@ -59,6 +66,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
       developerAppId: developerApps.id,
       publicClientId: oidcClients.clientId,
       ownerId: developerApps.ownerId,
+      isPlatformDefault: developerApps.isPlatformDefault,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -73,6 +81,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
     developerAppId: row.developerAppId,
     publicClientId: row.publicClientId?.trim() || row.developerAppId,
     ownerId: row.ownerId,
+    isPlatformDefault: row.isPlatformDefault === 1,
   };
 }
 
@@ -100,7 +109,8 @@ export function resetBillingIdentityCacheForTests(): void {
 /**
  * Resolve the OpenMeter billing customer for an (app, external user) pair.
  * App owners map to a single bare `{users.id}` customer across all apps;
- * M2M end-users stay on `app_…:externalUserId`.
+ * platform-default (Livepeer Direct) members bill their own owner wallet;
+ * M2M end-users on normal apps stay on `app_…:externalUserId`.
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
@@ -160,6 +170,18 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
       customerKey: buildOwnerCustomerKey(app.ownerId),
       isOwner: true,
       ownerUserId: app.ownerId,
+      publicClientId: app.publicClientId,
+      developerAppId: app.developerAppId,
+    };
+  }
+
+  // Explorer / personal network keys on Livepeer Direct: each platform user
+  // bills their own owner wallet (Owner Starter), not the admin app owner.
+  if (app.isPlatformDefault) {
+    return {
+      customerKey: buildOwnerCustomerKey(normalized),
+      isOwner: true,
+      ownerUserId: normalized,
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
     };
