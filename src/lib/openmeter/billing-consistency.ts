@@ -622,6 +622,54 @@ async function queryOwnerUsedUsdMicros(
   }
 }
 
+/**
+ * Which of `candidates` actually carried usage this cycle.
+ *
+ * Checks the whole set in one query first — the healthy case is "none", and
+ * this keeps the audit to a single round-trip for it. Only when that total is
+ * non-zero does it drill down per subject to name the offenders.
+ */
+async function findSubjectsWithUsage(
+  client: OpenMeter,
+  candidates: string[],
+): Promise<string[]> {
+  if (candidates.length === 0) return [];
+  const cycle = calendarMonthBoundsUtc(new Date());
+  const window = {
+    windowSize: "MONTH" as const,
+    from: new Date(cycle.start),
+    to: new Date(cycle.end),
+  };
+
+  const totalFor = async (subjects: string[]): Promise<bigint> => {
+    const result = await client.meters.query(NETWORK_FEE_USD_MICROS_METER, {
+      ...window,
+      subject: subjects,
+    });
+    let total = 0n;
+    for (const row of result.data || []) {
+      total += meterRowValueToBigInt(row.value);
+    }
+    return total;
+  };
+
+  try {
+    if ((await totalFor(candidates)) === 0n) {
+      return [];
+    }
+    const withUsage: string[] = [];
+    for (const subject of candidates) {
+      if ((await totalFor([subject])) > 0n) {
+        withUsage.push(subject);
+      }
+    }
+    return withUsage;
+  } catch {
+    // An audit that cannot read usage must not claim everything is attributed.
+    return [];
+  }
+}
+
 export type AuditBillingConsistencyOptions = {
   ownerId?: string;
   clientId?: string;
@@ -714,8 +762,18 @@ async function auditOwnerSubscriptions(
   const customerKey = buildOwnerCustomerKey(ownerId);
 
   let customerId: string;
+  let attributedSubjects: string[] = [];
   try {
-    const customer = await findOpenMeterCustomerByKey(client, customerKey);
+    const customer = (await findOpenMeterCustomerByKey(client, customerKey)) as
+      | { id?: string; usageAttribution?: { subjectKeys?: string[] } }
+      | null;
+    attributedSubjects = [
+      ...new Set(
+        (customer?.usageAttribution?.subjectKeys ?? [])
+          .map((key) => key.trim())
+          .filter(Boolean),
+      ),
+    ];
     if (!customer?.id) {
       return [
         {
@@ -809,6 +867,25 @@ async function auditOwnerSubscriptions(
       }),
     );
   }
+
+  // Gate for the transitional-subject cutover: usage on a subject the customer
+  // is not attributed is metered but never invoiced. This must report clean
+  // before buildOwnerMeterSubjects can be reduced to the canonical key.
+  // See docs/adr-owner-vs-app-billing.md.
+  const ownedPublicClientIds = await listOwnedPublicClientIds(ownerId);
+  const subjectsWithUsage = await findSubjectsWithUsage(
+    client,
+    buildOwnerMeterSubjects(ownerId, ownedPublicClientIds),
+  );
+  findings.push(
+    ...classifyUsageAttributionConsistency({
+      ownerId,
+      customerKey,
+      attributedSubjects,
+      subjectsWithUsage,
+    }),
+  );
+
   return findings;
 }
 
