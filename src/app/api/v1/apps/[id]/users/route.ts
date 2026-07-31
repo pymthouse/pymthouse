@@ -71,7 +71,8 @@ function parseUpsertUserBody(body: Record<string, unknown>): {
   email: string | null;
   status: string;
 } | { ok: false; response: NextResponse } {
-  const externalUserId = String(body.externalUserId || "").trim();
+  const externalUserId =
+    typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
   if (!externalUserId) {
     return {
       ok: false,
@@ -240,7 +241,8 @@ export async function PUT(
   }
 
   const body = await request.json();
-  const externalUserId = String(body.externalUserId || "").trim();
+  const externalUserId =
+    typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
   if (!externalUserId) {
     return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
   }

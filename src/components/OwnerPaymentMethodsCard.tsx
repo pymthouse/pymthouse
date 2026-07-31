@@ -32,6 +32,16 @@ function paymentMethodDetail(pm: OwnerPaymentMethodListItem): string | null {
   return `Expires ${month}/${String(pm.expYear).slice(-2)}`;
 }
 
+function paymentMethodStatusLabel(pm: OwnerPaymentMethodListItem): string {
+  if (pm.isDefault) {
+    return "Default for platform overage invoices";
+  }
+  if (isLinkPaymentMethod(pm)) {
+    return "Stripe Link wallet";
+  }
+  return "On file";
+}
+
 /** Stripe Link–inspired mark: green pill + chain icon + wordmark. */
 function StripeLinkMark() {
   return (
@@ -240,11 +250,7 @@ export default function OwnerPaymentMethodsCard({
                   </p>
                 )}
                 <p className="mt-1 text-xs text-zinc-500">
-                  {pm.isDefault
-                    ? "Default for platform overage invoices"
-                    : isLinkPaymentMethod(pm)
-                      ? "Stripe Link wallet"
-                      : "On file"}
+                  {paymentMethodStatusLabel(pm)}
                   {detail ? (
                     <>
                       <span className="mx-1.5 text-zinc-700">·</span>
