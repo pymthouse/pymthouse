@@ -765,7 +765,7 @@ export default function SignedTicketRequestHistory({
 
       {!openMeterConfigured ? (
         <p className="text-sm text-zinc-500 py-6 text-center">
-          OpenMeter is not configured, so per-request history is unavailable.
+          Usage metering is not configured, so per-request history is unavailable.
         </p>
       ) : null}
       {openMeterConfigured && loading ? (

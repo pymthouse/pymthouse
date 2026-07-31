@@ -231,7 +231,7 @@ export default function TransactionsLedger({
                     {entry.derived ? (
                       <span
                         className="ml-1.5 text-[10px] text-zinc-600"
-                        title="Derived from metered usage — OpenMeter does not expose per-event credit consumption."
+                        title="Derived from metered usage — the billing engine reports a consumed total, not per-event credit consumption."
                       >
                         (derived)
                       </span>

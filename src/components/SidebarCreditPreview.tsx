@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { formatUsdMicrosDisplay } from "@/lib/format-usd-micros";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 
 type CreditPayload = {
   creditAllowance: {
@@ -60,7 +60,7 @@ export default function SidebarCreditPreview() {
         if (!hasDisplayableCredit(body.creditAllowance)) return;
         setBlocked(false);
         setBalanceLabel(
-          formatUsdMicrosDisplay(body.creditAllowance!.balanceUsdMicros),
+          formatUsdMicrosSummary(body.creditAllowance!.balanceUsdMicros),
         );
       } catch {
         // Non-blocking preview — ignore abort/network/OpenMeter failures.

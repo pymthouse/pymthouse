@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import InfoTooltip from "@/components/InfoTooltip";
 import {
-  formatUsdMicrosDisplay,
+  formatUsdMicrosSummary,
   hasPositiveUsdMicrosBalance,
 } from "@/lib/format-usd-micros";
 
@@ -83,11 +83,11 @@ export default function AllowanceStrip({
       <div className="flex flex-wrap items-baseline gap-3">
         <span className="font-mono text-[15px] tabular-nums leading-none text-zinc-400">
           <b className="mr-0.5 text-[22px] font-medium tracking-[-0.01em] text-zinc-100">
-            {formatUsdMicrosDisplay(remaining.toString())}
+            {formatUsdMicrosSummary(remaining.toString())}
           </b>
           <span className="text-zinc-500">
             {" "}
-            / {formatUsdMicrosDisplay(grantedDisplay.toString())} remaining
+            / {formatUsdMicrosSummary(grantedDisplay.toString())} remaining
           </span>
         </span>
       </div>
@@ -113,7 +113,7 @@ export default function AllowanceStrip({
           requests this period
           {" · "}
           <b className="font-medium text-zinc-300">
-            {formatUsdMicrosDisplay(consumed.toString())}
+            {formatUsdMicrosSummary(consumed.toString())}
           </b>{" "}
           credits consumed
         </span>

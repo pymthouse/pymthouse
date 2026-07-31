@@ -9,7 +9,7 @@ import TransactionsLedger from "@/components/billing/TransactionsLedger";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
-import { formatBillingPeriod } from "@/lib/billing-format";
+import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
@@ -363,8 +363,7 @@ export default function OwnerBillingView({
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
-            Cycle: {formatBillingPeriod(data.cycle.start)} —{" "}
-            {formatBillingPeriod(data.cycle.end)}
+            Cycle: <CycleRange start={data.cycle.start} end={data.cycle.end} />
             <span className="mx-2 text-zinc-700">·</span>
             <Link
               href="/usage"
@@ -375,7 +374,7 @@ export default function OwnerBillingView({
           </p>
         ) : (
           <p className="mt-2 text-sm text-amber-400/90">
-            OpenMeter is not configured — billing balances are unavailable.
+            Usage metering is not configured — billing balances are unavailable.
           </p>
         )}
       </div>
