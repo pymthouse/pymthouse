@@ -3,11 +3,14 @@ import type { ReactNode } from "react";
 
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
+import CostWaterfall from "@/components/billing/CostWaterfall";
+import PlatformInvoicesTable from "@/components/billing/PlatformInvoicesTable";
+import TransactionsLedger from "@/components/billing/TransactionsLedger";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import { formatBillingPeriod } from "@/lib/billing-format";
-import { formatUsdMicrosDisplay, formatUsdMicrosString } from "@/lib/format-usd-micros";
+import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
 
@@ -26,13 +29,16 @@ function hasDisplayablePrepaidCredit(
 
 function SubscriptionCard({
   row,
+  creditBalanceUsdMicros,
+  defaultPaymentMethod,
 }: Readonly<{
   row: OwnerBillingPayload["subscriptions"][number];
+  creditBalanceUsdMicros: string | null;
+  defaultPaymentMethod: OwnerBillingPayload["paymentMethods"][number] | null;
 }>) {
   const hasAllowance =
     row.discountUsdMicros != null && BigInt(row.discountUsdMicros) > 0n;
-  const overage = BigInt(row.overageUsdMicros || "0");
-  const usedLabel = formatUsdMicrosString(row.usedUsdMicros, 4) ?? "$0";
+  const usedLabel = formatUsdMicrosSummary(row.usedUsdMicros);
 
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
@@ -75,28 +81,15 @@ function SubscriptionCard({
           usedUsdMicros={row.usedUsdMicros}
           allowanceUsdMicros={row.discountUsdMicros!}
         />
-      ) : (
-        <p className="mt-3 text-xs text-zinc-600">
-          No included usage allowance on this plan — cycle usage settles against prepaid
-          credits or your Stripe payment method.
-        </p>
-      )}
-
-      {hasAllowance && overage > 0n ? (
-        <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Allowance exhausted ·{" "}
-          <span className="font-mono tabular-nums">
-            {formatUsdMicrosDisplay(overage.toString())}
-          </span>{" "}
-          overage burns prepaid credits, then invoices your Stripe payment method
-        </p>
       ) : null}
 
-      {hasAllowance && overage === 0n && BigInt(row.usedUsdMicros) > 0n ? (
-        <p className="mt-3 text-xs text-zinc-600">
-          Usage is covered by the plan allowance; prepaid credits are not charged yet.
-        </p>
-      ) : null}
+      <CostWaterfall
+        className="mt-4"
+        usedUsdMicros={row.usedUsdMicros}
+        planIncludedUsdMicros={row.discountUsdMicros}
+        creditBalanceUsdMicros={creditBalanceUsdMicros}
+        paymentMethod={defaultPaymentMethod}
+      />
     </div>
   );
 }
@@ -191,9 +184,7 @@ export default function OwnerBillingView({
           <section>
             <h2 className="mb-3 text-sm font-semibold text-zinc-200">Active subscriptions</h2>
             <p className="mb-4 text-xs text-zinc-600">
-              Usage toward each plan&apos;s included allowance for the current cycle. Overage
-              after the allowance burns prepaid credits, then charges your Stripe payment
-              method.
+              Each card shows where this cycle&apos;s usage settled.
             </p>
             {data.subscriptions.length === 0 ? (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
@@ -206,7 +197,18 @@ export default function OwnerBillingView({
             ) : (
               <div className="space-y-3">
                 {data.subscriptions.map((row) => (
-                  <SubscriptionCard key={row.subscriptionId} row={row} />
+                  <SubscriptionCard
+                    key={row.subscriptionId}
+                    row={row}
+                    creditBalanceUsdMicros={
+                      data.creditAllowance?.balanceUsdMicros ?? null
+                    }
+                    defaultPaymentMethod={
+                      data.paymentMethods.find((m) => m.isDefault) ??
+                      data.paymentMethods[0] ??
+                      null
+                    }
+                  />
                 ))}
               </div>
             )}
@@ -220,37 +222,11 @@ export default function OwnerBillingView({
                 wide
               />
             </div>
-            {data.invoices.length === 0 ? (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-                No platform invoices yet.
-              </div>
-            ) : (
-              <ul className="divide-y divide-white/[0.06] rounded-xl border border-white/[0.06] bg-white/[0.02]">
-                {data.invoices.map((inv) => (
-                  <li
-                    key={inv.id}
-                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-mono text-zinc-200">{inv.number ?? inv.id}</p>
-                      {inv.issuedAt ? (
-                        <p className="mt-0.5 text-xs text-zinc-600">
-                          {formatBillingPeriod(inv.issuedAt)}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono tabular-nums text-zinc-100">
-                        {inv.totalAmount} {inv.currency}
-                      </p>
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                        {inv.status}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <PlatformInvoicesTable invoices={data.invoices} />
+          </section>
+
+          <section className="mt-8">
+            <TransactionsLedger entries={data.ledger} />
           </section>
         </>
       )}

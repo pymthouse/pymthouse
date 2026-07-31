@@ -236,6 +236,9 @@ export default function OwnerPaymentMethodsCard({
         {paymentMethods.map((pm) => {
           const busy = busyId === pm.id;
           const detail = paymentMethodDetail(pm);
+          // Overage invoices need something to charge — never allow the list
+          // to reach zero from here.
+          const isOnlyMethod = paymentMethods.length <= 1;
           return (
             <li
               key={pm.id}
@@ -276,8 +279,13 @@ export default function OwnerPaymentMethodsCard({
                 )}
                 <button
                   type="button"
-                  className="min-h-9 rounded-md border border-white/10 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
-                  disabled={busyId !== null}
+                  className="min-h-9 rounded-md border border-white/10 px-2.5 py-1.5 text-xs text-zinc-300 hover:border-red-500/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-white/10 disabled:hover:text-zinc-300"
+                  disabled={busyId !== null || isOnlyMethod}
+                  title={
+                    isOnlyMethod
+                      ? "Add another payment method before removing this one."
+                      : undefined
+                  }
                   onClick={() => setPendingRemove(pm)}
                 >
                   Remove
@@ -289,6 +297,12 @@ export default function OwnerPaymentMethodsCard({
       </ul>
       {error && !pendingRemove ? (
         <p className="mt-3 text-xs text-red-400">{error}</p>
+      ) : null}
+      {paymentMethods.length === 1 ? (
+        <p className="mt-3 text-[11px] text-zinc-600">
+          Add a second payment method before removing this one — overage invoices
+          need a method to charge.
+        </p>
       ) : null}
       {pendingRemove ? (
         <RemovePaymentMethodDialog

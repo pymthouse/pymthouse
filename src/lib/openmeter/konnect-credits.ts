@@ -15,14 +15,42 @@ type KonnectCreditBalanceResponse = {
   retrieved_at?: string;
 };
 
-type KonnectCreditGrantRow = {
+export type KonnectCreditGrantRow = {
   id?: string;
   amount?: string;
   currency?: string;
   status?: string;
   name?: string;
   key?: string;
+  /**
+   * Konnect has used both snake_case and camelCase for grant timestamps across
+   * revisions; accept either so the ledger can place grants chronologically.
+   * All optional — an undated grant is skipped rather than mis-ordered.
+   */
+  effective_at?: string;
+  effectiveAt?: string;
+  created_at?: string;
+  createdAt?: string;
 };
+
+/** First usable ISO timestamp on a grant row, or null when undated. */
+export function konnectGrantTimestamp(
+  grant: KonnectCreditGrantRow,
+): string | null {
+  const candidates = [
+    grant.effective_at,
+    grant.effectiveAt,
+    grant.created_at,
+    grant.createdAt,
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed && !Number.isNaN(Date.parse(trimmed))) {
+      return trimmed;
+    }
+  }
+  return null;
+}
 
 type KonnectCreditGrantsListResponse = {
   data?: KonnectCreditGrantRow[];

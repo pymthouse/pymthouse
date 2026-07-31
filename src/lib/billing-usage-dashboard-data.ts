@@ -5,6 +5,7 @@ import { db } from "@/db/index";
 import { developerApps, oidcClients, providerAdmins, users } from "@/db/schema";
 import { calendarMonthBoundsUtc, dateKeysInclusiveUtc } from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
+import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
 import {
   listOwnerActiveSubscriptions,
   type OwnerBillingSubscriptionRow,
@@ -157,6 +158,11 @@ export type BillingUsageDashboardPayload = {
   appsWithUsage: number;
   /** Viewer's active subscriptions (discount progress); empty when none / unavailable. */
   activeSubscriptions: OwnerBillingSubscriptionRow[];
+  /**
+   * Remaining prepaid credit balance (USD micros) for the cost waterfall.
+   * Null when unavailable — the waterfall then shows no credit headroom.
+   */
+  creditBalanceUsdMicros: string | null;
 };
 
 export type BillingUsageDashboardResult =
@@ -387,7 +393,7 @@ async function buildOpenMeterBillingDashboard(input: {
   cycleBounds: { start: string; end: string };
   orderedApps: BillingAppRow[];
 }): Promise<BillingUsageDashboardResult> {
-  const [omResults, activeSubscriptions] = await Promise.all([
+  const [omResults, activeSubscriptions, creditAllowance] = await Promise.all([
     queryDashboardUsagePaged(input.orderedApps, input.cycle, input.userId),
     listOwnerActiveSubscriptions(input.userId).catch((err) => {
       console.warn(
@@ -395,6 +401,13 @@ async function buildOpenMeterBillingDashboard(input: {
         err instanceof Error ? err.message : String(err),
       );
       return [] as OwnerBillingSubscriptionRow[];
+    }),
+    getOwnerPrepaidCreditBalance(input.userId).catch((err) => {
+      console.warn(
+        "billing-usage-dashboard: prepaid credit balance failed",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
     }),
   ]);
 
@@ -604,6 +617,7 @@ async function buildOpenMeterBillingDashboard(input: {
       totalNetworkFeeUsdMicros,
       appsWithUsage,
       activeSubscriptions,
+      creditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
     },
   };
 }

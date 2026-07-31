@@ -141,6 +141,20 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
+    // Removing the only method would leave overage invoices with nothing to
+    // charge. Enforced here as well as in the UI so the API cannot be used to
+    // reach that state.
+    const existing = await listOwnerPaymentMethods(userId);
+    if (existing.length <= 1 && existing.some((pm) => pm.id === paymentMethodId)) {
+      return NextResponse.json(
+        {
+          error:
+            "This is your only payment method. Add another before removing this one.",
+        },
+        { status: 409 },
+      );
+    }
+
     const result = await unlinkOwnerPaymentMethod(userId, paymentMethodId);
     if (!result.unlinked) {
       return NextResponse.json(

@@ -30,6 +30,12 @@ export type TenantInvoiceDto = {
   issuedAt?: string;
   periodStart?: string;
   periodEnd?: string;
+  /**
+   * Stripe invoice id from the invoicing app, when installed. The hosted
+   * invoice URL is signed and is not returned here — resolve it on demand
+   * via `retrievePlatformInvoiceLinks`.
+   */
+  externalInvoicingId?: string;
 };
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -137,6 +143,7 @@ async function listInvoicesForCustomerIds(input: {
         issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
         periodStart: inv.period?.from?.toISOString?.() ?? undefined,
         periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
+        externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
       });
     }
   }

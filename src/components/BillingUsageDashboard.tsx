@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppFilterDropdown from "@/components/AppFilterDropdown";
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
+import CostWaterfall from "@/components/billing/CostWaterfall";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import SignedTicketRequestHistory from "@/components/SignedTicketRequestHistory";
 import {
@@ -39,6 +40,7 @@ type BillingUsageDashboardClientPayload = {
   totalNetworkFeeUsdMicros: string;
   appsWithUsage: number;
   activeSubscriptions?: OwnerBillingSubscriptionRow[];
+  creditBalanceUsdMicros?: string | null;
 };
 
 type UsageTab = "mine" | "all";
@@ -186,8 +188,10 @@ function deriveFilteredView(
 
 function ActiveSubscriptionSummary({
   subscriptions,
+  creditBalanceUsdMicros,
 }: Readonly<{
   subscriptions: OwnerBillingSubscriptionRow[];
+  creditBalanceUsdMicros: string | null;
 }>) {
   if (subscriptions.length === 0) {
     return (
@@ -250,6 +254,13 @@ function ActiveSubscriptionSummary({
           className="mt-3"
         />
       ) : null}
+
+      <CostWaterfall
+        className="mt-4"
+        usedUsdMicros={primary.usedUsdMicros}
+        planIncludedUsdMicros={primary.discountUsdMicros}
+        creditBalanceUsdMicros={creditBalanceUsdMicros}
+      />
     </div>
   );
 }
@@ -515,6 +526,7 @@ function BillingUsageBody({
           <div className="mb-5">
             <ActiveSubscriptionSummary
               subscriptions={data.activeSubscriptions ?? []}
+              creditBalanceUsdMicros={data.creditBalanceUsdMicros ?? null}
             />
           </div>
         ) : null}
