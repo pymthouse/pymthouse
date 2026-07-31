@@ -5,13 +5,14 @@ import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients } from "@/db/schema";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import { getAppBillingConfig, upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { getProviderApp } from "@/lib/provider-apps";
 
 export type BillingMode = "owner_rollup" | "merchant";
 
 export type ActivationReason =
-  | "owner_balance_exhausted"
+  | "owner_payment_method_required"
   | "end_user_cap_reached"
   | "stripe_connect_required"
   | "stripe_connect_pending";
@@ -66,6 +67,38 @@ export function __testSetSpendableLookup(fn: SpendableLookup | null): void {
   spendableLookup = fn ?? getSpendableUsdMicros;
 }
 
+type PaymentMethodLookup = typeof ownerHasChargeablePaymentMethod;
+let paymentMethodLookup: PaymentMethodLookup = ownerHasChargeablePaymentMethod;
+
+/** Test-only override for owner payment-method lookups. */
+export function __testSetOwnerPaymentMethodLookup(
+  fn: PaymentMethodLookup | null,
+): void {
+  paymentMethodLookup = fn ?? ownerHasChargeablePaymentMethod;
+}
+
+/**
+ * OpenMeter bills platform usage on `charge_automatically`, so a dry prepaid
+ * wallet is fine as long as there is a card behind it. Only an owner with
+ * neither is unbillable, and the payment-method lookup costs a Stripe round
+ * trip, so it runs only once the cheap balance read has already failed.
+ * Unknown answers (OpenMeter or Stripe unreachable) fail open — an outage must
+ * not freeze provisioning.
+ */
+async function isOwnerBillable(input: {
+  publicClientId: string;
+  ownerId: string;
+}): Promise<boolean> {
+  const spendable = await spendableLookup({
+    clientId: input.publicClientId,
+    externalUserId: input.ownerId,
+  });
+  if (spendable == null || hasPositiveUsdMicrosBalance(spendable)) {
+    return true;
+  }
+  return (await paymentMethodLookup(input.ownerId)) !== false;
+}
+
 export function getActivationGateMode(): ActivationGateMode {
   const raw = process.env.ACTIVATION_GATE_MODE?.trim().toLowerCase();
   if (raw === "log" || raw === "enforce_revenue" || raw === "enforce") {
@@ -90,15 +123,23 @@ function normalizeBillingMode(raw: string | null | undefined): BillingMode {
   return raw === "merchant" ? "merchant" : "owner_rollup";
 }
 
-function appSettingsActionUrl(publicClientId: string): string {
+function actionUrlForReason(
+  reason: ActivationReason,
+  publicClientId: string,
+): string {
   const base = (process.env.NEXTAUTH_URL || "http://localhost:3001").replace(/\/$/, "");
+  // The owner's own card is managed on the platform billing page, not in the
+  // per-app settings the other reasons point at.
+  if (reason === "owner_payment_method_required") {
+    return `${base}/billing`;
+  }
   return `${base}/apps/${encodeURIComponent(publicClientId)}/settings?tab=billing`;
 }
 
 function messageForReason(reason: ActivationReason): string {
   switch (reason) {
-    case "owner_balance_exhausted":
-      return "Owner wallet has no spendable balance";
+    case "owner_payment_method_required":
+      return "Owner wallet is empty and no payment method is on file";
     case "end_user_cap_reached":
       return "App end-user cap reached";
     case "stripe_connect_required":
@@ -109,7 +150,7 @@ function messageForReason(reason: ActivationReason): string {
 }
 
 function statusForReason(reason: ActivationReason): number {
-  return reason === "owner_balance_exhausted" ? 402 : 403;
+  return reason === "owner_payment_method_required" ? 402 : 403;
 }
 
 async function resolvePublicClientId(app: typeof developerApps.$inferSelect): Promise<string> {
@@ -149,15 +190,13 @@ export async function resolveAppActivation(clientId: string): Promise<AppActivat
   let provisionReason: ActivationReason | null = null;
 
   if (!isPlatformDefault) {
-    const spendable = await spendableLookup({
-      clientId: publicClientId,
-      externalUserId: app.ownerId,
+    const billable = await isOwnerBillable({
+      publicClientId,
+      ownerId: app.ownerId,
     });
-    // Fail-open when OpenMeter is unavailable (null) so outages do not freeze provisioning.
-    const solvent = spendable == null || hasPositiveUsdMicrosBalance(spendable);
-    if (!solvent) {
+    if (!billable) {
       canProvisionEndUsers = false;
-      provisionReason = "owner_balance_exhausted";
+      provisionReason = "owner_payment_method_required";
     } else if (Number(appUserCount) >= endUserCap) {
       canProvisionEndUsers = false;
       provisionReason = "end_user_cap_reached";
@@ -272,14 +311,14 @@ export async function assertAppCanProvisionUsers(
   const reason: ActivationReason =
     activation.reason === "end_user_cap_reached"
       ? "end_user_cap_reached"
-      : "owner_balance_exhausted";
+      : "owner_payment_method_required";
 
   throw new AppActivationError({
     code: reason,
     message: messageForReason(reason),
     status: statusForReason(reason),
     billingMode: activation.billingMode,
-    actionUrl: appSettingsActionUrl(activation.clientId),
+    actionUrl: actionUrlForReason(reason, activation.clientId),
     activation: { ...activation, reason },
   });
 }
@@ -307,7 +346,7 @@ export async function assertAppCanSellPaidPlans(clientId: string): Promise<AppAc
     message: messageForReason(reason),
     status: 403,
     billingMode: activation.billingMode,
-    actionUrl: appSettingsActionUrl(activation.clientId),
+    actionUrl: actionUrlForReason(reason, activation.clientId),
     activation: { ...activation, reason },
   });
 }

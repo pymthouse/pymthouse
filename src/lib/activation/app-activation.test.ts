@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import type { TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { appBillingConfig } from "@/db/schema";
 import {
   __testDefaultEndUserCap,
+  __testSetOwnerPaymentMethodLookup,
   __testSetSpendableLookup,
   AppActivationError,
   assertAppCanProvisionUsers,
@@ -24,6 +26,22 @@ import {
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 import { withTemporaryPlatformDefault } from "@/test-utils/platform-default-lock";
+
+/**
+ * Both halves of the cost rail. `hasPaymentMethod: null` is the outage answer,
+ * which must fail open.
+ */
+function stubOwnerBilling(
+  t: TestContext,
+  input: { spendableUsdMicros: string; hasPaymentMethod: boolean | null },
+): void {
+  __testSetSpendableLookup(async () => input.spendableUsdMicros);
+  __testSetOwnerPaymentMethodLookup(async () => input.hasPaymentMethod);
+  t.after(() => {
+    __testSetSpendableLookup(null);
+    __testSetOwnerPaymentMethodLookup(null);
+  });
+}
 
 test("isConnectReady requires account, charges, and details_submitted", () => {
   assert.equal(isConnectReady(null), false);
@@ -54,15 +72,15 @@ test("getActivationGateMode defaults to off", () => {
   process.env.ACTIVATION_GATE_MODE = prev;
 });
 
-test("buildActivationProblem uses 402 for empty wallet", () => {
+test("buildActivationProblem uses 402 when there is nothing to charge", () => {
   const body = buildActivationProblem({
-    reason: "owner_balance_exhausted",
+    reason: "owner_payment_method_required",
     billingMode: "owner_rollup",
     actionUrl: "https://example.com/billing",
     correlationId: "corr-1",
   });
   assert.equal(body.status, 402);
-  assert.equal(body.code, "owner_balance_exhausted");
+  assert.equal(body.code, "owner_payment_method_required");
   assert.equal(body.correlation_id, "corr-1");
 });
 
@@ -70,8 +88,7 @@ test("resolveAppActivation defaults when billing config is missing", async (t) =
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  __testSetSpendableLookup(async () => "1000000");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "1000000", hasPaymentMethod: false });
 
   const activation = await resolveAppActivation(seeded.clientId);
   assert.equal(activation.billingMode, "owner_rollup");
@@ -86,8 +103,7 @@ test("resolveAppActivation exempts platform default apps from provision checks",
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  __testSetSpendableLookup(async () => "0");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: false });
 
   await withTemporaryPlatformDefault(seeded.clientId, async () => {
     const activation = await resolveAppActivation(seeded.clientId);
@@ -106,8 +122,7 @@ test("resolveAppActivation blocks when charges_enabled or details_submitted fals
     stripeDetailsSubmitted: true,
   });
 
-  __testSetSpendableLookup(async () => "1000000");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "1000000", hasPaymentMethod: false });
 
   const activation = await resolveAppActivation(seeded.clientId);
   assert.equal(activation.connectReady, false);
@@ -131,8 +146,7 @@ test("resolveAppActivation blocks at end_user_cap boundary", async (t) => {
   t.after(async () => cleanupTestApp(seeded));
 
   await upsertAppBillingConfig(seeded.clientId, { endUserCap: 2 });
-  __testSetSpendableLookup(async () => "1000000");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "1000000", hasPaymentMethod: false });
 
   await createAppUser({ clientId: seeded.clientId, externalUserId: "eu-1" });
   await createAppUser({ clientId: seeded.clientId, externalUserId: "eu-2" });
@@ -143,16 +157,36 @@ test("resolveAppActivation blocks at end_user_cap boundary", async (t) => {
   assert.equal(activation.appUserCount, 2);
 });
 
-test("resolveAppActivation blocks on zero owner balance", async (t) => {
+test("resolveAppActivation blocks an empty wallet with no payment method", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  __testSetSpendableLookup(async () => "0");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: false });
 
   const activation = await resolveAppActivation(seeded.clientId);
   assert.equal(activation.canProvisionEndUsers, false);
-  assert.equal(activation.reason, "owner_balance_exhausted");
+  assert.equal(activation.reason, "owner_payment_method_required");
+});
+
+test("resolveAppActivation allows an empty wallet backed by a card", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+
+  // OpenMeter invoices charge_automatically, so a card is enough to keep going.
+  stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: true });
+
+  const activation = await resolveAppActivation(seeded.clientId);
+  assert.equal(activation.canProvisionEndUsers, true);
+});
+
+test("resolveAppActivation fails open when chargeability is unknown", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+
+  stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: null });
+
+  const activation = await resolveAppActivation(seeded.clientId);
+  assert.equal(activation.canProvisionEndUsers, true);
 });
 
 test("assertAppCanProvisionUsers allows existing app users (creation-only)", async (t) => {
@@ -160,8 +194,7 @@ test("assertAppCanProvisionUsers allows existing app users (creation-only)", asy
   t.after(async () => cleanupTestApp(seeded));
 
   await createAppUser({ clientId: seeded.clientId, externalUserId: "eu-existing" });
-  __testSetSpendableLookup(async () => "0");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: false });
 
   const activation = await assertAppCanProvisionUsers(seeded.clientId, {
     externalUserId: "eu-existing",
@@ -174,7 +207,8 @@ test("assertAppCanProvisionUsers allows existing app users (creation-only)", asy
         externalUserId: `eu-new-${randomUUID()}`,
       }),
     (err: unknown) =>
-      err instanceof AppActivationError && err.code === "owner_balance_exhausted",
+      err instanceof AppActivationError &&
+      err.code === "owner_payment_method_required",
   );
 });
 
@@ -182,8 +216,7 @@ test("assertAppCanSellPaidPlans distinguishes required vs pending", async (t) =>
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  __testSetSpendableLookup(async () => "1000000");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "1000000", hasPaymentMethod: false });
 
   await assert.rejects(
     () => assertAppCanSellPaidPlans(seeded.clientId),
@@ -209,8 +242,7 @@ test("runActivationGate mode matrix: off soft-allows, enforce denies", async (t)
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  __testSetSpendableLookup(async () => "0");
-  t.after(() => __testSetSpendableLookup(null));
+  stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: false });
 
   const prev = process.env.ACTIVATION_GATE_MODE;
   t.after(() => {

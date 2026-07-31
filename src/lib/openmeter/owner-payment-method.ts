@@ -360,6 +360,46 @@ export async function listOwnerPaymentMethods(
 }
 
 /**
+ * Whether OpenMeter has something it can charge for this owner's platform
+ * invoices. `null` means the answer is unknown — platform billing is not wired
+ * up, or Stripe/OpenMeter could not be reached — so callers can fail open
+ * instead of blocking on an outage.
+ */
+export async function ownerHasChargeablePaymentMethod(
+  ownerUserId: string,
+): Promise<boolean | null> {
+  const trimmed = ownerUserId.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (!isHostedAdminClientAvailable() || !stripeSecretKeyOrNull()) {
+    return null;
+  }
+
+  try {
+    const deps = liveStripeDeps(OWNER_PAYMENT_METHOD_BUDGET_MS);
+    const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
+    // Past the availability check, no refs means the owner has no Stripe
+    // customer yet, so there is nothing on file to charge.
+    if (!refs) {
+      return false;
+    }
+    if (refs.konnectDefaultPaymentMethodId) {
+      return true;
+    }
+    return Boolean(
+      await getCustomerDefaultPaymentMethodId(refs.stripeCustomerId, deps),
+    );
+  } catch (err) {
+    console.warn(
+      "owner-payment-method: chargeability lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+/**
  * The payment method, but only when it is attached to this owner's Stripe
  * customer — a session must not be able to manage someone else's method by id.
  */

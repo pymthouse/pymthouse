@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { test } from "@/test-utils/db-guard";
-import { __testSetSpendableLookup } from "@/lib/activation/app-activation";
+import {
+  __testSetOwnerPaymentMethodLookup,
+  __testSetSpendableLookup,
+} from "@/lib/activation/app-activation";
 import {
   cleanupTestApp,
   seedDeveloperAppWithClient,
@@ -39,9 +42,13 @@ test("granting to a new end-user clears the provision gate", async (t) => {
     await cleanupTestApp(app);
   });
 
-  // Dry owner wallet: creating a new end-user must be denied on the cost rail.
+  // Nothing to charge: creating a new end-user must be denied on the cost rail.
   __testSetSpendableLookup(async () => "0");
-  t.after(() => __testSetSpendableLookup(null));
+  __testSetOwnerPaymentMethodLookup(async () => false);
+  t.after(() => {
+    __testSetSpendableLookup(null);
+    __testSetOwnerPaymentMethodLookup(null);
+  });
 
   const prev = process.env.ACTIVATION_GATE_MODE;
   process.env.ACTIVATION_GATE_MODE = "enforce";
@@ -61,7 +68,7 @@ test("granting to a new end-user clears the provision gate", async (t) => {
     /application\/problem\+json/,
   );
   const body = (await denied.json()) as { code?: string };
-  assert.equal(body.code, "owner_balance_exhausted");
+  assert.equal(body.code, "owner_payment_method_required");
 
   // The owner topping up their own wallet is the way out of that denial.
   const ownerSubject = `owner:${app.userId}`;

@@ -21,14 +21,14 @@ export type ActivationProblemBody = {
 };
 
 const TITLE_BY_REASON: Record<ActivationReason, string> = {
-  owner_balance_exhausted: "App cannot provision end users",
+  owner_payment_method_required: "Payment method required",
   end_user_cap_reached: "App cannot provision end users",
   stripe_connect_required: "Stripe Connect required",
   stripe_connect_pending: "Stripe Connect onboarding incomplete",
 };
 
 export function statusForActivationReason(reason: ActivationReason): number {
-  return reason === "owner_balance_exhausted" ? 402 : 403;
+  return reason === "owner_payment_method_required" ? 402 : 403;
 }
 
 export function buildActivationProblem(input: {

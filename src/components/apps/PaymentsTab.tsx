@@ -87,7 +87,7 @@ function PaymentsActivationBanner({
   const provisionHint =
     activation.reason === "end_user_cap_reached"
       ? "End-user cap reached — raise the cap or switch to merchant mode."
-      : "Owner wallet has no spendable balance — top up credits to provision more users.";
+      : "Owner wallet is empty and no payment method is on file — add a card on the billing page or top up credits.";
 
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
