@@ -49,11 +49,14 @@ export function BillingDashboardHeader({
   singleAppName,
   cycle,
   isOpenMeter,
+  appId,
 }: Readonly<{
   scope: BillingUsageDashboardPayload["scope"];
   singleAppName: string | null | undefined;
   cycle: BillingUsageDashboardPayload["cycle"];
   isOpenMeter: boolean;
+  /** App id for the Identities cross-link (single-app scope only). */
+  appId?: string | null;
 }>) {
   const sourceClass = isOpenMeter ? "text-emerald-500/90" : "text-zinc-500";
   const sourceLabel = isOpenMeter ? "OpenMeter" : "Postgres";
@@ -81,12 +84,22 @@ export function BillingDashboardHeader({
           </p>
           {cycleLine}
         </div>
-        <Link
-          href="/usage"
-          className="shrink-0 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
-        >
-          ← All applications
-        </Link>
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
+          {appId ? (
+            <Link
+              href={`/apps/${appId}/identities`}
+              className="text-sm text-emerald-400 transition-colors hover:text-emerald-300"
+            >
+              Identities →
+            </Link>
+          ) : null}
+          <Link
+            href="/usage"
+            className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
+          >
+            ← All applications
+          </Link>
+        </div>
       </div>
     );
   }
@@ -289,7 +302,13 @@ function AppUsageUserTable({
               >
                 <td className="px-4 sm:px-5 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <code className="text-xs text-zinc-300">{userUsage.userLabel}</code>
+                    <Link
+                      href={`/apps/${entry.app.id}/identities/${encodeURIComponent(userUsage.externalUserId ?? userUsage.endUserId)}`}
+                      className="font-mono text-xs text-zinc-300 transition-colors hover:text-emerald-400"
+                      title={userUsage.userLabel}
+                    >
+                      {userUsage.userLabel}
+                    </Link>
                     <span
                       className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${userTypeBadgeClass(userUsage.userType)}`}
                     >

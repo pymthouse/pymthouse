@@ -23,6 +23,31 @@ export function formatBillingPeriod(iso: string): string {
   }
 }
 
+/**
+ * Compact duration from a `billable_secs` meter total (e.g. `4m 12s`, `1h 03m`).
+ * Sub-second totals render as `<1s` so metered work never displays as zero.
+ */
+export function formatBillableDuration(billableSecs: string | null | undefined): string {
+  if (billableSecs == null || billableSecs === "") return "—";
+  const secs = Number(billableSecs);
+  if (!Number.isFinite(secs) || secs < 0) return "—";
+  if (secs === 0) return "—";
+  if (secs < 1) return "<1s";
+
+  const total = Math.floor(secs);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
+}
+
 /** Short label for when the current billing period resets (e.g. "Jul 31"). */
 export function formatPeriodResetLabel(periodEndIso: string): string {
   try {
