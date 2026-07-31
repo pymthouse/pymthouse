@@ -182,9 +182,9 @@ const activationMode = (process.env.ACTIVATION_GATE_MODE || "off").trim().toLowe
 const allowedActivationModes = new Set(["off", "log", "enforce_revenue", "enforce"]);
 if (!allowedActivationModes.has(activationMode)) {
   console.log(
-    `  ⚠️  ACTIVATION_GATE_MODE="${process.env.ACTIVATION_GATE_MODE}" is invalid (use off|log|enforce_revenue|enforce)`,
+    `  ❌ ACTIVATION_GATE_MODE="${process.env.ACTIVATION_GATE_MODE}" is invalid (use off|log|enforce_revenue|enforce)`,
   );
-  hasWarnings = true;
+  hasErrors = true;
 } else {
   console.log(`  ✅ ACTIVATION_GATE_MODE: ${activationMode}`);
 }

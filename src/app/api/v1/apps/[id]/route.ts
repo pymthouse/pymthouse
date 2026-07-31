@@ -160,8 +160,22 @@ export async function GET(
 
   let activation = null;
   try {
-    activation = await resolveAppActivation(app.id);
-  } catch {
+    // Soft budget so a slow OpenMeter spendable lookup cannot stall the
+    // dashboard detail response. Failures stay null (activation is advisory here).
+    activation = await Promise.race([
+      resolveAppActivation(app.id),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("resolveAppActivation timed out")),
+          2_500,
+        );
+      }),
+    ]);
+  } catch (err) {
+    console.warn(
+      "apps/[id] GET: activation lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
     activation = null;
   }
 

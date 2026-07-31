@@ -176,9 +176,13 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const parsed = parseUpsertUserBody(
-    (await request.json()) as Record<string, unknown>,
-  );
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = parseUpsertUserBody(body);
   if (!parsed.ok) {
     return parsed.response;
   }

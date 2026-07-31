@@ -252,6 +252,14 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         }
         invoiceThresholdUsdMicros = micros;
       }
+      const parsedCap = Number.parseInt(endUserCap, 10);
+      if (
+        !Number.isFinite(parsedCap) ||
+        parsedCap < 1 ||
+        parsedCap > 1_000_000
+      ) {
+        throw new Error("End-user cap must be an integer between 1 and 1000000");
+      }
       const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -260,7 +268,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           invoiceThresholdUsdMicros,
           applicationFeeBps: Number.parseInt(applicationFeeBps, 10) || 0,
           billingMode,
-          endUserCap: Number.parseInt(endUserCap, 10) || 25,
+          endUserCap: parsedCap,
         }),
       });
       const body = await res.json();
@@ -290,6 +298,13 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   );
   /** Allow clearing legacy OM link and/or merchant Connect account. */
   const canDisconnect = hasAccount || hasLegacyOmLink;
+  // Prefer activation.connectReady when present; fall back to flat status fields
+  // so the merchant option stays selectable if activation was omitted.
+  const connectReadyForMode =
+    status?.activation?.connectReady ??
+    (hasAccount &&
+      Boolean(status?.stripeChargesEnabled) &&
+      Boolean(status?.stripeDetailsSubmitted));
 
   return (
     <div className="space-y-6">
@@ -422,7 +437,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 <option value="owner_rollup">Owner roll-up (default)</option>
                 <option
                   value="merchant"
-                  disabled={!status?.activation?.connectReady}
+                  disabled={!connectReadyForMode}
                 >
                   Merchant (requires Connect ready)
                 </option>

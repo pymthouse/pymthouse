@@ -443,7 +443,7 @@ Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus 
 
 **Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** instead share one platform **Owner Starter** plan (`pymthouse_owner_starter`) on their bare `{users.id}` Konnect customer — not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
 
-**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`.
+**Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`. Granting to an end-user who does not exist yet provisions them, so the call clears the same activation gate as `POST …/users` and can return `402 owner_payment_method_required` / `403 end_user_cap_reached`. Owner top-ups are exempt.
 
 **Endpoint:** `GET /api/v1/apps/{clientId}/usage`
 
@@ -677,7 +677,7 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect merchant Connect (+ clear OM Stripe profile ids) |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (requires merchant + Connect ready when `ACTIVATION_GATE_MODE` is `enforce_revenue` or `enforce`) |
-| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl`. Gated by `sell_paid_plans` under `enforce_revenue`/`enforce` — migrate users off a phased-out plan before switching to `owner_rollup`, or the change is denied with `stripe_connect_required` |
+| `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl`. A **priced target** is gated by `sell_paid_plans` under `enforce_revenue`/`enforce` and denied with `stripe_connect_required`; free, Starter, and draft targets are never gated, so migrating users off a phased-out paid plan stays possible after switching to `owner_rollup` |
 
 ### App activation gate
 
@@ -687,7 +687,7 @@ Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `en
 | --- | --- |
 | `off` | Resolve + expose `activation` on `GET /api/v1/apps/{id}`; never deny |
 | `log` | Would-deny writes `activation_gate_would_deny` audit rows; still allow |
-| `enforce_revenue` | Deny priced plan activate + checkout + `subscription/change` without merchant Connect readiness |
+| `enforce_revenue` | Deny priced plan activate + checkout + priced `subscription/change` targets without merchant Connect readiness |
 | `enforce` | Also deny new end-user provisioning when owner wallet is empty or `endUserCap` is reached |
 
 `GET /api/v1/apps/{id}` includes an `activation` object:
@@ -709,7 +709,7 @@ Denial responses use RFC 9457 problem details (`Content-Type: application/proble
 
 | Condition | Status | `code` |
 | --- | --- | --- |
-| Owner wallet empty | `402` | `owner_balance_exhausted` |
+| Owner wallet empty and no payment method on file | `402` | `owner_payment_method_required` |
 | Per-app user cap reached | `403` | `end_user_cap_reached` |
 | Paid plan / checkout / plan change without Connect | `403` | `stripe_connect_required` |
 | Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |

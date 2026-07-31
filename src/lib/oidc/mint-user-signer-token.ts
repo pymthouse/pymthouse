@@ -213,7 +213,6 @@ async function provisionForMintOrThrow(input: {
 }
 
 async function loadMintAllowance(input: {
-  publicClientId: string;
   provisionExternalUserId: string;
   identity: ResolvedBillingIdentity;
 }): Promise<TrialCreditBalance | null> {
@@ -231,8 +230,10 @@ async function loadMintAllowance(input: {
   const gateSubject = input.identity.isOwner
     ? buildOwnerWireSubject(input.provisionExternalUserId)
     : input.provisionExternalUserId;
+  // Seed under the same client id the webhook balance gate looks up
+  // (UsageIdentity.client_id === public OIDC client id).
   seedSignerSpendableBalance(
-    input.publicClientId,
+    input.identity.publicClientId,
     gateSubject,
     spendable.spendableUsdMicros,
   );
@@ -278,7 +279,6 @@ export async function mintSignerJwtForExternalUser(input: {
   });
 
   const allowance = await loadMintAllowance({
-    publicClientId: input.publicClientId,
     provisionExternalUserId,
     identity,
   });

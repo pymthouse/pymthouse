@@ -138,9 +138,13 @@ registerAppMetadata("post", "/billing/stripe/account-link", "Create Stripe Conne
 });
 registerAppMetadata("get", "/billing/stripe/callback", "Stripe Connect return callback", {
   tags: ["Billing"],
+  // Browser redirect after Stripe Account Links / OAuth; auth is the dashboard
+  // session plus the signed OAuth state, not M2M credentials.
+  security: [],
 });
 registerAppMetadata("get", "/billing/stripe/oauth/callback", "Stripe OAuth callback", {
   tags: ["Billing"],
+  security: [],
 });
 registerAppMetadata("get", "/plans", "List plans", { tags: ["Billing"] });
 registerAppMetadata("post", "/plans", "Create plan", { tags: ["Billing"] });

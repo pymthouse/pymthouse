@@ -63,13 +63,16 @@ test("isConnectReady requires account, charges, and details_submitted", () => {
   );
 });
 
-test("getActivationGateMode defaults to off", () => {
+test("getActivationGateMode defaults to off", (t) => {
   const prev = process.env.ACTIVATION_GATE_MODE;
+  t.after(() => {
+    if (prev === undefined) delete process.env.ACTIVATION_GATE_MODE;
+    else process.env.ACTIVATION_GATE_MODE = prev;
+  });
   delete process.env.ACTIVATION_GATE_MODE;
   assert.equal(getActivationGateMode(), "off");
   process.env.ACTIVATION_GATE_MODE = "enforce_revenue";
   assert.equal(getActivationGateMode(), "enforce_revenue");
-  process.env.ACTIVATION_GATE_MODE = prev;
 });
 
 test("buildActivationProblem uses 402 when there is nothing to charge", () => {

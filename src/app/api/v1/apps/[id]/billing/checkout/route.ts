@@ -49,6 +49,32 @@ async function runSellGate(appId: string): Promise<NextResponse | null> {
   }
 }
 
+function checkoutErrorResponse(err: unknown): NextResponse {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("OPENMETER_ROUTE_MODE") || message.includes("OPENMETER_URL")) {
+    return NextResponse.json(
+      { error: "Checkout is not available for this deployment" },
+      { status: 503 },
+    );
+  }
+  if (message.includes("Merchant Stripe Connect onboarding is required")) {
+    return NextResponse.json(
+      { error: "Merchant Stripe Connect onboarding is required before checkout" },
+      { status: 403 },
+    );
+  }
+  if (
+    message.includes("Plan not found") ||
+    message.includes("not active") ||
+    message.includes("phased out") ||
+    message.includes("not synced")
+  ) {
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+  console.error("checkout failed:", message);
+  return NextResponse.json({ error: "Checkout failed" }, { status: 502 });
+}
+
 async function createCheckoutOrError(
   appId: string,
   fields: NonNullable<ReturnType<typeof readCheckoutBody>>,
@@ -63,8 +89,7 @@ async function createCheckoutOrError(
     });
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 400 });
+    return checkoutErrorResponse(err);
   }
 }
 

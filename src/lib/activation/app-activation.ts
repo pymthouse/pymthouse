@@ -57,7 +57,8 @@ export class AppActivationError extends Error {
   }
 }
 
-const DEFAULT_END_USER_CAP = 25;
+/** Default per-app end-user cap for owner_rollup before Connect is ready. */
+export const DEFAULT_END_USER_CAP = 25;
 
 type SpendableLookup = typeof getSpendableUsdMicros;
 let spendableLookup: SpendableLookup = getSpendableUsdMicros;
@@ -381,10 +382,13 @@ async function handleActivationDenial(input: {
   // activation.clientId is the public OIDC client id; auth_audit_log.client_id
   // FKs developer_apps.id.
   const app = await getProviderApp(err.activation.clientId);
+  const enforced = shouldEnforce(kind, mode);
   await writeAuditLog({
     clientId: app?.id ?? null,
     action: "activation_gate_would_deny",
-    status: mode === "log" ? "logged" : "denied",
+    // "denied" only when this kind is actually enforced for the mode —
+    // enforce_revenue soft-allows provision denials, so those stay "logged".
+    status: enforced ? "denied" : "logged",
     metadata: {
       kind,
       mode,
@@ -397,7 +401,7 @@ async function handleActivationDenial(input: {
     },
   });
 
-  if (!shouldEnforce(kind, mode)) {
+  if (!enforced) {
     return err.activation;
   }
 

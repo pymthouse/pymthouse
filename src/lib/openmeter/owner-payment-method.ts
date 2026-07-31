@@ -291,6 +291,16 @@ type OwnerStripeRefs = {
   konnectDefaultPaymentMethodId: string | null;
 };
 
+/**
+ * Resolve the owner's Stripe/Konnect customer refs for payment-method work.
+ *
+ * `signal` binds the Konnect `/billing` read (and Stripe calls that take deps).
+ * `listOwnedPublicClientIds` / `ensureOwnerCustomer` / the Stripe-app-data
+ * fallback do not accept AbortSignal today — they are Neon / OM SDK calls.
+ * Callers that need a hard outer deadline (billing page paint) wrap this with
+ * `withSoftTimeout`; when those steps overrun, the outer soft timeout wins and
+ * returns [].
+ */
 async function resolveOwnerStripeRefs(
   ownerUserId: string,
   signal: AbortSignal,
