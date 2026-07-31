@@ -1,0 +1,124 @@
+# Keep security updates flowing even when other Dependabot PRs are open:
+# - Group security updates into one PR per ecosystem (security PR limit is ~10)
+# - Raise version-update PR limit so version bumps do not starve the queue
+# - Prefer stable releases for major frameworks (ignore pre-releases)
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 25
+    commit-message:
+      prefix: "build"
+      include: scope
+    ignore:
+      # Stay on stable channels for major frameworks (no canary/rc/beta/preview)
+      - dependency-name: next
+        versions:
+          - "*-canary*"
+          - "*-rc*"
+          - "*-beta*"
+          - "*-preview*"
+      - dependency-name: eslint-config-next
+        versions:
+          - "*-canary*"
+          - "*-rc*"
+          - "*-beta*"
+          - "*-preview*"
+      - dependency-name: react
+        versions:
+          - "*-canary*"
+          - "*-rc*"
+          - "*-beta*"
+          - "*-experimental*"
+      - dependency-name: react-dom
+        versions:
+          - "*-canary*"
+          - "*-rc*"
+          - "*-beta*"
+          - "*-experimental*"
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      npm-production-minor-patch:
+        applies-to: version-updates
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      npm-development-minor-patch:
+        applies-to: version-updates
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      npm-major:
+        applies-to: version-updates
+        update-types:
+          - major
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /docker/signer-dmz/turnkey-bootstrap
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 15
+    commit-message:
+      prefix: "build"
+      include: scope
+    groups:
+      go-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      go-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      go-major:
+        applies-to: version-updates
+        update-types:
+          - major
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "ci"
+      include: scope
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+      actions-major:
+        applies-to: version-updates
+        update-types:
+          - major
+        patterns:
+          - "*"
