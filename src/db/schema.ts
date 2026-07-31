@@ -578,6 +578,15 @@ export const appBillingConfig = pgTable(
     applicationFeeBps: integer("application_fee_bps").notNull().default(0),
     /** After hard cutover: refuse OM Stripe checkout fallback. */
     connectPaymentsOnly: boolean("connect_payments_only").notNull().default(false),
+    /**
+     * owner_rollup — end-user usage rolls to the owner wallet (default).
+     * merchant — Builder charges end users via Stripe Connect.
+     */
+    billingMode: text("billing_mode").notNull().default("owner_rollup"),
+    /** Max app_users on owner_rollup before provisioning is blocked. */
+    endUserCap: integer("end_user_cap").notNull().default(25),
+    /** ISO timestamp of first cost-rail denial notification. */
+    activationNotifiedAt: text("activation_notified_at"),
     connectedAt: text("connected_at"),
     createdAt: text("created_at")
       .notNull()

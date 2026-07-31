@@ -107,6 +107,9 @@ export async function POST(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
+  // Provision gate is creation-only; this path already requires an active
+  // app_users row, so the gate cannot deny and is intentionally omitted.
+
   const body = await request.json().catch(() => ({}));
   const label = typeof body.label === "string" ? body.label : null;
 

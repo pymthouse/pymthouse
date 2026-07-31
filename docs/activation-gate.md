@@ -1,8 +1,12 @@
 # Builder app activation gate
 
-Status: **design**. Depends on PR #313 (platform default app) and PR #124 (Stripe
-Connect merchant accounts), both open at time of writing. No enforcement code exists
-yet.
+Status: **implemented (default off)**. Resolver and choke points live in
+`src/lib/activation/`. Controlled by `ACTIVATION_GATE_MODE`
+(`off` | `log` | `enforce_revenue` | `enforce`). Shipping with `off` does not
+change live request behaviour; flip the env to advance rollout phases.
+
+Depends on platform default app (#313) and Stripe Connect merchant accounts
+(PR #124 / `feat/configure-stripe`).
 
 This document specifies how PymtHouse decides whether a developer app may provision
 end users and whether it may sell paid plans to them.
@@ -203,19 +207,22 @@ shape so the dashboard and integrator backends read the same state the gate enfo
 
 ## Rollout
 
-Controlled by `ACTIVATION_GATE_MODE` (`off` | `log` | `enforce`, default `off`).
+Controlled by `ACTIVATION_GATE_MODE` (`off` | `log` | `enforce_revenue` | `enforce`,
+default `off`).
 
 1. **Phase 0 — Observe.** Ship the resolver, the `activation` field on
-   `GET /api/v1/apps/{id}`, and the dashboard banner. No request is refused.
+   `GET /api/v1/apps/{id}`, and the dashboard banner. No request is refused
+   (`ACTIVATION_GATE_MODE=off`).
 2. **Phase 1 — Log.** `ACTIVATION_GATE_MODE=log`. Every would-be denial writes an audit
    row (`activation_gate_would_deny`). Review real traffic for false positives —
    particularly apps whose owners are solvent but whose `app_billing_config` row is
    absent.
-3. **Phase 2 — Enforce revenue rail.** Turn on plan-activation and checkout gating
-   first. It is the lowest-risk half: it cannot break a running integration, only a new
-   monetisation attempt.
-4. **Phase 3 — Enforce cost rail.** Turn on provisioning gating. Notify owners whose
-   apps would be affected via `activation_notified_at` before flipping.
+3. **Phase 2 — Enforce revenue rail.** `ACTIVATION_GATE_MODE=enforce_revenue`. Turn on
+   plan-activation and checkout gating first. It is the lowest-risk half: it cannot
+   break a running integration, only a new monetisation attempt.
+4. **Phase 3 — Enforce cost rail.** `ACTIVATION_GATE_MODE=enforce`. Turn on provisioning
+   gating. Notify owners whose apps would be affected via `activation_notified_at`
+   before flipping.
 
 Enforcement must never retroactively disable existing end users. The gate blocks
 *creation*; existing users continue until their owner's balance is exhausted, which the
@@ -280,33 +287,36 @@ mint gate already handles.
 
 ### Phase 0 — Resolver and visibility
 
-- [ ] Add `0035_app_activation_gate.sql` and the matching `appBillingConfig` columns in
+- [x] Add `0035_app_activation_gate.sql` and the matching `appBillingConfig` columns in
       `src/db/schema.ts`.
-- [ ] Create `src/lib/activation/app-activation.ts` with `resolveAppActivation` and
+- [x] Create `src/lib/activation/app-activation.ts` with `resolveAppActivation` and
       `assertAppCanProvisionUsers` / `assertAppCanSellPaidPlans`.
-- [ ] Unit tests covering: missing `app_billing_config` row, platform default exemption,
+- [x] Unit tests covering: missing `app_billing_config` row, platform default exemption,
       `charges_enabled` false, `details_submitted` false, cap boundary, zero balance.
-- [ ] Surface `activation` on `GET /api/v1/apps/{id}` and in `AppSettingsScreen`.
-- [ ] Dashboard banner on the Payments tab describing the current mode and next action.
+- [x] Surface `activation` on `GET /api/v1/apps/{id}` and in `AppSettingsScreen`.
+- [x] Dashboard banner on the Payments tab describing the current mode and next action.
 
 ### Phase 1 — Log-only
 
-- [ ] Add `ACTIVATION_GATE_MODE` to `.env.example` and `scripts/validate-env.js`.
-- [ ] Wire guards into the four enforced call sites in log mode; emit
+- [x] Add `ACTIVATION_GATE_MODE` to `.env.example` and `scripts/validate-env.js`.
+- [x] Wire guards into the four enforced call sites in log mode; emit
       `activation_gate_would_deny` audit rows.
 - [ ] Run for one full billing cycle; review denials against live traffic.
 
 ### Phase 2 — Revenue rail
 
-- [ ] Enforce `canSellPaidPlans` on plan activation and `POST .../billing/checkout`.
-- [ ] RFC 9457 problem responses with `code` and `actionUrl`.
-- [ ] Document the modes and error codes in `docs/builder-api.md`.
+- [x] Enforce `canSellPaidPlans` on plan activation and `POST .../billing/checkout`
+      (`ACTIVATION_GATE_MODE=enforce_revenue`).
+- [x] RFC 9457 problem responses with `code` and `actionUrl`.
+- [x] Document the modes and error codes in `docs/builder-api.md`.
 
 ### Phase 3 — Cost rail
 
-- [ ] Enforce `canProvisionEndUsers`; populate `activation_notified_at` on first denial.
+- [x] Enforce `canProvisionEndUsers` (`ACTIVATION_GATE_MODE=enforce`); populate
+      `activation_notified_at` on first denial.
 - [ ] Owner notification before enforcement is enabled in production.
-- [ ] Admin control to adjust `end_user_cap` and force `billing_mode`.
+- [x] Admin/owner control to adjust `end_user_cap` and force `billing_mode`
+      (`PATCH .../billing/stripe`).
 
 ## Success criteria
 
