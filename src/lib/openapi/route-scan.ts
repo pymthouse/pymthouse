@@ -8,7 +8,8 @@ export const API_V1_ROOT = join(process.cwd(), "src/app/api/v1");
 /**
  * Prefixes excluded from OpenAPI contracts.
  * Legacy `/admin`, `/signer`, `/me`, `/dashboard` stay excluded — Internal docs
- * use `/api/v1/internal/…` (rewrites + virtual metadata).
+ * use `/api/v1/internal/…` (rewrites for apps/admin/signer/billing; dedicated
+ * handlers for dashboard/me usage aliases).
  */
 export const OPENAPI_EXCLUDED_PREFIXES = [
   "oidc/",

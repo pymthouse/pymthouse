@@ -26,7 +26,7 @@ function userPath(suffix: string) {
   return `/api/v1/apps/{clientId}/users/{externalUserId}${suffix}`;
 }
 
-const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }, { bearerUserJwt: [] }];
+const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 const m2mOnlySecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
 type MetadataRoute = [
@@ -117,7 +117,9 @@ defineRouteMetadata("get", builderAppPath("/usage"), {
 defineRouteMetadata("get", builderAppPath("/usage/balance"), {
   tags: [OPENAPI_TAGS.usage],
   summary: "Usage balance",
-  description: "M2M Basic only. Requires `externalUserId` for one end user.",
+  description:
+    "M2M Basic only. Requires `externalUserId`. Returns plan included-usage " +
+    "allowance for that end user (not prepaid ledger fields).",
   security: m2mOnlySecurity,
   request: {
     params: z.object({ clientId }),

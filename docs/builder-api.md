@@ -19,9 +19,9 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 
 - `client_id` is the canonical app identifier in Builder API URLs.
 - **API surfaces:**
-  - **Builder (M2M):** `/api/v1/builder/…` + integrator `/api/v1/apps/{clientId}/…` (users, tokens, usage, billing reads)
-  - **End-user:** `/api/v1/user/…` — composite API key or end-user/signer JWT
-  - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` — not published in public OpenAPI/docs
+  - **Builder (M2M):** canonical `/api/v1/builder/…` for usage; integrator `/api/v1/apps/{clientId}/…` for users, tokens, billing reads (legacy `/apps/…/usage*` aliases remain M2M-only)
+  - **End-user:** `/api/v1/user/…` — composite API key, bare `pmth_*` key, or end-user/signer JWT
+  - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` (unpublished from the public Scalar UI)
 - OIDC issuer stays at `/api/v1/oidc/*`. Public catalog/health stay under `/api/v1/*` without a product prefix.
 - Internal database IDs are implementation details and are not part of the public API contract.
 
@@ -32,8 +32,9 @@ Machine-readable contract and interactive reference:
 | Surface | Spec | Docs UI |
 | --- | --- | --- |
 | **Public (Builder + End-user)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` |
+| **Internal (dashboard/session)** | `GET /api/v1/internal/openapi.json` | `GET /api/v1/internal/docs` |
 
-The public document includes M2M integrator routes and `/api/v1/user/usage*`. Dashboard/admin (Internal) is omitted from the published docs UI.
+The public document includes M2M integrator routes and `/api/v1/user/usage*`. Internal is available at the paths above but is not linked from `/api/v1/docs`.
 
 Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
 
@@ -127,7 +128,7 @@ or confidential **HTTP Basic** auth:
 Authorization: Basic base64(client_id:client_secret)
 ```
 
-**Usage API:** Basic auth (or an authorized provider dashboard session — see [Usage API](#usage-api)) is typical; no extra OAuth scope is required beyond valid credentials for that app.
+**Usage API:** HTTP Basic with the app’s confidential client is required for Builder/legacy `/apps/…/usage*` and `/builder/…/usage*`. Dashboard session usage uses Internal routes (`/api/v1/internal/dashboard/usage`, `/api/v1/internal/me/usage/requests`). No extra OAuth scope is required beyond valid credentials for that app.
 
 ---
 
@@ -409,8 +410,8 @@ End users can read **their own** usage with the credential they already hold (no
 | Endpoint | Description |
 | --- | --- |
 | `GET /api/v1/user/usage` | Aggregates for the authenticated subject (`groupBy`, `startDate`, `endDate` as on Builder usage) |
-| `GET /api/v1/user/usage/balance` | Prepaid credit balance for that subject |
-| `GET /api/v1/user/usage/requests` | Signed-ticket CloudEvent history (newest first; `cursor` / `limit`) |
+| `GET /api/v1/user/usage/balance` | Plan included-usage allowance for that subject |
+| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `cursor`, `limit`) |
 
 **Auth:** `Authorization: Bearer` with a composite `app_<24hex>_<secret>` API key, a bare `pmth_*` app-user key, a programmatic user JWT, or a signer JWT (`external_user_id` + `client_id`). Identity is taken **only** from the token — do **not** pass `externalUserId` (rejected with 400).
 
@@ -464,11 +465,11 @@ Integrators (e.g. Livepeer Dashboard / `@pymthouse/builder-sdk`) mint a user JWT
 
 **Endpoint:** `GET /api/v1/user/usage`
 
-Same OpenMeter usage shape as `GET /api/v1/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline` / `manifest`), and `include=retail`.
+Same OpenMeter usage shape as `GET /api/v1/builder/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline` / `manifest`), and `include=retail`.
 
 **Endpoint:** `GET /api/v1/user/usage/balance`
 
-Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount, `lifetimeGrantedUsdMicros` = included total for the cycle, `consumedUsdMicros` = granted − remaining, `hasAccess` from spendable). Prepaid credits settle invoices/charges and are not the meter source. Builder M2M equivalent: `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...`.
+Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount, `lifetimeGrantedUsdMicros` = included total for the cycle, `consumedUsdMicros` = granted − remaining, `hasAccess` from spendable). Prepaid credits settle invoices/charges and are not the meter source. Builder M2M equivalent: `GET /api/v1/builder/apps/{clientId}/usage/balance?externalUserId=...` (legacy `/api/v1/apps/.../usage/balance` alias is M2M-only too).
 
 **Endpoint:** `GET /api/v1/user/usage/requests`
 
@@ -483,13 +484,13 @@ Lists signed-ticket CloudEvents for the **token subject only** — newest first.
 
 Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus `clientId` / `externalUserId` echoed from the credential.
 
-**Balance (Builder M2M):** `GET /api/v1/apps/{clientId}/usage/balance?externalUserId=...` (or `/api/v1/builder/apps/...`) is the confidential-client equivalent when an end-user JWT is not available.
+**Balance (Builder M2M):** `GET /api/v1/builder/apps/{clientId}/usage/balance?externalUserId=...` (legacy `/api/v1/apps/...` alias) is the confidential-client equivalent when an end-user JWT is not available.
 
 **Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** instead share one platform **Owner Starter** plan (`pymthouse_owner_starter`) on their bare `{users.id}` Konnect customer — not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
 
 **Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`. Granting to an end-user who does not exist yet provisions them, so the call clears the same activation gate as `POST …/users` and can return `402 owner_payment_method_required` / `403 end_user_cap_reached`. Owner top-ups are exempt.
 
-**Endpoint:** `GET /api/v1/apps/{clientId}/usage`
+**Endpoint:** `GET /api/v1/builder/apps/{clientId}/usage` (legacy alias: `GET /api/v1/apps/{clientId}/usage`)
 
 ### Identity model
 
@@ -500,8 +501,8 @@ Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus 
 
 | Mode | Description |
 | --- | --- |
-| **Confidential client (recommended)** | `Authorization: Basic base64(client_id:client_secret)` — same credentials as other server-to-server calls |
-| **Provider session** | Logged-in app owner, platform admin, or team member with `providerAdmins` access — powers the in-app dashboard |
+| **Confidential client (required)** | `Authorization: Basic base64(client_id:client_secret)` — M2M only on Builder/legacy usage paths |
+| **Provider session** | Dashboard usage goes through Internal `/api/v1/internal/dashboard/usage` and `/api/v1/internal/me/usage/requests` (not Builder `/apps/…/usage*`) |
 
 Requests that fail auth or tenant match receive **`404 Not Found`** (not `401`/`403`) to avoid leaking whether a `client_id` exists.
 
@@ -556,21 +557,21 @@ App-level totals:
 
 ```bash
 curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage"
+  "${BASE_URL}/api/v1/builder/apps/${CLIENT_ID}/usage"
 ```
 
 Per-user breakdown:
 
 ```bash
 curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?groupBy=user"
+  "${BASE_URL}/api/v1/builder/apps/${CLIENT_ID}/usage?groupBy=user"
 ```
 
 Date window:
 
 ```bash
 curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?startDate=2026-01-01T00:00:00.000Z&endDate=2026-12-31T23:59:59.999Z"
+  "${BASE_URL}/api/v1/builder/apps/${CLIENT_ID}/usage?startDate=2026-01-01T00:00:00.000Z&endDate=2026-12-31T23:59:59.999Z"
 ```
 
 Filter by internal user id:
@@ -579,7 +580,7 @@ Filter by internal user id:
 export USER_ID="internal-app-user-uuid"
 
 curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?userId=${USER_ID}"
+  "${BASE_URL}/api/v1/builder/apps/${CLIENT_ID}/usage?userId=${USER_ID}"
 ```
 
 **Security:** Do not call the Usage API from a browser with Basic auth; keep secrets server-side.
@@ -666,7 +667,7 @@ PymtHouse uses these fields for attribution and billing-event grouping together 
 
 ### Usage API — pipeline/model grouping
 
-`GET /api/v1/apps/{clientId}/usage` supports:
+`GET /api/v1/builder/apps/{clientId}/usage` (legacy `/api/v1/apps/{clientId}/usage`) supports:
 
 | Parameter | Description |
 | --- | --- |
@@ -825,7 +826,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 
 ```bash
 curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/usage?groupBy=pipeline_model"
+  "${BASE_URL}/api/v1/builder/apps/${CLIENT_ID}/usage?groupBy=pipeline_model"
 ```
 
 ### App metadata (integrator read)
@@ -1021,7 +1022,7 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 **Auth and usage**
 
 - [`src/lib/auth.ts`](../src/lib/auth.ts) (`authenticateAppClient`, JWT parsing)
-- [`src/app/api/v1/apps/[id]/usage/route.ts`](../src/app/api/v1/apps/[id]/usage/route.ts)
+- [`src/app/api/v1/builder/apps/[id]/usage/route.ts`](../src/app/api/v1/builder/apps/[id]/usage/route.ts) (canonical; legacy alias under `apps/[id]/usage`)
 - [`src/app/api/v1/apps/[id]/billing/route.ts`](../src/app/api/v1/apps/[id]/billing/route.ts)
 - [`src/app/api/v1/apps/[id]/plans/route.ts`](../src/app/api/v1/apps/[id]/plans/route.ts)
 - [`src/lib/provider-apps.ts`](../src/lib/provider-apps.ts) (`getAuthorizedProviderApp`, `getProviderApp`)

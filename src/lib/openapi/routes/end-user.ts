@@ -4,6 +4,7 @@ import {
   jsonSuccess,
 } from "@/lib/openapi/routes/shared";
 import { OPENAPI_TAGS } from "@/lib/openapi/tags";
+import { z } from "@/lib/openapi/zod";
 
 const endUserSecurity: Array<Record<string, string[]>> = [{ endUserBearer: [] }];
 
@@ -12,7 +13,7 @@ defineRouteMetadata("get", "/api/v1/user/usage", {
   summary: "End-user usage summary",
   description:
     "Aggregated usage for the authenticated subject only. " +
-    "Do not pass `externalUserId` — identity is taken from the Bearer credential. " +
+    "Do not pass `userId` / `externalUserId` — identity is taken from the Bearer credential. " +
     "Supports the same `groupBy` / date query params as Builder usage.",
   security: endUserSecurity,
   responses: {
@@ -26,8 +27,10 @@ defineRouteMetadata("get", "/api/v1/user/usage/balance", {
   tags: [OPENAPI_TAGS.endUserUsage],
   summary: "End-user usage balance",
   description:
-    "Prepaid / trial credit balance for the authenticated subject. " +
-    "`externalUserId` query overrides are rejected.",
+    "Plan included-usage allowance for the authenticated subject " +
+    "(`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount). " +
+    "Prepaid credits settle invoices/charges and are not the meter source. " +
+    "`userId` / `externalUserId` query overrides are rejected.",
   security: endUserSecurity,
   responses: {
     200: jsonSuccess,
@@ -41,12 +44,52 @@ defineRouteMetadata("get", "/api/v1/user/usage/requests", {
   tags: [OPENAPI_TAGS.endUserUsage],
   summary: "End-user signed-ticket request history",
   description:
-    "Chronological `create_signed_ticket` events for the authenticated subject. " +
-    "Query: `cursor`, `limit` (max 50). Do not pass `externalUserId`.",
+    "Chronological signed-ticket history for the authenticated subject. " +
+    "`groupBy=session` lists per-manifest sessions; `groupBy=request` (default) " +
+    "lists CloudEvents (optionally filtered by `manifestId`). " +
+    "Do not pass `userId` / `externalUserId`.",
   security: endUserSecurity,
+  request: {
+    query: z.object({
+      groupBy: z
+        .enum(["request", "session"])
+        .optional()
+        .openapi({
+          param: { name: "groupBy", in: "query" },
+          description: "session or request (default request).",
+        }),
+      manifestId: z
+        .string()
+        .min(1)
+        .optional()
+        .openapi({
+          param: { name: "manifestId", in: "query" },
+          description: "When groupBy=request, restrict to one session mid.",
+        }),
+      cursor: z
+        .string()
+        .min(1)
+        .optional()
+        .openapi({
+          param: { name: "cursor", in: "query" },
+          description: "Opaque pagination cursor from a prior response.",
+        }),
+      limit: z
+        .coerce
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .openapi({
+          param: { name: "limit", in: "query" },
+          description: "Page size (default 25, max 50).",
+        }),
+    }),
+  },
   responses: {
     200: jsonSuccess,
-    400: { description: "Disallowed cross-user filter" },
+    400: { description: "Disallowed cross-user filter or invalid groupBy" },
     401: { description: "Missing or invalid end-user credential" },
   },
 });
