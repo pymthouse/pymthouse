@@ -15,6 +15,7 @@ import {
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
 import { buildOwnerCustomerKey, buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
+import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
 import {
   findOpenMeterCustomerByKey,
   listOwnedPublicClientIds,
@@ -802,14 +803,25 @@ async function auditOwnerSubscriptions(
 
   const stripeCus = await getStripeCustomerAppDataId({ client, customerId });
   if (!stripeCus) {
-    findings.push({
-      code: "owner_missing_stripe_app_data",
-      severity: "error",
-      ownerId,
-      message: `Owner customer ${customerKey} has no Stripe customer app data (cus_…)`,
-      details: { customerId, customerKey },
-      remediation: FIX_SANDBOX_TO_STRIPE,
-    });
+    // Missing Stripe app data is only a defect for an owner who has something
+    // chargeable. Owners without a payment method deliberately stay on the free
+    // billing profile — Konnect rejects a Starter subscription for a customer
+    // pinned to a Stripe profile with no default payment method — so
+    // migrate-sandbox-to-stripe skips them by design. Reporting those as errors
+    // pointed at a remediation that can never apply.
+    // `null` (Stripe/OpenMeter unreachable) is treated as not-chargeable, the
+    // same fail-open choice the migration makes.
+    const chargeable = await ownerHasChargeablePaymentMethod(ownerId);
+    if (chargeable === true) {
+      findings.push({
+        code: "owner_missing_stripe_app_data",
+        severity: "error",
+        ownerId,
+        message: `Owner customer ${customerKey} has a payment method but no Stripe customer app data (cus_…)`,
+        details: { customerId, customerKey },
+        remediation: FIX_SANDBOX_TO_STRIPE,
+      });
+    }
   }
 
   if (
