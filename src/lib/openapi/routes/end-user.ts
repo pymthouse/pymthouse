@@ -2,6 +2,7 @@ import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
   builderErrorResponses,
   jsonSuccess,
+  usageDateRangeQueryParams,
 } from "@/lib/openapi/routes/shared";
 import { OPENAPI_TAGS } from "@/lib/openapi/tags";
 import { z } from "@/lib/openapi/zod";
@@ -9,20 +10,7 @@ import { z } from "@/lib/openapi/zod";
 const endUserSecurity: Array<Record<string, string[]>> = [{ endUserBearer: [] }];
 
 const endUserUsageQueryParams = z.object({
-  startDate: z
-    .string()
-    .optional()
-    .openapi({
-      param: { name: "startDate", in: "query" },
-      description: "Inclusive lower bound (ISO 8601).",
-    }),
-  endDate: z
-    .string()
-    .optional()
-    .openapi({
-      param: { name: "endDate", in: "query" },
-      description: "Inclusive upper bound (ISO 8601).",
-    }),
+  ...usageDateRangeQueryParams,
   groupBy: z
     .enum(["none", "user", "pipeline_model", "daily_pipeline", "manifest"])
     .optional()
@@ -30,20 +18,6 @@ const endUserUsageQueryParams = z.object({
       param: { name: "groupBy", in: "query" },
       description:
         "Aggregation mode (default none). Subject is always the Bearer user; do not pass `userId`.",
-    }),
-  include: z
-    .literal("retail")
-    .optional()
-    .openapi({
-      param: { name: "include", in: "query" },
-      description: "Set to `retail` to include retail billable micros.",
-    }),
-  includeRetail: z
-    .enum(["1", "true"])
-    .optional()
-    .openapi({
-      param: { name: "includeRetail", in: "query" },
-      description: "Alternate flag for retail breakdown (`1` or `true`).",
     }),
 });
 

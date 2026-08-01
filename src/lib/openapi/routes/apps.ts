@@ -7,6 +7,7 @@ import {
   builderErrorResponses,
   genericJsonObject,
   jsonSuccess,
+  usageDateRangeQueryParams,
 } from "@/lib/openapi/routes/shared";
 import { OPENAPI_TAGS } from "@/lib/openapi/tags";
 import { z } from "@/lib/openapi/zod";
@@ -105,20 +106,7 @@ registerMetadataRoutes([
 ]);
 
 const usageQueryParams = z.object({
-  startDate: z
-    .string()
-    .optional()
-    .openapi({
-      param: { name: "startDate", in: "query" },
-      description: "Inclusive lower bound (ISO 8601).",
-    }),
-  endDate: z
-    .string()
-    .optional()
-    .openapi({
-      param: { name: "endDate", in: "query" },
-      description: "Inclusive upper bound (ISO 8601).",
-    }),
+  ...usageDateRangeQueryParams,
   groupBy: z
     .enum(["none", "user", "pipeline_model", "daily_pipeline", "manifest"])
     .optional()
@@ -134,20 +122,6 @@ const usageQueryParams = z.object({
     .openapi({
       param: { name: "userId", in: "query" },
       description: "Filter to one usage subject / internal user id.",
-    }),
-  include: z
-    .literal("retail")
-    .optional()
-    .openapi({
-      param: { name: "include", in: "query" },
-      description: "Set to `retail` to include retail billable micros.",
-    }),
-  includeRetail: z
-    .enum(["1", "true"])
-    .optional()
-    .openapi({
-      param: { name: "includeRetail", in: "query" },
-      description: "Alternate flag for retail breakdown (`1` or `true`).",
     }),
 });
 
