@@ -107,11 +107,13 @@ function FormatSlider({
 export default function ApiKeyCredentialSwitcher({
   apiKey,
   sdkToken,
+  defaultFormat = "token",
 }: Readonly<{
   apiKey: string;
   sdkToken?: string | null;
+  defaultFormat?: ApiKeyDisplayFormat;
 }>): ReactNode {
-  const [format, setFormat] = useState<ApiKeyDisplayFormat>("token");
+  const [format, setFormat] = useState<ApiKeyDisplayFormat>(defaultFormat);
   const hasToken = Boolean(sdkToken?.trim());
   const showToken = hasToken && format === "token";
   const value = showToken ? sdkToken!.trim() : apiKey;

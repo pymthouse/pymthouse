@@ -5,6 +5,7 @@
  */
 import {
   OPENAPI_PUBLIC_ROUTE_KEYS,
+  OPENAPI_ROUTE_INVENTORY,
 } from "../src/lib/openapi/generated-route-inventory";
 import {
   registeredMetadataKeys,
@@ -30,6 +31,14 @@ function buildVirtualRouteKeySet(): Set<string> {
   );
 }
 
+function buildInventoryRouteKeySet(): Set<string> {
+  return new Set(
+    OPENAPI_ROUTE_INVENTORY.filter((op) => !op.excluded).map((op) =>
+      routeKey(op.method, op.path),
+    ),
+  );
+}
+
 function getMissingMetadata(publicKeys: readonly string[], metadataKeys: ReadonlySet<string>): string[] {
   return publicKeys.filter((key) => !metadataKeys.has(key));
 }
@@ -38,16 +47,28 @@ function getStaleMetadata(
   metadataKeys: ReadonlySet<string>,
   publicKeys: readonly string[],
   virtualKeys: ReadonlySet<string>,
+  inventoryKeys: ReadonlySet<string>,
 ): string[] {
   const publicKeySet = new Set(publicKeys);
-  return [...metadataKeys].filter((key) => !virtualKeys.has(key) && !publicKeySet.has(key));
+  return [...metadataKeys].filter(
+    (key) =>
+      !virtualKeys.has(key) &&
+      !publicKeySet.has(key) &&
+      !inventoryKeys.has(key),
+  );
 }
 
 function main() {
   const metadataKeys = registeredMetadataKeys();
   const virtualKeys = buildVirtualRouteKeySet();
+  const inventoryKeys = buildInventoryRouteKeySet();
   const missing = getMissingMetadata(OPENAPI_PUBLIC_ROUTE_KEYS, metadataKeys);
-  const stale = getStaleMetadata(metadataKeys, OPENAPI_PUBLIC_ROUTE_KEYS, virtualKeys);
+  const stale = getStaleMetadata(
+    metadataKeys,
+    OPENAPI_PUBLIC_ROUTE_KEYS,
+    virtualKeys,
+    inventoryKeys,
+  );
 
   if (missing.length === 0 && stale.length === 0) {
     console.log(

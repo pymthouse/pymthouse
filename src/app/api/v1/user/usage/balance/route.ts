@@ -1,32 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
-import {
-  authenticateEndUser,
-  endUserSubjectOverrideError,
-} from "@/lib/auth/end-user";
-import { handleAppUsageBalanceGet } from "@/lib/usage/app-usage-handlers";
+import { handleEndUserMeUsageBalanceGet } from "@/lib/usage/end-user-usage-handlers";
 
 /**
- * End-user allowance balance for the Bearer subject only.
- * Auth: bare `pmth_*` API key, optional composite `app_*_*`, or end-user/signer JWT.
- *
- * Returns the plan's included usage discount for the cycle (granted / remaining /
- * consumed), not prepaid trial-credit ledger fields.
+ * Deprecated alias for `GET /api/v1/apps/{clientId}/me/usage/balance`.
+ * Same behavior; the app is derived from the Bearer credential instead of the path.
  */
 export async function GET(request: NextRequest) {
-  const params = new URL(request.url).searchParams;
-  const override = endUserSubjectOverrideError(params, "balance");
-  if (override) {
-    return override;
-  }
-
-  const auth = await authenticateEndUser(request);
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  return handleAppUsageBalanceGet({
-    app: { id: auth.developerAppId },
-    externalUserId: auth.externalUserId,
-  });
+  return handleEndUserMeUsageBalanceGet(request);
 }

@@ -1,76 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
-import {
-  authenticateEndUser,
-  endUserSubjectOverrideError,
-} from "@/lib/auth/end-user";
-import {
-  listEndUserSignedTicketRequests,
-  listEndUserSignedTicketSessions,
-} from "@/lib/openmeter/signed-ticket-events";
+import { handleEndUserMeUsageRequestsGet } from "@/lib/usage/end-user-usage-handlers";
 
 /**
- * End-user signed-ticket request history for the Bearer subject only.
- * Auth: bare `pmth_*` API key, optional composite `app_*_*`, or end-user/signer JWT
- * (subject forced from the token — not queryable).
+ * Deprecated alias for `GET /api/v1/apps/{clientId}/me/usage/requests`.
+ * Same behavior; the app is derived from the Bearer credential instead of the path.
  */
 export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
-  const override = endUserSubjectOverrideError(params, "requests");
-  if (override) {
-    return override;
-  }
-
-  const auth = await authenticateEndUser(request);
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const cursor = params.get("cursor")?.trim() || undefined;
-  const manifestId = params.get("manifestId")?.trim() || undefined;
-  const groupBy = params.get("groupBy")?.trim().toLowerCase() || "request";
-  const limitRaw = params.get("limit");
-  const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
-
-  if (groupBy !== "request" && groupBy !== "session") {
-    return NextResponse.json(
-      { error: "Invalid groupBy; use request or session" },
-      { status: 400 },
-    );
-  }
-
-  if (groupBy === "session") {
-    const result = await listEndUserSignedTicketSessions({
-      externalUserId: auth.externalUserId,
-      clientId: auth.publicClientId,
-      cursor,
-      limit: Number.isFinite(limit) ? limit : undefined,
-    });
-
-    return NextResponse.json({
-      items: result.items,
-      nextCursor: result.nextCursor,
-      openMeterConfigured: result.openMeterConfigured,
-      clientId: auth.publicClientId,
-      externalUserId: auth.externalUserId,
-      groupBy: "session",
-    });
-  }
-
-  const result = await listEndUserSignedTicketRequests({
-    externalUserId: auth.externalUserId,
-    clientId: auth.publicClientId,
-    manifestId,
-    cursor,
-    limit: Number.isFinite(limit) ? limit : undefined,
-  });
-
-  return NextResponse.json({
-    items: result.items,
-    nextCursor: result.nextCursor,
-    openMeterConfigured: result.openMeterConfigured,
-    clientId: auth.publicClientId,
-    externalUserId: auth.externalUserId,
-    groupBy: "request",
-  });
+  return handleEndUserMeUsageRequestsGet(request);
 }

@@ -192,7 +192,6 @@ export async function mintDefaultAppNetworkKey(input: {
   const created = await createAppUserApiKey({
     developerAppId,
     appUserId: appUser.id,
-    publicClientId: clientId,
     label: input.label?.trim() || "network-signing-token",
   });
 

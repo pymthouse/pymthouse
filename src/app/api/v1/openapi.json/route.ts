@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { buildOpenApiDocument } from "@/lib/openapi/document";
+import { buildPublicOpenApiDocument } from "@/lib/openapi/document";
 import "@/lib/openapi/routes";
 
 export const dynamic = "force-dynamic";
 
+/** Public OpenAPI — Builder (M2M) + End-user. */
 export async function GET() {
-  const doc = buildOpenApiDocument();
+  const doc = buildPublicOpenApiDocument();
   return NextResponse.json(doc, {
     headers: {
       "Cache-Control": "no-store",

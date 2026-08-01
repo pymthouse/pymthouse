@@ -13,7 +13,7 @@ import { db } from "@/db/index";
 import { apiKeys } from "@/db/schema";
 import { hashToken } from "@/lib/token-hash";
 
-run("user usage balance rejects externalUserId override with bare Bearer", async (t) => {
+run("me usage balance rejects externalUserId override with bare Bearer", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
@@ -34,15 +34,19 @@ run("user usage balance rejects externalUserId override with bare Bearer", async
   });
 
   const unauthorized = await GET(
-    new NextRequest("http://localhost/api/v1/user/usage/balance"),
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/me/usage/balance`,
+    ),
+    { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(unauthorized.status, 401);
 
   const bad = await GET(
     new NextRequest(
-      "http://localhost/api/v1/user/usage/balance?externalUserId=other",
+      `http://localhost/api/v1/apps/${app.clientId}/me/usage/balance?externalUserId=other`,
       { headers: { Authorization: `Bearer ${bare}` } },
     ),
+    { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(bad.status, 400);
 });

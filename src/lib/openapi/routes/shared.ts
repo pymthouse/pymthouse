@@ -18,6 +18,38 @@ export const builderErrorResponses = {
   404: { description: "Not found", content: { "application/json": { schema: OAuthErrorSchema } } },
 } as const;
 
+/** Shared usage date + retail include flags (Builder and End-user OpenAPI). */
+export const usageDateRangeQueryParams = {
+  startDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "startDate", in: "query" },
+      description: "Inclusive lower bound (ISO 8601).",
+    }),
+  endDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "endDate", in: "query" },
+      description: "Inclusive upper bound (ISO 8601).",
+    }),
+  include: z
+    .literal("retail")
+    .optional()
+    .openapi({
+      param: { name: "include", in: "query" },
+      description: "Set to `retail` to include retail billable micros.",
+    }),
+  includeRetail: z
+    .enum(["1", "true"])
+    .optional()
+    .openapi({
+      param: { name: "includeRetail", in: "query" },
+      description: "Alternate flag for retail breakdown (`1` or `true`).",
+    }),
+} as const;
+
 type HttpMethod = RouteConfig["method"];
 
 export function registerJsonRouteMetadata(input: {

@@ -20,7 +20,7 @@ defineRouteMetadata("get", "/api/v1/health", {
 });
 
 defineRouteMetadata("post", "/api/v1/auth/validate", {
-  tags: ["Credentials"],
+  tags: ["Platform"],
   summary: "Validate API key (C0 POST)",
   description: "Provider-neutral validate when `BPP_VALIDATE_V2=1`.",
   request: {
