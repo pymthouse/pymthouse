@@ -6,6 +6,7 @@ import {
   collapseDuplicateLinkMethods,
   listOwnerPaymentMethods,
   toOwnerPaymentMethodItem,
+  toStripeApiUrl,
 } from "./owner-payment-method";
 
 type StripeRoute = Record<string, unknown>;
@@ -62,6 +63,19 @@ test("toOwnerPaymentMethodItem maps card fields", () => {
     expYear: 2028,
     isDefault: true,
   });
+});
+
+test("toStripeApiUrl accepts relative /v1 paths on api.stripe.com", () => {
+  assert.equal(
+    toStripeApiUrl("/v1/customers/cus_abc/payment_methods?limit=100"),
+    "https://api.stripe.com/v1/customers/cus_abc/payment_methods?limit=100",
+  );
+});
+
+test("toStripeApiUrl rejects absolute or non-/v1 paths", () => {
+  assert.throws(() => toStripeApiUrl("https://evil.example/v1/customers"));
+  assert.throws(() => toStripeApiUrl("/v2/customers"));
+  assert.throws(() => toStripeApiUrl("/v1/../admin"));
 });
 
 test("toOwnerPaymentMethodItem labels Link as brand-only (no last4 from Stripe)", () => {

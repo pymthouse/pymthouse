@@ -1,4 +1,5 @@
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import {
@@ -13,6 +14,25 @@ import {
   getStripeCustomerAppDataId,
   setKonnectStripeDefaultPaymentMethod,
 } from "./stripe-customer-data";
+
+const STRIPE_API_ORIGIN = "https://api.stripe.com";
+
+/**
+ * Build a Stripe REST URL from a relative `/v1/…` path only.
+ * Rejects scheme/host injection so path segments (customer ids, etc.) cannot
+ * redirect the request off api.stripe.com (tssecurity:S8476).
+ * @internal Exported for unit tests.
+ */
+export function toStripeApiUrl(path: string): string {
+  if (!/^\/v1\/[A-Za-z0-9/_.=?%&\-]+$/.test(path) || path.includes("..")) {
+    throw new Error("Invalid Stripe API path");
+  }
+  const url = new URL(path, STRIPE_API_ORIGIN);
+  if (url.origin !== STRIPE_API_ORIGIN || !url.pathname.startsWith("/v1/")) {
+    throw new Error("Stripe API origin mismatch");
+  }
+  return url.href;
+}
 
 export type OwnerPaymentMethodCheckoutResult = {
   checkoutUrl: string;
@@ -89,19 +109,18 @@ async function stripeRequestJson<T>(input: {
   }
   let response: Response;
   try {
-    response = await input.deps.fetchImpl(
-      `https://api.stripe.com${input.path}`,
-      {
-        method: input.method,
-        headers,
-        body: input.body?.toString(),
-        signal: input.deps.signal,
-      },
-    );
+    response = await input.deps.fetchImpl(toStripeApiUrl(input.path), {
+      method: input.method,
+      headers,
+      body: input.body?.toString(),
+      signal: input.deps.signal,
+    });
   } catch (err) {
     console.warn(
-      `owner-payment-method: Stripe ${input.method} ${input.path} failed`,
-      err instanceof Error ? err.message : String(err),
+      "owner-payment-method: Stripe request failed",
+      sanitizeForLog(input.method),
+      sanitizeForLog(input.path),
+      sanitizeForLog(err),
     );
     return null;
   }
@@ -113,8 +132,11 @@ async function stripeRequestJson<T>(input: {
       detail = "";
     }
     console.warn(
-      `owner-payment-method: Stripe ${input.method} ${input.path} → ${response.status}`,
-      detail,
+      "owner-payment-method: Stripe request not ok",
+      sanitizeForLog(input.method),
+      sanitizeForLog(input.path),
+      sanitizeForLog(response.status),
+      sanitizeForLog(detail),
     );
     return null;
   }
@@ -361,10 +383,7 @@ export async function listOwnerPaymentMethods(
     });
     return items;
   } catch (err) {
-    console.warn(
-      "owner-payment-method: lookup failed",
-      err instanceof Error ? err.message : String(err),
-    );
+    console.warn("owner-payment-method: lookup failed", sanitizeForLog(err));
     return [];
   }
 }
@@ -403,7 +422,7 @@ export async function ownerHasChargeablePaymentMethod(
   } catch (err) {
     console.warn(
       "owner-payment-method: chargeability lookup failed",
-      err instanceof Error ? err.message : String(err),
+      sanitizeForLog(err),
     );
     return null;
   }
@@ -494,7 +513,7 @@ export async function unlinkOwnerPaymentMethod(
     } catch (err) {
       console.warn(
         "owner-payment-method: Konnect default clear failed",
-        err instanceof Error ? err.message : String(err),
+        sanitizeForLog(err),
       );
     }
   }
@@ -544,7 +563,7 @@ export async function setOwnerDefaultPaymentMethod(
   } catch (err) {
     console.warn(
       "owner-payment-method: Konnect default sync failed",
-      err instanceof Error ? err.message : String(err),
+      sanitizeForLog(err),
     );
   }
 
