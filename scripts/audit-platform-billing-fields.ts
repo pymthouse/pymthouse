@@ -65,7 +65,9 @@ async function main(): Promise<void> {
     endUserCap: row.endUserCap,
     connectedAccountId: row.connectedAccountId,
     zeroFeeWithConnect:
-      row.applicationFeeBps === 0 && Boolean(row.chargesEnabled),
+      row.applicationFeeBps === 0 &&
+      Boolean(row.chargesEnabled) &&
+      row.billingMode === "merchant",
     raisedCap: row.endUserCap > DEFAULT_END_USER_CAP,
   }));
 

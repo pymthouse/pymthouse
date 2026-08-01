@@ -371,8 +371,13 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       const payload: Record<string, unknown> = {
         progressiveBilling,
         invoiceThresholdUsdMicros,
-        billingMode,
       };
+      // Only send billingMode when it changed — re-sending "merchant" re-runs
+      // Connect readiness validation and fails unrelated saves if Connect later
+      // becomes non-ready.
+      if (billingMode !== savedForm.billingMode) {
+        payload.billingMode = billingMode;
+      }
       if (isPlatformAdmin) {
         const parsedCap = Number.parseInt(endUserCap, 10);
         if (
@@ -383,7 +388,17 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
           throw new Error("End-user cap must be an integer between 1 and 1000000");
         }
         payload.endUserCap = parsedCap;
-        payload.applicationFeeBps = Number.parseInt(applicationFeeBps, 10) || 0;
+        const parsedFee = Number.parseInt(applicationFeeBps, 10);
+        if (
+          !Number.isFinite(parsedFee) ||
+          parsedFee < 0 ||
+          parsedFee > 10_000
+        ) {
+          throw new Error(
+            "Platform application fee must be an integer between 0 and 10000",
+          );
+        }
+        payload.applicationFeeBps = parsedFee;
       }
       const res = await fetch(`/api/v1/apps/${appId}/billing/stripe`, {
         method: "PATCH",
@@ -616,9 +631,9 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 {busy ? "Saving…" : "Save billing settings"}
               </button>
               {!isDirty && settingsSaved ? (
-                <span className="text-xs text-emerald-400" role="status">
+                <output className="text-xs text-emerald-400">
                   {settingsSaved}
-                </span>
+                </output>
               ) : null}
               {isDirty && !busy ? (
                 <span className="text-xs text-zinc-500">Unsaved changes</span>
@@ -654,8 +669,8 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 setSettingsSaved(null);
               }}
             />
-            <span>
-              Enable progressive billing
+            <span className="block">
+              <span className="block">Enable progressive billing</span>
               <span className="block text-xs text-zinc-500">
                 Synced to this app&apos;s OpenMeter billing profile.
               </span>
@@ -701,9 +716,9 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
                 {busy ? "Saving…" : "Save invoicing settings"}
               </button>
               {!isDirty && settingsSaved ? (
-                <span className="text-xs text-emerald-400" role="status">
+                <output className="text-xs text-emerald-400">
                   {settingsSaved}
-                </span>
+                </output>
               ) : null}
               {isDirty && !busy ? (
                 <span className="text-xs text-zinc-500">Unsaved changes</span>

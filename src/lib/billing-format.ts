@@ -73,7 +73,12 @@ export function formatCycleRange(
       timeZone,
     }).format(date);
 
-  const zone = timeZoneLabel(end, locale, timeZone);
+  const startZone = timeZoneLabel(start, locale, timeZone);
+  const endZone = timeZoneLabel(end, locale, timeZone);
+  if (startZone && endZone && startZone !== endZone) {
+    return `${format(start)} ${startZone} — ${format(end)} ${endZone}`;
+  }
+  const zone = endZone || startZone;
   const range = `${format(start)} — ${format(end)}`;
   return zone ? `${range} ${zone}` : range;
 }

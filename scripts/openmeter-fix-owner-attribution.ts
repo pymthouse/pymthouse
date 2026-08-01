@@ -102,7 +102,9 @@ async function main(): Promise<void> {
   const locking = await readLocking();
   console.log(`owner=${ownerId} customer=${customerId}`);
   console.log(`  attribution: ${attribution.length > 0 ? attribution.join(", ") : "(none)"}`);
-  console.log(`  locking subscriptions: ${locking.map((s) => `${s.id}(${s.status})`).join(", ") || "(none)"}`);
+  const lockingSummary =
+    locking.map((s) => s.id + "(" + s.status + ")").join(", ") || "(none)";
+  console.log(`  locking subscriptions: ${lockingSummary}`);
 
   if (attribution.length > 0) {
     console.log("Nothing to do — customer already has attributed subjects.");

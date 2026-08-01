@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import {
   formatExactUsdMicrosString,
@@ -522,6 +529,44 @@ function SessionTable({
   );
 }
 
+type HistoryPageResult = {
+  openMeterConfigured: boolean;
+  nextCursor: string | null;
+  items: SignedTicketSessionRow[] | SignedTicketRequestRow[];
+  mode: ViewMode;
+};
+
+function applyHistoryPage(
+  page: HistoryPageResult,
+  append: boolean,
+  setOpenMeterConfigured: (value: boolean) => void,
+  setNextCursor: (value: string | null) => void,
+  setSessions: Dispatch<SetStateAction<SignedTicketSessionRow[]>>,
+  setRequests: Dispatch<SetStateAction<SignedTicketRequestRow[]>>,
+): void {
+  setOpenMeterConfigured(page.openMeterConfigured);
+  setNextCursor(page.nextCursor);
+  if (page.mode === "session") {
+    const rows = page.items as SignedTicketSessionRow[];
+    setSessions((prev) => (append ? [...prev, ...rows] : rows));
+    return;
+  }
+  const rows = page.items as SignedTicketRequestRow[];
+  setRequests((prev) => (append ? [...prev, ...rows] : rows));
+}
+
+function downloadRequestsCsv(requests: SignedTicketRequestRow[]): void {
+  const csv = buildRequestsCsv(requests);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = buildRequestsCsvFilename();
+  anchor.click();
+  // Revoke after the click task so the browser can start the download first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 export default function SignedTicketRequestHistory({
   clientId,
   clientIds,
@@ -559,18 +604,11 @@ export default function SignedTicketRequestHistory({
   const clientIdsKey = resolvedClientIds.join(",");
 
   const downloadCsv = useCallback(() => {
-    const csv = buildRequestsCsv(requests);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = buildRequestsCsvFilename();
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadRequestsCsv(requests);
   }, [requests]);
 
   const fetchPage = useCallback(
-    async (cursor: string | null, mode: ViewMode) => {
+    async (cursor: string | null, mode: ViewMode): Promise<HistoryPageResult> => {
       const params = new URLSearchParams();
       params.set("limit", "25");
       params.set("scope", historyScope);
@@ -621,13 +659,14 @@ export default function SignedTicketRequestHistory({
     fetchPage(null, viewMode)
       .then((page) => {
         if (cancelled) return;
-        setOpenMeterConfigured(page.openMeterConfigured);
-        setNextCursor(page.nextCursor);
-        if (page.mode === "session") {
-          setSessions(page.items as SignedTicketSessionRow[]);
-        } else {
-          setRequests(page.items as SignedTicketRequestRow[]);
-        }
+        applyHistoryPage(
+          page,
+          false,
+          setOpenMeterConfigured,
+          setNextCursor,
+          setSessions,
+          setRequests,
+        );
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -653,19 +692,14 @@ export default function SignedTicketRequestHistory({
     setError(null);
     try {
       const page = await fetchPage(nextCursor, viewMode);
-      setOpenMeterConfigured(page.openMeterConfigured);
-      setNextCursor(page.nextCursor);
-      if (page.mode === "session") {
-        setSessions((prev) => [
-          ...prev,
-          ...(page.items as SignedTicketSessionRow[]),
-        ]);
-      } else {
-        setRequests((prev) => [
-          ...prev,
-          ...(page.items as SignedTicketRequestRow[]),
-        ]);
-      }
+      applyHistoryPage(
+        page,
+        true,
+        setOpenMeterConfigured,
+        setNextCursor,
+        setSessions,
+        setRequests,
+      );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load more");
     } finally {

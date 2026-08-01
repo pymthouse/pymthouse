@@ -115,7 +115,7 @@ export function bucketPoints(
     }
     buckets.push({
       date: slice[0].date,
-      endDate: slice[slice.length - 1].date,
+      endDate: slice.at(-1)!.date,
       value,
       feeUsdMicros: fee.toString(),
     });

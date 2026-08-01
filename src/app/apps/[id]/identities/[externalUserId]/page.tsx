@@ -201,7 +201,7 @@ export default async function AppIdentityDetailPage({
       <section className="mb-6 rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 sm:mb-8">
         <h2 className="text-sm font-semibold text-zinc-200">Usage over billing period</h2>
         <p className="mb-4 mt-1 text-xs text-zinc-500">
-          Split by pipeline / model. Toggle between requests and cost.
+          Split by pipeline / model.
         </p>
         {series.length === 0 ? (
           <p className="py-6 text-center text-sm text-zinc-500">
@@ -213,6 +213,7 @@ export default async function AppIdentityDetailPage({
             valueLabel="Usage"
             height={220}
             maxSeries={8}
+            showMetricToggle={false}
           />
         )}
       </section>

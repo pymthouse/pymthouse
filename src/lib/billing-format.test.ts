@@ -61,3 +61,16 @@ test("formatCycleRange is deterministic for a fixed zone", () => {
 test("formatCycleRange falls back to raw values for unparseable input", () => {
   assert.equal(formatCycleRange("nope", "also-nope"), "nope — also-nope");
 });
+
+test("formatCycleRange labels both bounds across a DST transition", () => {
+  // America/New_York springs forward on 2024-03-10: 05:00Z is EST, 07:00Z is EDT.
+  const start = "2024-03-10T05:00:00.000Z";
+  const end = "2024-03-10T07:00:00.000Z";
+  const range = formatCycleRange(start, end, { timeZone: "America/New_York" });
+  assert.match(range, /EST/);
+  assert.match(range, /EDT/);
+  assert.ok(
+    range.indexOf("EST") < range.indexOf("EDT"),
+    `expected EST before EDT in "${range}"`,
+  );
+});

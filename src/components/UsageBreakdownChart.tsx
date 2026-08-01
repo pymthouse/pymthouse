@@ -106,11 +106,8 @@ function ToggleGroup<T extends string>({
   label: string;
 }>) {
   return (
-    <div
-      className="inline-flex rounded-lg border border-zinc-700 p-0.5"
-      role="group"
-      aria-label={label}
-    >
+    <fieldset className="m-0 inline-flex min-w-0 rounded-lg border border-solid border-zinc-700 p-0.5">
+      <legend className="sr-only">{label}</legend>
       {options.map((option) => (
         <button
           key={option.key}
@@ -126,7 +123,7 @@ function ToggleGroup<T extends string>({
           {option.label}
         </button>
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -168,20 +165,33 @@ export default function UsageBreakdownChart({
     () => visible.map((s) => bucketPoints(s.points, bucket)),
     [visible, bucket],
   );
-  const buckets = bucketedSeries[0] ?? [];
+  // Axis = union of all series dates so a sparse series cannot shift values.
+  const buckets = useMemo(() => {
+    const byDate = new Map<string, BucketedPoint>();
+    for (const points of bucketedSeries) {
+      for (const point of points) {
+        if (!byDate.has(point.date)) byDate.set(point.date, point);
+      }
+    }
+    return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  }, [bucketedSeries]);
+  const seriesByDate = useMemo(
+    () => bucketedSeries.map((points) => new Map(points.map((p) => [p.date, p]))),
+    [bucketedSeries],
+  );
   const n = buckets.length;
   const todayKey = utcTodayKey();
 
   // Stacked: the axis must cover each column's summed height.
   const columnTotals = useMemo(
     () =>
-      Array.from({ length: n }, (_, i) =>
-        bucketedSeries.reduce(
-          (sum, points) => sum + (points[i] ? pointMagnitude(points[i], metric) : 0),
-          0,
-        ),
+      buckets.map((bucketPoint) =>
+        seriesByDate.reduce((sum, byDate) => {
+          const point = byDate.get(bucketPoint.date);
+          return sum + (point ? pointMagnitude(point, metric) : 0);
+        }, 0),
       ),
-    [bucketedSeries, n, metric],
+    [buckets, seriesByDate, metric],
   );
 
   const yTicks = useMemo(
@@ -236,7 +246,13 @@ export default function UsageBreakdownChart({
     return out;
   }, [n]);
 
-  const hasAnyValue = columnTotals.some((total) => total > 0);
+  // Empty state is based on request counts, not the selected metric — a zero
+  // cost view must not hide the metric toggle with no way back.
+  const hasAnyValue = useMemo(
+    () =>
+      bucketedSeries.some((points) => points.some((point) => point.value > 0)),
+    [bucketedSeries],
+  );
 
   if (visible.length === 0 || n === 0 || !hasAnyValue) {
     return (
@@ -313,10 +329,11 @@ export default function UsageBreakdownChart({
 
           {Array.from({ length: n }, (_, i) => {
             let cursor = 0;
+            const bucketDate = buckets[i].date;
             return (
-              <g key={buckets[i].date} opacity={hoverIndex === null || hoverIndex === i ? 1 : 0.45}>
-                {bucketedSeries.map((points, sIdx) => {
-                  const point = points[i];
+              <g key={bucketDate} opacity={hoverIndex === null || hoverIndex === i ? 1 : 0.45}>
+                {seriesByDate.map((byDate, sIdx) => {
+                  const point = byDate.get(bucketDate);
                   if (!point) return null;
                   const magnitude = pointMagnitude(point, metric);
                   if (magnitude <= 0) return null;
@@ -408,8 +425,8 @@ export default function UsageBreakdownChart({
                 {formatBucketTitle(buckets[hoverIndex], todayKey, bucket)}
               </p>
               <ul className="mt-1 space-y-0.5">
-                {bucketedSeries.map((points, sIdx) => {
-                  const point = points[hoverIndex];
+                {seriesByDate.map((byDate, sIdx) => {
+                  const point = byDate.get(buckets[hoverIndex].date);
                   if (!point || pointMagnitude(point, metric) <= 0) return null;
                   const s = visible[sIdx];
                   const color =
@@ -439,12 +456,11 @@ export default function UsageBreakdownChart({
                   {metric === "requests"
                     ? columnTotals[hoverIndex].toLocaleString("en-US")
                     : formatUsdMicrosSummary(
-                        bucketedSeries
-                          .reduce(
-                            (sum, points) =>
-                              sum + BigInt(points[hoverIndex]?.feeUsdMicros ?? "0"),
-                            0n,
-                          )
+                        seriesByDate
+                          .reduce((sum, byDate) => {
+                            const point = byDate.get(buckets[hoverIndex].date);
+                            return sum + BigInt(point?.feeUsdMicros ?? "0");
+                          }, 0n)
                           .toString(),
                       )}
                 </span>

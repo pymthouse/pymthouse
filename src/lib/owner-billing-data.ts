@@ -542,6 +542,8 @@ async function mapSubscriptionRow(input: {
   ownerUserId: string;
   ownedApps: OwnedApp[];
   planKeyToLocalId: Map<string, string>;
+  /** Pre-resolved owner-wallet subjects; avoids a second OpenMeter lookup. */
+  ownerWalletSubjects?: string[];
 }): Promise<OwnerBillingSubscriptionRow> {
   const localPlanId = input.candidate.appPublicClientId
     ? await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -573,11 +575,12 @@ async function mapSubscriptionRow(input: {
   // Read the subjects OpenMeter actually bills for this customer, so the
   // figure shown matches the invoice it explains.
   const usageSubjects = isSharedOwnerWallet
-    ? await resolveOwnerWalletReadSubjects({
+    ? (input.ownerWalletSubjects ??
+      (await resolveOwnerWalletReadSubjects({
         client: input.client,
         ownerUserId: input.ownerUserId,
         ownedApps: input.ownedApps,
-      })
+      })))
     : [input.candidate.customerKey];
 
   const usage = await querySubjectCycleUsage({
@@ -668,6 +671,10 @@ async function listActiveSubscriptionsForCustomer(input: {
  */
 export async function listOwnerActiveSubscriptions(
   userId: string,
+  options?: Readonly<{
+    ownedApps?: OwnedApp[];
+    ownerWalletSubjects?: string[];
+  }>,
 ): Promise<OwnerBillingSubscriptionRow[]> {
   const trimmed = userId.trim();
   if (!trimmed) {
@@ -680,7 +687,14 @@ export async function listOwnerActiveSubscriptions(
   const client = getHostedAdminClient();
   const cycleBounds = calendarMonthBoundsUtc(new Date());
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
-  const ownedApps = await listOwnedApps(trimmed);
+  const ownedApps = options?.ownedApps ?? (await listOwnedApps(trimmed));
+  const ownerWalletSubjects =
+    options?.ownerWalletSubjects ??
+    (await resolveOwnerWalletReadSubjects({
+      client,
+      ownerUserId: trimmed,
+      ownedApps,
+    }));
   const planKeyToLocalId = await loadPlanKeyToLocalId(
     ownedApps.map((app) => app.developerAppId),
   );
@@ -727,6 +741,7 @@ export async function listOwnerActiveSubscriptions(
         ownerUserId: trimmed,
         ownedApps,
         planKeyToLocalId,
+        ownerWalletSubjects,
       }),
     ),
   );
@@ -761,6 +776,15 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   }
 
   const adminClient = getHostedAdminClient();
+  // Resolve owned apps + wallet subjects once: subscriptions and daily usage
+  // both read the same attributed subject set, and a second customer lookup
+  // would be a wasted round trip with a consistency risk between the two.
+  const ownedApps = await listOwnedApps(userId);
+  const ownerWalletSubjects = await resolveOwnerWalletReadSubjects({
+    client: adminClient,
+    ownerUserId: userId,
+    ownedApps,
+  });
   // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
   // first paint is not blocked when the invoice index is large or slow.
   const emptyInvoices = { items: [] as TenantInvoiceDto[] };
@@ -772,7 +796,6 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     creditAllowance,
     paymentMethods,
     subscriptions,
-    ownedApps,
     invoicesResult,
     creditGrants,
   ] = await Promise.all([
@@ -792,12 +815,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         "payment method lookup",
       ),
       withSoftTimeout(
-        listOwnerActiveSubscriptions(userId),
+        listOwnerActiveSubscriptions(userId, {
+          ownedApps,
+          ownerWalletSubjects,
+        }),
         8_000,
         [] as OwnerBillingSubscriptionRow[],
         "subscription lookup",
       ),
-      listOwnedApps(userId),
       withSoftTimeout(
         listOwnerWalletInvoices({
           client: adminClient,
@@ -823,11 +848,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   const dailyUsage = await withSoftTimeout(
     querySubjectDailyUsage({
       client: adminClient,
-      subjects: await resolveOwnerWalletReadSubjects({
-        client: adminClient,
-        ownerUserId: userId,
-        ownedApps,
-      }),
+      subjects: ownerWalletSubjects,
       start: cycle.start,
       end: cycle.end,
     }),
