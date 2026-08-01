@@ -24,7 +24,7 @@ const STRIPE_API_ORIGIN = "https://api.stripe.com";
  * @internal Exported for unit tests.
  */
 export function toStripeApiUrl(path: string): string {
-  if (!/^\/v1\/[A-Za-z0-9/_.=?%&\-]+$/.test(path) || path.includes("..")) {
+  if (!/^\/v1\/[A-Za-z0-9/_.=?%&-]+$/.test(path) || path.includes("..")) {
     throw new Error("Invalid Stripe API path");
   }
   const url = new URL(path, STRIPE_API_ORIGIN);
