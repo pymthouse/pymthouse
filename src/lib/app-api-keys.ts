@@ -226,8 +226,6 @@ export async function listAppUserApiKeys(input: {
 export async function createAppUserApiKey(input: {
   developerAppId: string;
   appUserId: string;
-  /** Public OIDC client id (`app_*`); when set, returned `apiKey` is composite. */
-  publicClientId?: string | null;
   label?: string | null;
 }) {
   const apiKeyValue = generateApiKeyValue();
@@ -248,14 +246,9 @@ export async function createAppUserApiKey(input: {
     revokedAt: null,
   });
 
-  const publicClientId = input.publicClientId?.trim() || "";
-  const presented = publicClientId
-    ? formatCompositeApiKey(publicClientId, apiKeyValue)
-    : apiKeyValue;
-
   return {
     id,
-    apiKey: presented,
+    apiKey: apiKeyValue,
     prefix: maskApiKeyPrefix(apiKeyValue.slice(0, 16)),
     suffix: maskApiKeySuffix(apiKeyValue),
     label: input.label?.trim() || null,

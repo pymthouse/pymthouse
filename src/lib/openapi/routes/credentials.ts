@@ -23,7 +23,7 @@ defineRouteMetadata("post", "/api/v1/apps/{clientId}/oidc/token", {
     "(`pmth_*` or composite `app_*_*`) for a short-lived signer JWT. The `{clientId}` path segment is the public " +
     "OAuth app client id. Authenticate with the end-user `subject_token`; optional HTTP Basic " +
     "with the M2M client is supported for server-side callers. " +
-    "For self-serve usage reads, prefer `GET /api/v1/user/usage*` with the composite Bearer directly.",
+    "For self-serve usage reads, prefer `GET /api/v1/apps/{clientId}/me/usage*` with bare Bearer `pmth_*`.",
   request: {
     params: z.object({ clientId: clientIdParam }),
     body: {

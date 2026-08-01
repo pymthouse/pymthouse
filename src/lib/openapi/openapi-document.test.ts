@@ -25,9 +25,10 @@ test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal"
   assert.ok(doc.paths["/api/v1/apps/{clientId}/users"]?.get);
   assert.ok(doc.paths["/api/v1/apps/{clientId}/oidc/token"]?.post);
   assert.ok(doc.paths["/api/v1/builder/apps/{clientId}/usage"]?.get);
-  assert.ok(doc.paths["/api/v1/user/usage"]?.get);
-  assert.ok(doc.paths["/api/v1/user/usage/balance"]?.get);
-  assert.ok(doc.paths["/api/v1/user/usage/requests"]?.get);
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage"]?.get);
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage/balance"]?.get);
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage/requests"]?.get);
+  assert.equal(doc.paths["/api/v1/user/usage"]?.get?.deprecated, true);
   assert.equal(doc.paths["/api/v1/signer"], undefined);
 
   assert.ok(doc.components?.securitySchemes?.m2mBasic);
@@ -53,7 +54,7 @@ test("buildInternalOpenApiDocument documents /internal paths and session auth", 
   assert.ok(doc.paths["/api/v1/internal/signer"]?.get);
 
   assert.equal(doc.paths["/api/v1/builder/apps/{clientId}/usage"], undefined);
-  assert.equal(doc.paths["/api/v1/user/usage"], undefined);
+  assert.equal(doc.paths["/api/v1/apps/{clientId}/me/usage"], undefined);
   assert.equal(doc.paths["/api/v1/apps/{clientId}/users"], undefined);
 
   assert.ok(doc.components?.securitySchemes?.adminSession);
@@ -68,7 +69,7 @@ test("buildOpenApiDocument aliases public", () => {
   const publicDoc = buildPublicOpenApiDocument();
   assert.equal(legacy.info.title, publicDoc.info.title);
   assert.ok(legacy.paths["/api/v1/builder/apps/{clientId}/usage"]);
-  assert.ok(legacy.paths["/api/v1/user/usage"]);
+  assert.ok(legacy.paths["/api/v1/apps/{clientId}/me/usage"]);
 });
 
 test("buildPublicOpenApiDocument servers follow NEXTAUTH_URL", () => {

@@ -40,7 +40,6 @@ test("listSessionUserApiKeys excludes spoofed external_user_id on foreign apps",
   const spoofedKey = await createAppUserApiKey({
     developerAppId: attackerApp.clientId,
     appUserId: spoofedAppUserId,
-    publicClientId: attackerApp.clientId,
     label: "spoofed",
   });
 
@@ -83,7 +82,6 @@ test("list/revoke session keys allow personal default and owned-app keys", async
     const personalKey = await createAppUserApiKey({
       developerAppId: defaultApp.clientId,
       appUserId: personalUserId,
-      publicClientId: defaultApp.clientId,
       label: "personal",
     });
 
@@ -99,7 +97,6 @@ test("list/revoke session keys allow personal default and owned-app keys", async
     const ownerKey = await createAppUserApiKey({
       developerAppId: ownerApp.clientId,
       appUserId: ownerAppUserId,
-      publicClientId: ownerApp.clientId,
       label: "owner",
     });
 
@@ -160,7 +157,6 @@ test("session key helpers ignore non-owned apps even when external ids match", a
   const plantedKey = await createAppUserApiKey({
     developerAppId: attackerApp.clientId,
     appUserId: plantedId,
-    publicClientId: attackerApp.clientId,
     label: "planted",
   });
 
@@ -176,7 +172,6 @@ test("session key helpers ignore non-owned apps even when external ids match", a
   const realKey = await createAppUserApiKey({
     developerAppId: victimApp.clientId,
     appUserId: realAppUserId,
-    publicClientId: victimApp.clientId,
     label: "real",
   });
 

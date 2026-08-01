@@ -98,7 +98,7 @@ async function buildRetailByPipelineModel(input: {
 }
 
 /**
- * Shared OpenMeter usage payload for apps/{id}/usage and /api/v1/user/usage.
+ * Shared OpenMeter usage payload for apps/{id}/usage and /apps/{id}/me/usage.
  */
 export async function buildAppUsageResponse(input: {
   appId: string;

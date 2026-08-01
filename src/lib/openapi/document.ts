@@ -97,7 +97,7 @@ function publicSecuritySchemes() {
       type: "http" as const,
       scheme: "bearer",
       description:
-        "End-user credential: composite `app_<24hex>_<secret>` API key, bare `pmth_*` app-user key, programmatic user JWT, or signer JWT.",
+        "End-user credential: bare `pmth_*` app-user key, programmatic user JWT, or signer JWT (optional composite `app_<24hex>_<secret>`).",
     },
   };
 }

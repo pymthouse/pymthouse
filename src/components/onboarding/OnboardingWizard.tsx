@@ -253,6 +253,7 @@ export default function OnboardingWizard({
                   <ApiKeyCredentialSwitcher
                     apiKey={minted.apiKey}
                     sdkToken={minted.sdkToken}
+                    defaultFormat="bearer"
                   />
                 </div>
               </div>

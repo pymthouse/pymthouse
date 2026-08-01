@@ -116,7 +116,6 @@ export async function POST(
   const created = await createAppUserApiKey({
     developerAppId: access.app.id,
     appUserId: appUser.id,
-    publicClientId: clientId,
     label,
   });
 
@@ -152,7 +151,7 @@ export async function POST(
       label: created.label,
       createdAt: created.createdAt,
       message:
-        "Store this API key securely. It will not be shown again. Use the full app_<24hex>_<secret> value as Authorization: Bearer <token> for the remote signer, or use sdkToken as --token with livepeer-python-sdk.",
+        "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on /api/v1/apps/{clientId}/me/usage* and as subject_token on POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.",
       correlation_id: correlationId,
     },
     { status: 201 },

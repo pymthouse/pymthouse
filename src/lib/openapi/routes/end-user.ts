@@ -9,6 +9,14 @@ import { z } from "@/lib/openapi/zod";
 
 const endUserSecurity: Array<Record<string, string[]>> = [{ endUserBearer: [] }];
 
+const clientId = z
+  .string()
+  .min(1)
+  .openapi({
+    param: { name: "clientId", in: "path" },
+    description: "Public OIDC client id (`app_…`).",
+  });
+
 const endUserUsageQueryParams = z.object({
   ...usageDateRangeQueryParams,
   groupBy: z
@@ -21,15 +29,22 @@ const endUserUsageQueryParams = z.object({
     }),
 });
 
-defineRouteMetadata("get", "/api/v1/user/usage", {
+const meUsagePath = (suffix: string) =>
+  `/api/v1/apps/{clientId}/me/usage${suffix}`;
+
+defineRouteMetadata("get", meUsagePath(""), {
   tags: [OPENAPI_TAGS.endUserUsage],
   summary: "End-user usage summary",
   description:
-    "Aggregated usage for the authenticated subject only. " +
+    "Aggregated usage for the authenticated subject on this app. " +
     "Do not pass `userId` / `externalUserId` — identity is taken from the Bearer credential. " +
+    "Path `{clientId}` must match the credential’s public app. " +
     "Optional query: `startDate`, `endDate`, `groupBy`, `include` / `includeRetail`.",
   security: endUserSecurity,
-  request: { query: endUserUsageQueryParams },
+  request: {
+    params: z.object({ clientId }),
+    query: endUserUsageQueryParams,
+  },
   responses: {
     200: jsonSuccess,
     ...builderErrorResponses,
@@ -37,7 +52,7 @@ defineRouteMetadata("get", "/api/v1/user/usage", {
   },
 });
 
-defineRouteMetadata("get", "/api/v1/user/usage/balance", {
+defineRouteMetadata("get", meUsagePath("/balance"), {
   tags: [OPENAPI_TAGS.endUserUsage],
   summary: "End-user usage balance",
   description:
@@ -46,6 +61,7 @@ defineRouteMetadata("get", "/api/v1/user/usage/balance", {
     "Prepaid credits settle invoices/charges and are not the meter source. " +
     "`userId` / `externalUserId` query overrides are rejected.",
   security: endUserSecurity,
+  request: { params: z.object({ clientId }) },
   responses: {
     200: jsonSuccess,
     ...builderErrorResponses,
@@ -61,7 +77,7 @@ defineRouteMetadata("get", "/api/v1/user/usage/balance", {
   },
 });
 
-defineRouteMetadata("get", "/api/v1/user/usage/requests", {
+defineRouteMetadata("get", meUsagePath("/requests"), {
   tags: [OPENAPI_TAGS.endUserUsage],
   summary: "End-user signed-ticket request history",
   description:
@@ -71,6 +87,7 @@ defineRouteMetadata("get", "/api/v1/user/usage/requests", {
     "Do not pass `userId` / `externalUserId`.",
   security: endUserSecurity,
   request: {
+    params: z.object({ clientId }),
     query: z.object({
       groupBy: z
         .enum(["request", "session"])
@@ -123,3 +140,34 @@ defineRouteMetadata("get", "/api/v1/user/usage/requests", {
     503: { description: "OpenMeter not configured" },
   },
 });
+
+/**
+ * Deprecated pathless aliases. Identical behavior, but the app is derived from
+ * the Bearer credential instead of `{clientId}`.
+ */
+const legacyAlias = (
+  suffix: string,
+  summary: string,
+  query?: typeof endUserUsageQueryParams,
+) => {
+  defineRouteMetadata("get", `/api/v1/user/usage${suffix}`, {
+    tags: [OPENAPI_TAGS.endUserUsage],
+    summary: `${summary} (deprecated)`,
+    description:
+      `Deprecated alias for \`GET ${meUsagePath(suffix)}\`. ` +
+      "Behavior is identical; the app is resolved from the Bearer credential " +
+      "instead of the path. Prefer the app-scoped route for new integrations.",
+    deprecated: true,
+    security: endUserSecurity,
+    ...(query ? { request: { query } } : {}),
+    responses: {
+      200: jsonSuccess,
+      ...builderErrorResponses,
+      503: { description: "OpenMeter not configured" },
+    },
+  });
+};
+
+legacyAlias("", "End-user usage summary", endUserUsageQueryParams);
+legacyAlias("/balance", "End-user usage balance");
+legacyAlias("/requests", "End-user signed-ticket request history");

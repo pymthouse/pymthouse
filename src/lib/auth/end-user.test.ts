@@ -80,7 +80,7 @@ run("authenticateEndUser resolves bare Bearer to end-user identity", async (t) =
   });
 
   const auth = await authenticateEndUser(
-    new Request("http://localhost/api/v1/user/usage", {
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/me/usage`, {
       headers: { Authorization: `Bearer ${bare}` },
     }),
   );
@@ -88,6 +88,23 @@ run("authenticateEndUser resolves bare Bearer to end-user identity", async (t) =
   assert.equal(auth?.externalUserId, externalUserId);
   assert.equal(auth?.publicClientId, app.clientId);
   assert.equal(auth?.developerAppId, app.clientId);
+
+  const mismatched = await authenticateEndUser(
+    new Request("http://localhost/api/v1/apps/app_otherclientid0000000001/me/usage", {
+      headers: { Authorization: `Bearer ${bare}` },
+    }),
+    { expectedPublicClientId: "app_otherclientid0000000001" },
+  );
+  assert.equal(mismatched, null);
+
+  const matched = await authenticateEndUser(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/me/usage`, {
+      headers: { Authorization: `Bearer ${bare}` },
+    }),
+    { expectedPublicClientId: app.clientId },
+  );
+  assert.ok(matched);
+  assert.equal(matched?.publicClientId, app.clientId);
 });
 
 run("authenticateEndUser resolves composite Bearer to end-user identity", async (t) => {
@@ -111,9 +128,10 @@ run("authenticateEndUser resolves composite Bearer to end-user identity", async 
 
   const composite = formatCompositeApiKey(app.clientId, bare);
   const auth = await authenticateEndUser(
-    new Request("http://localhost/api/v1/user/usage", {
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/me/usage`, {
       headers: { Authorization: `Bearer ${composite}` },
     }),
+    { expectedPublicClientId: app.clientId },
   );
   assert.ok(auth);
   assert.equal(auth?.externalUserId, externalUserId);
@@ -122,6 +140,8 @@ run("authenticateEndUser resolves composite Bearer to end-user identity", async 
 });
 
 test("authenticateEndUser returns null without Authorization", async () => {
-  const auth = await authenticateEndUser(new Request("http://localhost/api/v1/user/usage"));
+  const auth = await authenticateEndUser(
+    new Request("http://localhost/api/v1/apps/app_x/me/usage"),
+  );
   assert.equal(auth, null);
 });
