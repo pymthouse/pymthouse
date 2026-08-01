@@ -1,6 +1,6 @@
 {
   "name": "pymthouse",
-  "version": "0.3.3",
+  "version": "0.3.5",
   "private": true,
   "engines": {
     "node": ">=20.18.1"
