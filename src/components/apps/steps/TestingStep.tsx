@@ -137,8 +137,7 @@ function buildOwnerSignJobCurl(origin: string, clientId: string): string {
 
 const TOKEN_EXCHANGE_GRANT =
   "urn:ietf:params:oauth:grant-type:token-exchange";
-const SUBJECT_ACCESS_TOKEN_TYPE =
-  "urn:ietf:params:oauth:token-type:access_token";
+const SUBJECT_API_KEY_TOKEN_TYPE = "urn:pymthouse:oauth:token-type:api_key";
 
 function buildSignerTokenExchangeCurl(origin: string, publicClientId?: string): string {
   // Pathless issuer exchange resolves the app from the bare API key (RFC 8693).
@@ -148,14 +147,14 @@ function buildSignerTokenExchangeCurl(origin: string, publicClientId?: string): 
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
   -d "subject_token=pmth_YOUR_BARE_API_KEY" \
-  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
+  -d "subject_token_type=${SUBJECT_API_KEY_TOKEN_TYPE}"`;
   }
   const encodedClientId = encodeURIComponent(publicClientId);
   return String.raw`curl -sS -X POST ${origin}/api/v1/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
   -d "subject_token=pmth_YOUR_BARE_API_KEY" \
-  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"
+  -d "subject_token_type=${SUBJECT_API_KEY_TOKEN_TYPE}"
 
 # Or path-scoped: POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token`;
 }
@@ -338,7 +337,7 @@ async function postAppScopedSignerExchange(input: {
   const body = new URLSearchParams({
     grant_type: TOKEN_EXCHANGE_GRANT,
     subject_token: input.subjectToken,
-    subject_token_type: SUBJECT_ACCESS_TOKEN_TYPE,
+    subject_token_type: SUBJECT_API_KEY_TOKEN_TYPE,
   });
   const res = await fetch(
     `/api/v1/apps/${encodeURIComponent(input.publicClientId)}/oidc/token`,
