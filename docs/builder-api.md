@@ -20,7 +20,7 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 - `client_id` is the canonical app identifier in Builder API URLs.
 - **API surfaces:**
   - **Builder (M2M):** canonical `/api/v1/builder/…` for usage; integrator `/api/v1/apps/{clientId}/…` for users, tokens, billing reads (legacy `/apps/…/usage*` aliases remain M2M-only)
-  - **End-user:** `/api/v1/apps/{clientId}/me/…` — bare `pmth_*` key or end-user/signer JWT (path `{clientId}` must match)
+  - **End-user:** `/api/v1/user/usage*` (app from Bearer) or `/api/v1/apps/{clientId}/me/…` (path `{clientId}` must match) — bare `pmth_*` key or end-user/signer JWT
   - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` (unpublished from the public Scalar UI)
 - OIDC issuer stays at `/api/v1/oidc/*`. Public catalog/health stay under `/api/v1/*` without a product prefix.
 - Internal database IDs are implementation details and are not part of the public API contract.
@@ -34,11 +34,11 @@ Machine-readable contract and interactive reference:
 | **Public (Builder + End-user)** | `GET /api/v1/openapi.json` | `GET /api/v1/docs` |
 | **Internal (dashboard/session)** | `GET /api/v1/internal/openapi.json` | `GET /api/v1/internal/docs` |
 
-The public document includes M2M integrator routes and `/api/v1/apps/{clientId}/me/usage*`. Internal is available at the paths above but is not linked from `/api/v1/docs`.
+The public document includes M2M integrator routes and end-user `/api/v1/user/usage*` plus `/api/v1/apps/{clientId}/me/usage*`. Internal is available at the paths above but is not linked from `/api/v1/docs`.
 
 Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
 
-OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration`. Signer session exchange is documented at `POST /api/v1/apps/{clientId}/oidc/token`. The OIDC provider token endpoint (`POST /api/v1/oidc/token`) covers standard OAuth grants only.
+OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration`. Signer session exchange accepts a bare `pmth_*` API key as RFC 8693 `subject_token` on both `POST /api/v1/oidc/token` (app resolved from the credential) and `POST /api/v1/apps/{clientId}/oidc/token` (path-scoped).
 
 ### Breaking changes (API cleanup)
 
@@ -61,8 +61,8 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
-| Stored API key (`pmth_<hex>`) | Per-app-user **API key** (hashed at rest; presented bare at mint) | `Authorization: Bearer` on `/api/v1/apps/{clientId}/me/usage*`; `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
-| `app_<24hex>_<secret>` | Optional **composite** presentation (not issued by default) | Pathless remote-signer webhooks that must recover `{clientId}` from a single Bearer |
+| Stored API key (`pmth_<hex>`) | Per-app-user **API key** (hashed at rest) | Personal mint returns bare `pmth_*`; Builder mint returns composite presentation of the same secret |
+| `app_<24hex>_<secret>` | **Presented** Builder API key (issuance + remote-signer Bearer) | Same secret as the stored key; `app_*` segment routes pathless exchange / webhooks |
 | Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (device / SDK; **no** authorization-code redirects) |
 | `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
@@ -80,26 +80,27 @@ Authorization-code (browser / portal) login is registered **only** on the confid
 
 Enable **Confidential web RP** on App profile (same pattern as Confidential M2M backend). Rotate the `web_` secret with `POST /api/v1/apps/{clientId}/credentials?target=web`. Do not put portal SSO credentials on the public SDK client or the M2M helper.
 
-Newly issued keys are returned as bare `pmth_<hex>`. Prefer REST paths that carry `{clientId}`:
+Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted app-user keys are returned as composite `app_<24hex>_<secret>` (same stored secret):
 
-- Self-serve usage: `GET /api/v1/apps/{clientId}/me/usage*`
-- Signer session exchange: `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token=pmth_…`
+- Self-serve usage (credential-scoped app): `GET /api/v1/user/usage*` with bare Bearer
+- Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
+- Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite
 
-Composite `app_<24hex>_<secret>` is still **accepted** where a pathless caller (e.g. remote-signer identity webhook) must recover the public client id from a single Bearer. Prefer app-scoped signer URLs + bare Bearer when possible.
+Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer.
 
 **Design notes**
 
-- Tenancy lives in the URL for Builder and end-user self-serve routes; the secret stays bare.
-- Composite remains a convenience for pathless webhooks; underscore separator keeps copy/select UX intact when used.
-- `formatCompositeApiKey` / `splitCompositeApiKey` remain available for webhook parsers.
+- Personal keys stay bare; Builder app-user mint returns composite so pathless signer webhooks can recover `{clientId}`.
+- Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
+- `formatCompositeApiKey` / `splitCompositeApiKey` parse the Builder presentation form.
 
 Do not pass M2M client secrets as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
 
 ### Implementation tasks
 
-- [x] Issue bare `pmth_*` from key creation APIs (composite optional / pathless only).
+- [x] Issue bare `pmth_*` from personal key mint; composite `app_*_*` from Builder app-user key mint.
 - [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
-- [x] Canonical end-user usage at `/api/v1/apps/{clientId}/me/usage*` (pathless `/api/v1/user/usage*` kept as a deprecated alias).
+- [x] End-user usage at `/api/v1/user/usage*` (app from credential) and `/api/v1/apps/{clientId}/me/usage*` (path-scoped).
 
 ## Authentication
 
@@ -152,9 +153,14 @@ Authorization: Basic base64(client_id:client_secret)
 
 ## Signer session exchange (RFC 8693)
 
-`POST /api/v1/apps/{clientId}/oidc/token`
+Exchange a user access JWT **or** a per-app-user API key (`pmth_*`) for a short-lived signer JWT (`SignerSession`).
 
-Clearinghouse-compatible signer session issuance. `Content-Type: application/x-www-form-urlencoded`.
+| Endpoint | App resolution |
+| --- | --- |
+| `POST /api/v1/oidc/token` | From the `subject_token` credential (bare `pmth_*` or composite) |
+| `POST /api/v1/apps/{clientId}/oidc/token` | Path `{clientId}` must match the credential |
+
+`Content-Type: application/x-www-form-urlencoded`.
 
 | Field | Value |
 | --- | --- |
@@ -163,11 +169,22 @@ Clearinghouse-compatible signer session issuance. `Content-Type: application/x-w
 | `subject_token_type` | `urn:ietf:params:oauth:token-type:access_token` |
 | `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
 
-Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange.
+Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange. Do not use client secrets (`pmth_cs_*`) as `subject_token`.
 
 Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (Livepeer network discovery, not OIDC metadata), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
 
-Example (API key as `subject_token`):
+Example (bare API key on the issuer token endpoint — personal key, no `{clientId}` in the URL):
+
+```bash
+curl -sS \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  --data-urlencode "subject_token=pmth_..." \
+  --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  "https://your-pymthouse.example/api/v1/oidc/token"
+```
+
+Example (API key on the app-scoped route):
 
 ```bash
 curl -sS \
@@ -414,23 +431,28 @@ End users can read **their own** usage with the credential they already hold (no
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/v1/apps/{clientId}/me/usage` | Aggregates for the authenticated subject (`groupBy`, `startDate`, `endDate` as on Builder usage) |
-| `GET /api/v1/apps/{clientId}/me/usage/balance` | Plan included-usage allowance for that subject |
-| `GET /api/v1/apps/{clientId}/me/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `cursor`, `limit`) |
+| `GET /api/v1/user/usage` | Aggregates for the authenticated subject; app resolved from the Bearer credential |
+| `GET /api/v1/user/usage/balance` | Plan included-usage allowance for that subject |
+| `GET /api/v1/user/usage/requests` | Signed-ticket history (`groupBy=session\|request`, `manifestId`, `cursor`, `limit`) |
+| `GET /api/v1/apps/{clientId}/me/usage` | Same aggregates with path-scoped app (`{clientId}` must match the credential) |
+| `GET /api/v1/apps/{clientId}/me/usage/balance` | Same balance, path-scoped |
+| `GET /api/v1/apps/{clientId}/me/usage/requests` | Same request history, path-scoped |
 
-The pathless `GET /api/v1/user/usage*` routes remain as **deprecated aliases** with identical behavior — they resolve the app from the Bearer credential instead of the path. Prefer the app-scoped routes for new integrations.
-
-**Auth:** `Authorization: Bearer` with a bare `pmth_*` app-user key, a programmatic user JWT, or a signer JWT (`external_user_id` + `client_id`). Optional composite `app_*_*` is still accepted. Path `{clientId}` must match the credential’s public app. Identity is taken **only** from the token — do **not** pass `externalUserId` (rejected with 400).
+**Auth:** `Authorization: Bearer` with a bare `pmth_*` app-user key, a programmatic user JWT, or a signer JWT (`external_user_id` + `client_id`). Optional composite `app_*_*` is still accepted. On `/apps/{clientId}/me/…`, path `{clientId}` must match the credential’s public app. Identity is taken **only** from the token — do **not** pass `externalUserId` (rejected with 400).
 
 ```bash
 curl -sS -H "Authorization: Bearer ${API_KEY}" \
+  "${BASE_URL}/api/v1/user/usage?groupBy=pipeline_model"
+
+curl -sS -H "Authorization: Bearer ${API_KEY}" \
+  "${BASE_URL}/api/v1/user/usage/balance"
+
+curl -sS -H "Authorization: Bearer ${API_KEY}" \
+  "${BASE_URL}/api/v1/user/usage/requests?limit=25"
+
+# Path-scoped equivalent when the client id is already known:
+curl -sS -H "Authorization: Bearer ${API_KEY}" \
   "${BASE_URL}/api/v1/apps/${CLIENT_ID}/me/usage?groupBy=pipeline_model"
-
-curl -sS -H "Authorization: Bearer ${API_KEY}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/me/usage/balance"
-
-curl -sS -H "Authorization: Bearer ${API_KEY}" \
-  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/me/usage/requests?limit=25"
 ```
 
 ### Builder Usage API (M2M)
@@ -470,15 +492,15 @@ Per-request fees in the UI are valued exactly from `feeWei × ethUsdPrice` (full
 
 Integrators (e.g. Livepeer Dashboard / `@pymthouse/builder-sdk`) mint a user JWT via Builder `POST .../users/{externalUserId}/token`, then call these routes. Subject is forced from the credential — do **not** pass `userId` / `externalUserId` query params (rejected with 400).
 
-**Endpoint:** `GET /api/v1/apps/{clientId}/me/usage`
+**Endpoint:** `GET /api/v1/user/usage` (or `GET /api/v1/apps/{clientId}/me/usage`)
 
 Same OpenMeter usage shape as `GET /api/v1/builder/apps/{clientId}/usage`, always scoped to the Bearer subject. Supports `startDate`, `endDate`, `groupBy` (`none` / `user` / `pipeline_model` / `daily_pipeline` / `manifest`), and `include=retail`.
 
-**Endpoint:** `GET /api/v1/apps/{clientId}/me/usage/balance`
+**Endpoint:** `GET /api/v1/user/usage/balance` (or `GET /api/v1/apps/{clientId}/me/usage/balance`)
 
 Plan included-usage allowance for the Bearer subject (`balanceUsdMicros` / `remainingUsdMicros` = remaining plan discount, `lifetimeGrantedUsdMicros` = included total for the cycle, `consumedUsdMicros` = granted − remaining, `hasAccess` from spendable). Prepaid credits settle invoices/charges and are not the meter source. Builder M2M equivalent: `GET /api/v1/builder/apps/{clientId}/usage/balance?externalUserId=...` (legacy `/api/v1/apps/.../usage/balance` alias is M2M-only too).
 
-**Endpoint:** `GET /api/v1/apps/{clientId}/me/usage/requests`
+**Endpoint:** `GET /api/v1/user/usage/requests` (or `GET /api/v1/apps/{clientId}/me/usage/requests`)
 
 Lists signed-ticket CloudEvents for the **token subject only** — newest first. Supports `groupBy=session|request` and `manifestId` (same semantics as `/api/v1/me/usage/requests`).
 

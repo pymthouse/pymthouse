@@ -17,7 +17,7 @@ import {
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 
-run("deprecated /user/usage alias resolves the app from the credential", async (t) => {
+run("/user/usage accepts bare Bearer and scopes to that user", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));

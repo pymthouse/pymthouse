@@ -144,22 +144,22 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
 });
 
 /**
- * Deprecated pathless aliases. Identical behavior, but the app is derived from
- * the Bearer credential instead of `{clientId}`.
+ * Pathless end-user usage. App is resolved from the Bearer credential
+ * (`pmth_*`, optional composite, or user/signer JWT).
  */
-const legacyAlias = (
+const defineUserUsageRoute = (
   suffix: string,
   summary: string,
   query?: typeof endUserUsageQueryParams | typeof endUserRequestsQueryParams,
 ) => {
   defineRouteMetadata("get", `/api/v1/user/usage${suffix}`, {
     tags: [OPENAPI_TAGS.endUserUsage],
-    summary: `${summary} (deprecated)`,
+    summary,
     description:
-      `Deprecated alias for \`GET ${meUsagePath(suffix)}\`. ` +
-      "Behavior is identical; the app is resolved from the Bearer credential " +
-      "instead of the path. Prefer the app-scoped route for new integrations.",
-    deprecated: true,
+      "Usage for the authenticated subject. The app is resolved from the " +
+      "Bearer credential (bare `pmth_*` key, optional composite, or user/signer JWT). " +
+      "Do not pass `userId` / `externalUserId`. " +
+      `App-scoped equivalent: \`GET ${meUsagePath(suffix)}\`.`,
     security: endUserSecurity,
     ...(query ? { request: { query } } : {}),
     responses: {
@@ -170,9 +170,9 @@ const legacyAlias = (
   });
 };
 
-legacyAlias("", "End-user usage summary", endUserUsageQueryParams);
-legacyAlias("/balance", "End-user usage balance");
-legacyAlias(
+defineUserUsageRoute("", "End-user usage summary", endUserUsageQueryParams);
+defineUserUsageRoute("/balance", "End-user usage balance");
+defineUserUsageRoute(
   "/requests",
   "End-user signed-ticket request history",
   endUserRequestsQueryParams,

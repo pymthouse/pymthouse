@@ -15,8 +15,8 @@ import {
 
 /**
  * `publicClientId` is the app the credential must belong to. Omit it for the
- * deprecated pathless `/api/v1/user/usage*` aliases, where the app is derived
- * from the credential itself.
+ * pathless `/api/v1/user/usage*` routes, where the app is derived from the
+ * credential itself.
  */
 async function requireEndUserAuth(
   request: NextRequest,

@@ -11,7 +11,7 @@ import {
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import {
-  APP_USER_API_KEY_STORE_MESSAGE,
+  BUILDER_API_KEY_STORE_MESSAGE,
   createAppUserApiKey,
   listAppUserApiKeys,
   revokeAppUserApiKey,
@@ -117,6 +117,7 @@ export async function POST(
   const created = await createAppUserApiKey({
     developerAppId: access.app.id,
     appUserId: appUser.id,
+    publicClientId: clientId,
     label,
   });
 
@@ -151,7 +152,7 @@ export async function POST(
       suffix: created.suffix,
       label: created.label,
       createdAt: created.createdAt,
-      message: APP_USER_API_KEY_STORE_MESSAGE,
+      message: BUILDER_API_KEY_STORE_MESSAGE,
       correlation_id: correlationId,
     },
     { status: 201 },

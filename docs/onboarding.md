@@ -30,7 +30,7 @@ curl -X POST "$BASE/api/v1/network/key" \
   -H "Cookie: …"
 ```
 
-Response includes `clientId` (public `app_…` only), bare `apiKey` (`pmth_*`), and optional `sdkToken` for livepeer-python-sdk. Use the key as `Authorization: Bearer` on `/api/v1/apps/{clientId}/me/usage*`.
+Response includes `clientId` (public `app_…` only), bare `apiKey` (`pmth_*`), and optional `sdkToken` for livepeer-python-sdk. Use the key as `Authorization: Bearer` on `/api/v1/user/usage*` (or `/api/v1/apps/{clientId}/me/usage*`).
 
 Do **not** treat the default `clientId` as a target for confidential Builder API backends. The Personal Access Token card on My Apps exposes the same flow in the dashboard.
 
