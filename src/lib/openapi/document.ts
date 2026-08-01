@@ -72,8 +72,7 @@ function filterOperations(
         delete filtered[method];
       }
     }
-    const hasMethod = HTTP_METHODS.some((method) => method in filtered);
-    if (keep && hasMethod) {
+    if (keep) {
       next[path] = filtered as PathItem;
     }
   }

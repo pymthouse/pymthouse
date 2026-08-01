@@ -87,7 +87,7 @@ export function toOpenApiPath(fileRel: string): string {
   const segments = withoutRoute.split("/").map((segment, index, all) => {
     if (segment.startsWith("[") && segment.endsWith("]")) {
       const inner = segment.slice(1, -1);
-      const appsIdx = all.findIndex((s) => s === "apps");
+      const appsIdx = all.indexOf("apps");
       const underApps =
         appsIdx >= 0 && all[appsIdx + 1]?.startsWith("[") && index === appsIdx + 1;
       if (inner === "id" && underApps) {

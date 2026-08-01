@@ -27,7 +27,6 @@ function userPath(suffix: string) {
 }
 
 const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
-const m2mOnlySecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
 type MetadataRoute = [
   method: "get" | "post" | "put" | "delete",
@@ -78,7 +77,7 @@ defineRouteMetadata("get", appPath(""), {
   tags: [OPENAPI_TAGS.app],
   summary: "Get app (integrator view)",
   description: "Returns the app record visible to the authenticated M2M client.",
-  security: m2mOnlySecurity,
+  security: m2mSecurity,
   request: { params: z.object({ clientId }) },
   responses: {
     200: { description: "App", content: { "application/json": { schema: genericJsonObject } } },
@@ -105,13 +104,64 @@ registerMetadataRoutes([
   ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
 ]);
 
+const usageQueryParams = z.object({
+  startDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "startDate", in: "query" },
+      description: "Inclusive lower bound (ISO 8601).",
+    }),
+  endDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "endDate", in: "query" },
+      description: "Inclusive upper bound (ISO 8601).",
+    }),
+  groupBy: z
+    .enum(["none", "user", "pipeline_model", "daily_pipeline", "manifest"])
+    .optional()
+    .openapi({
+      param: { name: "groupBy", in: "query" },
+      description:
+        "Aggregation mode (default none). `daily_pipeline` requires `userId`.",
+    }),
+  userId: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "userId", in: "query" },
+      description: "Filter to one usage subject / internal user id.",
+    }),
+  include: z
+    .literal("retail")
+    .optional()
+    .openapi({
+      param: { name: "include", in: "query" },
+      description: "Set to `retail` to include retail billable micros.",
+    }),
+  includeRetail: z
+    .enum(["1", "true"])
+    .optional()
+    .openapi({
+      param: { name: "includeRetail", in: "query" },
+      description: "Alternate flag for retail breakdown (`1` or `true`).",
+    }),
+});
+
 // Usage (canonical Builder mount)
 defineRouteMetadata("get", builderAppPath("/usage"), {
   tags: [OPENAPI_TAGS.usage],
   summary: "Usage summary",
-  description: "M2M Basic only.",
-  security: m2mOnlySecurity,
-  request: { params: z.object({ clientId }) },
+  description:
+    "M2M Basic only. Optional `startDate` / `endDate` / `groupBy` / `userId` / retail include flags.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    query: usageQueryParams,
+  },
   responses: { 200: jsonSuccess, ...builderErrorResponses },
 });
 defineRouteMetadata("get", builderAppPath("/usage/balance"), {
@@ -120,7 +170,7 @@ defineRouteMetadata("get", builderAppPath("/usage/balance"), {
   description:
     "M2M Basic only. Requires `externalUserId`. Returns plan included-usage " +
     "allowance for that end user (not prepaid ledger fields).",
-  security: m2mOnlySecurity,
+  security: m2mSecurity,
   request: {
     params: z.object({ clientId }),
     query: z.object({

@@ -36,7 +36,7 @@ function meta(
     virtual?: boolean;
   },
 ) {
-  const params: Record<string, z.ZodTypeAny> = {};
+  const params: Record<string, z.ZodType> = {};
   if (input.params) {
     params.clientId = clientId;
   }

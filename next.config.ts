@@ -22,9 +22,16 @@ const nextConfig: NextConfig = {
         source: "/api/v1/internal/apps",
         destination: "/api/v1/apps",
       },
+      // Client-id scoped only (`app_*`). Excludes public `apps/branding` and
+      // Builder `…/oidc/token` (and other `oidc/*`) from the Internal prefix.
       {
-        source: "/api/v1/internal/apps/:path*",
-        destination: "/api/v1/apps/:path*",
+        source: "/api/v1/internal/apps/:clientId(app_[^/]+)",
+        destination: "/api/v1/apps/:clientId",
+      },
+      {
+        source:
+          "/api/v1/internal/apps/:clientId(app_[^/]+)/:path((?!oidc(?:/|$)).*)",
+        destination: "/api/v1/apps/:clientId/:path*",
       },
       {
         source: "/api/v1/internal/billing",

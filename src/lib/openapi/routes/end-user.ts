@@ -8,18 +8,58 @@ import { z } from "@/lib/openapi/zod";
 
 const endUserSecurity: Array<Record<string, string[]>> = [{ endUserBearer: [] }];
 
+const endUserUsageQueryParams = z.object({
+  startDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "startDate", in: "query" },
+      description: "Inclusive lower bound (ISO 8601).",
+    }),
+  endDate: z
+    .string()
+    .optional()
+    .openapi({
+      param: { name: "endDate", in: "query" },
+      description: "Inclusive upper bound (ISO 8601).",
+    }),
+  groupBy: z
+    .enum(["none", "user", "pipeline_model", "daily_pipeline", "manifest"])
+    .optional()
+    .openapi({
+      param: { name: "groupBy", in: "query" },
+      description:
+        "Aggregation mode (default none). Subject is always the Bearer user; do not pass `userId`.",
+    }),
+  include: z
+    .literal("retail")
+    .optional()
+    .openapi({
+      param: { name: "include", in: "query" },
+      description: "Set to `retail` to include retail billable micros.",
+    }),
+  includeRetail: z
+    .enum(["1", "true"])
+    .optional()
+    .openapi({
+      param: { name: "includeRetail", in: "query" },
+      description: "Alternate flag for retail breakdown (`1` or `true`).",
+    }),
+});
+
 defineRouteMetadata("get", "/api/v1/user/usage", {
   tags: [OPENAPI_TAGS.endUserUsage],
   summary: "End-user usage summary",
   description:
     "Aggregated usage for the authenticated subject only. " +
     "Do not pass `userId` / `externalUserId` — identity is taken from the Bearer credential. " +
-    "Supports the same `groupBy` / date query params as Builder usage.",
+    "Optional query: `startDate`, `endDate`, `groupBy`, `include` / `includeRetail`.",
   security: endUserSecurity,
+  request: { query: endUserUsageQueryParams },
   responses: {
     200: jsonSuccess,
-    503: { description: "OpenMeter not configured" },
     ...builderErrorResponses,
+    503: { description: "OpenMeter not configured" },
   },
 });
 
@@ -34,8 +74,15 @@ defineRouteMetadata("get", "/api/v1/user/usage/balance", {
   security: endUserSecurity,
   responses: {
     200: jsonSuccess,
-    400: { description: "Disallowed cross-user filter" },
-    401: { description: "Missing or invalid end-user credential" },
+    ...builderErrorResponses,
+    400: {
+      ...builderErrorResponses[400],
+      description: "Disallowed cross-user filter",
+    },
+    401: {
+      ...builderErrorResponses[401],
+      description: "Missing or invalid end-user credential",
+    },
     503: { description: "OpenMeter not configured" },
   },
 });
@@ -64,7 +111,8 @@ defineRouteMetadata("get", "/api/v1/user/usage/requests", {
         .optional()
         .openapi({
           param: { name: "manifestId", in: "query" },
-          description: "When groupBy=request, restrict to one session mid.",
+          description:
+            "When groupBy=request, restrict to one session manifest ID.",
         }),
       cursor: z
         .string()
@@ -89,7 +137,15 @@ defineRouteMetadata("get", "/api/v1/user/usage/requests", {
   },
   responses: {
     200: jsonSuccess,
-    400: { description: "Disallowed cross-user filter or invalid groupBy" },
-    401: { description: "Missing or invalid end-user credential" },
+    ...builderErrorResponses,
+    400: {
+      ...builderErrorResponses[400],
+      description: "Disallowed cross-user filter or invalid groupBy",
+    },
+    401: {
+      ...builderErrorResponses[401],
+      description: "Missing or invalid end-user credential",
+    },
+    503: { description: "OpenMeter not configured" },
   },
 });

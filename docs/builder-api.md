@@ -116,7 +116,7 @@ Or equivalently: `POST {issuer}/token` with the same body (issuer includes `/api
 
 ### 2) Calling Builder and Usage routes
 
-Use either:
+**Most Builder integrator routes** (users, tokens, billing reads, discovery) accept either:
 
 ```http
 Authorization: Bearer <access_token>
@@ -128,7 +128,7 @@ or confidential **HTTP Basic** auth:
 Authorization: Basic base64(client_id:client_secret)
 ```
 
-**Usage API:** HTTP Basic with the app’s confidential client is required for Builder/legacy `/apps/…/usage*` and `/builder/…/usage*`. Dashboard session usage uses Internal routes (`/api/v1/internal/dashboard/usage`, `/api/v1/internal/me/usage/requests`). No extra OAuth scope is required beyond valid credentials for that app.
+**Usage API (Builder + legacy aliases):** confidential-client **HTTP Basic is required** for `/api/v1/builder/apps/…/usage*` and legacy `/api/v1/apps/…/usage*`. Bearer access tokens are not accepted on those paths. Dashboard session usage uses Internal routes (`/api/v1/internal/dashboard/usage`, `/api/v1/internal/me/usage/requests`). No extra OAuth scope is required beyond valid credentials for that app.
 
 ---
 

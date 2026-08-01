@@ -151,13 +151,36 @@ export async function handleMeUsageRequestsGet(
     to: dateRange.to,
   };
 
-  if (groupBy === "session") {
+  try {
+    if (groupBy === "session") {
+      const result =
+        scope === "all"
+          ? await listAdminSignedTicketSessions(listInput)
+          : await listViewerSignedTicketSessions({
+              userId,
+              ...listInput,
+            });
+
+      return NextResponse.json({
+        items: result.items,
+        nextCursor: result.nextCursor,
+        openMeterConfigured: result.openMeterConfigured,
+        scope,
+        groupBy: "session",
+      });
+    }
+
+    const requestInput = {
+      ...listInput,
+      manifestId,
+    };
+
     const result =
       scope === "all"
-        ? await listAdminSignedTicketSessions(listInput)
-        : await listViewerSignedTicketSessions({
+        ? await listAdminSignedTicketRequests(requestInput)
+        : await listViewerSignedTicketRequests({
             userId,
-            ...listInput,
+            ...requestInput,
           });
 
     return NextResponse.json({
@@ -165,28 +188,13 @@ export async function handleMeUsageRequestsGet(
       nextCursor: result.nextCursor,
       openMeterConfigured: result.openMeterConfigured,
       scope,
-      groupBy: "session",
+      groupBy: "request",
     });
+  } catch (err) {
+    console.error("[me-usage-requests] OpenMeter list failed:", err);
+    return NextResponse.json(
+      { error: "Failed to load usage requests" },
+      { status: 502 },
+    );
   }
-
-  const requestInput = {
-    ...listInput,
-    manifestId,
-  };
-
-  const result =
-    scope === "all"
-      ? await listAdminSignedTicketRequests(requestInput)
-      : await listViewerSignedTicketRequests({
-          userId,
-          ...requestInput,
-        });
-
-  return NextResponse.json({
-    items: result.items,
-    nextCursor: result.nextCursor,
-    openMeterConfigured: result.openMeterConfigured,
-    scope,
-    groupBy: "request",
-  });
 }
