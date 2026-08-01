@@ -125,6 +125,7 @@ async function resolveOwnerLocalPlanId(input: {
     .from(plans)
     .where(inArray(plans.clientId, clientIds));
   for (const plan of ownedPlans) {
+    if (!plan.clientId) continue;
     if (buildOpenMeterPlanKey(plan.clientId, plan.id) === input.planKey) {
       return plan.id;
     }

@@ -399,6 +399,12 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
   if (plan?.status !== "active") {
     return { ok: false, error: "Plan not active" };
   }
+  // Platform-scoped plans (Owner Starter) have no owning app and are synced by
+  // ensureOwnerStarterPlanSynced, not through the per-app rate-card path here.
+  const planClientId = plan.clientId;
+  if (!planClientId) {
+    return { ok: false, error: "Platform-scoped plans are not synced per app" };
+  }
 
   if (!isHostedAdminClientAvailable()) {
     return {
@@ -414,12 +420,12 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
     .where(
       and(
         eq(planCapabilityBundles.planId, planId),
-        eq(planCapabilityBundles.clientId, plan.clientId),
+        eq(planCapabilityBundles.clientId, planClientId),
       ),
     );
 
   const omPlan = await mapPymthousePlanToOpenMeterCreate({
-    clientId: plan.clientId,
+    clientId: planClientId,
     plan,
     capabilities: capabilityRows,
     client,

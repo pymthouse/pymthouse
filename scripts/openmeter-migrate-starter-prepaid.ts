@@ -18,7 +18,7 @@
  *   … npx tsx scripts/openmeter-migrate-starter-prepaid.ts --client-id app_xxx --apply
  */
 import "./load-env-first";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { closeDb, db } from "../src/db/index";
 import { plans } from "../src/db/schema";
 import { KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE } from "../src/lib/openmeter/constants";
@@ -183,11 +183,13 @@ async function loadStarterRows(clientId?: string): Promise<StarterRow[]> {
   const conditions = [
     eq(plans.isStarterDefault, true),
     eq(plans.status, "active"),
+    // Platform-scoped plans have a NULL clientId; this script is per-app.
+    isNotNull(plans.clientId),
   ];
   if (clientId) {
     conditions.push(eq(plans.clientId, clientId));
   }
-  return db
+  const rows = await db
     .select({
       id: plans.id,
       clientId: plans.clientId,
@@ -196,6 +198,10 @@ async function loadStarterRows(clientId?: string): Promise<StarterRow[]> {
     })
     .from(plans)
     .where(and(...conditions));
+  // isNotNull filters these out in SQL; narrow for the type system too.
+  return rows.flatMap((row) =>
+    row.clientId ? [{ ...row, clientId: row.clientId }] : [],
+  );
 }
 
 async function readStoredPlan(

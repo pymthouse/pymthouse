@@ -490,6 +490,7 @@ async function loadPlanKeyToLocalId(
     .from(plans)
     .where(inArray(plans.clientId, clientIds));
   for (const plan of scopedPlans) {
+    if (!plan.clientId) continue;
     index.set(buildOpenMeterPlanKey(plan.clientId, plan.id), plan.id);
   }
   return index;

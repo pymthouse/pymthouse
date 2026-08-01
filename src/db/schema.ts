@@ -381,9 +381,13 @@ export const plans = pgTable(
   "plans",
   {
     id: text("id").primaryKey(),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => developerApps.id),
+    /**
+     * Owning app, or NULL for a platform-scoped plan (the Owner Starter that
+     * developers subscribe to PymtHouse on). Platform plans belong to no app,
+     * so before this was nullable owner subscriptions had to borrow the
+     * requesting app's Starter row. See docs/adr-owner-vs-app-billing.md.
+     */
+    clientId: text("client_id").references(() => developerApps.id),
     name: text("name").notNull(),
     type: text("type").notNull().default("free"),
     priceAmount: text("price_amount").notNull().default("0"),
@@ -476,9 +480,12 @@ export const planCapabilityBundles = pgTable(
 export const subscriptions = pgTable("subscriptions", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id),
-  clientId: text("client_id")
-    .notNull()
-    .references(() => developerApps.id),
+  /**
+   * Owning app, or NULL for the owner's platform subscription. App-scoped
+   * queries filter on `eq(clientId, appId)`, which never matches NULL, so
+   * platform rows are naturally excluded from them.
+   */
+  clientId: text("client_id").references(() => developerApps.id),
   planId: text("plan_id")
     .notNull()
     .references(() => plans.id),
@@ -596,6 +603,47 @@ export const appBillingConfig = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [uniqueIndex("idx_app_billing_config_client_id").on(t.clientId)],
+);
+
+/**
+ * Per-owner cost-rail overrides, set by PymtHouse admins.
+ *
+ * The cost rail is account-level: a developer subscribes to PymtHouse once and
+ * every app they own bills against it. These values constrain the owner, so
+ * they are admin-set, never Builder-editable. A missing row means the owner is
+ * on platform defaults (see lib/billing/platform-billing-defaults).
+ *
+ * See docs/adr-owner-vs-app-billing.md.
+ */
+export const ownerBillingConfig = pgTable(
+  "owner_billing_config",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id),
+    /**
+     * Included usage granted per cycle on the Owner Starter plan (USD micros).
+     * NULL = platform default. Changing this requires re-syncing the owner's
+     * OpenMeter plan version, so it is applied deliberately, not on read.
+     */
+    starterIncludedUsdMicros: text("starter_included_usd_micros"),
+    /** NULL = platform default. */
+    endUserCap: integer("end_user_cap"),
+    /** NULL = platform default. */
+    applicationFeeBps: integer("application_fee_bps"),
+    /** Free-text note for why this owner was moved off the defaults. */
+    note: text("note"),
+    /** users.id of the admin who last changed it, for attribution. */
+    updatedBy: text("updated_by").references(() => users.id),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [uniqueIndex("idx_owner_billing_config_owner").on(t.ownerUserId)],
 );
 
 export const appBillingOauthStates = pgTable(

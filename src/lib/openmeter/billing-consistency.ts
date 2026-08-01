@@ -564,6 +564,9 @@ async function loadOwnedStarterPlans(
   const byApp = new Map(apps.map((a) => [a.developerAppId, a]));
   const out: LocalStarterPlanRef[] = [];
   for (const row of starterRows) {
+    // Platform-scoped plans have no clientId and no owning app; the byApp
+    // lookup would miss them anyway, but skip explicitly for the type.
+    if (!row.clientId) continue;
     const app = byApp.get(row.clientId);
     if (!app) continue;
     const publicClientId = app.publicClientId?.trim() || app.developerAppId;
@@ -1039,7 +1042,7 @@ async function auditPhaseOutPlans(
         findings.push({
           code: "phase_out_subscriber_check_failed",
           severity: "warn",
-          clientId: plan.clientId,
+          clientId: plan.clientId ?? undefined,
           message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
           details: {
             planId: plan.id,
@@ -1052,7 +1055,7 @@ async function auditPhaseOutPlans(
     }
     findings.push(
       ...classifyPhaseOutPastDeadline({
-        clientId: plan.clientId,
+        clientId: plan.clientId ?? "",
         planId: plan.id,
         planName: plan.name,
         status: plan.status,
