@@ -224,16 +224,30 @@ Shipped (PR #348):
 
 Outstanding:
 
-- **Symptom 1 (schema)** — `end_user_cap` and `application_fee_bps` still live
-  on `app_billing_config`. Authorization is correct, so their location is now
-  cosmetic; the move is deferred, not abandoned.
-- **Symptom 4** — `subscriptions.client_id` is still `NOT NULL`, so the platform
-  subscription still has no local row and exists only in OpenMeter. This is why
-  the plan name on the billing card cannot come from PymtHouse's own database.
-- **Migration steps 1–4** — backfill, enforce, dual-read, cutover. The
-  transitional union in `buildOwnerMeterSubjects` and the three
-  `openmeter-*-owner-*` scripts remain until
-  `usage_on_unattributed_subject` reports zero across all owners.
+- **Symptom 1 (schema)** — resolved as *platform defaults with admin-only
+  per-app override*, the second form this ADR allows.
+  `platform-billing-defaults` supplies the values a new app inherits
+  (`PYMTHOUSE_DEFAULT_END_USER_CAP`, `PYMTHOUSE_DEFAULT_APPLICATION_FEE_BPS`),
+  so platform policy changes without a migration, and the per-app columns are
+  admin-set overrides. The columns stay on `app_billing_config`; moving them to
+  a separate table would be churn without behavioural gain now that
+  authorization is correct.
+- **Migration steps 1 and 3–4** — backfill, dual-read, cutover. Step 2
+  (enforce) is done: an owner can no longer become a customer of their own app.
+  Step 1 now has a completion signal — `npm run openmeter:audit-billing` runs
+  `classifyUsageAttributionConsistency` per owner and exits non-zero while any
+  usage sits on an unattributed subject. The transitional union in
+  `buildOwnerMeterSubjects` and the three `openmeter-*-owner-*` scripts remain
+  until that audit is clean; running it needs a live database and OpenMeter
+  tenant.
+
+- **Symptom 4** — unchanged, and larger than one nullable column.
+  `plans.client_id` is `NOT NULL` as well as `subscriptions.client_id`, which is
+  why `ensureStarterSubscriptionForAppUser` borrows "the requesting app's local
+  Starter id" for an owner subscription. Giving the platform plan a real local
+  row means making both nullable (or adding platform-scoped tables), rewiring
+  owner subscription persistence, and backfilling existing rows — a multi-table
+  change to core billing that should be verified against a real database.
 
 ### Risks
 
