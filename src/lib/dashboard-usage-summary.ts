@@ -10,7 +10,10 @@ export type DashboardUsageChartSeries = {
   appName: string;
   jobType: string;
   totalRequests: number;
-  points: { date: string; value: number }[];
+  /** Total network fee across the series (USD micros), for the cost metric. */
+  totalFeeUsdMicros?: string;
+  /** `value` is the request count; `feeUsdMicros` backs the $ metric. */
+  points: { date: string; value: number; feeUsdMicros?: string }[];
 };
 
 export type DashboardUsageSummary = {

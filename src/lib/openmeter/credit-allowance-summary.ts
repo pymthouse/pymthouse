@@ -309,12 +309,30 @@ export async function listOwnerCreditGrants(
       customerId: customer.id,
       apiKey,
     });
-    return grants.map((grant, index) => ({
-      id: grant.id || grant.key || `grant-${index}`,
-      amountUsdMicros: decimalDollarsToUsdMicros(grant.amount || "0").toString(),
-      date: konnectGrantTimestamp(grant),
-      name: grant.name?.trim() || null,
-    }));
+    // decimalDollarsToUsdMicros throws on a malformed amount. Parsing inside
+    // the shared try would let one bad row discard every valid grant, so each
+    // is parsed independently and only the bad row is dropped.
+    return grants.flatMap((grant, index) => {
+      let amountUsdMicros: string;
+      try {
+        amountUsdMicros = decimalDollarsToUsdMicros(grant.amount || "0").toString();
+      } catch (err) {
+        console.warn(
+          "credit-allowance-summary: skipping grant with unparseable amount",
+          grant.id || grant.key || `grant-${index}`,
+          err instanceof Error ? err.message : String(err),
+        );
+        return [];
+      }
+      return [
+        {
+          id: grant.id || grant.key || `grant-${index}`,
+          amountUsdMicros,
+          date: konnectGrantTimestamp(grant),
+          name: grant.name?.trim() || null,
+        },
+      ];
+    });
   } catch (err) {
     console.warn(
       "credit-allowance-summary: owner grant list failed",

@@ -9,6 +9,10 @@ import {
   listViewerSignedTicketSessions,
 } from "@/lib/openmeter/signed-ticket-events";
 import { resolveViewerUsageClientIds } from "@/lib/viewer-usage-clients";
+import {
+  isValidBoundedDateRange,
+  MAX_DATE_RANGE_DAYS,
+} from "@/lib/billing-utils";
 
 type MeUsageGroupBy = "request" | "session";
 type MeUsageScope = "own" | "all";
@@ -73,6 +77,34 @@ function validateMeUsageRequestsParams(
   return { scope, groupBy };
 }
 
+function parseOptionalDateRange(
+  params: URLSearchParams,
+): { error: NextResponse } | { from?: string; to?: string } {
+  // Optional date range for the requests table's range picker. Both bounds are
+  // required together and are span-limited before hitting OpenMeter.
+  const from = params.get("from")?.trim() || undefined;
+  const to = params.get("to")?.trim() || undefined;
+  if ((from && !to) || (to && !from)) {
+    return {
+      error: NextResponse.json(
+        { error: "from and to must be supplied together" },
+        { status: 400 },
+      ),
+    };
+  }
+  if (from && to && !isValidBoundedDateRange(from, to)) {
+    return {
+      error: NextResponse.json(
+        {
+          error: `Invalid range; supply from <= to within ${MAX_DATE_RANGE_DAYS} days`,
+        },
+        { status: 400 },
+      ),
+    };
+  }
+  return { from, to };
+}
+
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
   const sessionUser = session?.user as Record<string, unknown> | undefined;
@@ -103,10 +135,17 @@ export async function GET(request: NextRequest) {
   const limitRaw = params.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
 
+  const dateRange = parseOptionalDateRange(params);
+  if ("error" in dateRange) {
+    return dateRange.error;
+  }
+
   const listInput = {
     clientIds: resolvedClientIds.length > 0 ? resolvedClientIds : undefined,
     cursor,
     limit: Number.isFinite(limit) ? limit : undefined,
+    from: dateRange.from,
+    to: dateRange.to,
   };
 
   if (groupBy === "session") {

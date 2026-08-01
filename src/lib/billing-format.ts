@@ -32,6 +32,57 @@ export function formatBillingWei(wei: string): string {
   return `${whole}.${fracStr} ETH`;
 }
 
+/** Short timezone label for a formatted instant, e.g. `UTC`, `EDT`. */
+function timeZoneLabel(date: Date, locale: string, timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat(locale, {
+    timeZone,
+    timeZoneName: "short",
+  }).formatToParts(date);
+  return parts.find((part) => part.type === "timeZoneName")?.value ?? "";
+}
+
+/**
+ * Billing cycle range, rendered in one timezone and labelled with it.
+ *
+ * Cycle bounds are computed in UTC. Passing `timeZone: "UTC"` renders them
+ * as stored — deterministic, so server and client agree. Omitting `timeZone`
+ * renders in the viewer's zone, which is only safe after mount.
+ *
+ * The label is not decoration: without it, `Jun 30, 8:00 PM — Jul 31, 7:59 PM`
+ * and `Jul 1, 12:00 AM — Jul 31, 11:59 PM` are the same cycle and look like
+ * different ones.
+ */
+export function formatCycleRange(
+  startIso: string,
+  endIso: string,
+  options?: Readonly<{ timeZone?: string; locale?: string }>,
+): string {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return `${startIso} — ${endIso}`;
+  }
+  const locale = options?.locale ?? BILLING_DATE_LOCALE;
+  const timeZone = options?.timeZone;
+  const format = (date: Date) =>
+    new Intl.DateTimeFormat(locale, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    }).format(date);
+
+  const startZone = timeZoneLabel(start, locale, timeZone);
+  const endZone = timeZoneLabel(end, locale, timeZone);
+  if (startZone && endZone && startZone !== endZone) {
+    return `${format(start)} ${startZone} — ${format(end)} ${endZone}`;
+  }
+  const zone = endZone || startZone;
+  const range = `${format(start)} — ${format(end)}`;
+  return zone ? `${range} ${zone}` : range;
+}
+
 export function formatBillingPeriod(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {

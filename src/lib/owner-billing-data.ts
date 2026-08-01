@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients, plans } from "@/db/schema";
+import { appBillingConfig, developerApps, oidcClients, plans } from "@/db/schema";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import { authOptions } from "@/lib/next-auth-options";
 import {
@@ -26,7 +26,10 @@ import {
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
 } from "@/lib/openmeter/customer-key";
-import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import {
+  ensureOpenMeterCustomer,
+  resolveCustomerSubjectKeys,
+} from "@/lib/openmeter/customers";
 import {
   defaultStarterIncludedUsdMicros,
   planDisplayNameWithStarter,
@@ -85,6 +88,15 @@ export type OwnerBillingPayload = {
   /** Every attached Stripe payment method (Plane A), default flagged. */
   paymentMethods: OwnerPaymentMethodListItem[];
   subscriptions: OwnerBillingSubscriptionRow[];
+  /**
+   * Apps this owner owns, with how each one bills its end users. Every app
+   * here rolls its network cost up to the platform subscription above.
+   */
+  ownedApps: Array<{
+    id: string;
+    name: string;
+    billingMode: "owner_rollup" | "merchant";
+  }>;
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
   /**
@@ -108,6 +120,12 @@ type OwnedApp = {
   developerAppId: string;
   publicClientId: string;
   name: string;
+  /**
+   * owner_rollup — this app's end-user usage is paid by the owner's platform
+   * plan. merchant — the Builder also bills their own end users via Connect,
+   * but the owner still pays PymtHouse for the underlying network usage.
+   */
+  billingMode: "owner_rollup" | "merchant";
 };
 
 type CustomerCandidate = {
@@ -333,15 +351,44 @@ function buildOwnerWalletUsageSubjects(
   );
 }
 
+/**
+ * Subjects to read for the owner wallet.
+ *
+ * Prefers `usageAttribution.subjectKeys` from the OpenMeter customer, because
+ * that is the exact set OpenMeter's invoicing runs over — reading anything
+ * wider shows usage the billing engine will never charge for. Falls back to the
+ * transitional union only when the customer record cannot be read, so a lookup
+ * failure degrades to the old behaviour rather than reporting zero.
+ *
+ * `classifyUsageAttributionConsistency` reports the gap between the two.
+ * See docs/adr-owner-vs-app-billing.md.
+ */
+async function resolveOwnerWalletReadSubjects(input: {
+  client: OpenMeter;
+  ownerUserId: string;
+  ownedApps: OwnedApp[];
+}): Promise<string[]> {
+  const attributed = await resolveCustomerSubjectKeys(
+    input.client,
+    buildOwnerCustomerKey(input.ownerUserId),
+  );
+  if (attributed.length > 0) {
+    return attributed;
+  }
+  return buildOwnerWalletUsageSubjects(input.ownerUserId, input.ownedApps);
+}
+
 async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
   const rows = await db
     .select({
       developerAppId: developerApps.id,
       name: developerApps.name,
       publicClientId: oidcClients.clientId,
+      billingMode: appBillingConfig.billingMode,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .leftJoin(appBillingConfig, eq(appBillingConfig.clientId, developerApps.id))
     .where(eq(developerApps.ownerId, ownerUserId));
 
   return rows
@@ -349,6 +396,10 @@ async function listOwnedApps(ownerUserId: string): Promise<OwnedApp[]> {
       developerAppId: row.developerAppId,
       name: row.name,
       publicClientId: row.publicClientId?.trim() || row.developerAppId,
+      billingMode:
+        row.billingMode === "merchant"
+          ? ("merchant" as const)
+          : ("owner_rollup" as const),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -444,16 +495,27 @@ async function loadPlanKeyToLocalId(
   return index;
 }
 
+/**
+ * Resolve `fallback` on timeout or failure so first paint is never blocked.
+ *
+ * The fallback is indistinguishable from a genuine result, so callers that
+ * need to know whether data is complete must pass `onDegraded`.
+ */
 function withSoftTimeout<T>(
   promise: Promise<T>,
   ms: number,
   fallback: T,
   label: string,
+  onDegraded?: () => void,
 ): Promise<T> {
   return new Promise((resolve) => {
+    const degrade = (value: T) => {
+      onDegraded?.();
+      resolve(value);
+    };
     const timer = setTimeout(() => {
       console.warn(`owner-billing: ${label} timed out after ${ms}ms`);
-      resolve(fallback);
+      degrade(fallback);
     }, ms);
     promise.then(
       (value) => {
@@ -466,7 +528,7 @@ function withSoftTimeout<T>(
           `owner-billing: ${label} failed`,
           err instanceof Error ? err.message : String(err),
         );
-        resolve(fallback);
+        degrade(fallback);
       },
     );
   });
@@ -480,6 +542,8 @@ async function mapSubscriptionRow(input: {
   ownerUserId: string;
   ownedApps: OwnedApp[];
   planKeyToLocalId: Map<string, string>;
+  /** Pre-resolved owner-wallet subjects; avoids a second OpenMeter lookup. */
+  ownerWalletSubjects?: string[];
 }): Promise<OwnerBillingSubscriptionRow> {
   const localPlanId = input.candidate.appPublicClientId
     ? await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -508,8 +572,15 @@ async function mapSubscriptionRow(input: {
   });
 
   const isSharedOwnerWallet = input.candidate.appPublicClientId == null;
+  // Read the subjects OpenMeter actually bills for this customer, so the
+  // figure shown matches the invoice it explains.
   const usageSubjects = isSharedOwnerWallet
-    ? buildOwnerWalletUsageSubjects(input.ownerUserId, input.ownedApps)
+    ? (input.ownerWalletSubjects ??
+      (await resolveOwnerWalletReadSubjects({
+        client: input.client,
+        ownerUserId: input.ownerUserId,
+        ownedApps: input.ownedApps,
+      })))
     : [input.candidate.customerKey];
 
   const usage = await querySubjectCycleUsage({
@@ -600,6 +671,10 @@ async function listActiveSubscriptionsForCustomer(input: {
  */
 export async function listOwnerActiveSubscriptions(
   userId: string,
+  options?: Readonly<{
+    ownedApps?: OwnedApp[];
+    ownerWalletSubjects?: string[];
+  }>,
 ): Promise<OwnerBillingSubscriptionRow[]> {
   const trimmed = userId.trim();
   if (!trimmed) {
@@ -612,7 +687,14 @@ export async function listOwnerActiveSubscriptions(
   const client = getHostedAdminClient();
   const cycleBounds = calendarMonthBoundsUtc(new Date());
   const cycle = { start: cycleBounds.start, end: cycleBounds.end };
-  const ownedApps = await listOwnedApps(trimmed);
+  const ownedApps = options?.ownedApps ?? (await listOwnedApps(trimmed));
+  const ownerWalletSubjects =
+    options?.ownerWalletSubjects ??
+    (await resolveOwnerWalletReadSubjects({
+      client,
+      ownerUserId: trimmed,
+      ownedApps,
+    }));
   const planKeyToLocalId = await loadPlanKeyToLocalId(
     ownedApps.map((app) => app.developerAppId),
   );
@@ -659,6 +741,7 @@ export async function listOwnerActiveSubscriptions(
         ownerUserId: trimmed,
         ownedApps,
         planKeyToLocalId,
+        ownerWalletSubjects,
       }),
     ),
   );
@@ -693,14 +776,26 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   }
 
   const adminClient = getHostedAdminClient();
+  // Resolve owned apps + wallet subjects once: subscriptions and daily usage
+  // both read the same attributed subject set, and a second customer lookup
+  // would be a wasted round trip with a consistency risk between the two.
+  const ownedApps = await listOwnedApps(userId);
+  const ownerWalletSubjects = await resolveOwnerWalletReadSubjects({
+    client: adminClient,
+    ownerUserId: userId,
+    ownedApps,
+  });
   // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
   // first paint is not blocked when the invoice index is large or slow.
   const emptyInvoices = { items: [] as TenantInvoiceDto[] };
+  // Grants and daily usage both move the prepaid balance, so a soft-timeout on
+  // either leaves holes in the ledger's event chain and its running balances
+  // cannot be trusted.
+  let ledgerInputsDegraded = false;
   const [
     creditAllowance,
     paymentMethods,
     subscriptions,
-    ownedApps,
     invoicesResult,
     creditGrants,
   ] = await Promise.all([
@@ -720,12 +815,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         "payment method lookup",
       ),
       withSoftTimeout(
-        listOwnerActiveSubscriptions(userId),
+        listOwnerActiveSubscriptions(userId, {
+          ownedApps,
+          ownerWalletSubjects,
+        }),
         8_000,
         [] as OwnerBillingSubscriptionRow[],
         "subscription lookup",
       ),
-      listOwnedApps(userId),
       withSoftTimeout(
         listOwnerWalletInvoices({
           client: adminClient,
@@ -742,19 +839,25 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         2_500,
         [] as OwnerCreditGrant[],
         "credit grant lookup",
+        () => {
+          ledgerInputsDegraded = true;
+        },
       ),
     ]);
 
   const dailyUsage = await withSoftTimeout(
     querySubjectDailyUsage({
       client: adminClient,
-      subjects: buildOwnerWalletUsageSubjects(userId, ownedApps),
+      subjects: ownerWalletSubjects,
       start: cycle.start,
       end: cycle.end,
     }),
     3_000,
     [] as Array<{ date: string; usedUsdMicros: string }>,
     "daily usage lookup",
+    () => {
+      ledgerInputsDegraded = true;
+    },
   );
 
   // Allowance from the owner-wallet subscription (the one credits settle against).
@@ -775,6 +878,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     })),
     planIncludedUsdMicros: walletSubscription?.discountUsdMicros ?? null,
     endingCreditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
+    inputsComplete: !ledgerInputsDegraded,
   });
 
   return {
@@ -785,6 +889,11 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       creditAllowance,
       paymentMethods,
       subscriptions,
+      ownedApps: ownedApps.map((app) => ({
+        id: app.developerAppId,
+        name: app.name,
+        billingMode: app.billingMode,
+      })),
       invoices: invoicesResult.items,
       ledger,
       openMeterConfigured: true,

@@ -15,6 +15,7 @@ import {
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
 import { buildOwnerCustomerKey, buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
+import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
 import {
   findOpenMeterCustomerByKey,
   listOwnedPublicClientIds,
@@ -380,6 +381,68 @@ export function classifyOwnerSubscriptionMapping(input: {
  * Detect mint/signer gate mismatch: unused included allowance but spendable=0.
  * Pure — no I/O.
  */
+/**
+ * Compare the subjects a customer is *attributed* against the subjects that
+ * actually carry metered usage.
+ *
+ * OpenMeter invoices per customer over `usageAttribution.subjectKeys`. A
+ * subject carrying usage that is not attributed to any customer is metered,
+ * displayed, and **never billed** — a silent revenue leak that looks like
+ * normal operation. The reverse (attributed but idle) is harmless.
+ *
+ * See docs/adr-owner-vs-app-billing.md ("Usage reads follow customer id").
+ */
+export function classifyUsageAttributionConsistency(input: {
+  ownerId: string;
+  customerKey: string;
+  /** `usageAttribution.subjectKeys` from the OpenMeter customer record. */
+  attributedSubjects: string[];
+  /** Subjects observed carrying non-zero usage this cycle. */
+  subjectsWithUsage: string[];
+}): BillingConsistencyFinding[] {
+  const attributed = new Set(
+    input.attributedSubjects.map((key) => key.trim()).filter(Boolean),
+  );
+  const used = [
+    ...new Set(input.subjectsWithUsage.map((key) => key.trim()).filter(Boolean)),
+  ];
+
+  if (attributed.size === 0) {
+    return [
+      {
+        code: "customer_has_no_usage_attribution",
+        severity: "error",
+        ownerId: input.ownerId,
+        message: `Customer ${input.customerKey} has no attributed subjects; OpenMeter cannot bill any of its usage.`,
+        details: { customerKey: input.customerKey, subjectsWithUsage: used },
+        remediation:
+          "Re-run openmeter-migrate-owner-customers.ts to attach the settlement subject.",
+      },
+    ];
+  }
+
+  const unattributed = used.filter((subject) => !attributed.has(subject));
+  if (unattributed.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      code: "usage_on_unattributed_subject",
+      severity: "error",
+      ownerId: input.ownerId,
+      message: `Customer ${input.customerKey} has usage on ${unattributed.length} subject(s) it is not attributed: ${unattributed.join(", ")}. This usage is metered but will never be invoiced.`,
+      details: {
+        customerKey: input.customerKey,
+        unattributed,
+        attributed: [...attributed],
+      },
+      remediation:
+        "Attach the subject to the customer, or re-key ingest to the canonical customer subject. Until then PymtHouse shows usage the billing engine will not charge for.",
+    },
+  ];
+}
+
 export function classifySpendableGateConsistency(input: {
   ownerId: string;
   clientId: string;
@@ -560,6 +623,54 @@ async function queryOwnerUsedUsdMicros(
   }
 }
 
+/**
+ * Which of `candidates` actually carried usage this cycle.
+ *
+ * Checks the whole set in one query first — the healthy case is "none", and
+ * this keeps the audit to a single round-trip for it. Only when that total is
+ * non-zero does it drill down per subject to name the offenders.
+ */
+async function findSubjectsWithUsage(
+  client: OpenMeter,
+  candidates: string[],
+): Promise<string[]> {
+  if (candidates.length === 0) return [];
+  const cycle = calendarMonthBoundsUtc(new Date());
+  const window = {
+    windowSize: "MONTH" as const,
+    from: new Date(cycle.start),
+    to: new Date(cycle.end),
+  };
+
+  const totalFor = async (subjects: string[]): Promise<bigint> => {
+    const result = await client.meters.query(NETWORK_FEE_USD_MICROS_METER, {
+      ...window,
+      subject: subjects,
+    });
+    let total = 0n;
+    for (const row of result.data || []) {
+      total += meterRowValueToBigInt(row.value);
+    }
+    return total;
+  };
+
+  try {
+    if ((await totalFor(candidates)) === 0n) {
+      return [];
+    }
+    const withUsage: string[] = [];
+    for (const subject of candidates) {
+      if ((await totalFor([subject])) > 0n) {
+        withUsage.push(subject);
+      }
+    }
+    return withUsage;
+  } catch {
+    // An audit that cannot read usage must not claim everything is attributed.
+    return [];
+  }
+}
+
 export type AuditBillingConsistencyOptions = {
   ownerId?: string;
   clientId?: string;
@@ -652,8 +763,18 @@ async function auditOwnerSubscriptions(
   const customerKey = buildOwnerCustomerKey(ownerId);
 
   let customerId: string;
+  let attributedSubjects: string[] = [];
   try {
-    const customer = await findOpenMeterCustomerByKey(client, customerKey);
+    const customer = (await findOpenMeterCustomerByKey(client, customerKey)) as
+      | { id?: string; usageAttribution?: { subjectKeys?: string[] } }
+      | null;
+    attributedSubjects = [
+      ...new Set(
+        (customer?.usageAttribution?.subjectKeys ?? [])
+          .map((key) => key.trim())
+          .filter(Boolean),
+      ),
+    ];
     if (!customer?.id) {
       return [
         {
@@ -682,14 +803,25 @@ async function auditOwnerSubscriptions(
 
   const stripeCus = await getStripeCustomerAppDataId({ client, customerId });
   if (!stripeCus) {
-    findings.push({
-      code: "owner_missing_stripe_app_data",
-      severity: "error",
-      ownerId,
-      message: `Owner customer ${customerKey} has no Stripe customer app data (cus_…)`,
-      details: { customerId, customerKey },
-      remediation: FIX_SANDBOX_TO_STRIPE,
-    });
+    // Missing Stripe app data is only a defect for an owner who has something
+    // chargeable. Owners without a payment method deliberately stay on the free
+    // billing profile — Konnect rejects a Starter subscription for a customer
+    // pinned to a Stripe profile with no default payment method — so
+    // migrate-sandbox-to-stripe skips them by design. Reporting those as errors
+    // pointed at a remediation that can never apply.
+    // `null` (Stripe/OpenMeter unreachable) is treated as not-chargeable, the
+    // same fail-open choice the migration makes.
+    const chargeable = await ownerHasChargeablePaymentMethod(ownerId);
+    if (chargeable === true) {
+      findings.push({
+        code: "owner_missing_stripe_app_data",
+        severity: "error",
+        ownerId,
+        message: `Owner customer ${customerKey} has a payment method but no Stripe customer app data (cus_…)`,
+        details: { customerId, customerKey },
+        remediation: FIX_SANDBOX_TO_STRIPE,
+      });
+    }
   }
 
   if (
@@ -747,6 +879,25 @@ async function auditOwnerSubscriptions(
       }),
     );
   }
+
+  // Gate for the transitional-subject cutover: usage on a subject the customer
+  // is not attributed is metered but never invoiced. This must report clean
+  // before buildOwnerMeterSubjects can be reduced to the canonical key.
+  // See docs/adr-owner-vs-app-billing.md.
+  const ownedPublicClientIds = await listOwnedPublicClientIds(ownerId);
+  const subjectsWithUsage = await findSubjectsWithUsage(
+    client,
+    buildOwnerMeterSubjects(ownerId, ownedPublicClientIds),
+  );
+  findings.push(
+    ...classifyUsageAttributionConsistency({
+      ownerId,
+      customerKey,
+      attributedSubjects,
+      subjectsWithUsage,
+    }),
+  );
+
   return findings;
 }
 

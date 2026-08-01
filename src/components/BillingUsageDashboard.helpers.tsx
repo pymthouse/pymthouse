@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { formatBillingPeriod, formatBillingWei } from "@/lib/billing-format";
+import { formatBillingWei } from "@/lib/billing-format";
+import CycleRange from "@/components/billing/CycleRange";
 import type {
   BillingAppUsageSummary,
   BillingUsageDashboardPayload,
@@ -58,13 +59,15 @@ export function BillingDashboardHeader({
   /** App id for the Identities cross-link (single-app scope only). */
   appId?: string | null;
 }>) {
+  // The metering vendor is an implementation detail; surface whether usage is
+  // live-metered, not which product does it.
   const sourceClass = isOpenMeter ? "text-emerald-500/90" : "text-zinc-500";
-  const sourceLabel = isOpenMeter ? "OpenMeter" : "Postgres";
+  const sourceLabel = isOpenMeter ? "Live metering" : "Cached usage";
   const cycleLine = (
     <p className="text-xs text-zinc-600 mt-2 break-words">
-      Cycle: {formatBillingPeriod(cycle.start)} — {formatBillingPeriod(cycle.end)}
+      Cycle: <CycleRange start={cycle.start} end={cycle.end} />
       <span className="mx-2 text-zinc-700">·</span>
-      <span className={sourceClass}>Source: {sourceLabel}</span>
+      <span className={sourceClass}>{sourceLabel}</span>
     </p>
   );
 

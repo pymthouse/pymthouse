@@ -9,7 +9,7 @@ import TransactionsLedger from "@/components/billing/TransactionsLedger";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
-import { formatBillingPeriod } from "@/lib/billing-format";
+import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
@@ -200,6 +200,87 @@ function OwnerPaymentCreditsSection({
   );
 }
 
+/**
+ * What the platform plan covers.
+ *
+ * Both modes cost the owner: `merchant` only changes whether the Builder also
+ * bills their own end users on top. Stating that here answers "where does my
+ * usage go?" without opening each app. See docs/adr-owner-vs-app-billing.md.
+ */
+function PlanCoverage({
+  ownedApps,
+}: Readonly<{ ownedApps: OwnerBillingPayload["ownedApps"] }>) {
+  if (ownedApps.length === 0) {
+    return null;
+  }
+  const merchant = ownedApps.filter((app) => app.billingMode === "merchant");
+  const rollup = ownedApps.filter((app) => app.billingMode !== "merchant");
+
+  const summary =
+    merchant.length > 0
+      ? `${rollup.length} roll up · ${merchant.length} also bill their own users`
+      : "all usage rolls up here";
+
+  // Native <details> so the list collapses without making this server-rendered
+  // page a client component.
+  return (
+    <details className="group mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-4 py-3 text-xs text-zinc-400 transition-colors hover:text-zinc-200">
+        <svg
+          className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-transform group-open:rotate-180"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+        <span className="font-medium text-zinc-300">
+          Covers {ownedApps.length} app{ownedApps.length === 1 ? "" : "s"}
+        </span>
+        <span className="text-zinc-600">{summary}</span>
+      </summary>
+
+      <div className="border-t border-white/[0.06] px-4 py-3">
+        <ul className="space-y-1.5">
+          {ownedApps.map((app) => (
+            <li
+              key={app.id}
+              className="flex flex-wrap items-baseline justify-between gap-2 text-xs"
+            >
+              <Link
+                href={`/apps/${app.id}/usage`}
+                className="text-zinc-300 transition-colors hover:text-emerald-400"
+              >
+                {app.name}
+              </Link>
+              <span className="text-zinc-600">
+                {app.billingMode === "merchant"
+                  ? "bills its own end users · network cost rolls up here"
+                  : "usage rolls up here"}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {merchant.length > 0 ? (
+          <p className="mt-2 text-[11px] text-zinc-600">
+            {merchant.length} app{merchant.length === 1 ? "" : "s"} charge their end
+            users directly; you still pay PymtHouse for the network usage
+            {rollup.length > 0
+              ? `, as you do for the other ${rollup.length}.`
+              : "."}
+          </p>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 function OwnerSubscriptionsSection({
   data,
   defaultPaymentMethod,
@@ -216,9 +297,12 @@ function OwnerSubscriptionsSection({
 
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-zinc-200">Active subscriptions</h2>
+      <h2 className="mb-3 text-sm font-semibold text-zinc-200">
+        Your PymtHouse plan
+      </h2>
       <p className="mb-4 text-xs text-zinc-600">
-        Each card shows where this cycle&apos;s usage settled.
+        One plan for your whole account. Every app you own bills its network usage
+        here — each card shows where this cycle&apos;s usage settled.
       </p>
       {data.subscriptions.length === 0 ? (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-6 text-center">
@@ -243,6 +327,7 @@ function OwnerSubscriptionsSection({
           ))}
         </div>
       )}
+      <PlanCoverage ownedApps={data.ownedApps} />
     </section>
   );
 }
@@ -278,8 +363,7 @@ export default function OwnerBillingView({
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
-            Cycle: {formatBillingPeriod(data.cycle.start)} —{" "}
-            {formatBillingPeriod(data.cycle.end)}
+            Cycle: <CycleRange start={data.cycle.start} end={data.cycle.end} />
             <span className="mx-2 text-zinc-700">·</span>
             <Link
               href="/usage"
@@ -290,7 +374,7 @@ export default function OwnerBillingView({
           </p>
         ) : (
           <p className="mt-2 text-sm text-amber-400/90">
-            OpenMeter is not configured — billing balances are unavailable.
+            Usage metering is not configured — billing balances are unavailable.
           </p>
         )}
       </div>

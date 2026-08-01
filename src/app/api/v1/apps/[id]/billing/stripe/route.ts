@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import {
+  platformControlledFieldsError,
+  platformControlledFieldsInBody,
+} from "@/lib/billing/platform-controlled-fields";
 import {
   canManageMerchantBilling,
   getAuthorizedProviderApp,
@@ -216,6 +221,54 @@ function openMeterPatchHttpStatus(message: string): number {
   return 502;
 }
 
+/** 403 when a non-admin PATCH tries to set platform-controlled fields. */
+function rejectPlatformControlledForNonAdmin(
+  role: string | undefined,
+  body: Record<string, unknown>,
+): NextResponse | null {
+  if (role === "admin") return null;
+  const attempted = platformControlledFieldsInBody(body);
+  if (attempted.length === 0) return null;
+  return NextResponse.json(
+    { error: platformControlledFieldsError(attempted) },
+    { status: 403 },
+  );
+}
+
+async function persistBillingPatch(
+  appId: string,
+  fields: BillingPatchFields,
+): Promise<Record<string, unknown>> {
+  const {
+    progressiveBilling,
+    invoiceThresholdUsdMicros,
+    applicationFeeBps,
+    billingMode,
+    endUserCap,
+  } = fields;
+  // Persist OpenMeter profile settings before Neon billingMode/endUserCap so
+  // a failed OM write cannot leave the app on a new revenue plane.
+  const updated =
+    progressiveBilling !== undefined ||
+    invoiceThresholdUsdMicros !== undefined ||
+    applicationFeeBps !== undefined
+      ? await updateAppBillingProfileSettings({
+          clientId: appId,
+          progressiveBilling,
+          invoiceThresholdUsdMicros,
+          applicationFeeBps,
+        })
+      : {};
+
+  if (billingMode !== undefined || endUserCap !== undefined) {
+    await upsertAppBillingConfig(appId, {
+      ...(billingMode !== undefined ? { billingMode } : {}),
+      ...(endUserCap !== undefined ? { endUserCap } : {}),
+    });
+  }
+  return updated;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -230,7 +283,13 @@ export async function GET(
   }
 
   const status = await getStripeConnectStatus(access.auth.app.id);
-  return NextResponse.json({ clientId: access.auth.app.id, ...status });
+  return NextResponse.json({
+    clientId: access.auth.app.id,
+    ...status,
+    // Drives whether the Payments tab offers the platform-controlled fields as
+    // editable inputs or as read-only, platform-attributed values.
+    isPlatformAdmin: access.auth.role === "admin",
+  });
 }
 
 export async function PATCH(
@@ -256,40 +315,26 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // canManageMerchantBilling admits the app owner, which is correct for
+  // revenue-rail settings but not for the platform's own controls.
+  const platformReject = rejectPlatformControlledForNonAdmin(
+    access.auth.role,
+    body,
+  );
+  if (platformReject) {
+    return platformReject;
+  }
+
   const parsed = await parseBillingPatchBody(body, access.auth.app.id);
   if (!parsed.ok) {
     return parsed.response;
   }
-  const {
-    progressiveBilling,
-    invoiceThresholdUsdMicros,
-    applicationFeeBps,
-    billingMode,
-    endUserCap,
-  } = parsed.fields;
 
   try {
-    // Persist OpenMeter profile settings before Neon billingMode/endUserCap so
-    // a failed OM write cannot leave the app on a new revenue plane.
-    const updated =
-      progressiveBilling !== undefined ||
-      invoiceThresholdUsdMicros !== undefined ||
-      applicationFeeBps !== undefined
-        ? await updateAppBillingProfileSettings({
-            clientId: access.auth.app.id,
-            progressiveBilling,
-            invoiceThresholdUsdMicros,
-            applicationFeeBps,
-          })
-        : {};
-
-    if (billingMode !== undefined || endUserCap !== undefined) {
-      await upsertAppBillingConfig(access.auth.app.id, {
-        ...(billingMode !== undefined ? { billingMode } : {}),
-        ...(endUserCap !== undefined ? { endUserCap } : {}),
-      });
-    }
-
+    const updated = await persistBillingPatch(
+      access.auth.app.id,
+      parsed.fields,
+    );
     const status = await getStripeConnectStatus(access.auth.app.id);
     return NextResponse.json({
       clientId: access.auth.app.id,

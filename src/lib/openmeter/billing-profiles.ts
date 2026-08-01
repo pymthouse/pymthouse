@@ -1,3 +1,7 @@
+import {
+  platformDefaultApplicationFeeBps,
+  platformDefaultEndUserCap,
+} from "@/lib/billing/platform-billing-defaults";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
@@ -643,6 +647,12 @@ export async function upsertAppBillingConfig(
     clientId,
     stripeConnectStatus: "disconnected",
     defaultCurrency: "USD",
+    // Cost-rail controls come from platform policy, not from the app. Set
+    // explicitly (rather than leaning on the column defaults) so changing
+    // policy is an env change instead of a migration. An explicit value in
+    // `values` still wins — that path is admin-only.
+    endUserCap: platformDefaultEndUserCap(),
+    applicationFeeBps: platformDefaultApplicationFeeBps(),
     createdAt: now,
     updatedAt: now,
     ...values,

@@ -177,8 +177,15 @@ export async function ensureOwnerCustomerWireSubjects(
  * simply avoids attaching more. Transitional wire/compound subjects
  * (`owner:…`, `app_…:…`) are attached best-effort once at create time;
  * Konnect rejects later changes while a subscription is active (400) or when
- * a legacy wallet still claims them (409). Meter dual-read for usage does not
- * require those keys on the customer record.
+ * a legacy wallet still claims them (409).
+ *
+ * These keys are what OpenMeter bills over, and since
+ * `resolveCustomerSubjectKeys` they are also what PymtHouse reads. A subject
+ * missing here is therefore neither invoiced nor displayed —
+ * `classifyUsageAttributionConsistency` reports any that still carry usage.
+ * (This previously read "meter dual-read for usage does not require those keys
+ * on the customer record", which was true of reads and false of billing: usage
+ * on an unattributed subject was shown but never charged.)
  */
 export async function ensureOwnerCustomer(
   client: OpenMeter,
@@ -285,6 +292,43 @@ export async function listOwnedPublicClientIds(ownerUserId: string): Promise<str
 }
 
 /** Lookup-only (never creates). Exact key match on Konnect; get() elsewhere. */
+/**
+ * Subjects OpenMeter attributes to a customer — `usageAttribution.subjectKeys`.
+ *
+ * This is the authority for both billing and reads. OpenMeter's invoicing runs
+ * per customer over exactly these subjects, so any usage query that reads a
+ * different set will disagree with the invoice it is meant to explain.
+ * Reading a *wider* set is the dangerous direction: it shows usage the billing
+ * engine will never charge for.
+ *
+ * Returns [] when the customer cannot be read, so callers can distinguish
+ * "no attributed subjects" from "lookup failed" and avoid silently widening.
+ *
+ * See docs/adr-owner-vs-app-billing.md ("Usage reads follow customer id").
+ */
+export async function resolveCustomerSubjectKeys(
+  client: OpenMeter,
+  customerKey: string,
+): Promise<string[]> {
+  const trimmed = customerKey.trim();
+  if (!trimmed) return [];
+  try {
+    const customer = (await findOpenMeterCustomerByKey(
+      client,
+      trimmed,
+    )) as OpenMeterCustomerRecord | null;
+    const keys = customer?.usageAttribution?.subjectKeys ?? [];
+    return [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
+  } catch (err) {
+    console.warn(
+      "customers: subject key lookup failed",
+      trimmed,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
 export async function findOpenMeterCustomerByKey(
   client: OpenMeter,
   customerKey: string,
