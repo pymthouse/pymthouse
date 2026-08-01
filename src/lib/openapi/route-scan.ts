@@ -181,5 +181,9 @@ export function scanApiV1Routes(apiRoot = API_V1_ROOT): ScannedRouteOperation[] 
 export function publicRouteOperations(
   operations: ScannedRouteOperation[],
 ): ScannedRouteOperation[] {
-  return operations.filter((op) => !op.excluded);
+  // Builder + End-user (+ catalog) only. Real `/api/v1/internal/…` handlers stay
+  // in the inventory for Internal docs, but are not public allowlist keys.
+  return operations.filter(
+    (op) => !op.excluded && !op.path.startsWith("/api/v1/internal/"),
+  );
 }

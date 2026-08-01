@@ -127,6 +127,16 @@ export type AuthenticateEndUserOptions = {
   expectedPublicClientId?: string;
 };
 
+function bindExpectedPublicClientId(
+  auth: EndUserAuth,
+  expectedPublicClientId: string,
+): EndUserAuth | null {
+  if (expectedPublicClientId && auth.publicClientId !== expectedPublicClientId) {
+    return null;
+  }
+  return auth;
+}
+
 /**
  * Authenticate an end-user Bearer credential for app-scoped self-serve routes.
  * Accepts bare `pmth_*` / hex app API keys, optional composite `app_*_*`,
@@ -152,15 +162,14 @@ export async function authenticateEndUser(
   ) {
     const resolved = await resolveActiveAppApiKeyFromBearer(token);
     if (resolved) {
-      const auth: EndUserAuth = {
-        publicClientId: resolved.publicClientId,
-        developerAppId: resolved.developerAppId,
-        externalUserId: resolved.externalUserId,
-      };
-      if (expected && auth.publicClientId !== expected) {
-        return null;
-      }
-      return auth;
+      return bindExpectedPublicClientId(
+        {
+          publicClientId: resolved.publicClientId,
+          developerAppId: resolved.developerAppId,
+          externalUserId: resolved.externalUserId,
+        },
+        expected,
+      );
     }
     if (composite || !looksLikeJwt) {
       return null;
@@ -176,23 +185,19 @@ export async function authenticateEndUser(
   // Signer JWTs carry external_user_id / user_type=external_user with sub=external id.
   const signerResolved = await resolveSignerJwtEndUser(rec);
   if (signerResolved) {
-    if (expected && signerResolved.publicClientId !== expected) {
-      return null;
-    }
-    return signerResolved;
+    return bindExpectedPublicClientId(signerResolved, expected);
   }
 
   try {
     const resolved = await resolveSubjectAccessToken(token);
-    const auth: EndUserAuth = {
-      publicClientId: resolved.publicClientId,
-      developerAppId: resolved.developerAppId,
-      externalUserId: resolved.externalUserId,
-    };
-    if (expected && auth.publicClientId !== expected) {
-      return null;
-    }
-    return auth;
+    return bindExpectedPublicClientId(
+      {
+        publicClientId: resolved.publicClientId,
+        developerAppId: resolved.developerAppId,
+        externalUserId: resolved.externalUserId,
+      },
+      expected,
+    );
   } catch (err) {
     if (err instanceof SubjectAccessTokenResolveError) {
       return null;

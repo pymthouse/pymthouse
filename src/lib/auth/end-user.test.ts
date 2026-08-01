@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { SignJWT } from "jose";
+import { v4 as uuidv4 } from "uuid";
 
 import { run } from "@/test-utils/db-guard";
 import {
@@ -18,7 +20,38 @@ import {
   authenticateEndUser,
   endUserSubjectOverrideError,
 } from "@/lib/auth/end-user";
+import { getIssuer } from "@/lib/oidc/issuer-urls";
+import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { hashToken } from "@/lib/token-hash";
+
+const OTHER_CLIENT_ID = "app_otherclientid0000000001";
+
+async function mintEndUserJwt(input: {
+  publicClientId: string;
+  sub: string;
+  claims?: Record<string, unknown>;
+}): Promise<string> {
+  const issuer = getIssuer();
+  const keyPair = await ensureSigningKey();
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return new SignJWT({
+    client_id: input.publicClientId,
+    ...input.claims,
+  })
+    .setProtectedHeader({
+      alg: "RS256",
+      kid: keyPair.kid,
+      typ: ACCESS_TOKEN_JWT_TYP,
+    })
+    .setIssuer(issuer)
+    .setAudience(issuer)
+    .setSubject(input.sub)
+    .setJti(uuidv4())
+    .setIssuedAt(nowSeconds)
+    .setNotBefore(nowSeconds)
+    .setExpirationTime(nowSeconds + 300)
+    .sign(keyPair.privateKey);
+}
 
 test("endUserSubjectOverrideError rejects userId and externalUserId", () => {
   for (const key of ["userId", "externalUserId", "external_user_id"]) {
@@ -90,10 +123,10 @@ run("authenticateEndUser resolves bare Bearer to end-user identity", async (t) =
   assert.equal(auth?.developerAppId, app.clientId);
 
   const mismatched = await authenticateEndUser(
-    new Request("http://localhost/api/v1/apps/app_otherclientid0000000001/me/usage", {
+    new Request(`http://localhost/api/v1/apps/${OTHER_CLIENT_ID}/me/usage`, {
       headers: { Authorization: `Bearer ${bare}` },
     }),
-    { expectedPublicClientId: "app_otherclientid0000000001" },
+    { expectedPublicClientId: OTHER_CLIENT_ID },
   );
   assert.equal(mismatched, null);
 
@@ -144,4 +177,81 @@ test("authenticateEndUser returns null without Authorization", async () => {
     new Request("http://localhost/api/v1/apps/app_x/me/usage"),
   );
   assert.equal(auth, null);
+});
+
+run("authenticateEndUser rejects mismatched expectedPublicClientId for signer JWT", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const externalUserId = `user-${randomUUID()}`;
+  await createAppUser({
+    clientId: app.clientId,
+    externalUserId,
+  });
+
+  const token = await mintEndUserJwt({
+    publicClientId: app.clientId,
+    sub: externalUserId,
+    claims: {
+      external_user_id: externalUserId,
+      user_type: "external_user",
+      scope: "sign:job",
+    },
+  });
+
+  const matched = await authenticateEndUser(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/me/usage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+    { expectedPublicClientId: app.clientId },
+  );
+  assert.ok(matched);
+  assert.equal(matched?.externalUserId, externalUserId);
+  assert.equal(matched?.publicClientId, app.clientId);
+
+  const mismatched = await authenticateEndUser(
+    new Request(`http://localhost/api/v1/apps/${OTHER_CLIENT_ID}/me/usage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+    { expectedPublicClientId: OTHER_CLIENT_ID },
+  );
+  assert.equal(mismatched, null);
+});
+
+run("authenticateEndUser rejects mismatched expectedPublicClientId for subject access token", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(() => cleanupTestApp(app));
+
+  const externalUserId = `user-${randomUUID()}`;
+  const appUser = await createAppUser({
+    clientId: app.clientId,
+    externalUserId,
+  });
+
+  const token = await mintEndUserJwt({
+    publicClientId: app.clientId,
+    sub: appUser.id,
+    claims: {
+      user_type: "app_user",
+      scope: "openid",
+    },
+  });
+
+  const matched = await authenticateEndUser(
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/me/usage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+    { expectedPublicClientId: app.clientId },
+  );
+  assert.ok(matched);
+  assert.equal(matched?.externalUserId, externalUserId);
+  assert.equal(matched?.publicClientId, app.clientId);
+
+  const mismatched = await authenticateEndUser(
+    new Request(`http://localhost/api/v1/apps/${OTHER_CLIENT_ID}/me/usage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+    { expectedPublicClientId: OTHER_CLIENT_ID },
+  );
+  assert.equal(mismatched, null);
 });

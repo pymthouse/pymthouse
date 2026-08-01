@@ -30,6 +30,10 @@ export function maskApiKeySuffix(keyPrefix: string | null | undefined): string {
   return raw.slice(-4);
 }
 
+/** Shown once at mint time for personal and Builder-issued app-user keys. */
+export const APP_USER_API_KEY_STORE_MESSAGE =
+  "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on /api/v1/apps/{clientId}/me/usage* and as subject_token on POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.";
+
 /** Presented composite: `app_<24hex>_<secret>` (underscore separator for copy UX). */
 const COMPOSITE_API_KEY_RE = /^(app_[a-f0-9]{24})_(.+)$/;
 /** Reject client-secret shaped secret segments. */

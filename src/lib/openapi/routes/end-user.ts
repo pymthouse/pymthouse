@@ -29,6 +29,44 @@ const endUserUsageQueryParams = z.object({
     }),
 });
 
+const endUserRequestsQueryParams = z.object({
+  groupBy: z
+    .enum(["request", "session"])
+    .optional()
+    .openapi({
+      param: { name: "groupBy", in: "query" },
+      description: "session or request (default request).",
+    }),
+  manifestId: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "manifestId", in: "query" },
+      description:
+        "When groupBy=request, restrict to one session manifest ID.",
+    }),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .openapi({
+      param: { name: "cursor", in: "query" },
+      description: "Opaque pagination cursor from a prior response.",
+    }),
+  limit: z
+    .coerce
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .openapi({
+      param: { name: "limit", in: "query" },
+      description: "Page size (default 25, max 50).",
+    }),
+});
+
 const meUsagePath = (suffix: string) =>
   `/api/v1/apps/{clientId}/me/usage${suffix}`;
 
@@ -88,43 +126,7 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
   security: endUserSecurity,
   request: {
     params: z.object({ clientId }),
-    query: z.object({
-      groupBy: z
-        .enum(["request", "session"])
-        .optional()
-        .openapi({
-          param: { name: "groupBy", in: "query" },
-          description: "session or request (default request).",
-        }),
-      manifestId: z
-        .string()
-        .min(1)
-        .optional()
-        .openapi({
-          param: { name: "manifestId", in: "query" },
-          description:
-            "When groupBy=request, restrict to one session manifest ID.",
-        }),
-      cursor: z
-        .string()
-        .min(1)
-        .optional()
-        .openapi({
-          param: { name: "cursor", in: "query" },
-          description: "Opaque pagination cursor from a prior response.",
-        }),
-      limit: z
-        .coerce
-        .number()
-        .int()
-        .min(1)
-        .max(50)
-        .optional()
-        .openapi({
-          param: { name: "limit", in: "query" },
-          description: "Page size (default 25, max 50).",
-        }),
-    }),
+    query: endUserRequestsQueryParams,
   },
   responses: {
     200: jsonSuccess,
@@ -148,7 +150,7 @@ defineRouteMetadata("get", meUsagePath("/requests"), {
 const legacyAlias = (
   suffix: string,
   summary: string,
-  query?: typeof endUserUsageQueryParams,
+  query?: typeof endUserUsageQueryParams | typeof endUserRequestsQueryParams,
 ) => {
   defineRouteMetadata("get", `/api/v1/user/usage${suffix}`, {
     tags: [OPENAPI_TAGS.endUserUsage],
@@ -170,4 +172,8 @@ const legacyAlias = (
 
 legacyAlias("", "End-user usage summary", endUserUsageQueryParams);
 legacyAlias("/balance", "End-user usage balance");
-legacyAlias("/requests", "End-user signed-ticket request history");
+legacyAlias(
+  "/requests",
+  "End-user signed-ticket request history",
+  endUserRequestsQueryParams,
+);

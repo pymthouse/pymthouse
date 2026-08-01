@@ -11,6 +11,7 @@ import {
 } from "@/lib/provider-apps";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import {
+  APP_USER_API_KEY_STORE_MESSAGE,
   createAppUserApiKey,
   listAppUserApiKeys,
   revokeAppUserApiKey,
@@ -150,8 +151,7 @@ export async function POST(
       suffix: created.suffix,
       label: created.label,
       createdAt: created.createdAt,
-      message:
-        "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on /api/v1/apps/{clientId}/me/usage* and as subject_token on POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.",
+      message: APP_USER_API_KEY_STORE_MESSAGE,
       correlation_id: correlationId,
     },
     { status: 201 },

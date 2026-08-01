@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/next-auth-options";
 import { mintDefaultAppNetworkKey } from "@/lib/onboarding";
+import { APP_USER_API_KEY_STORE_MESSAGE } from "@/lib/app-api-keys";
 import {
   isPersonalKeysSessionResult,
   requirePersonalKeysSession,
@@ -41,8 +42,7 @@ export async function POST() {
         prefix: result.prefix,
         suffix: result.suffix,
         label: result.label,
-        message:
-          "Store this API key securely. It will not be shown again. Use Authorization: Bearer <pmth_…> on /api/v1/apps/{clientId}/me/usage* and as subject_token on POST /api/v1/apps/{clientId}/oidc/token, or use sdkToken as --token with livepeer-python-sdk.",
+        message: APP_USER_API_KEY_STORE_MESSAGE,
         correlation_id: result.correlationId,
       },
       { status: 201 },
