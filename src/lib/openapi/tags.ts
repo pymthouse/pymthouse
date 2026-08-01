@@ -65,7 +65,7 @@ const END_USER_OPERATION_KEYS = new Set([
   "GET /api/v1/apps/{clientId}/me/usage",
   "GET /api/v1/apps/{clientId}/me/usage/balance",
   "GET /api/v1/apps/{clientId}/me/usage/requests",
-  // Deprecated pathless aliases, kept for existing integrations.
+  // Pathless: app resolved from Bearer credential.
   "GET /api/v1/user/usage",
   "GET /api/v1/user/usage/balance",
   "GET /api/v1/user/usage/requests",
@@ -181,7 +181,9 @@ export const BUILDER_TAG_DEFINITIONS: Array<{
   {
     name: OPENAPI_TAGS.endUserUsage,
     description:
-      "Self-serve usage for the authenticated end user on an app. Bearer = bare `pmth_*` API key (or user/signer JWT). Path `{clientId}` must match the credential.",
+      "Self-serve usage for the authenticated end user. Bearer = bare `pmth_*` API key (or user/signer JWT). " +
+      "`GET /api/v1/user/usage*` resolves the app from the credential; " +
+      "`GET /api/v1/apps/{clientId}/me/usage*` requires path `{clientId}` to match.",
   },
   {
     name: OPENAPI_TAGS.billing,
@@ -295,12 +297,12 @@ export const BUILDER_INFO_DESCRIPTION = `PymtHouse **public API** — Builder (M
 
 **Builder (M2M):** HTTP Basic (\`m2m_*\` + \`pmth_cs_*\`) for integrator backends — users, keys, tokens, app usage, billing reads, discovery.
 
-**End-user:** \`Authorization: Bearer\` with a bare \`pmth_*\` API key, programmatic user JWT, or signer JWT (optional composite \`app_*_*\` still accepted). Identity comes **only** from the token — do not pass \`externalUserId\`. Path \`{clientId}\` must match the credential’s public app.
+**End-user:** \`Authorization: Bearer\` with a bare \`pmth_*\` API key, programmatic user JWT, or signer JWT (optional composite \`app_*_*\` still accepted). Identity comes **only** from the token — do not pass \`externalUserId\`.
 
 OIDC discovery: \`{issuer}/.well-known/openid-configuration\`.
 
 Canonical Builder usage: \`GET /api/v1/builder/apps/{clientId}/usage*\`.
-Canonical End-user usage: \`GET /api/v1/apps/{clientId}/me/usage*\`.
+End-user usage: \`GET /api/v1/user/usage*\` (app from credential) or \`GET /api/v1/apps/{clientId}/me/usage*\` (path must match).
 `;
 
 export const INTERNAL_INFO_DESCRIPTION = `PymtHouse **Internal API** — dashboard, admin, and platform ops for the PymtHouse application (not linked from public docs).

@@ -28,7 +28,8 @@ test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal"
   assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage"]?.get);
   assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage/balance"]?.get);
   assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage/requests"]?.get);
-  assert.equal(doc.paths["/api/v1/user/usage"]?.get?.deprecated, true);
+  assert.ok(doc.paths["/api/v1/user/usage"]?.get);
+  assert.equal(doc.paths["/api/v1/user/usage"]?.get?.deprecated, undefined);
   assert.equal(doc.paths["/api/v1/signer"], undefined);
 
   assert.ok(doc.components?.securitySchemes?.m2mBasic);
