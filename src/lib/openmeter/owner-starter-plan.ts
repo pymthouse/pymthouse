@@ -155,10 +155,7 @@ async function publishOwnerStarterPlanBestEffort(
       !isOpenMeterConflictError(err) &&
       !isOpenMeterPlanAlreadyPublishedError(err)
     ) {
-      console.warn(
-        "openmeter: owner starter plan publish",
-        err instanceof Error ? err.message : String(err),
-      );
+      console.warn("openmeter: owner starter plan publish failed");
     }
     return planId;
   }

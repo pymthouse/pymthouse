@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { eq, inArray } from "drizzle-orm";
 
-import { mergeOwnerBilling } from "@/lib/billing/owner-billing-config";
+import { db } from "@/db/index";
+import { ownerBillingConfig, users } from "@/db/schema";
+import {
+  getOwnerBillingOverrides,
+  mergeOwnerBilling,
+  resolveOwnerBilling,
+  resolveOwnerStarterIncludedUsdMicros,
+  setOwnerBillingOverrides,
+} from "@/lib/billing/owner-billing-config";
 import {
   isOwnerStarterPlanKey,
   ownerStarterPlanKeyForAmount,
 } from "@/lib/openmeter/owner-starter-key";
+import { test as dbTest } from "@/test-utils/db-guard";
+import { createTestUser } from "@/test-utils/fixtures";
 
 const DEFAULTS = {
   starterIncludedUsdMicros: "5000000",
@@ -94,4 +105,84 @@ test("unrelated plan keys are not mistaken for Owner Starter", () => {
 test("isOwnerStarterPlanKey does not treat the base key as a RegExp", () => {
   // Suffix must be digits only; a metacharacter-looking suffix is not a variant.
   assert.equal(isOwnerStarterPlanKey("pymthouse_owner_starter_[0-9]+"), false);
+});
+
+dbTest("getOwnerBillingOverrides returns null without a row", async (t) => {
+  const ownerId = await createTestUser();
+  t.after(async () => {
+    await db.delete(users).where(eq(users.id, ownerId));
+  });
+
+  const overrides = await getOwnerBillingOverrides(ownerId);
+  assert.equal(overrides, null);
+});
+
+dbTest("setOwnerBillingOverrides upserts and resolveOwnerBilling merges", async (t) => {
+  const ownerId = await createTestUser();
+  const adminId = await createTestUser({ role: "admin" });
+  const userIds = [ownerId, adminId];
+
+  t.after(async () => {
+    await db
+      .delete(ownerBillingConfig)
+      .where(inArray(ownerBillingConfig.ownerUserId, userIds));
+    await db.delete(users).where(inArray(users.id, userIds));
+  });
+
+  await setOwnerBillingOverrides({
+    ownerUserId: ownerId,
+    starterIncludedUsdMicros: "15000000",
+    endUserCap: 50,
+    applicationFeeBps: 100,
+    note: "test override",
+    updatedBy: adminId,
+  });
+
+  const overrides = await getOwnerBillingOverrides(ownerId);
+  assert.deepEqual(overrides, {
+    starterIncludedUsdMicros: "15000000",
+    endUserCap: 50,
+    applicationFeeBps: 100,
+    note: "test override",
+  });
+
+  const resolved = await resolveOwnerBilling(ownerId);
+  assert.equal(resolved.starterIncludedUsdMicros, "15000000");
+  assert.equal(resolved.endUserCap, 50);
+  assert.equal(resolved.applicationFeeBps, 100);
+  assert.equal(resolved.hasOverride, true);
+  assert.equal(resolved.note, "test override");
+
+  const starterMicros = await resolveOwnerStarterIncludedUsdMicros(ownerId);
+  assert.equal(starterMicros, "15000000");
+});
+
+dbTest("setOwnerBillingOverrides clears fields with explicit null", async (t) => {
+  const ownerId = await createTestUser();
+  const adminId = await createTestUser({ role: "admin" });
+  const userIds = [ownerId, adminId];
+
+  t.after(async () => {
+    await db
+      .delete(ownerBillingConfig)
+      .where(inArray(ownerBillingConfig.ownerUserId, userIds));
+    await db.delete(users).where(inArray(users.id, userIds));
+  });
+
+  await setOwnerBillingOverrides({
+    ownerUserId: ownerId,
+    starterIncludedUsdMicros: "20000000",
+    updatedBy: adminId,
+  });
+  await setOwnerBillingOverrides({
+    ownerUserId: ownerId,
+    starterIncludedUsdMicros: null,
+    updatedBy: adminId,
+  });
+
+  const overrides = await getOwnerBillingOverrides(ownerId);
+  assert.equal(overrides?.starterIncludedUsdMicros, null);
+
+  const resolved = await resolveOwnerBilling(ownerId);
+  assert.equal(resolved.hasOverride, false);
 });

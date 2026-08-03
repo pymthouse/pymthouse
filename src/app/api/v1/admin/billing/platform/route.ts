@@ -59,15 +59,10 @@ export const PATCH = withSessionAdminGuard(async (request, context) => {
       openmeterPlanId: result.openmeterPlanId,
       migrate: result.migrate,
     });
-  } catch (err) {
-    console.error("Admin platform billing PATCH failed:", err);
+  } catch {
+    console.error("Admin platform billing PATCH failed");
     return NextResponse.json(
-      {
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to update platform Owner Starter default",
-      },
+      { error: "Failed to update platform Owner Starter default" },
       { status: 500 },
     );
   }

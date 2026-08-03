@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { eq, inArray } from "drizzle-orm";
 
+import { db } from "@/db/index";
+import { ownerBillingConfig, users } from "@/db/schema";
 import {
   classifyBaseOwnerStarterMigrateCandidate,
   hasStarterAllowanceOverride,
+  listOwnersOnPlatformDefaultStarter,
 } from "@/lib/billing/republish-base-owner-starter";
+import { test as dbTest } from "@/test-utils/db-guard";
+import { createTestUser } from "@/test-utils/fixtures";
+import { setOwnerBillingOverrides } from "@/lib/billing/owner-billing-config";
 
 test("classifyBaseOwnerStarterMigrateCandidate skips target and non-base keys", () => {
   assert.equal(
@@ -38,4 +45,29 @@ test("hasStarterAllowanceOverride requires a digit micros string", () => {
   assert.equal(hasStarterAllowanceOverride(""), false);
   assert.equal(hasStarterAllowanceOverride("abc"), false);
   assert.equal(hasStarterAllowanceOverride("5000000"), true);
+});
+
+dbTest("listOwnersOnPlatformDefaultStarter excludes owners with starter override", async (t) => {
+  const defaultOwnerId = await createTestUser({ role: "developer" });
+  const overriddenOwnerId = await createTestUser({ role: "developer" });
+  const adminId = await createTestUser({ role: "admin" });
+  const userIds = [defaultOwnerId, overriddenOwnerId, adminId];
+
+  t.after(async () => {
+    await db
+      .delete(ownerBillingConfig)
+      .where(inArray(ownerBillingConfig.ownerUserId, userIds));
+    await db.delete(users).where(inArray(users.id, userIds));
+  });
+
+  await setOwnerBillingOverrides({
+    ownerUserId: overriddenOwnerId,
+    starterIncludedUsdMicros: "50000000",
+    updatedBy: adminId,
+  });
+
+  const owners = await listOwnersOnPlatformDefaultStarter();
+  assert.ok(owners.includes(defaultOwnerId));
+  assert.ok(owners.includes(adminId));
+  assert.ok(!owners.includes(overriddenOwnerId));
 });

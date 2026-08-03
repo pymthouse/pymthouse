@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { platformBillingSettings } from "@/db/schema";
+import { platformBillingSettings, users } from "@/db/schema";
 import {
   PLATFORM_BILLING_SETTINGS_ID,
   resolvePlatformOwnerStarterDefault,
   setPlatformOwnerStarterIncludedUsdMicros,
 } from "@/lib/billing/platform-owner-starter-default";
 import { test } from "@/test-utils/db-guard";
-import { createTestUserWithCleanup } from "@/test-utils/fixtures";
+import { createTestUser } from "@/test-utils/fixtures";
 
 test("platform owner starter default resolves env/fallback without a DB row", async () => {
   await db
@@ -32,7 +32,7 @@ test("platform owner starter default resolves env/fallback without a DB row", as
 });
 
 test("platform owner starter default prefers DB over env", async (t) => {
-  const adminId = await createTestUserWithCleanup(t, { role: "admin" });
+  const adminId = await createTestUser({ role: "admin" });
   const prior = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
   process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = "1000000";
 
@@ -45,6 +45,7 @@ test("platform owner starter default prefers DB over env", async (t) => {
     await db
       .delete(platformBillingSettings)
       .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
+    await db.delete(users).where(eq(users.id, adminId));
   });
 
   const saved = await setPlatformOwnerStarterIncludedUsdMicros({
