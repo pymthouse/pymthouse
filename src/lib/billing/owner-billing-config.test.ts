@@ -90,3 +90,8 @@ test("unrelated plan keys are not mistaken for Owner Starter", () => {
   assert.equal(isOwnerStarterPlanKey("some_app_plan"), false);
   assert.equal(isOwnerStarterPlanKey(null), false);
 });
+
+test("isOwnerStarterPlanKey does not treat the base key as a RegExp", () => {
+  // Suffix must be digits only; a metacharacter-looking suffix is not a variant.
+  assert.equal(isOwnerStarterPlanKey("pymthouse_owner_starter_[0-9]+"), false);
+});

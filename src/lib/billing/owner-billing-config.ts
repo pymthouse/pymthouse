@@ -140,6 +140,7 @@ export async function setOwnerBillingOverrides(input: {
     .limit(1);
 
   const prior = existingRow[0];
+  const updatedBy = input.updatedBy.trim() || null;
   const values = {
     starterIncludedUsdMicros:
       input.starterIncludedUsdMicros === undefined
@@ -155,7 +156,7 @@ export async function setOwnerBillingOverrides(input: {
       input.note === undefined
         ? (prior?.note ?? null)
         : input.note?.trim() || null,
-    updatedBy: input.updatedBy,
+    updatedBy,
     updatedAt: now,
   };
 

@@ -389,13 +389,9 @@ export async function verifyOpenMeterPlanId(
   }
 }
 
-export async function syncPlanToOpenMeter(planId: string): Promise<{
-  ok: boolean;
-  openmeterPlanId?: string;
-  error?: string;
-}> {
-  const planRows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
-  const plan = planRows[0];
+function resolveActivePlanClientId(
+  plan: typeof plans.$inferSelect | undefined,
+): { ok: true; clientId: string } | { ok: false; error: string } {
   if (plan?.status !== "active") {
     return { ok: false, error: "Plan not active" };
   }
@@ -405,6 +401,21 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
   if (!planClientId) {
     return { ok: false, error: "Platform-scoped plans are not synced per app" };
   }
+  return { ok: true, clientId: planClientId };
+}
+
+export async function syncPlanToOpenMeter(planId: string): Promise<{
+  ok: boolean;
+  openmeterPlanId?: string;
+  error?: string;
+}> {
+  const planRows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+  const plan = planRows[0];
+  const resolved = resolveActivePlanClientId(plan);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error };
+  }
+  const planClientId = resolved.clientId;
 
   if (!isHostedAdminClientAvailable()) {
     return {
@@ -426,7 +437,7 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
 
   const omPlan = await mapPymthousePlanToOpenMeterCreate({
     clientId: planClientId,
-    plan,
+    plan: plan!,
     capabilities: capabilityRows,
     client,
   });

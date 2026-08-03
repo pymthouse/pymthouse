@@ -85,6 +85,7 @@ export async function setPlatformOwnerStarterIncludedUsdMicros(input: {
   if (!micros) {
     throw new Error("ownerStarterIncludedUsdMicros must be a non-negative integer string");
   }
+  const updatedBy = input.updatedBy.trim() || null;
   const now = new Date().toISOString();
   const existing = await db
     .select({ id: platformBillingSettings.id })
@@ -97,7 +98,7 @@ export async function setPlatformOwnerStarterIncludedUsdMicros(input: {
       .update(platformBillingSettings)
       .set({
         ownerStarterIncludedUsdMicros: micros,
-        updatedBy: input.updatedBy,
+        updatedBy,
         updatedAt: now,
       })
       .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
@@ -105,7 +106,7 @@ export async function setPlatformOwnerStarterIncludedUsdMicros(input: {
     await db.insert(platformBillingSettings).values({
       id: PLATFORM_BILLING_SETTINGS_ID,
       ownerStarterIncludedUsdMicros: micros,
-      updatedBy: input.updatedBy,
+      updatedBy,
       updatedAt: now,
     });
   }
@@ -113,7 +114,7 @@ export async function setPlatformOwnerStarterIncludedUsdMicros(input: {
   return {
     ownerStarterIncludedUsdMicros: micros,
     source: "db",
-    updatedBy: input.updatedBy,
+    updatedBy,
     updatedAt: now,
   };
 }

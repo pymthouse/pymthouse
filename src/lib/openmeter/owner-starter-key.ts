@@ -49,8 +49,13 @@ export function isOwnerStarterPlanKey(planKey: string | null | undefined): boole
   const lower = key.toLowerCase();
   // Per-amount variants are still Owner Starter plans; matching only the base
   // key would make an overridden owner look unsubscribed to every caller that
-  // classifies plans by this predicate.
-  return lower === base || new RegExp(`^${base}_\\d+$`).test(lower);
+  // classifies plans by this predicate. Use prefix + digit checks so an env
+  // base key with regex metacharacters is never interpreted as a pattern.
+  if (lower === base) return true;
+  const prefix = `${base}_`;
+  if (!lower.startsWith(prefix)) return false;
+  const suffix = lower.slice(prefix.length);
+  return /^\d+$/.test(suffix);
 }
 
 /**

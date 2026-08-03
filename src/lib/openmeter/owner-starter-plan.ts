@@ -511,10 +511,9 @@ export async function ensureOwnerStarterSubscription(input: {
           openmeterPlanId: plan.openmeterPlanId,
           created: false,
         };
-      } catch (err) {
+      } catch {
         console.warn(
           "openmeter: owner starter subscription change failed; recreating",
-          err instanceof Error ? err.message : String(err),
         );
         try {
           await client.subscriptions.cancel(existing.id, {

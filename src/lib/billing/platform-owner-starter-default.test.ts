@@ -1,40 +1,61 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { eq } from "drizzle-orm";
 
-import { mergeOwnerBilling } from "@/lib/billing/owner-billing-config";
+import { db } from "@/db/index";
+import { platformBillingSettings } from "@/db/schema";
+import {
+  PLATFORM_BILLING_SETTINGS_ID,
+  resolvePlatformOwnerStarterDefault,
+  setPlatformOwnerStarterIncludedUsdMicros,
+} from "@/lib/billing/platform-owner-starter-default";
+import { test } from "@/test-utils/db-guard";
+import { createTestUserWithCleanup } from "@/test-utils/fixtures";
 
-/**
- * Pure resolve precedence for the platform Owner Starter default is covered
- * together with mergeOwnerBilling: callers pass the DB/env/fallback micros as
- * `defaults.starterIncludedUsdMicros`. Direct DB tests need a live database.
- */
+test("platform owner starter default resolves env/fallback without a DB row", async () => {
+  await db
+    .delete(platformBillingSettings)
+    .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
 
-test("resolved owner billing prefers override over platform default micros", () => {
-  const resolved = mergeOwnerBilling(
-    {
-      starterIncludedUsdMicros: "25000000",
-      endUserCap: null,
-      applicationFeeBps: null,
-      note: null,
-    },
-    {
-      starterIncludedUsdMicros: "10000000",
-      endUserCap: 25,
-      applicationFeeBps: 0,
-    },
-  );
-  assert.equal(resolved.starterIncludedUsdMicros, "25000000");
-  assert.equal(resolved.hasOverride, true);
+  const prior = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+  delete process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+  try {
+    const resolved = await resolvePlatformOwnerStarterDefault();
+    assert.equal(resolved.ownerStarterIncludedUsdMicros, "5000000");
+    assert.equal(resolved.source, "fallback");
+  } finally {
+    if (prior === undefined) {
+      delete process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+    } else {
+      process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = prior;
+    }
+  }
 });
 
-test("without override the platform default micros win", () => {
-  const resolved = mergeOwnerBilling(null, {
-    starterIncludedUsdMicros: "10000000",
-    endUserCap: 40,
-    applicationFeeBps: 100,
+test("platform owner starter default prefers DB over env", async (t) => {
+  const adminId = await createTestUserWithCleanup(t, { role: "admin" });
+  const prior = process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+  process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = "1000000";
+
+  t.after(async () => {
+    if (prior === undefined) {
+      delete process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS;
+    } else {
+      process.env.OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS = prior;
+    }
+    await db
+      .delete(platformBillingSettings)
+      .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
   });
-  assert.equal(resolved.starterIncludedUsdMicros, "10000000");
-  assert.equal(resolved.endUserCap, 40);
-  assert.equal(resolved.applicationFeeBps, 100);
-  assert.equal(resolved.hasOverride, false);
+
+  const saved = await setPlatformOwnerStarterIncludedUsdMicros({
+    ownerStarterIncludedUsdMicros: "25000000",
+    updatedBy: ` ${adminId} `,
+  });
+  assert.equal(saved.source, "db");
+  assert.equal(saved.ownerStarterIncludedUsdMicros, "25000000");
+  assert.equal(saved.updatedBy, adminId);
+
+  const resolved = await resolvePlatformOwnerStarterDefault();
+  assert.equal(resolved.source, "db");
+  assert.equal(resolved.ownerStarterIncludedUsdMicros, "25000000");
 });

@@ -964,7 +964,7 @@ async function auditOwnerSpendableGates(input: {
  * Pure — no I/O.
  */
 export function classifyPhaseOutPastDeadline(input: {
-  clientId: string;
+  clientId?: string;
   planId: string;
   planName: string;
   status: string;
@@ -995,7 +995,7 @@ export function classifyPhaseOutPastDeadline(input: {
   findings.push({
     code: "phase_out_subscribers_past_deadline",
     severity: "error",
-    clientId: input.clientId,
+    ...(input.clientId ? { clientId: input.clientId } : {}),
     message: `Plan "${input.planName}" is past phaseOutAt with ${input.activeSubscriberCount} active subscriber(s)`,
     details: {
       planId: input.planId,
@@ -1025,6 +1025,11 @@ async function auditPhaseOutPlans(
     : await db.select().from(plans).where(eq(plans.status, "phase_out"));
 
   for (const plan of rows) {
+    // Platform-scoped plans (nullable client_id) are Owner Starter catalog
+    // rows — not app phase-out candidates. Skip so findings never invent "".
+    if (!plan.clientId?.trim()) {
+      continue;
+    }
     if (!plan.phaseOutAt?.trim()) {
       continue;
     }
@@ -1042,7 +1047,7 @@ async function auditPhaseOutPlans(
         findings.push({
           code: "phase_out_subscriber_check_failed",
           severity: "warn",
-          clientId: plan.clientId ?? undefined,
+          clientId: plan.clientId,
           message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
           details: {
             planId: plan.id,
@@ -1055,7 +1060,7 @@ async function auditPhaseOutPlans(
     }
     findings.push(
       ...classifyPhaseOutPastDeadline({
-        clientId: plan.clientId ?? "",
+        clientId: plan.clientId,
         planId: plan.id,
         planName: plan.name,
         status: plan.status,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { buildOwnerOverridePatchBody } from "@/lib/billing/owner-override-form";
 import {
   sanitizeUsdCentsInput,
   usdCentsDisplayToMicros,
@@ -181,49 +182,22 @@ export default function AdminPlatformBillingPage() {
     setError(null);
     setMessage(null);
     try {
-      const body: Record<string, unknown> = {};
-
-      if (clearStarter) {
-        body.starterIncludedUsdMicros = null;
-      } else if (starterDisplay.trim()) {
-        const micros = usdCentsDisplayToMicros(starterDisplay);
-        if (!micros) {
-          setError("Enter a valid USD starter allowance or clear the field");
-          return;
-        }
-        body.starterIncludedUsdMicros = micros;
-      } else {
-        body.starterIncludedUsdMicros = null;
+      const built = buildOwnerOverridePatchBody({
+        starterDisplay,
+        endUserCap,
+        applicationFeeBps,
+        note,
+        clearStarter,
+      });
+      if (!built.ok) {
+        setError(built.error);
+        return;
       }
-
-      if (endUserCap.trim()) {
-        const parsed = Number.parseInt(endUserCap, 10);
-        if (!Number.isInteger(parsed) || parsed <= 0) {
-          setError("End-user cap must be a positive integer");
-          return;
-        }
-        body.endUserCap = parsed;
-      } else {
-        body.endUserCap = null;
-      }
-
-      if (applicationFeeBps.trim()) {
-        const parsed = Number.parseInt(applicationFeeBps, 10);
-        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) {
-          setError("Application fee must be an integer from 0 to 10000");
-          return;
-        }
-        body.applicationFeeBps = parsed;
-      } else {
-        body.applicationFeeBps = null;
-      }
-
-      body.note = note.trim() || null;
 
       const res = await fetch(`/api/v1/admin/billing/owners/${selectedId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(built.body),
       });
       const data = await res.json();
       if (!res.ok) {
