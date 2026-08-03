@@ -167,7 +167,7 @@ test("resolveActiveAppApiKey accepts composite app_*_* subject tokens", async (t
   assert.equal(mismatched, null);
 });
 
-test("createAppUserApiKey returns bare personal keys and composite Builder keys", async (t) => {
+test("createAppUserApiKey always returns bare pmth_* keys", async (t) => {
   const { createAppUserApiKey } = await import("@/lib/app-api-keys");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
@@ -188,9 +188,8 @@ test("createAppUserApiKey returns bare personal keys and composite Builder keys"
   const builder = await createAppUserApiKey({
     developerAppId: app.clientId,
     appUserId: appUser.id,
-    publicClientId: app.clientId,
     label: "builder",
   });
-  assert.ok(builder.apiKey.startsWith(`${app.clientId}_`));
-  assert.ok(builder.apiKey.includes("pmth_"));
+  assert.ok(builder.apiKey.startsWith("pmth_"));
+  assert.equal(builder.apiKey.includes(app.clientId), false);
 });

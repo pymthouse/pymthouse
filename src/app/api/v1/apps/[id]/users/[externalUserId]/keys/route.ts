@@ -117,7 +117,6 @@ export async function POST(
   const created = await createAppUserApiKey({
     developerAppId: access.app.id,
     appUserId: appUser.id,
-    publicClientId: clientId,
     label,
   });
 

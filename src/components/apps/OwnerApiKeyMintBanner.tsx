@@ -1,6 +1,7 @@
 "use client";
 
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
+import CopyIdButton from "@/components/apps/CopyIdButton";
 import type { OwnerApiKeyMintState } from "@/components/apps/use-owner-api-key-mint";
 
 type BannerApp = {
@@ -103,6 +104,26 @@ export default function OwnerApiKeyMintBanner<TApp extends BannerApp>({
         sdkToken={mintState.sdkToken}
         defaultFormat="bearer"
       />
+
+      {mintState.app.clientId ? (
+        <div className="rounded-md border border-sky-500/15 bg-black/20 px-2.5 py-2">
+          <p className="text-[10px] font-mono uppercase tracking-wider text-sky-300/60">
+            clientId (for REST paths)
+          </p>
+          <div className="mt-1 flex items-center gap-2">
+            <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-sky-100">
+              {mintState.app.clientId}
+            </code>
+            <CopyIdButton value={mintState.app.clientId} label="Copy client ID" />
+          </div>
+          <p className="mt-1.5 text-[10px] text-sky-300/55">
+            Usage:{" "}
+            <code className="font-mono text-sky-200/80">
+              GET /api/v1/apps/{mintState.app.clientId}/me/usage
+            </code>
+          </p>
+        </div>
+      ) : null}
 
       <details className="text-[11px] text-sky-300/70">
         <summary className="cursor-pointer hover:text-sky-200">Show more details</summary>

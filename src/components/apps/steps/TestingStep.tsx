@@ -529,29 +529,30 @@ async function executeOwnerTokenTest(input: {
   sdkToken: string | null;
   tokenKind: TokenTestKind;
 }> {
-  // Remote signing needs no client secret: mint the composite key with the
+  // Remote signing needs no client secret: mint a bare pmth_* key with the
   // signed-in session (same as the Get API Key easy flow), then either return
-  // it as a Bearer key or exchange it once for a signer JWT.
+  // it as a Bearer key or exchange it once for a signer JWT on the app-scoped
+  // OIDC token route (path supplies {clientId}).
   const minted = await mintOwnerApiKey({
     clientId: input.publicClientId,
     ownerExternalUserId: input.ownerExternalUserId,
   });
-  const compositeKey = readTrimmedString(minted.apiKey);
-  if (!compositeKey) {
+  const apiKey = readTrimmedString(minted.apiKey);
+  if (!apiKey) {
     throw new Error("API key mint response missing apiKey.");
   }
   const sdkToken = readTrimmedString(minted.sdkToken);
   if (input.useBearerSigning) {
     return {
       result: formatTokenTestResult(minted),
-      rawAccessToken: compositeKey,
+      rawAccessToken: apiKey,
       sdkToken,
       tokenKind: "api_key",
     };
   }
   const exchanged = await postAppScopedSignerExchange({
     publicClientId: input.publicClientId,
-    subjectToken: compositeKey,
+    subjectToken: apiKey,
   });
   return {
     result: formatTokenTestResult(exchanged),
@@ -781,6 +782,7 @@ function M2mTokenCredentialValue({
       <ApiKeyCredentialSwitcher
         apiKey={rawAccessToken}
         sdkToken={sdkToken}
+        defaultFormat="bearer"
       />
     );
   }

@@ -20,7 +20,7 @@ For issuer-level OIDC behavior and token endpoint details, see [NaaP OIDC integr
 - `client_id` is the canonical app identifier in Builder API URLs.
 - **API surfaces:**
   - **Builder (M2M):** canonical `/api/v1/builder/…` for usage; integrator `/api/v1/apps/{clientId}/…` for users, tokens, billing reads (legacy `/apps/…/usage*` aliases remain M2M-only)
-  - **End-user:** `/api/v1/user/usage*` (app from Bearer) or `/api/v1/apps/{clientId}/me/…` (path `{clientId}` must match) — bare `pmth_*` key or end-user/signer JWT
+  - **End-user:** `/api/v1/apps/{clientId}/me/…` (path `{clientId}` must match) or pathless `/api/v1/user/usage*` (app from Bearer) — bare `pmth_*` key or end-user/signer JWT
   - **Internal:** PymtHouse dashboard/session under canonical `/api/v1/internal/…` (unpublished from the public Scalar UI)
 - OIDC issuer stays at `/api/v1/oidc/*`. Public catalog/health stay under `/api/v1/*` without a product prefix.
 - Internal database IDs are implementation details and are not part of the public API contract.
@@ -61,8 +61,8 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 
 | Prefix | Role | RFC usage |
 | --- | --- | --- |
-| Stored API key (`pmth_<hex>`) | Per-app-user **API key** (hashed at rest) | Personal mint returns bare `pmth_*`; Builder mint returns composite presentation of the same secret |
-| `app_<24hex>_<secret>` | **Presented** Builder API key (issuance + remote-signer Bearer) | Same secret as the stored key; `app_*` segment routes pathless exchange / webhooks |
+| Stored API key (`pmth_<hex>`) | Per-app-user **API key** (hashed at rest; presented bare at mint) | `Authorization: Bearer` on `/api/v1/apps/{clientId}/me/usage*`; `subject_token` on `POST /api/v1/apps/{clientId}/oidc/token` |
+| `app_<24hex>_<secret>` | Optional **composite** presentation (not issued by default) | Pathless remote-signer webhooks that must recover `{clientId}` from a single Bearer |
 | Client secret (`*_cs_*`) | Confidential client secret | HTTP Basic / `client_secret_post` with the matching client id (RFC 6749 §2.3.1) — never the API-key bearer exchange |
 | `app_…` | Public interactive client | Path params and token endpoint `client_id`; `token_endpoint_auth_method=none` (device / SDK; **no** authorization-code redirects) |
 | `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
@@ -80,27 +80,26 @@ Authorization-code (browser / portal) login is registered **only** on the confid
 
 Enable **Confidential web RP** on App profile (same pattern as Confidential M2M backend). Rotate the `web_` secret with `POST /api/v1/apps/{clientId}/credentials?target=web`. Do not put portal SSO credentials on the public SDK client or the M2M helper.
 
-Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted app-user keys are returned as composite `app_<24hex>_<secret>` (same stored secret):
+Newly issued keys are returned as bare `pmth_<hex>`. Prefer REST paths that carry `{clientId}`:
 
-- Self-serve usage (credential-scoped app): `GET /api/v1/user/usage*` with bare Bearer
-- Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
-- Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite
+- Self-serve usage: `GET /api/v1/apps/{clientId}/me/usage*`
+- Signer session exchange: `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token=pmth_…`
 
-Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer.
+Composite `app_<24hex>_<secret>` is still **accepted** where a pathless caller (e.g. remote-signer identity webhook) must recover the public client id from a single Bearer. Prefer app-scoped signer URLs + bare Bearer when possible.
 
 **Design notes**
 
-- Personal keys stay bare; Builder app-user mint returns composite so pathless signer webhooks can recover `{clientId}`.
-- Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
-- `formatCompositeApiKey` / `splitCompositeApiKey` parse the Builder presentation form.
+- Tenancy lives in the URL for Builder and end-user self-serve routes; the secret stays bare.
+- Composite remains a convenience for pathless webhooks; underscore separator keeps copy/select UX intact when used.
+- `formatCompositeApiKey` / `splitCompositeApiKey` remain available for webhook parsers.
 
 Do not pass M2M client secrets as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
 
 ### Implementation tasks
 
-- [x] Issue bare `pmth_*` from personal key mint; composite `app_*_*` from Builder app-user key mint.
+- [x] Issue bare `pmth_*` from key creation APIs (composite optional / pathless only).
 - [x] Publish `@pymthouse/clearinghouse-identity-webhook` with the matching composite parser (`0.4.2`).
-- [x] End-user usage at `/api/v1/user/usage*` (app from credential) and `/api/v1/apps/{clientId}/me/usage*` (path-scoped).
+- [x] Canonical end-user usage at `/api/v1/apps/{clientId}/me/usage*` (pathless `/api/v1/user/usage*` remains available).
 
 ## Authentication
 

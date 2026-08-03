@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
+import CopyIdButton from "@/components/apps/CopyIdButton";
 import AppFilterDropdown from "@/components/AppFilterDropdown";
 import { useNetworkKeyMint } from "@/hooks/useNetworkKeyMint";
 import { PLATFORM_DEFAULT_USAGE_DISPLAY_NAME } from "@/lib/platform-default-labels";
@@ -295,6 +296,25 @@ export default function ApiKeysManager() {
             sdkToken={mint.sdkToken}
             defaultFormat="bearer"
           />
+          {mint.clientId ? (
+            <div className="rounded-md border border-sky-500/15 bg-black/20 px-2.5 py-2">
+              <p className="text-[10px] font-mono uppercase tracking-wider text-sky-300/60">
+                clientId (for REST paths)
+              </p>
+              <div className="mt-1 flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-sky-100">
+                  {mint.clientId}
+                </code>
+                <CopyIdButton value={mint.clientId} label="Copy client ID" />
+              </div>
+              <p className="mt-1.5 text-[10px] text-sky-300/55">
+                Usage:{" "}
+                <code className="font-mono text-sky-200/80">
+                  GET /api/v1/apps/{mint.clientId}/me/usage
+                </code>
+              </p>
+            </div>
+          ) : null}
         </output>
       )}
 

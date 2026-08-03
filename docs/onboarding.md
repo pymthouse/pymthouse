@@ -30,7 +30,17 @@ curl -X POST "$BASE/api/v1/network/key" \
   -H "Cookie: …"
 ```
 
-Response includes `clientId` (public `app_…` only), bare `apiKey` (`pmth_*`), and optional `sdkToken` for livepeer-python-sdk. Use the key as `Authorization: Bearer` on `/api/v1/user/usage*` (or `/api/v1/apps/{clientId}/me/usage*`).
+Response includes `clientId` (public `app_…` only), bare `apiKey` (`pmth_*`), and optional `sdkToken` for livepeer-python-sdk.
+
+```bash
+# Path-scoped end-user usage (preferred)
+curl -sS -H "Authorization: Bearer ${API_KEY}" \
+  "${BASE}/api/v1/apps/${CLIENT_ID}/me/usage?groupBy=pipeline_model"
+
+# Pathless alias (app resolved from the credential)
+curl -sS -H "Authorization: Bearer ${API_KEY}" \
+  "${BASE}/api/v1/user/usage?groupBy=pipeline_model"
+```
 
 Do **not** treat the default `clientId` as a target for confidential Builder API backends. The Personal Access Token card on My Apps exposes the same flow in the dashboard.
 
