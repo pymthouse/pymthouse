@@ -6,6 +6,8 @@ import {
   AppScopedSignerTokenExchangeError,
   GRANT_TYPE_TOKEN_EXCHANGE,
   handleAppScopedSignerTokenExchange,
+  handleIssuerApiKeySignerTokenExchange,
+  looksLikeAppApiKeySubjectToken,
   resolveAppScopedSubjectToken,
   SUBJECT_ACCESS_TOKEN_TYPE,
   validateOptionalM2mClient,
@@ -250,4 +252,99 @@ test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope
   );
 
   assert.equal(session.access_token, "eyJ.signer.jwt");
+});
+
+test("looksLikeAppApiKeySubjectToken accepts bare pmth_ and composite", () => {
+  assert.equal(looksLikeAppApiKeySubjectToken("pmth_abc"), true);
+  assert.equal(
+    looksLikeAppApiKeySubjectToken(`${PUBLIC_ID}_${"a".repeat(64)}`),
+    true,
+  );
+  assert.equal(looksLikeAppApiKeySubjectToken("a".repeat(64)), true);
+  assert.equal(looksLikeAppApiKeySubjectToken("pmth_cs_secret"), false);
+  assert.equal(looksLikeAppApiKeySubjectToken("header.payload.sig"), false);
+});
+
+test("handleIssuerApiKeySignerTokenExchange resolves app from bare pmth_ subject", async () => {
+  const bare = "pmth_7c3d2ae03dcca8cfa04223523301b8b29f81a883294492c7e07a2333cb3d24d5";
+  const session = await handleIssuerApiKeySignerTokenExchange(
+    {
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: bare,
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-issuer",
+    },
+    {
+      resolveActiveAppApiKeyFromBearer: async (token) => {
+        assert.equal(token, bare);
+        return {
+          apiKeyId: "key-1",
+          developerAppId: "dev-app-1",
+          publicClientId: PUBLIC_ID,
+          appUserId: "au-1",
+          externalUserId: "ext-1",
+          label: null,
+        };
+      },
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async (input) => {
+        assert.equal(input.publicClientId, PUBLIC_ID);
+        assert.equal(input.externalUserId, "ext-1");
+        return {
+          access_token: "eyJ.personal.signer",
+          token_type: "Bearer" as const,
+          expires_in: 300,
+          scope: "sign:job",
+          balanceUsdMicros: "0",
+          lifetimeGrantedUsdMicros: "0",
+        };
+      },
+      getClientSignerApiUrl: () => "https://signer.example",
+      getSignerDiscoveryUrl: () => undefined,
+    },
+  );
+
+  assert.equal(session.access_token, "eyJ.personal.signer");
+  assert.equal(session.token_type, "Bearer");
+  assert.equal(session.issued_token_type, SUBJECT_ACCESS_TOKEN_TYPE);
+  assert.equal(session.correlation_id, "corr-issuer");
+});
+
+test("handleIssuerApiKeySignerTokenExchange rejects unknown bare key", async () => {
+  await assert.rejects(
+    () =>
+      handleIssuerApiKeySignerTokenExchange(
+        {
+          clientId: "",
+          clientSecret: "",
+          grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+          subjectToken: "pmth_deadbeef",
+          subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+          requestedTokenType: "",
+          resource: "",
+          audiences: [],
+          correlationId: "corr-miss",
+        },
+        {
+          resolveActiveAppApiKeyFromBearer: async () => null,
+        },
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof AppScopedSignerTokenExchangeError);
+      assert.equal(err.code, "invalid_grant");
+      return true;
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { authenticateAppClient } from "@/lib/auth";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
@@ -104,4 +104,52 @@ export async function resolveAppForUsageAccess(input: {
   } catch {
     return null;
   }
+}
+
+type AppIdRouteContext = { params: Promise<{ id: string }> };
+
+/**
+ * Builder + legacy `/apps/.../usage` entrypoint (M2M Basic only).
+ * Shared so the two mounts stay identical without CPD clones.
+ */
+export async function getBuilderAppUsage(
+  request: Request,
+  context: AppIdRouteContext,
+): Promise<NextResponse> {
+  const { id: clientId } = await context.params;
+  const app = await resolveAppForUsageAccess({
+    request,
+    clientId,
+    m2mOnly: true,
+  });
+  if (!app) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return handleAppUsageGet({ request, app });
+}
+
+/**
+ * Builder + legacy `/apps/.../usage/balance` entrypoint (M2M Basic only).
+ * Shared so the two mounts stay identical without CPD clones.
+ */
+export async function getBuilderAppUsageBalance(
+  request: NextRequest,
+  context: AppIdRouteContext,
+): Promise<NextResponse> {
+  const { id: clientId } = await context.params;
+  const externalUserId = request.nextUrl.searchParams.get("externalUserId")?.trim();
+  if (!externalUserId) {
+    return NextResponse.json({ error: "externalUserId is required" }, { status: 400 });
+  }
+
+  const app = await resolveAppForUsageAccess({
+    request,
+    clientId,
+    m2mOnly: true,
+  });
+  if (!app) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  return handleAppUsageBalanceGet({ app, externalUserId });
 }

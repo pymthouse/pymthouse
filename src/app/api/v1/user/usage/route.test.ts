@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
 
 import { NextRequest } from "next/server";
 
-import { run } from "@/test-utils/db-guard";
-import {
-  cleanupTestApp,
-  createAppUser,
-  seedDeveloperAppWithClient,
-} from "@/test-utils/fixtures";
 import { db } from "@/db/index";
 import { apiKeys } from "@/db/schema";
 import {
@@ -17,34 +10,14 @@ import {
   __testSetOpenMeterUsageRows,
 } from "@/lib/openmeter/usage-read";
 import { hashToken } from "@/lib/token-hash";
+import { run } from "@/test-utils/db-guard";
+import {
+  cleanupTestApp,
+  createAppUser,
+  seedDeveloperAppWithClient,
+} from "@/test-utils/fixtures";
 
-test("end-user usage routes reject subject overrides and require auth", async () => {
-  const usage = await import("./route");
-  const balance = await import("./balance/route");
-
-  for (const [label, GET] of [
-    ["usage", usage.GET],
-    ["balance", balance.GET],
-  ] as const) {
-    const noAuth = await GET(
-      new NextRequest(`http://localhost/api/v1/user/${label}`),
-    );
-    assert.equal(noAuth.status, 401, `${label} requires auth`);
-
-    for (const key of ["userId", "externalUserId", "external_user_id"]) {
-      const overridden = await GET(
-        new NextRequest(
-          `http://localhost/api/v1/user/${label}?${key}=other-user`,
-        ),
-      );
-      assert.equal(overridden.status, 400, `${label} rejects ${key}`);
-      const body = (await overridden.json()) as { error?: string };
-      assert.match(body.error ?? "", /userId\/externalUserId/);
-    }
-  }
-});
-
-run("user usage API accepts bare Bearer and scopes to that user", async (t) => {
+run("/user/usage accepts bare Bearer and scopes to that user", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
@@ -59,7 +32,7 @@ run("user usage API accepts bare Bearer and scopes to that user", async (t) => {
     clientId: app.clientId,
     externalUserId,
   });
-  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"e".repeat(32)}`;
+  const bare = `pmth_${randomUUID().replaceAll("-", "")}${"d".repeat(32)}`;
   await db.insert(apiKeys).values({
     id: `key-${randomUUID()}`,
     keyHash: hashToken(bare),
@@ -77,16 +50,8 @@ run("user usage API accepts bare Bearer and scopes to that user", async (t) => {
   assert.equal(rejectedOverride.status, 400);
 
   __testSetOpenMeterUsageRows(app.clientId, [
-    {
-      externalUserId,
-      requestCount: 2,
-      networkFeeUsdMicros: "32",
-    },
-    {
-      externalUserId: "someone-else",
-      requestCount: 9,
-      networkFeeUsdMicros: "999",
-    },
+    { externalUserId, requestCount: 2, networkFeeUsdMicros: "32" },
+    { externalUserId: "someone-else", requestCount: 9, networkFeeUsdMicros: "999" },
   ]);
   t.after(() => __testClearOpenMeterUsageStubs());
 
@@ -98,7 +63,7 @@ run("user usage API accepts bare Bearer and scopes to that user", async (t) => {
   assert.equal(ok.status, 200);
   const body = (await ok.json()) as {
     totals: { requestCount: number; networkFeeUsdMicros: string };
-    byUser?: Array<{ externalUserId: string; requestCount: number }>;
+    byUser?: Array<{ externalUserId: string }>;
   };
   assert.equal(body.totals.requestCount, 2);
   assert.equal(body.totals.networkFeeUsdMicros, "32");

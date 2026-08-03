@@ -1,6 +1,7 @@
 import { hasScope } from "@/lib/auth";
 import {
   resolveActiveAppApiKey,
+  resolveActiveAppApiKeyFromBearer,
 } from "@/lib/app-api-keys";
 import { getDiscoveryRawUrl } from "@/lib/discovery-service-url";
 import { validateClientSecret } from "@/lib/oidc/clients";
@@ -40,6 +41,24 @@ const COMPOSITE_APP_API_KEY_PREFIX_RE = /^app_[a-f0-9]{24}_/;
 const COMPOSITE_APP_API_KEY_RE = /^app_[a-f0-9]{24}_.+/;
 /** Opaque hex secret from a composite exchange (subject_token after split). */
 const OPAQUE_HEX_SECRET_RE = /^[a-f0-9]{32,}$/i;
+
+/**
+ * True when `subject_token` is a stored app-user API key shape (not a JWT).
+ * Includes bare `pmth_*`, composite `app_*_*`, and opaque hex secrets.
+ */
+export function looksLikeAppApiKeySubjectToken(subjectToken: string): boolean {
+  const token = subjectToken.trim();
+  if (!token) {
+    return false;
+  }
+  if (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) {
+    return true;
+  }
+  if (COMPOSITE_APP_API_KEY_RE.test(token)) {
+    return true;
+  }
+  return OPAQUE_HEX_SECRET_RE.test(token);
+}
 
 export class AppScopedSignerTokenExchangeError extends Error {
   code: string;
@@ -218,11 +237,7 @@ export async function resolveAppScopedSubjectToken(
   }
 
   // Bare stored API key, composite app_*_*, or opaque hex secret segment.
-  const looksLikeApiKey =
-    (token.startsWith("pmth_") && !token.startsWith("pmth_cs_")) ||
-    COMPOSITE_APP_API_KEY_RE.test(token) ||
-    OPAQUE_HEX_SECRET_RE.test(token);
-  if (!looksLikeApiKey) {
+  if (!looksLikeAppApiKeySubjectToken(token)) {
     throw new AppScopedSignerTokenExchangeError(
       "invalid_grant",
       "subject_token is not a valid access token for this issuer",
@@ -363,4 +378,68 @@ export async function handleAppScopedSignerTokenExchange(
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     correlation_id: input.correlationId,
   });
+}
+
+/**
+ * Issuer-path RFC 8693 exchange when `subject_token` is a bare/composite API
+ * key. Resolves the app from the credential (no `{clientId}` in the URL), then
+ * mints the same SignerSession as the app-scoped route.
+ */
+export async function handleIssuerApiKeySignerTokenExchange(
+  input: {
+    clientId: string;
+    clientSecret: string;
+    grantType: string;
+    subjectToken: string;
+    subjectTokenType: string;
+    requestedTokenType: string;
+    resource: string;
+    audiences: string[];
+    correlationId: string;
+  },
+  inject: Partial<AppScopedSignerTokenExchangeDeps> & {
+    resolveActiveAppApiKeyFromBearer?: typeof resolveActiveAppApiKeyFromBearer;
+  } = {},
+): Promise<SignerSession> {
+  const resolveFromBearer =
+    inject.resolveActiveAppApiKeyFromBearer ?? resolveActiveAppApiKeyFromBearer;
+  const subjectToken = input.subjectToken.trim();
+
+  if (!looksLikeAppApiKeySubjectToken(subjectToken)) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_grant",
+      "subject_token is not a valid access token for this issuer",
+    );
+  }
+
+  if (subjectToken.startsWith("pmth_cs_")) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_grant",
+      "client secrets cannot be used as subject_token",
+    );
+  }
+
+  const resolved = await resolveFromBearer(subjectToken);
+  if (!resolved) {
+    throw new AppScopedSignerTokenExchangeError(
+      "invalid_grant",
+      "subject_token is not a valid access token for this issuer",
+    );
+  }
+
+  return handleAppScopedSignerTokenExchange(
+    {
+      publicClientId: resolved.publicClientId,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      grantType: input.grantType,
+      subjectToken,
+      subjectTokenType: input.subjectTokenType,
+      requestedTokenType: input.requestedTokenType,
+      resource: input.resource,
+      audiences: input.audiences,
+      correlationId: input.correlationId,
+    },
+    inject,
+  );
 }

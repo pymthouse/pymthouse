@@ -20,9 +20,11 @@ defineRouteMetadata("post", "/api/v1/apps/{clientId}/oidc/token", {
   summary: "RFC 8693 signer session token exchange",
   description:
     "Exchanges a user access JWT (device code / authorization code) or per-app-user API key " +
-    "(`pmth_*`) for a short-lived signer JWT. The `{clientId}` path segment is the public " +
+    "(`pmth_*` or composite `app_*_*`) for a short-lived signer JWT. The `{clientId}` path segment is the public " +
     "OAuth app client id. Authenticate with the end-user `subject_token`; optional HTTP Basic " +
-    "with the M2M client is supported for server-side callers.",
+    "with the M2M client is supported for server-side callers. " +
+    "For self-serve usage reads, use `GET /api/v1/user/usage*` with bare Bearer `pmth_*` " +
+    "(or `GET /api/v1/apps/{clientId}/me/usage*` when the path already supplies the app).",
   request: {
     params: z.object({ clientId: clientIdParam }),
     body: {
@@ -108,7 +110,9 @@ defineRouteMetadata("post", "/api/v1/oidc/token", {
     "Served by oidc-provider at `/api/v1/oidc/token`. Standard OAuth/OIDC grants: " +
     "`authorization_code`, `refresh_token`, `client_credentials`, device code, and " +
     "pymthouse-specific exchanges (device approval, gateway session). " +
-    "Signer session exchange uses `POST /api/v1/apps/{clientId}/oidc/token` instead. " +
+    "RFC 8693 token exchange also accepts a bare `pmth_*` (or composite) API key as " +
+    "`subject_token` with `subject_token_type=urn:ietf:params:oauth:token-type:access_token` " +
+    "and returns a SignerSession (same as `POST /api/v1/apps/{clientId}/oidc/token`). " +
     "See OpenID Configuration for the full parameter matrix.",
   responses: {
     200: { description: "Token response per OAuth/OIDC." },

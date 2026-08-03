@@ -30,7 +30,7 @@ import DomainAllowlistBlock from "./DomainAllowlistBlock";
 import { mintOwnerApiKey } from "../mint-owner-api-key";
 import ApiKeyCredentialSwitcher from "@/components/apps/ApiKeyCredentialSwitcher";
 
-const API_REFERENCE_URL = "https://pymthouse.com/api/v1/docs";
+const API_REFERENCE_URL = "/api/v1/docs";
 
 export { API_REFERENCE_URL };
 
@@ -140,13 +140,24 @@ const TOKEN_EXCHANGE_GRANT =
 const SUBJECT_ACCESS_TOKEN_TYPE =
   "urn:ietf:params:oauth:token-type:access_token";
 
-function buildSignerTokenExchangeCurl(origin: string, publicClientId: string): string {
-  const encodedClientId = encodeURIComponent(publicClientId);
-  return String.raw`curl -sS -X POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token \
+function buildSignerTokenExchangeCurl(origin: string, publicClientId?: string): string {
+  // Pathless issuer exchange resolves the app from the bare API key (RFC 8693).
+  // App-scoped URL remains available when the client id is already known.
+  if (!publicClientId) {
+    return String.raw`curl -sS -X POST ${origin}/api/v1/oidc/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
-  -d "subject_token=${publicClientId}_YOUR_BARE_API_KEY" \
+  -d "subject_token=pmth_YOUR_BARE_API_KEY" \
   -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"`;
+  }
+  const encodedClientId = encodeURIComponent(publicClientId);
+  return String.raw`curl -sS -X POST ${origin}/api/v1/oidc/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=${TOKEN_EXCHANGE_GRANT}" \
+  -d "subject_token=pmth_YOUR_BARE_API_KEY" \
+  -d "subject_token_type=${SUBJECT_ACCESS_TOKEN_TYPE}"
+
+# Or path-scoped: POST ${origin}/api/v1/apps/${encodedClientId}/oidc/token`;
 }
 
 function buildDeviceAuthorizeCurl(origin: string, publicClientId: string): string {
@@ -164,9 +175,10 @@ function buildDevicePollCurl(origin: string, publicClientId: string): string {
   -d "client_id=${publicClientId}"`;
 }
 
-function buildBearerUsageCurl(publicClientId: string): string {
-  return String.raw`curl -sS https://your-signer.example/path \
-  -H "Authorization: Bearer ${publicClientId}_YOUR_BARE_API_KEY"`;
+function buildBearerUsageCurl(origin: string, publicClientId: string): string {
+  const encodedClientId = encodeURIComponent(publicClientId);
+  return String.raw`curl -sS ${origin}/api/v1/apps/${encodedClientId}/me/usage \
+  -H "Authorization: Bearer pmth_YOUR_BARE_API_KEY"`;
 }
 
 type CurlSnippet = Readonly<{
@@ -206,7 +218,7 @@ function resolveCurlSnippetsForSelection(input: {
       {
         id: "bearer-usage",
         title: "2. Use the API key as Bearer",
-        body: buildBearerUsageCurl(publicClientId),
+        body: buildBearerUsageCurl(origin, publicClientId),
       },
       {
         id: "api-key-exchange",

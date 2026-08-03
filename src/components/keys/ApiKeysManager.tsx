@@ -290,7 +290,11 @@ export default function ApiKeysManager() {
               Done
             </button>
           </div>
-          <ApiKeyCredentialSwitcher apiKey={mint.apiKey} sdkToken={mint.sdkToken} />
+          <ApiKeyCredentialSwitcher
+            apiKey={mint.apiKey}
+            sdkToken={mint.sdkToken}
+            defaultFormat="bearer"
+          />
         </output>
       )}
 
