@@ -24,6 +24,14 @@
 #   data.client_id retains the app id; data.usage_subject / external_user_id are bare ids.
 # - End-users keep CloudEvent subject = full compound auth_id.
 # - data.client_id / data.usage_subject always retain the parsed tenant + subject.
+#
+# Pipeline / model (wire -> CloudEvent dims):
+# - Preferred: Kafka pipeline is "base:model" (e.g. live-video-to-video:comfyui). Split on
+#   the first ':' into data.pipeline + data.model_id.
+# - Legacy: separate Kafka model_id (pre-encode images) is still accepted and preferred
+#   when present.
+# - Also passthrough (CloudEvent data only, not meter dimensions): app, session_status,
+#   orch_address, num_tickets.
 
 
 cache_resources:
@@ -159,6 +167,41 @@ pipeline:
         }
         let manifest_id_out = if $manifest_id != "" { $manifest_id } else { "unknown" }
 
+        # Pipeline / model: prefer legacy Kafka model_id; else split base:model.
+        let pipeline_raw = if $data.pipeline != "" && $data.pipeline != null {
+          $data.pipeline.string().trim()
+        } else {
+          ""
+        }
+        let legacy_model_id = if $data.model_id != "" && $data.model_id != null {
+          $data.model_id.string().trim()
+        } else {
+          ""
+        }
+        let pipeline_colon = $pipeline_raw.index_of(":")
+        let pipeline_has_model = $pipeline_colon > 0 && $pipeline_colon < $pipeline_raw.length() - 1
+        let pipeline_out = if $pipeline_raw == "" {
+          "unknown"
+        } else if $legacy_model_id != "" {
+          $pipeline_raw
+        } else if $pipeline_has_model {
+          $pipeline_raw.slice(0, $pipeline_colon)
+        } else {
+          $pipeline_raw
+        }
+        let model_id_out = if $legacy_model_id != "" {
+          $legacy_model_id
+        } else if $pipeline_has_model {
+          $pipeline_raw.slice($pipeline_colon + 1)
+        } else {
+          "unknown"
+        }
+
+        let app_out = $data.app.or("").string()
+        let session_status_out = $data.session_status.or("").string()
+        let orch_address_out = $data.orch_address.or("").string()
+        let num_tickets_out = $data.num_tickets.number().or(0)
+
         root = if $auth_id == "" {
           deleted()
         } else {
@@ -175,9 +218,13 @@ pipeline:
               "usage_subject_type": $usage_subject_type,
               "external_user_id": $usage_subject_out,
               "network_fee_usd_micros": $fee_usd_micros,
-              "pipeline": if $data.pipeline != "" && $data.pipeline != null { $data.pipeline } else { "unknown" },
-              "model_id": if $data.model_id != "" && $data.model_id != null { $data.model_id } else { "unknown" },
+              "pipeline": $pipeline_out,
+              "model_id": $model_id_out,
               "manifest_id": $manifest_id_out,
+              "app": $app_out,
+              "session_status": $session_status_out,
+              "orch_address": $orch_address_out,
+              "num_tickets": $num_tickets_out,
               # Numbers (not strings) so OpenMeter SUM $.billable_secs / $.fee_wei accumulate.
               "billable_secs": $billable_secs,
               "pixels": $data.pixels.string().or("0"),
