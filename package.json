@@ -3,7 +3,7 @@
   "version": "0.3.5",
   "private": true,
   "engines": {
-    "node": ">=20.18.1"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "predev": "npm run db:prepare",
@@ -78,6 +78,7 @@
     },
     "minimatch": "^10.2.6",
     "js-yaml": "4.3.0",
+    "nanoid": "5.1.16",
     "postcss": "^8.5.18",
     "undici": "^7.29.0",
     "ws": "8.21.1",
