@@ -7,7 +7,7 @@ import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 
-const DEFAULT_REAUTH_TTL_SECONDS = 60;
+const DEFAULT_EXPIRY_TTL_SECONDS = 60;
 const DEFAULT_BALANCE_CACHE_TTL_SECONDS = 20;
 const BALANCE_CACHE_MAX_ENTRIES = 1000;
 
@@ -23,12 +23,13 @@ function resolvePositiveSecondsEnv(name: string, fallback: number): number {
   return parsed;
 }
 
-function resolveReauthTtlSeconds(): number {
+/** Whole seconds for the webhook `expiry` cap that forces go-livepeer to reauthorize. */
+function resolveExpiryTtlSeconds(): number {
   const ttl = resolvePositiveSecondsEnv(
     "SIGNER_BALANCE_REAUTH_TTL_SECONDS",
-    DEFAULT_REAUTH_TTL_SECONDS,
+    DEFAULT_EXPIRY_TTL_SECONDS,
   );
-  return ttl > 0 ? ttl : DEFAULT_REAUTH_TTL_SECONDS;
+  return Number.isInteger(ttl) && ttl > 0 ? ttl : DEFAULT_EXPIRY_TTL_SECONDS;
 }
 
 export type SpendableBalanceCache = {
@@ -121,7 +122,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
   const cache = getSharedSpendableCache();
   return createBalanceGate({
     getBalanceUsdMicros: (identity) => cache.get(identity),
-    reauthTtlSeconds: resolveReauthTtlSeconds(),
+    expiryTtl: { seconds: resolveExpiryTtlSeconds() },
     failClosed: true,
     onError: (err) => {
       console.warn(
