@@ -646,6 +646,23 @@ export const ownerBillingConfig = pgTable(
   (t) => [uniqueIndex("idx_owner_billing_config_owner").on(t.ownerUserId)],
 );
 
+/**
+ * Singleton platform cost-rail defaults (id = "default").
+ *
+ * Owner Starter included allowance is admin-editable here so changing the
+ * default for new developers (and base-key re-sync) does not require a
+ * redeploy. Env `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS` is the
+ * bootstrap fallback when this row is absent.
+ */
+export const platformBillingSettings = pgTable("platform_billing_settings", {
+  id: text("id").primaryKey(),
+  ownerStarterIncludedUsdMicros: text("owner_starter_included_usd_micros").notNull(),
+  updatedBy: text("updated_by").references(() => users.id),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 export const appBillingOauthStates = pgTable(
   "app_billing_oauth_states",
   {

@@ -267,6 +267,13 @@
       "when": 1785900000000,
       "tag": "0036_owner_billing_config",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0037_platform_billing_settings",
+      "breakpoints": true
     }
   ]
 }

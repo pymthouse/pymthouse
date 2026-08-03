@@ -1,8 +1,9 @@
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
+import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
+import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 import { defaultRetailRateUsd } from "@/lib/plan-pricing";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import {
@@ -17,9 +18,11 @@ import {
   findKonnectFeatureIdByKey,
 } from "./konnect-catalog";
 import { buildKonnectUsageRateCard } from "./konnect-plan-body";
+import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
   isOpenMeterConflictError,
   isOpenMeterPlanAlreadyPublishedError,
+  isOpenMeterPlanImmutableError,
   isOpenMeterPlanNotFoundError,
   isOpenMeterStripeBillingError,
 } from "./plan-errors";
@@ -33,6 +36,7 @@ import {
   OWNER_STARTER_PLAN_KEY,
   OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
+  ownerStarterPlanKeyForAmount,
 } from "./owner-starter-key";
 
 export {
@@ -40,6 +44,8 @@ export {
   OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
   ownerStarterIncludedUsdMicros,
+  ownerStarterPlanKeyForAmount,
+  isBaseOwnerStarterPlanKey,
 } from "./owner-starter-key";
 
 export type OwnerStarterPlanRef = {
@@ -57,12 +63,13 @@ function parseIncludedMicros(raw: string): number {
 }
 
 function buildOwnerStarterPlanBody(input: {
+  planKey: string;
   featureId: string;
   includedUsdMicros: number;
   unitAmount: string;
 }): Record<string, unknown> {
   return {
-    key: OWNER_STARTER_PLAN_KEY,
+    key: input.planKey,
     name: OWNER_STARTER_PLAN_NAME,
     currency: "USD",
     billing_cadence: "P1M",
@@ -102,7 +109,6 @@ async function findPlanByKey(
 ): Promise<FoundPlan | null> {
   try {
     const listed = await client.plans.list({
-      // SDK typings vary; key filter is supported by Konnect.
       ...( { key: planKey } as Record<string, unknown> ),
       page: 1,
       pageSize: 50,
@@ -158,11 +164,6 @@ async function publishOwnerStarterPlanBestEffort(
   }
 }
 
-/**
- * The Owner Starter plan is a single platform-global Konnect plan; once it is
- * verified/published, re-checking it costs a features + plans list per call.
- * Cache the resolved reference per process.
- */
 let ownerStarterPlanCache: ReturnType<
   typeof createAsyncTtlCache<OwnerStarterPlanRef>
 > | null = null;
@@ -178,26 +179,75 @@ export function resetOwnerStarterPlanCacheForTests(): void {
   ownerStarterPlanCache = null;
 }
 
-const OWNER_STARTER_PLAN_CACHE_KEY = "owner-starter-plan";
+/** Drop cached Owner Starter plan refs (call after platform default / override changes). */
+export function invalidateOwnerStarterPlanCache(): void {
+  ownerStarterPlanCache = null;
+}
+
+function cacheKeyForAmount(includedUsdMicros: string): string {
+  return `owner-starter-plan:${includedUsdMicros}`;
+}
+
+async function createOwnerStarterPlan(input: {
+  client: OpenMeter;
+  planKey: string;
+  featureId: string;
+  includedUsdMicros: string;
+}): Promise<string> {
+  const body = buildOwnerStarterPlanBody({
+    planKey: input.planKey,
+    featureId: input.featureId,
+    includedUsdMicros: parseIncludedMicros(input.includedUsdMicros),
+    unitAmount: defaultRetailRateUsd(),
+  });
+
+  try {
+    const created = await input.client.plans.create(
+      body as unknown as Parameters<OpenMeter["plans"]["create"]>[0],
+    );
+    if (!created?.id) {
+      throw new Error("Failed to create Owner Starter plan");
+    }
+    return created.id;
+  } catch (err) {
+    if (!isOpenMeterConflictError(err)) {
+      throw err;
+    }
+    const raced = await findPlanByKey(input.client, input.planKey);
+    if (!raced?.id) {
+      throw err;
+    }
+    return raced.id;
+  }
+}
 
 /**
- * Ensure the platform Owner Starter plan exists and is published in Konnect.
- * Not a Neon `plans` row — owners share one Konnect plan across all apps.
+ * Ensure an Owner Starter plan exists for the given included allowance.
+ * Amount-keyed: platform default → base key; overrides → `base_<micros>`.
  */
-export async function ensureOwnerStarterPlanSynced(): Promise<OwnerStarterPlanRef> {
-  return getOwnerStarterPlanCache().get(
-    OWNER_STARTER_PLAN_CACHE_KEY,
-    ensureOwnerStarterPlanSyncedUncached,
+export async function ensureOwnerStarterPlanSynced(
+  includedUsdMicros?: string,
+): Promise<OwnerStarterPlanRef> {
+  const platformDefault = await resolvePlatformOwnerStarterIncludedUsdMicros();
+  const amount = (includedUsdMicros ?? platformDefault).trim();
+  const planKey = ownerStarterPlanKeyForAmount(amount, platformDefault);
+
+  return getOwnerStarterPlanCache().get(cacheKeyForAmount(amount), async () =>
+    ensureOwnerStarterPlanSyncedUncached({
+      includedUsdMicros: amount,
+      planKey,
+    }),
   );
 }
 
-async function ensureOwnerStarterPlanSyncedUncached(): Promise<OwnerStarterPlanRef> {
+async function ensureOwnerStarterPlanSyncedUncached(input: {
+  includedUsdMicros: string;
+  planKey: string;
+}): Promise<OwnerStarterPlanRef> {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
 
-  const includedUsdMicros = defaultStarterIncludedUsdMicros();
-  const included = parseIncludedMicros(includedUsdMicros);
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey);
   if (!useKonnect) {
@@ -211,51 +261,112 @@ async function ensureOwnerStarterPlanSyncedUncached(): Promise<OwnerStarterPlanR
     throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
   }
 
-  const existing = await findPlanByKey(client, OWNER_STARTER_PLAN_KEY);
+  const existing = await findPlanByKey(client, input.planKey);
   if (existing?.id) {
     if (planNeedsPublish(existing.status)) {
       await publishOwnerStarterPlanBestEffort(client, existing.id);
     }
     return {
-      key: OWNER_STARTER_PLAN_KEY,
+      key: input.planKey,
       openmeterPlanId: existing.id,
-      includedUsdMicros,
+      includedUsdMicros: input.includedUsdMicros,
     };
   }
 
-  const body = buildOwnerStarterPlanBody({
+  let openmeterPlanId = await createOwnerStarterPlan({
+    client,
+    planKey: input.planKey,
     featureId,
-    includedUsdMicros: included,
-    unitAmount: defaultRetailRateUsd(),
+    includedUsdMicros: input.includedUsdMicros,
   });
-
-  let openmeterPlanId: string;
-  try {
-    const created = await client.plans.create(
-      body as unknown as Parameters<OpenMeter["plans"]["create"]>[0],
-    );
-    if (!created?.id) {
-      throw new Error("Failed to create Owner Starter plan");
-    }
-    openmeterPlanId = created.id;
-  } catch (err) {
-    if (!isOpenMeterConflictError(err)) {
-      throw err;
-    }
-    const raced = await findPlanByKey(client, OWNER_STARTER_PLAN_KEY);
-    if (!raced?.id) {
-      throw err;
-    }
-    openmeterPlanId = raced.id;
-  }
-
   openmeterPlanId = await publishOwnerStarterPlanBestEffort(client, openmeterPlanId);
 
   return {
-    key: OWNER_STARTER_PLAN_KEY,
+    key: input.planKey,
     openmeterPlanId,
-    includedUsdMicros,
+    includedUsdMicros: input.includedUsdMicros,
   };
+}
+
+/**
+ * Force-update (or create) the Owner Starter plan for an amount and publish it.
+ * Used when the platform default changes so base-key discounts.usage is rewritten.
+ */
+export async function forceSyncOwnerStarterPlan(
+  includedUsdMicros: string,
+): Promise<OwnerStarterPlanRef> {
+  if (!isHostedAdminClientAvailable()) {
+    throw new Error("OpenMeter is not configured");
+  }
+
+  const platformDefault = await resolvePlatformOwnerStarterIncludedUsdMicros();
+  const amount = includedUsdMicros.trim();
+  const planKey = ownerStarterPlanKeyForAmount(amount, platformDefault);
+
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey);
+  if (!useKonnect) {
+    throw new Error("Owner Starter plan requires Konnect metering routes");
+  }
+
+  const client = getHostedAdminClient();
+  await ensureKonnectTenantCatalog();
+  const featureId = await findKonnectFeatureIdByKey(DEFAULT_TRIAL_FEATURE_KEY);
+  if (!featureId) {
+    throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
+  }
+
+  const body = buildOwnerStarterPlanBody({
+    planKey,
+    featureId,
+    includedUsdMicros: parseIncludedMicros(amount),
+    unitAmount: defaultRetailRateUsd(),
+  });
+
+  const existing = await findPlanByKey(client, planKey);
+  let openmeterPlanId = existing?.id;
+
+  if (openmeterPlanId) {
+    try {
+      const updated = await client.plans.update(
+        openmeterPlanId,
+        body as unknown as Parameters<OpenMeter["plans"]["update"]>[1],
+      );
+      openmeterPlanId = updated?.id ?? openmeterPlanId;
+    } catch (updateErr) {
+      if (
+        !isOpenMeterPlanNotFoundError(updateErr) &&
+        !isOpenMeterPlanImmutableError(updateErr)
+      ) {
+        throw updateErr;
+      }
+      // Published versions are immutable — create a new draft under the same key.
+      openmeterPlanId = await createOwnerStarterPlan({
+        client,
+        planKey,
+        featureId,
+        includedUsdMicros: amount,
+      });
+    }
+  } else {
+    openmeterPlanId = await createOwnerStarterPlan({
+      client,
+      planKey,
+      featureId,
+      includedUsdMicros: amount,
+    });
+  }
+
+  openmeterPlanId = await publishOwnerStarterPlanBestEffort(client, openmeterPlanId);
+  invalidateOwnerStarterPlanCache();
+
+  const ref: OwnerStarterPlanRef = {
+    key: planKey,
+    openmeterPlanId,
+    includedUsdMicros: amount,
+  };
+  getOwnerStarterPlanCache().seed(cacheKeyForAmount(amount), ref);
+  return ref;
 }
 
 async function findExistingOwnerWalletSubscription(input: {
@@ -264,7 +375,11 @@ async function findExistingOwnerWalletSubscription(input: {
   planKey: string;
   openmeterPlanId: string;
   hintOpenMeterSubscriptionId?: string | null;
-}): Promise<{ id: string; planKey: string; openmeterPlanId: string } | null> {
+}): Promise<{
+  id: string;
+  planKey: string;
+  openmeterPlanId: string;
+} | null> {
   if (input.hintOpenMeterSubscriptionId) {
     const verified = await verifyOpenMeterSubscriptionId(
       input.client,
@@ -273,8 +388,8 @@ async function findExistingOwnerWalletSubscription(input: {
     if (verified?.id) {
       return {
         id: verified.id,
-        planKey: input.planKey,
-        openmeterPlanId: input.openmeterPlanId,
+        planKey: verified.planKey ?? input.planKey,
+        openmeterPlanId: verified.planId ?? input.openmeterPlanId,
       };
     }
   }
@@ -288,8 +403,8 @@ async function findExistingOwnerWalletSubscription(input: {
   if (existing?.id) {
     return {
       id: existing.id,
-      planKey: input.planKey,
-      openmeterPlanId: input.openmeterPlanId,
+      planKey: existing.planKey ?? input.planKey,
+      openmeterPlanId: existing.planId ?? input.openmeterPlanId,
     };
   }
 
@@ -312,11 +427,10 @@ async function findExistingOwnerWalletSubscription(input: {
     if (isOwnerStarterPlanKey(active.planKey)) {
       return {
         id: active.id,
-        planKey: input.planKey,
-        openmeterPlanId: input.openmeterPlanId,
+        planKey: active.planKey ?? input.planKey,
+        openmeterPlanId: active.planId ?? input.openmeterPlanId,
       };
     }
-    // Legacy per-app Starter — migration cancels and resubscribes.
     return {
       id: active.id,
       planKey: active.planKey ?? input.planKey,
@@ -328,8 +442,8 @@ async function findExistingOwnerWalletSubscription(input: {
 }
 
 /**
- * Subscribe the shared owner customer to the platform Owner Starter plan.
- * Cancels are left to migration/dedupe scripts — this only ensures one active sub.
+ * Subscribe the shared owner customer to the Owner Starter plan for their
+ * resolved allowance (platform default or per-owner override).
  */
 export async function ensureOwnerStarterSubscription(input: {
   ownerUserId: string;
@@ -350,18 +464,16 @@ export async function ensureOwnerStarterSubscription(input: {
     };
   }
 
-  const plan = await ensureOwnerStarterPlanSynced();
+  const includedUsdMicros = await resolveOwnerStarterIncludedUsdMicros(
+    input.ownerUserId,
+  );
+  const plan = await ensureOwnerStarterPlanSynced(includedUsdMicros);
   const client = getHostedAdminClient();
   const customer = await ensureOwnerCustomer(
     client,
     input.ownerUserId,
     input.publicClientIds ?? [],
   );
-
-  // Starter needs no Stripe setup: an owner gets a Stripe customer and a
-  // billing profile when they attach a payment method. Pinning them to the
-  // owners Stripe billing profile here makes Konnect reject the subscription
-  // with "customers need a default payment method".
 
   const existing = await findExistingOwnerWalletSubscription({
     client,
@@ -370,17 +482,51 @@ export async function ensureOwnerStarterSubscription(input: {
     openmeterPlanId: plan.openmeterPlanId,
     hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
   });
+
   if (existing) {
-    return {
-      openmeterSubscriptionId: existing.id,
-      planKey: existing.planKey,
-      openmeterPlanId: existing.openmeterPlanId,
-      created: false,
-    };
+    if (
+      isOwnerStarterPlanKey(existing.planKey) &&
+      existing.planKey === plan.key &&
+      existing.openmeterPlanId === plan.openmeterPlanId
+    ) {
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey,
+        openmeterPlanId: existing.openmeterPlanId,
+        created: false,
+      };
+    }
+
+    if (isOwnerStarterPlanKey(existing.planKey)) {
+      try {
+        await changeKonnectSubscription({
+          subscriptionId: existing.id,
+          customerId: customer.id,
+          planId: plan.openmeterPlanId,
+          timing: "immediate",
+        });
+        return {
+          openmeterSubscriptionId: existing.id,
+          planKey: plan.key,
+          openmeterPlanId: plan.openmeterPlanId,
+          created: false,
+        };
+      } catch (err) {
+        console.warn(
+          "openmeter: owner starter subscription change failed; recreating",
+          err instanceof Error ? err.message : String(err),
+        );
+        try {
+          await client.subscriptions.cancel(existing.id, {
+            timing: "immediate",
+          });
+        } catch {
+          // fall through to create
+        }
+      }
+    }
   }
 
-  // Plan key is the SDK PlanReferenceInput contract. Free billing-profile
-  // override is applied only when create fails with the Stripe-setup 409.
   try {
     const createdSub = await client.subscriptions.create({
       customerId: customer.id,
@@ -397,9 +543,8 @@ export async function ensureOwnerStarterSubscription(input: {
     };
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
-      // Konnect lost the plan the cached ref points at — force a real resync.
-      getOwnerStarterPlanCache().delete(OWNER_STARTER_PLAN_CACHE_KEY);
-      const resynced = await ensureOwnerStarterPlanSynced();
+      invalidateOwnerStarterPlanCache();
+      const resynced = await ensureOwnerStarterPlanSynced(includedUsdMicros);
       const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
         client,
         customerId: customer.id,
@@ -453,11 +598,6 @@ export async function ensureOwnerStarterSubscription(input: {
   }
 }
 
-/**
- * Create an Owner Starter subscription, applying the free billing profile if
- * Konnect rejects for missing Stripe app data. Used after a plan-not-found
- * resync so that path still recovers from the Stripe-setup 409.
- */
 async function createOwnerStarterSubscriptionWithBillingRecovery(input: {
   client: OpenMeter;
   customerId: string;

@@ -14,19 +14,32 @@ export const OWNER_STARTER_PLAN_NAME = "Owner Starter";
  * (`pymthouse_owner_starter_50000000`). Plan count is therefore bounded by the
  * number of distinct allowances, not by the number of developers.
  *
- * The allowance is baked into the plan's `discounts.usage`, so an owner whose
- * override is not reflected in their plan would be shown an allowance OpenMeter
- * will not honour when invoicing. Resolving key and amount together is what
- * keeps the two in step. See docs/adr-owner-vs-app-billing.md.
+ * Pass `platformDefaultMicros` from `resolvePlatformOwnerStarterIncludedUsdMicros`
+ * so amount-keyed vs base-key classification matches the DB/env default, not a
+ * stale sync env read. When omitted, falls back to the env/hardcoded M2M helper
+ * (tests and sync-only call sites).
+ *
+ * See docs/adr-owner-vs-app-billing.md.
  */
 export function ownerStarterPlanKeyForAmount(
   includedUsdMicros: string,
+  platformDefaultMicros: string = defaultStarterIncludedUsdMicros(),
 ): string {
   const trimmed = includedUsdMicros.trim();
-  if (!/^\d+$/.test(trimmed) || trimmed === defaultStarterIncludedUsdMicros()) {
+  const defaultMicros = platformDefaultMicros.trim();
+  if (!/^\d+$/.test(trimmed) || trimmed === defaultMicros) {
     return OWNER_STARTER_PLAN_KEY;
   }
   return `${OWNER_STARTER_PLAN_KEY}_${trimmed}`;
+}
+
+/** True when `planKey` is exactly the shared base Owner Starter key (not an amount variant). */
+export function isBaseOwnerStarterPlanKey(
+  planKey: string | null | undefined,
+): boolean {
+  const key = planKey?.trim();
+  if (!key) return false;
+  return key.toLowerCase() === OWNER_STARTER_PLAN_KEY.toLowerCase();
 }
 
 export function isOwnerStarterPlanKey(planKey: string | null | undefined): boolean {
@@ -40,7 +53,10 @@ export function isOwnerStarterPlanKey(planKey: string | null | undefined): boole
   return lower === base || new RegExp(`^${base}_\\d+$`).test(lower);
 }
 
-/** Included usage discount for the platform-default Owner Starter plan. */
+/**
+ * Sync env/hardcoded Owner Starter default — bootstrap only.
+ * Prefer `resolvePlatformOwnerStarterIncludedUsdMicros()` on async Owner paths.
+ */
 export function ownerStarterIncludedUsdMicros(): string {
   return defaultStarterIncludedUsdMicros();
 }

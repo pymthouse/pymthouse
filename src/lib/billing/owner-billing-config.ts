@@ -7,7 +7,7 @@ import {
   platformDefaultApplicationFeeBps,
   platformDefaultEndUserCap,
 } from "@/lib/billing/platform-billing-defaults";
-import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
+import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 
 /**
  * Per-owner cost-rail overrides.
@@ -93,7 +93,7 @@ export async function resolveOwnerBilling(
 ): Promise<ResolvedOwnerBilling> {
   const overrides = await getOwnerBillingOverrides(ownerUserId);
   return mergeOwnerBilling(overrides, {
-    starterIncludedUsdMicros: defaultStarterIncludedUsdMicros(),
+    starterIncludedUsdMicros: await resolvePlatformOwnerStarterIncludedUsdMicros(),
     endUserCap: platformDefaultEndUserCap(),
     applicationFeeBps: platformDefaultApplicationFeeBps(),
   });
@@ -112,7 +112,12 @@ export async function resolveOwnerStarterIncludedUsdMicros(
   return (await resolveOwnerBilling(ownerUserId)).starterIncludedUsdMicros;
 }
 
-/** Upsert an owner's overrides. Admin-only at the route layer. */
+/**
+ * Upsert an owner's overrides. Admin-only at the route layer.
+ *
+ * Omitted fields keep their previous values; explicit `null` clears an override
+ * back to the platform default.
+ */
 export async function setOwnerBillingOverrides(input: {
   ownerUserId: string;
   starterIncludedUsdMicros?: string | null;
@@ -122,22 +127,39 @@ export async function setOwnerBillingOverrides(input: {
   updatedBy: string;
 }): Promise<void> {
   const now = new Date().toISOString();
-  const values = {
-    starterIncludedUsdMicros: normalizeMicros(input.starterIncludedUsdMicros),
-    endUserCap: input.endUserCap ?? null,
-    applicationFeeBps: input.applicationFeeBps ?? null,
-    note: input.note?.trim() || null,
-    updatedBy: input.updatedBy,
-    updatedAt: now,
-  };
-
-  const existing = await db
-    .select({ id: ownerBillingConfig.id })
+  const existingRow = await db
+    .select({
+      id: ownerBillingConfig.id,
+      starterIncludedUsdMicros: ownerBillingConfig.starterIncludedUsdMicros,
+      endUserCap: ownerBillingConfig.endUserCap,
+      applicationFeeBps: ownerBillingConfig.applicationFeeBps,
+      note: ownerBillingConfig.note,
+    })
     .from(ownerBillingConfig)
     .where(eq(ownerBillingConfig.ownerUserId, input.ownerUserId))
     .limit(1);
 
-  if (existing[0]?.id) {
+  const prior = existingRow[0];
+  const values = {
+    starterIncludedUsdMicros:
+      input.starterIncludedUsdMicros === undefined
+        ? (prior?.starterIncludedUsdMicros ?? null)
+        : normalizeMicros(input.starterIncludedUsdMicros),
+    endUserCap:
+      input.endUserCap === undefined ? (prior?.endUserCap ?? null) : input.endUserCap,
+    applicationFeeBps:
+      input.applicationFeeBps === undefined
+        ? (prior?.applicationFeeBps ?? null)
+        : input.applicationFeeBps,
+    note:
+      input.note === undefined
+        ? (prior?.note ?? null)
+        : input.note?.trim() || null,
+    updatedBy: input.updatedBy,
+    updatedAt: now,
+  };
+
+  if (prior?.id) {
     await db
       .update(ownerBillingConfig)
       .set(values)
