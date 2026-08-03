@@ -70,6 +70,14 @@ test("mintDefaultAppNetworkKey creates app_users not provider_admins", async (t)
     assert.equal(result.clientId, app.clientId);
     assert.ok(result.apiKey.startsWith("pmth_"));
     assert.equal(result.apiKey.includes(app.clientId), false);
+    assert.ok(result.sdkToken);
+    const sdkPayload = JSON.parse(
+      Buffer.from(result.sdkToken!, "base64").toString("utf8"),
+    ) as { signer_headers?: { Authorization?: string } };
+    assert.equal(
+      sdkPayload.signer_headers?.Authorization,
+      `Bearer ${app.clientId}_${result.apiKey}`,
+    );
 
     const membership = await db
       .select()
