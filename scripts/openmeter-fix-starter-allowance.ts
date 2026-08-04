@@ -9,7 +9,7 @@
  *   npx tsx scripts/openmeter-fix-starter-allowance.ts --client-id app_xxx --apply
  */
 import "./load-env-first";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { closeDb, db } from "../src/db/index";
 import { developerApps, oidcClients, plans } from "../src/db/schema";
@@ -127,11 +127,14 @@ async function loadStarterRows(clientIds?: string[]): Promise<StarterRow[]> {
   const conditions = [
     eq(plans.isStarterDefault, true),
     eq(plans.status, "active"),
+    // plans.clientId is NULL for platform-scoped plans (Owner Starter). This
+    // script syncs per-app Starter plans only.
+    isNotNull(plans.clientId),
   ];
   if (clientIds && clientIds.length > 0) {
     conditions.push(inArray(plans.clientId, clientIds));
   }
-  return db
+  const rows = await db
     .select({
       id: plans.id,
       clientId: plans.clientId,
@@ -140,6 +143,10 @@ async function loadStarterRows(clientIds?: string[]): Promise<StarterRow[]> {
     })
     .from(plans)
     .where(and(...conditions));
+  // isNotNull filters these out in SQL; narrow for the type system too.
+  return rows.flatMap((row) =>
+    row.clientId ? [{ ...row, clientId: row.clientId }] : [],
+  );
 }
 
 async function listOwnedApps(ownerId: string): Promise<OwnedApp[]> {

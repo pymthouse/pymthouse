@@ -18,6 +18,7 @@ const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
 export type OpenMeterSubscriptionView = {
   id: string;
   status: string;
+  customerId: string | null;
   planKey: string | null;
   planId: string | null;
   activeFrom: string | null;
@@ -27,6 +28,8 @@ export type OpenMeterSubscriptionView = {
 type OpenMeterSubscriptionSourceItem = {
   id: string;
   status: string;
+  customerId?: string | null;
+  customer_id?: string | null;
   plan?: { key?: string; id?: string } | null;
   planId?: string;
   plan_id?: string;
@@ -64,10 +67,14 @@ function mapSubscriptionItem(item: OpenMeterSubscriptionSourceItem): OpenMeterSu
   const { planKey, planId } = readPlanFields(item);
   const activeFrom = item.activeFrom ?? item.active_from ?? null;
   const activeTo = item.activeTo ?? item.active_to ?? null;
+  const customerId =
+    (typeof item.customerId === "string" ? item.customerId : null) ??
+    (typeof item.customer_id === "string" ? item.customer_id : null);
 
   return {
     id: item.id,
     status: item.status,
+    customerId: customerId?.trim() || null,
     planKey,
     planId,
     activeFrom:

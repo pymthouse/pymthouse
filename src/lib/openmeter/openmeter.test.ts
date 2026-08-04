@@ -1389,9 +1389,14 @@ test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409"
   assert.equal(isOpenMeterStripeBillingError(stripeErr), true);
   assert.equal(isOpenMeterConflictError(stripeErr), true);
 
-  const stripeMessageOnly = new Error(stripeErr.message);
-  (stripeMessageOnly as unknown as { status: number }).status = 500;
-  assert.equal(isOpenMeterStripeBillingError(stripeMessageOnly), false);
+  // Konnect often omits .status on the thrown Error; message alone must still match.
+  const messageOnly = new Error(stripeErr.message);
+  assert.equal(isOpenMeterConflictError(messageOnly), true);
+  assert.equal(isOpenMeterStripeBillingError(messageOnly), true);
+
+  const unrelated500 = new Error("validation failed");
+  (unrelated500 as unknown as { status: number }).status = 500;
+  assert.equal(isOpenMeterStripeBillingError(unrelated500), false);
 });
 
 test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () => {
@@ -1497,6 +1502,7 @@ test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {
   assert.deepEqual(view, {
     id: "sub-1",
     status: "active",
+    customerId: null,
     planKey: "app_1:plan_starter",
     planId: null,
     activeFrom: "2026-01-01T00:00:00.000Z",

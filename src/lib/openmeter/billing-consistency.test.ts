@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  classifyOwnerPaidPlanRemoteConsistency,
   classifyOwnerSubscriptionMapping,
   classifyPhaseOutPastDeadline,
   classifySpendableGateConsistency,
@@ -11,6 +12,7 @@ import {
   summarizeFindings,
   type LocalStarterPlanRef,
 } from "./billing-consistency";
+import { OWNER_PAID_PLAN_KEY } from "./owner-paid-key";
 import { includedDiscountUsdMicrosForPlan } from "./spendable-allowance";
 import { mintAllowanceGateDecision } from "@/lib/oidc/mint-user-signer-token";
 
@@ -45,6 +47,40 @@ test("readUsageDiscountUsdMicrosFromPlanBody reads SDK camelCase rateCards", () 
     ],
   });
   assert.equal(micros, "2500000");
+});
+
+test("classifyOwnerPaidPlanRemoteConsistency is quiet when published matches default", () => {
+  const findings = classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: "5000000",
+    remote: {
+      id: "plan_paid",
+      key: OWNER_PAID_PLAN_KEY,
+      usageDiscountUsdMicros: "5000000",
+    },
+  });
+  assert.equal(findings.length, 0);
+});
+
+test("classifyOwnerPaidPlanRemoteConsistency warns on allowance drift", () => {
+  const findings = classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: "10000000",
+    remote: {
+      id: "plan_paid",
+      key: OWNER_PAID_PLAN_KEY,
+      usageDiscountUsdMicros: "5000000",
+    },
+  });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.code, "owner_paid_plan_allowance_drift");
+  assert.equal(findings[0]?.severity, "warn");
+});
+
+test("classifyOwnerPaidPlanRemoteConsistency warns when Paid plan is missing", () => {
+  const findings = classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: "5000000",
+    remote: null,
+  });
+  assert.equal(findings[0]?.code, "owner_paid_plan_missing");
 });
 
 test("includedDiscountUsdMicrosForPlan uses plan micros then starter default", () => {

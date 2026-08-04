@@ -35,6 +35,7 @@ import {
   planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
 import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
+import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   isOpenMeterSubscriptionActive,
@@ -467,7 +468,10 @@ async function resolvePlanName(input: {
 
   const key = input.planKey?.toLowerCase() ?? "";
   if (key.includes("starter") || isOwnerStarterPlanKey(input.planKey)) {
-    return { planName: "Starter", isStarterDefault: true };
+    return { planName: "Owner Sandbox Starter", isStarterDefault: true };
+  }
+  if (isOwnerPaidPlanKey(input.planKey)) {
+    return { planName: "Owner Paid", isStarterDefault: false };
   }
   return {
     planName: input.planKey?.trim() || "Subscription",
@@ -490,6 +494,7 @@ async function loadPlanKeyToLocalId(
     .from(plans)
     .where(inArray(plans.clientId, clientIds));
   for (const plan of scopedPlans) {
+    if (!plan.clientId) continue;
     index.set(buildOpenMeterPlanKey(plan.clientId, plan.id), plan.id);
   }
   return index;

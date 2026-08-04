@@ -1,11 +1,11 @@
 /**
- * Owner billing pressure states for the Starter → attach-card product surface.
+ * Owner billing pressure states for the Sandbox Starter → Owner Paid surface.
  *
  * Client-safe (no DB/Node imports) — used from /billing and the usage dashboard.
  *
- * - solvent: still has plan allowance or prepaid credits; soft CTA to attach a card
- * - blocked: spendable is zero and no card — usage is paused until they attach one
- * - chargeable: a payment method is on file; overage can invoice
+ * - solvent: still has plan allowance or prepaid credits; soft CTA to add a card
+ * - blocked: spendable is zero and no card — usage is paused until Paid upgrade
+ * - chargeable: a payment method is on file; overage can invoice on Owner Paid
  */
 
 function parseMicros(raw: string | null | undefined): bigint {

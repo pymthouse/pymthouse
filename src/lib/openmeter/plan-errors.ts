@@ -28,7 +28,12 @@ export function isOpenMeterPlanAlreadyPublishedError(err: unknown): boolean {
 /** True when OpenMeter rejects a duplicate subscription or entitlement for the same feature. */
 export function isOpenMeterConflictError(err: unknown): boolean {
   const message = errorMessage(err);
-  if (/already exists/i.test(message) || /\b409\b/.test(message)) {
+  // Konnect often returns "conflict error: …" without attaching HTTP status on the SDK Error.
+  if (
+    /already exists/i.test(message) ||
+    /\b409\b/.test(message) ||
+    /conflict error/i.test(message)
+  ) {
     return true;
   }
   const status =
@@ -36,15 +41,26 @@ export function isOpenMeterConflictError(err: unknown): boolean {
   return status === 409;
 }
 
-/** True when OpenMeter refuses subscription/billing because Stripe app data is missing on the customer. */
-export function isOpenMeterStripeBillingError(err: unknown): boolean {
-  if (!isOpenMeterConflictError(err)) {
-    return false;
-  }
-  const message = errorMessage(err);
+function isStripeBillingSetupMessage(message: string): boolean {
   return (
     /invalid billing setup/i.test(message) ||
     /failed to get stripe customer data/i.test(message) ||
-    /customer has no data for stripe app/i.test(message)
+    /customer has no data for stripe app/i.test(message) ||
+    /customers need a default payment method/i.test(message)
   );
+}
+
+/** True when OpenMeter refuses subscription/billing because Stripe app data is missing on the customer. */
+export function isOpenMeterStripeBillingError(err: unknown): boolean {
+  const message = errorMessage(err);
+  if (!isStripeBillingSetupMessage(message)) {
+    return false;
+  }
+  // Prefer conflict classification, but accept message-only Konnect bodies (no .status).
+  if (isOpenMeterConflictError(err)) {
+    return true;
+  }
+  const status =
+    (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode;
+  return status === undefined || status === 409 || status === 412;
 }

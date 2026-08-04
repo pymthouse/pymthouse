@@ -21,8 +21,9 @@ import {
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import {
   isOwnerStarterPlanKey,
-  ownerStarterIncludedUsdMicros,
 } from "@/lib/openmeter/owner-starter-key";
+import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
+import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
 import {
@@ -125,6 +126,7 @@ async function resolveOwnerLocalPlanId(input: {
     .from(plans)
     .where(inArray(plans.clientId, clientIds));
   for (const plan of ownedPlans) {
+    if (!plan.clientId) continue;
     if (buildOpenMeterPlanKey(plan.clientId, plan.id) === input.planKey) {
       return plan.id;
     }
@@ -205,12 +207,15 @@ export async function getPlanDiscountUsdMicros(input: {
 
   const subscriptionForLookup = await resolveSubscriptionWithPlanKey(subscription);
 
-  // Platform Owner Starter — discount is env/config, not a Neon plans row.
+  // Platform Owner Starter — discount from resolved owner/platform default.
   if (
     identity.isOwner &&
     isOwnerStarterPlanKey(subscriptionForLookup.planKey)
   ) {
-    const discount = parsePositiveMicros(ownerStarterIncludedUsdMicros());
+    const discountMicros = identity.ownerUserId
+      ? await resolveOwnerStarterIncludedUsdMicros(identity.ownerUserId)
+      : await resolvePlatformOwnerStarterIncludedUsdMicros();
+    const discount = parsePositiveMicros(discountMicros);
     if (discount == null || discount <= 0n) {
       return zero;
     }

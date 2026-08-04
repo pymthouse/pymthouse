@@ -8,7 +8,14 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients, plans, users } from "@/db/schema";
+import {
+  developerApps,
+  oidcClients,
+  plans,
+  users,
+  type Plan,
+} from "@/db/schema";
+import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   getHostedAdminClient,
@@ -26,6 +33,7 @@ import {
   OWNER_STARTER_PLAN_KEY,
   ownerStarterIncludedUsdMicros,
 } from "@/lib/openmeter/owner-starter-key";
+import { isOwnerPaidPlanKey, OWNER_PAID_PLAN_KEY } from "@/lib/openmeter/owner-paid-key";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   includedDiscountUsdMicrosForPlan,
@@ -51,6 +59,12 @@ import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import {
   countActiveKonnectSubscriptionsForPlan,
 } from "@/lib/openmeter/konnect-subscriptions";
+import {
+  findOpenMeterPlanByKey,
+  readUsageDiscountUsdMicrosFromPlanBody,
+} from "@/lib/openmeter/owner-allowance-plan";
+
+export { readUsageDiscountUsdMicrosFromPlanBody };
 
 export type FindingSeverity = "error" | "warn" | "info";
 
@@ -93,6 +107,8 @@ const FIX_SANDBOX_TO_STRIPE =
   "npm run openmeter:migrate-sandbox-to-stripe -- --apply";
 const FIX_MIGRATE_PLAN_SUBSCRIBERS =
   "npm run openmeter:migrate-plan-subscribers -- --client-id <app_…> --from-plan <planId> --apply";
+const FIX_OWNER_PAID_PLATFORM =
+  "PATCH /api/v1/admin/billing/platform with the desired ownerStarterIncludedUsdMicros";
 
 function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   if (!raw?.trim()) return null;
@@ -102,58 +118,6 @@ function parsePositiveMicros(raw: string | null | undefined): bigint | null {
   } catch {
     return null;
   }
-}
-
-/** Read discounts.usage from an OpenMeter/Konnect plan body (SDK or raw). */
-export function readUsageDiscountUsdMicrosFromPlanBody(
-  plan: unknown,
-): string | null {
-  if (!plan || typeof plan !== "object") return null;
-  const phases = readPlanPhases(plan);
-  if (!phases) return null;
-
-  for (const phase of phases) {
-    const micros = readUsageDiscountFromPhase(phase);
-    if (micros != null) return micros;
-  }
-  return null;
-}
-
-function readPlanPhases(plan: object): unknown[] | null {
-  const phases =
-    (plan as { phases?: unknown }).phases ??
-    (plan as { Phases?: unknown }).Phases;
-  return Array.isArray(phases) ? phases : null;
-}
-
-function readUsageDiscountFromPhase(phase: unknown): string | null {
-  if (!phase || typeof phase !== "object") return null;
-  const cards =
-    (phase as { rateCards?: unknown }).rateCards ??
-    (phase as { rate_cards?: unknown }).rate_cards ??
-    [];
-  if (!Array.isArray(cards)) return null;
-  for (const card of cards) {
-    const micros = readUsageDiscountFromRateCard(card);
-    if (micros != null) return micros;
-  }
-  return null;
-}
-
-function readUsageDiscountFromRateCard(card: unknown): string | null {
-  if (!card || typeof card !== "object") return null;
-  const discounts = (card as { discounts?: unknown }).discounts;
-  if (!discounts || typeof discounts !== "object") return null;
-  const usage =
-    (discounts as { usage?: unknown }).usage ??
-    (discounts as { Usage?: unknown }).Usage;
-  if (typeof usage === "number" && Number.isFinite(usage)) {
-    return String(Math.trunc(usage));
-  }
-  if (typeof usage === "string" && /^\d+$/.test(usage.trim())) {
-    return usage.trim();
-  }
-  return null;
 }
 
 /**
@@ -249,6 +213,83 @@ export function classifyStarterPlanRemoteConsistency(input: {
 }
 
 /**
+ * Classify the platform Owner Paid plan against the Developer wallet default.
+ * Pure — no I/O. Emits a warn when the published discount has drifted.
+ */
+export function classifyOwnerPaidPlanRemoteConsistency(input: {
+  expectedIncludedUsdMicros: string;
+  remote: RemotePlanSnapshot | null;
+}): BillingConsistencyFinding[] {
+  const findings: BillingConsistencyFinding[] = [];
+  const expected = input.expectedIncludedUsdMicros.trim();
+  if (!/^\d+$/.test(expected)) {
+    return findings;
+  }
+
+  if (!input.remote) {
+    findings.push({
+      code: "owner_paid_plan_missing",
+      severity: "warn",
+      message: `Owner Paid plan ${OWNER_PAID_PLAN_KEY} is not published in OpenMeter`,
+      details: {
+        planKey: OWNER_PAID_PLAN_KEY,
+        expectedIncludedUsdMicros: expected,
+      },
+      remediation: FIX_OWNER_PAID_PLATFORM,
+    });
+    return findings;
+  }
+
+  if (input.remote.key && !isOwnerPaidPlanKey(input.remote.key)) {
+    findings.push({
+      code: "owner_paid_plan_key_mismatch",
+      severity: "warn",
+      message:
+        `Expected Owner Paid key ${OWNER_PAID_PLAN_KEY} but remote key is ${input.remote.key}`,
+      details: {
+        expectedPlanKey: OWNER_PAID_PLAN_KEY,
+        remotePlanKey: input.remote.key,
+        openmeterPlanId: input.remote.id,
+      },
+      remediation: FIX_OWNER_PAID_PLATFORM,
+    });
+  }
+
+  const published = input.remote.usageDiscountUsdMicros?.trim() || null;
+  if (published == null || published === "") {
+    findings.push({
+      code: "owner_paid_plan_missing_usage_discount",
+      severity: "warn",
+      message:
+        `Owner Paid plan ${input.remote.id} has no rate-card discounts.usage ` +
+        `(expected ${expected} micros)`,
+      details: {
+        planKey: OWNER_PAID_PLAN_KEY,
+        openmeterPlanId: input.remote.id,
+        expectedIncludedUsdMicros: expected,
+      },
+      remediation: FIX_OWNER_PAID_PLATFORM,
+    });
+  } else if (published !== expected) {
+    findings.push({
+      code: "owner_paid_plan_allowance_drift",
+      severity: "warn",
+      message:
+        `Owner Paid discounts.usage=${published} ≠ platform default=${expected}`,
+      details: {
+        planKey: OWNER_PAID_PLAN_KEY,
+        openmeterPlanId: input.remote.id,
+        publishedIncludedUsdMicros: published,
+        expectedIncludedUsdMicros: expected,
+      },
+      remediation: FIX_OWNER_PAID_PLATFORM,
+    });
+  }
+
+  return findings;
+}
+
+/**
  * Classify an owner wallet's active subscription against the platform Owner
  * Starter plan (and legacy per-app Starters during transition). Pure — no I/O.
  */
@@ -312,6 +353,11 @@ export function classifyOwnerSubscriptionMapping(input: {
     return findings;
   }
 
+  // Canonical: platform Owner Paid (post–payment-method upgrade).
+  if (isOwnerPaidPlanKey(planKey)) {
+    return findings;
+  }
+
   // Legacy: still on a per-app Starter — warn to migrate.
   if (ownedStarters.some((s) => s.openmeterPlanId === planId)) {
     findings.push({
@@ -363,7 +409,8 @@ export function classifyOwnerSubscriptionMapping(input: {
     message:
       `Owner sub ${subscription.id} plan ${planId}` +
       (planKey ? ` (key=${planKey})` : "") +
-      ` does not map to Owner Starter (${OWNER_STARTER_PLAN_KEY}) or any owned app Starter`,
+      ` does not map to Owner Sandbox Starter (${OWNER_STARTER_PLAN_KEY}), ` +
+      `Owner Paid (${OWNER_PAID_PLAN_KEY}), or any owned app Starter`,
     details: {
       subscriptionId: subscription.id,
       subscriptionPlanId: planId,
@@ -564,6 +611,9 @@ async function loadOwnedStarterPlans(
   const byApp = new Map(apps.map((a) => [a.developerAppId, a]));
   const out: LocalStarterPlanRef[] = [];
   for (const row of starterRows) {
+    // Platform-scoped plans have no clientId and no owning app; the byApp
+    // lookup would miss them anyway, but skip explicitly for the type.
+    if (!row.clientId) continue;
     const app = byApp.get(row.clientId);
     if (!app) continue;
     const publicClientId = app.publicClientId?.trim() || app.developerAppId;
@@ -830,14 +880,19 @@ async function auditOwnerSubscriptions(
     const profileId = await getKonnectCustomerBillingProfileId(customerId);
     const sandboxId = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
     if (profileId && sandboxId && profileId === sandboxId) {
-      findings.push({
-        code: "owner_sandbox_billing_profile",
-        severity: "error",
-        ownerId,
-        message: `Owner customer ${customerKey} still uses sandbox billing profile ${profileId}`,
-        details: { customerId, profileId },
-        remediation: FIX_SANDBOX_TO_STRIPE,
-      });
+      // Sandbox is correct for Owner Sandbox Starter. Flag only when the owner
+      // already has a chargeable card (should be on owners Stripe / Paid).
+      const chargeable = await ownerHasChargeablePaymentMethod(ownerId);
+      if (chargeable === true) {
+        findings.push({
+          code: "owner_sandbox_billing_profile",
+          severity: "warn",
+          ownerId,
+          message: `Owner customer ${customerKey} has a payment method but still uses sandbox billing profile ${profileId}`,
+          details: { customerId, profileId },
+          remediation: FIX_SANDBOX_TO_STRIPE,
+        });
+      }
     }
   }
 
@@ -961,7 +1016,7 @@ async function auditOwnerSpendableGates(input: {
  * Pure — no I/O.
  */
 export function classifyPhaseOutPastDeadline(input: {
-  clientId: string;
+  clientId?: string;
   planId: string;
   planName: string;
   status: string;
@@ -992,7 +1047,7 @@ export function classifyPhaseOutPastDeadline(input: {
   findings.push({
     code: "phase_out_subscribers_past_deadline",
     severity: "error",
-    clientId: input.clientId,
+    ...(input.clientId ? { clientId: input.clientId } : {}),
     message: `Plan "${input.planName}" is past phaseOutAt with ${input.activeSubscriberCount} active subscriber(s)`,
     details: {
       planId: input.planId,
@@ -1005,10 +1060,68 @@ export function classifyPhaseOutPastDeadline(input: {
   return findings;
 }
 
+async function countPhaseOutSubscribers(
+  plan: Plan,
+): Promise<
+  | { ok: true; activeSubscriberCount: number }
+  | { ok: false; finding: BillingConsistencyFinding }
+> {
+  if (!plan.openmeterPlanId?.trim()) {
+    return { ok: true, activeSubscriberCount: 0 };
+  }
+  try {
+    const activeSubscriberCount = await countActiveKonnectSubscriptionsForPlan(
+      plan.openmeterPlanId,
+    );
+    return { ok: true, activeSubscriberCount };
+  } catch (err) {
+    return {
+      ok: false,
+      finding: {
+        code: "phase_out_subscriber_check_failed",
+        severity: "warn",
+        clientId: plan.clientId ?? undefined,
+        message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
+        details: {
+          planId: plan.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        remediation: FIX_MIGRATE_PLAN_SUBSCRIBERS,
+      },
+    };
+  }
+}
+
+async function auditOnePhaseOutPlan(
+  plan: Plan,
+): Promise<BillingConsistencyFinding[]> {
+  // Platform-scoped plans (nullable client_id) are Owner Starter catalog
+  // rows — not app phase-out candidates. Skip so findings never invent "".
+  if (!plan.clientId?.trim() || !plan.phaseOutAt?.trim()) {
+    return [];
+  }
+  const deadline = Date.parse(plan.phaseOutAt);
+  if (Number.isNaN(deadline) || Date.now() < deadline) {
+    return [];
+  }
+  const counted = await countPhaseOutSubscribers(plan);
+  if (!counted.ok) {
+    return [counted.finding];
+  }
+  return classifyPhaseOutPastDeadline({
+    clientId: plan.clientId,
+    planId: plan.id,
+    planName: plan.name,
+    status: plan.status,
+    phaseOutAt: plan.phaseOutAt,
+    openmeterPlanId: plan.openmeterPlanId,
+    activeSubscriberCount: counted.activeSubscriberCount,
+  });
+}
+
 async function auditPhaseOutPlans(
   clientIdFilter?: string,
 ): Promise<BillingConsistencyFinding[]> {
-  const findings: BillingConsistencyFinding[] = [];
   const rows = clientIdFilter?.trim()
     ? await db
         .select()
@@ -1021,46 +1134,9 @@ async function auditPhaseOutPlans(
         )
     : await db.select().from(plans).where(eq(plans.status, "phase_out"));
 
+  const findings: BillingConsistencyFinding[] = [];
   for (const plan of rows) {
-    if (!plan.phaseOutAt?.trim()) {
-      continue;
-    }
-    const deadline = Date.parse(plan.phaseOutAt);
-    if (Number.isNaN(deadline) || Date.now() < deadline) {
-      continue;
-    }
-    let activeSubscriberCount = 0;
-    if (plan.openmeterPlanId?.trim()) {
-      try {
-        activeSubscriberCount = await countActiveKonnectSubscriptionsForPlan(
-          plan.openmeterPlanId,
-        );
-      } catch (err) {
-        findings.push({
-          code: "phase_out_subscriber_check_failed",
-          severity: "warn",
-          clientId: plan.clientId,
-          message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
-          details: {
-            planId: plan.id,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          remediation: FIX_MIGRATE_PLAN_SUBSCRIBERS,
-        });
-        continue;
-      }
-    }
-    findings.push(
-      ...classifyPhaseOutPastDeadline({
-        clientId: plan.clientId,
-        planId: plan.id,
-        planName: plan.name,
-        status: plan.status,
-        phaseOutAt: plan.phaseOutAt,
-        openmeterPlanId: plan.openmeterPlanId,
-        activeSubscriberCount,
-      }),
-    );
+    findings.push(...(await auditOnePhaseOutPlan(plan)));
   }
   return findings;
 }
@@ -1112,7 +1188,29 @@ export async function auditBillingConsistency(
     );
   }
 
-  findings.push(...(await auditPhaseOutPlans(options.clientId)));
+  findings.push(
+    ...(await auditPhaseOutPlans(options.clientId)),
+    ...(await auditOwnerPaidPlan(client)),
+  );
 
   return findings;
+}
+
+async function auditOwnerPaidPlan(
+  client: OpenMeter,
+): Promise<BillingConsistencyFinding[]> {
+  const expected = await resolvePlatformOwnerStarterIncludedUsdMicros();
+  let remote: RemotePlanSnapshot | null = null;
+  try {
+    const existing = await findOpenMeterPlanByKey(client, OWNER_PAID_PLAN_KEY);
+    if (existing?.id) {
+      remote = await fetchRemotePlanSnapshot(client, existing.id);
+    }
+  } catch {
+    remote = null;
+  }
+  return classifyOwnerPaidPlanRemoteConsistency({
+    expectedIncludedUsdMicros: expected,
+    remote,
+  });
 }

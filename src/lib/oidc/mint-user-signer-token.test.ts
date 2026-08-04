@@ -187,6 +187,21 @@ test("mintAllowanceGateDecision rejects zero micros even when hasAccess is stale
   );
 });
 
+test("mintAllowanceGateDecision allows zero spendable when overage invoicing is enabled", () => {
+  assert.equal(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: false,
+        balanceUsdMicros: "0",
+        consumedUsdMicros: "5000000",
+        lifetimeGrantedUsdMicros: "5000000",
+      },
+      true,
+      { allowsOverageInvoicing: true },
+    ),
+    null,
+  );
+});
 test("enforceMintAllowanceGate throws billing_unavailable when allowance is null in test env", () => {
   const previousUrl = process.env.OPENMETER_URL;
   const previousLive = process.env.OPENMETER_TEST_LIVE;

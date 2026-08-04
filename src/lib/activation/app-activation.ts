@@ -69,20 +69,23 @@ export function __testSetSpendableLookup(fn: SpendableLookup | null): void {
 }
 
 type PaymentMethodLookup = typeof ownerHasChargeablePaymentMethod;
-let paymentMethodLookup: PaymentMethodLookup = ownerHasChargeablePaymentMethod;
+/**
+ * When set, replaces the live Owner-Paid + PM overage check used after
+ * spendable is exhausted. `null` from the lookup fails open (billable).
+ */
+let overageInvoicingLookup: PaymentMethodLookup | null = null;
 
-/** Test-only override for owner payment-method lookups. */
+/** Test-only override for owner payment-method / overage-invoicing lookups. */
 export function __testSetOwnerPaymentMethodLookup(
   fn: PaymentMethodLookup | null,
 ): void {
-  paymentMethodLookup = fn ?? ownerHasChargeablePaymentMethod;
+  overageInvoicingLookup = fn;
 }
 
 /**
- * OpenMeter bills platform usage on `charge_automatically`, so a dry prepaid
- * wallet is fine as long as there is a card behind it. Only an owner with
- * neither is unbillable, and the payment-method lookup costs a Stripe round
- * trip, so it runs only once the cheap balance read has already failed.
+ * OpenMeter bills platform usage on `charge_automatically` only after the
+ * owner upgrades to Owner Paid with a card. Sandbox Starter is a hard balance
+ * gate — a card alone does not unlock overage while still on Sandbox.
  * Unknown answers (OpenMeter or Stripe unreachable) fail open — an outage must
  * not freeze provisioning.
  */
@@ -97,7 +100,14 @@ async function isOwnerBillable(input: {
   if (spendable == null || hasPositiveUsdMicrosBalance(spendable)) {
     return true;
   }
-  return (await paymentMethodLookup(input.ownerId)) !== false;
+  if (overageInvoicingLookup) {
+    // Test stubs: `null` means chargeability unknown → fail open.
+    return (await overageInvoicingLookup(input.ownerId)) !== false;
+  }
+  const { ownerWalletAllowsOverageInvoicing } = await import(
+    "@/lib/openmeter/owner-paid-plan"
+  );
+  return ownerWalletAllowsOverageInvoicing(input.ownerId);
 }
 
 export function getActivationGateMode(): ActivationGateMode {

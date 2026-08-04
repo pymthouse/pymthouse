@@ -1,0 +1,50 @@
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+
+import { authOptions } from "@/lib/next-auth-options";
+import {
+  OwnerPaidUpgradeError,
+  upgradeOwnerToPaidPlan,
+} from "@/lib/openmeter/owner-paid-plan";
+import { ownerPaidUpgradeHttpStatus } from "@/lib/openmeter/owner-paid-upgrade-status";
+
+function sessionUserId(session: unknown): string | undefined {
+  if (!session || typeof session !== "object") {
+    return undefined;
+  }
+  const user = (session as { user?: unknown }).user;
+  if (!user || typeof user !== "object") {
+    return undefined;
+  }
+  const id = (user as { id?: unknown }).id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * Upgrade the signed-in owner from Sandbox Starter → Owner Paid.
+ * Requires a chargeable payment method (Add payment method first).
+ */
+export async function POST() {
+  const session = await getServerSession(authOptions);
+  const userId = sessionUserId(session);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const result = await upgradeOwnerToPaidPlan({ ownerUserId: userId });
+    return NextResponse.json(result);
+  } catch (err) {
+    if (err instanceof OwnerPaidUpgradeError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: ownerPaidUpgradeHttpStatus(err.code) },
+      );
+    }
+    console.error("Owner Paid upgrade failed", err);
+    return NextResponse.json(
+      { error: "Owner Paid upgrade failed", code: "upgrade_failed" },
+      { status: 502 },
+    );
+  }
+}
