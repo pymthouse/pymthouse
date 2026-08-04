@@ -82,7 +82,7 @@ export const PATCH = withSessionAdminGuardParams<{ userId: string }>(
       );
     }
 
-    let body: Record<string, unknown>;
+    let body: unknown;
     try {
       body = await request.json();
     } catch {

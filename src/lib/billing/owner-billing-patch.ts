@@ -28,8 +28,14 @@ function parseStarterMicros(
     }
     return { ok: true, value: trimmed || null };
   }
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return { ok: true, value: String(Math.trunc(raw)) };
+  if (typeof raw === "number") {
+    if (!Number.isSafeInteger(raw) || raw < 0) {
+      return {
+        ok: false,
+        error: "starterIncludedUsdMicros must be a non-negative integer string or null",
+      };
+    }
+    return { ok: true, value: String(raw) };
   }
   return {
     ok: false,
@@ -57,9 +63,14 @@ function parseNote(
 
 /** Parse a JSON body into a sparse owner-billing patch. */
 export function parseOwnerBillingPatchBody(
-  body: Record<string, unknown>,
+  body: unknown,
 ): OwnerBillingPatchParseResult {
-  if ("applicationFeeBps" in body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "Invalid JSON body" };
+  }
+  const record = body as Record<string, unknown>;
+
+  if ("applicationFeeBps" in record) {
     return {
       ok: false,
       error:
@@ -69,20 +80,20 @@ export function parseOwnerBillingPatchBody(
 
   const patch: OwnerBillingPatch = {};
 
-  if ("starterIncludedUsdMicros" in body) {
-    const parsed = parseStarterMicros(body.starterIncludedUsdMicros);
+  if ("starterIncludedUsdMicros" in record) {
+    const parsed = parseStarterMicros(record.starterIncludedUsdMicros);
     if (!parsed.ok) return parsed;
     patch.starterIncludedUsdMicros = parsed.value;
   }
 
-  if ("endUserCap" in body) {
-    const parsed = parseEndUserCap(body.endUserCap);
+  if ("endUserCap" in record) {
+    const parsed = parseEndUserCap(record.endUserCap);
     if (!parsed.ok) return parsed;
     patch.endUserCap = parsed.value;
   }
 
-  if ("note" in body) {
-    const parsed = parseNote(body.note);
+  if ("note" in record) {
+    const parsed = parseNote(record.note);
     if (!parsed.ok) return parsed;
     patch.note = parsed.value;
   }

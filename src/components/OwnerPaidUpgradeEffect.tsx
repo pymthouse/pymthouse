@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+const PAYMENT_METHOD_SYNC_ATTEMPTS = 5;
+const PAYMENT_METHOD_SYNC_BASE_DELAY_MS = 1000;
+
 /**
  * After Stripe Checkout returns (`?pm=attached`), upgrade Sandbox Starter →
  * Owner Paid. Also upgrades when a payment method is already on file but the
@@ -36,23 +39,37 @@ export default function OwnerPaidUpgradeEffect({
       setBusy(true);
       setError(null);
       try {
-        const res = await fetch("/api/v1/me/billing/upgrade-paid", {
-          method: "POST",
-        });
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-        };
-        if (!res.ok) {
-          if (body.code === "payment_method_required") {
-            // Still waiting for Stripe/Konnect to sync the new card.
+        for (let attempt = 0; attempt < PAYMENT_METHOD_SYNC_ATTEMPTS; attempt += 1) {
+          if (cancelled) {
             return;
           }
+          const res = await fetch("/api/v1/me/billing/upgrade-paid", {
+            method: "POST",
+          });
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+            code?: string;
+          };
+          if (res.ok) {
+            if (!cancelled) {
+              router.replace("/billing");
+              router.refresh();
+            }
+            return;
+          }
+          if (body.code === "payment_method_required") {
+            // Stripe/Konnect may still be syncing the new card after checkout.
+            if (attempt + 1 < PAYMENT_METHOD_SYNC_ATTEMPTS) {
+              const delayMs =
+                PAYMENT_METHOD_SYNC_BASE_DELAY_MS * (attempt + 1);
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              continue;
+            }
+            throw new Error(
+              "Payment method is not ready yet. Retry in a moment.",
+            );
+          }
           throw new Error(body.error || "Could not upgrade to Owner Paid");
-        }
-        if (!cancelled) {
-          router.replace("/billing");
-          router.refresh();
         }
       } catch (err) {
         if (!cancelled) {

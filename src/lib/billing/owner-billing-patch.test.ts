@@ -35,7 +35,11 @@ test("parseOwnerBillingPatchBody clears fields with null", () => {
 
 test("parseOwnerBillingPatchBody rejects applicationFeeBps and bad fields", () => {
   assert.equal(parseOwnerBillingPatchBody({}).ok, false);
+  assert.equal(parseOwnerBillingPatchBody(null).ok, false);
+  assert.equal(parseOwnerBillingPatchBody("x").ok, false);
   assert.equal(parseOwnerBillingPatchBody({ starterIncludedUsdMicros: "x" }).ok, false);
+  assert.equal(parseOwnerBillingPatchBody({ starterIncludedUsdMicros: -1 }).ok, false);
+  assert.equal(parseOwnerBillingPatchBody({ starterIncludedUsdMicros: 1.9 }).ok, false);
   assert.equal(parseOwnerBillingPatchBody({ endUserCap: 0 }).ok, false);
   assert.equal(parseOwnerBillingPatchBody({ note: 1 }).ok, false);
   const fee = parseOwnerBillingPatchBody({ applicationFeeBps: 250 });
@@ -43,4 +47,11 @@ test("parseOwnerBillingPatchBody rejects applicationFeeBps and bad fields", () =
   if (!fee.ok) {
     assert.match(fee.error, /applicationFeeBps is not an owner override/);
   }
+});
+
+test("parseOwnerBillingPatchBody accepts integer numeric starter allowances", () => {
+  const parsed = parseOwnerBillingPatchBody({ starterIncludedUsdMicros: 5_000_000 });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.patch.starterIncludedUsdMicros, "5000000");
 });
