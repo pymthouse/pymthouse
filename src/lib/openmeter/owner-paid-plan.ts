@@ -153,7 +153,11 @@ async function findActiveOwnerWalletSubscription(input: {
       input.client,
       input.hintOpenMeterSubscriptionId,
     );
-    if (verified?.id) {
+    if (
+      verified?.id &&
+      verified.customerId &&
+      verified.customerId === input.customerId
+    ) {
       return {
         id: verified.id,
         planKey: verified.planKey ?? "",
@@ -315,9 +319,10 @@ export async function upgradeOwnerToPaidPlan(input: {
         alreadyPaid: false,
       };
     }
+    console.error("Owner Paid upgrade change failed", err);
     throw new OwnerPaidUpgradeError(
       "upgrade_failed",
-      err instanceof Error ? err.message : "Owner Paid upgrade failed",
+      "Owner Paid upgrade failed",
     );
   }
 

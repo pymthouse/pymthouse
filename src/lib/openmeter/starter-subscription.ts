@@ -117,7 +117,11 @@ async function resolveOpenMeterStarterSubscription(input: {
       input.client,
       input.hintOpenMeterSubscriptionId,
     );
-    if (verified?.id) {
+    if (
+      verified?.id &&
+      verified.customerId &&
+      verified.customerId === input.customerId
+    ) {
       return verified;
     }
   }
@@ -135,6 +139,7 @@ function subscriptionViewFromCreateResult(
   return {
     id: createdSub.id,
     status: createdSub.status,
+    customerId: createdSub.customerId ?? null,
     planKey,
     planId: openmeterPlanId,
     activeFrom: createdSub.activeFrom?.toISOString?.() ?? null,

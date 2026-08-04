@@ -2,7 +2,10 @@ import { eq, or } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { ownerBillingConfig, users } from "@/db/schema";
-import { setPlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
+import {
+  resolvePlatformOwnerStarterIncludedUsdMicros,
+  setPlatformOwnerStarterIncludedUsdMicros,
+} from "@/lib/billing/platform-owner-starter-default";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import {
   changeKonnectSubscription,
@@ -65,15 +68,29 @@ export async function republishAndMigrateBaseOwnerStarter(input: {
   resyncSubscribers?: boolean;
 }): Promise<RepublishBaseOwnerStarterResult> {
   const resyncSubscribers = input.resyncSubscribers === true;
+  // Persist first so forceSync classifies the new amount as the base key, then
+  // roll back if OpenMeter sync fails so spendable allowance cannot drift ahead
+  // of the published plan discount.
+  const previous = await resolvePlatformOwnerStarterIncludedUsdMicros();
   const settings = await setPlatformOwnerStarterIncludedUsdMicros({
     ownerStarterIncludedUsdMicros: input.ownerStarterIncludedUsdMicros,
     updatedBy: input.updatedBy,
   });
   invalidateOwnerStarterPlanCache();
 
-  const plan = await forceSyncOwnerStarterPlan(
-    settings.ownerStarterIncludedUsdMicros,
-  );
+  let plan;
+  try {
+    plan = await forceSyncOwnerStarterPlan(
+      settings.ownerStarterIncludedUsdMicros,
+    );
+  } catch (err) {
+    await setPlatformOwnerStarterIncludedUsdMicros({
+      ownerStarterIncludedUsdMicros: previous,
+      updatedBy: input.updatedBy,
+    });
+    invalidateOwnerStarterPlanCache();
+    throw err;
+  }
 
   const migrate = resyncSubscribers
     ? await migrateBaseOwnerStarterSubscriptions({
@@ -169,9 +186,17 @@ async function migrateViaOwnerEnsure(input: {
   const ownerIds = await listOwnersOnPlatformDefaultStarter();
   for (const ownerUserId of ownerIds) {
     try {
-      const ensured = await ensureOwnerStarterSubscription({ ownerUserId });
+      // Do not create wallet subscriptions as a side effect of an admin
+      // platform-default change — only migrate owners who already have one.
+      const ensured = await ensureOwnerStarterSubscription({
+        ownerUserId,
+        createIfMissing: false,
+      });
+      if (!ensured.openmeterSubscriptionId) {
+        stats.skipped += 1;
+        continue;
+      }
       if (
-        ensured.openmeterSubscriptionId &&
         ensured.planKey === input.targetPlanKey &&
         ensured.openmeterPlanId === input.targetPlanId
       ) {
@@ -209,7 +234,9 @@ async function migrateBaseOwnerStarterSubscriptions(input: {
 
   // Konnect's global /subscriptions index often omits rows; fall back to
   // owners without a starter override (they should be on the base key).
-  if (listed.eligible === 0 && listed.stats.errors === 0) {
+  // Gate on eligibility only — per-subscription plans.get failures bump
+  // stats.errors without marking eligibility and must not skip the fallback.
+  if (listed.eligible === 0) {
     return migrateViaOwnerEnsure(input);
   }
   return listed.stats;

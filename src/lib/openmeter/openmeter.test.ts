@@ -1502,6 +1502,7 @@ test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {
   assert.deepEqual(view, {
     id: "sub-1",
     status: "active",
+    customerId: null,
     planKey: "app_1:plan_starter",
     planId: null,
     activeFrom: "2026-01-01T00:00:00.000Z",

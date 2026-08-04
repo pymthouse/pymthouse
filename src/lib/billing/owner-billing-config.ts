@@ -113,45 +113,41 @@ export async function setOwnerBillingOverrides(input: {
   updatedBy: string;
 }): Promise<void> {
   const now = new Date().toISOString();
-  const existingRow = await db
-    .select({
-      id: ownerBillingConfig.id,
-      starterIncludedUsdMicros: ownerBillingConfig.starterIncludedUsdMicros,
-      endUserCap: ownerBillingConfig.endUserCap,
-      note: ownerBillingConfig.note,
-    })
-    .from(ownerBillingConfig)
-    .where(eq(ownerBillingConfig.ownerUserId, input.ownerUserId))
-    .limit(1);
-
-  const prior = existingRow[0];
   const updatedBy = input.updatedBy.trim() || null;
-  const values = {
-    starterIncludedUsdMicros:
-      input.starterIncludedUsdMicros === undefined
-        ? (prior?.starterIncludedUsdMicros ?? null)
-        : normalizeMicros(input.starterIncludedUsdMicros),
-    endUserCap:
-      input.endUserCap === undefined ? (prior?.endUserCap ?? null) : input.endUserCap,
-    note:
-      input.note === undefined
-        ? (prior?.note ?? null)
-        : input.note?.trim() || null,
+  const patch: {
+    starterIncludedUsdMicros?: string | null;
+    endUserCap?: number | null;
+    note?: string | null;
+    updatedBy: string | null;
+    updatedAt: string;
+  } = {
     updatedBy,
     updatedAt: now,
   };
-
-  if (prior?.id) {
-    await db
-      .update(ownerBillingConfig)
-      .set(values)
-      .where(eq(ownerBillingConfig.ownerUserId, input.ownerUserId));
-    return;
+  if (input.starterIncludedUsdMicros !== undefined) {
+    patch.starterIncludedUsdMicros = normalizeMicros(input.starterIncludedUsdMicros);
   }
-  await db.insert(ownerBillingConfig).values({
-    id: uuidv4(),
-    ownerUserId: input.ownerUserId,
-    createdAt: now,
-    ...values,
-  });
+  if (input.endUserCap !== undefined) {
+    patch.endUserCap = input.endUserCap;
+  }
+  if (input.note !== undefined) {
+    patch.note = input.note?.trim() || null;
+  }
+
+  await db
+    .insert(ownerBillingConfig)
+    .values({
+      id: uuidv4(),
+      ownerUserId: input.ownerUserId,
+      starterIncludedUsdMicros: patch.starterIncludedUsdMicros ?? null,
+      endUserCap: patch.endUserCap ?? null,
+      note: patch.note ?? null,
+      updatedBy,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: ownerBillingConfig.ownerUserId,
+      set: patch,
+    });
 }

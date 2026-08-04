@@ -266,7 +266,11 @@ async function findExistingOwnerWalletSubscription(input: {
       input.client,
       input.hintOpenMeterSubscriptionId,
     );
-    if (verified?.id) {
+    if (
+      verified?.id &&
+      verified.customerId &&
+      verified.customerId === input.customerId
+    ) {
       return {
         id: verified.id,
         planKey: verified.planKey ?? input.planKey,
@@ -330,6 +334,8 @@ export async function ensureOwnerStarterSubscription(input: {
   ownerUserId: string;
   publicClientIds?: string[];
   hintOpenMeterSubscriptionId?: string | null;
+  /** When false, skip creating a subscription if the owner has none. */
+  createIfMissing?: boolean;
 }): Promise<{
   openmeterSubscriptionId: string | null;
   planKey: string;
@@ -411,16 +417,38 @@ export async function ensureOwnerStarterSubscription(input: {
           openmeterPlanId: plan.openmeterPlanId,
           created: false,
         };
-      } catch {
+      } catch (changeErr) {
         console.warn(
-          "openmeter: owner starter subscription change failed; recreating",
+          "openmeter: owner starter subscription change failed; recreating without cancel-first",
+          changeErr,
         );
+        // Create the replacement first; cancel the old subscription only after
+        // the new one exists so a create failure cannot leave the owner with none.
         try {
-          await client.subscriptions.cancel(existing.id, {
-            timing: "immediate",
+          const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
+            client,
+            customerId: customer.id,
+            planKey: plan.key,
           });
+          try {
+            await client.subscriptions.cancel(existing.id, {
+              timing: "immediate",
+            });
+          } catch (cancelErr) {
+            console.warn(
+              "openmeter: owner starter old subscription cancel after recreate failed",
+              cancelErr,
+            );
+          }
+          return {
+            openmeterSubscriptionId: createdSub.id,
+            planKey: plan.key,
+            openmeterPlanId: plan.openmeterPlanId,
+            created: true,
+          };
         } catch {
-          // fall through to create
+          // Keep the existing subscription; surface the original change failure.
+          throw changeErr;
         }
       }
     } else if (existing.id) {
@@ -432,6 +460,15 @@ export async function ensureOwnerStarterSubscription(input: {
         created: false,
       };
     }
+  }
+
+  if (input.createIfMissing === false) {
+    return {
+      openmeterSubscriptionId: null,
+      planKey: plan.key,
+      openmeterPlanId: plan.openmeterPlanId,
+      created: false,
+    };
   }
 
   // New Sandbox Starter must not inherit the org Stripe default without cus_….

@@ -87,29 +87,22 @@ export async function setPlatformOwnerStarterIncludedUsdMicros(input: {
   }
   const updatedBy = input.updatedBy.trim() || null;
   const now = new Date().toISOString();
-  const existing = await db
-    .select({ id: platformBillingSettings.id })
-    .from(platformBillingSettings)
-    .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID))
-    .limit(1);
-
-  if (existing[0]?.id) {
-    await db
-      .update(platformBillingSettings)
-      .set({
-        ownerStarterIncludedUsdMicros: micros,
-        updatedBy,
-        updatedAt: now,
-      })
-      .where(eq(platformBillingSettings.id, PLATFORM_BILLING_SETTINGS_ID));
-  } else {
-    await db.insert(platformBillingSettings).values({
+  await db
+    .insert(platformBillingSettings)
+    .values({
       id: PLATFORM_BILLING_SETTINGS_ID,
       ownerStarterIncludedUsdMicros: micros,
       updatedBy,
       updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: platformBillingSettings.id,
+      set: {
+        ownerStarterIncludedUsdMicros: micros,
+        updatedBy,
+        updatedAt: now,
+      },
     });
-  }
 
   return {
     ownerStarterIncludedUsdMicros: micros,

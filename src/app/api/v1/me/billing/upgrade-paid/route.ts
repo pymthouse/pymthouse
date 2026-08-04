@@ -41,7 +41,10 @@ export async function POST() {
         { status: ownerPaidUpgradeHttpStatus(err.code) },
       );
     }
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 502 });
+    console.error("Owner Paid upgrade failed", err);
+    return NextResponse.json(
+      { error: "Owner Paid upgrade failed", code: "upgrade_failed" },
+      { status: 502 },
+    );
   }
 }
