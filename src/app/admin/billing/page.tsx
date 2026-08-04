@@ -70,7 +70,6 @@ export default function AdminPlatformBillingPage() {
   const [selected, setSelected] = useState<OwnerSummary | null>(null);
   const [starterDisplay, setStarterDisplay] = useState("");
   const [endUserCap, setEndUserCap] = useState("");
-  const [applicationFeeBps, setApplicationFeeBps] = useState("");
   const [note, setNote] = useState("");
   const [savingOwner, setSavingOwner] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -134,11 +133,6 @@ export default function AdminPlatformBillingPage() {
     );
     setEndUserCap(
       owner.overrides?.endUserCap != null ? String(owner.overrides.endUserCap) : "",
-    );
-    setApplicationFeeBps(
-      owner.overrides?.applicationFeeBps != null
-        ? String(owner.overrides.applicationFeeBps)
-        : "",
     );
     setNote(owner.overrides?.note ?? "");
   }
@@ -258,7 +252,6 @@ export default function AdminPlatformBillingPage() {
       const built = buildOwnerOverridePatchBody({
         starterDisplay,
         endUserCap,
-        applicationFeeBps,
         note,
         clearStarter,
       });
@@ -453,8 +446,7 @@ export default function AdminPlatformBillingPage() {
               <p className="text-xs text-zinc-500">
                 Empty fields clear back to the platform default. Effective now: $
                 {usdMicrosToCentsDisplay(selected.resolved.starterIncludedUsdMicros)}{" "}
-                included · cap {selected.resolved.endUserCap} · fee{" "}
-                {selected.resolved.applicationFeeBps} bps
+                included · cap {selected.resolved.endUserCap}
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block text-sm">
@@ -491,25 +483,6 @@ export default function AdminPlatformBillingPage() {
                     className="mt-1 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm"
                     value={endUserCap}
                     onChange={(e) => setEndUserCap(e.target.value)}
-                    placeholder="platform default"
-                    disabled={savingOwner}
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="inline-flex items-center gap-1.5 text-zinc-400">
-                    Application fee (bps)
-                    <InfoTooltip
-                      wide
-                      label="Platform take rate on merchant (Stripe Connect) charges, in basis points. 100 bps = 1%. 0 means no platform fee."
-                    />
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={10000}
-                    className="mt-1 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm"
-                    value={applicationFeeBps}
-                    onChange={(e) => setApplicationFeeBps(e.target.value)}
                     placeholder="platform default"
                     disabled={savingOwner}
                   />

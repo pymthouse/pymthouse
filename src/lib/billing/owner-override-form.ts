@@ -3,7 +3,6 @@ import { usdCentsDisplayToMicros } from "@/lib/format-usd-micros";
 export type OwnerOverrideFormFields = {
   starterDisplay: string;
   endUserCap: string;
-  applicationFeeBps: string;
   note: string;
   clearStarter?: boolean;
 };
@@ -39,19 +38,6 @@ export function buildOwnerOverridePatchBody(
     body.endUserCap = parsed;
   } else {
     body.endUserCap = null;
-  }
-
-  if (fields.applicationFeeBps.trim()) {
-    const parsed = Number.parseInt(fields.applicationFeeBps, 10);
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) {
-      return {
-        ok: false,
-        error: "Application fee must be an integer from 0 to 10000",
-      };
-    }
-    body.applicationFeeBps = parsed;
-  } else {
-    body.applicationFeeBps = null;
   }
 
   body.note = fields.note.trim() || null;
