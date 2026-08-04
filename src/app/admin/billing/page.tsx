@@ -46,6 +46,16 @@ type OwnerSummary = {
 
 const PAGE_SIZE = 25;
 
+function platformSaveButtonLabel(input: {
+  saving: boolean;
+  resync: boolean;
+}): string {
+  if (input.saving) {
+    return input.resync ? "Saving & re-syncing…" : "Saving…";
+  }
+  return input.resync ? "Save & re-sync base plan" : "Save platform default";
+}
+
 export default function AdminPlatformBillingPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
@@ -362,13 +372,10 @@ export default function AdminPlatformBillingPage() {
               disabled={savingPlatform}
               onClick={() => void savePlatformDefault()}
             >
-              {savingPlatform
-                ? resyncSubscribers
-                  ? "Saving & re-syncing…"
-                  : "Saving…"
-                : resyncSubscribers
-                  ? "Save & re-sync base plan"
-                  : "Save platform default"}
+              {platformSaveButtonLabel({
+                saving: savingPlatform,
+                resync: resyncSubscribers,
+              })}
             </button>
           </div>
           <label className="flex items-start gap-2 text-sm text-zinc-400">

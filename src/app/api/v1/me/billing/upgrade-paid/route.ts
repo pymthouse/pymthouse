@@ -6,6 +6,7 @@ import {
   OwnerPaidUpgradeError,
   upgradeOwnerToPaidPlan,
 } from "@/lib/openmeter/owner-paid-plan";
+import { ownerPaidUpgradeHttpStatus } from "@/lib/openmeter/owner-paid-upgrade-status";
 
 function sessionUserId(session: unknown): string | undefined {
   if (!session || typeof session !== "object") {
@@ -35,17 +36,9 @@ export async function POST() {
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof OwnerPaidUpgradeError) {
-      const status =
-        err.code === "payment_method_required"
-          ? 402
-          : err.code === "openmeter_unavailable"
-            ? 503
-            : err.code === "no_subscription"
-              ? 404
-              : 400;
       return NextResponse.json(
         { error: err.message, code: err.code },
-        { status },
+        { status: ownerPaidUpgradeHttpStatus(err.code) },
       );
     }
     const message = err instanceof Error ? err.message : String(err);

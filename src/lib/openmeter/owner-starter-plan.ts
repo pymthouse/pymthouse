@@ -9,19 +9,23 @@ import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
-  KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
-  NETWORK_FEE_USD_MICROS_METER,
 } from "./constants";
 import { ensureOwnerCustomer } from "./customers";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
 } from "./konnect-catalog";
-import { buildKonnectUsageRateCard } from "./konnect-plan-body";
 import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
+  buildOwnerAllowancePlanBody,
+  createOwnerAllowancePlan,
+  findOpenMeterPlanByKey,
+  openMeterPlanNeedsPublish,
+  parseOwnerAllowanceIncludedMicros,
+  publishOpenMeterPlanBestEffort,
+} from "./owner-allowance-plan";
+import {
   isOpenMeterConflictError,
-  isOpenMeterPlanAlreadyPublishedError,
   isOpenMeterPlanImmutableError,
   isOpenMeterPlanNotFoundError,
   isOpenMeterStripeBillingError,
@@ -55,113 +59,6 @@ export type OwnerStarterPlanRef = {
   includedUsdMicros: string;
 };
 
-function parseIncludedMicros(raw: string): number {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    return 5_000_000;
-  }
-  return Math.floor(n);
-}
-
-function buildOwnerStarterPlanBody(input: {
-  planKey: string;
-  featureId: string;
-  includedUsdMicros: number;
-  unitAmount: string;
-}): Record<string, unknown> {
-  return {
-    key: input.planKey,
-    name: OWNER_STARTER_PLAN_NAME,
-    currency: "USD",
-    billing_cadence: "P1M",
-    settlement_mode: KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
-    phases: [
-      {
-        key: "default",
-        name: "Default",
-        rate_cards: [
-          buildKonnectUsageRateCard({
-            key: DEFAULT_TRIAL_FEATURE_KEY,
-            name: "Network usage",
-            featureId: input.featureId,
-            unitAmount: input.unitAmount,
-            includedUsdMicros: input.includedUsdMicros,
-          }),
-        ],
-      },
-    ],
-    metadata: {
-      pymthouse_plan_kind: "owner_starter",
-      meter_slug: NETWORK_FEE_USD_MICROS_METER,
-    },
-  };
-}
-
-type FoundPlan = {
-  id: string;
-  key?: string;
-  version?: number;
-  status?: string;
-};
-
-async function findPlanByKey(
-  client: OpenMeter,
-  planKey: string,
-): Promise<FoundPlan | null> {
-  try {
-    const listed = await client.plans.list({
-      ...( { key: planKey } as Record<string, unknown> ),
-      page: 1,
-      pageSize: 50,
-    } as Parameters<OpenMeter["plans"]["list"]>[0]);
-    const items = (listed as { items?: Array<FoundPlan> })?.items ?? [];
-    const exact = items.find((item) => item.key === planKey);
-    if (exact?.id) {
-      return exact;
-    }
-  } catch {
-    // fall through to get-by-key
-  }
-
-  try {
-    const plan = await client.plans.get(planKey);
-    if (plan?.id) {
-      return {
-        id: plan.id,
-        key: plan.key,
-        version: typeof plan.version === "number" ? plan.version : undefined,
-        status: plan.status,
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-/** Publish is only legal for these plan states; any other state is already live. */
-function planNeedsPublish(status: string | undefined): boolean {
-  return status === "draft" || status === "scheduled";
-}
-
-async function publishOwnerStarterPlanBestEffort(
-  client: OpenMeter,
-  planId: string,
-): Promise<string> {
-  try {
-    const published = await client.plans.publish(planId);
-    return published?.id ?? planId;
-  } catch (err) {
-    if (
-      !isOpenMeterConflictError(err) &&
-      !isOpenMeterPlanAlreadyPublishedError(err)
-    ) {
-      console.warn("openmeter: owner starter plan publish failed");
-    }
-    return planId;
-  }
-}
-
 let ownerStarterPlanCache: ReturnType<
   typeof createAsyncTtlCache<OwnerStarterPlanRef>
 > | null = null;
@@ -184,39 +81,6 @@ export function invalidateOwnerStarterPlanCache(): void {
 
 function cacheKeyForAmount(includedUsdMicros: string): string {
   return `owner-starter-plan:${includedUsdMicros}`;
-}
-
-async function createOwnerStarterPlan(input: {
-  client: OpenMeter;
-  planKey: string;
-  featureId: string;
-  includedUsdMicros: string;
-}): Promise<string> {
-  const body = buildOwnerStarterPlanBody({
-    planKey: input.planKey,
-    featureId: input.featureId,
-    includedUsdMicros: parseIncludedMicros(input.includedUsdMicros),
-    unitAmount: defaultRetailRateUsd(),
-  });
-
-  try {
-    const created = await input.client.plans.create(
-      body as unknown as Parameters<OpenMeter["plans"]["create"]>[0],
-    );
-    if (!created?.id) {
-      throw new Error("Failed to create Owner Starter plan");
-    }
-    return created.id;
-  } catch (err) {
-    if (!isOpenMeterConflictError(err)) {
-      throw err;
-    }
-    const raced = await findPlanByKey(input.client, input.planKey);
-    if (!raced?.id) {
-      throw err;
-    }
-    return raced.id;
-  }
 }
 
 /**
@@ -259,10 +123,10 @@ async function ensureOwnerStarterPlanSyncedUncached(input: {
     throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
   }
 
-  const existing = await findPlanByKey(client, input.planKey);
+  const existing = await findOpenMeterPlanByKey(client, input.planKey);
   if (existing?.id) {
-    if (planNeedsPublish(existing.status)) {
-      await publishOwnerStarterPlanBestEffort(client, existing.id);
+    if (openMeterPlanNeedsPublish(existing.status)) {
+      await publishOpenMeterPlanBestEffort(client, existing.id, "owner starter");
     }
     return {
       key: input.planKey,
@@ -271,13 +135,20 @@ async function ensureOwnerStarterPlanSyncedUncached(input: {
     };
   }
 
-  let openmeterPlanId = await createOwnerStarterPlan({
+  let openmeterPlanId = await createOwnerAllowancePlan({
     client,
     planKey: input.planKey,
+    planName: OWNER_STARTER_PLAN_NAME,
+    planKind: "owner_starter",
     featureId,
     includedUsdMicros: input.includedUsdMicros,
+    createFailedMessage: "Failed to create Owner Starter plan",
   });
-  openmeterPlanId = await publishOwnerStarterPlanBestEffort(client, openmeterPlanId);
+  openmeterPlanId = await publishOpenMeterPlanBestEffort(
+    client,
+    openmeterPlanId,
+    "owner starter",
+  );
 
   return {
     key: input.planKey,
@@ -314,14 +185,16 @@ export async function forceSyncOwnerStarterPlan(
     throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
   }
 
-  const body = buildOwnerStarterPlanBody({
+  const body = buildOwnerAllowancePlanBody({
     planKey,
+    planName: OWNER_STARTER_PLAN_NAME,
+    planKind: "owner_starter",
     featureId,
-    includedUsdMicros: parseIncludedMicros(amount),
+    includedUsdMicros: parseOwnerAllowanceIncludedMicros(amount),
     unitAmount: defaultRetailRateUsd(),
   });
 
-  const existing = await findPlanByKey(client, planKey);
+  const existing = await findOpenMeterPlanByKey(client, planKey);
   let openmeterPlanId = existing?.id;
 
   if (openmeterPlanId) {
@@ -339,23 +212,33 @@ export async function forceSyncOwnerStarterPlan(
         throw updateErr;
       }
       // Published versions are immutable — create a new draft under the same key.
-      openmeterPlanId = await createOwnerStarterPlan({
+      openmeterPlanId = await createOwnerAllowancePlan({
         client,
         planKey,
+        planName: OWNER_STARTER_PLAN_NAME,
+        planKind: "owner_starter",
         featureId,
         includedUsdMicros: amount,
+        createFailedMessage: "Failed to create Owner Starter plan",
       });
     }
   } else {
-    openmeterPlanId = await createOwnerStarterPlan({
+    openmeterPlanId = await createOwnerAllowancePlan({
       client,
       planKey,
+      planName: OWNER_STARTER_PLAN_NAME,
+      planKind: "owner_starter",
       featureId,
       includedUsdMicros: amount,
+      createFailedMessage: "Failed to create Owner Starter plan",
     });
   }
 
-  openmeterPlanId = await publishOwnerStarterPlanBestEffort(client, openmeterPlanId);
+  openmeterPlanId = await publishOpenMeterPlanBestEffort(
+    client,
+    openmeterPlanId,
+    "owner starter",
+  );
   invalidateOwnerStarterPlanCache();
 
   const ref: OwnerStarterPlanRef = {

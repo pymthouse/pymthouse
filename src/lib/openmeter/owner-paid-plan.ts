@@ -2,27 +2,25 @@ import type { OpenMeter } from "@openmeter/sdk";
 
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
-import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import {
   DEFAULT_TRIAL_FEATURE_KEY,
   getHostedOpenMeterUrl,
-  KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
-  NETWORK_FEE_USD_MICROS_METER,
 } from "./constants";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
 } from "./konnect-catalog";
-import { buildKonnectUsageRateCard } from "./konnect-plan-body";
 import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
-  isOpenMeterConflictError,
-  isOpenMeterPlanAlreadyPublishedError,
-  isOpenMeterPlanNotFoundError,
-} from "./plan-errors";
+  createOwnerAllowancePlan,
+  findOpenMeterPlanByKey,
+  openMeterPlanNeedsPublish,
+  publishOpenMeterPlanBestEffort,
+} from "./owner-allowance-plan";
+import { isOpenMeterPlanNotFoundError } from "./plan-errors";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   listOpenMeterSubscriptionsForCustomer,
@@ -48,112 +46,6 @@ export type OwnerPaidPlanRef = {
   includedUsdMicros: string;
 };
 
-function parseIncludedMicros(raw: string): number {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    return 5_000_000;
-  }
-  return Math.floor(n);
-}
-
-function buildOwnerPaidPlanBody(input: {
-  planKey: string;
-  featureId: string;
-  includedUsdMicros: number;
-  unitAmount: string;
-}): Record<string, unknown> {
-  return {
-    key: input.planKey,
-    name: OWNER_PAID_PLAN_NAME,
-    currency: "USD",
-    billing_cadence: "P1M",
-    settlement_mode: KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
-    phases: [
-      {
-        key: "default",
-        name: "Default",
-        rate_cards: [
-          buildKonnectUsageRateCard({
-            key: DEFAULT_TRIAL_FEATURE_KEY,
-            name: "Network usage",
-            featureId: input.featureId,
-            unitAmount: input.unitAmount,
-            includedUsdMicros: input.includedUsdMicros,
-          }),
-        ],
-      },
-    ],
-    metadata: {
-      pymthouse_plan_kind: "owner_paid",
-      meter_slug: NETWORK_FEE_USD_MICROS_METER,
-    },
-  };
-}
-
-type FoundPlan = {
-  id: string;
-  key?: string;
-  version?: number;
-  status?: string;
-};
-
-async function findPlanByKey(
-  client: OpenMeter,
-  planKey: string,
-): Promise<FoundPlan | null> {
-  try {
-    const listed = await client.plans.list({
-      ...( { key: planKey } as Record<string, unknown> ),
-      page: 1,
-      pageSize: 50,
-    } as Parameters<OpenMeter["plans"]["list"]>[0]);
-    const items = (listed as { items?: Array<FoundPlan> })?.items ?? [];
-    const exact = items.find((item) => item.key === planKey);
-    if (exact?.id) {
-      return exact;
-    }
-  } catch {
-    // fall through to get-by-key
-  }
-
-  try {
-    const plan = await client.plans.get(planKey);
-    if (plan?.id) {
-      return {
-        id: plan.id,
-        key: plan.key,
-        version: typeof plan.version === "number" ? plan.version : undefined,
-        status: plan.status,
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function planNeedsPublish(status: string | undefined): boolean {
-  return status === "draft" || status === "scheduled";
-}
-
-async function publishOwnerPaidPlanBestEffort(
-  client: OpenMeter,
-  planId: string,
-): Promise<string> {
-  try {
-    const published = await client.plans.publish(planId);
-    return published?.id ?? planId;
-  } catch (err) {
-    if (
-      !isOpenMeterConflictError(err) &&
-      !isOpenMeterPlanAlreadyPublishedError(err)
-    ) {
-      console.warn("openmeter: owner paid plan publish failed");
-    }
-    return planId;
-  }
-}
-
 let ownerPaidPlanCache: ReturnType<
   typeof createAsyncTtlCache<OwnerPaidPlanRef>
 > | null = null;
@@ -171,39 +63,6 @@ export function resetOwnerPaidPlanCacheForTests(): void {
 
 export function invalidateOwnerPaidPlanCache(): void {
   ownerPaidPlanCache = null;
-}
-
-async function createOwnerPaidPlan(input: {
-  client: OpenMeter;
-  planKey: string;
-  featureId: string;
-  includedUsdMicros: string;
-}): Promise<string> {
-  const body = buildOwnerPaidPlanBody({
-    planKey: input.planKey,
-    featureId: input.featureId,
-    includedUsdMicros: parseIncludedMicros(input.includedUsdMicros),
-    unitAmount: defaultRetailRateUsd(),
-  });
-
-  try {
-    const created = await input.client.plans.create(
-      body as unknown as Parameters<OpenMeter["plans"]["create"]>[0],
-    );
-    if (!created?.id) {
-      throw new Error("Failed to create Owner Paid plan");
-    }
-    return created.id;
-  } catch (err) {
-    if (!isOpenMeterConflictError(err)) {
-      throw err;
-    }
-    const raced = await findPlanByKey(input.client, input.planKey);
-    if (!raced?.id) {
-      throw err;
-    }
-    return raced.id;
-  }
 }
 
 /**
@@ -246,10 +105,10 @@ async function ensureOwnerPaidPlanSyncedUncached(input: {
     throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
   }
 
-  const existing = await findPlanByKey(client, input.planKey);
+  const existing = await findOpenMeterPlanByKey(client, input.planKey);
   if (existing?.id) {
-    if (planNeedsPublish(existing.status)) {
-      await publishOwnerPaidPlanBestEffort(client, existing.id);
+    if (openMeterPlanNeedsPublish(existing.status)) {
+      await publishOpenMeterPlanBestEffort(client, existing.id, "owner paid");
     }
     return {
       key: input.planKey,
@@ -258,13 +117,20 @@ async function ensureOwnerPaidPlanSyncedUncached(input: {
     };
   }
 
-  let openmeterPlanId = await createOwnerPaidPlan({
+  let openmeterPlanId = await createOwnerAllowancePlan({
     client,
     planKey: input.planKey,
+    planName: OWNER_PAID_PLAN_NAME,
+    planKind: "owner_paid",
     featureId,
     includedUsdMicros: input.includedUsdMicros,
+    createFailedMessage: "Failed to create Owner Paid plan",
   });
-  openmeterPlanId = await publishOwnerPaidPlanBestEffort(client, openmeterPlanId);
+  openmeterPlanId = await publishOpenMeterPlanBestEffort(
+    client,
+    openmeterPlanId,
+    "owner paid",
+  );
 
   return {
     key: input.planKey,
