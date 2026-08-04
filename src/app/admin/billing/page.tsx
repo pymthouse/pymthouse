@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
+import AdminOwnerTiersSection from "@/components/admin/AdminOwnerTiersSection";
 import { buildOwnerOverridePatchBody } from "@/lib/billing/owner-override-form";
 import {
   sanitizeUsdCentsInput,
@@ -348,11 +349,15 @@ export default function AdminPlatformBillingPage() {
             Owner Starter platform default
           </h2>
           <p className="text-sm text-zinc-500">
-            Applies to new developer accounts. Saving always updates the stored default
-            and republishes base plan{" "}
-            <code className="text-zinc-300">{platform?.planKey ?? "pymthouse_owner_starter"}</code>.
-            Optionally re-sync existing subscribers still on that shared base plan
-            (per-owner amount overrides are not moved).
+            Applies to new developer Sandbox Starter wallets only. Owner Paid
+            allowances and monthly fees are configured in{" "}
+            <strong className="font-medium text-zinc-300">
+              Owner Paid subscription tiers
+            </strong>{" "}
+            below. Saving updates the Starter base plan{" "}
+            <code className="text-zinc-300">{platform?.planKey ?? "pymthouse_owner_starter"}</code>
+            {" "}
+            and best-effort re-syncs active Paid tiers.
           </p>
           <div className="flex flex-wrap items-end gap-3">
             <label className="block text-sm">
@@ -419,6 +424,8 @@ export default function AdminPlatformBillingPage() {
             </p>
           )}
         </section>
+
+        <AdminOwnerTiersSection />
 
         <section className="space-y-4 rounded-lg border border-white/10 bg-black/20 p-5">
           <h2 className="text-lg font-medium text-zinc-100">Developer accounts</h2>

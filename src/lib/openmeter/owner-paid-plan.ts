@@ -1,29 +1,27 @@
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
-import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
+import {
+  ensureDefaultOwnerPaidTierRow,
+  getOwnerSubscriptionTierByKey,
+  listOwnerSubscriptionTiers,
+  markOwnerSubscriptionTierSynced,
+  parseOwnerTierMonthlyFeeUsd,
+  requireSelectableOwnerSubscriptionTier,
+  resolveOwnerTierOverageRateUsd,
+  type OwnerSubscriptionTierRow,
+} from "@/lib/billing/owner-subscription-tiers";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
-import {
-  DEFAULT_TRIAL_FEATURE_KEY,
-  getHostedOpenMeterUrl,
-} from "./constants";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
-import {
-  ensureKonnectTenantCatalog,
-  findKonnectFeatureIdByKey,
-} from "./konnect-catalog";
 import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
-  createOwnerAllowancePlan,
   findOpenMeterPlanByKey,
   forceSyncOwnerAllowancePlan,
-  openMeterPlanNeedsPublish,
-  publishOpenMeterPlanBestEffort,
   readUsageDiscountUsdMicrosFromPlanBody,
+  type OwnerAllowancePlanRef,
 } from "./owner-allowance-plan";
 import { isOpenMeterPlanNotFoundError } from "./plan-errors";
-import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   listOpenMeterSubscriptionsForCustomer,
   verifyOpenMeterSubscriptionId,
@@ -42,13 +40,10 @@ export {
   isOwnerPaidPlanKey,
 } from "./owner-paid-key";
 
-export type OwnerPaidPlanRef = {
-  key: string;
-  openmeterPlanId: string;
-  includedUsdMicros: string;
+export type OwnerPaidPlanRef = OwnerAllowancePlanRef & {
+  monthlyFeeUsd?: string;
+  tierId?: string;
 };
-
-const OWNER_PAID_PLAN_CACHE_KEY = "owner-paid-plan";
 
 let ownerPaidPlanCache: ReturnType<
   typeof createAsyncTtlCache<OwnerPaidPlanRef>
@@ -69,19 +64,33 @@ export function invalidateOwnerPaidPlanCache(): void {
   ownerPaidPlanCache = null;
 }
 
-/**
- * Force-update (or create) the fixed-key Owner Paid plan and publish it.
- * Used when the platform Developer default changes so discounts.usage is rewritten.
- */
-export async function forceSyncOwnerPaidPlan(
-  includedUsdMicros: string,
+function tierCacheKey(planKey: string): string {
+  return `owner-paid-tier\u0000${planKey.trim()}`;
+}
+
+/** Force-sync one Owner Paid tier (flat fee + usage) into OpenMeter. */
+export async function forceSyncOwnerPaidTier(
+  tier: OwnerSubscriptionTierRow,
 ): Promise<OwnerPaidPlanRef> {
+  const monthlyFeeUsd = parseOwnerTierMonthlyFeeUsd(tier.monthlyFeeUsd);
+  if (!monthlyFeeUsd) {
+    throw new Error(`Tier ${tier.key} needs a positive monthlyFeeUsd`);
+  }
+
   const synced = await forceSyncOwnerAllowancePlan({
-    planKey: OWNER_PAID_PLAN_KEY,
-    planName: OWNER_PAID_PLAN_NAME,
-    planKind: "owner_paid",
-    includedUsdMicros,
-    warnLabel: "owner paid",
+    planKey: tier.key,
+    planName: tier.name,
+    planKind: "owner_paid_tier",
+    includedUsdMicros: tier.includedUsdMicros,
+    monthlyFeeUsd,
+    unitAmount: resolveOwnerTierOverageRateUsd(tier.overageRateUsd),
+    tierId: tier.id,
+    warnLabel: `owner paid tier ${tier.key}`,
+  });
+
+  await markOwnerSubscriptionTierSynced({
+    id: tier.id,
+    openmeterPlanId: synced.openmeterPlanId,
   });
 
   invalidateOwnerPaidPlanCache();
@@ -89,26 +98,73 @@ export async function forceSyncOwnerPaidPlan(
     key: synced.key,
     openmeterPlanId: synced.openmeterPlanId,
     includedUsdMicros: synced.includedUsdMicros,
+    monthlyFeeUsd,
+    tierId: tier.id,
   };
-  getOwnerPaidPlanCache().seed(OWNER_PAID_PLAN_CACHE_KEY, ref);
+  getOwnerPaidPlanCache().seed(tierCacheKey(tier.key), ref);
   return ref;
 }
 
 /**
- * Read-only peek at the published Owner Paid plan (no force-sync side effects).
- * Used by admin GET so drift is visible without mutating OpenMeter.
+ * @deprecated Prefer forceSyncOwnerPaidTier / forceSyncAllOwnerPaidTiers.
+ * Kept for callers that still pass an included-micros override for the default key.
+ */
+export async function forceSyncOwnerPaidPlan(
+  includedUsdMicros: string,
+): Promise<OwnerPaidPlanRef> {
+  await ensureDefaultOwnerPaidTierRow();
+  const tier = await getOwnerSubscriptionTierByKey(OWNER_PAID_PLAN_KEY);
+  if (!tier) {
+    throw new Error("Default Owner Paid tier missing");
+  }
+  return forceSyncOwnerPaidTier({
+    ...tier,
+    includedUsdMicros: includedUsdMicros.trim() || tier.includedUsdMicros,
+  });
+}
+
+/** Force-sync every active Owner Paid tier. Best-effort per tier. */
+export async function forceSyncAllOwnerPaidTiers(): Promise<{
+  synced: OwnerPaidPlanRef[];
+  errors: Array<{ key: string; message: string }>;
+}> {
+  await ensureDefaultOwnerPaidTierRow();
+  const tiers = await listOwnerSubscriptionTiers({ activeOnly: true });
+  const synced: OwnerPaidPlanRef[] = [];
+  const errors: Array<{ key: string; message: string }> = [];
+  for (const tier of tiers) {
+    try {
+      synced.push(await forceSyncOwnerPaidTier(tier));
+    } catch (err) {
+      errors.push({
+        key: tier.key,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { synced, errors };
+}
+
+/**
+ * Read-only peek at the default Owner Paid tier (admin platform GET).
  */
 export async function peekOwnerPaidPlanPublished(): Promise<{
   planKey: string;
   openmeterPlanId: string | null;
   publishedIncludedUsdMicros: string | null;
+  monthlyFeeUsd: string | null;
+  tierCount: number;
 }> {
-  const planKey = OWNER_PAID_PLAN_KEY;
+  const tiers = await listOwnerSubscriptionTiers();
+  const defaultTier = tiers.find((t) => t.key === OWNER_PAID_PLAN_KEY) ?? tiers[0];
+  const planKey = defaultTier?.key ?? OWNER_PAID_PLAN_KEY;
   if (!isHostedAdminClientAvailable()) {
     return {
       planKey,
-      openmeterPlanId: null,
-      publishedIncludedUsdMicros: null,
+      openmeterPlanId: defaultTier?.openmeterPlanId ?? null,
+      publishedIncludedUsdMicros: defaultTier?.includedUsdMicros ?? null,
+      monthlyFeeUsd: defaultTier?.monthlyFeeUsd ?? null,
+      tierCount: tiers.length,
     };
   }
 
@@ -120,6 +176,8 @@ export async function peekOwnerPaidPlanPublished(): Promise<{
         planKey,
         openmeterPlanId: null,
         publishedIncludedUsdMicros: null,
+        monthlyFeeUsd: defaultTier?.monthlyFeeUsd ?? null,
+        tierCount: tiers.length,
       };
     }
     const body = await client.plans.get(existing.id);
@@ -127,92 +185,68 @@ export async function peekOwnerPaidPlanPublished(): Promise<{
       planKey,
       openmeterPlanId: existing.id,
       publishedIncludedUsdMicros: readUsageDiscountUsdMicrosFromPlanBody(body),
+      monthlyFeeUsd: defaultTier?.monthlyFeeUsd ?? null,
+      tierCount: tiers.length,
     };
   } catch {
     return {
       planKey,
       openmeterPlanId: null,
       publishedIncludedUsdMicros: null,
+      monthlyFeeUsd: defaultTier?.monthlyFeeUsd ?? null,
+      tierCount: tiers.length,
     };
   }
 }
 
-/**
- * Ensure the platform Owner Paid plan exists and its published discount matches
- * the current Developer platform default. Settlement collects via the owners
- * Stripe billing profile.
- */
-export async function ensureOwnerPaidPlanSynced(): Promise<OwnerPaidPlanRef> {
-  return getOwnerPaidPlanCache().get(
-    OWNER_PAID_PLAN_CACHE_KEY,
-    () => ensureOwnerPaidPlanSyncedUncached(),
-  );
-}
-
-async function ensureOwnerPaidPlanSyncedUncached(): Promise<OwnerPaidPlanRef> {
+/** Ensure a specific Owner Paid tier is synced to OpenMeter. */
+export async function ensureOwnerPaidTierPlanSynced(
+  planKey: string,
+): Promise<OwnerPaidPlanRef> {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
-
-  const amount = (await resolvePlatformOwnerStarterIncludedUsdMicros()).trim();
-  const apiKey = process.env.OPENMETER_API_KEY?.trim();
-  const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey);
-  if (!useKonnect) {
-    throw new Error("Owner Paid plan requires Konnect metering routes");
-  }
-
-  const client = getHostedAdminClient();
-  await ensureKonnectTenantCatalog();
-  const featureId = await findKonnectFeatureIdByKey(DEFAULT_TRIAL_FEATURE_KEY);
-  if (!featureId) {
-    throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
-  }
-
-  const existing = await findOpenMeterPlanByKey(client, OWNER_PAID_PLAN_KEY);
-  if (existing?.id) {
-    let publishedMicros: string | null = null;
-    try {
-      const body = await client.plans.get(existing.id);
-      publishedMicros = readUsageDiscountUsdMicrosFromPlanBody(body);
-    } catch {
-      publishedMicros = null;
-    }
-
-    if (publishedMicros === amount) {
-      if (openMeterPlanNeedsPublish(existing.status)) {
-        await publishOpenMeterPlanBestEffort(client, existing.id, "owner paid");
+  const key = planKey.trim() || OWNER_PAID_PLAN_KEY;
+  return getOwnerPaidPlanCache().get(tierCacheKey(key), async () => {
+    const tier = await requireSelectableOwnerSubscriptionTier(key);
+    if (
+      tier.openmeterPlanId &&
+      isHostedAdminClientAvailable()
+    ) {
+      try {
+        const client = getHostedAdminClient();
+        const existing = await findOpenMeterPlanByKey(client, tier.key);
+        if (existing?.id) {
+          const body = await client.plans.get(existing.id);
+          const published = readUsageDiscountUsdMicrosFromPlanBody(body);
+          if (published === tier.includedUsdMicros) {
+            return {
+              key: tier.key,
+              openmeterPlanId: existing.id,
+              includedUsdMicros: tier.includedUsdMicros,
+              monthlyFeeUsd: tier.monthlyFeeUsd,
+              tierId: tier.id,
+            };
+          }
+        }
+      } catch {
+        // Fall through to force-sync.
       }
-      return {
-        key: OWNER_PAID_PLAN_KEY,
-        openmeterPlanId: existing.id,
-        includedUsdMicros: publishedMicros,
-      };
     }
-
-    // Published discount drifted from the platform default — rewrite.
-    return forceSyncOwnerPaidPlan(amount);
-  }
-
-  let openmeterPlanId = await createOwnerAllowancePlan({
-    client,
-    planKey: OWNER_PAID_PLAN_KEY,
-    planName: OWNER_PAID_PLAN_NAME,
-    planKind: "owner_paid",
-    featureId,
-    includedUsdMicros: amount,
-    createFailedMessage: "Failed to create Owner Paid plan",
+    return forceSyncOwnerPaidTier(tier);
   });
-  openmeterPlanId = await publishOpenMeterPlanBestEffort(
-    client,
-    openmeterPlanId,
-    "owner paid",
-  );
+}
 
-  return {
-    key: OWNER_PAID_PLAN_KEY,
-    openmeterPlanId,
-    includedUsdMicros: amount,
-  };
+/**
+ * Ensure the default Owner Paid tier exists and is synced.
+ * Prefer ensureOwnerPaidTierPlanSynced(planKey) for Upgrade.
+ */
+export async function ensureOwnerPaidPlanSynced(): Promise<OwnerPaidPlanRef> {
+  if (!isHostedAdminClientAvailable()) {
+    throw new Error("OpenMeter is not configured");
+  }
+  await ensureDefaultOwnerPaidTierRow();
+  return ensureOwnerPaidTierPlanSynced(OWNER_PAID_PLAN_KEY);
 }
 
 async function findActiveOwnerWalletSubscription(input: {
@@ -273,6 +307,8 @@ export class OwnerPaidUpgradeError extends Error {
     | "payment_method_required"
     | "openmeter_unavailable"
     | "no_subscription"
+    | "confirm_required"
+    | "tier_unavailable"
     | "upgrade_failed";
 
   constructor(
@@ -286,19 +322,28 @@ export class OwnerPaidUpgradeError extends Error {
 }
 
 /**
- * Upgrade an owner wallet from Sandbox Starter to Owner Paid.
- * Requires a chargeable default payment method; pins the owners Stripe
- * profile, then changes the Konnect subscription.
+ * Upgrade an owner wallet from Sandbox Starter to a selected Owner Paid tier.
+ * Requires confirm + chargeable PM; starts a new billing cycle immediately.
  */
 export async function upgradeOwnerToPaidPlan(input: {
   ownerUserId: string;
+  planKey?: string | null;
+  confirm?: boolean;
   hintOpenMeterSubscriptionId?: string | null;
 }): Promise<{
   openmeterSubscriptionId: string;
   planKey: string;
   openmeterPlanId: string;
+  monthlyFeeUsd: string;
   alreadyPaid: boolean;
 }> {
+  if (input.confirm !== true) {
+    throw new OwnerPaidUpgradeError(
+      "confirm_required",
+      "Confirm Upgrade to charge the monthly fee and start a new billing cycle",
+    );
+  }
+
   if (!isHostedAdminClientAvailable()) {
     throw new OwnerPaidUpgradeError(
       "openmeter_unavailable",
@@ -322,7 +367,30 @@ export async function upgradeOwnerToPaidPlan(input: {
     );
   }
 
-  const plan = await ensureOwnerPaidPlanSynced();
+  const planKey = (input.planKey?.trim() || OWNER_PAID_PLAN_KEY);
+  let plan: OwnerPaidPlanRef;
+  try {
+    plan = await ensureOwnerPaidTierPlanSynced(planKey);
+  } catch (err) {
+    throw new OwnerPaidUpgradeError(
+      "tier_unavailable",
+      err instanceof Error ? err.message : "Owner Paid tier is not available",
+    );
+  }
+
+  const monthlyFeeUsd =
+    plan.monthlyFeeUsd ||
+    parseOwnerTierMonthlyFeeUsd(
+      (await getOwnerSubscriptionTierByKey(plan.key))?.monthlyFeeUsd,
+    ) ||
+    "";
+  if (!monthlyFeeUsd) {
+    throw new OwnerPaidUpgradeError(
+      "tier_unavailable",
+      "Owner Paid tier has no monthly fee configured",
+    );
+  }
+
   const client = getHostedAdminClient();
   const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
   const customer = await ensureOwnerCustomer(
@@ -331,7 +399,6 @@ export async function upgradeOwnerToPaidPlan(input: {
     publicClientIds,
   );
 
-  // Ensure cus_… + owners Stripe profile before the Paid subscription change.
   await prepareOwnerCustomerStripeBilling({
     client,
     customerId: customer.id,
@@ -351,11 +418,12 @@ export async function upgradeOwnerToPaidPlan(input: {
     );
   }
 
-  if (isOwnerPaidPlanKey(existing.planKey)) {
+  if (isOwnerPaidPlanKey(existing.planKey) && existing.planKey === plan.key) {
     return {
       openmeterSubscriptionId: existing.id,
       planKey: existing.planKey || plan.key,
       openmeterPlanId: existing.openmeterPlanId || plan.openmeterPlanId,
+      monthlyFeeUsd,
       alreadyPaid: true,
     };
   }
@@ -381,7 +449,7 @@ export async function upgradeOwnerToPaidPlan(input: {
   } catch (err) {
     if (isOpenMeterPlanNotFoundError(err)) {
       invalidateOwnerPaidPlanCache();
-      const resynced = await ensureOwnerPaidPlanSynced();
+      const resynced = await ensureOwnerPaidTierPlanSynced(plan.key);
       await changeKonnectSubscription({
         subscriptionId: existing.id,
         customerId: customer.id,
@@ -392,6 +460,7 @@ export async function upgradeOwnerToPaidPlan(input: {
         openmeterSubscriptionId: existing.id,
         planKey: resynced.key,
         openmeterPlanId: resynced.openmeterPlanId,
+        monthlyFeeUsd: resynced.monthlyFeeUsd || monthlyFeeUsd,
         alreadyPaid: false,
       };
     }
@@ -406,13 +475,14 @@ export async function upgradeOwnerToPaidPlan(input: {
     openmeterSubscriptionId: existing.id,
     planKey: plan.key,
     openmeterPlanId: plan.openmeterPlanId,
+    monthlyFeeUsd,
     alreadyPaid: false,
   };
 }
 
 /**
- * True when the owner wallet is on Owner Paid with a chargeable payment method
- * so mint/signer may continue past spendable=0 (overage invoices).
+ * True when the owner wallet is on any Owner Paid tier with a chargeable
+ * payment method so mint/signer may continue past spendable=0.
  */
 export async function ownerWalletAllowsOverageInvoicing(
   ownerUserId: string,

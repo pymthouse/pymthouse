@@ -3,8 +3,8 @@
 import { useState } from "react";
 
 /**
- * Owner billing: start OpenMeter Stripe Checkout (setup) to attach a card,
- * then upgrade Sandbox Starter → Owner Paid.
+ * Owner billing: start OpenMeter Stripe Checkout (setup) to attach a card.
+ * Upgrade to a paid tier is a separate consentful step on /billing.
  */
 export default function OwnerPaymentMethodButton({
   hasPaymentMethod = false,

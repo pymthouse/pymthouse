@@ -13,9 +13,10 @@ import {
   OwnerPaidUpgradeError,
 } from "@/lib/openmeter/owner-paid-plan";
 
-test("isOwnerPaidPlanKey matches the platform Paid key", () => {
+test("isOwnerPaidPlanKey matches the platform Paid key and tier suffixes", () => {
   assert.equal(isOwnerPaidPlanKey(OWNER_PAID_PLAN_KEY), true);
   assert.equal(isOwnerPaidPlanKey("pymthouse_owner_paid"), true);
+  assert.equal(isOwnerPaidPlanKey("pymthouse_owner_paid_growth"), true);
   assert.equal(isOwnerPaidPlanKey("pymthouse_owner_starter"), false);
   assert.equal(isOwnerPaidPlanKey(""), false);
   assert.equal(isOwnerPaidPlanKey(null), false);
@@ -32,18 +33,38 @@ test("ensureOwnerPaidPlanSynced rejects when OpenMeter is unavailable", async ()
 test("upgradeOwnerToPaidPlan rejects when OpenMeter is unavailable", async () => {
   resetOwnerPaidPlanCacheForTests();
   await assert.rejects(
-    () => upgradeOwnerToPaidPlan({ ownerUserId: "user_test" }),
+    () =>
+      upgradeOwnerToPaidPlan({
+        ownerUserId: "user_test",
+        confirm: true,
+      }),
     (err: unknown) =>
       err instanceof OwnerPaidUpgradeError &&
       err.code === "openmeter_unavailable",
   );
 });
 
-test("upgradeOwnerToPaidPlan rejects blank ownerUserId when OpenMeter available path not reached", async () => {
+test("upgradeOwnerToPaidPlan rejects without confirm", async () => {
   resetOwnerPaidPlanCacheForTests();
-  // With OpenMeter unavailable, blank id still surfaces openmeter_unavailable first.
   await assert.rejects(
-    () => upgradeOwnerToPaidPlan({ ownerUserId: "   " }),
+    () =>
+      upgradeOwnerToPaidPlan({
+        ownerUserId: "user_test",
+        confirm: false,
+      }),
+    (err: unknown) =>
+      err instanceof OwnerPaidUpgradeError && err.code === "confirm_required",
+  );
+});
+
+test("upgradeOwnerToPaidPlan rejects blank ownerUserId", async () => {
+  resetOwnerPaidPlanCacheForTests();
+  await assert.rejects(
+    () =>
+      upgradeOwnerToPaidPlan({
+        ownerUserId: "   ",
+        confirm: true,
+      }),
     (err: unknown) =>
       err instanceof OwnerPaidUpgradeError &&
       err.code === "openmeter_unavailable",

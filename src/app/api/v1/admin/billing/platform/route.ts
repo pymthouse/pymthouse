@@ -25,6 +25,8 @@ export const GET = withSessionAdminGuard(async () => {
     ownerPaidPlanKey: paid.planKey || OWNER_PAID_PLAN_KEY,
     ownerPaidOpenmeterPlanId: paid.openmeterPlanId,
     ownerPaidIncludedUsdMicros: paid.publishedIncludedUsdMicros,
+    ownerPaidMonthlyFeeUsd: paid.monthlyFeeUsd,
+    ownerPaidTierCount: paid.tierCount,
   });
 });
 

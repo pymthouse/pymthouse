@@ -45,10 +45,35 @@ test("buildOwnerAllowancePlanBody sets kind metadata and rate card", () => {
     "owner_paid",
   );
   const phases = body.phases as Array<{
-    rate_cards: Array<{ key: string; feature: { id: string } }>;
+    rate_cards: Array<{ key: string; feature?: { id: string }; price?: { type: string } }>;
   }>;
+  assert.equal(phases[0]?.rate_cards.length, 1);
   assert.equal(phases[0]?.rate_cards[0]?.key, DEFAULT_TRIAL_FEATURE_KEY);
-  assert.equal(phases[0]?.rate_cards[0]?.feature.id, "feat_1");
+});
+
+test("buildOwnerAllowancePlanBody prepends flat fee for paid tiers", () => {
+  const body = buildOwnerAllowancePlanBody({
+    planKey: "pymthouse_owner_paid_growth",
+    planName: "Growth",
+    planKind: "owner_paid_tier",
+    featureId: "feat_1",
+    includedUsdMicros: 10_000_000,
+    unitAmount: "0.000001",
+    monthlyFeeUsd: "29.00",
+    tierId: "tier_1",
+  });
+  const phases = body.phases as Array<{
+    rate_cards: Array<{ key: string; price?: { type: string; amount?: string } }>;
+  }>;
+  assert.equal(phases[0]?.rate_cards.length, 2);
+  assert.equal(phases[0]?.rate_cards[0]?.key, "subscription_fee");
+  assert.equal(phases[0]?.rate_cards[0]?.price?.type, "flat");
+  assert.equal(phases[0]?.rate_cards[0]?.price?.amount, "29.00");
+  assert.equal(phases[0]?.rate_cards[1]?.key, DEFAULT_TRIAL_FEATURE_KEY);
+  assert.equal(
+    (body.metadata as { tier_id?: string }).tier_id,
+    "tier_1",
+  );
 });
 
 test("findOpenMeterPlanByKey returns exact list match", async () => {

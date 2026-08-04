@@ -8,7 +8,7 @@ import PlatformInvoicesTable from "@/components/billing/PlatformInvoicesTable";
 import TransactionsLedger from "@/components/billing/TransactionsLedger";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
-import OwnerPaidUpgradeEffect from "@/components/OwnerPaidUpgradeEffect";
+import OwnerPaidUpgradePanel from "@/components/OwnerPaidUpgradeEffect";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
@@ -105,12 +105,12 @@ function billingIntroCopy(
   pressure: ReturnType<typeof resolveOwnerBillingPressure>,
 ): string {
   if (pressure === "blocked") {
-    return "Sandbox Starter allowance is used up. Usage is paused until you add a payment method and upgrade to Owner Paid.";
+    return "Sandbox Starter allowance is used up. Usage is paused until you add a payment method and Upgrade to a paid plan.";
   }
   if (pressure === "chargeable") {
     return "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
   }
-  return "Prepaid credits, active subscriptions, and platform invoices for your account. On Sandbox Starter, usage stops when included allowance and credits run out — add a payment method to continue on Owner Paid.";
+  return "Prepaid credits, active subscriptions, and platform invoices for your account. On Sandbox Starter, usage stops when included allowance and credits run out — Upgrade to a paid plan to continue with overage invoicing.";
 }
 
 function PaymentMethodRequiredBanner({
@@ -123,11 +123,11 @@ function PaymentMethodRequiredBanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-amber-100">
-            Add payment method to continue on Paid
+            Add payment method, then Upgrade
           </h2>
           <p className="mt-1 text-sm text-amber-200/90">
-            Sandbox Starter allowance used up. Attach a card to upgrade to Owner
-            Paid so overage can invoice on Stripe.
+            Sandbox Starter allowance used up. Attach a card, then choose a paid
+            plan to resume usage (monthly fee + overage invoicing).
           </p>
         </div>
         {paymentMethodPanel ? (
@@ -387,7 +387,7 @@ export default function OwnerBillingView({
       {data.openMeterConfigured ? (
         <>
           <Suspense fallback={null}>
-            <OwnerPaidUpgradeEffect
+            <OwnerPaidUpgradePanel
               hasPaymentMethod={data.paymentMethods.length > 0}
               onSandboxStarter={onSandboxStarter}
             />
