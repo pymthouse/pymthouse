@@ -14,7 +14,7 @@ Dashboard wizard (post-auth) also lives at `/onboarding`. This document covers t
 
 | Persona | Who | App model |
 | --- | --- | --- |
-| **Explorer** | Individual / try the network | Joins the platform **default app** as an `app_users` row. Usage bills to the user’s own owner wallet (`users.id`) on the platform **Owner Starter** plan — not as an end-user of the admin-owned default app. No OIDC/M2M settings UI. |
+| **Explorer** | Individual / try the network | Joins the platform **default app** as an `app_users` row. Usage bills to the user’s own owner wallet (`users.id`) on **Owner Sandbox Starter** (then **Owner Paid** after adding a payment method) — not as an end-user of the admin-owned default app. No OIDC/M2M settings UI. |
 | **Builder** | Product / merchant | Creates an owned `developer_apps` row. Full Builder API, plans, users, Stripe. |
 
 The platform default app is flagged `is_platform_default = 1` (or pinned via `PYMTHOUSE_DEFAULT_APP_CLIENT_ID`). Only platform **admins** may edit its config. Its `m2m_…` credentials are **not** for third-party Builder integrations — use your own app.

@@ -171,11 +171,11 @@ test("resolveAppActivation blocks an empty wallet with no payment method", async
   assert.equal(activation.reason, "owner_payment_method_required");
 });
 
-test("resolveAppActivation allows an empty wallet backed by a card", async (t) => {
+test("resolveAppActivation allows an empty wallet on Owner Paid with a card", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  // OpenMeter invoices charge_automatically, so a card is enough to keep going.
+  // Owner Paid + chargeable PM unlocks overage invoicing past spendable=0.
   stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: true });
 
   const activation = await resolveAppActivation(seeded.clientId);

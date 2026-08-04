@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import AllowanceProgressBar from "@/components/AllowanceProgressBar";
 import AllowanceStrip from "@/components/AllowanceStrip";
@@ -8,12 +8,14 @@ import PlatformInvoicesTable from "@/components/billing/PlatformInvoicesTable";
 import TransactionsLedger from "@/components/billing/TransactionsLedger";
 import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
+import OwnerPaidUpgradeEffect from "@/components/OwnerPaidUpgradeEffect";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
+import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
 
 function hasDisplayablePrepaidCredit(
@@ -103,12 +105,12 @@ function billingIntroCopy(
   pressure: ReturnType<typeof resolveOwnerBillingPressure>,
 ): string {
   if (pressure === "blocked") {
-    return "Starter allowance is used up. Usage is paused until you attach a payment method.";
+    return "Sandbox Starter allowance is used up. Usage is paused until you add a payment method and upgrade to Owner Paid.";
   }
   if (pressure === "chargeable") {
     return "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
   }
-  return "Prepaid credits, active subscriptions, and platform invoices for your account. Attach a Stripe payment method so overage invoices can charge automatically.";
+  return "Prepaid credits, active subscriptions, and platform invoices for your account. On Sandbox Starter, usage stops when included allowance and credits run out — add a payment method to continue on Owner Paid.";
 }
 
 function PaymentMethodRequiredBanner({
@@ -121,11 +123,11 @@ function PaymentMethodRequiredBanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-amber-100">
-            Payment method required
+            Add payment method to continue on Paid
           </h2>
           <p className="mt-1 text-sm text-amber-200/90">
-            Starter allowance used up. Usage is paused until you attach a
-            payment method so overage can invoice on Stripe.
+            Sandbox Starter allowance used up. Attach a card to upgrade to Owner
+            Paid so overage can invoice on Stripe.
           </p>
         </div>
         {paymentMethodPanel ? (
@@ -353,6 +355,9 @@ export default function OwnerBillingView({
     data.paymentMethods.find((m) => m.isDefault) ??
     data.paymentMethods[0] ??
     null;
+  const onSandboxStarter = data.subscriptions.some((row) =>
+    isOwnerStarterPlanKey(row.openMeterPlanKey),
+  );
 
   return (
     <DashboardLayout>
@@ -381,6 +386,13 @@ export default function OwnerBillingView({
 
       {data.openMeterConfigured ? (
         <>
+          <Suspense fallback={null}>
+            <OwnerPaidUpgradeEffect
+              hasPaymentMethod={data.paymentMethods.length > 0}
+              onSandboxStarter={onSandboxStarter}
+            />
+          </Suspense>
+
           {needsPaymentMethod ? (
             <PaymentMethodRequiredBanner paymentMethodPanel={paymentMethodPanel} />
           ) : null}

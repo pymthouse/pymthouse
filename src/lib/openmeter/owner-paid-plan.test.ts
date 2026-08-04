@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  OWNER_PAID_PLAN_KEY,
+  isOwnerPaidPlanKey,
+} from "@/lib/openmeter/owner-paid-key";
+import {
+  ensureOwnerPaidPlanSynced,
+  resetOwnerPaidPlanCacheForTests,
+  upgradeOwnerToPaidPlan,
+  OwnerPaidUpgradeError,
+} from "@/lib/openmeter/owner-paid-plan";
+
+test("isOwnerPaidPlanKey matches the platform Paid key", () => {
+  assert.equal(isOwnerPaidPlanKey(OWNER_PAID_PLAN_KEY), true);
+  assert.equal(isOwnerPaidPlanKey("pymthouse_owner_paid"), true);
+  assert.equal(isOwnerPaidPlanKey("pymthouse_owner_starter"), false);
+  assert.equal(isOwnerPaidPlanKey(""), false);
+  assert.equal(isOwnerPaidPlanKey(null), false);
+});
+
+test("ensureOwnerPaidPlanSynced rejects when OpenMeter is unavailable", async () => {
+  resetOwnerPaidPlanCacheForTests();
+  await assert.rejects(
+    () => ensureOwnerPaidPlanSynced("5000000"),
+    /OpenMeter is not configured/,
+  );
+});
+
+test("upgradeOwnerToPaidPlan rejects when OpenMeter is unavailable", async () => {
+  resetOwnerPaidPlanCacheForTests();
+  await assert.rejects(
+    () => upgradeOwnerToPaidPlan({ ownerUserId: "user_test" }),
+    (err: unknown) =>
+      err instanceof OwnerPaidUpgradeError &&
+      err.code === "openmeter_unavailable",
+  );
+});

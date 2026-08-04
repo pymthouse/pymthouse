@@ -38,6 +38,7 @@ import {
   isOwnerStarterPlanKey,
   ownerStarterPlanKeyForAmount,
 } from "./owner-starter-key";
+import { isOwnerPaidPlanKey } from "./owner-paid-key";
 
 export {
   OWNER_STARTER_PLAN_KEY,
@@ -481,11 +482,26 @@ export async function ensureOwnerStarterSubscription(input: {
   });
 
   if (existing) {
+    // Already on Owner Paid — do not recreate Sandbox Starter or re-pin sandbox.
+    if (isOwnerPaidPlanKey(existing.planKey)) {
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey,
+        openmeterPlanId: existing.openmeterPlanId,
+        created: false,
+      };
+    }
+
     if (
       isOwnerStarterPlanKey(existing.planKey) &&
       existing.planKey === plan.key &&
       existing.openmeterPlanId === plan.openmeterPlanId
     ) {
+      // Keep Sandbox Starter on the free profile (org default may be Stripe).
+      await applyFreeBillingProfileToCustomer({
+        client,
+        customerId: customer.id,
+      });
       return {
         openmeterSubscriptionId: existing.id,
         planKey: existing.planKey,
@@ -495,6 +511,10 @@ export async function ensureOwnerStarterSubscription(input: {
     }
 
     if (isOwnerStarterPlanKey(existing.planKey)) {
+      await applyFreeBillingProfileToCustomer({
+        client,
+        customerId: customer.id,
+      });
       try {
         await changeKonnectSubscription({
           subscriptionId: existing.id,
@@ -520,8 +540,22 @@ export async function ensureOwnerStarterSubscription(input: {
           // fall through to create
         }
       }
+    } else if (existing.id) {
+      // Unknown active wallet subscription — leave it alone.
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey,
+        openmeterPlanId: existing.openmeterPlanId,
+        created: false,
+      };
     }
   }
+
+  // New Sandbox Starter must not inherit the org Stripe default without cus_….
+  await applyFreeBillingProfileToCustomer({
+    client,
+    customerId: customer.id,
+  });
 
   try {
     const createdSub = await client.subscriptions.create({

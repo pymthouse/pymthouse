@@ -26,6 +26,7 @@ import {
   OWNER_STARTER_PLAN_KEY,
   ownerStarterIncludedUsdMicros,
 } from "@/lib/openmeter/owner-starter-key";
+import { isOwnerPaidPlanKey, OWNER_PAID_PLAN_KEY } from "@/lib/openmeter/owner-paid-key";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   includedDiscountUsdMicrosForPlan,
@@ -312,6 +313,11 @@ export function classifyOwnerSubscriptionMapping(input: {
     return findings;
   }
 
+  // Canonical: platform Owner Paid (post–payment-method upgrade).
+  if (isOwnerPaidPlanKey(planKey)) {
+    return findings;
+  }
+
   // Legacy: still on a per-app Starter — warn to migrate.
   if (ownedStarters.some((s) => s.openmeterPlanId === planId)) {
     findings.push({
@@ -363,7 +369,8 @@ export function classifyOwnerSubscriptionMapping(input: {
     message:
       `Owner sub ${subscription.id} plan ${planId}` +
       (planKey ? ` (key=${planKey})` : "") +
-      ` does not map to Owner Starter (${OWNER_STARTER_PLAN_KEY}) or any owned app Starter`,
+      ` does not map to Owner Sandbox Starter (${OWNER_STARTER_PLAN_KEY}), ` +
+      `Owner Paid (${OWNER_PAID_PLAN_KEY}), or any owned app Starter`,
     details: {
       subscriptionId: subscription.id,
       subscriptionPlanId: planId,
@@ -833,14 +840,19 @@ async function auditOwnerSubscriptions(
     const profileId = await getKonnectCustomerBillingProfileId(customerId);
     const sandboxId = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
     if (profileId && sandboxId && profileId === sandboxId) {
-      findings.push({
-        code: "owner_sandbox_billing_profile",
-        severity: "error",
-        ownerId,
-        message: `Owner customer ${customerKey} still uses sandbox billing profile ${profileId}`,
-        details: { customerId, profileId },
-        remediation: FIX_SANDBOX_TO_STRIPE,
-      });
+      // Sandbox is correct for Owner Sandbox Starter. Flag only when the owner
+      // already has a chargeable card (should be on owners Stripe / Paid).
+      const chargeable = await ownerHasChargeablePaymentMethod(ownerId);
+      if (chargeable === true) {
+        findings.push({
+          code: "owner_sandbox_billing_profile",
+          severity: "warn",
+          ownerId,
+          message: `Owner customer ${customerKey} has a payment method but still uses sandbox billing profile ${profileId}`,
+          details: { customerId, profileId },
+          remediation: FIX_SANDBOX_TO_STRIPE,
+        });
+      }
     }
   }
 

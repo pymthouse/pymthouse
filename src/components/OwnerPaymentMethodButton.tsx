@@ -3,8 +3,8 @@
 import { useState } from "react";
 
 /**
- * Owner billing: start OpenMeter Stripe Checkout (setup) to attach a card for
- * platform overage invoices.
+ * Owner billing: start OpenMeter Stripe Checkout (setup) to attach a card,
+ * then upgrade Sandbox Starter → Owner Paid.
  */
 export default function OwnerPaymentMethodButton({
   hasPaymentMethod = false,
@@ -21,7 +21,10 @@ export default function OwnerPaymentMethodButton({
       const res = await fetch("/api/v1/me/billing/payment-method", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({
+          successUrl: `${window.location.origin}/billing?pm=attached`,
+          cancelUrl: `${window.location.origin}/billing`,
+        }),
       });
       const body = (await res.json().catch(() => ({}))) as {
         checkoutUrl?: string;

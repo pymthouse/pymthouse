@@ -159,6 +159,7 @@ export function signerJwtAudience(): string {
 export function mintAllowanceGateDecision(
   allowance: TrialCreditBalance | null,
   hostedBillingEnabled: boolean,
+  options?: { allowsOverageInvoicing?: boolean },
 ): { code: "billing_unavailable" | "trial_credits_exhausted"; message: string } | null {
   if (!hostedBillingEnabled) {
     return null;
@@ -173,6 +174,11 @@ export function mintAllowanceGateDecision(
   // remainders still authorize. Spendable allowance already ceils fractional
   // meter sums once at the read boundary (exact ingest, no per-ticket ceil).
   if (!hasPositiveUsdMicrosBalance(allowance.balanceUsdMicros)) {
+    // Owner Paid + chargeable PM: overage invoices charge_automatically.
+    // Sandbox Starter never uses this path — hard balance gate only.
+    if (options?.allowsOverageInvoicing) {
+      return null;
+    }
     return {
       code: "trial_credits_exhausted",
       message: "Payment method required",
@@ -181,8 +187,15 @@ export function mintAllowanceGateDecision(
   return null;
 }
 
-export function enforceMintAllowanceGate(allowance: TrialCreditBalance | null): void {
-  const decision = mintAllowanceGateDecision(allowance, isHostedAdminClientAvailable());
+export function enforceMintAllowanceGate(
+  allowance: TrialCreditBalance | null,
+  options?: { allowsOverageInvoicing?: boolean },
+): void {
+  const decision = mintAllowanceGateDecision(
+    allowance,
+    isHostedAdminClientAvailable(),
+    options,
+  );
   if (decision) {
     throw new MintUserSignerTokenError(decision.code, decision.message, 402);
   }
@@ -282,7 +295,16 @@ export async function mintSignerJwtForExternalUser(input: {
     provisionExternalUserId,
     identity,
   });
-  enforceMintAllowanceGate(allowance);
+  let allowsOverageInvoicing = false;
+  if (identity.isOwner && identity.ownerUserId) {
+    const { ownerWalletAllowsOverageInvoicing } = await import(
+      "@/lib/openmeter/owner-paid-plan"
+    );
+    allowsOverageInvoicing = await ownerWalletAllowsOverageInvoicing(
+      identity.ownerUserId,
+    );
+  }
+  enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

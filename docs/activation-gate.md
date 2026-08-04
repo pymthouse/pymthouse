@@ -31,12 +31,13 @@ simultaneously too strict (blocks integration before any money is at risk) and t
 
 | Rail | Who pays whom | Always on? | Gated by |
 |---|---|---|---|
-| **Cost** | App owner pays PymtHouse for all network usage their app generates | Yes | Owner chargeability (balance *or* card) + end-user cap |
+| **Cost** | App owner pays PymtHouse for all network usage their app generates | Yes | Owner chargeability (Sandbox Starter balance, or Owner Paid + card) + end-user cap |
 | **Revenue** | Builder's end users pay the Builder | Opt-in | Stripe Connect readiness |
 
 The cost rail already exists and is proven: Explorers on the platform default app bill
-to `buildOwnerCustomerKey(users.id)` against the Owner Starter plan with prepaid credits
-and a MoonPay top-up path. Builder apps reuse it unchanged.
+to `buildOwnerCustomerKey(users.id)` against **Owner Sandbox Starter** (hard balance
+gate) or **Owner Paid** (card required; overage invoices `charge_automatically`) with
+prepaid credits and an admin MoonPay top-up path. Builder apps reuse it unchanged.
 
 The consequence is that **end-user provisioning is never gated on Stripe**. It is gated
 on whether the owner can pay. Stripe Connect gates only the two operations that cannot

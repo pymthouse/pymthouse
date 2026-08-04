@@ -4,7 +4,7 @@ import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-disp
 export const OWNER_STARTER_PLAN_KEY =
   process.env.OPENMETER_OWNER_STARTER_PLAN_KEY?.trim() || "pymthouse_owner_starter";
 
-export const OWNER_STARTER_PLAN_NAME = "Owner Starter";
+export const OWNER_STARTER_PLAN_NAME = "Owner Sandbox Starter";
 
 /**
  * Plan key for a given included allowance.
