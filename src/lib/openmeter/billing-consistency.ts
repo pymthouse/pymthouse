@@ -1188,8 +1188,10 @@ export async function auditBillingConsistency(
     );
   }
 
-  findings.push(...(await auditPhaseOutPlans(options.clientId)));
-  findings.push(...(await auditOwnerPaidPlan(client)));
+  findings.push(
+    ...(await auditPhaseOutPlans(options.clientId)),
+    ...(await auditOwnerPaidPlan(client)),
+  );
 
   return findings;
 }
