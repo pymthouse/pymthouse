@@ -5,10 +5,7 @@ import { db } from "@/db/index";
 import { ownerBillingConfig, users } from "@/db/schema";
 import { withSessionAdminGuard } from "@/lib/api-guards";
 import { mergeOwnerBilling } from "@/lib/billing/owner-billing-config";
-import {
-  platformDefaultApplicationFeeBps,
-  platformDefaultEndUserCap,
-} from "@/lib/billing/platform-billing-defaults";
+import { platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaults";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -44,7 +41,6 @@ export const GET = withSessionAdminGuard(async (request) => {
   const defaults = {
     starterIncludedUsdMicros: platformDefault,
     endUserCap: platformDefaultEndUserCap(),
-    applicationFeeBps: platformDefaultApplicationFeeBps(),
   };
 
   const roleFilter = or(eq(users.role, "developer"), eq(users.role, "admin"));
@@ -72,7 +68,6 @@ export const GET = withSessionAdminGuard(async (request) => {
       role: users.role,
       starterIncludedUsdMicros: ownerBillingConfig.starterIncludedUsdMicros,
       endUserCap: ownerBillingConfig.endUserCap,
-      applicationFeeBps: ownerBillingConfig.applicationFeeBps,
       note: ownerBillingConfig.note,
     })
     .from(users)
@@ -89,13 +84,11 @@ export const GET = withSessionAdminGuard(async (request) => {
     const hasRow =
       row.starterIncludedUsdMicros != null ||
       row.endUserCap != null ||
-      row.applicationFeeBps != null ||
       row.note != null;
     const overrides = hasRow
       ? {
           starterIncludedUsdMicros: row.starterIncludedUsdMicros,
           endUserCap: row.endUserCap,
-          applicationFeeBps: row.applicationFeeBps,
           note: row.note,
         }
       : null;
@@ -118,7 +111,6 @@ export const GET = withSessionAdminGuard(async (request) => {
     platformDefault: {
       starterIncludedUsdMicros: platformDefault,
       endUserCap: defaults.endUserCap,
-      applicationFeeBps: defaults.applicationFeeBps,
     },
   });
 });

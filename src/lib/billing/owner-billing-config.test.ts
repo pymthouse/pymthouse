@@ -21,14 +21,12 @@ import { createTestUser } from "@/test-utils/fixtures";
 const DEFAULTS = {
   starterIncludedUsdMicros: "5000000",
   endUserCap: 25,
-  applicationFeeBps: 0,
 };
 
 test("no override row means platform defaults", () => {
   const resolved = mergeOwnerBilling(null, DEFAULTS);
   assert.equal(resolved.starterIncludedUsdMicros, "5000000");
   assert.equal(resolved.endUserCap, 25);
-  assert.equal(resolved.applicationFeeBps, 0);
   assert.equal(resolved.hasOverride, false);
 });
 
@@ -37,7 +35,6 @@ test("an override wins over the platform default", () => {
     {
       starterIncludedUsdMicros: "50000000",
       endUserCap: null,
-      applicationFeeBps: null,
       note: "design partner",
     },
     DEFAULTS,
@@ -49,23 +46,13 @@ test("an override wins over the platform default", () => {
   assert.equal(resolved.note, "design partner");
 });
 
-test("a zero application fee override is honoured, not treated as unset", () => {
-  const resolved = mergeOwnerBilling(
-    { starterIncludedUsdMicros: null, endUserCap: null, applicationFeeBps: 0, note: null },
-    { ...DEFAULTS, applicationFeeBps: 250 },
-  );
-  assert.equal(resolved.applicationFeeBps, 0);
-  assert.equal(resolved.hasOverride, true);
-});
-
 test("malformed override amounts fall back rather than corrupt billing", () => {
   const resolved = mergeOwnerBilling(
-    { starterIncludedUsdMicros: "not-micros", endUserCap: 0, applicationFeeBps: -5, note: null },
+    { starterIncludedUsdMicros: "not-micros", endUserCap: 0, note: null },
     DEFAULTS,
   );
   assert.equal(resolved.starterIncludedUsdMicros, "5000000");
   assert.equal(resolved.endUserCap, 25, "a cap of 0 would block all provisioning");
-  assert.equal(resolved.applicationFeeBps, 0);
   assert.equal(resolved.hasOverride, false);
 });
 
@@ -133,7 +120,6 @@ dbTest("setOwnerBillingOverrides upserts and resolveOwnerBilling merges", async 
     ownerUserId: ownerId,
     starterIncludedUsdMicros: "15000000",
     endUserCap: 50,
-    applicationFeeBps: 100,
     note: "test override",
     updatedBy: adminId,
   });
@@ -142,14 +128,12 @@ dbTest("setOwnerBillingOverrides upserts and resolveOwnerBilling merges", async 
   assert.deepEqual(overrides, {
     starterIncludedUsdMicros: "15000000",
     endUserCap: 50,
-    applicationFeeBps: 100,
     note: "test override",
   });
 
   const resolved = await resolveOwnerBilling(ownerId);
   assert.equal(resolved.starterIncludedUsdMicros, "15000000");
   assert.equal(resolved.endUserCap, 50);
-  assert.equal(resolved.applicationFeeBps, 100);
   assert.equal(resolved.hasOverride, true);
   assert.equal(resolved.note, "test override");
 

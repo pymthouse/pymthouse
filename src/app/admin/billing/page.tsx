@@ -34,14 +34,12 @@ type OwnerSummary = {
   resolved: {
     starterIncludedUsdMicros: string;
     endUserCap: number;
-    applicationFeeBps: number;
     hasOverride: boolean;
     note: string | null;
   };
   overrides: {
     starterIncludedUsdMicros: string | null;
     endUserCap: number | null;
-    applicationFeeBps: number | null;
     note: string | null;
   } | null;
 };

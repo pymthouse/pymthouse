@@ -630,7 +630,10 @@ export const ownerBillingConfig = pgTable(
     starterIncludedUsdMicros: text("starter_included_usd_micros"),
     /** NULL = platform default. */
     endUserCap: integer("end_user_cap"),
-    /** NULL = platform default. */
+    /**
+     * Legacy unused column. Connect application fees live on app_billing_config;
+     * owner admin APIs reject writes to this field.
+     */
     applicationFeeBps: integer("application_fee_bps"),
     /** Free-text note for why this owner was moved off the defaults. */
     note: text("note"),

@@ -7,7 +7,6 @@
 export type OwnerBillingPatch = {
   starterIncludedUsdMicros?: string | null;
   endUserCap?: number | null;
-  applicationFeeBps?: number | null;
   note?: string | null;
 };
 
@@ -48,24 +47,6 @@ function parseEndUserCap(
   return { ok: false, error: "endUserCap must be a positive integer or null" };
 }
 
-function parseApplicationFeeBps(
-  raw: unknown,
-): { ok: true; value: number | null } | { ok: false; error: string } {
-  if (raw === null) return { ok: true, value: null };
-  if (
-    typeof raw === "number" &&
-    Number.isInteger(raw) &&
-    raw >= 0 &&
-    raw <= 10_000
-  ) {
-    return { ok: true, value: raw };
-  }
-  return {
-    ok: false,
-    error: "applicationFeeBps must be an integer in [0, 10000] or null",
-  };
-}
-
 function parseNote(
   raw: unknown,
 ): { ok: true; value: string | null } | { ok: false; error: string } {
@@ -78,6 +59,14 @@ function parseNote(
 export function parseOwnerBillingPatchBody(
   body: Record<string, unknown>,
 ): OwnerBillingPatchParseResult {
+  if ("applicationFeeBps" in body) {
+    return {
+      ok: false,
+      error:
+        "applicationFeeBps is not an owner override; set Connect platform fees on the app billing path",
+    };
+  }
+
   const patch: OwnerBillingPatch = {};
 
   if ("starterIncludedUsdMicros" in body) {
@@ -90,12 +79,6 @@ export function parseOwnerBillingPatchBody(
     const parsed = parseEndUserCap(body.endUserCap);
     if (!parsed.ok) return parsed;
     patch.endUserCap = parsed.value;
-  }
-
-  if ("applicationFeeBps" in body) {
-    const parsed = parseApplicationFeeBps(body.applicationFeeBps);
-    if (!parsed.ok) return parsed;
-    patch.applicationFeeBps = parsed.value;
   }
 
   if ("note" in body) {

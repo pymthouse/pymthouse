@@ -3,10 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 
 import { db } from "@/db/index";
 import { ownerBillingConfig } from "@/db/schema";
-import {
-  platformDefaultApplicationFeeBps,
-  platformDefaultEndUserCap,
-} from "@/lib/billing/platform-billing-defaults";
+import { platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaults";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 
 /**
@@ -15,20 +12,19 @@ import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/plat
  * The cost rail is account-level — a developer subscribes to PymtHouse once and
  * every app they own bills against it — so these values live per owner, not per
  * app, and are admin-set. A missing row (the common case) means platform
- * defaults. See docs/adr-owner-vs-app-billing.md.
+ * defaults. Connect `application_fee_bps` stays on app billing, not here.
+ * See docs/adr-owner-vs-app-billing.md.
  */
 
 export type OwnerBillingOverrides = {
   starterIncludedUsdMicros: string | null;
   endUserCap: number | null;
-  applicationFeeBps: number | null;
   note: string | null;
 };
 
 export type ResolvedOwnerBilling = {
   starterIncludedUsdMicros: string;
   endUserCap: number;
-  applicationFeeBps: number;
   /** True when any value came from an override rather than a platform default. */
   hasOverride: boolean;
   note: string | null;
@@ -49,7 +45,6 @@ export async function getOwnerBillingOverrides(
     .select({
       starterIncludedUsdMicros: ownerBillingConfig.starterIncludedUsdMicros,
       endUserCap: ownerBillingConfig.endUserCap,
-      applicationFeeBps: ownerBillingConfig.applicationFeeBps,
       note: ownerBillingConfig.note,
     })
     .from(ownerBillingConfig)
@@ -64,7 +59,6 @@ export function mergeOwnerBilling(
   defaults: {
     starterIncludedUsdMicros: string;
     endUserCap: number;
-    applicationFeeBps: number;
   },
 ): ResolvedOwnerBilling {
   const starter = normalizeMicros(overrides?.starterIncludedUsdMicros);
@@ -72,17 +66,11 @@ export function mergeOwnerBilling(
     typeof overrides?.endUserCap === "number" && overrides.endUserCap > 0
       ? overrides.endUserCap
       : null;
-  const fee =
-    typeof overrides?.applicationFeeBps === "number" &&
-    overrides.applicationFeeBps >= 0
-      ? overrides.applicationFeeBps
-      : null;
 
   return {
     starterIncludedUsdMicros: starter ?? defaults.starterIncludedUsdMicros,
     endUserCap: cap ?? defaults.endUserCap,
-    applicationFeeBps: fee ?? defaults.applicationFeeBps,
-    hasOverride: starter !== null || cap !== null || fee !== null,
+    hasOverride: starter !== null || cap !== null,
     note: overrides?.note ?? null,
   };
 }
@@ -95,7 +83,6 @@ export async function resolveOwnerBilling(
   return mergeOwnerBilling(overrides, {
     starterIncludedUsdMicros: await resolvePlatformOwnerStarterIncludedUsdMicros(),
     endUserCap: platformDefaultEndUserCap(),
-    applicationFeeBps: platformDefaultApplicationFeeBps(),
   });
 }
 
@@ -122,7 +109,6 @@ export async function setOwnerBillingOverrides(input: {
   ownerUserId: string;
   starterIncludedUsdMicros?: string | null;
   endUserCap?: number | null;
-  applicationFeeBps?: number | null;
   note?: string | null;
   updatedBy: string;
 }): Promise<void> {
@@ -132,7 +118,6 @@ export async function setOwnerBillingOverrides(input: {
       id: ownerBillingConfig.id,
       starterIncludedUsdMicros: ownerBillingConfig.starterIncludedUsdMicros,
       endUserCap: ownerBillingConfig.endUserCap,
-      applicationFeeBps: ownerBillingConfig.applicationFeeBps,
       note: ownerBillingConfig.note,
     })
     .from(ownerBillingConfig)
@@ -148,10 +133,6 @@ export async function setOwnerBillingOverrides(input: {
         : normalizeMicros(input.starterIncludedUsdMicros),
     endUserCap:
       input.endUserCap === undefined ? (prior?.endUserCap ?? null) : input.endUserCap,
-    applicationFeeBps:
-      input.applicationFeeBps === undefined
-        ? (prior?.applicationFeeBps ?? null)
-        : input.applicationFeeBps,
     note:
       input.note === undefined
         ? (prior?.note ?? null)
