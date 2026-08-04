@@ -7,6 +7,7 @@ import {
 } from "@/lib/openmeter/owner-paid-key";
 import {
   ensureOwnerPaidPlanSynced,
+  ownerPaidTierPlanMatchesPublished,
   ownerWalletAllowsOverageInvoicing,
   resetOwnerPaidPlanCacheForTests,
   upgradeOwnerToPaidPlan,
@@ -84,4 +85,43 @@ test("OwnerPaidUpgradeError preserves code", () => {
   assert.equal(err.name, "OwnerPaidUpgradeError");
   assert.equal(err.code, "payment_method_required");
   assert.equal(err.message, "Add a payment method");
+});
+
+test("ownerPaidTierPlanMatchesPublished requires fee and included parity", () => {
+  assert.equal(
+    ownerPaidTierPlanMatchesPublished({
+      includedUsdMicros: "5000000",
+      monthlyFeeUsd: "20",
+      publishedIncluded: "5000000",
+      publishedFee: "20.00",
+    }),
+    true,
+  );
+  assert.equal(
+    ownerPaidTierPlanMatchesPublished({
+      includedUsdMicros: "5000000",
+      monthlyFeeUsd: "20.00",
+      publishedIncluded: "5000000",
+      publishedFee: "25.00",
+    }),
+    false,
+  );
+  assert.equal(
+    ownerPaidTierPlanMatchesPublished({
+      includedUsdMicros: "5000000",
+      monthlyFeeUsd: "20.00",
+      publishedIncluded: "10000000",
+      publishedFee: "20.00",
+    }),
+    false,
+  );
+  assert.equal(
+    ownerPaidTierPlanMatchesPublished({
+      includedUsdMicros: "5000000",
+      monthlyFeeUsd: "20.00",
+      publishedIncluded: "5000000",
+      publishedFee: null,
+    }),
+    false,
+  );
 });

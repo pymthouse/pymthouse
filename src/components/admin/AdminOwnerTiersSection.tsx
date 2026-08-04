@@ -303,6 +303,21 @@ export default function AdminOwnerTiersSection() {
               disabled={creating}
             />
           </label>
+          <label className="block text-sm">
+            <span className="text-zinc-400">Sort order</span>
+            <input
+              className="mt-1 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm"
+              inputMode="numeric"
+              value={draft.sortOrder}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  sortOrder: e.target.value.replace(/[^\d-]/g, ""),
+                })
+              }
+              disabled={creating}
+            />
+          </label>
         </div>
         <label className="block text-sm">
           <span className="text-zinc-400">Description (optional)</span>

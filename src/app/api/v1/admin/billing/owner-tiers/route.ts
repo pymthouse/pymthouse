@@ -5,6 +5,7 @@ import {
   createOwnerSubscriptionTier,
   listOwnerSubscriptionTiers,
   toOwnerSubscriptionTierPublic,
+  updateOwnerSubscriptionTier,
 } from "@/lib/billing/owner-subscription-tiers";
 import { forceSyncOwnerPaidTier } from "@/lib/openmeter/owner-paid-plan";
 
@@ -50,7 +51,6 @@ export const POST = withSessionAdminGuard(async (request) => {
       active: body.active === false ? false : true,
     });
 
-    let syncError: string | null = null;
     try {
       const synced = await forceSyncOwnerPaidTier(tier);
       return NextResponse.json({
@@ -62,14 +62,18 @@ export const POST = withSessionAdminGuard(async (request) => {
         synced: true,
       });
     } catch (err) {
-      syncError = err instanceof Error ? err.message : String(err);
+      const syncError = err instanceof Error ? err.message : String(err);
+      // Keep failed syncs out of the Upgrade picker.
+      const deactivated = await updateOwnerSubscriptionTier(tier.id, {
+        active: false,
+      });
       return NextResponse.json(
         {
-          tier: toOwnerSubscriptionTierPublic(tier),
+          tier: toOwnerSubscriptionTierPublic(deactivated),
           synced: false,
           syncError,
         },
-        { status: 201 },
+        { status: 502 },
       );
     }
   } catch (err) {

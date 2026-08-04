@@ -23,6 +23,8 @@ export function isOwnerPaidPlanKey(planKey: string | null | undefined): boolean 
 /** Validate an admin-supplied Owner Paid tier key. */
 export function isValidOwnerPaidTierKey(planKey: string): boolean {
   const key = planKey.trim().toLowerCase();
+  // Allow the configured env key (may be a legacy non-prefix value).
+  if (key === OWNER_PAID_PLAN_KEY.toLowerCase()) return true;
   if (key === OWNER_PAID_PLAN_KEY_PREFIX) return true;
   return /^pymthouse_owner_paid_[a-z0-9]+(?:_[a-z0-9]+)*$/.test(key);
 }

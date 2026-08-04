@@ -106,7 +106,8 @@ connectReady =
 
 ownerBillable =
      ownerSpendableUsdMicros > 0
-  || ownerHasChargeablePaymentMethod
+  || ownerWalletAllowsOverageInvoicing
+     // Owner Paid tier (`pymthouse_owner_paid*`) + chargeable PM — not card alone on Starter
 
 canProvisionEndUsers =
      is_platform_default

@@ -11,6 +11,7 @@ import {
   parseOwnerAllowanceIncludedMicros,
   publishOpenMeterPlanBestEffort,
   readUsageDiscountUsdMicrosFromPlanBody,
+  readFlatFeeUsdFromPlanBody,
 } from "@/lib/openmeter/owner-allowance-plan";
 import { DEFAULT_TRIAL_FEATURE_KEY } from "@/lib/openmeter/constants";
 
@@ -218,6 +219,35 @@ test("readUsageDiscountUsdMicrosFromPlanBody reads snake_case and camelCase", ()
     "7500000",
   );
   assert.equal(readUsageDiscountUsdMicrosFromPlanBody({}), null);
+});
+
+test("readFlatFeeUsdFromPlanBody reads subscription_fee flat amount", () => {
+  assert.equal(
+    readFlatFeeUsdFromPlanBody({
+      phases: [
+        {
+          rate_cards: [
+            { key: "subscription_fee", price: { type: "flat", amount: "20" } },
+            { key: "network_spend", discounts: { usage: 5_000_000 } },
+          ],
+        },
+      ],
+    }),
+    "20.00",
+  );
+  assert.equal(
+    readFlatFeeUsdFromPlanBody({
+      phases: [
+        {
+          rateCards: [
+            { key: "subscription_fee", price: { type: "flat", amount: 29.5 } },
+          ],
+        },
+      ],
+    }),
+    "29.50",
+  );
+  assert.equal(readFlatFeeUsdFromPlanBody({ phases: [{ rate_cards: [] }] }), null);
 });
 
 test("forceSyncOwnerAllowancePlanWithClient updates an existing plan", async () => {

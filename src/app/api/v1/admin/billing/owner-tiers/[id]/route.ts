@@ -67,11 +67,14 @@ export const PATCH = withSessionAdminGuardParams<{ id: string }>(
             openmeterPlanId: synced.openmeterPlanId,
           });
         } catch (err) {
-          return NextResponse.json({
-            tier: toOwnerSubscriptionTierPublic(tier),
-            synced: false,
-            syncError: err instanceof Error ? err.message : String(err),
-          });
+          return NextResponse.json(
+            {
+              tier: toOwnerSubscriptionTierPublic(tier),
+              synced: false,
+              syncError: err instanceof Error ? err.message : String(err),
+            },
+            { status: 502 },
+          );
         }
       }
 

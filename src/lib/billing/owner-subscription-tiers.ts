@@ -68,13 +68,32 @@ export function parseOwnerTierIncludedMicros(raw: unknown): string | null {
   return trimmed;
 }
 
+/**
+ * Parse an optional custom overage rate. Empty/null → platform default (null).
+ * Rejects zero, negative, and malformed values.
+ */
+export function parseOwnerTierOverageRateUsd(
+  raw: unknown,
+): { ok: true; value: string | null } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) return { ok: false };
+    return { ok: true, value: String(raw) };
+  }
+  if (typeof raw !== "string") return { ok: false };
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: null };
+  if (!/^\d+(\.\d+)?$/.test(trimmed) || Number(trimmed) <= 0) {
+    return { ok: false };
+  }
+  return { ok: true, value: trimmed };
+}
+
 export function resolveOwnerTierOverageRateUsd(
   overageRateUsd: string | null | undefined,
 ): string {
-  const parsed = overageRateUsd?.trim();
-  if (parsed && /^\d+(\.\d+)?$/.test(parsed) && Number(parsed) > 0) {
-    return parsed;
-  }
+  const parsed = parseOwnerTierOverageRateUsd(overageRateUsd);
+  if (parsed.ok && parsed.value) return parsed.value;
   return defaultRetailRateUsd();
 }
 
@@ -95,7 +114,9 @@ export async function listSelectableOwnerSubscriptionTiers(): Promise<
   OwnerSubscriptionTierRow[]
 > {
   const rows = await listOwnerSubscriptionTiers({ activeOnly: true });
-  return rows.filter((row) => parseOwnerTierMonthlyFeeUsd(row.monthlyFeeUsd) != null);
+  return rows.filter(
+    (row) => parseOwnerTierMonthlyFeeUsd(row.monthlyFeeUsd) != null,
+  );
 }
 
 export async function getOwnerSubscriptionTierByKey(
@@ -150,6 +171,10 @@ export async function createOwnerSubscriptionTier(
   if (includedUsdMicros == null) {
     throw new Error("includedUsdMicros must be a non-negative integer string");
   }
+  const overageParsed = parseOwnerTierOverageRateUsd(input.overageRateUsd);
+  if (!overageParsed.ok) {
+    throw new Error("overageRateUsd must be a positive USD amount or empty");
+  }
   const now = new Date().toISOString();
   const row = {
     id: randomUUID(),
@@ -158,7 +183,7 @@ export async function createOwnerSubscriptionTier(
     description: input.description?.trim() || null,
     monthlyFeeUsd,
     includedUsdMicros,
-    overageRateUsd: input.overageRateUsd?.trim() || null,
+    overageRateUsd: overageParsed.value,
     sortOrder: input.sortOrder ?? 0,
     active: input.active === false ? 0 : 1,
     openmeterPlanId: null,
@@ -216,7 +241,11 @@ export async function updateOwnerSubscriptionTier(
     patch.includedUsdMicros = includedUsdMicros;
   }
   if (input.overageRateUsd !== undefined) {
-    patch.overageRateUsd = input.overageRateUsd?.trim() || null;
+    const overageParsed = parseOwnerTierOverageRateUsd(input.overageRateUsd);
+    if (!overageParsed.ok) {
+      throw new Error("overageRateUsd must be a positive USD amount or empty");
+    }
+    patch.overageRateUsd = overageParsed.value;
   }
   if (input.sortOrder !== undefined) {
     patch.sortOrder = input.sortOrder;

@@ -122,6 +122,47 @@ export function readUsageDiscountUsdMicrosFromPlanBody(
   return null;
 }
 
+/**
+ * Read the flat `subscription_fee` amount from an OpenMeter/Konnect plan body.
+ * Used to detect fee drift between Neon tiers and published OM plans.
+ */
+export function readFlatFeeUsdFromPlanBody(plan: unknown): string | null {
+  if (!plan || typeof plan !== "object") return null;
+  const phases = readPlanPhases(plan);
+  if (!phases) return null;
+
+  for (const phase of phases) {
+    if (!phase || typeof phase !== "object") continue;
+    const cards =
+      (phase as { rateCards?: unknown }).rateCards ??
+      (phase as { rate_cards?: unknown }).rate_cards ??
+      [];
+    if (!Array.isArray(cards)) continue;
+    for (const card of cards) {
+      if (!card || typeof card !== "object") continue;
+      const key = String(
+        (card as { key?: unknown }).key ??
+          (card as { Key?: unknown }).Key ??
+          "",
+      );
+      if (key !== "subscription_fee") continue;
+      const price =
+        (card as { price?: unknown }).price ??
+        (card as { Price?: unknown }).Price;
+      if (!price || typeof price !== "object") continue;
+      const amount = (price as { amount?: unknown }).amount;
+      if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
+        return amount.toFixed(2);
+      }
+      if (typeof amount === "string") {
+        const n = Number(amount.trim());
+        if (Number.isFinite(n) && n > 0) return n.toFixed(2);
+      }
+    }
+  }
+  return null;
+}
+
 function readPlanPhases(plan: object): unknown[] | null {
   const phases =
     (plan as { phases?: unknown }).phases ??

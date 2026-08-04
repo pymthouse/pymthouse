@@ -168,13 +168,15 @@ See [`adr-stripe-connect-openmeter-webhooks.md`](./adr-stripe-connect-openmeter-
 
 **Plane A — OpenMeter Stripe app (platform cost rail):** Owners start on
 **Owner Sandbox Starter** (sandbox/free billing profile, no payment method,
-hard balance gate). Attaching a card (`POST /api/v1/me/billing/payment-method`)
-does **not** subscribe. Explicit **Upgrade** on `/billing` picks an admin-defined
+hard balance gate). Attaching a chargeable payment method
+(`POST /api/v1/me/billing/payment-method`) is required first and does **not**
+subscribe. Explicit **Upgrade** on `/billing` then picks an admin-defined
 Owner Paid tier (`POST /api/v1/me/billing/upgrade-paid` with
 `{ planKey, confirm: true }`): flat monthly fee + included usage + overage.
-That path provisions a Stripe Customer (`cus_…`) via `STRIPE_SECRET_KEY`, pins
-the owners Stripe billing profile, starts a new billing cycle, and invoices
-overage `charge_automatically`.
+Without a chargeable PM, Upgrade returns `payment_method_required` and does
+not change the tier. That path provisions a Stripe Customer (`cus_…`) via
+`STRIPE_SECRET_KEY`, pins the owners Stripe billing profile, starts a new
+billing cycle, and invoices overage `charge_automatically`.
 
 Sandbox is intentional for Sandbox Starter. Owners with a card who remain on
 sandbox should Upgrade to a Paid tier (consistency audit warns). M2M end-user

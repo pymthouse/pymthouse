@@ -18,6 +18,7 @@ import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
   findOpenMeterPlanByKey,
   forceSyncOwnerAllowancePlan,
+  readFlatFeeUsdFromPlanBody,
   readUsageDiscountUsdMicrosFromPlanBody,
   type OwnerAllowancePlanRef,
 } from "./owner-allowance-plan";
@@ -66,6 +67,21 @@ export function invalidateOwnerPaidPlanCache(): void {
 
 function tierCacheKey(planKey: string): string {
   return `owner-paid-tier\u0000${planKey.trim()}`;
+}
+
+/** True when published OM plan fee + included match the Neon tier row. */
+export function ownerPaidTierPlanMatchesPublished(input: {
+  includedUsdMicros: string;
+  monthlyFeeUsd: string;
+  publishedIncluded: string | null;
+  publishedFee: string | null;
+}): boolean {
+  const expectedFee = parseOwnerTierMonthlyFeeUsd(input.monthlyFeeUsd);
+  return (
+    input.publishedIncluded === input.includedUsdMicros &&
+    expectedFee != null &&
+    input.publishedFee === expectedFee
+  );
 }
 
 /** Force-sync one Owner Paid tier (flat fee + usage) into OpenMeter. */
@@ -218,13 +234,24 @@ export async function ensureOwnerPaidTierPlanSynced(
         const existing = await findOpenMeterPlanByKey(client, tier.key);
         if (existing?.id) {
           const body = await client.plans.get(existing.id);
-          const published = readUsageDiscountUsdMicrosFromPlanBody(body);
-          if (published === tier.includedUsdMicros) {
+          const publishedIncluded =
+            readUsageDiscountUsdMicrosFromPlanBody(body);
+          const publishedFee = readFlatFeeUsdFromPlanBody(body);
+          if (
+            ownerPaidTierPlanMatchesPublished({
+              includedUsdMicros: tier.includedUsdMicros,
+              monthlyFeeUsd: tier.monthlyFeeUsd,
+              publishedIncluded,
+              publishedFee,
+            })
+          ) {
             return {
               key: tier.key,
               openmeterPlanId: existing.id,
               includedUsdMicros: tier.includedUsdMicros,
-              monthlyFeeUsd: tier.monthlyFeeUsd,
+              monthlyFeeUsd:
+                parseOwnerTierMonthlyFeeUsd(tier.monthlyFeeUsd) ??
+                tier.monthlyFeeUsd,
               tierId: tier.id,
             };
           }
