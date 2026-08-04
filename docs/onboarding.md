@@ -17,6 +17,17 @@ Dashboard wizard (post-auth) also lives at `/onboarding`. This document covers t
 | **Explorer** | Individual / try the network | Joins the platform **default app** as an `app_users` row. Usage bills to the user’s own owner wallet (`users.id`) on **Owner Sandbox Starter** (then **Owner Paid** after adding a payment method) — not as an end-user of the admin-owned default app. No OIDC/M2M settings UI. |
 | **Builder** | Product / merchant | Creates an owned `developer_apps` row. Full Builder API, plans, users, Stripe. |
 
+### Plane A progression (owner cost rail)
+
+Default billing is **without Stripe Connect** (`billing_mode=owner_rollup`). The owner pays PymtHouse for network usage; Connect is only for Builders who resell to end users (revenue rail — see [activation-gate.md](activation-gate.md)).
+
+1. **Explorer onboarding** — join **Livepeer Direct** (platform default app) and mint a personal network key.
+2. **Owner Sandbox Starter** — free included usage credit on the owner wallet (`users.id`). Hard stop when spendable hits zero (no overage invoice).
+3. **Add payment method** — Stripe Checkout setup (`POST /api/v1/me/billing/payment-method`).
+4. **Owner Paid** — upgrade (`POST /api/v1/me/billing/upgrade-paid`). Access stays usage-priced (`discounts.usage` + overage invoices `charge_automatically`), not a flat subscription fee for “being on Paid.”
+
+**Builders vs M2M end-users:** A Builder’s own owner wallet follows the same Starter → Paid path. End-users of a Builder app under `owner_rollup` ride the **owner’s** cost rail (usage rolls up to the owner Konnect customer). They do **not** each get an Owner Paid plan. Session/M2M allowance grant routes are not the shared-owner credit pool (see follow-ups in PR #352 / design.md §1).
+
 The platform default app is flagged `is_platform_default = 1` (or pinned via `PYMTHOUSE_DEFAULT_APP_CLIENT_ID`). Only platform **admins** may edit its config. Its `m2m_…` credentials are **not** for third-party Builder integrations — use your own app.
 
 Bootstrap ensures the default app exists: `npm run bootstrap`.

@@ -34,10 +34,25 @@ simultaneously too strict (blocks integration before any money is at risk) and t
 | **Cost** | App owner pays PymtHouse for all network usage their app generates | Yes | Owner chargeability (Sandbox Starter balance, or Owner Paid + card) + end-user cap |
 | **Revenue** | Builder's end users pay the Builder | Opt-in | Stripe Connect readiness |
 
-The cost rail already exists and is proven: Explorers on the platform default app bill
-to `buildOwnerCustomerKey(users.id)` against **Owner Sandbox Starter** (hard balance
-gate) or **Owner Paid** (card required; overage invoices `charge_automatically`) with
-prepaid credits and an admin MoonPay top-up path. Builder apps reuse it unchanged.
+The cost rail already exists and is proven: Explorers on the platform default app
+(**Livepeer Direct**) bill to `buildOwnerCustomerKey(users.id)` against **Owner
+Sandbox Starter** (hard balance gate) or **Owner Paid** (chargeable payment method
+required; overage invoices `charge_automatically`) with prepaid credits and an admin
+MoonPay top-up path. Builder apps reuse it unchanged.
+
+### Balance gate (design.md §4)
+
+| Owner plan | Spendable = 0 | Mint / activation cost check |
+| --- | --- | --- |
+| **Owner Sandbox Starter** | Hard stop | Fail mint (`trial_credits_exhausted`) and block new end-user provisioning |
+| **Owner Paid** + chargeable PM | Allow past zero | `ownerWalletAllowsOverageInvoicing` → overage invoices; mint may continue |
+
+A card alone while still on Sandbox Starter does **not** unlock overage — upgrade to
+Owner Paid is required. Verified by `mintAllowanceGateDecision` /
+`enforceMintAllowanceGate` (`src/lib/oidc/mint-user-signer-token.ts`) and
+`resolveAppActivation` (`src/lib/activation/app-activation.ts`). Unit coverage:
+`mint-user-signer-token.test.ts` (zero spendable reject vs `allowsOverageInvoicing`
+allow) and `app-activation.test.ts` (empty wallet + Paid/PM allows provision).
 
 The consequence is that **end-user provisioning is never gated on Stripe**. It is gated
 on whether the owner can pay. Stripe Connect gates only the two operations that cannot
@@ -114,18 +129,17 @@ Notes:
 - `ownerSpendableUsdMicros` reuses `getSpendableUsdMicros` — included plan allowance
   plus prepaid credits — so the gate agrees with the existing signer mint gate rather
   than introducing a second definition of solvency.
-- An empty wallet alone does **not** block. Platform billing profiles are created with
-  `payment.collectionMethod = charge_automatically`, so an owner with a card on file is
-  billable regardless of prepaid balance — OpenMeter invoices and collects. Only an owner
-  with neither a balance nor a payment method is unbillable, and that is the one thing
-  the cost rail refuses, because the usage it would authorise is uncollectable by
-  construction.
-- `ownerHasChargeablePaymentMethod` (`owner-payment-method.ts`) reads the Konnect
-  `app_data.stripe.default_payment_method_id` pointer, falling back to Stripe's customer
-  invoice default. It costs a round trip, so it runs **only after** the cheap balance read
-  has already failed — solvent owners never pay for it. It returns `null` when platform
-  billing is unconfigured or Stripe/OpenMeter is unreachable, and `null` fails open: an
-  outage must not freeze provisioning.
+- An empty wallet alone does **not** block **when** the owner is on **Owner Paid** with a
+  chargeable payment method (`ownerWalletAllowsOverageInvoicing`). Sandbox Starter with
+  spendable=0 is a hard stop even if a card is already attached (upgrade required). Only
+  an owner with neither spendable balance nor Paid+PM overage path is unbillable — that
+  is what the cost rail refuses, because the usage would be uncollectable by construction.
+- Chargeability for the overage path uses `ownerWalletAllowsOverageInvoicing`
+  (`owner-paid-plan.ts`), which requires the Owner Paid subscription **and** a chargeable
+  Stripe default PM. The cheaper prepaid/balance read runs first; PM/overage lookup runs
+  only after spendable is exhausted. Lookup returns `null` when platform billing is
+  unconfigured or Stripe/OpenMeter is unreachable, and `null` fails open on the
+  **activation** path: an outage must not freeze provisioning.
 
 ## Choke points
 
