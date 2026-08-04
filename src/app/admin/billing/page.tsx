@@ -45,6 +45,8 @@ type OwnerSummary = {
   } | null;
 };
 
+const PAGE_SIZE = 25;
+
 export default function AdminPlatformBillingPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
@@ -59,13 +61,16 @@ export default function AdminPlatformBillingPage() {
 
   const [query, setQuery] = useState("");
   const [owners, setOwners] = useState<OwnerSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const [loadingOwners, setLoadingOwners] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<OwnerSummary | null>(null);
   const [starterDisplay, setStarterDisplay] = useState("");
   const [endUserCap, setEndUserCap] = useState("");
   const [applicationFeeBps, setApplicationFeeBps] = useState("");
   const [note, setNote] = useState("");
   const [savingOwner, setSavingOwner] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -80,17 +85,22 @@ export default function AdminPlatformBillingPage() {
     setDefaultDisplay(usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros));
   }, []);
 
-  const loadOwners = useCallback(async (q: string) => {
+  const loadOwners = useCallback(async (q: string, pageNum: number) => {
     setLoadingOwners(true);
     try {
-      const res = await fetch(
-        `/api/v1/admin/billing/owners?q=${encodeURIComponent(q)}`,
-      );
+      const params = new URLSearchParams({
+        q,
+        page: String(pageNum),
+        pageSize: String(PAGE_SIZE),
+      });
+      const res = await fetch(`/api/v1/admin/billing/owners?${params}`);
       if (!res.ok) {
         throw new Error(`Failed to search owners (${res.status})`);
       }
       const data = await res.json();
       setOwners(data.owners ?? []);
+      setPage(typeof data.page === "number" ? data.page : pageNum);
+      setTotalCount(typeof data.totalCount === "number" ? data.totalCount : 0);
     } finally {
       setLoadingOwners(false);
     }
@@ -106,15 +116,14 @@ export default function AdminPlatformBillingPage() {
     void (async () => {
       try {
         await loadPlatform();
-        await loadOwners("");
+        await loadOwners("", 1);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
   }, [status, userRole, router, loadPlatform, loadOwners]);
 
-  function selectOwner(owner: OwnerSummary) {
-    setSelectedId(owner.id);
+  function fillOverrideForm(owner: OwnerSummary) {
     setStarterDisplay(
       owner.overrides?.starterIncludedUsdMicros
         ? usdMicrosToCentsDisplay(owner.overrides.starterIncludedUsdMicros)
@@ -129,8 +138,29 @@ export default function AdminPlatformBillingPage() {
         : "",
     );
     setNote(owner.overrides?.note ?? "");
+  }
+
+  function selectOwner(owner: OwnerSummary) {
+    setSelected(owner);
+    fillOverrideForm(owner);
     setMessage(null);
     setError(null);
+  }
+
+  async function copyOwnerId(id: string) {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      setError("Clipboard is not available in this browser");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedId(id);
+      window.setTimeout(() => {
+        setCopiedId((current) => (current === id ? null : current));
+      }, 1500);
+    } catch {
+      setError("Failed to copy user id");
+    }
   }
 
   async function savePlatformDefault() {
@@ -168,7 +198,7 @@ export default function AdminPlatformBillingPage() {
             ? ` — migrated ${data.migrate.updated}, skipped ${data.migrate.skipped}, errors ${data.migrate.errors}.`
             : "."),
       );
-      await loadOwners(query);
+      await loadOwners(query, page);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -177,7 +207,7 @@ export default function AdminPlatformBillingPage() {
   }
 
   async function saveOwnerOverrides(clearStarter = false) {
-    if (!selectedId) return;
+    if (!selected) return;
     setSavingOwner(true);
     setError(null);
     setMessage(null);
@@ -194,7 +224,7 @@ export default function AdminPlatformBillingPage() {
         return;
       }
 
-      const res = await fetch(`/api/v1/admin/billing/owners/${selectedId}`, {
+      const res = await fetch(`/api/v1/admin/billing/owners/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(built.body),
@@ -204,25 +234,21 @@ export default function AdminPlatformBillingPage() {
         throw new Error(data.error || "Failed to update owner billing");
       }
       setMessage(
-        `Saved overrides for ${data.owner?.email ?? selectedId}` +
+        `Saved overrides for ${data.owner?.email ?? selected.id}` +
           (data.planKey ? ` (plan ${data.planKey})` : ""),
       );
-      await loadOwners(query);
+      await loadOwners(query, page);
       if (data.resolved) {
-        setStarterDisplay(
-          data.overrides?.starterIncludedUsdMicros
-            ? usdMicrosToCentsDisplay(data.overrides.starterIncludedUsdMicros)
-            : "",
-        );
-        setEndUserCap(
-          data.overrides?.endUserCap != null ? String(data.overrides.endUserCap) : "",
-        );
-        setApplicationFeeBps(
-          data.overrides?.applicationFeeBps != null
-            ? String(data.overrides.applicationFeeBps)
-            : "",
-        );
-        setNote(data.overrides?.note ?? "");
+        const next: OwnerSummary = {
+          id: data.owner?.id ?? selected.id,
+          email: data.owner?.email ?? selected.email,
+          name: data.owner?.name ?? selected.name,
+          role: data.owner?.role ?? selected.role,
+          resolved: data.resolved,
+          overrides: data.overrides ?? null,
+        };
+        setSelected(next);
+        fillOverrideForm(next);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -230,6 +256,15 @@ export default function AdminPlatformBillingPage() {
       setSavingOwner(false);
     }
   }
+
+  function searchOwners() {
+    setPage(1);
+    void loadOwners(query, 1);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, totalCount);
 
   if (status === "loading" || (status === "authenticated" && userRole !== "admin")) {
     return (
@@ -240,8 +275,6 @@ export default function AdminPlatformBillingPage() {
       </DashboardLayout>
     );
   }
-
-  const selected = owners.find((o) => o.id === selectedId) ?? null;
 
   return (
     <DashboardLayout>
@@ -314,65 +347,32 @@ export default function AdminPlatformBillingPage() {
 
         <section className="space-y-4 rounded-lg border border-white/10 bg-black/20 p-5">
           <h2 className="text-lg font-medium text-zinc-100">Developer accounts</h2>
-          <div className="flex flex-wrap gap-2">
-            <input
-              type="search"
-              placeholder="Search by email, name, or user id"
-              className="min-w-[16rem] flex-1 rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/40"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void loadOwners(query);
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-500/40"
-              disabled={loadingOwners}
-              onClick={() => void loadOwners(query)}
-            >
-              {loadingOwners ? "Searching…" : "Search"}
-            </button>
-          </div>
 
-          <ul className="divide-y divide-white/5 rounded-md border border-white/10">
-            {owners.length === 0 && (
-              <li className="px-3 py-4 text-sm text-zinc-500">No matching accounts</li>
-            )}
-            {owners.map((owner) => (
-              <li key={owner.id}>
+          {selected ? (
+            <div className="space-y-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-medium text-zinc-200">
+                    Overrides for {selected.email ?? selected.name ?? selected.id}
+                  </h3>
+                  <button
+                    type="button"
+                    className="mt-1 font-mono text-xs text-zinc-400 hover:text-emerald-300"
+                    title="Copy user id"
+                    onClick={() => void copyOwnerId(selected.id)}
+                  >
+                    {selected.id}
+                    {copiedId === selected.id ? " · copied" : " · copy"}
+                  </button>
+                </div>
                 <button
                   type="button"
-                  className={`w-full px-3 py-3 text-left text-sm transition-colors hover:bg-white/5 ${
-                    selectedId === owner.id ? "bg-emerald-500/10" : ""
-                  }`}
-                  onClick={() => selectOwner(owner)}
+                  className="text-xs text-zinc-500 hover:text-zinc-300"
+                  onClick={() => setSelected(null)}
                 >
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-zinc-100">
-                      {owner.email ?? owner.name ?? owner.id}
-                    </span>
-                    <span className="text-xs text-zinc-500">
-                      {owner.resolved.hasOverride ? "override" : "default"} · $
-                      {usdMicrosToCentsDisplay(owner.resolved.starterIncludedUsdMicros)}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-xs text-zinc-500">
-                    {owner.id}
-                    {owner.resolved.note ? ` · ${owner.resolved.note}` : ""}
-                  </div>
+                  Clear selection
                 </button>
-              </li>
-            ))}
-          </ul>
-
-          {selected && (
-            <div className="space-y-3 border-t border-white/10 pt-4">
-              <h3 className="text-sm font-medium text-zinc-200">
-                Overrides for {selected.email ?? selected.id}
-              </h3>
+              </div>
               <p className="text-xs text-zinc-500">
                 Empty fields clear back to the platform default. Effective now: $
                 {usdMicrosToCentsDisplay(selected.resolved.starterIncludedUsdMicros)}{" "}
@@ -452,7 +452,113 @@ export default function AdminPlatformBillingPage() {
                 </button>
               </div>
             </div>
+          ) : (
+            <p className="text-sm text-zinc-500">
+              Select a developer account below to edit per-owner overrides.
+            </p>
           )}
+
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="search"
+              placeholder="Search by email, name, or user id"
+              className="min-w-[16rem] flex-1 rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/40"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  searchOwners();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-200 hover:border-emerald-500/40"
+              disabled={loadingOwners}
+              onClick={searchOwners}
+            >
+              {loadingOwners ? "Searching…" : "Search"}
+            </button>
+          </div>
+
+          <ul className="divide-y divide-white/5 rounded-md border border-white/10">
+            {owners.length === 0 && (
+              <li className="px-3 py-4 text-sm text-zinc-500">No matching accounts</li>
+            )}
+            {owners.map((owner) => (
+              <li key={owner.id}>
+                <div
+                  className={`flex items-start gap-2 px-3 py-3 text-sm transition-colors ${
+                    selected?.id === owner.id ? "bg-emerald-500/10" : "hover:bg-white/5"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => selectOwner(owner)}
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-zinc-100">
+                        {owner.email ?? owner.name ?? owner.id}
+                      </span>
+                      <span className="text-xs text-zinc-500">
+                        {owner.resolved.hasOverride ? "override" : "default"} · $
+                        {usdMicrosToCentsDisplay(owner.resolved.starterIncludedUsdMicros)}
+                      </span>
+                    </div>
+                    {owner.resolved.note ? (
+                      <div className="mt-1 text-xs text-zinc-500">{owner.resolved.note}</div>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded border border-white/10 px-2 py-1 font-mono text-[11px] text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-300"
+                    title={`Copy user id ${owner.id}`}
+                    onClick={() => void copyOwnerId(owner.id)}
+                  >
+                    {copiedId === owner.id ? "Copied" : `${owner.id.slice(0, 8)}…`}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-500">
+            <span>
+              {totalCount === 0
+                ? "0 accounts"
+                : `${rangeStart}–${rangeEnd} of ${totalCount}`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-white/10 px-3 py-1.5 text-zinc-200 disabled:opacity-40"
+                disabled={loadingOwners || page <= 1}
+                onClick={() => {
+                  const next = page - 1;
+                  setPage(next);
+                  void loadOwners(query, next);
+                }}
+              >
+                Previous
+              </button>
+              <span className="text-zinc-400">
+                Page {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="rounded-md border border-white/10 px-3 py-1.5 text-zinc-200 disabled:opacity-40"
+                disabled={loadingOwners || page >= totalPages}
+                onClick={() => {
+                  const next = page + 1;
+                  setPage(next);
+                  void loadOwners(query, next);
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
         </section>
       </div>
     </DashboardLayout>
