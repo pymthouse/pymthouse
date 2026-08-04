@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import DashboardLayout from "@/components/DashboardLayout";
+import InfoTooltip from "@/components/InfoTooltip";
 import { buildOwnerOverridePatchBody } from "@/lib/billing/owner-override-form";
 import {
   sanitizeUsdCentsInput,
@@ -457,7 +458,13 @@ export default function AdminPlatformBillingPage() {
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block text-sm">
-                  <span className="text-zinc-400">Starter allowance (USD)</span>
+                  <span className="inline-flex items-center gap-1.5 text-zinc-400">
+                    Starter allowance (USD)
+                    <InfoTooltip
+                      wide
+                      label="USD credit on this developer's Owner Starter plan. Network usage burns this credit first; after it runs out they pay for overage."
+                    />
+                  </span>
                   <input
                     type="text"
                     inputMode="decimal"
@@ -471,7 +478,13 @@ export default function AdminPlatformBillingPage() {
                   />
                 </label>
                 <label className="block text-sm">
-                  <span className="text-zinc-400">End-user cap</span>
+                  <span className="inline-flex items-center gap-1.5 text-zinc-400">
+                    End-user cap
+                    <InfoTooltip
+                      wide
+                      label="Maximum number of end users this developer can provision across their apps. Not money — a headcount limit."
+                    />
+                  </span>
                   <input
                     type="number"
                     min={1}
@@ -483,7 +496,13 @@ export default function AdminPlatformBillingPage() {
                   />
                 </label>
                 <label className="block text-sm">
-                  <span className="text-zinc-400">Application fee (bps)</span>
+                  <span className="inline-flex items-center gap-1.5 text-zinc-400">
+                    Application fee (bps)
+                    <InfoTooltip
+                      wide
+                      label="Platform take rate on merchant (Stripe Connect) charges, in basis points. 100 bps = 1%. 0 means no platform fee."
+                    />
+                  </span>
                   <input
                     type="number"
                     min={0}
