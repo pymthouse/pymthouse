@@ -8,7 +8,8 @@ import {
   classifyBaseOwnerStarterMigrateCandidate,
   hasStarterAllowanceOverride,
   listOwnersOnPlatformDefaultStarter,
-} from "@/lib/billing/republish-base-owner-starter";
+  ownerPaidForceSyncWarning,
+} from "@/lib/billing/republish-platform-owner-allowance-plans";
 import { test as dbTest } from "@/test-utils/db-guard";
 import { createTestUser } from "@/test-utils/fixtures";
 import { setOwnerBillingOverrides } from "@/lib/billing/owner-billing-config";
@@ -45,6 +46,13 @@ test("hasStarterAllowanceOverride requires a digit micros string", () => {
   assert.equal(hasStarterAllowanceOverride(""), false);
   assert.equal(hasStarterAllowanceOverride("abc"), false);
   assert.equal(hasStarterAllowanceOverride("5000000"), true);
+});
+
+test("ownerPaidForceSyncWarning is non-fatal and carries the failure code", () => {
+  const warning = ownerPaidForceSyncWarning(new Error("konnect down"));
+  assert.equal(warning.code, "owner_paid_force_sync_failed");
+  assert.match(warning.message, /konnect down/);
+  assert.match(warning.message, /self-heal/);
 });
 
 dbTest("listOwnersOnPlatformDefaultStarter excludes owners with starter override", async (t) => {

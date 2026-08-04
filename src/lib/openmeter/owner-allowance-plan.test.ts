@@ -6,9 +6,11 @@ import {
   buildOwnerAllowancePlanBody,
   createOwnerAllowancePlan,
   findOpenMeterPlanByKey,
+  forceSyncOwnerAllowancePlanWithClient,
   openMeterPlanNeedsPublish,
   parseOwnerAllowanceIncludedMicros,
   publishOpenMeterPlanBestEffort,
+  readUsageDiscountUsdMicrosFromPlanBody,
 } from "@/lib/openmeter/owner-allowance-plan";
 import { DEFAULT_TRIAL_FEATURE_KEY } from "@/lib/openmeter/constants";
 
@@ -175,4 +177,136 @@ test("createOwnerAllowancePlan recovers raced create via find", async () => {
     createFailedMessage: "Failed to create Owner Paid plan",
   });
   assert.equal(id, "raced_1");
+});
+
+test("readUsageDiscountUsdMicrosFromPlanBody reads snake_case and camelCase", () => {
+  assert.equal(
+    readUsageDiscountUsdMicrosFromPlanBody({
+      phases: [{ rate_cards: [{ discounts: { usage: 5_000_000 } }] }],
+    }),
+    "5000000",
+  );
+  assert.equal(
+    readUsageDiscountUsdMicrosFromPlanBody({
+      phases: [{ rateCards: [{ discounts: { usage: "7500000" } }] }],
+    }),
+    "7500000",
+  );
+  assert.equal(readUsageDiscountUsdMicrosFromPlanBody({}), null);
+});
+
+test("forceSyncOwnerAllowancePlanWithClient updates an existing plan", async () => {
+  const updatedIds: string[] = [];
+  const client = {
+    plans: {
+      list: async () => ({
+        items: [{ id: "plan_old", key: "pymthouse_owner_paid", status: "draft" }],
+      }),
+      get: async () => null,
+      update: async (id: string) => {
+        updatedIds.push(id);
+        return { id: "plan_updated" };
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+      publish: async () => ({ id: "plan_published" }),
+    },
+  } as unknown as OpenMeter;
+
+  const ref = await forceSyncOwnerAllowancePlanWithClient(client, {
+    planKey: "pymthouse_owner_paid",
+    planName: "Owner Paid",
+    planKind: "owner_paid",
+    featureId: "feat_1",
+    includedUsdMicros: "10000000",
+    warnLabel: "owner paid",
+  });
+  assert.deepEqual(updatedIds, ["plan_old"]);
+  assert.equal(ref.key, "pymthouse_owner_paid");
+  assert.equal(ref.openmeterPlanId, "plan_published");
+  assert.equal(ref.includedUsdMicros, "10000000");
+});
+
+test("forceSyncOwnerAllowancePlanWithClient creates a new draft when update is immutable", async () => {
+  const client = {
+    plans: {
+      list: async () => ({
+        items: [{ id: "plan_live", key: "pymthouse_owner_paid", status: "active" }],
+      }),
+      get: async () => null,
+      update: async () => {
+        throw new Error("only Plans in [draft scheduled] can be updated");
+      },
+      create: async () => ({ id: "plan_draft" }),
+      publish: async () => ({ id: "plan_new_pub" }),
+    },
+  } as unknown as OpenMeter;
+
+  const ref = await forceSyncOwnerAllowancePlanWithClient(client, {
+    planKey: "pymthouse_owner_paid",
+    planName: "Owner Paid",
+    planKind: "owner_paid",
+    featureId: "feat_1",
+    includedUsdMicros: "8000000",
+    warnLabel: "owner paid",
+  });
+  assert.equal(ref.openmeterPlanId, "plan_new_pub");
+  assert.equal(ref.includedUsdMicros, "8000000");
+});
+
+test("forceSyncOwnerAllowancePlanWithClient creates when plan is missing", async () => {
+  const client = {
+    plans: {
+      list: async () => ({ items: [] }),
+      get: async () => {
+        throw new Error("not found");
+      },
+      update: async () => {
+        throw new Error("should not update");
+      },
+      create: async () => ({ id: "plan_created" }),
+      publish: async () => ({ id: "plan_created_pub" }),
+    },
+  } as unknown as OpenMeter;
+
+  const ref = await forceSyncOwnerAllowancePlanWithClient(client, {
+    planKey: "pymthouse_owner_starter",
+    planName: "Owner Starter",
+    planKind: "owner_starter",
+    featureId: "feat_1",
+    includedUsdMicros: "5000000",
+    warnLabel: "owner starter",
+  });
+  assert.equal(ref.openmeterPlanId, "plan_created_pub");
+  assert.equal(ref.key, "pymthouse_owner_starter");
+});
+
+test("forceSyncOwnerAllowancePlanWithClient rethrows non-immutable update errors", async () => {
+  const client = {
+    plans: {
+      list: async () => ({
+        items: [{ id: "plan_x", key: "pymthouse_owner_paid" }],
+      }),
+      get: async () => null,
+      update: async () => {
+        throw new Error("boom: permission denied");
+      },
+      create: async () => ({ id: "unused" }),
+      publish: async () => ({ id: "unused" }),
+    },
+  } as unknown as OpenMeter;
+
+  await assert.rejects(
+    () =>
+      forceSyncOwnerAllowancePlanWithClient(client, {
+        planKey: "pymthouse_owner_paid",
+        planName: "Owner Paid",
+        planKind: "owner_paid",
+        featureId: "feat_1",
+        includedUsdMicros: "5000000",
+        warnLabel: "owner paid",
+      }),
+    /permission denied/,
+  );
 });

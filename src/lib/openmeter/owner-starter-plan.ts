@@ -3,7 +3,6 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
-import { defaultRetailRateUsd } from "@/lib/plan-pricing";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import {
@@ -17,16 +16,14 @@ import {
 } from "./konnect-catalog";
 import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
-  buildOwnerAllowancePlanBody,
   createOwnerAllowancePlan,
   findOpenMeterPlanByKey,
+  forceSyncOwnerAllowancePlan,
   openMeterPlanNeedsPublish,
-  parseOwnerAllowanceIncludedMicros,
   publishOpenMeterPlanBestEffort,
 } from "./owner-allowance-plan";
 import {
   isOpenMeterConflictError,
-  isOpenMeterPlanImmutableError,
   isOpenMeterPlanNotFoundError,
   isOpenMeterStripeBillingError,
 } from "./plan-errors";
@@ -164,87 +161,23 @@ async function ensureOwnerStarterPlanSyncedUncached(input: {
 export async function forceSyncOwnerStarterPlan(
   includedUsdMicros: string,
 ): Promise<OwnerStarterPlanRef> {
-  if (!isHostedAdminClientAvailable()) {
-    throw new Error("OpenMeter is not configured");
-  }
-
   const platformDefault = await resolvePlatformOwnerStarterIncludedUsdMicros();
   const amount = includedUsdMicros.trim();
   const planKey = ownerStarterPlanKeyForAmount(amount, platformDefault);
 
-  const apiKey = process.env.OPENMETER_API_KEY?.trim();
-  const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey);
-  if (!useKonnect) {
-    throw new Error("Owner Starter plan requires Konnect metering routes");
-  }
-
-  const client = getHostedAdminClient();
-  await ensureKonnectTenantCatalog();
-  const featureId = await findKonnectFeatureIdByKey(DEFAULT_TRIAL_FEATURE_KEY);
-  if (!featureId) {
-    throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
-  }
-
-  const body = buildOwnerAllowancePlanBody({
+  const synced = await forceSyncOwnerAllowancePlan({
     planKey,
     planName: OWNER_STARTER_PLAN_NAME,
     planKind: "owner_starter",
-    featureId,
-    includedUsdMicros: parseOwnerAllowanceIncludedMicros(amount),
-    unitAmount: defaultRetailRateUsd(),
+    includedUsdMicros: amount,
+    warnLabel: "owner starter",
   });
 
-  const existing = await findOpenMeterPlanByKey(client, planKey);
-  let openmeterPlanId = existing?.id;
-
-  if (openmeterPlanId) {
-    try {
-      const updated = await client.plans.update(
-        openmeterPlanId,
-        body as unknown as Parameters<OpenMeter["plans"]["update"]>[1],
-      );
-      openmeterPlanId = updated?.id ?? openmeterPlanId;
-    } catch (updateErr) {
-      if (
-        !isOpenMeterPlanNotFoundError(updateErr) &&
-        !isOpenMeterPlanImmutableError(updateErr)
-      ) {
-        throw updateErr;
-      }
-      // Published versions are immutable — create a new draft under the same key.
-      openmeterPlanId = await createOwnerAllowancePlan({
-        client,
-        planKey,
-        planName: OWNER_STARTER_PLAN_NAME,
-        planKind: "owner_starter",
-        featureId,
-        includedUsdMicros: amount,
-        createFailedMessage: "Failed to create Owner Starter plan",
-      });
-    }
-  } else {
-    openmeterPlanId = await createOwnerAllowancePlan({
-      client,
-      planKey,
-      planName: OWNER_STARTER_PLAN_NAME,
-      planKind: "owner_starter",
-      featureId,
-      includedUsdMicros: amount,
-      createFailedMessage: "Failed to create Owner Starter plan",
-    });
-  }
-
-  openmeterPlanId = await publishOpenMeterPlanBestEffort(
-    client,
-    openmeterPlanId,
-    "owner starter",
-  );
   invalidateOwnerStarterPlanCache();
-
   const ref: OwnerStarterPlanRef = {
-    key: planKey,
-    openmeterPlanId,
-    includedUsdMicros: amount,
+    key: synced.key,
+    openmeterPlanId: synced.openmeterPlanId,
+    includedUsdMicros: synced.includedUsdMicros,
   };
   getOwnerStarterPlanCache().seed(cacheKeyForAmount(amount), ref);
   return ref;

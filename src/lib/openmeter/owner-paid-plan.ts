@@ -17,8 +17,10 @@ import { changeKonnectSubscription } from "./konnect-subscriptions";
 import {
   createOwnerAllowancePlan,
   findOpenMeterPlanByKey,
+  forceSyncOwnerAllowancePlan,
   openMeterPlanNeedsPublish,
   publishOpenMeterPlanBestEffort,
+  readUsageDiscountUsdMicrosFromPlanBody,
 } from "./owner-allowance-plan";
 import { isOpenMeterPlanNotFoundError } from "./plan-errors";
 import { shouldUseKonnectRoutes } from "./route-mode";
@@ -46,6 +48,8 @@ export type OwnerPaidPlanRef = {
   includedUsdMicros: string;
 };
 
+const OWNER_PAID_PLAN_CACHE_KEY = "owner-paid-plan";
+
 let ownerPaidPlanCache: ReturnType<
   typeof createAsyncTtlCache<OwnerPaidPlanRef>
 > | null = null;
@@ -66,32 +70,91 @@ export function invalidateOwnerPaidPlanCache(): void {
 }
 
 /**
- * Ensure the platform Owner Paid plan exists (same meters as Sandbox Starter;
- * settlement collects via the owners Stripe billing profile).
+ * Force-update (or create) the fixed-key Owner Paid plan and publish it.
+ * Used when the platform Developer default changes so discounts.usage is rewritten.
  */
-export async function ensureOwnerPaidPlanSynced(
-  includedUsdMicros?: string,
+export async function forceSyncOwnerPaidPlan(
+  includedUsdMicros: string,
 ): Promise<OwnerPaidPlanRef> {
-  const amount = (
-    includedUsdMicros ?? (await resolvePlatformOwnerStarterIncludedUsdMicros())
-  ).trim();
+  const synced = await forceSyncOwnerAllowancePlan({
+    planKey: OWNER_PAID_PLAN_KEY,
+    planName: OWNER_PAID_PLAN_NAME,
+    planKind: "owner_paid",
+    includedUsdMicros,
+    warnLabel: "owner paid",
+  });
 
-  return getOwnerPaidPlanCache().get(`owner-paid-plan:${amount}`, async () =>
-    ensureOwnerPaidPlanSyncedUncached({
-      includedUsdMicros: amount,
-      planKey: OWNER_PAID_PLAN_KEY,
-    }),
+  invalidateOwnerPaidPlanCache();
+  const ref: OwnerPaidPlanRef = {
+    key: synced.key,
+    openmeterPlanId: synced.openmeterPlanId,
+    includedUsdMicros: synced.includedUsdMicros,
+  };
+  getOwnerPaidPlanCache().seed(OWNER_PAID_PLAN_CACHE_KEY, ref);
+  return ref;
+}
+
+/**
+ * Read-only peek at the published Owner Paid plan (no force-sync side effects).
+ * Used by admin GET so drift is visible without mutating OpenMeter.
+ */
+export async function peekOwnerPaidPlanPublished(): Promise<{
+  planKey: string;
+  openmeterPlanId: string | null;
+  publishedIncludedUsdMicros: string | null;
+}> {
+  const planKey = OWNER_PAID_PLAN_KEY;
+  if (!isHostedAdminClientAvailable()) {
+    return {
+      planKey,
+      openmeterPlanId: null,
+      publishedIncludedUsdMicros: null,
+    };
+  }
+
+  try {
+    const client = getHostedAdminClient();
+    const existing = await findOpenMeterPlanByKey(client, planKey);
+    if (!existing?.id) {
+      return {
+        planKey,
+        openmeterPlanId: null,
+        publishedIncludedUsdMicros: null,
+      };
+    }
+    const body = await client.plans.get(existing.id);
+    return {
+      planKey,
+      openmeterPlanId: existing.id,
+      publishedIncludedUsdMicros: readUsageDiscountUsdMicrosFromPlanBody(body),
+    };
+  } catch {
+    return {
+      planKey,
+      openmeterPlanId: null,
+      publishedIncludedUsdMicros: null,
+    };
+  }
+}
+
+/**
+ * Ensure the platform Owner Paid plan exists and its published discount matches
+ * the current Developer platform default. Settlement collects via the owners
+ * Stripe billing profile.
+ */
+export async function ensureOwnerPaidPlanSynced(): Promise<OwnerPaidPlanRef> {
+  return getOwnerPaidPlanCache().get(
+    OWNER_PAID_PLAN_CACHE_KEY,
+    () => ensureOwnerPaidPlanSyncedUncached(),
   );
 }
 
-async function ensureOwnerPaidPlanSyncedUncached(input: {
-  includedUsdMicros: string;
-  planKey: string;
-}): Promise<OwnerPaidPlanRef> {
+async function ensureOwnerPaidPlanSyncedUncached(): Promise<OwnerPaidPlanRef> {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
 
+  const amount = (await resolvePlatformOwnerStarterIncludedUsdMicros()).trim();
   const apiKey = process.env.OPENMETER_API_KEY?.trim();
   const useKonnect = shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey);
   if (!useKonnect) {
@@ -105,25 +168,38 @@ async function ensureOwnerPaidPlanSyncedUncached(input: {
     throw new Error(`Konnect feature missing: ${DEFAULT_TRIAL_FEATURE_KEY}`);
   }
 
-  const existing = await findOpenMeterPlanByKey(client, input.planKey);
+  const existing = await findOpenMeterPlanByKey(client, OWNER_PAID_PLAN_KEY);
   if (existing?.id) {
-    if (openMeterPlanNeedsPublish(existing.status)) {
-      await publishOpenMeterPlanBestEffort(client, existing.id, "owner paid");
+    let publishedMicros: string | null = null;
+    try {
+      const body = await client.plans.get(existing.id);
+      publishedMicros = readUsageDiscountUsdMicrosFromPlanBody(body);
+    } catch {
+      publishedMicros = null;
     }
-    return {
-      key: input.planKey,
-      openmeterPlanId: existing.id,
-      includedUsdMicros: input.includedUsdMicros,
-    };
+
+    if (publishedMicros === amount) {
+      if (openMeterPlanNeedsPublish(existing.status)) {
+        await publishOpenMeterPlanBestEffort(client, existing.id, "owner paid");
+      }
+      return {
+        key: OWNER_PAID_PLAN_KEY,
+        openmeterPlanId: existing.id,
+        includedUsdMicros: publishedMicros,
+      };
+    }
+
+    // Published discount drifted from the platform default — rewrite.
+    return forceSyncOwnerPaidPlan(amount);
   }
 
   let openmeterPlanId = await createOwnerAllowancePlan({
     client,
-    planKey: input.planKey,
+    planKey: OWNER_PAID_PLAN_KEY,
     planName: OWNER_PAID_PLAN_NAME,
     planKind: "owner_paid",
     featureId,
-    includedUsdMicros: input.includedUsdMicros,
+    includedUsdMicros: amount,
     createFailedMessage: "Failed to create Owner Paid plan",
   });
   openmeterPlanId = await publishOpenMeterPlanBestEffort(
@@ -133,9 +209,9 @@ async function ensureOwnerPaidPlanSyncedUncached(input: {
   );
 
   return {
-    key: input.planKey,
+    key: OWNER_PAID_PLAN_KEY,
     openmeterPlanId,
-    includedUsdMicros: input.includedUsdMicros,
+    includedUsdMicros: amount,
   };
 }
 

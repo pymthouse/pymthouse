@@ -24,7 +24,7 @@ test("isOwnerPaidPlanKey matches the platform Paid key", () => {
 test("ensureOwnerPaidPlanSynced rejects when OpenMeter is unavailable", async () => {
   resetOwnerPaidPlanCacheForTests();
   await assert.rejects(
-    () => ensureOwnerPaidPlanSynced("5000000"),
+    () => ensureOwnerPaidPlanSynced(),
     /OpenMeter is not configured/,
   );
 });

@@ -2,28 +2,36 @@ import { NextResponse } from "next/server";
 
 import { withSessionAdminGuard } from "@/lib/api-guards";
 import { resolvePlatformOwnerStarterDefault } from "@/lib/billing/platform-owner-starter-default";
-import { republishAndMigrateBaseOwnerStarter } from "@/lib/billing/republish-base-owner-starter";
+import { republishPlatformOwnerAllowancePlans } from "@/lib/billing/republish-platform-owner-allowance-plans";
+import {
+  OWNER_PAID_PLAN_KEY,
+  peekOwnerPaidPlanPublished,
+} from "@/lib/openmeter/owner-paid-plan";
 import { OWNER_STARTER_PLAN_KEY } from "@/lib/openmeter/owner-starter-key";
 
 /**
  * GET /api/v1/admin/billing/platform
- * Resolved Owner Starter platform default + source.
+ * Resolved Owner Starter platform default + Owner Paid published snapshot.
  */
 export const GET = withSessionAdminGuard(async () => {
   const resolved = await resolvePlatformOwnerStarterDefault();
+  const paid = await peekOwnerPaidPlanPublished();
   return NextResponse.json({
     ownerStarterIncludedUsdMicros: resolved.ownerStarterIncludedUsdMicros,
     source: resolved.source,
     updatedBy: resolved.updatedBy,
     updatedAt: resolved.updatedAt,
     planKey: OWNER_STARTER_PLAN_KEY,
+    ownerPaidPlanKey: paid.planKey || OWNER_PAID_PLAN_KEY,
+    ownerPaidOpenmeterPlanId: paid.openmeterPlanId,
+    ownerPaidIncludedUsdMicros: paid.publishedIncludedUsdMicros,
   });
 });
 
 /**
  * PATCH /api/v1/admin/billing/platform
- * Persist a new Owner Starter default and republish the base plan.
- * Pass `resync: true` to also migrate subscribers still on the shared base key.
+ * Persist a new Developer wallet default and republish Owner Starter + Owner Paid.
+ * Pass `resync: true` to also migrate subscribers still on the shared Starter base key.
  */
 export const PATCH = withSessionAdminGuard(async (request, context) => {
   let body: Record<string, unknown>;
@@ -51,7 +59,7 @@ export const PATCH = withSessionAdminGuard(async (request, context) => {
   const resyncSubscribers = body.resync === true || body.resyncSubscribers === true;
 
   try {
-    const result = await republishAndMigrateBaseOwnerStarter({
+    const result = await republishPlatformOwnerAllowancePlans({
       ownerStarterIncludedUsdMicros: micros,
       updatedBy: context.userId,
       resyncSubscribers,
@@ -61,8 +69,12 @@ export const PATCH = withSessionAdminGuard(async (request, context) => {
       source: "db" as const,
       planKey: result.planKey,
       openmeterPlanId: result.openmeterPlanId,
+      ownerPaidPlanKey: result.ownerPaidPlanKey,
+      ownerPaidOpenmeterPlanId: result.ownerPaidOpenmeterPlanId,
+      ownerPaidIncludedUsdMicros: result.ownerPaidIncludedUsdMicros,
       resyncSubscribers: result.resyncSubscribers,
       migrate: result.migrate,
+      warnings: result.warnings,
     });
   } catch {
     console.error("Admin platform billing PATCH failed");

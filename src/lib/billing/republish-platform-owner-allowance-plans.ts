@@ -14,6 +14,10 @@ import {
 } from "@/lib/openmeter/konnect-subscriptions";
 import { isBaseOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import {
+  forceSyncOwnerPaidPlan,
+  OWNER_PAID_PLAN_KEY,
+} from "@/lib/openmeter/owner-paid-plan";
+import {
   ensureOwnerStarterSubscription,
   forceSyncOwnerStarterPlan,
   invalidateOwnerStarterPlanCache,
@@ -25,13 +29,33 @@ export type BaseOwnerStarterMigrateStats = {
   errors: number;
 };
 
-export type RepublishBaseOwnerStarterResult = {
+export type PlatformOwnerAllowanceWarning = {
+  code: string;
+  message: string;
+};
+
+/** Structured warning when Owner Paid force-sync fails after Starter succeeded. */
+export function ownerPaidForceSyncWarning(err: unknown): PlatformOwnerAllowanceWarning {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    code: "owner_paid_force_sync_failed",
+    message:
+      `Owner Paid plan was not force-synced (${message}). ` +
+      "Starter is live; Paid will self-heal on the next upgrade.",
+  };
+}
+
+export type RepublishPlatformOwnerAllowancePlansResult = {
   ownerStarterIncludedUsdMicros: string;
   planKey: string;
   openmeterPlanId: string;
+  ownerPaidPlanKey: string;
+  ownerPaidOpenmeterPlanId: string | null;
+  ownerPaidIncludedUsdMicros: string | null;
   /** Present only when `resyncSubscribers` was requested. */
   migrate: BaseOwnerStarterMigrateStats | null;
   resyncSubscribers: boolean;
+  warnings: PlatformOwnerAllowanceWarning[];
 };
 
 /** Classify a Konnect subscription for base-key Owner Starter migration. */
@@ -58,19 +82,21 @@ export function hasStarterAllowanceOverride(
 }
 
 /**
- * Persist the new platform Owner Starter default and republish the shared base
- * plan. When `resyncSubscribers` is true, also migrate every active subscription
- * still on that base key (not amount-keyed override plans).
+ * Persist the new platform Developer wallet default and republish both Owner
+ * Starter (atomic) and Owner Paid (best-effort) catalog plans. When
+ * `resyncSubscribers` is true, also migrate every active subscription still on
+ * the Starter base key (not amount-keyed override plans).
  */
-export async function republishAndMigrateBaseOwnerStarter(input: {
+export async function republishPlatformOwnerAllowancePlans(input: {
   ownerStarterIncludedUsdMicros: string;
   updatedBy: string;
   resyncSubscribers?: boolean;
-}): Promise<RepublishBaseOwnerStarterResult> {
+}): Promise<RepublishPlatformOwnerAllowancePlansResult> {
   const resyncSubscribers = input.resyncSubscribers === true;
+  const warnings: PlatformOwnerAllowanceWarning[] = [];
   // Persist first so forceSync classifies the new amount as the base key, then
-  // roll back if OpenMeter sync fails so spendable allowance cannot drift ahead
-  // of the published plan discount.
+  // roll back if Starter OpenMeter sync fails so spendable allowance cannot
+  // drift ahead of the published plan discount.
   const previous = await resolvePlatformOwnerStarterIncludedUsdMicros();
   const settings = await setPlatformOwnerStarterIncludedUsdMicros({
     ownerStarterIncludedUsdMicros: input.ownerStarterIncludedUsdMicros,
@@ -92,6 +118,19 @@ export async function republishAndMigrateBaseOwnerStarter(input: {
     throw err;
   }
 
+  let ownerPaidOpenmeterPlanId: string | null = null;
+  let ownerPaidIncludedUsdMicros: string | null = null;
+  try {
+    const paid = await forceSyncOwnerPaidPlan(
+      settings.ownerStarterIncludedUsdMicros,
+    );
+    ownerPaidOpenmeterPlanId = paid.openmeterPlanId;
+    ownerPaidIncludedUsdMicros = paid.includedUsdMicros;
+  } catch (err) {
+    console.warn("openmeter: Owner Paid force-sync failed after platform default change");
+    warnings.push(ownerPaidForceSyncWarning(err));
+  }
+
   const migrate = resyncSubscribers
     ? await migrateBaseOwnerStarterSubscriptions({
         targetPlanId: plan.openmeterPlanId,
@@ -103,8 +142,12 @@ export async function republishAndMigrateBaseOwnerStarter(input: {
     ownerStarterIncludedUsdMicros: settings.ownerStarterIncludedUsdMicros,
     planKey: plan.key,
     openmeterPlanId: plan.openmeterPlanId,
+    ownerPaidPlanKey: OWNER_PAID_PLAN_KEY,
+    ownerPaidOpenmeterPlanId,
+    ownerPaidIncludedUsdMicros,
     migrate,
     resyncSubscribers,
+    warnings,
   };
 }
 
