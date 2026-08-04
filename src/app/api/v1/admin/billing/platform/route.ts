@@ -22,7 +22,8 @@ export const GET = withSessionAdminGuard(async () => {
 
 /**
  * PATCH /api/v1/admin/billing/platform
- * Persist a new Owner Starter default and re-sync base-key subscribers.
+ * Persist a new Owner Starter default and republish the base plan.
+ * Pass `resync: true` to also migrate subscribers still on the shared base key.
  */
 export const PATCH = withSessionAdminGuard(async (request, context) => {
   let body: Record<string, unknown>;
@@ -47,16 +48,20 @@ export const PATCH = withSessionAdminGuard(async (request, context) => {
     );
   }
 
+  const resyncSubscribers = body.resync === true || body.resyncSubscribers === true;
+
   try {
     const result = await republishAndMigrateBaseOwnerStarter({
       ownerStarterIncludedUsdMicros: micros,
       updatedBy: context.userId,
+      resyncSubscribers,
     });
     return NextResponse.json({
       ownerStarterIncludedUsdMicros: result.ownerStarterIncludedUsdMicros,
       source: "db" as const,
       planKey: result.planKey,
       openmeterPlanId: result.openmeterPlanId,
+      resyncSubscribers: result.resyncSubscribers,
       migrate: result.migrate,
     });
   } catch {

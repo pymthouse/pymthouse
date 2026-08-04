@@ -26,7 +26,9 @@ export type RepublishBaseOwnerStarterResult = {
   ownerStarterIncludedUsdMicros: string;
   planKey: string;
   openmeterPlanId: string;
-  migrate: BaseOwnerStarterMigrateStats;
+  /** Present only when `resyncSubscribers` was requested. */
+  migrate: BaseOwnerStarterMigrateStats | null;
+  resyncSubscribers: boolean;
 };
 
 /** Classify a Konnect subscription for base-key Owner Starter migration. */
@@ -53,14 +55,16 @@ export function hasStarterAllowanceOverride(
 }
 
 /**
- * Persist the new platform Owner Starter default, republish the shared base
- * plan, and migrate every active subscription still on that base key (not
- * amount-keyed override plans).
+ * Persist the new platform Owner Starter default and republish the shared base
+ * plan. When `resyncSubscribers` is true, also migrate every active subscription
+ * still on that base key (not amount-keyed override plans).
  */
 export async function republishAndMigrateBaseOwnerStarter(input: {
   ownerStarterIncludedUsdMicros: string;
   updatedBy: string;
+  resyncSubscribers?: boolean;
 }): Promise<RepublishBaseOwnerStarterResult> {
+  const resyncSubscribers = input.resyncSubscribers === true;
   const settings = await setPlatformOwnerStarterIncludedUsdMicros({
     ownerStarterIncludedUsdMicros: input.ownerStarterIncludedUsdMicros,
     updatedBy: input.updatedBy,
@@ -71,16 +75,19 @@ export async function republishAndMigrateBaseOwnerStarter(input: {
     settings.ownerStarterIncludedUsdMicros,
   );
 
-  const migrate = await migrateBaseOwnerStarterSubscriptions({
-    targetPlanId: plan.openmeterPlanId,
-    targetPlanKey: plan.key,
-  });
+  const migrate = resyncSubscribers
+    ? await migrateBaseOwnerStarterSubscriptions({
+        targetPlanId: plan.openmeterPlanId,
+        targetPlanKey: plan.key,
+      })
+    : null;
 
   return {
     ownerStarterIncludedUsdMicros: settings.ownerStarterIncludedUsdMicros,
     planKey: plan.key,
     openmeterPlanId: plan.openmeterPlanId,
     migrate,
+    resyncSubscribers,
   };
 }
 

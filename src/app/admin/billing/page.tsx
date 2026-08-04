@@ -57,7 +57,9 @@ export default function AdminPlatformBillingPage() {
   const [platform, setPlatform] = useState<PlatformResponse | null>(null);
   const [defaultDisplay, setDefaultDisplay] = useState("5.00");
   const [savingPlatform, setSavingPlatform] = useState(false);
+  const [resyncSubscribers, setResyncSubscribers] = useState(false);
   const [migrate, setMigrate] = useState<MigrateStats | null>(null);
+  const [platformStatus, setPlatformStatus] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [owners, setOwners] = useState<OwnerSummary[]>([]);
@@ -167,40 +169,80 @@ export default function AdminPlatformBillingPage() {
     setSavingPlatform(true);
     setError(null);
     setMessage(null);
+    setPlatformStatus(null);
     setMigrate(null);
     try {
       const micros = usdCentsDisplayToMicros(defaultDisplay);
       if (!micros) {
         setError("Enter a valid USD amount for the platform default (e.g. 5.00)");
+        setPlatformStatus("Enter a valid USD amount (e.g. 5.00)");
         return;
       }
       const res = await fetch("/api/v1/admin/billing/platform", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerStarterIncludedUsdMicros: micros }),
+        body: JSON.stringify({
+          ownerStarterIncludedUsdMicros: micros,
+          resync: resyncSubscribers,
+        }),
       });
-      const data = await res.json();
+      let data: {
+        error?: string;
+        ownerStarterIncludedUsdMicros?: string;
+        source?: "db" | "env" | "fallback";
+        planKey?: string;
+        resyncSubscribers?: boolean;
+        migrate?: MigrateStats | null;
+      };
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.ok
+            ? "Save succeeded but the response could not be read"
+            : `Failed to update platform default (${res.status})`,
+        );
+      }
       if (!res.ok) {
         throw new Error(data.error || "Failed to update platform default");
       }
+      if (!data.ownerStarterIncludedUsdMicros || !data.planKey) {
+        throw new Error("Save response was missing plan details");
+      }
       setPlatform({
         ownerStarterIncludedUsdMicros: data.ownerStarterIncludedUsdMicros,
-        source: data.source,
+        source: data.source ?? "db",
         updatedBy: null,
         updatedAt: new Date().toISOString(),
         planKey: data.planKey,
       });
       setDefaultDisplay(usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros));
-      setMigrate(data.migrate ?? null);
-      setMessage(
-        `Platform default saved. Base plan ${data.planKey} republished` +
-          (data.migrate
-            ? ` — migrated ${data.migrate.updated}, skipped ${data.migrate.skipped}, errors ${data.migrate.errors}.`
-            : "."),
-      );
-      await loadOwners(query, page);
+      const migrateStats = data.migrate ?? null;
+      setMigrate(migrateStats);
+
+      const statusParts = [
+        `Saved ${usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros)} USD`,
+        `plan ${data.planKey} republished`,
+      ];
+      if (data.resyncSubscribers && migrateStats) {
+        statusParts.push(
+          `re-synced subscribers (updated ${migrateStats.updated}, skipped ${migrateStats.skipped}, errors ${migrateStats.errors})`,
+        );
+      } else {
+        statusParts.push("subscriber re-sync skipped");
+      }
+      const status = statusParts.join(" · ");
+      setPlatformStatus(status);
+      setMessage(status);
+      try {
+        await loadOwners(query, page);
+      } catch (reloadErr) {
+        console.error("Failed to refresh owners after platform save", reloadErr);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const text = err instanceof Error ? err.message : String(err);
+      setError(text);
+      setPlatformStatus(text);
     } finally {
       setSavingPlatform(false);
     }
@@ -304,9 +346,11 @@ export default function AdminPlatformBillingPage() {
             Owner Starter platform default
           </h2>
           <p className="text-sm text-zinc-500">
-            Applies to new developer accounts and re-syncs everyone still on the shared
-            base plan <code className="text-zinc-300">{platform?.planKey ?? "pymthouse_owner_starter"}</code>.
-            Per-owner amount overrides are not moved.
+            Applies to new developer accounts. Saving always updates the stored default
+            and republishes base plan{" "}
+            <code className="text-zinc-300">{platform?.planKey ?? "pymthouse_owner_starter"}</code>.
+            Optionally re-sync existing subscribers still on that shared base plan
+            (per-owner amount overrides are not moved).
           </p>
           <div className="flex flex-wrap items-end gap-3">
             <label className="block text-sm">
@@ -326,9 +370,41 @@ export default function AdminPlatformBillingPage() {
               disabled={savingPlatform}
               onClick={() => void savePlatformDefault()}
             >
-              {savingPlatform ? "Saving & re-syncing…" : "Save & re-sync base plan"}
+              {savingPlatform
+                ? resyncSubscribers
+                  ? "Saving & re-syncing…"
+                  : "Saving…"
+                : resyncSubscribers
+                  ? "Save & re-sync base plan"
+                  : "Save platform default"}
             </button>
           </div>
+          <label className="flex items-start gap-2 text-sm text-zinc-400">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={resyncSubscribers}
+              disabled={savingPlatform}
+              onChange={(e) => setResyncSubscribers(e.target.checked)}
+            />
+            <span>
+              Also re-sync subscribers still on the shared base plan. Leave unchecked to
+              only save the default for new accounts / future ensures.
+            </span>
+          </label>
+          {platformStatus && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`rounded-md border px-3 py-2 text-sm ${
+                error && platformStatus === error
+                  ? "border-red-500/40 bg-red-500/10 text-red-300"
+                  : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+              }`}
+            >
+              {platformStatus}
+            </div>
+          )}
           {platform && (
             <p className="text-xs text-zinc-500">
               Current source: <span className="text-zinc-300">{platform.source}</span>
