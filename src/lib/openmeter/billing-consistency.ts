@@ -8,7 +8,13 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients, plans, users } from "@/db/schema";
+import {
+  developerApps,
+  oidcClients,
+  plans,
+  users,
+  type Plan,
+} from "@/db/schema";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   getHostedAdminClient,
@@ -1020,10 +1026,68 @@ export function classifyPhaseOutPastDeadline(input: {
   return findings;
 }
 
+async function countPhaseOutSubscribers(
+  plan: Plan,
+): Promise<
+  | { ok: true; activeSubscriberCount: number }
+  | { ok: false; finding: BillingConsistencyFinding }
+> {
+  if (!plan.openmeterPlanId?.trim()) {
+    return { ok: true, activeSubscriberCount: 0 };
+  }
+  try {
+    const activeSubscriberCount = await countActiveKonnectSubscriptionsForPlan(
+      plan.openmeterPlanId,
+    );
+    return { ok: true, activeSubscriberCount };
+  } catch (err) {
+    return {
+      ok: false,
+      finding: {
+        code: "phase_out_subscriber_check_failed",
+        severity: "warn",
+        clientId: plan.clientId ?? undefined,
+        message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
+        details: {
+          planId: plan.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        remediation: FIX_MIGRATE_PLAN_SUBSCRIBERS,
+      },
+    };
+  }
+}
+
+async function auditOnePhaseOutPlan(
+  plan: Plan,
+): Promise<BillingConsistencyFinding[]> {
+  // Platform-scoped plans (nullable client_id) are Owner Starter catalog
+  // rows — not app phase-out candidates. Skip so findings never invent "".
+  if (!plan.clientId?.trim() || !plan.phaseOutAt?.trim()) {
+    return [];
+  }
+  const deadline = Date.parse(plan.phaseOutAt);
+  if (Number.isNaN(deadline) || Date.now() < deadline) {
+    return [];
+  }
+  const counted = await countPhaseOutSubscribers(plan);
+  if (!counted.ok) {
+    return [counted.finding];
+  }
+  return classifyPhaseOutPastDeadline({
+    clientId: plan.clientId,
+    planId: plan.id,
+    planName: plan.name,
+    status: plan.status,
+    phaseOutAt: plan.phaseOutAt,
+    openmeterPlanId: plan.openmeterPlanId,
+    activeSubscriberCount: counted.activeSubscriberCount,
+  });
+}
+
 async function auditPhaseOutPlans(
   clientIdFilter?: string,
 ): Promise<BillingConsistencyFinding[]> {
-  const findings: BillingConsistencyFinding[] = [];
   const rows = clientIdFilter?.trim()
     ? await db
         .select()
@@ -1036,51 +1100,9 @@ async function auditPhaseOutPlans(
         )
     : await db.select().from(plans).where(eq(plans.status, "phase_out"));
 
+  const findings: BillingConsistencyFinding[] = [];
   for (const plan of rows) {
-    // Platform-scoped plans (nullable client_id) are Owner Starter catalog
-    // rows — not app phase-out candidates. Skip so findings never invent "".
-    if (!plan.clientId?.trim()) {
-      continue;
-    }
-    if (!plan.phaseOutAt?.trim()) {
-      continue;
-    }
-    const deadline = Date.parse(plan.phaseOutAt);
-    if (Number.isNaN(deadline) || Date.now() < deadline) {
-      continue;
-    }
-    let activeSubscriberCount = 0;
-    if (plan.openmeterPlanId?.trim()) {
-      try {
-        activeSubscriberCount = await countActiveKonnectSubscriptionsForPlan(
-          plan.openmeterPlanId,
-        );
-      } catch (err) {
-        findings.push({
-          code: "phase_out_subscriber_check_failed",
-          severity: "warn",
-          clientId: plan.clientId,
-          message: `Unable to count subscribers for phase_out plan "${plan.name}"`,
-          details: {
-            planId: plan.id,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          remediation: FIX_MIGRATE_PLAN_SUBSCRIBERS,
-        });
-        continue;
-      }
-    }
-    findings.push(
-      ...classifyPhaseOutPastDeadline({
-        clientId: plan.clientId,
-        planId: plan.id,
-        planName: plan.name,
-        status: plan.status,
-        phaseOutAt: plan.phaseOutAt,
-        openmeterPlanId: plan.openmeterPlanId,
-        activeSubscriberCount,
-      }),
-    );
+    findings.push(...(await auditOnePhaseOutPlan(plan)));
   }
   return findings;
 }

@@ -6,6 +6,62 @@ import { useRouter, useSearchParams } from "next/navigation";
 const PAYMENT_METHOD_SYNC_ATTEMPTS = 5;
 const PAYMENT_METHOD_SYNC_BASE_DELAY_MS = 1000;
 
+type UpgradeAttemptResult =
+  | { kind: "ok" }
+  | { kind: "retry"; delayMs: number }
+  | { kind: "fail"; message: string };
+
+async function attemptOwnerPaidUpgrade(
+  attempt: number,
+): Promise<UpgradeAttemptResult> {
+  const res = await fetch("/api/v1/me/billing/upgrade-paid", {
+    method: "POST",
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    code?: string;
+  };
+  if (res.ok) {
+    return { kind: "ok" };
+  }
+  if (body.code !== "payment_method_required") {
+    return {
+      kind: "fail",
+      message: body.error || "Could not upgrade to Owner Paid",
+    };
+  }
+  if (attempt + 1 >= PAYMENT_METHOD_SYNC_ATTEMPTS) {
+    return {
+      kind: "fail",
+      message: "Payment method is not ready yet. Retry in a moment.",
+    };
+  }
+  return {
+    kind: "retry",
+    delayMs: PAYMENT_METHOD_SYNC_BASE_DELAY_MS * (attempt + 1),
+  };
+}
+
+async function runOwnerPaidUpgradeAttempts(
+  isCancelled: () => boolean,
+): Promise<"ok" | "cancelled"> {
+  for (let attempt = 0; attempt < PAYMENT_METHOD_SYNC_ATTEMPTS; attempt += 1) {
+    if (isCancelled()) {
+      return "cancelled";
+    }
+    const result = await attemptOwnerPaidUpgrade(attempt);
+    if (result.kind === "retry") {
+      await new Promise((resolve) => setTimeout(resolve, result.delayMs));
+      continue;
+    }
+    if (result.kind === "fail") {
+      throw new Error(result.message);
+    }
+    return "ok";
+  }
+  throw new Error("Could not upgrade to Owner Paid");
+}
+
 /**
  * After Stripe Checkout returns (`?pm=attached`), upgrade Sandbox Starter →
  * Owner Paid. Also upgrades when a payment method is already on file but the
@@ -39,37 +95,10 @@ export default function OwnerPaidUpgradeEffect({
       setBusy(true);
       setError(null);
       try {
-        for (let attempt = 0; attempt < PAYMENT_METHOD_SYNC_ATTEMPTS; attempt += 1) {
-          if (cancelled) {
-            return;
-          }
-          const res = await fetch("/api/v1/me/billing/upgrade-paid", {
-            method: "POST",
-          });
-          const body = (await res.json().catch(() => ({}))) as {
-            error?: string;
-            code?: string;
-          };
-          if (res.ok) {
-            if (!cancelled) {
-              router.replace("/billing");
-              router.refresh();
-            }
-            return;
-          }
-          if (body.code === "payment_method_required") {
-            // Stripe/Konnect may still be syncing the new card after checkout.
-            if (attempt + 1 < PAYMENT_METHOD_SYNC_ATTEMPTS) {
-              const delayMs =
-                PAYMENT_METHOD_SYNC_BASE_DELAY_MS * (attempt + 1);
-              await new Promise((resolve) => setTimeout(resolve, delayMs));
-              continue;
-            }
-            throw new Error(
-              "Payment method is not ready yet. Retry in a moment.",
-            );
-          }
-          throw new Error(body.error || "Could not upgrade to Owner Paid");
+        const outcome = await runOwnerPaidUpgradeAttempts(() => cancelled);
+        if (outcome === "ok" && !cancelled) {
+          router.replace("/billing");
+          router.refresh();
         }
       } catch (err) {
         if (!cancelled) {
