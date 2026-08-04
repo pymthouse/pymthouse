@@ -86,13 +86,14 @@ Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted
 - Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
 - Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite
 
-Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer.
+Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer. Personal network keys keep a bare `apiKey` for usage, but mint `sdkToken` with the same composite Authorization header.
 
 **Design notes**
 
-- Personal keys stay bare; Builder app-user mint returns composite so pathless signer webhooks can recover `{clientId}`.
+- Personal keys stay bare for usage/self-serve; `sdkToken` (livepeer-python-sdk `--token`) embeds the composite `app_*_*` form so pathless signer webhooks can recover `{clientId}`.
+- Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) for the same reason.
 - Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
-- `formatCompositeApiKey` / `splitCompositeApiKey` parse the Builder presentation form.
+- `formatCompositeApiKey` / `splitCompositeApiKey` parse the composite presentation form.
 
 Do not pass M2M client secrets as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
 
