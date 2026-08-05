@@ -65,6 +65,8 @@ export default function AdminOwnerTiersSection() {
   const [draft, setDraft] = useState(emptyDraft);
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +91,33 @@ export default function AdminOwnerTiersSection() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  function startEditName(tier: Tier) {
+    setEditingId(tier.id);
+    setEditName(tier.name);
+    setError(null);
+    setMessage(null);
+  }
+
+  function cancelEditName() {
+    setEditingId(null);
+    setEditName("");
+  }
+
+  async function saveEditName(tier: Tier) {
+    const next = editName.trim();
+    if (!next) {
+      setError("Name is required");
+      return;
+    }
+    if (next === tier.name) {
+      cancelEditName();
+      return;
+    }
+    await patchTier(tier.id, { name: next });
+    setEditingId(null);
+    setEditName("");
+  }
 
   async function createTier() {
     setCreating(true);
@@ -172,6 +201,7 @@ export default function AdminOwnerTiersSection() {
         throw new Error(body.error || "Failed to deactivate");
       }
       setMessage("Tier deactivated");
+      if (editingId === id) cancelEditName();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -205,66 +235,122 @@ export default function AdminOwnerTiersSection() {
         <p className="text-sm text-zinc-500">Loading tiers…</p>
       ) : (
         <ul className="space-y-3">
-          {tiers.map((tier) => (
-            <li
-              key={tier.id}
-              className="rounded-md border border-white/10 bg-black/30 px-3 py-3 text-sm"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <p className="font-medium text-zinc-100">
-                    {tier.name}{" "}
-                    <span className="font-mono text-xs text-zinc-500">
-                      {tier.key}
-                    </span>
-                    {!tier.active ? (
-                      <span className="ml-2 text-xs text-amber-400">inactive</span>
-                    ) : null}
-                  </p>
-                  <p className="mt-1 text-zinc-400">
-                    ${tier.monthlyFeeUsd}/mo · $
-                    {usdMicrosToCentsDisplay(tier.includedUsdMicros)} included
-                    {tier.openmeterPlanId
-                      ? ` · OM ${tier.openmeterPlanId.slice(0, 8)}…`
-                      : " · not synced"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
-                    disabled={busyId === tier.id || !tier.active}
-                    onClick={() =>
-                      void patchTier(tier.id, { sync: true })
-                    }
-                  >
-                    Re-sync
-                  </button>
-                  {tier.active ? (
+          {tiers.map((tier) => {
+            const isEditing = editingId === tier.id;
+            const isBusy = busyId === tier.id;
+            return (
+              <li
+                key={tier.id}
+                className="rounded-md border border-white/10 bg-black/30 px-3 py-3 text-sm"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    {isEditing ? (
+                      <label className="block">
+                        <span className="sr-only">Tier name</span>
+                        <input
+                          className="w-full max-w-md rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-sm text-zinc-100"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          disabled={isBusy}
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void saveEditName(tier);
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              cancelEditName();
+                            }
+                          }}
+                        />
+                      </label>
+                    ) : (
+                      <p className="font-medium text-zinc-100">
+                        {tier.name}{" "}
+                        <span className="font-mono text-xs text-zinc-500">
+                          {tier.key}
+                        </span>
+                        {!tier.active ? (
+                          <span className="ml-2 text-xs text-amber-400">
+                            inactive
+                          </span>
+                        ) : null}
+                      </p>
+                    )}
+                    <p className="mt-1 text-zinc-400">
+                      ${tier.monthlyFeeUsd}/mo · $
+                      {usdMicrosToCentsDisplay(tier.includedUsdMicros)} included
+                      {tier.openmeterPlanId
+                        ? ` · OM ${tier.openmeterPlanId.slice(0, 8)}…`
+                        : " · not synced"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {isEditing ? (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-300 disabled:opacity-50"
+                          disabled={isBusy}
+                          onClick={() => void saveEditName(tier)}
+                        >
+                          Save name
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
+                          disabled={isBusy}
+                          onClick={cancelEditName}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
+                        disabled={isBusy}
+                        onClick={() => startEditName(tier)}
+                      >
+                        Edit name
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="rounded border border-amber-500/30 px-2 py-1 text-xs text-amber-300 disabled:opacity-50"
-                      disabled={busyId === tier.id}
-                      onClick={() => void deactivate(tier.id)}
+                      className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
+                      disabled={isBusy || !tier.active}
+                      onClick={() => void patchTier(tier.id, { sync: true })}
                     >
-                      Deactivate
+                      Re-sync
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-300 disabled:opacity-50"
-                      disabled={busyId === tier.id}
-                      onClick={() =>
-                        void patchTier(tier.id, { active: true, sync: true })
-                      }
-                    >
-                      Activate
-                    </button>
-                  )}
+                    {tier.active ? (
+                      <button
+                        type="button"
+                        className="rounded border border-amber-500/30 px-2 py-1 text-xs text-amber-300 disabled:opacity-50"
+                        disabled={isBusy}
+                        onClick={() => void deactivate(tier.id)}
+                      >
+                        Deactivate
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-300 disabled:opacity-50"
+                        disabled={isBusy}
+                        onClick={() =>
+                          void patchTier(tier.id, { active: true, sync: true })
+                        }
+                      >
+                        Activate
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 

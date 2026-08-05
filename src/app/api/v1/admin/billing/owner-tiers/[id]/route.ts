@@ -31,6 +31,7 @@ function patchFromBody(body: Record<string, unknown>): UpdateOwnerSubscriptionTi
 
 function shouldSyncTier(body: Record<string, unknown>): boolean {
   return (
+    body.name !== undefined ||
     body.monthlyFeeUsd !== undefined ||
     body.includedUsdMicros !== undefined ||
     body.overageRateUsd !== undefined ||
@@ -63,7 +64,7 @@ async function syncTierResponse(
 
 /**
  * PATCH /api/v1/admin/billing/owner-tiers/[id]
- * Update a tier and re-sync to OpenMeter when pricing/allowance changes.
+ * Update a tier and re-sync to OpenMeter when name, pricing, or allowance changes.
  */
 export const PATCH = withSessionAdminGuardParams<{ id: string }>(
   async (request, routeContext) => {
