@@ -36,7 +36,6 @@ import {
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import {
   OWNER_PAID_PLAN_KEY,
-  OWNER_PAID_PLAN_NAME,
   isOwnerPaidPlanKey,
 } from "./owner-paid-key";
 import { ownerHasChargeablePaymentMethod } from "./owner-payment-method";
@@ -366,19 +365,8 @@ export async function upgradeOwnerToPaidPlan(input: {
   confirm?: boolean;
   hintOpenMeterSubscriptionId?: string | null;
 }): Promise<OwnerPaidUpgradeResult> {
-  if (input.confirm !== true) {
-    throw new OwnerPaidUpgradeError(
-      "confirm_required",
-      "Confirm Upgrade to charge the monthly fee and start a new billing cycle",
-    );
-  }
-
-  if (!isHostedAdminClientAvailable()) {
-    throw new OwnerPaidUpgradeError(
-      "openmeter_unavailable",
-      "OpenMeter is not configured",
-    );
-  }
+  assertUpgradeConfirm(input.confirm);
+  assertHostedOpenMeterConfigured();
 
   const ownerUserId = input.ownerUserId.trim();
   if (!ownerUserId) {
@@ -388,6 +376,68 @@ export async function upgradeOwnerToPaidPlan(input: {
     );
   }
 
+  await assertChargeablePaymentMethod(ownerUserId);
+  const { plan, monthlyFeeUsd } = await resolveUpgradePlan(input.planKey);
+
+  const client = getHostedAdminClient();
+  const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
+  const customer = await ensureOwnerCustomer(
+    client,
+    ownerUserId,
+    publicClientIds,
+  );
+
+  await prepareOwnerCustomerStripeBilling({
+    client,
+    customerId: customer.id,
+    customerKey: customer.key,
+  });
+
+  const existing = await findActiveOwnerWalletSubscription({
+    client,
+    customerId: customer.id,
+    hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
+  });
+  assertUpgradeableSubscription(existing);
+
+  if (isOwnerPaidPlanKey(existing.planKey) && existing.planKey === plan.key) {
+    return {
+      openmeterSubscriptionId: existing.id,
+      planKey: existing.planKey || plan.key,
+      openmeterPlanId: existing.openmeterPlanId || plan.openmeterPlanId,
+      monthlyFeeUsd,
+      alreadyPaid: true,
+    };
+  }
+
+  return runClaimedOwnerPaidUpgrade({
+    ownerUserId,
+    plan,
+    monthlyFeeUsd,
+    existingId: existing.id,
+    customerId: customer.id,
+  });
+}
+
+function assertUpgradeConfirm(confirm: boolean | undefined): void {
+  if (confirm !== true) {
+    throw new OwnerPaidUpgradeError(
+      "confirm_required",
+      "Confirm Upgrade to charge the monthly fee and start a new billing cycle",
+    );
+  }
+}
+
+function assertHostedOpenMeterConfigured(): void {
+  if (!isHostedAdminClientAvailable()) {
+    throw new OwnerPaidUpgradeError(
+      "openmeter_unavailable",
+      "OpenMeter is not configured",
+    );
+  }
+}
+
+async function assertChargeablePaymentMethod(ownerUserId: string): Promise<void> {
   const chargeable = await ownerHasChargeablePaymentMethod(ownerUserId);
   if (chargeable !== true) {
     throw new OwnerPaidUpgradeError(
@@ -395,8 +445,13 @@ export async function upgradeOwnerToPaidPlan(input: {
       "Add a payment method before upgrading to Owner Paid",
     );
   }
+}
 
-  const planKey = (input.planKey?.trim() || OWNER_PAID_PLAN_KEY);
+async function resolveUpgradePlan(planKeyInput: string | null | undefined): Promise<{
+  plan: OwnerPaidPlanRef;
+  monthlyFeeUsd: string;
+}> {
+  const planKey = planKeyInput?.trim() || OWNER_PAID_PLAN_KEY;
   let plan: OwnerPaidPlanRef;
   try {
     plan = await ensureOwnerPaidTierPlanSynced(planKey);
@@ -419,44 +474,26 @@ export async function upgradeOwnerToPaidPlan(input: {
       "Owner Paid tier has no monthly fee configured",
     );
   }
+  return { plan, monthlyFeeUsd };
+}
 
-  const client = getHostedAdminClient();
-  const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
-  const customer = await ensureOwnerCustomer(
-    client,
-    ownerUserId,
-    publicClientIds,
-  );
-
-  await prepareOwnerCustomerStripeBilling({
-    client,
-    customerId: customer.id,
-    customerKey: customer.key,
-  });
-
-  const existing = await findActiveOwnerWalletSubscription({
-    client,
-    customerId: customer.id,
-    hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
-  });
-
+function assertUpgradeableSubscription(
+  existing: {
+    id?: string | null;
+    planKey?: string | null;
+    openmeterPlanId?: string | null;
+  } | null,
+): asserts existing is {
+  id: string;
+  planKey?: string | null;
+  openmeterPlanId?: string | null;
+} {
   if (!existing?.id) {
     throw new OwnerPaidUpgradeError(
       "no_subscription",
       "No active owner wallet subscription to upgrade",
     );
   }
-
-  if (isOwnerPaidPlanKey(existing.planKey) && existing.planKey === plan.key) {
-    return {
-      openmeterSubscriptionId: existing.id,
-      planKey: existing.planKey || plan.key,
-      openmeterPlanId: existing.openmeterPlanId || plan.openmeterPlanId,
-      monthlyFeeUsd,
-      alreadyPaid: true,
-    };
-  }
-
   if (
     existing.planKey &&
     !isOwnerStarterPlanKey(existing.planKey) &&
@@ -467,10 +504,18 @@ export async function upgradeOwnerToPaidPlan(input: {
       `Cannot upgrade subscription on plan ${existing.planKey} to Owner Paid`,
     );
   }
+}
 
+async function runClaimedOwnerPaidUpgrade(input: {
+  ownerUserId: string;
+  plan: OwnerPaidPlanRef;
+  monthlyFeeUsd: string;
+  existingId: string;
+  customerId: string;
+}): Promise<OwnerPaidUpgradeResult> {
   const claim = await claimOwnerPaidUpgradeOperation({
-    ownerUserId,
-    planKey: plan.key,
+    ownerUserId: input.ownerUserId,
+    planKey: input.plan.key,
   });
   if (claim.action === "return") {
     return claim.result;
@@ -484,41 +529,12 @@ export async function upgradeOwnerToPaidPlan(input: {
 
   const operationId = claim.operationId;
   try {
-    let openmeterPlanId = plan.openmeterPlanId;
-    let resultPlanKey = plan.key;
-    let resultMonthlyFee = monthlyFeeUsd;
-    try {
-      await changeKonnectSubscription({
-        subscriptionId: existing.id,
-        customerId: customer.id,
-        planId: openmeterPlanId,
-        timing: "immediate",
-      });
-    } catch (err) {
-      if (isOpenMeterPlanNotFoundError(err)) {
-        invalidateOwnerPaidPlanCache();
-        const resynced = await ensureOwnerPaidTierPlanSynced(plan.key);
-        openmeterPlanId = resynced.openmeterPlanId;
-        resultPlanKey = resynced.key;
-        resultMonthlyFee = resynced.monthlyFeeUsd || monthlyFeeUsd;
-        await changeKonnectSubscription({
-          subscriptionId: existing.id,
-          customerId: customer.id,
-          planId: openmeterPlanId,
-          timing: "immediate",
-        });
-      } else {
-        throw err;
-      }
-    }
-
-    const result: OwnerPaidUpgradeResult = {
-      openmeterSubscriptionId: existing.id,
-      planKey: resultPlanKey,
-      openmeterPlanId,
-      monthlyFeeUsd: resultMonthlyFee,
-      alreadyPaid: false,
-    };
+    const result = await changeSubscriptionToPaidTier({
+      subscriptionId: input.existingId,
+      customerId: input.customerId,
+      plan: input.plan,
+      monthlyFeeUsd: input.monthlyFeeUsd,
+    });
     await completeOwnerPaidUpgradeOperation({ operationId, result });
     return result;
   } catch (err) {
@@ -538,6 +554,48 @@ export async function upgradeOwnerToPaidPlan(input: {
       "Owner Paid upgrade failed",
     );
   }
+}
+
+async function changeSubscriptionToPaidTier(input: {
+  subscriptionId: string;
+  customerId: string;
+  plan: OwnerPaidPlanRef;
+  monthlyFeeUsd: string;
+}): Promise<OwnerPaidUpgradeResult> {
+  let openmeterPlanId = input.plan.openmeterPlanId;
+  let resultPlanKey = input.plan.key;
+  let resultMonthlyFee = input.monthlyFeeUsd;
+  try {
+    await changeKonnectSubscription({
+      subscriptionId: input.subscriptionId,
+      customerId: input.customerId,
+      planId: openmeterPlanId,
+      timing: "immediate",
+    });
+  } catch (err) {
+    if (!isOpenMeterPlanNotFoundError(err)) {
+      throw err;
+    }
+    invalidateOwnerPaidPlanCache();
+    const resynced = await ensureOwnerPaidTierPlanSynced(input.plan.key);
+    openmeterPlanId = resynced.openmeterPlanId;
+    resultPlanKey = resynced.key;
+    resultMonthlyFee = resynced.monthlyFeeUsd || input.monthlyFeeUsd;
+    await changeKonnectSubscription({
+      subscriptionId: input.subscriptionId,
+      customerId: input.customerId,
+      planId: openmeterPlanId,
+      timing: "immediate",
+    });
+  }
+
+  return {
+    openmeterSubscriptionId: input.subscriptionId,
+    planKey: resultPlanKey,
+    openmeterPlanId,
+    monthlyFeeUsd: resultMonthlyFee,
+    alreadyPaid: false,
+  };
 }
 
 /**

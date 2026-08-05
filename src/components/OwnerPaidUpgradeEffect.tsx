@@ -18,6 +18,199 @@ type OwnerTier = {
   includedUsdMicros: string;
 };
 
+function PaymentMethodStep({
+  error,
+  pmBusy,
+  onCancel,
+  onContinue,
+}: Readonly<{
+  error: string | null;
+  pmBusy: boolean;
+  onCancel: () => void;
+  onContinue: () => void;
+}>) {
+  return (
+    <>
+      <h3
+        id="owner-upgrade-title"
+        className="text-lg font-semibold text-zinc-100"
+      >
+        Upgrade
+      </h3>
+      <p className="mt-1 text-sm text-zinc-500">
+        Add a payment method, then you’ll pick a monthly plan. Attaching a card
+        does not subscribe you automatically.
+      </p>
+      {error ? (
+        <p className="mt-3 text-sm text-red-400" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-300"
+          disabled={pmBusy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="rounded-md bg-emerald-500/20 px-3 py-2 text-sm text-emerald-200 disabled:opacity-50"
+          disabled={pmBusy}
+          onClick={onContinue}
+        >
+          {pmBusy ? "Opening Stripe…" : "Continue — add payment method"}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function TierList({
+  tiers,
+  selectedKey,
+  onSelect,
+}: Readonly<{
+  tiers: OwnerTier[];
+  selectedKey: string;
+  onSelect: (key: string) => void;
+}>) {
+  return (
+    <ul className="mt-4 space-y-2">
+      {tiers.map((tier) => {
+        const selectedTier = tier.key === selectedKey;
+        const tierClass = selectedTier
+          ? "border-emerald-500/50 bg-emerald-500/10"
+          : "border-white/10 bg-black/20 hover:border-white/20";
+        return (
+          <li key={tier.id}>
+            <button
+              type="button"
+              className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${tierClass}`}
+              onClick={() => onSelect(tier.key)}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-medium text-zinc-100">{tier.name}</span>
+                <span className="text-sm text-emerald-300">
+                  ${tier.monthlyFeeUsd}/mo
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {formatUsdMicrosSummary(tier.includedUsdMicros)} included usage
+                each cycle
+                {tier.description ? ` · ${tier.description}` : ""}
+              </p>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PlanChooserBody({
+  loadingTiers,
+  tiers,
+  selectedKey,
+  onSelect,
+}: Readonly<{
+  loadingTiers: boolean;
+  tiers: OwnerTier[];
+  selectedKey: string;
+  onSelect: (key: string) => void;
+}>) {
+  if (loadingTiers) {
+    return <p className="mt-4 text-sm text-zinc-400">Loading plans…</p>;
+  }
+  if (tiers.length === 0) {
+    return (
+      <p className="mt-4 text-sm text-amber-300">
+        No paid plans are available yet. Ask a platform admin to configure Owner
+        Paid tiers.
+      </p>
+    );
+  }
+  return (
+    <TierList tiers={tiers} selectedKey={selectedKey} onSelect={onSelect} />
+  );
+}
+
+function confirmUpgradeLabel(
+  busy: boolean,
+  selected: OwnerTier | null,
+): string {
+  if (busy) return "Upgrading…";
+  if (selected) return `Confirm — charge $${selected.monthlyFeeUsd} today`;
+  return "Confirm Upgrade";
+}
+
+function PlanChooserStep({
+  error,
+  busy,
+  loadingTiers,
+  tiers,
+  selectedKey,
+  selected,
+  onSelect,
+  onCancel,
+  onConfirm,
+}: Readonly<{
+  error: string | null;
+  busy: boolean;
+  loadingTiers: boolean;
+  tiers: OwnerTier[];
+  selectedKey: string;
+  selected: OwnerTier | null;
+  onSelect: (key: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}>) {
+  return (
+    <>
+      <h3
+        id="owner-upgrade-title"
+        className="text-lg font-semibold text-zinc-100"
+      >
+        Choose a plan
+      </h3>
+      <p className="mt-1 text-sm text-zinc-500">
+        Confirming charges the monthly fee today and starts a new billing cycle.
+      </p>
+      <PlanChooserBody
+        loadingTiers={loadingTiers}
+        tiers={tiers}
+        selectedKey={selectedKey}
+        onSelect={onSelect}
+      />
+      {error ? (
+        <p className="mt-3 text-sm text-red-400" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-300"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="rounded-md bg-emerald-500/20 px-3 py-2 text-sm text-emerald-200 disabled:opacity-50"
+          disabled={busy || !selected}
+          onClick={onConfirm}
+        >
+          {confirmUpgradeLabel(busy, selected)}
+        </button>
+      </div>
+    </>
+  );
+}
+
 /**
  * Consentful Upgrade: pick an Owner Paid tier and confirm the monthly charge.
  * Does not auto-upgrade after payment-method attach.
@@ -44,7 +237,7 @@ export default function OwnerPaidUpgradePanel({
   const [pmBusy, setPmBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cardSavedNotice, setCardSavedNotice] = useState(false);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const upgradeButtonRef = useRef<HTMLButtonElement | null>(null);
   const sectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -84,17 +277,14 @@ export default function OwnerPaidUpgradePanel({
   }, []);
 
   useEffect(() => {
-    if (!open) return;
-    dialogRef.current?.focus();
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeDialog();
-      }
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      dialog.showModal();
+    } else if (!open && dialog.open) {
+      dialog.close();
     }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, closeDialog]);
+  }, [open]);
 
   const loadTiers = useCallback(async () => {
     setLoadingTiers(true);
@@ -228,140 +418,39 @@ export default function OwnerPaidUpgradePanel({
         </div>
       </div>
 
-      {open ? (
-        <div
-          ref={dialogRef}
-          tabIndex={-1}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 outline-none"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="owner-upgrade-title"
-        >
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-xl">
-            {!hasPaymentMethod ? (
-              <>
-                <h3
-                  id="owner-upgrade-title"
-                  className="text-lg font-semibold text-zinc-100"
-                >
-                  Upgrade
-                </h3>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Add a payment method, then you’ll pick a monthly plan. Attaching
-                  a card does not subscribe you automatically.
-                </p>
-                {error ? (
-                  <p className="mt-3 text-sm text-red-400" role="alert">
-                    {error}
-                  </p>
-                ) : null}
-                <div className="mt-5 flex flex-wrap justify-end gap-2">
-                  <button
-                    type="button"
-                    className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-300"
-                    disabled={pmBusy}
-                    onClick={closeDialog}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md bg-emerald-500/20 px-3 py-2 text-sm text-emerald-200 disabled:opacity-50"
-                    disabled={pmBusy}
-                    onClick={() => void startPaymentMethodCheckout()}
-                  >
-                    {pmBusy ? "Opening Stripe…" : "Continue — add payment method"}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h3
-                  id="owner-upgrade-title"
-                  className="text-lg font-semibold text-zinc-100"
-                >
-                  Choose a plan
-                </h3>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Confirming charges the monthly fee today and starts a new billing
-                  cycle.
-                </p>
-
-                {loadingTiers ? (
-                  <p className="mt-4 text-sm text-zinc-400">Loading plans…</p>
-                ) : tiers.length === 0 ? (
-                  <p className="mt-4 text-sm text-amber-300">
-                    No paid plans are available yet. Ask a platform admin to configure
-                    Owner Paid tiers.
-                  </p>
-                ) : (
-                  <ul className="mt-4 space-y-2">
-                    {tiers.map((tier) => {
-                      const selectedTier = tier.key === selectedKey;
-                      return (
-                        <li key={tier.id}>
-                          <button
-                            type="button"
-                            className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-                              selectedTier
-                                ? "border-emerald-500/50 bg-emerald-500/10"
-                                : "border-white/10 bg-black/20 hover:border-white/20"
-                            }`}
-                            onClick={() => setSelectedKey(tier.key)}
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span className="font-medium text-zinc-100">
-                                {tier.name}
-                              </span>
-                              <span className="text-sm text-emerald-300">
-                                ${tier.monthlyFeeUsd}/mo
-                              </span>
-                            </div>
-                            <p className="mt-1 text-xs text-zinc-500">
-                              {formatUsdMicrosSummary(tier.includedUsdMicros)} included
-                              usage each cycle
-                              {tier.description ? ` · ${tier.description}` : ""}
-                            </p>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-
-                {error ? (
-                  <p className="mt-3 text-sm text-red-400" role="alert">
-                    {error}
-                  </p>
-                ) : null}
-
-                <div className="mt-5 flex flex-wrap justify-end gap-2">
-                  <button
-                    type="button"
-                    className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-300"
-                    disabled={busy}
-                    onClick={closeDialog}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md bg-emerald-500/20 px-3 py-2 text-sm text-emerald-200 disabled:opacity-50"
-                    disabled={busy || !selected}
-                    onClick={() => void confirmUpgrade()}
-                  >
-                    {busy
-                      ? "Upgrading…"
-                      : selected
-                        ? `Confirm — charge $${selected.monthlyFeeUsd} today`
-                        : "Confirm Upgrade"}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+      <dialog
+        ref={dialogRef}
+        className="fixed inset-0 z-50 m-0 flex h-full max-h-none w-full max-w-none items-center justify-center bg-black/70 p-4 open:flex"
+        aria-labelledby="owner-upgrade-title"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeDialog();
+        }}
+        onClose={closeDialog}
+      >
+        <div className="w-full max-w-lg rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-xl">
+          {!hasPaymentMethod ? (
+            <PaymentMethodStep
+              error={error}
+              pmBusy={pmBusy}
+              onCancel={closeDialog}
+              onContinue={() => void startPaymentMethodCheckout()}
+            />
+          ) : (
+            <PlanChooserStep
+              error={error}
+              busy={busy}
+              loadingTiers={loadingTiers}
+              tiers={tiers}
+              selectedKey={selectedKey}
+              selected={selected}
+              onSelect={setSelectedKey}
+              onCancel={closeDialog}
+              onConfirm={() => void confirmUpgrade()}
+            />
+          )}
         </div>
-      ) : null}
+      </dialog>
     </div>
   );
 }

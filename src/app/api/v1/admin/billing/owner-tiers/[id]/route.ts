@@ -6,8 +6,60 @@ import {
   getOwnerSubscriptionTierById,
   toOwnerSubscriptionTierPublic,
   updateOwnerSubscriptionTier,
+  type OwnerSubscriptionTierRow,
+  type UpdateOwnerSubscriptionTierInput,
 } from "@/lib/billing/owner-subscription-tiers";
+import {
+  readNullableStringField,
+  readOptionalBooleanField,
+  readOptionalNumberField,
+  readOptionalStringField,
+} from "@/lib/billing/owner-tier-body";
 import { forceSyncOwnerPaidTier } from "@/lib/openmeter/owner-paid-plan";
+
+function patchFromBody(body: Record<string, unknown>): UpdateOwnerSubscriptionTierInput {
+  return {
+    name: readOptionalStringField(body, "name"),
+    description: readNullableStringField(body, "description"),
+    monthlyFeeUsd: readOptionalStringField(body, "monthlyFeeUsd"),
+    includedUsdMicros: readOptionalStringField(body, "includedUsdMicros"),
+    overageRateUsd: readNullableStringField(body, "overageRateUsd"),
+    sortOrder: readOptionalNumberField(body, "sortOrder"),
+    active: readOptionalBooleanField(body, "active"),
+  };
+}
+
+function shouldSyncTier(body: Record<string, unknown>): boolean {
+  return (
+    body.monthlyFeeUsd !== undefined ||
+    body.includedUsdMicros !== undefined ||
+    body.overageRateUsd !== undefined ||
+    body.sync === true
+  );
+}
+
+async function syncTierResponse(
+  tier: OwnerSubscriptionTierRow,
+): Promise<NextResponse> {
+  try {
+    const synced = await forceSyncOwnerPaidTier(tier);
+    const refreshed = await getOwnerSubscriptionTierById(tier.id);
+    return NextResponse.json({
+      tier: toOwnerSubscriptionTierPublic(refreshed ?? tier),
+      synced: true,
+      openmeterPlanId: synced.openmeterPlanId,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        tier: toOwnerSubscriptionTierPublic(tier),
+        synced: false,
+        syncError: err instanceof Error ? err.message : String(err),
+      },
+      { status: 502 },
+    );
+  }
+}
 
 /**
  * PATCH /api/v1/admin/billing/owner-tiers/[id]
@@ -24,60 +76,10 @@ export const PATCH = withSessionAdminGuardParams<{ id: string }>(
     }
 
     try {
-      const tier = await updateOwnerSubscriptionTier(id, {
-        name: typeof body.name === "string" ? body.name : undefined,
-        description:
-          body.description === undefined
-            ? undefined
-            : body.description === null
-              ? null
-              : String(body.description),
-        monthlyFeeUsd:
-          body.monthlyFeeUsd === undefined
-            ? undefined
-            : String(body.monthlyFeeUsd),
-        includedUsdMicros:
-          body.includedUsdMicros === undefined
-            ? undefined
-            : String(body.includedUsdMicros),
-        overageRateUsd:
-          body.overageRateUsd === undefined
-            ? undefined
-            : body.overageRateUsd === null
-              ? null
-              : String(body.overageRateUsd),
-        sortOrder:
-          typeof body.sortOrder === "number" ? body.sortOrder : undefined,
-        active: typeof body.active === "boolean" ? body.active : undefined,
-      });
-
-      const shouldSync =
-        body.monthlyFeeUsd !== undefined ||
-        body.includedUsdMicros !== undefined ||
-        body.overageRateUsd !== undefined ||
-        body.sync === true;
-
-      if (shouldSync && tier.active === 1) {
-        try {
-          const synced = await forceSyncOwnerPaidTier(tier);
-          const refreshed = await getOwnerSubscriptionTierById(tier.id);
-          return NextResponse.json({
-            tier: toOwnerSubscriptionTierPublic(refreshed ?? tier),
-            synced: true,
-            openmeterPlanId: synced.openmeterPlanId,
-          });
-        } catch (err) {
-          return NextResponse.json(
-            {
-              tier: toOwnerSubscriptionTierPublic(tier),
-              synced: false,
-              syncError: err instanceof Error ? err.message : String(err),
-            },
-            { status: 502 },
-          );
-        }
+      const tier = await updateOwnerSubscriptionTier(id, patchFromBody(body));
+      if (shouldSyncTier(body) && tier.active === 1) {
+        return syncTierResponse(tier);
       }
-
       return NextResponse.json({
         tier: toOwnerSubscriptionTierPublic(tier),
         synced: false,

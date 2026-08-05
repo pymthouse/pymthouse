@@ -206,15 +206,9 @@ export type UpdateOwnerSubscriptionTierInput = {
   active?: boolean;
 };
 
-export async function updateOwnerSubscriptionTier(
-  id: string,
+function applyOwnerTierUpdatePatch(
   input: UpdateOwnerSubscriptionTierInput,
-): Promise<OwnerSubscriptionTierRow> {
-  const existing = await getOwnerSubscriptionTierById(id);
-  if (!existing) {
-    throw new Error("Owner subscription tier not found");
-  }
-
+): Partial<OwnerSubscriptionTierRow> {
   const patch: Partial<OwnerSubscriptionTierRow> = {
     updatedAt: new Date().toISOString(),
   };
@@ -253,7 +247,19 @@ export async function updateOwnerSubscriptionTier(
   if (input.active !== undefined) {
     patch.active = input.active ? 1 : 0;
   }
+  return patch;
+}
 
+export async function updateOwnerSubscriptionTier(
+  id: string,
+  input: UpdateOwnerSubscriptionTierInput,
+): Promise<OwnerSubscriptionTierRow> {
+  const existing = await getOwnerSubscriptionTierById(id);
+  if (!existing) {
+    throw new Error("Owner subscription tier not found");
+  }
+
+  const patch = applyOwnerTierUpdatePatch(input);
   await db
     .update(ownerSubscriptionTiers)
     .set(patch)
@@ -295,7 +301,7 @@ export async function requireSelectableOwnerSubscriptionTier(
   planKey: string,
 ): Promise<OwnerSubscriptionTierRow> {
   const tier = await getOwnerSubscriptionTierByKey(planKey);
-  if (!tier || tier.active !== 1) {
+  if (tier?.active !== 1) {
     throw new Error("Owner Paid tier is not available");
   }
   if (!parseOwnerTierMonthlyFeeUsd(tier.monthlyFeeUsd)) {

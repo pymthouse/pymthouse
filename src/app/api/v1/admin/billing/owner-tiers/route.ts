@@ -7,6 +7,11 @@ import {
   toOwnerSubscriptionTierPublic,
   updateOwnerSubscriptionTier,
 } from "@/lib/billing/owner-subscription-tiers";
+import {
+  readNullableStringField,
+  readOptionalNumberField,
+  readRequiredStringField,
+} from "@/lib/billing/owner-tier-body";
 import { forceSyncOwnerPaidTier } from "@/lib/openmeter/owner-paid-plan";
 
 /**
@@ -34,21 +39,14 @@ export const POST = withSessionAdminGuard(async (request) => {
 
   try {
     const tier = await createOwnerSubscriptionTier({
-      key: String(body.key ?? ""),
-      name: String(body.name ?? ""),
-      description:
-        body.description === undefined || body.description === null
-          ? null
-          : String(body.description),
-      monthlyFeeUsd: String(body.monthlyFeeUsd ?? ""),
-      includedUsdMicros: String(body.includedUsdMicros ?? ""),
-      overageRateUsd:
-        body.overageRateUsd === undefined || body.overageRateUsd === null
-          ? null
-          : String(body.overageRateUsd),
-      sortOrder:
-        typeof body.sortOrder === "number" ? body.sortOrder : undefined,
-      active: body.active === false ? false : true,
+      key: readRequiredStringField(body, "key"),
+      name: readRequiredStringField(body, "name"),
+      description: readNullableStringField(body, "description") ?? null,
+      monthlyFeeUsd: readRequiredStringField(body, "monthlyFeeUsd"),
+      includedUsdMicros: readRequiredStringField(body, "includedUsdMicros"),
+      overageRateUsd: readNullableStringField(body, "overageRateUsd") ?? null,
+      sortOrder: readOptionalNumberField(body, "sortOrder"),
+      active: body.active !== false,
     });
 
     try {

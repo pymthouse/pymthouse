@@ -24,31 +24,35 @@ export function ownerPaidUpgradeIdempotencyKey(
 function isUniqueViolation(error: unknown): boolean {
   const codes: string[] = [];
   const messages: string[] = [];
-  let cur: unknown = error;
-  for (let depth = 0; depth < 4; depth++) {
-    if (cur == null) break;
-    if (cur instanceof Error) {
-      messages.push(cur.message);
-      const withCause = cur as Error & { cause?: unknown; code?: string };
-      if (typeof withCause.code === "string") codes.push(withCause.code);
-      cur = withCause.cause;
-      continue;
-    }
-    if (typeof cur === "object") {
-      const obj = cur as { message?: unknown; code?: unknown; cause?: unknown };
-      if (typeof obj.message === "string") messages.push(obj.message);
-      if (typeof obj.code === "string") codes.push(obj.code);
-      cur = obj.cause;
-      continue;
-    }
-    break;
-  }
+  collectErrorCodesAndMessages(error, codes, messages, 0);
   if (codes.includes("23505")) return true;
   return messages.some(
     (m) =>
       m.toLowerCase().includes("unique") ||
       m.toLowerCase().includes("duplicate"),
   );
+}
+
+function collectErrorCodesAndMessages(
+  cur: unknown,
+  codes: string[],
+  messages: string[],
+  depth: number,
+): void {
+  if (cur == null || depth >= 4) return;
+  if (cur instanceof Error) {
+    messages.push(cur.message);
+    const withCause = cur as Error & { cause?: unknown; code?: string };
+    if (typeof withCause.code === "string") codes.push(withCause.code);
+    collectErrorCodesAndMessages(withCause.cause, codes, messages, depth + 1);
+    return;
+  }
+  if (typeof cur === "object") {
+    const obj = cur as { message?: unknown; code?: unknown; cause?: unknown };
+    if (typeof obj.message === "string") messages.push(obj.message);
+    if (typeof obj.code === "string") codes.push(obj.code);
+    collectErrorCodesAndMessages(obj.cause, codes, messages, depth + 1);
+  }
 }
 
 function isStalePending(createdAt: string, updatedAt: string): boolean {

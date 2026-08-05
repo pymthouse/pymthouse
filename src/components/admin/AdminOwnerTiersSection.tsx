@@ -31,6 +31,32 @@ const emptyDraft = {
   sortOrder: "0",
 };
 
+function createTierMessage(body: {
+  synced?: boolean;
+  syncError?: string;
+}): string {
+  if (body.synced) {
+    return "Tier created and synced to OpenMeter";
+  }
+  if (body.syncError) {
+    return `Tier saved (sync: ${body.syncError})`;
+  }
+  return "Tier saved";
+}
+
+function updateTierMessage(body: {
+  synced?: boolean;
+  syncError?: string;
+}): string {
+  if (body.synced) {
+    return "Tier updated and synced";
+  }
+  if (body.syncError) {
+    return `Saved (sync: ${body.syncError})`;
+  }
+  return "Tier updated";
+}
+
 export default function AdminOwnerTiersSection() {
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,11 +121,7 @@ export default function AdminOwnerTiersSection() {
         throw new Error(body.error || "Failed to create tier");
       }
       setDraft(emptyDraft);
-      setMessage(
-        body.synced
-          ? "Tier created and synced to OpenMeter"
-          : `Tier saved${body.syncError ? ` (sync: ${body.syncError})` : ""}`,
-      );
+      setMessage(createTierMessage(body));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -129,13 +151,7 @@ export default function AdminOwnerTiersSection() {
       if (!res.ok) {
         throw new Error(body.error || "Failed to update tier");
       }
-      setMessage(
-        body.synced
-          ? "Tier updated and synced"
-          : body.syncError
-            ? `Saved (sync: ${body.syncError})`
-            : "Tier updated",
-      );
+      setMessage(updateTierMessage(body));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -182,9 +198,7 @@ export default function AdminOwnerTiersSection() {
         </p>
       ) : null}
       {message ? (
-        <p className="text-sm text-emerald-300" role="status">
-          {message}
-        </p>
+        <output className="block text-sm text-emerald-300">{message}</output>
       ) : null}
 
       {loading ? (

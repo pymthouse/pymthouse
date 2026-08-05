@@ -5,6 +5,13 @@ import { useState } from "react";
 import { OPEN_OWNER_UPGRADE_EVENT } from "@/components/OwnerPaidUpgradeEffect";
 import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-session";
 
+function openOwnerUpgradeChooser() {
+  window.dispatchEvent(new Event(OPEN_OWNER_UPGRADE_EVENT));
+  document
+    .getElementById("owner-paid-upgrade")
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 /**
  * Owner billing header action for payment methods.
  * On owners eligible for Paid Upgrade without a card, the primary CTA is Upgrade
@@ -20,13 +27,6 @@ export default function OwnerPaymentMethodButton({
 }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  function openUpgrade() {
-    window.dispatchEvent(new Event(OPEN_OWNER_UPGRADE_EVENT));
-    document
-      .getElementById("owner-paid-upgrade")
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
 
   async function startCheckout() {
     setBusy(true);
@@ -77,7 +77,7 @@ export default function OwnerPaymentMethodButton({
         disabled={busy}
         onClick={() => {
           if (useUpgradeCta) {
-            openUpgrade();
+            openOwnerUpgradeChooser();
             return;
           }
           void startCheckout();

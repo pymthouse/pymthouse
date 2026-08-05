@@ -132,33 +132,8 @@ export function readFlatFeeUsdFromPlanBody(plan: unknown): string | null {
   if (!phases) return null;
 
   for (const phase of phases) {
-    if (!phase || typeof phase !== "object") continue;
-    const cards =
-      (phase as { rateCards?: unknown }).rateCards ??
-      (phase as { rate_cards?: unknown }).rate_cards ??
-      [];
-    if (!Array.isArray(cards)) continue;
-    for (const card of cards) {
-      if (!card || typeof card !== "object") continue;
-      const key = String(
-        (card as { key?: unknown }).key ??
-          (card as { Key?: unknown }).Key ??
-          "",
-      );
-      if (key !== "subscription_fee") continue;
-      const price =
-        (card as { price?: unknown }).price ??
-        (card as { Price?: unknown }).Price;
-      if (!price || typeof price !== "object") continue;
-      const amount = (price as { amount?: unknown }).amount;
-      if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
-        return amount.toFixed(2);
-      }
-      if (typeof amount === "string") {
-        const n = Number(amount.trim());
-        if (Number.isFinite(n) && n > 0) return n.toFixed(2);
-      }
-    }
+    const fee = readSubscriptionFeeFromPhase(phase);
+    if (fee != null) return fee;
   }
   return null;
 }
@@ -170,14 +145,50 @@ function readPlanPhases(plan: object): unknown[] | null {
   return Array.isArray(phases) ? phases : null;
 }
 
-function readUsageDiscountFromPhase(phase: unknown): string | null {
-  if (!phase || typeof phase !== "object") return null;
+function readRateCardsFromPhase(phase: unknown): unknown[] {
+  if (!phase || typeof phase !== "object") return [];
   const cards =
     (phase as { rateCards?: unknown }).rateCards ??
     (phase as { rate_cards?: unknown }).rate_cards ??
     [];
-  if (!Array.isArray(cards)) return null;
-  for (const card of cards) {
+  return Array.isArray(cards) ? cards : [];
+}
+
+function readCardKey(card: object): string {
+  const key = (card as { key?: unknown }).key;
+  if (typeof key === "string") return key;
+  const Key = (card as { Key?: unknown }).Key;
+  return typeof Key === "string" ? Key : "";
+}
+
+function readPriceAmountUsd(price: unknown): string | null {
+  if (!price || typeof price !== "object") return null;
+  const amount = (price as { amount?: unknown }).amount;
+  if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
+    return amount.toFixed(2);
+  }
+  if (typeof amount === "string") {
+    const n = Number(amount.trim());
+    if (Number.isFinite(n) && n > 0) return n.toFixed(2);
+  }
+  return null;
+}
+
+function readSubscriptionFeeFromPhase(phase: unknown): string | null {
+  for (const card of readRateCardsFromPhase(phase)) {
+    if (!card || typeof card !== "object") continue;
+    if (readCardKey(card) !== "subscription_fee") continue;
+    const price =
+      (card as { price?: unknown }).price ??
+      (card as { Price?: unknown }).Price;
+    const fee = readPriceAmountUsd(price);
+    if (fee != null) return fee;
+  }
+  return null;
+}
+
+function readUsageDiscountFromPhase(phase: unknown): string | null {
+  for (const card of readRateCardsFromPhase(phase)) {
     const micros = readUsageDiscountFromRateCard(card);
     if (micros != null) return micros;
   }
