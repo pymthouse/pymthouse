@@ -9,6 +9,8 @@ export type PlatformInvoiceDisplayRow = TenantInvoiceDto & {
   source: "openmeter" | "stripe";
   /** When known (Stripe list), open directly without the hosted-url round-trip. */
   hostedInvoiceUrl?: string | null;
+  /** Stripe PDF URL when hosted invoice URL is absent. */
+  invoicePdf?: string | null;
 };
 
 /** USD cents → decimal dollars string for TenantInvoiceDto.totalAmount. */
@@ -34,6 +36,7 @@ export function stripeInvoiceToDisplayRow(
     externalInvoicingId: inv.id,
     source: "stripe",
     hostedInvoiceUrl: inv.hostedInvoiceUrl,
+    invoicePdf: inv.invoicePdf,
   };
 }
 
@@ -61,6 +64,7 @@ export function mergePlatformInvoiceRows(
       ...inv,
       source: "openmeter",
       hostedInvoiceUrl: match?.hostedInvoiceUrl ?? null,
+      invoicePdf: match?.invoicePdf ?? null,
     });
   }
 

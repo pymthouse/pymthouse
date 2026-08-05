@@ -4,6 +4,7 @@ import {
   cancelKonnectSubscription,
   changeKonnectSubscription,
   countActiveKonnectSubscriptionsForPlan,
+  estimateNextBillingCycleIso,
   listActiveKonnectSubscriptions,
   parseSubscriptionTiming,
   restoreKonnectSubscription,
@@ -32,6 +33,23 @@ test("parseSubscriptionTiming accepts only known values", () => {
   assert.equal(parseSubscriptionTiming("immediate"), "immediate");
   assert.equal(parseSubscriptionTiming("next_billing_cycle"), "next_billing_cycle");
   assert.throws(() => parseSubscriptionTiming("later"), /timing must be/);
+});
+
+test("estimateNextBillingCycleIso clamps end-of-month anchors", () => {
+  assert.equal(estimateNextBillingCycleIso(null), null);
+  assert.equal(estimateNextBillingCycleIso("not-a-date"), null);
+  assert.equal(
+    estimateNextBillingCycleIso("2025-01-31T00:00:00.000Z"),
+    "2025-02-28T00:00:00.000Z",
+  );
+  assert.equal(
+    estimateNextBillingCycleIso("2024-01-31T12:30:00.000Z"),
+    "2024-02-29T12:30:00.000Z",
+  );
+  assert.equal(
+    estimateNextBillingCycleIso("2025-03-31T00:00:00.000Z"),
+    "2025-04-30T00:00:00.000Z",
+  );
 });
 
 test("subscriptionMatchesOpenMeterPlanId reads plan_id or planId", () => {

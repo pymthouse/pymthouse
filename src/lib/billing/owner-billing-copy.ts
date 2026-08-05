@@ -43,7 +43,7 @@ export function billingCreditsEmptyHint(input: {
     return `No prepaid credit balance yet. Included usage on ${paidName} comes from your plan allowance. Link a payment method for renewals and overage after the included allowance.`;
   }
   const starterName = input.starterPlanName?.trim() || "Starter";
-  return `No prepaid credit balance yet. ${starterName} included usage comes from your plan allowance. Upgrade to a paid plan when you need more — your payment method pays the plan fee and overage after included usage.`;
+  return `No prepaid credit balance yet. ${starterName} included usage comes from your plan allowance. Upgrade to a paid plan when you need more. You will add a payment method during Upgrade if needed; it pays the plan fee and overage after included usage.`;
 }
 
 /** Change/Upgrade checkout: empty payment-method step. */

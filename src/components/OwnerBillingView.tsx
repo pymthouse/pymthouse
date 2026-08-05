@@ -207,10 +207,17 @@ function OwnerPaymentCreditsSection({
             balanceUsdMicros={data.creditAllowance.balanceUsdMicros}
             lifetimeGrantedUsdMicros={data.creditAllowance.lifetimeGrantedUsdMicros}
             consumedUsdMicros={data.creditAllowance.consumedUsdMicros}
-            requestCount={data.subscriptions.reduce(
-              (sum, row) => sum + row.requestCount,
-              0,
-            )}
+            requestCount={data.subscriptions.reduce((sum, row) => {
+              // Canceled owner-wallet rows share the same subject usage as the
+              // live plan — skip them so AllowanceStrip does not double-count.
+              if (
+                row.appPublicClientId == null &&
+                row.status.toLowerCase() === "canceled"
+              ) {
+                return sum;
+              }
+              return sum + row.requestCount;
+            }, 0)}
           />
         ) : null}
         {showEmptyHint ? (

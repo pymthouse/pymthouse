@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 /**
  * Cancels a scheduled Sandbox Starter downgrade (OpenMeter restore).
@@ -15,6 +15,7 @@ export default function OwnerResumePendingDowngradeButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const idempotencyKeyRef = useRef(`owner-resume:${crypto.randomUUID()}`);
 
   const labelName = currentPlanName?.trim() || "your plan";
 
@@ -25,7 +26,10 @@ export default function OwnerResumePendingDowngradeButton({
     try {
       const res = await fetch("/api/v1/me/billing/resume-paid-plan", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKeyRef.current,
+        },
         body: JSON.stringify({ confirm: true }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };

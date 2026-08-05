@@ -103,7 +103,8 @@ function InvoiceLink({ invoice }: Readonly<{ invoice: PlatformInvoiceDisplayRow 
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
 
-  const directUrl = invoice.hostedInvoiceUrl?.trim() || null;
+  const directUrl =
+    invoice.hostedInvoiceUrl?.trim() || invoice.invoicePdf?.trim() || null;
   const canResolve =
     Boolean(directUrl) ||
     (invoice.source === "openmeter" && Boolean(invoice.externalInvoicingId));
@@ -248,16 +249,17 @@ export default function PlatformInvoicesTable({
             <tbody>
               {page.map((invoice) => {
                 const micros = decimalDollarsToMicros(invoice.totalAmount);
-                const isOpen = expanded === invoice.id;
+                const rowKey = `${invoice.source}:${invoice.id}`;
+                const isOpen = expanded === rowKey;
                 return [
                   <tr
-                    key={`${invoice.source}:${invoice.id}`}
+                    key={rowKey}
                     className="border-b border-white/[0.04] hover:bg-white/[0.02]"
                   >
                     <td className="px-4 py-3">
                       <button
                         type="button"
-                        onClick={() => setExpanded(isOpen ? null : invoice.id)}
+                        onClick={() => setExpanded(isOpen ? null : rowKey)}
                         aria-expanded={isOpen}
                         className="text-left text-zinc-200 transition-colors hover:text-emerald-400"
                       >

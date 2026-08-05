@@ -114,7 +114,8 @@ export default function AdminOwnerTiersSection() {
       cancelEditName();
       return;
     }
-    await patchTier(tier.id, { name: next });
+    const ok = await patchTier(tier.id, { name: next });
+    if (!ok) return;
     setEditingId(null);
     setEditName("");
   }
@@ -162,7 +163,7 @@ export default function AdminOwnerTiersSection() {
   async function patchTier(
     id: string,
     patch: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     setBusyId(id);
     setError(null);
     setMessage(null);
@@ -182,8 +183,10 @@ export default function AdminOwnerTiersSection() {
       }
       setMessage(updateTierMessage(body));
       await load();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setBusyId(null);
     }

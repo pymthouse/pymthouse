@@ -917,6 +917,9 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         OWNER_INVOICE_LOOKUP_BUDGET_MS,
         [] as OwnerStripeInvoiceItem[],
         "stripe invoice lookup",
+        () => {
+          invoicesDegraded = true;
+        },
       ),
       withSoftTimeout(
         listOwnerCreditGrants(userId),

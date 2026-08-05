@@ -88,6 +88,21 @@ test("stripeInvoiceToDisplayRow maps Stripe receipt fields", () => {
   assert.equal(row.hostedInvoiceUrl, "https://example.com/i");
 });
 
+test("stripeInvoiceToDisplayRow preserves PDF when hosted URL is null", () => {
+  const row = stripeInvoiceToDisplayRow({
+    id: "in_pdf",
+    number: null,
+    status: "paid",
+    currency: "USD",
+    amountCents: 500,
+    createdAt: "2026-08-05T12:00:00.000Z",
+    hostedInvoiceUrl: null,
+    invoicePdf: "https://files.stripe.com/invoices/in_pdf/pdf",
+  });
+  assert.equal(row.hostedInvoiceUrl, null);
+  assert.equal(row.invoicePdf, "https://files.stripe.com/invoices/in_pdf/pdf");
+});
+
 test("mergePlatformInvoiceRows with empty OM still shows Stripe receipts", () => {
   const stripe: OwnerStripeInvoiceItem[] = [
     {

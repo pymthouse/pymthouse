@@ -13,6 +13,7 @@ import {
   ensureOwnerStarterPlanSynced,
   isOwnerStarterPlanKey,
 } from "./owner-starter-plan";
+import { OWNER_STARTER_PLAN_KEY } from "./owner-starter-key";
 import {
   listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
@@ -507,7 +508,7 @@ export function deriveOwnerPendingDowngrade<
   ) {
     pendingDowngrade = {
       planName: input.starterPlanName,
-      planKey: "pymthouse_owner_starter",
+      planKey: OWNER_STARTER_PLAN_KEY,
       effectiveAt: canceledPaid.activeTo ?? null,
       currentPlanName: canceledPaid.planName,
       resumeBlocked: false,

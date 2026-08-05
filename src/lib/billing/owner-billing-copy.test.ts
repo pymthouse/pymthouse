@@ -67,7 +67,8 @@ test("billingCreditsEmptyHint distinguishes Paid vs Starter", () => {
   });
   assert.match(starter, /Developer Free Tier included usage/);
   assert.match(starter, /Upgrade to a paid plan/);
-  assert.match(starter, /plan fee and overage/);
+  assert.match(starter, /add a payment method during Upgrade/i);
+  assert.doesNotMatch(starter, /your payment method pays/i);
 
   const fallback = billingCreditsEmptyHint({ onPaidPlan: false });
   assert.match(fallback, /Starter included usage/);

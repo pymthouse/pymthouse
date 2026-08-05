@@ -51,12 +51,15 @@ type StripeInvoiceApiRow = {
   invoice_pdf?: string | null;
 };
 
-function mapStripeInvoice(row: StripeInvoiceApiRow): OwnerStripeInvoiceItem | null {
+/** @internal Exported for unit tests. */
+export function mapStripeInvoice(row: StripeInvoiceApiRow): OwnerStripeInvoiceItem | null {
   const id = row.id?.trim();
   if (!id) return null;
   const status = (row.status ?? "unknown").trim() || "unknown";
   let amountCents = 0;
-  if (typeof row.amount_paid === "number") {
+  if (status === "open" && typeof row.amount_due === "number") {
+    amountCents = row.amount_due;
+  } else if (typeof row.amount_paid === "number") {
     amountCents = row.amount_paid;
   } else if (typeof row.amount_due === "number") {
     amountCents = row.amount_due;
@@ -145,6 +148,6 @@ export async function listOwnerStripeInvoices(
     );
   } catch (err) {
     console.warn("owner-stripe-invoices: lookup failed", sanitizeForLog(err));
-    return [];
+    throw err;
   }
 }

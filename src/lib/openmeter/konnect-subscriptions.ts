@@ -147,9 +147,24 @@ export function estimateNextBillingCycleIso(
   if (!billingAnchorIso?.trim()) return null;
   const anchor = new Date(billingAnchorIso);
   if (Number.isNaN(anchor.getTime())) return null;
-  const next = new Date(anchor);
-  next.setUTCMonth(next.getUTCMonth() + 1);
-  return next.toISOString();
+  const targetMonth = anchor.getUTCMonth() + 1;
+  const targetYear = anchor.getUTCFullYear() + Math.floor(targetMonth / 12);
+  const monthIndex = targetMonth % 12;
+  const lastDayOfMonth = new Date(
+    Date.UTC(targetYear, monthIndex + 1, 0),
+  ).getUTCDate();
+  const day = Math.min(anchor.getUTCDate(), lastDayOfMonth);
+  return new Date(
+    Date.UTC(
+      targetYear,
+      monthIndex,
+      day,
+      anchor.getUTCHours(),
+      anchor.getUTCMinutes(),
+      anchor.getUTCSeconds(),
+      anchor.getUTCMilliseconds(),
+    ),
+  ).toISOString();
 }
 
 export async function listActiveKonnectSubscriptions(): Promise<
