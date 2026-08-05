@@ -20,7 +20,7 @@ import {
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
-import { changeKonnectSubscription, cancelKonnectSubscription, deleteKonnectSubscription, unscheduleKonnectSubscriptionCancelation } from "./konnect-subscriptions";
+import { changeKonnectSubscription, cancelKonnectSubscription, deleteKonnectSubscription, restoreKonnectSubscription, unscheduleKonnectSubscriptionCancelation } from "./konnect-subscriptions";
 import {
   findOpenMeterPlanByKey,
   forceSyncOwnerAllowancePlan,
@@ -441,13 +441,13 @@ export async function upgradeOwnerToPaidPlan(input: {
     customerKey: customer.key,
   });
 
-  const listed = await listOpenMeterSubscriptionsForCustomer(
+  let listed = await listOpenMeterSubscriptionsForCustomer(
     client,
     customer.id,
   );
   // Never treat scheduled/pending rows as change targets — Konnect 403s
   // "transition cancel in state scheduled not allowed".
-  const liveRaw =
+  let liveRaw =
     (input.hintOpenMeterSubscriptionId
       ? listed.find(
           (s) =>
@@ -455,19 +455,50 @@ export async function upgradeOwnerToPaidPlan(input: {
             isLiveOwnerWalletSubscriptionStatus(s.status),
         )
       : null) ?? pickLiveOwnerWalletSubscription(listed);
-  const live =
+  let live =
     liveRaw && !isScheduledOwnerWalletSubscriptionStatus(liveRaw.status)
       ? liveRaw
       : null;
-  const scheduledIds = listScheduledOwnerWalletSubscriptionIds(listed);
+  let scheduledIds = listScheduledOwnerWalletSubscriptionIds(listed);
 
-  // Fast-fail before claim when a scheduled successor blocks Konnect writes.
+  // Clear scheduled successors before claim (restore canceled Paid via metering/v1).
   if (!live && scheduledIds.length > 0) {
-    await clearScheduledOwnerSubscriptions(scheduledIds);
-    const stillScheduled = listScheduledOwnerWalletSubscriptionIds(
-      await listOpenMeterSubscriptionsForCustomer(client, customer.id),
+    const canceledPaidForRestore = listed.find(
+      (s) =>
+        Boolean(s.id) &&
+        (s.status || "").toLowerCase() === "canceled" &&
+        isOwnerPaidPlanKey(s.planKey),
     );
-    if (stillScheduled.length > 0) {
+    if (canceledPaidForRestore?.id) {
+      try {
+        await restoreKonnectSubscription({
+          subscriptionId: canceledPaidForRestore.id,
+        });
+      } catch (restoreErr) {
+        console.warn(
+          "Owner Paid upgrade: restore canceled Paid failed",
+          restoreErr instanceof Error ? restoreErr.message : restoreErr,
+        );
+        await clearScheduledOwnerSubscriptions(scheduledIds);
+      }
+    } else {
+      await clearScheduledOwnerSubscriptions(scheduledIds);
+    }
+    listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
+    liveRaw =
+      (input.hintOpenMeterSubscriptionId
+        ? listed.find(
+            (s) =>
+              s.id === input.hintOpenMeterSubscriptionId &&
+              isLiveOwnerWalletSubscriptionStatus(s.status),
+          )
+        : null) ?? pickLiveOwnerWalletSubscription(listed);
+    live =
+      liveRaw && !isScheduledOwnerWalletSubscriptionStatus(liveRaw.status)
+        ? liveRaw
+        : null;
+    scheduledIds = listScheduledOwnerWalletSubscriptionIds(listed);
+    if (!live && scheduledIds.length > 0) {
       throw new OwnerPaidUpgradeError(
         "subscription_conflict",
         "A scheduled plan change is blocking this upgrade and cannot be removed automatically. Contact support at billing@pymthouse.com.",
@@ -520,26 +551,13 @@ export async function upgradeOwnerToPaidPlan(input: {
     });
   }
 
-  // Cancel-at-period-end Paid (or legacy canceled Paid + scheduled Starter).
+  // Cancel-at-period-end Paid (no scheduled successor — those were restored above).
   const canceledPaid = listed.find(
     (s) =>
       Boolean(s.id) &&
       (s.status || "").toLowerCase() === "canceled" &&
       isOwnerPaidPlanKey(s.planKey),
   );
-
-  if (canceledPaid?.id || scheduledIds.length > 0) {
-    await clearScheduledOwnerSubscriptions(scheduledIds);
-    const stillScheduled = listScheduledOwnerWalletSubscriptionIds(
-      await listOpenMeterSubscriptionsForCustomer(client, customer.id),
-    );
-    if (stillScheduled.length > 0) {
-      throw new OwnerPaidUpgradeError(
-        "subscription_conflict",
-        "A scheduled plan change is blocking this upgrade and cannot be removed automatically. Contact support at billing@pymthouse.com.",
-      );
-    }
-  }
 
   if (canceledPaid?.id) {
     try {

@@ -3,7 +3,6 @@ import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-clie
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
 import {
   cancelKonnectSubscription,
-  deleteKonnectSubscription,
   estimateNextBillingCycleIso,
   konnectSubscriptionBillingAnchorIso,
   restoreKonnectSubscription,
@@ -323,7 +322,8 @@ export function resolveOwnerPaidResumeTarget(
 /**
  * Undo a pending end-of-cycle downgrade.
  * Prefer Konnect `unschedule-cancelation` (cancel-at-period-end). When a legacy
- * scheduled Starter successor exists, try delete then unschedule, then restore.
+ * scheduled Starter successor exists, restore the Paid subscription via
+ * `/metering/v1/.../restore` (deletes the scheduled successor).
  */
 export async function resumeOwnerPaidAfterScheduledDowngrade(input: {
   ownerUserId: string;
@@ -374,36 +374,15 @@ export async function resumeOwnerPaidAfterScheduledDowngrade(input: {
 
   try {
     if (target.scheduledStarterId) {
-      try {
-        await deleteKonnectSubscription({
-          subscriptionId: target.scheduledStarterId,
-        });
-      } catch (deleteErr) {
-        console.warn(
-          "Owner Paid resume: delete scheduled Starter failed",
-          deleteErr instanceof Error ? deleteErr.message : deleteErr,
-        );
-        try {
-          await restoreKonnectSubscription({
-            subscriptionId: target.subscriptionId,
-          });
-          return {
-            resumed: true,
-            openmeterSubscriptionId: target.subscriptionId,
-            planKey: target.planKey,
-            planName: null,
-          };
-        } catch (restoreErr) {
-          console.warn(
-            "Owner Paid resume: restore failed after scheduled delete miss",
-            restoreErr instanceof Error ? restoreErr.message : restoreErr,
-          );
-          throw new OwnerPaidResumeError(
-            "resume_failed",
-            "Could not cancel the scheduled downgrade — email billing@pymthouse.com and we’ll unblock your account.",
-          );
-        }
-      }
+      const restored = await restoreKonnectSubscription({
+        subscriptionId: target.subscriptionId,
+      });
+      return {
+        resumed: true,
+        openmeterSubscriptionId: restored.id?.trim() || target.subscriptionId,
+        planKey: target.planKey,
+        planName: null,
+      };
     }
 
     const resumed = await unscheduleKonnectSubscriptionCancelation({
@@ -452,8 +431,8 @@ export type OwnerPendingDowngrade = {
   effectiveAt: string | null;
   currentPlanName: string | null;
   /**
-   * True when a scheduled Starter successor exists. Konnect Metering cannot
-   * delete/restore that successor via API — resume/re-upgrade need support.
+   * Reserved for hard Konnect outages. Scheduled Starter successors are cleared
+   * via `/metering/v1/.../restore` on resume — not a support-only path.
    */
   resumeBlocked: boolean;
 };
@@ -518,7 +497,7 @@ export function deriveOwnerPendingDowngrade<
       effectiveAt:
         scheduledStarter.activeFrom ?? paidForPending.activeTo ?? null,
       currentPlanName: paidForPending.planName,
-      resumeBlocked: true,
+      resumeBlocked: false,
     };
   } else if (
     canceledPaid &&

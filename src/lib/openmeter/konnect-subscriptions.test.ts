@@ -74,7 +74,7 @@ test("changeKonnectSubscription cancel and restore call admin API", async (t) =>
   assert.match(calls[0]!.body, /"timing":"immediate"/);
   assert.match(calls[1]!.url, /\/subscriptions\/sub_1\/cancel$/);
   assert.match(calls[1]!.body, /next_billing_cycle/);
-  assert.match(calls[2]!.url, /\/subscriptions\/sub_1\/restore$/);
+  assert.match(calls[2]!.url, /\/metering\/v1\/subscriptions\/sub_1\/restore$/);
   assert.match(calls[3]!.url, /\/subscriptions\/sub_1\/unschedule-cancelation$/);
 });
 

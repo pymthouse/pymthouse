@@ -107,7 +107,7 @@ test("deriveOwnerPendingDowngrade surfaces scheduled Starter beside active Paid"
     planKey: "pymthouse_owner_starter",
     effectiveAt: "2026-09-01T00:00:00.000Z",
     currentPlanName: "Producer",
-    resumeBlocked: true,
+    resumeBlocked: false,
   });
   assert.equal(displaySubscriptions.length, 2);
   assert.equal(

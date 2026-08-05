@@ -1,4 +1,7 @@
-import { konnectAdminFetch } from "./konnect-admin-client";
+import {
+  konnectAdminFetch,
+  konnectMeteringV1Fetch,
+} from "./konnect-admin-client";
 
 export type SubscriptionChangeTiming = "immediate" | "next_billing_cycle";
 
@@ -82,13 +85,13 @@ export async function cancelKonnectSubscription(input: {
 }
 
 /**
- * Delete a subscription that cannot be canceled via state transitions
- * (typical for `scheduled` successors left after a botched upgrade/downgrade).
+ * Delete a scheduled subscription (OpenMeter: only `scheduled` may be deleted).
+ * Uses Konnect `/metering/v1` — `/v3/openmeter` returns 405 for DELETE.
  */
 export async function deleteKonnectSubscription(input: {
   subscriptionId: string;
 }): Promise<void> {
-  await konnectAdminFetch<unknown>(
+  await konnectMeteringV1Fetch<unknown>(
     `/subscriptions/${encodeURIComponent(input.subscriptionId)}`,
     { method: "DELETE" },
     "subscription-delete",
@@ -96,15 +99,15 @@ export async function deleteKonnectSubscription(input: {
 }
 
 /**
- * Continue a subscription and delete conflicting scheduled successors.
- * Used to undo a next-cycle plan change (e.g. scheduled Starter downgrade).
- * Not exposed on Konnect Metering today (404) — prefer
- * {@link unscheduleKonnectSubscriptionCancelation} for cancel-at-period-end.
+ * Continue a canceled subscription and delete conflicting scheduled successors.
+ * Cloud UI uses `POST /metering/v1/subscriptions/{id}/restore` (not `/v3/openmeter`).
+ * Prefer {@link unscheduleKonnectSubscriptionCancelation} for cancel-at-period-end
+ * with no scheduled successor.
  */
 export async function restoreKonnectSubscription(input: {
   subscriptionId: string;
 }): Promise<KonnectSubscription> {
-  return konnectAdminFetch<KonnectSubscription>(
+  return konnectMeteringV1Fetch<KonnectSubscription>(
     `/subscriptions/${encodeURIComponent(input.subscriptionId)}/restore`,
     { method: "POST" },
     "subscription-restore",
