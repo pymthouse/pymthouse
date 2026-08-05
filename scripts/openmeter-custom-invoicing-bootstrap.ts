@@ -11,6 +11,11 @@
  * Prints env vars to set: OPENMETER_CUSTOM_INVOICING_APP_ID,
  * OPENMETER_MERCHANT_BILLING_PROFILE_ID.
  *
+ * Notifications + marketplace install live on Konnect `/metering/v1`
+ * (not `/v3/openmeter`). Channels sign with Standard Webhooks / Svix via
+ * `signingSecret` — do NOT put the secret in `customHeaders`; the settlement
+ * producer verifies `webhook-signature` / `svix-signature`, not a custom header.
+ *
  * @see https://github.com/pymthouse/settlement
  * @see https://developer.konghq.com/metering-and-billing/custom-invoicing/
  * @see https://developer.konghq.com/metering-and-billing/notifications/
@@ -28,7 +33,7 @@ import {
   resolveKonnectCustomInvoicingAppId,
   selectKonnectCustomInvoicingApp,
 } from "../src/lib/openmeter/konnect-billing-profiles";
-import { konnectAdminFetch } from "../src/lib/openmeter/konnect-admin-client";
+import { konnectMeteringV1Fetch } from "../src/lib/openmeter/konnect-admin-client";
 import {
   getHostedOpenMeterUrl,
   isKonnectMeteringUrl,
@@ -38,13 +43,21 @@ import {
 const CHANNEL_NAME = "pymthouse-merchant-invoices";
 const PROFILE_NAME = "pymthouse-merchant-custom-invoicing";
 
-type KonnectPage<T> = { data?: T[] };
+/** metering/v1 list envelope (items + flat page fields). */
+type MeteringV1Page<T> = {
+  items?: T[];
+  data?: T[];
+  page?: number;
+  pageSize?: number;
+  totalCount?: number;
+};
 
 type NotificationChannel = {
   id?: string;
   name?: string;
   type?: string;
   url?: string;
+  signingSecret?: string;
 };
 
 type MarketplaceInstallResponse = {
@@ -86,25 +99,67 @@ function requireSettlementOpenMeterWebhookUrl(): string {
   return url.replace(/\/$/, "");
 }
 
+/**
+ * Standard Webhooks / Svix secret: `whsec_` + base64 of ≥24 random bytes.
+ * Matches Konnect's `^(whsec_)?[a-zA-Z0-9+/=]{32,100}$` pattern (std base64,
+ * not base64url).
+ */
+function newWebhookSigningSecret(): string {
+  return `whsec_${randomBytes(24).toString("base64")}`;
+}
+
+function pageItems<T>(page: MeteringV1Page<T>): T[] {
+  return page.items ?? page.data ?? [];
+}
+
 async function listNotificationChannels(): Promise<NotificationChannel[]> {
-  const page = await konnectAdminFetch<KonnectPage<NotificationChannel>>(
-    "/notification/channels?page[size]=100",
+  const page = await konnectMeteringV1Fetch<MeteringV1Page<NotificationChannel>>(
+    "/notification/channels?pageSize=100",
   );
-  return page.data ?? [];
+  return pageItems(page);
+}
+
+async function getNotificationChannel(
+  channelId: string,
+): Promise<NotificationChannel> {
+  return konnectMeteringV1Fetch<NotificationChannel>(
+    `/notification/channels/${encodeURIComponent(channelId)}`,
+  );
 }
 
 async function ensureNotificationChannel(input: {
   url: string;
   webhookSecret: string;
-}): Promise<{ channelId: string; created: boolean }> {
+}): Promise<{
+  channelId: string;
+  created: boolean;
+  signingSecret: string;
+}> {
   const existing = (await listNotificationChannels()).find(
     (ch) => ch.name === CHANNEL_NAME || ch.url === input.url,
   );
   if (existing?.id) {
-    return { channelId: existing.id, created: false };
+    // Prefer the channel's real signing secret over whatever we invented.
+    const fresh =
+      existing.signingSecret != null && existing.signingSecret !== ""
+        ? existing
+        : await getNotificationChannel(existing.id);
+    const signingSecret = fresh.signingSecret?.trim();
+    if (!signingSecret) {
+      throw new Error(
+        `Notification channel ${existing.id} exists but has no signingSecret. ` +
+          "Delete it in Konnect and re-run bootstrap, or set " +
+          "SETTLEMENT_OPENMETER_WEBHOOK_SECRETS to the channel secret from the UI.",
+      );
+    }
+    return {
+      channelId: existing.id,
+      created: false,
+      signingSecret,
+    };
   }
 
-  const created = await konnectAdminFetch<NotificationChannel>(
+  const created = await konnectMeteringV1Fetch<NotificationChannel>(
     "/notification/channels",
     {
       method: "POST",
@@ -112,9 +167,8 @@ async function ensureNotificationChannel(input: {
         type: "WEBHOOK",
         name: CHANNEL_NAME,
         url: input.url,
-        customHeaders: {
-          "X-Webhook-Secret": input.webhookSecret,
-        },
+        // Standard Webhooks / Svix signing — settlement verifies webhook-signature.
+        signingSecret: input.webhookSecret,
         disabled: false,
       }),
     },
@@ -123,13 +177,19 @@ async function ensureNotificationChannel(input: {
   if (!created.id) {
     throw new Error("Failed to create notification channel");
   }
-  return { channelId: created.id, created: true };
+  const signingSecret =
+    created.signingSecret?.trim() || input.webhookSecret;
+  return {
+    channelId: created.id,
+    created: true,
+    signingSecret,
+  };
 }
 
 async function ensureInvoiceRules(channelId: string): Promise<void> {
   for (const type of ["invoice.created", "invoice.updated"] as const) {
     const name = `pymthouse-${type}`;
-    await konnectAdminFetch(
+    await konnectMeteringV1Fetch(
       "/notification/rules",
       {
         method: "POST",
@@ -158,13 +218,15 @@ async function installCustomInvoicingApp(): Promise<string> {
     return existing;
   }
 
-  const installed = await konnectAdminFetch<MarketplaceInstallResponse>(
+  const installed = await konnectMeteringV1Fetch<MarketplaceInstallResponse>(
     "/marketplace/listings/custom_invoicing/install",
     {
       method: "POST",
       body: JSON.stringify({
         name: "PymtHouse Custom Invoicing",
         // Hooks off initially per Kong docs; payment status sync is always mandatory.
+        // Turn enableDraftSyncHook + enableIssuingSyncHook ON in Konnect after
+        // the settlement worker is live (PUT /metering/v1/apps/{id}).
         enableDraftSyncHook: false,
         enableIssuingSyncHook: false,
       }),
@@ -202,11 +264,11 @@ async function main(): Promise<void> {
   const webhookSecret =
     process.env.SETTLEMENT_OPENMETER_WEBHOOK_SECRETS?.split(",")[0]?.trim() ||
     process.env.OPENMETER_WEBHOOK_SECRET?.trim() ||
-    `whsec_${randomBytes(24).toString("base64url")}`;
+    newWebhookSigningSecret();
   const webhookUrl = requireSettlementOpenMeterWebhookUrl();
 
   console.log("[bootstrap] Ensuring notification channel →", webhookUrl);
-  const { channelId, created } = await ensureNotificationChannel({
+  const { channelId, created, signingSecret } = await ensureNotificationChannel({
     url: webhookUrl,
     webhookSecret,
   });
@@ -236,9 +298,15 @@ async function main(): Promise<void> {
   console.log(`OPENMETER_CUSTOM_INVOICING_APP_ID=${appId}`);
   console.log(`OPENMETER_MERCHANT_BILLING_PROFILE_ID=${profileId}`);
   console.log(
-    "\nConfigure the same webhook secret on pymthouse/settlement producer:\n",
+    "\nConfigure the channel signing secret on pymthouse/settlement producer:\n",
   );
-  console.log(`SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${webhookSecret}`);
+  console.log(`SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${signingSecret}`);
+  console.log(
+    "\nThen enable draft + issuing sync hooks on the Custom Invoicing app in Konnect",
+  );
+  console.log(
+    "(PUT /metering/v1/apps/{id} with enableDraftSyncHook/enableIssuingSyncHook true).",
+  );
   console.log(
     "\nPin merchant-mode end-user customers via assignMerchantCustomInvoicingProfile",
   );
