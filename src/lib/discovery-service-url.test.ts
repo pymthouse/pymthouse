@@ -17,8 +17,24 @@ test("buildDiscoverOrchestratorsUrl appends discover-orchestrators", () => {
   );
 });
 
-test("buildDiscoverOrchestratorsUrl rejects empty signer URL", () => {
+test("buildDiscoverOrchestratorsUrl preserves path and strips query/fragment", () => {
+  assert.equal(
+    buildDiscoverOrchestratorsUrl("https://signer.example/api?tenant=a#frag"),
+    "https://signer.example/api/discover-orchestrators",
+  );
+  assert.equal(
+    buildDiscoverOrchestratorsUrl("https://signer.example/v1/"),
+    "https://signer.example/v1/discover-orchestrators",
+  );
+});
+
+test("buildDiscoverOrchestratorsUrl rejects empty or non-http URLs", () => {
   assert.throws(() => buildDiscoverOrchestratorsUrl("  "), /signer URL is required/);
+  assert.throws(() => buildDiscoverOrchestratorsUrl("not-a-url"), /absolute http/);
+  assert.throws(
+    () => buildDiscoverOrchestratorsUrl("ftp://signer.example"),
+    /http\(s\) URL/,
+  );
 });
 
 test("normalizeDiscoveryCaps trims, drops empties, dedupes", () => {

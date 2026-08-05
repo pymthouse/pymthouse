@@ -5,25 +5,32 @@
  * Optional repeated `caps` query params are applied by callers / gateways.
  */
 
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "/") {
-    end -= 1;
-  }
-  return value.slice(0, end);
-}
-
 /**
  * Build the discover-orchestrators URL for a remote signer base URL.
- * Preserves an existing path on the signer origin (uses URL join on origin only).
+ * Appends `/discover-orchestrators` to the signer base path (path preserved).
+ * Query strings and fragments are stripped so they cannot absorb the endpoint.
  */
 export function buildDiscoverOrchestratorsUrl(signerUrl: string): string {
   const trimmed = signerUrl.trim();
   if (!trimmed) {
     throw new Error("signer URL is required to build discover-orchestrators URL");
   }
-  const base = trimTrailingSlashes(trimmed);
-  return `${base}/discover-orchestrators`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("signer URL must be an absolute http(s) URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("signer URL must be an http(s) URL");
+  }
+
+  parsed.search = "";
+  parsed.hash = "";
+  const basePath = parsed.pathname.replace(/\/+$/, "");
+  parsed.pathname = `${basePath}/discover-orchestrators`;
+  return parsed.toString();
 }
 
 /** Normalize caller-supplied capability strings for remote-signer `caps` filters. */
