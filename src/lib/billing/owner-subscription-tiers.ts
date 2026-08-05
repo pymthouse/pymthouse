@@ -206,47 +206,69 @@ export type UpdateOwnerSubscriptionTierInput = {
   active?: boolean;
 };
 
+function patchOwnerTierName(
+  patch: Partial<OwnerSubscriptionTierRow>,
+  name: string,
+): void {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("name is required");
+  patch.name = trimmed;
+}
+
+function patchOwnerTierMonthlyFee(
+  patch: Partial<OwnerSubscriptionTierRow>,
+  raw: string,
+): void {
+  const monthlyFeeUsd = parseOwnerTierMonthlyFeeUsd(raw);
+  if (!monthlyFeeUsd) {
+    throw new Error("monthlyFeeUsd must be a positive USD amount");
+  }
+  patch.monthlyFeeUsd = monthlyFeeUsd;
+}
+
+function patchOwnerTierIncluded(
+  patch: Partial<OwnerSubscriptionTierRow>,
+  raw: string,
+): void {
+  const includedUsdMicros = parseOwnerTierIncludedMicros(raw);
+  if (includedUsdMicros == null) {
+    throw new Error("includedUsdMicros must be a non-negative integer string");
+  }
+  patch.includedUsdMicros = includedUsdMicros;
+}
+
+function patchOwnerTierOverage(
+  patch: Partial<OwnerSubscriptionTierRow>,
+  raw: string | null,
+): void {
+  const overageParsed = parseOwnerTierOverageRateUsd(raw);
+  if (!overageParsed.ok) {
+    throw new Error("overageRateUsd must be a positive USD amount or empty");
+  }
+  patch.overageRateUsd = overageParsed.value;
+}
+
 function applyOwnerTierUpdatePatch(
   input: UpdateOwnerSubscriptionTierInput,
 ): Partial<OwnerSubscriptionTierRow> {
   const patch: Partial<OwnerSubscriptionTierRow> = {
     updatedAt: new Date().toISOString(),
   };
-  if (input.name !== undefined) {
-    const name = input.name.trim();
-    if (!name) throw new Error("name is required");
-    patch.name = name;
-  }
+  if (input.name !== undefined) patchOwnerTierName(patch, input.name);
   if (input.description !== undefined) {
     patch.description = input.description?.trim() || null;
   }
   if (input.monthlyFeeUsd !== undefined) {
-    const monthlyFeeUsd = parseOwnerTierMonthlyFeeUsd(input.monthlyFeeUsd);
-    if (!monthlyFeeUsd) {
-      throw new Error("monthlyFeeUsd must be a positive USD amount");
-    }
-    patch.monthlyFeeUsd = monthlyFeeUsd;
+    patchOwnerTierMonthlyFee(patch, input.monthlyFeeUsd);
   }
   if (input.includedUsdMicros !== undefined) {
-    const includedUsdMicros = parseOwnerTierIncludedMicros(input.includedUsdMicros);
-    if (includedUsdMicros == null) {
-      throw new Error("includedUsdMicros must be a non-negative integer string");
-    }
-    patch.includedUsdMicros = includedUsdMicros;
+    patchOwnerTierIncluded(patch, input.includedUsdMicros);
   }
   if (input.overageRateUsd !== undefined) {
-    const overageParsed = parseOwnerTierOverageRateUsd(input.overageRateUsd);
-    if (!overageParsed.ok) {
-      throw new Error("overageRateUsd must be a positive USD amount or empty");
-    }
-    patch.overageRateUsd = overageParsed.value;
+    patchOwnerTierOverage(patch, input.overageRateUsd);
   }
-  if (input.sortOrder !== undefined) {
-    patch.sortOrder = input.sortOrder;
-  }
-  if (input.active !== undefined) {
-    patch.active = input.active ? 1 : 0;
-  }
+  if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
+  if (input.active !== undefined) patch.active = input.active ? 1 : 0;
   return patch;
 }
 
