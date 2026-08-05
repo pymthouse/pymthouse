@@ -21,7 +21,7 @@ test("isKonnectCustomInvoicingApp matches custom_invoicing type", () => {
   assert.equal(isKonnectCustomInvoicingApp({ id: "1", type: "stripe" }), false);
 });
 
-test("selectKonnectCustomInvoicingApp returns first custom invoicing app", () => {
+test("selectKonnectCustomInvoicingApp prefers ready and skips unauthorized", () => {
   assert.equal(
     selectKonnectCustomInvoicingApp([
       { id: "stripe1", type: "stripe", status: "ready" },
@@ -29,7 +29,27 @@ test("selectKonnectCustomInvoicingApp returns first custom invoicing app", () =>
     ]),
     "ci1",
   );
+  assert.equal(
+    selectKonnectCustomInvoicingApp([
+      { id: "bad", type: "custom_invoicing", status: "unauthorized" },
+      { id: "ok", type: "custom_invoicing", status: "ready" },
+    ]),
+    "ok",
+  );
+  assert.equal(
+    selectKonnectCustomInvoicingApp([
+      { id: "bad", type: "custom_invoicing", status: "unauthorized" },
+      { id: "fallback", type: "custom_invoicing" },
+    ]),
+    "fallback",
+  );
   assert.equal(selectKonnectCustomInvoicingApp([{ id: "s", type: "stripe" }]), null);
+  assert.equal(
+    selectKonnectCustomInvoicingApp([
+      { id: "bad", type: "custom_invoicing", status: "unauthorized" },
+    ]),
+    null,
+  );
 });
 
 test("buildKonnectMerchantCustomInvoicingProfileBody pins all slots to CI app", () => {

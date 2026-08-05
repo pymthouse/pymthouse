@@ -3,6 +3,7 @@ import { applyConnectedAccountWebhookUpdate } from "@/lib/stripe/merchant-connec
 import {
   parseStripeAccountUpdated,
   requireStripeWebhookSecret,
+  resolveConnectWebhookSecret,
   verifyStripeWebhookSignature,
 } from "@/lib/stripe/webhook";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
@@ -23,19 +24,6 @@ export const runtime = "nodejs";
  * Prefer STRIPE_CONNECT_WEBHOOK_SECRET when the Connect endpoint has its own
  * signing secret; falls back to STRIPE_WEBHOOK_SECRET.
  */
-function resolveConnectWebhookSecret(): string {
-  const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  if (!connectSecret) {
-    return requireStripeWebhookSecret();
-  }
-  if (!connectSecret.startsWith("whsec_")) {
-    throw new Error(
-      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
-    );
-  }
-  return connectSecret;
-}
-
 export async function POST(request: Request): Promise<Response> {
   const tag = "[stripe-webhook]";
   let secret: string;
