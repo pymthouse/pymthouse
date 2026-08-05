@@ -3,11 +3,15 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 
 import OwnerPaidUpgradeCheckout from "@/components/OwnerPaidUpgradeCheckout";
-import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
+import {
+  ownerCanAccessPlanCheckout,
+  ownerCurrentPaidPlanKey,
+  ownerEligibleForPaidUpgrade,
+} from "@/lib/billing/owner-paid-upgrade-eligibility";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 /**
- * Dedicated Owner Paid Upgrade checkout.
+ * Dedicated Owner Paid plan checkout (Upgrade from Starter, or Change plan).
  * Stripe setup Checkout returns here with ?plan=&pm=attached so plan selection
  * survives the redirect.
  */
@@ -29,7 +33,7 @@ export default async function BillingUpgradePage({
   if (!data.openMeterConfigured) {
     redirect("/billing");
   }
-  if (!ownerEligibleForPaidUpgrade(data.subscriptions)) {
+  if (!ownerCanAccessPlanCheckout(data.subscriptions)) {
     redirect("/billing");
   }
 
@@ -41,9 +45,15 @@ export default async function BillingUpgradePage({
     typeof params.plan === "string" && params.plan.trim()
       ? params.plan.trim()
       : null;
+  const currentPlanKey = ownerCurrentPaidPlanKey(data.subscriptions);
+  const mode = ownerEligibleForPaidUpgrade(data.subscriptions)
+    ? "upgrade"
+    : "change";
 
   return (
     <OwnerPaidUpgradeCheckout
+      mode={mode}
+      currentPlanKey={currentPlanKey}
       hasPaymentMethod={data.paymentMethods.length > 0}
       paymentMethod={
         defaultPm

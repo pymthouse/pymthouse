@@ -13,6 +13,12 @@
  * Client-safe (no DB/Node imports).
  */
 
+import {
+  invoiceLineLedgerDescription,
+  type InvoiceLineKind,
+  type InvoiceLineSummary,
+} from "@/lib/billing/invoice-line-labels";
+
 export type LedgerEntryType =
   | "credit_purchased"
   | "usage"
@@ -59,6 +65,14 @@ export type LedgerDailyUsageInput = {
   usedUsdMicros: string;
 };
 
+export type LedgerInvoiceLineInput = {
+  id: string;
+  name: string;
+  description?: string;
+  totalAmountUsdMicros: string;
+  kind: InvoiceLineKind;
+};
+
 export type LedgerInvoiceInput = {
   id: string;
   number?: string | null;
@@ -68,6 +82,9 @@ export type LedgerInvoiceInput = {
   periodStart?: string | null;
   periodEnd?: string | null;
   hostedInvoiceUrl?: string | null;
+  /** OpenMeter `standard` | `credit_note`. */
+  invoiceType?: string | null;
+  lines?: LedgerInvoiceLineInput[] | null;
 };
 
 function parseMicros(raw: string | null | undefined): bigint {
@@ -115,6 +132,67 @@ export function splitDailyUsageAgainstAllowance(
 function invoiceDescription(invoice: LedgerInvoiceInput): string {
   const period = formatInvoicePeriodLabel(invoice.periodStart, invoice.periodEnd);
   return period ? `Invoice · ${period}` : "Invoice";
+}
+
+function toLineSummary(line: LedgerInvoiceLineInput): InvoiceLineSummary {
+  return {
+    id: line.id,
+    name: line.name,
+    description: line.description,
+    totalAmount: line.totalAmountUsdMicros,
+    kind: line.kind,
+  };
+}
+
+function pushInvoiceDrafts(
+  drafts: Array<
+    Omit<LedgerEntry, "balanceUsdMicros"> & { creditDelta: bigint }
+  >,
+  invoice: LedgerInvoiceInput,
+): void {
+  const date =
+    invoice.issuedAt || invoice.periodEnd || invoice.periodStart || "";
+  const creditNote = invoice.invoiceType === "credit_note";
+  const lines = (invoice.lines ?? []).filter(
+    (line) => parseMicros(line.totalAmountUsdMicros) !== 0n,
+  );
+
+  if (lines.length > 0) {
+    for (const line of lines) {
+      const amount = parseMicros(line.totalAmountUsdMicros);
+      const isRefund = creditNote || amount < 0n;
+      drafts.push({
+        id: `invoice:${invoice.id}:line:${line.id}`,
+        date,
+        type: isRefund ? "refund" : "invoice",
+        description: invoiceLineLedgerDescription(toLineSummary(line)),
+        amountUsdMicros: (amount < 0n ? -amount : amount).toString(),
+        creditDeltaUsdMicros: "0",
+        creditDelta: 0n,
+        derived: false,
+        status: invoice.status,
+        invoiceId: invoice.id,
+        hostedInvoiceUrl: invoice.hostedInvoiceUrl ?? null,
+      });
+    }
+    return;
+  }
+
+  const amount = parseMicros(invoice.totalAmountUsdMicros);
+  const isRefund = creditNote || amount < 0n;
+  drafts.push({
+    id: `invoice:${invoice.id}`,
+    date,
+    type: isRefund ? "refund" : "invoice",
+    description: invoiceDescription(invoice),
+    amountUsdMicros: (amount < 0n ? -amount : amount).toString(),
+    creditDeltaUsdMicros: "0",
+    creditDelta: 0n,
+    derived: false,
+    status: invoice.status,
+    invoiceId: invoice.id,
+    hostedInvoiceUrl: invoice.hostedInvoiceUrl ?? null,
+  });
 }
 
 /**
@@ -198,22 +276,7 @@ export function buildLedgerEntries(input: {
   }
 
   for (const invoice of input.invoices) {
-    const amount = parseMicros(invoice.totalAmountUsdMicros);
-    const isRefund = amount < 0n;
-    drafts.push({
-      id: `invoice:${invoice.id}`,
-      date: invoice.issuedAt || invoice.periodEnd || invoice.periodStart || "",
-      type: isRefund ? "refund" : "invoice",
-      description: invoiceDescription(invoice),
-      amountUsdMicros: (isRefund ? -amount : amount).toString(),
-      // Invoices settle outside the prepaid wallet — no credit movement.
-      creditDeltaUsdMicros: "0",
-      creditDelta: 0n,
-      derived: false,
-      status: invoice.status,
-      invoiceId: invoice.id,
-      hostedInvoiceUrl: invoice.hostedInvoiceUrl ?? null,
-    });
+    pushInvoiceDrafts(drafts, invoice);
   }
 
   const ordered = drafts

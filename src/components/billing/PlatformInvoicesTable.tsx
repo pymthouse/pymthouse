@@ -2,6 +2,10 @@
 
 import { useMemo, useState } from "react";
 
+import {
+  invoiceLineLedgerDescription,
+  invoiceSummaryLabel,
+} from "@/lib/billing/invoice-line-labels";
 import { formatInvoicePeriodLabel } from "@/lib/billing/transactions-ledger";
 import { formatBillingUtcDate } from "@/lib/billing-format";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
@@ -31,14 +35,19 @@ function isZeroInvoice(invoice: TenantInvoiceDto): boolean {
 }
 
 /**
- * Human label for an invoice, e.g. `Usage overage · Jul 2026`.
+ * Human label for an invoice, e.g. `Plan change · Jul 2026`.
  * Internal identifiers (`OM-SANDBOX-APP_-1`) never surface as the label —
- * they stay available in the details row.
+ * they stay available in the details row. Uses OpenMeter line kinds when
+ * expanded lines are present so subscription / proration are not mislabeled
+ * as usage overage.
  */
 export function invoiceDisplayLabel(invoice: TenantInvoiceDto): string {
   const period = formatInvoicePeriodLabel(invoice.periodStart, invoice.periodEnd);
-  const base = isZeroInvoice(invoice) ? "No charges" : "Usage overage";
-  return period ? `${base} · ${period}` : base;
+  return invoiceSummaryLabel({
+    lines: invoice.lines,
+    totalAmount: invoice.totalAmount,
+    periodLabel: period,
+  });
 }
 
 /** Period covered, e.g. `Jul 1 – Jul 31, 2026`. */
@@ -262,6 +271,30 @@ export default function PlatformInvoicesTable({
                               {invoice.currency}
                             </dd>
                           </div>
+                          {invoice.lines && invoice.lines.length > 0 ? (
+                            <div className="sm:col-span-2 mt-2 border-t border-white/[0.06] pt-2">
+                              <dt className="mb-1 text-zinc-500">Charges</dt>
+                              <dd>
+                                <ul className="space-y-1">
+                                  {invoice.lines.map((line) => (
+                                    <li
+                                      key={line.id}
+                                      className="flex justify-between gap-4 font-mono text-zinc-400"
+                                    >
+                                      <span className="min-w-0 truncate">
+                                        {invoiceLineLedgerDescription(line)}
+                                      </span>
+                                      <span className="shrink-0 tabular-nums text-zinc-300">
+                                        {formatUsdMicrosSummary(
+                                          decimalDollarsToMicros(line.totalAmount),
+                                        )}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </dd>
+                            </div>
+                          ) : null}
                         </dl>
                       </td>
                     </tr>

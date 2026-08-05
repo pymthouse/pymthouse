@@ -4,6 +4,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import {
+  classifyInvoiceLineKind,
+  type InvoiceLineSummary,
+} from "@/lib/billing/invoice-line-labels";
+import {
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
 } from "@/lib/openmeter/customer-key";
@@ -36,7 +40,117 @@ export type TenantInvoiceDto = {
    * via `retrievePlatformInvoiceLinks`.
    */
   externalInvoicingId?: string;
+  /** OpenMeter invoice type (`standard` | `credit_note`). */
+  invoiceType?: string;
+  /** Expanded charge lines when `expand=lines` is available. */
+  lines?: InvoiceLineSummary[];
 };
+
+type OmInvoiceLineLike = {
+  id?: string;
+  name?: string;
+  description?: string;
+  type?: string;
+  category?: string;
+  managedBy?: string;
+  totals?: { total?: string | number | null } | null;
+  period?: { from?: Date | string | null; to?: Date | string | null } | null;
+  children?: OmInvoiceLineLike[] | null;
+};
+
+function periodIso(
+  value: Date | string | null | undefined,
+): string | undefined {
+  if (!value) return undefined;
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+function mapOmLineToSummary(
+  line: OmInvoiceLineLike,
+  fallbackId: string,
+): InvoiceLineSummary {
+  const id = typeof line.id === "string" && line.id.trim() ? line.id : fallbackId;
+  const name =
+    typeof line.name === "string" && line.name.trim()
+      ? line.name.trim()
+      : "Charge";
+  return {
+    id,
+    name,
+    description:
+      typeof line.description === "string" ? line.description : undefined,
+    totalAmount: String(line.totals?.total ?? "0"),
+    kind: classifyInvoiceLineKind({
+      name,
+      description: line.description,
+      type: line.type,
+      category: line.category,
+      managedBy: line.managedBy,
+    }),
+    periodStart: periodIso(line.period?.from ?? null),
+    periodEnd: periodIso(line.period?.to ?? null),
+  };
+}
+
+/**
+ * Flatten OpenMeter invoice lines: prefer detailed `children` (flat fees /
+ * proration) when present, otherwise the parent usage-based line.
+ */
+export function mapOpenMeterInvoiceLines(
+  rawLines: unknown,
+): InvoiceLineSummary[] {
+  if (!Array.isArray(rawLines)) return [];
+  const out: InvoiceLineSummary[] = [];
+  let index = 0;
+  for (const raw of rawLines) {
+    if (!raw || typeof raw !== "object") continue;
+    const line = raw as OmInvoiceLineLike;
+    const children = Array.isArray(line.children) ? line.children : [];
+    if (children.length > 0) {
+      for (const child of children) {
+        if (!child || typeof child !== "object") continue;
+        out.push(mapOmLineToSummary(child, `line-${index}`));
+        index += 1;
+      }
+      continue;
+    }
+    out.push(mapOmLineToSummary(line, `line-${index}`));
+    index += 1;
+  }
+  return out;
+}
+
+function mapInvoiceRecord(inv: {
+  id: string;
+  number?: string | null;
+  status?: unknown;
+  currency?: unknown;
+  totals?: { total?: unknown } | null;
+  customer?: { id?: string; key?: string } | null;
+  issuedAt?: Date | null;
+  period?: { from?: Date | null; to?: Date | null } | null;
+  externalIds?: { invoicing?: string | null } | null;
+  type?: unknown;
+  lines?: unknown;
+}): TenantInvoiceDto {
+  return {
+    id: inv.id,
+    number: inv.number ?? undefined,
+    status: String(inv.status ?? "unknown"),
+    currency: String(inv.currency ?? "USD"),
+    totalAmount: String(inv.totals?.total ?? "0"),
+    customerId: inv.customer?.id,
+    customerKey: inv.customer?.key,
+    issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
+    periodStart: inv.period?.from?.toISOString?.() ?? undefined,
+    periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
+    externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
+    invoiceType: inv.type != null ? String(inv.type) : undefined,
+    lines: mapOpenMeterInvoiceLines(inv.lines),
+  };
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -130,21 +244,10 @@ async function listInvoicesForCustomerIds(input: {
       pageSize: 100,
       order: "DESC",
       orderBy: "createdAt",
+      expand: ["lines"],
     });
     for (const inv of result?.items ?? []) {
-      allItems.push({
-        id: inv.id,
-        number: inv.number ?? undefined,
-        status: String(inv.status ?? "unknown"),
-        currency: String(inv.currency ?? "USD"),
-        totalAmount: String(inv.totals?.total ?? "0"),
-        customerId: inv.customer?.id,
-        customerKey: inv.customer?.key,
-        issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
-        periodStart: inv.period?.from?.toISOString?.() ?? undefined,
-        periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
-        externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
-      });
+      allItems.push(mapInvoiceRecord(inv));
     }
   }
 
@@ -227,7 +330,14 @@ export async function getOwnerWalletInvoice(input: {
 
   let inv: Awaited<ReturnType<typeof input.client.billing.invoices.get>>;
   try {
-    inv = await input.client.billing.invoices.get(invoiceId);
+    // SDK `get` only types RequestOptions; expand is a query param on the HTTP API.
+    // Spread must include path or it replaces the SDK's params object.
+    inv = await input.client.billing.invoices.get(invoiceId, {
+      params: {
+        path: { invoiceId },
+        query: { expand: ["lines"] },
+      },
+    } as never);
   } catch {
     return null;
   }
@@ -238,17 +348,5 @@ export async function getOwnerWalletInvoice(input: {
     return null;
   }
 
-  return {
-    id: inv.id,
-    number: inv.number ?? undefined,
-    status: String(inv.status ?? "unknown"),
-    currency: String(inv.currency ?? "USD"),
-    totalAmount: String(inv.totals?.total ?? "0"),
-    customerId: inv.customer?.id,
-    customerKey: inv.customer?.key,
-    issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
-    periodStart: inv.period?.from?.toISOString?.() ?? undefined,
-    periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
-    externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
-  };
+  return mapInvoiceRecord(inv);
 }

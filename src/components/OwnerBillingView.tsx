@@ -12,9 +12,17 @@ import OwnerPaidUpgradePanel from "@/components/OwnerPaidUpgradeEffect";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
-import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
+import {
+  ownerCanChangePaidPlan,
+  ownerEligibleForPaidUpgrade,
+} from "@/lib/billing/owner-paid-upgrade-eligibility";
+import {
+  billingCreditsEmptyHint,
+  billingIntroCopy,
+} from "@/lib/billing/owner-billing-copy";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
+import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
 
@@ -36,11 +44,13 @@ function SubscriptionCard({
   creditBalanceUsdMicros,
   defaultPaymentMethod,
   needsPaymentMethod,
+  showChangePlan,
 }: Readonly<{
   row: OwnerBillingPayload["subscriptions"][number];
   creditBalanceUsdMicros: string | null;
   defaultPaymentMethod: OwnerBillingPayload["paymentMethods"][number] | null;
   needsPaymentMethod: boolean;
+  showChangePlan?: boolean;
 }>) {
   const hasAllowance =
     row.discountUsdMicros != null && BigInt(row.discountUsdMicros) > 0n;
@@ -55,6 +65,14 @@ function SubscriptionCard({
             <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-emerald-400">
               {row.status}
             </span>
+            {showChangePlan ? (
+              <Link
+                href="/billing/upgrade"
+                className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-300 transition-colors hover:bg-white/10 hover:text-zinc-100"
+              >
+                Change plan
+              </Link>
+            ) : null}
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
             {row.appName ? (
@@ -101,38 +119,30 @@ function SubscriptionCard({
   );
 }
 
-function billingIntroCopy(
-  pressure: ReturnType<typeof resolveOwnerBillingPressure>,
-  starterPlanName: string,
-): string {
-  if (pressure === "blocked") {
-    return `${starterPlanName} allowance is used up. Usage is paused until you Upgrade to a paid plan (you’ll add a payment method during Upgrade if needed).`;
-  }
-  if (pressure === "chargeable") {
-    return "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
-  }
-  return `Prepaid credits, active subscriptions, and platform invoices for your account. On ${starterPlanName}, usage stops when included allowance and credits run out — Upgrade to a paid plan to continue with overage invoicing.`;
-}
-
 function PaymentMethodRequiredBanner({
   paymentMethodPanel,
   starterPlanName,
+  onPaidPlan,
+  currentPlanName,
 }: Readonly<{
   paymentMethodPanel?: ReactNode;
   starterPlanName: string;
+  onPaidPlan: boolean;
+  currentPlanName?: string | null;
 }>) {
+  const title = onPaidPlan
+    ? "Payment method required for overage"
+    : "Upgrade to continue";
+  const body = onPaidPlan
+    ? `${currentPlanName?.trim() || "Your paid plan"} included allowance is used up. Link a payment method so overage can invoice to your card.`
+    : `${starterPlanName} allowance used up. Upgrade to a paid plan to resume usage (monthly fee + overage invoicing). You’ll add a payment method during Upgrade if one isn’t on file yet.`;
+
   return (
     <output className="mb-6 block w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 sm:px-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-amber-100">
-            Upgrade to continue
-          </h2>
-          <p className="mt-1 text-sm text-amber-200/90">
-            {starterPlanName} allowance used up. Upgrade to a paid plan to resume
-            usage (monthly fee + overage invoicing). You’ll add a payment method
-            during Upgrade if one isn’t on file yet.
-          </p>
+          <h2 className="text-sm font-semibold text-amber-100">{title}</h2>
+          <p className="mt-1 text-sm text-amber-200/90">{body}</p>
         </div>
         {paymentMethodPanel ? (
           <div className="shrink-0">{paymentMethodPanel}</div>
@@ -147,11 +157,15 @@ function OwnerPaymentCreditsSection({
   needsPaymentMethod,
   paymentMethodPanel,
   adminFundPanel,
+  onPaidPlan,
+  currentPlanName,
 }: Readonly<{
   data: OwnerBillingPayload;
   needsPaymentMethod: boolean;
   paymentMethodPanel?: ReactNode;
   adminFundPanel?: ReactNode;
+  onPaidPlan: boolean;
+  currentPlanName?: string | null;
 }>) {
   const billingActions =
     paymentMethodPanel || adminFundPanel ? (
@@ -171,7 +185,11 @@ function OwnerPaymentCreditsSection({
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold text-zinc-200">Payment &amp; credits</h2>
           <InfoTooltip
-            label="Upgrade to a paid plan for monthly included usage and automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement. Update your card anytime once one is on file."
+            label={
+              onPaidPlan
+                ? "Prepaid credits (when present) burn first under credit_then_invoice settlement. Update your card anytime once one is on file — overage invoices after included usage."
+                : "Upgrade to a paid plan for monthly included usage and automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement. Update your card anytime once one is on file."
+            }
             wide
           />
         </div>
@@ -195,9 +213,10 @@ function OwnerPaymentCreditsSection({
         {showEmptyHint ? (
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
             <p>
-              No prepaid credit balance yet. Starter included usage comes from your plan
-              allowance. Upgrade to a paid plan when you need more — overage invoices to
-              your card after the included allowance.
+              {billingCreditsEmptyHint({
+                onPaidPlan,
+                currentPlanName,
+              })}
             </p>
           </div>
         ) : null}
@@ -291,10 +310,12 @@ function OwnerSubscriptionsSection({
   data,
   defaultPaymentMethod,
   needsPaymentMethod,
+  canChangePlan,
 }: Readonly<{
   data: OwnerBillingPayload;
   defaultPaymentMethod: OwnerBillingPayload["paymentMethods"][number] | null;
   needsPaymentMethod: boolean;
+  canChangePlan: boolean;
 }>) {
   const creditBySubscription = allocateCreditBalancesForSubscriptions(
     data.subscriptions,
@@ -329,6 +350,11 @@ function OwnerSubscriptionsSection({
               }
               defaultPaymentMethod={defaultPaymentMethod}
               needsPaymentMethod={needsPaymentMethod}
+              showChangePlan={
+                canChangePlan &&
+                row.appPublicClientId == null &&
+                isOwnerPaidPlanKey(row.openMeterPlanKey)
+              }
             />
           ))}
         </div>
@@ -360,13 +386,30 @@ export default function OwnerBillingView({
     data.paymentMethods[0] ??
     null;
   const eligibleForUpgrade = ownerEligibleForPaidUpgrade(data.subscriptions);
+  const canChangePlan = ownerCanChangePaidPlan(data.subscriptions);
+  const onPaidPlan = canChangePlan;
+  const currentPaidPlanName =
+    data.subscriptions.find(
+      (row) =>
+        row.appPublicClientId == null &&
+        isOwnerPaidPlanKey(row.openMeterPlanKey),
+    )?.planName ??
+    data.subscriptions.find((row) =>
+      isOwnerPaidPlanKey(row.openMeterPlanKey),
+    )?.planName ??
+    null;
 
   return (
     <DashboardLayout>
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
         <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-          {billingIntroCopy(pressure, data.ownerStarterPlanName)}
+          {billingIntroCopy({
+            pressure,
+            starterPlanName: data.ownerStarterPlanName,
+            onPaidPlan,
+            currentPlanName: currentPaidPlanName,
+          })}
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
@@ -391,7 +434,9 @@ export default function OwnerBillingView({
           <Suspense fallback={null}>
             <OwnerPaidUpgradePanel
               eligibleForUpgrade={eligibleForUpgrade}
+              canChangePlan={canChangePlan}
               starterPlanName={data.ownerStarterPlanName}
+              currentPlanName={currentPaidPlanName}
             />
           </Suspense>
 
@@ -399,6 +444,8 @@ export default function OwnerBillingView({
             <PaymentMethodRequiredBanner
               paymentMethodPanel={paymentMethodPanel}
               starterPlanName={data.ownerStarterPlanName}
+              onPaidPlan={onPaidPlan}
+              currentPlanName={currentPaidPlanName}
             />
           ) : null}
 
@@ -407,12 +454,15 @@ export default function OwnerBillingView({
             needsPaymentMethod={needsPaymentMethod}
             paymentMethodPanel={paymentMethodPanel}
             adminFundPanel={adminFundPanel}
+            onPaidPlan={onPaidPlan}
+            currentPlanName={currentPaidPlanName}
           />
 
           <OwnerSubscriptionsSection
             data={data}
             defaultPaymentMethod={defaultPaymentMethod}
             needsPaymentMethod={needsPaymentMethod}
+            canChangePlan={canChangePlan}
           />
 
           <section className="mt-8">

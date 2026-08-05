@@ -116,30 +116,103 @@ test("ledger skips undated grants rather than mis-ordering them", () => {
   assert.equal(entries[0].id, "grant:dated");
 });
 
-test("ledger treats invoices as non-credit events", () => {
+test("ledger emits one row per non-zero invoice line with kind labels", () => {
   const entries = buildLedgerEntries({
     grants: [],
     dailyUsage: [],
     invoices: [
       {
-        id: "inv_1",
+        id: "inv_plan",
+        status: "paid",
+        totalAmountUsdMicros: "2460000",
+        issuedAt: "2026-08-01T00:00:00Z",
+        lines: [
+          {
+            id: "sub",
+            name: "Producer",
+            totalAmountUsdMicros: "20000000",
+            kind: "subscription",
+          },
+          {
+            id: "prorate",
+            name: "Unused period",
+            totalAmountUsdMicros: "-17540000",
+            kind: "proration",
+          },
+          {
+            id: "usage",
+            name: "Network fee",
+            totalAmountUsdMicros: "430000",
+            kind: "usage",
+          },
+          {
+            id: "zero",
+            name: "Zero line",
+            totalAmountUsdMicros: "0",
+            kind: "other",
+          },
+        ],
+      },
+    ],
+    endingCreditBalanceUsdMicros: "0",
+  });
+
+  assert.equal(entries.length, 3);
+  assert.deepEqual(
+    entries.map((e) => e.description).sort(),
+    [
+      "Plan · Producer",
+      "Proration · Unused period",
+      "Usage · Network fee",
+    ].sort(),
+  );
+  assert.ok(entries.every((e) => e.invoiceId === "inv_plan"));
+  assert.ok(entries.every((e) => e.creditDeltaUsdMicros === "0"));
+  const prorate = entries.find((e) => e.id.includes("prorate"));
+  assert.equal(prorate?.type, "refund");
+  assert.equal(prorate?.amountUsdMicros, "17540000");
+});
+
+test("ledger falls back to invoice header when lines are missing", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [],
+    invoices: [
+      {
+        id: "inv_header",
         status: "paid",
         totalAmountUsdMicros: "2500000",
         issuedAt: "2026-07-31T00:00:00Z",
         periodStart: "2026-07-01T00:00:00Z",
-        periodEnd: "2026-07-31T00:00:00Z",
+        lines: [],
       },
     ],
-    endingCreditBalanceUsdMicros: "5000000",
+    endingCreditBalanceUsdMicros: "0",
   });
 
   assert.equal(entries.length, 1);
-  assert.equal(entries[0].type, "invoice");
-  assert.equal(entries[0].creditDeltaUsdMicros, "0");
-  assert.equal(entries[0].status, "paid");
-  // Label is human-readable, never a raw internal identifier.
+  assert.equal(entries[0].id, "invoice:inv_header");
   assert.equal(entries[0].description, "Invoice · Jul 2026");
-  assert.equal(entries[0].balanceUsdMicros, "5000000");
+});
+
+test("ledger maps credit_note invoice type to refund", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [],
+    invoices: [
+      {
+        id: "inv_cn",
+        status: "paid",
+        totalAmountUsdMicros: "500000",
+        issuedAt: "2026-07-15T00:00:00Z",
+        invoiceType: "credit_note",
+      },
+    ],
+    endingCreditBalanceUsdMicros: "0",
+  });
+
+  assert.equal(entries[0].type, "refund");
+  assert.equal(entries[0].amountUsdMicros, "500000");
 });
 
 test("ledger classifies negative invoice totals as refunds", () => {

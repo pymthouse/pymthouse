@@ -288,10 +288,10 @@ async function querySubjectCycleUsage(input: {
  * Convert to signed USD micros for the ledger; unparseable totals become 0
  * rather than breaking the page.
  */
-function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
-  const raw = invoice.totalAmount?.trim();
-  if (!raw) return "0";
-  const match = /^(-?)(\d*)(?:\.(\d*))?$/.exec(raw);
+function decimalDollarsToUsdMicros(raw: string | null | undefined): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return "0";
+  const match = /^(-?)(\d*)(?:\.(\d*))?$/.exec(trimmed);
   if (!match) return "0";
   const [, sign, wholePart = "", fracPart = ""] = match;
   try {
@@ -302,6 +302,10 @@ function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
   } catch {
     return "0";
   }
+}
+
+function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
+  return decimalDollarsToUsdMicros(invoice.totalAmount);
 }
 
 /**
@@ -893,6 +897,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       issuedAt: invoice.issuedAt,
       periodStart: invoice.periodStart,
       periodEnd: invoice.periodEnd,
+      invoiceType: invoice.invoiceType ?? null,
+      lines: (invoice.lines ?? []).map((line) => ({
+        id: line.id,
+        name: line.name,
+        description: line.description,
+        totalAmountUsdMicros: decimalDollarsToUsdMicros(line.totalAmount),
+        kind: line.kind,
+      })),
     })),
     planIncludedUsdMicros: walletSubscription?.discountUsdMicros ?? null,
     endingCreditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,

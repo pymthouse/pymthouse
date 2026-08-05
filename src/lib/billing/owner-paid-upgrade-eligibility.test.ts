@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ownerEligibleForPaidUpgrade } from "./owner-paid-upgrade-eligibility";
+import {
+  ownerCanAccessPlanCheckout,
+  ownerCanChangePaidPlan,
+  ownerCurrentPaidPlanKey,
+  ownerEligibleForPaidUpgrade,
+} from "./owner-paid-upgrade-eligibility";
 
 test("ownerEligibleForPaidUpgrade is true with no subscriptions", () => {
   assert.equal(ownerEligibleForPaidUpgrade([]), true);
@@ -63,4 +68,33 @@ test("ownerEligibleForPaidUpgrade ignores app-scoped paid rows when wallet is St
     ]),
     true,
   );
+});
+
+test("ownerCurrentPaidPlanKey and change/access helpers", () => {
+  assert.equal(ownerCurrentPaidPlanKey([]), null);
+  assert.equal(ownerCanChangePaidPlan([]), false);
+  assert.equal(ownerCanAccessPlanCheckout([]), true);
+
+  const producer = [
+    {
+      openMeterPlanKey: "pymthouse_owner_paid_producer",
+      appPublicClientId: null,
+    },
+  ];
+  assert.equal(
+    ownerCurrentPaidPlanKey(producer),
+    "pymthouse_owner_paid_producer",
+  );
+  assert.equal(ownerCanChangePaidPlan(producer), true);
+  assert.equal(ownerCanAccessPlanCheckout(producer), true);
+  assert.equal(ownerEligibleForPaidUpgrade(producer), false);
+
+  const starter = [
+    {
+      openMeterPlanKey: "pymthouse_owner_starter",
+      appPublicClientId: null,
+    },
+  ];
+  assert.equal(ownerCanChangePaidPlan(starter), false);
+  assert.equal(ownerCanAccessPlanCheckout(starter), true);
 });

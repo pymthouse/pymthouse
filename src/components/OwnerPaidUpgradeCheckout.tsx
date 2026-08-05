@@ -144,22 +144,33 @@ function tierHasSurplusIncludedUsage(tier: OwnerTier): boolean {
   return included > fee;
 }
 
-function confirmBlockingHint(
+export function confirmBlockingHint(
   planStepDone: boolean,
   cardStepDone: boolean,
+  selectedIsCurrent: boolean,
 ): string {
+  if (selectedIsCurrent) return "Select a different plan to continue.";
   if (!planStepDone) return "Select a plan to continue.";
   if (!cardStepDone) return "Link a payment method to continue.";
   return "";
 }
 
-function confirmButtonLabel(
+/** True when the selected Owner Paid tier is not already the current plan. */
+export function isPaidPlanSelectionReady(
+  selectedKey: string | null | undefined,
+  currentPlanKey: string | null | undefined,
+): boolean {
+  return Boolean(selectedKey && selectedKey !== (currentPlanKey ?? ""));
+}
+
+export function confirmButtonLabel(
   busy: boolean,
-  selected: OwnerTier | null,
+  monthlyFeeUsd: string | null,
+  mode: "upgrade" | "change",
 ): string {
-  if (busy) return "Upgrading…";
-  if (selected) return `Confirm — charge $${selected.monthlyFeeUsd} today`;
-  return "Confirm upgrade";
+  if (busy) return mode === "change" ? "Changing…" : "Upgrading…";
+  if (monthlyFeeUsd) return `Confirm — charge $${monthlyFeeUsd} today`;
+  return mode === "change" ? "Confirm change" : "Confirm upgrade";
 }
 
 function SkeletonRow() {
@@ -397,12 +408,14 @@ function TierCard({
   onSelect,
   disabled,
   inputName,
+  isCurrent,
 }: Readonly<{
   tier: OwnerTier;
   selected: boolean;
   onSelect: () => void;
   disabled?: boolean;
   inputName: string;
+  isCurrent?: boolean;
 }>) {
   const detail = getPlanDetail(tier.key);
   return (
@@ -414,6 +427,7 @@ function TierCard({
           ? "border-emerald-500/50 bg-emerald-500/[0.07]"
           : "border-white/[0.07] bg-white/[0.025] hover:border-white/15",
         disabled ? "pointer-events-none opacity-50" : "",
+        isCurrent && !selected ? "border-white/12" : "",
       ].join(" ")}
     >
       <input
@@ -442,7 +456,12 @@ function TierCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="font-medium text-zinc-100">{tier.name}</span>
-            {detail ? (
+            {isCurrent ? (
+              <span className="rounded border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                Current
+              </span>
+            ) : null}
+            {detail && !isCurrent ? (
               <span className="text-xs text-zinc-500">{detail.headline}</span>
             ) : null}
           </div>
@@ -558,6 +577,7 @@ function PlanPicker({
   selectedKey,
   busy,
   radioGroupId,
+  currentPlanKey,
   onSelectTier,
 }: Readonly<{
   loadingTiers: boolean;
@@ -565,6 +585,7 @@ function PlanPicker({
   selectedKey: string;
   busy: boolean;
   radioGroupId: string;
+  currentPlanKey: string | null;
   onSelectTier: (key: string) => void;
 }>) {
   if (loadingTiers) {
@@ -596,16 +617,22 @@ function PlanPicker({
         id={radioGroupId}
         className="space-y-2"
       >
-        {tiers.map((tier) => (
-          <TierCard
-            key={tier.id}
-            tier={tier}
-            selected={tier.key === selectedKey}
-            onSelect={() => onSelectTier(tier.key)}
-            disabled={busy}
-            inputName={radioGroupId}
-          />
-        ))}
+        {tiers.map((tier) => {
+          const isCurrent = Boolean(
+            currentPlanKey && tier.key === currentPlanKey,
+          );
+          return (
+            <TierCard
+              key={tier.id}
+              tier={tier}
+              selected={tier.key === selectedKey}
+              onSelect={() => onSelectTier(tier.key)}
+              disabled={busy || isCurrent}
+              isCurrent={isCurrent}
+              inputName={radioGroupId}
+            />
+          );
+        })}
       </div>
     </>
   );
@@ -693,6 +720,8 @@ function ConfirmActions({
   planStepDone,
   cardStepDone,
   selected,
+  mode,
+  currentPlanKey,
   confirmRegionId,
   onConfirm,
 }: Readonly<{
@@ -701,10 +730,16 @@ function ConfirmActions({
   planStepDone: boolean;
   cardStepDone: boolean;
   selected: OwnerTier | null;
+  mode: "upgrade" | "change";
+  currentPlanKey: string | null;
   confirmRegionId: string;
   onConfirm: () => void;
 }>) {
-  const hint = confirmBlockingHint(planStepDone, cardStepDone);
+  const hint = confirmBlockingHint(
+    planStepDone,
+    cardStepDone,
+    Boolean(selected && currentPlanKey && selected.key === currentPlanKey),
+  );
   return (
     <div
       id={confirmRegionId}
@@ -718,7 +753,9 @@ function ConfirmActions({
       {busy ? (
         <p className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Spinner />
-          Upgrading — do not close this tab.
+          {mode === "change"
+            ? "Changing plan — do not close this tab."
+            : "Upgrading — do not close this tab."}
         </p>
       ) : (
         <span />
@@ -745,7 +782,7 @@ function ConfirmActions({
           aria-describedby={confirmRegionId}
         >
           {busy ? <Spinner /> : null}
-          {confirmButtonLabel(busy, selected)}
+          {confirmButtonLabel(busy, selected?.monthlyFeeUsd ?? null, mode)}
         </button>
       </div>
     </div>
@@ -753,11 +790,15 @@ function ConfirmActions({
 }
 
 export default function OwnerPaidUpgradeCheckout({
+  mode = "upgrade",
+  currentPlanKey = null,
   hasPaymentMethod,
   paymentMethod,
   initialPlanKey,
   pmAttached,
 }: Readonly<{
+  mode?: "upgrade" | "change";
+  currentPlanKey?: string | null;
   hasPaymentMethod: boolean;
   paymentMethod: UpgradePaymentMethodSummary | null;
   initialPlanKey: string | null;
@@ -821,13 +862,22 @@ export default function OwnerPaidUpgradeCheckout({
       const list = body.tiers ?? [];
       setTiers(list);
       setSelectedKey((prev) => {
-        if (prev && list.some((t) => t.key === prev)) return prev;
-        const first = list[0]?.key || "";
-        if (first && first !== lastKeyedPlanRef.current) {
-          idempotencyKeyRef.current = makeIdempotencyKey(first);
-          lastKeyedPlanRef.current = first;
+        if (
+          prev &&
+          list.some((t) => t.key === prev) &&
+          prev !== currentPlanKey
+        ) {
+          return prev;
         }
-        return first;
+        const preferred =
+          list.find((t) => t.key !== currentPlanKey)?.key ||
+          list[0]?.key ||
+          "";
+        if (preferred && preferred !== lastKeyedPlanRef.current) {
+          idempotencyKeyRef.current = makeIdempotencyKey(preferred);
+          lastKeyedPlanRef.current = preferred;
+        }
+        return preferred;
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -835,7 +885,7 @@ export default function OwnerPaidUpgradeCheckout({
     } finally {
       setLoadingTiers(false);
     }
-  }, []);
+  }, [currentPlanKey]);
 
   useEffect(() => {
     void loadTiers();
@@ -852,7 +902,7 @@ export default function OwnerPaidUpgradeCheckout({
   }, [pmAttached, router]);
 
   const selected = tiers.find((t) => t.key === selectedKey) ?? null;
-  const planStepDone = selected !== null;
+  const planStepDone = isPaidPlanSelectionReady(selectedKey, currentPlanKey);
   const cardStepDone = hasPaymentMethod;
   const canConfirm = planStepDone && cardStepDone && !busy;
 
@@ -954,11 +1004,12 @@ export default function OwnerPaidUpgradeCheckout({
           Billing
         </Link>
         <h1 className="mt-3 text-xl font-semibold text-zinc-100 sm:text-2xl">
-          Upgrade your plan
+          {mode === "change" ? "Change your plan" : "Upgrade your plan"}
         </h1>
         <p className="mt-1.5 text-sm text-zinc-500">
-          Pick a plan and confirm. Your card is not charged until you press
-          Confirm — linking it here does not subscribe you.
+          {mode === "change"
+            ? "Switch to another monthly plan. Your card is not charged until you press Confirm."
+            : "Pick a plan and confirm. Your card is not charged until you press Confirm — linking it here does not subscribe you."}
         </p>
       </div>
 
@@ -983,6 +1034,7 @@ export default function OwnerPaidUpgradeCheckout({
               selectedKey={selectedKey}
               busy={busy}
               radioGroupId={radioGroupId}
+              currentPlanKey={currentPlanKey}
               onSelectTier={onSelectTier}
             />
           </section>
@@ -1020,6 +1072,8 @@ export default function OwnerPaidUpgradeCheckout({
             planStepDone={planStepDone}
             cardStepDone={cardStepDone}
             selected={selected}
+            mode={mode}
+            currentPlanKey={currentPlanKey}
             confirmRegionId={confirmRegionId}
             onConfirm={() => void confirmUpgrade()}
           />
