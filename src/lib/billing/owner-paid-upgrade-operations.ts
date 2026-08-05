@@ -137,6 +137,77 @@ async function tryReclaimOwnerPaidUpgradeOperation(input: {
   return claimed[0]?.id ?? null;
 }
 
+function completedResultOrNull(
+  row: typeof ownerPaidUpgradeOperations.$inferSelect,
+  reclaimCompletedForPlanChange: boolean,
+): OwnerPaidUpgradeResult | null {
+  if (row.status !== "completed") return null;
+  const result = resultFromRow(row);
+  if (result && !reclaimCompletedForPlanChange) return result;
+  return null;
+}
+
+async function resolveConflictingUpgradeClaim(input: {
+  idempotencyKey: string;
+  reclaimCompletedForPlanChange: boolean;
+  now: string;
+}): Promise<
+  | { action: "proceed"; operationId: string }
+  | { action: "return"; result: OwnerPaidUpgradeResult }
+  | { action: "reject"; reason: "in_progress" }
+> {
+  const existingRows = await db
+    .select()
+    .from(ownerPaidUpgradeOperations)
+    .where(eq(ownerPaidUpgradeOperations.idempotencyKey, input.idempotencyKey))
+    .limit(1);
+  const existing = existingRows[0];
+  if (!existing) {
+    throw new Error("idempotency conflict without existing upgrade operation");
+  }
+
+  const completed = completedResultOrNull(
+    existing,
+    input.reclaimCompletedForPlanChange,
+  );
+  if (completed) {
+    return { action: "return", result: completed };
+  }
+
+  if (
+    existing.status === "pending" &&
+    !isStalePending(existing.createdAt, existing.updatedAt)
+  ) {
+    return { action: "reject", reason: "in_progress" };
+  }
+
+  const reclaimedId = await tryReclaimOwnerPaidUpgradeOperation({
+    existingId: existing.id,
+    reclaimCompletedForPlanChange: input.reclaimCompletedForPlanChange,
+    now: input.now,
+  });
+  if (reclaimedId) {
+    return { action: "proceed", operationId: reclaimedId };
+  }
+
+  const again = await db
+    .select()
+    .from(ownerPaidUpgradeOperations)
+    .where(eq(ownerPaidUpgradeOperations.idempotencyKey, input.idempotencyKey))
+    .limit(1);
+  const row = again[0];
+  if (row) {
+    const againCompleted = completedResultOrNull(
+      row,
+      input.reclaimCompletedForPlanChange,
+    );
+    if (againCompleted) {
+      return { action: "return", result: againCompleted };
+    }
+  }
+  return { action: "reject", reason: "in_progress" };
+}
+
 /**
  * Claim an owner+plan Upgrade slot before calling Konnect.
  * - First caller proceeds with a pending row.
@@ -186,52 +257,11 @@ export async function claimOwnerPaidUpgradeOperation(input: {
     }
   }
 
-  const existingRows = await db
-    .select()
-    .from(ownerPaidUpgradeOperations)
-    .where(eq(ownerPaidUpgradeOperations.idempotencyKey, idempotencyKey))
-    .limit(1);
-  const existing = existingRows[0];
-  if (!existing) {
-    throw new Error("idempotency conflict without existing upgrade operation");
-  }
-
-  if (existing.status === "completed") {
-    const result = resultFromRow(existing);
-    if (result && !reclaimCompletedForPlanChange) {
-      return { action: "return", result };
-    }
-  }
-
-  if (
-    existing.status === "pending" &&
-    !isStalePending(existing.createdAt, existing.updatedAt)
-  ) {
-    return { action: "reject", reason: "in_progress" };
-  }
-
-  const reclaimedId = await tryReclaimOwnerPaidUpgradeOperation({
-    existingId: existing.id,
+  return resolveConflictingUpgradeClaim({
+    idempotencyKey,
     reclaimCompletedForPlanChange,
     now,
   });
-  if (reclaimedId) {
-    return { action: "proceed", operationId: reclaimedId };
-  }
-
-  const again = await db
-    .select()
-    .from(ownerPaidUpgradeOperations)
-    .where(eq(ownerPaidUpgradeOperations.idempotencyKey, idempotencyKey))
-    .limit(1);
-  const row = again[0];
-  if (row?.status === "completed") {
-    const result = resultFromRow(row);
-    if (result && !reclaimCompletedForPlanChange) {
-      return { action: "return", result };
-    }
-  }
-  return { action: "reject", reason: "in_progress" };
 }
 
 export async function completeOwnerPaidUpgradeOperation(input: {
