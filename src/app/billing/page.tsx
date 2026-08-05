@@ -7,6 +7,7 @@ import FundAccountOnRampPanel from "@/components/apps/FundAccountOnRampPanel";
 import OwnerBillingView from "@/components/OwnerBillingView";
 import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
+import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 function isTurnkeyFundingConfigured(): boolean {
@@ -56,12 +57,20 @@ export default async function BillingPage() {
       />
     ) : null;
 
+  const hasPaymentMethod = data.paymentMethods.length > 0;
+  const onSandboxStarter = data.subscriptions.some((row) =>
+    isOwnerStarterPlanKey(row.openMeterPlanKey),
+  );
+
   return (
     <OwnerBillingView
       data={data}
       paymentMethodPanel={
         data.openMeterConfigured ? (
-          <OwnerPaymentMethodButton hasPaymentMethod={data.paymentMethods.length > 0} />
+          <OwnerPaymentMethodButton
+            hasPaymentMethod={hasPaymentMethod}
+            upgradeFirst={onSandboxStarter && !hasPaymentMethod}
+          />
         ) : null
       }
       adminFundPanel={adminFundPanel}

@@ -2,7 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
 import { resetHostedOpenMeterClientForTests } from "./client";
-import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
+import {
+  createOpenMeterStripeCheckoutSession,
+  isStripeCheckoutUrl,
+  stripeCheckoutRedirectUrl,
+} from "./stripe-checkout-session";
+
+test("isStripeCheckoutUrl allows only https checkout.stripe.com hosts", () => {
+  assert.equal(isStripeCheckoutUrl("https://checkout.stripe.com/c/pay/cs_test"), true);
+  assert.equal(
+    isStripeCheckoutUrl("https://pay.checkout.stripe.com/c/pay/cs_test"),
+    true,
+  );
+  assert.equal(isStripeCheckoutUrl("http://checkout.stripe.com/c/pay/cs_test"), false);
+  assert.equal(isStripeCheckoutUrl("https://evil.example/checkout.stripe.com"), false);
+  assert.equal(isStripeCheckoutUrl("https://checkout.stripe.com.evil.example/"), false);
+  assert.equal(isStripeCheckoutUrl("not-a-url"), false);
+  assert.equal(
+    stripeCheckoutRedirectUrl("https://checkout.stripe.com/c/pay/cs_test"),
+    "https://checkout.stripe.com/c/pay/cs_test",
+  );
+  assert.equal(stripeCheckoutRedirectUrl("https://evil.example/"), null);
+});
 
 function withKonnectEnv(t: test.TestContext): void {
   const savedUrl = process.env.OPENMETER_URL;

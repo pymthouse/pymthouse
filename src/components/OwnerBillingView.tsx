@@ -105,7 +105,7 @@ function billingIntroCopy(
   pressure: ReturnType<typeof resolveOwnerBillingPressure>,
 ): string {
   if (pressure === "blocked") {
-    return "Sandbox Starter allowance is used up. Usage is paused until you add a payment method and Upgrade to a paid plan.";
+    return "Sandbox Starter allowance is used up. Usage is paused until you Upgrade to a paid plan (you’ll add a payment method during Upgrade if needed).";
   }
   if (pressure === "chargeable") {
     return "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
@@ -123,11 +123,12 @@ function PaymentMethodRequiredBanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-amber-100">
-            Add payment method, then Upgrade
+            Upgrade to continue
           </h2>
           <p className="mt-1 text-sm text-amber-200/90">
-            Sandbox Starter allowance used up. Attach a card, then choose a paid
-            plan to resume usage (monthly fee + overage invoicing).
+            Sandbox Starter allowance used up. Upgrade to a paid plan to resume
+            usage (monthly fee + overage invoicing). You’ll add a payment method
+            during Upgrade if one isn’t on file yet.
           </p>
         </div>
         {paymentMethodPanel ? (
@@ -167,7 +168,7 @@ function OwnerPaymentCreditsSection({
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold text-zinc-200">Payment &amp; credits</h2>
           <InfoTooltip
-            label="Add a Stripe card for automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement."
+            label="Upgrade to a paid plan for monthly included usage and automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement. Update your card anytime once one is on file."
             wide
           />
         </div>
@@ -192,8 +193,8 @@ function OwnerPaymentCreditsSection({
           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
             <p>
               No prepaid credit balance yet. Starter included usage comes from your plan
-              allowance. Attach a payment method so usage beyond the allowance can be
-              invoiced on Stripe.
+              allowance. Upgrade to a paid plan when you need more — overage invoices to
+              your card after the included allowance.
             </p>
           </div>
         ) : null}

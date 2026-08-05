@@ -15,6 +15,30 @@ export type StripeCheckoutSessionResult = {
   sessionId: string | null;
 };
 
+/** True when `url` is an https Stripe Checkout host (blocks open redirects). */
+export function isStripeCheckoutUrl(url: string): boolean {
+  return stripeCheckoutRedirectUrl(url) !== null;
+}
+
+/**
+ * Returns a same-origin-safe Stripe Checkout URL, or null if the input is not
+ * an https `checkout.stripe.com` URL. Rebuilds the URL from allowlisted parts
+ * so callers do not pass a remote string straight into location.assign.
+ */
+export function stripeCheckoutRedirectUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return null;
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "checkout.stripe.com" && !host.endsWith(".checkout.stripe.com")) {
+      return null;
+    }
+    return `https://${host}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+
 type KonnectCheckoutSessionResponse = {
   url?: string;
   session_id?: string;
