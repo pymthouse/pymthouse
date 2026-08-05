@@ -5,6 +5,7 @@ import {
   buildOwnerPaymentMethodList,
   collapseDuplicateLinkMethods,
   listOwnerPaymentMethods,
+  resolveOwnerBillingCheckoutReturnUrl,
   toOwnerPaymentMethodItem,
   toStripeApiUrl,
 } from "./owner-payment-method";
@@ -236,6 +237,48 @@ test("listOwnerPaymentMethods returns [] without Stripe key", async () => {
       delete process.env.STRIPE_API_KEY;
     } else {
       process.env.STRIPE_API_KEY = previousApi;
+    }
+  }
+});
+
+test("resolveOwnerBillingCheckoutReturnUrl allows /billing/upgrade callbacks", () => {
+  const previous = process.env.NEXTAUTH_URL;
+  process.env.NEXTAUTH_URL = "https://app.example";
+  try {
+    const fallback = "https://app.example/billing";
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://app.example/billing/upgrade?plan=owner_paid_50&pm=attached",
+        fallback,
+      ),
+      "https://app.example/billing/upgrade?plan=owner_paid_50&pm=attached",
+    );
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://evil.example/billing",
+        fallback,
+      ),
+      fallback,
+    );
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://app.example/apps",
+        fallback,
+      ),
+      fallback,
+    );
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://app.example/billing-evil",
+        fallback,
+      ),
+      fallback,
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NEXTAUTH_URL;
+    } else {
+      process.env.NEXTAUTH_URL = previous;
     }
   }
 });

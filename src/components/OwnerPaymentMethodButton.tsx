@@ -1,21 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
-import { OPEN_OWNER_UPGRADE_EVENT } from "@/components/OwnerPaidUpgradeEffect";
 import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-session";
-
-function openOwnerUpgradeChooser() {
-  window.dispatchEvent(new Event(OPEN_OWNER_UPGRADE_EVENT));
-  document
-    .getElementById("owner-paid-upgrade")
-    ?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
 
 /**
  * Owner billing header action for payment methods.
- * On owners eligible for Paid Upgrade without a card, the primary CTA is Upgrade
- * (not attach-card). Updating an existing card stays a direct Stripe Checkout setup.
+ * When Upgrade is available and no card is on file, link to the dedicated
+ * checkout page. Otherwise start Stripe setup Checkout directly.
  */
 export default function OwnerPaymentMethodButton({
   hasPaymentMethod = false,
@@ -27,6 +20,8 @@ export default function OwnerPaymentMethodButton({
 }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const useUpgradeCta = upgradeFirst && !hasPaymentMethod;
 
   async function startCheckout() {
     setBusy(true);
@@ -58,8 +53,6 @@ export default function OwnerPaymentMethodButton({
     }
   }
 
-  const useUpgradeCta = upgradeFirst && !hasPaymentMethod;
-
   let buttonLabel = "Add payment method";
   if (useUpgradeCta) {
     buttonLabel = "Upgrade";
@@ -69,19 +62,26 @@ export default function OwnerPaymentMethodButton({
     buttonLabel = "Update payment method";
   }
 
+  if (useUpgradeCta) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <Link
+          href="/billing/upgrade"
+          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground"
+        >
+          {buttonLabel}
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-end gap-1">
       <button
         type="button"
         className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
         disabled={busy}
-        onClick={() => {
-          if (useUpgradeCta) {
-            openOwnerUpgradeChooser();
-            return;
-          }
-          void startCheckout();
-        }}
+        onClick={() => void startCheckout()}
       >
         {buttonLabel}
       </button>

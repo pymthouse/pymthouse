@@ -571,6 +571,31 @@ export async function setOwnerDefaultPaymentMethod(
 }
 
 /**
+ * Same-origin Stripe return URL under `/billing` (or `/billing/…`).
+ * Rejects open redirects; falls back when the candidate is missing/unsafe.
+ * @internal Exported for unit tests.
+ */
+export function resolveOwnerBillingCheckoutReturnUrl(
+  candidate: string | undefined,
+  fallback: string,
+): string {
+  const raw = candidate?.trim();
+  if (!raw) return fallback;
+  try {
+    const url = new URL(raw);
+    const origin = new URL(getPublicOrigin());
+    if (url.origin !== origin.origin) return fallback;
+    const path = url.pathname;
+    if (path !== "/billing" && !path.startsWith("/billing/")) {
+      return fallback;
+    }
+    return url.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * Start an OpenMeter Stripe Checkout session (always setup mode) so the owner
  * can attach a card for Plane A overage invoices (charge_automatically).
  */
@@ -599,9 +624,14 @@ export async function createOwnerPaymentMethodCheckout(input: {
 
   const defaultPm = await getKonnectDefaultPaymentMethodId(customer.id);
   const origin = getPublicOrigin();
-  const success =
-    input.successUrl?.trim() || `${origin}/billing?pm=attached`;
-  const cancel = input.cancelUrl?.trim() || `${origin}/billing`;
+  const success = resolveOwnerBillingCheckoutReturnUrl(
+    input.successUrl,
+    `${origin}/billing?pm=attached`,
+  );
+  const cancel = resolveOwnerBillingCheckoutReturnUrl(
+    input.cancelUrl,
+    `${origin}/billing`,
+  );
 
   const checkout = await createOpenMeterStripeCheckoutSession({
     client,

@@ -387,7 +387,6 @@ export default function OwnerBillingView({
         <>
           <Suspense fallback={null}>
             <OwnerPaidUpgradePanel
-              hasPaymentMethod={data.paymentMethods.length > 0}
               eligibleForUpgrade={eligibleForUpgrade}
             />
           </Suspense>
