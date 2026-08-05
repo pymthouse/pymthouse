@@ -701,6 +701,47 @@ export const ownerSubscriptionTiers = pgTable(
   ],
 );
 
+/**
+ * Durable Owner Paid Upgrade operations.
+ * Unique per (owner, plan_key); claim before Konnect change, return completed on retry.
+ */
+export const ownerPaidUpgradeOperations = pgTable(
+  "owner_paid_upgrade_operations",
+  {
+    id: text("id").primaryKey(),
+    /** Stable key: `owner_paid_upgrade:{ownerUserId}:{planKey}`. */
+    idempotencyKey: text("idempotency_key").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    planKey: text("plan_key").notNull(),
+    /** pending | completed | failed */
+    status: text("status").notNull().default("pending"),
+    openmeterSubscriptionId: text("openmeter_subscription_id"),
+    openmeterPlanId: text("openmeter_plan_id"),
+    monthlyFeeUsd: text("monthly_fee_usd"),
+    alreadyPaid: integer("already_paid").notNull().default(0),
+    error: text("error"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_owner_paid_upgrade_operations_idempotency_key").on(
+      t.idempotencyKey,
+    ),
+    uniqueIndex("idx_owner_paid_upgrade_operations_owner_plan").on(
+      t.ownerUserId,
+      t.planKey,
+    ),
+    index("idx_owner_paid_upgrade_operations_owner_status").on(
+      t.ownerUserId,
+      t.status,
+    ),
+  ],
+);
+
 export const appBillingOauthStates = pgTable(
   "app_billing_oauth_states",
   {

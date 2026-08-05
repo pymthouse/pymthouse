@@ -281,6 +281,13 @@
       "when": 1786100000000,
       "tag": "0038_owner_subscription_tiers",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0039_owner_paid_upgrade_operations",
+      "breakpoints": true
     }
   ]
 }

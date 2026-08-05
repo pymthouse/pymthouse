@@ -11,6 +11,12 @@ import {
   resolveOwnerTierOverageRateUsd,
   type OwnerSubscriptionTierRow,
 } from "@/lib/billing/owner-subscription-tiers";
+import {
+  claimOwnerPaidUpgradeOperation,
+  completeOwnerPaidUpgradeOperation,
+  failOwnerPaidUpgradeOperation,
+  type OwnerPaidUpgradeResult,
+} from "@/lib/billing/owner-paid-upgrade-operations";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
@@ -336,6 +342,7 @@ export class OwnerPaidUpgradeError extends Error {
     | "no_subscription"
     | "confirm_required"
     | "tier_unavailable"
+    | "upgrade_in_progress"
     | "upgrade_failed";
 
   constructor(
@@ -351,19 +358,14 @@ export class OwnerPaidUpgradeError extends Error {
 /**
  * Upgrade an owner wallet from Sandbox Starter to a selected Owner Paid tier.
  * Requires confirm + chargeable PM; starts a new billing cycle immediately.
+ * Durable owner+plan operation record guards Konnect writes and retries.
  */
 export async function upgradeOwnerToPaidPlan(input: {
   ownerUserId: string;
   planKey?: string | null;
   confirm?: boolean;
   hintOpenMeterSubscriptionId?: string | null;
-}): Promise<{
-  openmeterSubscriptionId: string;
-  planKey: string;
-  openmeterPlanId: string;
-  monthlyFeeUsd: string;
-  alreadyPaid: boolean;
-}> {
+}): Promise<OwnerPaidUpgradeResult> {
   if (input.confirm !== true) {
     throw new OwnerPaidUpgradeError(
       "confirm_required",
@@ -466,30 +468,69 @@ export async function upgradeOwnerToPaidPlan(input: {
     );
   }
 
+  const claim = await claimOwnerPaidUpgradeOperation({
+    ownerUserId,
+    planKey: plan.key,
+  });
+  if (claim.action === "return") {
+    return claim.result;
+  }
+  if (claim.action === "reject") {
+    throw new OwnerPaidUpgradeError(
+      "upgrade_in_progress",
+      "An Owner Paid upgrade for this plan is already in progress",
+    );
+  }
+
+  const operationId = claim.operationId;
   try {
-    await changeKonnectSubscription({
-      subscriptionId: existing.id,
-      customerId: customer.id,
-      planId: plan.openmeterPlanId,
-      timing: "immediate",
-    });
-  } catch (err) {
-    if (isOpenMeterPlanNotFoundError(err)) {
-      invalidateOwnerPaidPlanCache();
-      const resynced = await ensureOwnerPaidTierPlanSynced(plan.key);
+    let openmeterPlanId = plan.openmeterPlanId;
+    let resultPlanKey = plan.key;
+    let resultMonthlyFee = monthlyFeeUsd;
+    try {
       await changeKonnectSubscription({
         subscriptionId: existing.id,
         customerId: customer.id,
-        planId: resynced.openmeterPlanId,
+        planId: openmeterPlanId,
         timing: "immediate",
       });
-      return {
-        openmeterSubscriptionId: existing.id,
-        planKey: resynced.key,
-        openmeterPlanId: resynced.openmeterPlanId,
-        monthlyFeeUsd: resynced.monthlyFeeUsd || monthlyFeeUsd,
-        alreadyPaid: false,
-      };
+    } catch (err) {
+      if (isOpenMeterPlanNotFoundError(err)) {
+        invalidateOwnerPaidPlanCache();
+        const resynced = await ensureOwnerPaidTierPlanSynced(plan.key);
+        openmeterPlanId = resynced.openmeterPlanId;
+        resultPlanKey = resynced.key;
+        resultMonthlyFee = resynced.monthlyFeeUsd || monthlyFeeUsd;
+        await changeKonnectSubscription({
+          subscriptionId: existing.id,
+          customerId: customer.id,
+          planId: openmeterPlanId,
+          timing: "immediate",
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    const result: OwnerPaidUpgradeResult = {
+      openmeterSubscriptionId: existing.id,
+      planKey: resultPlanKey,
+      openmeterPlanId,
+      monthlyFeeUsd: resultMonthlyFee,
+      alreadyPaid: false,
+    };
+    await completeOwnerPaidUpgradeOperation({ operationId, result });
+    return result;
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Owner Paid upgrade failed";
+    try {
+      await failOwnerPaidUpgradeOperation({ operationId, error: message });
+    } catch (markErr) {
+      console.error("Failed to mark Owner Paid upgrade operation failed", markErr);
+    }
+    if (err instanceof OwnerPaidUpgradeError) {
+      throw err;
     }
     console.error("Owner Paid upgrade change failed", err);
     throw new OwnerPaidUpgradeError(
@@ -497,14 +538,6 @@ export async function upgradeOwnerToPaidPlan(input: {
       "Owner Paid upgrade failed",
     );
   }
-
-  return {
-    openmeterSubscriptionId: existing.id,
-    planKey: plan.key,
-    openmeterPlanId: plan.openmeterPlanId,
-    monthlyFeeUsd,
-    alreadyPaid: false,
-  };
 }
 
 /**
