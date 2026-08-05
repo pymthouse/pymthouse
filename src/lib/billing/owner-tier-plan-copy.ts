@@ -2,8 +2,29 @@ import {
   formatUsdMicrosSummary,
   parseUsdMicrosString,
 } from "@/lib/format-usd-micros";
-import { decimalDollarsToUsdMicros } from "@/lib/openmeter/konnect-credits";
-import { resolveOwnerTierOverageRateUsd } from "@/lib/billing/owner-subscription-tiers";
+import { defaultRetailRateUsd } from "@/lib/plan-pricing";
+
+const MICROS_PER_DOLLAR = 1_000_000n;
+
+/** Client-safe: parse a positive USD decimal into integer micros. */
+function usdDecimalToMicros(raw: string): bigint | null {
+  const trimmed = raw.trim();
+  if (!trimmed || !/^\d+(\.\d+)?$/.test(trimmed)) return null;
+  const [wholePart, fracPart = ""] = trimmed.split(".");
+  const whole = BigInt(wholePart || "0");
+  const fracDigits = (fracPart + "000000").slice(0, 6);
+  return whole * MICROS_PER_DOLLAR + BigInt(fracDigits);
+}
+
+function resolveOverageRateUsd(overageRateUsd?: string | null): string {
+  if (overageRateUsd?.trim()) {
+    const trimmed = overageRateUsd.trim();
+    if (/^\d+(\.\d+)?$/.test(trimmed) && Number(trimmed) > 0) {
+      return trimmed;
+    }
+  }
+  return defaultRetailRateUsd();
+}
 
 /**
  * Rough call-count label for Upgrade cards (e.g. 5_000_000 → "5 M").
@@ -32,14 +53,8 @@ export function estimateIncludedApiCalls(
 ): bigint | null {
   const micros = parseUsdMicrosString(includedUsdMicros);
   if (micros == null || micros <= 0n) return null;
-  const rate = resolveOwnerTierOverageRateUsd(overageRateUsd);
-  let rateMicros: bigint;
-  try {
-    rateMicros = decimalDollarsToUsdMicros(rate);
-  } catch {
-    return null;
-  }
-  if (rateMicros <= 0n) return null;
+  const rateMicros = usdDecimalToMicros(resolveOverageRateUsd(overageRateUsd));
+  if (rateMicros == null || rateMicros <= 0n) return null;
   return micros / rateMicros;
 }
 
