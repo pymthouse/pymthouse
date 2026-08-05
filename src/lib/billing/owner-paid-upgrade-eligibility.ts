@@ -3,6 +3,7 @@ import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
 type SubscriptionRow = {
   openMeterPlanKey?: string | null;
   appPublicClientId?: string | null;
+  status?: string | null;
 };
 
 function walletSubscriptionRows(
@@ -13,22 +14,43 @@ function walletSubscriptionRows(
 }
 
 /**
+ * Live Owner Paid key — skips canceled/inactive Paid left behind a scheduled
+ * Starter successor (resume-blocked), so Upgrade stays available instead of
+ * looking like a normal Change-plan wallet.
+ */
+export function ownerCurrentLivePaidPlanKey(
+  subscriptions: ReadonlyArray<SubscriptionRow>,
+): string | null {
+  for (const row of walletSubscriptionRows(subscriptions)) {
+    const status = (row.status || "").toLowerCase();
+    if (status === "canceled" || status === "inactive") {
+      continue;
+    }
+    const key = row.openMeterPlanKey?.trim() || null;
+    if (key && isOwnerPaidPlanKey(key)) {
+      return key;
+    }
+  }
+  return null;
+}
+
+/**
  * True when /billing should offer the Owner Paid Upgrade CTA.
  *
- * Eligible when the shared owner wallet is not already on an Owner Paid tier —
- * including empty subscription lists (Starter not provisioned yet, or a soft
- * timeout). Gating only on Starter plan-key detection hid the CTA for those
- * cases and left “Add payment method” as the primary action.
+ * Eligible when the shared owner wallet is not already on a live Owner Paid
+ * tier — including empty lists, Starter-only, and canceled-Paid + scheduled
+ * Starter (Konnect-blocked) wallets.
  */
 export function ownerEligibleForPaidUpgrade(
   subscriptions: ReadonlyArray<SubscriptionRow>,
 ): boolean {
-  const rows = walletSubscriptionRows(subscriptions);
-  if (rows.length === 0) return true;
-  return !rows.some((row) => isOwnerPaidPlanKey(row.openMeterPlanKey));
+  return ownerCurrentLivePaidPlanKey(subscriptions) == null;
 }
 
-/** Current Owner Paid plan key on the wallet, if any. */
+/**
+ * Any Owner Paid plan key on the wallet (including canceled). Used for
+ * checkout preselect / resume-current-plan detection.
+ */
 export function ownerCurrentPaidPlanKey(
   subscriptions: ReadonlyArray<SubscriptionRow>,
 ): string | null {
@@ -41,11 +63,11 @@ export function ownerCurrentPaidPlanKey(
   return null;
 }
 
-/** True when the wallet is already on an Owner Paid tier (can switch tiers). */
+/** True when the wallet is on a live Owner Paid tier (can switch tiers). */
 export function ownerCanChangePaidPlan(
   subscriptions: ReadonlyArray<SubscriptionRow>,
 ): boolean {
-  return ownerCurrentPaidPlanKey(subscriptions) != null;
+  return ownerCurrentLivePaidPlanKey(subscriptions) != null;
 }
 
 /**

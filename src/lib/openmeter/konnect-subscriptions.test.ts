@@ -8,6 +8,7 @@ import {
   parseSubscriptionTiming,
   restoreKonnectSubscription,
   subscriptionMatchesOpenMeterPlanId,
+  unscheduleKonnectSubscriptionCancelation,
 } from "./konnect-subscriptions";
 
 function withKonnectEnv(t: test.TestContext): void {
@@ -67,12 +68,14 @@ test("changeKonnectSubscription cancel and restore call admin API", async (t) =>
   });
   await cancelKonnectSubscription({ subscriptionId: "sub_1" });
   await restoreKonnectSubscription({ subscriptionId: "sub_1" });
+  await unscheduleKonnectSubscriptionCancelation({ subscriptionId: "sub_1" });
 
   assert.match(calls[0]!.url, /\/subscriptions\/sub_1\/change$/);
   assert.match(calls[0]!.body, /"timing":"immediate"/);
   assert.match(calls[1]!.url, /\/subscriptions\/sub_1\/cancel$/);
   assert.match(calls[1]!.body, /next_billing_cycle/);
   assert.match(calls[2]!.url, /\/subscriptions\/sub_1\/restore$/);
+  assert.match(calls[3]!.url, /\/subscriptions\/sub_1\/unschedule-cancelation$/);
 });
 
 test("listActiveKonnectSubscriptions pages and filters statuses", async (t) => {

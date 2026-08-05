@@ -8,6 +8,8 @@ import DashboardLayout from "@/components/DashboardLayout";
 import {
   planCheckoutBillingMethodOnFileHint,
   planCheckoutLinkBillingMethodCopy,
+  OWNER_BILLING_SUPPORT_EMAIL,
+  ownerPendingDowngradeBlockedCopy,
 } from "@/lib/billing/owner-billing-copy";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-session";
@@ -35,6 +37,7 @@ type ErrorCode =
   | "tier_unavailable"
   | "upgrade_in_progress"
   | "upgrade_failed"
+  | "subscription_conflict"
   | "already_subscribed"
   | "plan_unavailable"
   | "account_ineligible"
@@ -73,6 +76,10 @@ const ERROR_COPY: Record<ErrorCode, ErrorSpec> = {
     message: "Upgrade could not be completed.",
     action: "Try again. If this repeats, contact support.",
   },
+  subscription_conflict: {
+    message: "A scheduled plan change is blocking this upgrade.",
+    action: "Email billing@pymthouse.com — your card was not charged.",
+  },
   already_subscribed: {
     message: "This account is already on a paid plan.",
     action: "Go to billing to manage your plan.",
@@ -98,7 +105,20 @@ const ERROR_COPY: Record<ErrorCode, ErrorSpec> = {
   },
 };
 
-function classifyError(raw: string | undefined): ErrorCode {
+function classifyError(raw: string | undefined, code?: string | null): ErrorCode {
+  const fromCode = (code ?? "").trim().toLowerCase();
+  if (fromCode === "payment_method_required") return "payment_method_required";
+  if (fromCode === "openmeter_unavailable") return "openmeter_unavailable";
+  if (fromCode === "no_subscription") return "no_subscription";
+  if (fromCode === "confirm_required") return "confirm_required";
+  if (fromCode === "tier_unavailable" || fromCode === "plan_unavailable") {
+    return "tier_unavailable";
+  }
+  if (fromCode === "upgrade_in_progress") return "upgrade_in_progress";
+  if (fromCode === "upgrade_failed") return "upgrade_failed";
+  if (fromCode === "subscription_conflict") return "subscription_conflict";
+  if (fromCode === "already_subscribed") return "already_subscribed";
+
   const msg = (raw ?? "").toLowerCase();
   if (msg.includes("payment_method_required")) return "payment_method_required";
   if (msg.includes("openmeter_unavailable")) return "openmeter_unavailable";
@@ -108,7 +128,12 @@ function classifyError(raw: string | undefined): ErrorCode {
     return "tier_unavailable";
   }
   if (msg.includes("upgrade_in_progress")) return "upgrade_in_progress";
-  if (msg.includes("upgrade_failed")) return "upgrade_failed";
+  if (msg.includes("subscription_conflict") || msg.includes("scheduled plan change")) {
+    return "subscription_conflict";
+  }
+  if (msg.includes("upgrade_failed") || msg.includes("upgrade failed")) {
+    return "upgrade_failed";
+  }
   if (msg.includes("already_subscribed") || msg.includes("already on")) {
     return "already_subscribed";
   }
@@ -978,6 +1003,7 @@ export default function OwnerPaidUpgradeCheckout({
     planKey: string;
     effectiveAt: string | null;
     currentPlanName: string | null;
+    resumeBlocked?: boolean;
   } | null;
 }>) {
   const router = useRouter();
@@ -1156,6 +1182,9 @@ export default function OwnerPaidUpgradeCheckout({
     currentPlanKey,
     Boolean(pendingDowngrade),
   );
+  const resumeBlocked = Boolean(
+    pendingDowngrade?.resumeBlocked && resumePendingDowngrade,
+  );
   const planStepDone =
     resumePendingDowngrade ||
     isPaidPlanSelectionReady(selectedKey, currentPlanKey);
@@ -1165,7 +1194,8 @@ export default function OwnerPaidUpgradeCheckout({
     hasPaymentMethod: pmOnFile,
     pmAttached: false,
   });
-  const canConfirm = planStepDone && cardStepDone && !busy;
+  const canConfirm =
+    planStepDone && cardStepDone && !busy && !resumeBlocked;
 
   function upgradeUrlWithPlan(extra: Record<string, string> = {}): string {
     const url = new URL("/billing/upgrade", window.location.origin);
@@ -1264,9 +1294,12 @@ export default function OwnerPaidUpgradeCheckout({
         },
         body: JSON.stringify({ planKey: selected.key, confirm: true }),
       });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+      };
       if (!res.ok) {
-        setErrorCode(classifyError(body.error || "Upgrade failed"));
+        setErrorCode(classifyError(body.error || "Upgrade failed", body.code));
         setBusy(false);
         return;
       }
@@ -1319,6 +1352,33 @@ export default function OwnerPaidUpgradeCheckout({
 
       {notice ? <NoticeBanner>{notice}</NoticeBanner> : null}
       {errorCode ? <ErrorBanner code={errorCode} /> : null}
+      {pendingDowngrade?.resumeBlocked ? (
+        <div
+          role="status"
+          className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3 text-sm"
+        >
+          {(() => {
+            const copy = ownerPendingDowngradeBlockedCopy({
+              currentPlanName: pendingDowngrade.currentPlanName,
+              scheduledPlanName: pendingDowngrade.planName,
+            });
+            return (
+              <>
+                <p className="font-medium text-zinc-100">{copy.title}</p>
+                <p className="mt-1 text-zinc-400">{copy.body}</p>
+                <p className="mt-2">
+                  <a
+                    className="text-primary underline-offset-2 hover:underline"
+                    href={`mailto:${OWNER_BILLING_SUPPORT_EMAIL}?subject=${encodeURIComponent("Unblock scheduled plan change")}`}
+                  >
+                    {copy.action}
+                  </a>
+                </p>
+              </>
+            );
+          })()}
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
         <div className="min-w-0 flex-1 space-y-5">

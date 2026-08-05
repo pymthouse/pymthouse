@@ -107,6 +107,7 @@ test("deriveOwnerPendingDowngrade surfaces scheduled Starter beside active Paid"
     planKey: "pymthouse_owner_starter",
     effectiveAt: "2026-09-01T00:00:00.000Z",
     currentPlanName: "Producer",
+    resumeBlocked: true,
   });
   assert.equal(displaySubscriptions.length, 2);
   assert.equal(
@@ -161,11 +162,54 @@ test("resolveOwnerPaidResumeTarget needs paid + scheduled Starter", () => {
   assert.deepEqual(resolveOwnerPaidResumeTarget(withBoth), {
     subscriptionId: "sub_paid",
     planKey: "pymthouse_owner_paid_producer",
+    scheduledStarterId: "sub_starter",
   });
   assert.equal(
     resolveOwnerPaidResumeTarget(withBoth.slice(0, 1)),
     null,
   );
+});
+
+test("resolveOwnerPaidResumeTarget accepts cancel-at-period-end Paid", () => {
+  const canceledOnly: OpenMeterSubscriptionView[] = [
+    {
+      id: "sub_paid",
+      status: "canceled",
+      customerId: "cust_1",
+      planKey: "pymthouse_owner_paid_producer",
+      planId: "plan_paid",
+      activeFrom: null,
+      activeTo: "2026-09-01T00:00:00.000Z",
+    },
+  ];
+  assert.deepEqual(resolveOwnerPaidResumeTarget(canceledOnly), {
+    subscriptionId: "sub_paid",
+    planKey: "pymthouse_owner_paid_producer",
+    scheduledStarterId: null,
+  });
+});
+
+test("deriveOwnerPendingDowngrade surfaces cancel-at-period-end Paid", () => {
+  const { displaySubscriptions, pendingDowngrade } = deriveOwnerPendingDowngrade({
+    subscriptions: [
+      {
+        appPublicClientId: null,
+        openMeterPlanKey: "pymthouse_owner_paid_producer",
+        planName: "Producer",
+        status: "canceled",
+        activeTo: "2026-09-01T00:00:00.000Z",
+      },
+    ],
+    starterPlanName: "Sandbox Starter",
+  });
+  assert.deepEqual(pendingDowngrade, {
+    planName: "Sandbox Starter",
+    planKey: "pymthouse_owner_starter",
+    effectiveAt: "2026-09-01T00:00:00.000Z",
+    currentPlanName: "Producer",
+    resumeBlocked: false,
+  });
+  assert.equal(displaySubscriptions.length, 1);
 });
 
 test("resumeOwnerPaidAfterScheduledDowngrade rejects without confirm", async () => {

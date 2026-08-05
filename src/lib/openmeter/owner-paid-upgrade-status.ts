@@ -5,7 +5,8 @@ export type OwnerPaidUpgradeErrorCode =
   | "confirm_required"
   | "tier_unavailable"
   | "upgrade_in_progress"
-  | "upgrade_failed";
+  | "upgrade_failed"
+  | "subscription_conflict";
 
 /** Map Owner Paid upgrade error codes to HTTP status codes. */
 export function ownerPaidUpgradeHttpStatus(
@@ -19,6 +20,7 @@ export function ownerPaidUpgradeHttpStatus(
     case "no_subscription":
       return 404;
     case "upgrade_in_progress":
+    case "subscription_conflict":
       return 409;
     case "confirm_required":
     case "tier_unavailable":

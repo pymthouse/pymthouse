@@ -10,5 +10,6 @@ test("ownerPaidUpgradeHttpStatus maps known codes", () => {
   assert.equal(ownerPaidUpgradeHttpStatus("confirm_required"), 400);
   assert.equal(ownerPaidUpgradeHttpStatus("tier_unavailable"), 400);
   assert.equal(ownerPaidUpgradeHttpStatus("upgrade_in_progress"), 409);
+  assert.equal(ownerPaidUpgradeHttpStatus("subscription_conflict"), 409);
   assert.equal(ownerPaidUpgradeHttpStatus("upgrade_failed"), 400);
 });

@@ -20,7 +20,7 @@ import {
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
-import { changeKonnectSubscription } from "./konnect-subscriptions";
+import { changeKonnectSubscription, cancelKonnectSubscription, deleteKonnectSubscription, unscheduleKonnectSubscriptionCancelation } from "./konnect-subscriptions";
 import {
   findOpenMeterPlanByKey,
   forceSyncOwnerAllowancePlan,
@@ -32,6 +32,7 @@ import { isOpenMeterPlanNotFoundError } from "./plan-errors";
 import {
   listOpenMeterSubscriptionsForCustomer,
   verifyOpenMeterSubscriptionId,
+  type OpenMeterSubscriptionView,
 } from "./subscription-read";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import {
@@ -281,6 +282,58 @@ export async function ensureOwnerPaidPlanSynced(): Promise<OwnerPaidPlanRef> {
   return ensureOwnerPaidTierPlanSynced(OWNER_PAID_PLAN_KEY);
 }
 
+/** Live wallet rows that can be plan-changed via Konnect `/change`. */
+export function isLiveOwnerWalletSubscriptionStatus(
+  status: string | null | undefined,
+): boolean {
+  const s = (status || "").toLowerCase();
+  return s === "active" || s === "trialing" || !s;
+}
+
+/** Scheduled/pending successors — cannot be `/change`d (Konnect 403). */
+export function isScheduledOwnerWalletSubscriptionStatus(
+  status: string | null | undefined,
+): boolean {
+  const s = (status || "").toLowerCase();
+  return s === "scheduled" || s === "pending";
+}
+
+/**
+ * Prefer a live (active/trialing) wallet subscription. Never return scheduled
+ * rows for upgrade `/change` — those fail with
+ * "transition cancel in state scheduled not allowed".
+ * @internal Exported for unit tests.
+ */
+export function pickLiveOwnerWalletSubscription(
+  listed: OpenMeterSubscriptionView[],
+): OpenMeterSubscriptionView | null {
+  return (
+    listed.find(
+      (s) => Boolean(s.id) && isLiveOwnerWalletSubscriptionStatus(s.status),
+    ) ?? null
+  );
+}
+
+/** @internal Exported for unit tests. */
+export function listScheduledOwnerWalletSubscriptionIds(
+  listed: OpenMeterSubscriptionView[],
+): string[] {
+  return listed
+    .filter(
+      (s) =>
+        Boolean(s.id) && isScheduledOwnerWalletSubscriptionStatus(s.status),
+    )
+    .map((s) => s.id);
+}
+
+/** @internal Exported for unit tests. */
+export function isKonnectScheduledChangeForbidden(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /transition cancel in state scheduled not allowed|cancel in state scheduled/i.test(
+    msg,
+  );
+}
+
 async function findActiveOwnerWalletSubscription(input: {
   client: OpenMeter;
   customerId: string;
@@ -298,7 +351,8 @@ async function findActiveOwnerWalletSubscription(input: {
     if (
       verified?.id &&
       verified.customerId &&
-      verified.customerId === input.customerId
+      verified.customerId === input.customerId &&
+      isLiveOwnerWalletSubscriptionStatus(verified.status)
     ) {
       return {
         id: verified.id,
@@ -313,21 +367,14 @@ async function findActiveOwnerWalletSubscription(input: {
       input.client,
       input.customerId,
     );
-    const active = listed.find(
-      (s) =>
-        s.status === "active" ||
-        s.status === "trialing" ||
-        s.status === "scheduled" ||
-        s.status === "pending" ||
-        !s.status,
-    );
-    if (!active?.id) {
+    const live = pickLiveOwnerWalletSubscription(listed);
+    if (!live?.id) {
       return null;
     }
     return {
-      id: active.id,
-      planKey: active.planKey ?? "",
-      openmeterPlanId: active.planId ?? "",
+      id: live.id,
+      planKey: live.planKey ?? "",
+      openmeterPlanId: live.planId ?? "",
     };
   } catch {
     return null;
@@ -342,7 +389,8 @@ export class OwnerPaidUpgradeError extends Error {
     | "confirm_required"
     | "tier_unavailable"
     | "upgrade_in_progress"
-    | "upgrade_failed";
+    | "upgrade_failed"
+    | "subscription_conflict";
 
   constructor(
     code: OwnerPaidUpgradeError["code"],
@@ -393,45 +441,154 @@ export async function upgradeOwnerToPaidPlan(input: {
     customerKey: customer.key,
   });
 
-  const existing = await findActiveOwnerWalletSubscription({
+  const listed = await listOpenMeterSubscriptionsForCustomer(
     client,
-    customerId: customer.id,
-    hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
-  });
-  assertUpgradeableSubscription(existing);
+    customer.id,
+  );
+  // Never treat scheduled/pending rows as change targets — Konnect 403s
+  // "transition cancel in state scheduled not allowed".
+  const liveRaw =
+    (input.hintOpenMeterSubscriptionId
+      ? listed.find(
+          (s) =>
+            s.id === input.hintOpenMeterSubscriptionId &&
+            isLiveOwnerWalletSubscriptionStatus(s.status),
+        )
+      : null) ?? pickLiveOwnerWalletSubscription(listed);
+  const live =
+    liveRaw && !isScheduledOwnerWalletSubscriptionStatus(liveRaw.status)
+      ? liveRaw
+      : null;
+  const scheduledIds = listScheduledOwnerWalletSubscriptionIds(listed);
 
-  if (isOwnerPaidPlanKey(existing.planKey) && existing.planKey === plan.key) {
-    return {
-      openmeterSubscriptionId: existing.id,
-      planKey: existing.planKey || plan.key,
-      openmeterPlanId: existing.openmeterPlanId || plan.openmeterPlanId,
-      monthlyFeeUsd,
-      alreadyPaid: true,
-    };
+  // Fast-fail before claim when a scheduled successor blocks Konnect writes.
+  if (!live && scheduledIds.length > 0) {
+    await clearScheduledOwnerSubscriptions(scheduledIds);
+    const stillScheduled = listScheduledOwnerWalletSubscriptionIds(
+      await listOpenMeterSubscriptionsForCustomer(client, customer.id),
+    );
+    if (stillScheduled.length > 0) {
+      throw new OwnerPaidUpgradeError(
+        "subscription_conflict",
+        "A scheduled plan change is blocking this upgrade and cannot be removed automatically. Contact support at billing@pymthouse.com.",
+      );
+    }
   }
 
-  // planKey often missing on Konnect list/get — fall back to OpenMeter plan id.
-  if (
-    !existing.planKey &&
-    existing.openmeterPlanId &&
-    existing.openmeterPlanId === plan.openmeterPlanId
-  ) {
-    return {
-      openmeterSubscriptionId: existing.id,
-      planKey: plan.key,
-      openmeterPlanId: plan.openmeterPlanId,
-      monthlyFeeUsd,
-      alreadyPaid: true,
+  if (live?.id) {
+    const existing = {
+      id: live.id,
+      planKey: live.planKey ?? "",
+      openmeterPlanId: live.planId ?? "",
     };
+    assertUpgradeableSubscription(existing);
+
+    if (isOwnerPaidPlanKey(existing.planKey) && existing.planKey === plan.key) {
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey || plan.key,
+        openmeterPlanId: existing.openmeterPlanId || plan.openmeterPlanId,
+        monthlyFeeUsd,
+        alreadyPaid: true,
+      };
+    }
+
+    // planKey often missing on Konnect list/get — fall back to OpenMeter plan id.
+    if (
+      !existing.planKey &&
+      existing.openmeterPlanId &&
+      existing.openmeterPlanId === plan.openmeterPlanId
+    ) {
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: plan.key,
+        openmeterPlanId: plan.openmeterPlanId,
+        monthlyFeeUsd,
+        alreadyPaid: true,
+      };
+    }
+
+    return runClaimedOwnerPaidUpgrade({
+      ownerUserId,
+      plan,
+      monthlyFeeUsd,
+      existingId: existing.id,
+      existingPlanKey: existing.planKey,
+      customerId: customer.id,
+      client,
+      scheduledSubscriptionIds: scheduledIds,
+    });
   }
 
+  // Cancel-at-period-end Paid (or legacy canceled Paid + scheduled Starter).
+  const canceledPaid = listed.find(
+    (s) =>
+      Boolean(s.id) &&
+      (s.status || "").toLowerCase() === "canceled" &&
+      isOwnerPaidPlanKey(s.planKey),
+  );
+
+  if (canceledPaid?.id || scheduledIds.length > 0) {
+    await clearScheduledOwnerSubscriptions(scheduledIds);
+    const stillScheduled = listScheduledOwnerWalletSubscriptionIds(
+      await listOpenMeterSubscriptionsForCustomer(client, customer.id),
+    );
+    if (stillScheduled.length > 0) {
+      throw new OwnerPaidUpgradeError(
+        "subscription_conflict",
+        "A scheduled plan change is blocking this upgrade and cannot be removed automatically. Contact support at billing@pymthouse.com.",
+      );
+    }
+  }
+
+  if (canceledPaid?.id) {
+    try {
+      await unscheduleKonnectSubscriptionCancelation({
+        subscriptionId: canceledPaid.id,
+      });
+    } catch (err) {
+      console.warn(
+        "Owner Paid upgrade: unschedule canceled Paid failed",
+        err instanceof Error ? err.message : err,
+      );
+      throw new OwnerPaidUpgradeError(
+        "subscription_conflict",
+        "Could not resume the canceled paid plan before upgrading. Contact support at billing@pymthouse.com.",
+      );
+    }
+
+    if (isOwnerPaidPlanKey(canceledPaid.planKey) && canceledPaid.planKey === plan.key) {
+      return {
+        openmeterSubscriptionId: canceledPaid.id,
+        planKey: canceledPaid.planKey || plan.key,
+        openmeterPlanId: canceledPaid.planId || plan.openmeterPlanId,
+        monthlyFeeUsd,
+        alreadyPaid: true,
+      };
+    }
+
+    return runClaimedOwnerPaidUpgrade({
+      ownerUserId,
+      plan,
+      monthlyFeeUsd,
+      existingId: canceledPaid.id,
+      existingPlanKey: canceledPaid.planKey ?? "",
+      customerId: customer.id,
+      client,
+      scheduledSubscriptionIds: [],
+    });
+  }
+
+  // No live/canceled Paid — clear any stray scheduled rows and create Paid.
   return runClaimedOwnerPaidUpgrade({
     ownerUserId,
     plan,
     monthlyFeeUsd,
-    existingId: existing.id,
-    existingPlanKey: existing.planKey,
+    existingId: null,
+    existingPlanKey: "",
     customerId: customer.id,
+    client,
+    scheduledSubscriptionIds: scheduledIds,
   });
 }
 
@@ -526,14 +683,20 @@ async function runClaimedOwnerPaidUpgrade(input: {
   ownerUserId: string;
   plan: OwnerPaidPlanRef;
   monthlyFeeUsd: string;
-  existingId: string;
+  existingId: string | null;
   existingPlanKey: string;
   customerId: string;
+  client: OpenMeter;
+  scheduledSubscriptionIds: string[];
 }): Promise<OwnerPaidUpgradeResult> {
   const claim = await claimOwnerPaidUpgradeOperation({
     ownerUserId: input.ownerUserId,
     planKey: input.plan.key,
-    currentPlanKey: input.existingPlanKey,
+    // When there is no live subscription, force reclaim of any completed row
+    // for this plan (prior Paid may be canceled with a leftover scheduled Starter).
+    currentPlanKey: input.existingId
+      ? input.existingPlanKey
+      : "__no_live_subscription__",
   });
   if (claim.action === "return") {
     return claim.result;
@@ -548,11 +711,13 @@ async function runClaimedOwnerPaidUpgrade(input: {
   const operationId = claim.operationId;
   let result: OwnerPaidUpgradeResult;
   try {
-    result = await changeSubscriptionToPaidTier({
+    result = await changeOrCreateSubscriptionToPaidTier({
+      client: input.client,
       subscriptionId: input.existingId,
       customerId: input.customerId,
       plan: input.plan,
       monthlyFeeUsd: input.monthlyFeeUsd,
+      scheduledSubscriptionIds: input.scheduledSubscriptionIds,
     });
   } catch (err) {
     const message =
@@ -581,6 +746,149 @@ async function runClaimedOwnerPaidUpgrade(input: {
     );
   }
   return result;
+}
+
+async function clearScheduledOwnerSubscriptions(
+  subscriptionIds: string[],
+): Promise<void> {
+  for (const subscriptionId of subscriptionIds) {
+    try {
+      await cancelKonnectSubscription({
+        subscriptionId,
+        timing: "immediate",
+      });
+      continue;
+    } catch (cancelErr) {
+      console.warn(
+        "Owner Paid upgrade: cancel scheduled failed, trying delete",
+        subscriptionId,
+        cancelErr instanceof Error ? cancelErr.message : cancelErr,
+      );
+    }
+    try {
+      await deleteKonnectSubscription({ subscriptionId });
+    } catch (deleteErr) {
+      console.warn(
+        "Owner Paid upgrade: delete scheduled failed",
+        subscriptionId,
+        deleteErr instanceof Error ? deleteErr.message : deleteErr,
+      );
+    }
+  }
+}
+
+async function changeOrCreateSubscriptionToPaidTier(input: {
+  client: OpenMeter;
+  subscriptionId: string | null;
+  customerId: string;
+  plan: OwnerPaidPlanRef;
+  monthlyFeeUsd: string;
+  scheduledSubscriptionIds: string[];
+}): Promise<OwnerPaidUpgradeResult> {
+  const scheduledSet = new Set(input.scheduledSubscriptionIds);
+  if (input.subscriptionId && scheduledSet.has(input.subscriptionId)) {
+    throw new OwnerPaidUpgradeError(
+      "subscription_conflict",
+      "A scheduled plan change is blocking this upgrade and cannot be removed automatically. Contact support at billing@pymthouse.com.",
+    );
+  }
+
+  if (input.subscriptionId) {
+    try {
+      return await changeSubscriptionToPaidTier({
+        subscriptionId: input.subscriptionId,
+        customerId: input.customerId,
+        plan: input.plan,
+        monthlyFeeUsd: input.monthlyFeeUsd,
+      });
+    } catch (err) {
+      if (!isKonnectScheduledChangeForbidden(err)) {
+        throw err;
+      }
+      console.warn(
+        "Owner Paid upgrade: live change hit scheduled-state forbid; creating Paid subscription",
+      );
+    }
+  }
+
+  await clearScheduledOwnerSubscriptions(input.scheduledSubscriptionIds);
+  if (input.scheduledSubscriptionIds.length > 0) {
+    // Re-list is done by callers for the canceled-paid path; here fail closed on
+    // create if Konnect still refuses to remove scheduled successors.
+    try {
+      const remaining = listScheduledOwnerWalletSubscriptionIds(
+        await listOpenMeterSubscriptionsForCustomer(
+          input.client,
+          input.customerId,
+        ),
+      );
+      if (remaining.length > 0) {
+        throw new OwnerPaidUpgradeError(
+          "subscription_conflict",
+          "A scheduled plan change is blocking this upgrade and cannot be removed automatically. Contact support at billing@pymthouse.com.",
+        );
+      }
+    } catch (err) {
+      if (err instanceof OwnerPaidUpgradeError) {
+        throw err;
+      }
+      // Listing failed — still attempt create; conflict surfaces from Konnect.
+    }
+  }
+  return createOwnerPaidSubscription({
+    client: input.client,
+    customerId: input.customerId,
+    plan: input.plan,
+    monthlyFeeUsd: input.monthlyFeeUsd,
+  });
+}
+
+async function createOwnerPaidSubscription(input: {
+  client: OpenMeter;
+  customerId: string;
+  plan: OwnerPaidPlanRef;
+  monthlyFeeUsd: string;
+}): Promise<OwnerPaidUpgradeResult> {
+  let openmeterPlanId = input.plan.openmeterPlanId;
+  let resultPlanKey = input.plan.key;
+  let resultMonthlyFee = input.monthlyFeeUsd;
+
+  let created;
+  try {
+    created = await input.client.subscriptions.create({
+      customerId: input.customerId,
+      plan: { key: resultPlanKey },
+    });
+  } catch (err) {
+    if (!isOpenMeterPlanNotFoundError(err)) {
+      throw err;
+    }
+    invalidateOwnerPaidPlanCache();
+    const resynced = await ensureOwnerPaidTierPlanSynced(input.plan.key);
+    openmeterPlanId = resynced.openmeterPlanId;
+    resultPlanKey = resynced.key;
+    resultMonthlyFee = resynced.monthlyFeeUsd || input.monthlyFeeUsd;
+    created = await input.client.subscriptions.create({
+      customerId: input.customerId,
+      plan: { key: resultPlanKey },
+    });
+  }
+
+  const createdId = created?.id?.trim();
+  if (!createdId) {
+    throw new OwnerPaidUpgradeError(
+      "upgrade_failed",
+      "Owner Paid subscription create returned no id",
+    );
+  }
+
+  return {
+    openmeterSubscriptionId: createdId,
+    planKey: resultPlanKey,
+    openmeterPlanId,
+    monthlyFeeUsd: resultMonthlyFee,
+    alreadyPaid: false,
+  };
 }
 
 async function changeSubscriptionToPaidTier(input: {

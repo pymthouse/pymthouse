@@ -20,6 +20,8 @@ import {
 import {
   billingCreditsEmptyHint,
   billingIntroCopy,
+  OWNER_BILLING_SUPPORT_EMAIL,
+  ownerPendingDowngradeBlockedCopy,
 } from "@/lib/billing/owner-billing-copy";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
@@ -366,6 +368,51 @@ function OwnerSubscriptionsSection({
   );
 }
 
+function PendingDowngradeBanner({
+  pending,
+}: Readonly<{
+  pending: NonNullable<OwnerBillingPayload["pendingDowngrade"]>;
+}>) {
+  if (pending.resumeBlocked) {
+    const copy = ownerPendingDowngradeBlockedCopy({
+      currentPlanName: pending.currentPlanName,
+      scheduledPlanName: pending.planName,
+    });
+    return (
+      <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-4 py-4 sm:px-5">
+        <h2 className="text-sm font-semibold text-zinc-100">{copy.title}</h2>
+        <p className="mt-1 text-sm text-zinc-400">{copy.body}</p>
+        <p className="mt-2 text-sm text-zinc-300">
+          <a
+            className="text-primary underline-offset-2 hover:underline"
+            href={`mailto:${OWNER_BILLING_SUPPORT_EMAIL}?subject=${encodeURIComponent("Unblock scheduled plan change")}`}
+          >
+            {copy.action}
+          </a>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6 rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-4 sm:px-5">
+      <h2 className="text-sm font-semibold text-zinc-100">
+        Downgrade scheduled
+      </h2>
+      <p className="mt-1 text-sm text-zinc-400">
+        Switching to {pending.planName}
+        {pending.effectiveAt
+          ? ` on ${new Date(pending.effectiveAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`
+          : " at the end of this billing cycle"}
+        . You keep {pending.currentPlanName ?? "your paid plan"} until then.
+      </p>
+      <OwnerResumePendingDowngradeButton
+        currentPlanName={pending.currentPlanName}
+      />
+    </div>
+  );
+}
+
 export default function OwnerBillingView({
   data,
   paymentMethodPanel,
@@ -444,23 +491,7 @@ export default function OwnerBillingView({
           </Suspense>
 
           {data.pendingDowngrade ? (
-            <div className="mb-6 rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-4 sm:px-5">
-              <h2 className="text-sm font-semibold text-zinc-100">
-                Downgrade scheduled
-              </h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                Switching to {data.pendingDowngrade.planName}
-                {data.pendingDowngrade.effectiveAt
-                  ? ` on ${new Date(data.pendingDowngrade.effectiveAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`
-                  : " at the end of this billing cycle"}
-                . You keep{" "}
-                {data.pendingDowngrade.currentPlanName ?? "your paid plan"}{" "}
-                until then.
-              </p>
-              <OwnerResumePendingDowngradeButton
-                currentPlanName={data.pendingDowngrade.currentPlanName}
-              />
-            </div>
+            <PendingDowngradeBanner pending={data.pendingDowngrade} />
           ) : null}
 
           {needsPaymentMethod ? (

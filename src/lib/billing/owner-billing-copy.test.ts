@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   billingCreditsEmptyHint,
   billingIntroCopy,
+  ownerPendingDowngradeBlockedCopy,
   planCheckoutBillingMethodOnFileHint,
   planCheckoutLinkBillingMethodCopy,
 } from "@/lib/billing/owner-billing-copy";
@@ -89,4 +90,15 @@ test("planCheckoutBillingMethodOnFileHint is plan fee + overage", () => {
     planCheckoutBillingMethodOnFileHint(),
     "Used for plan fee and overage.",
   );
+});
+
+test("ownerPendingDowngradeBlockedCopy points at billing support", () => {
+  const copy = ownerPendingDowngradeBlockedCopy({
+    currentPlanName: "Producer",
+    scheduledPlanName: "Sandbox Starter",
+  });
+  assert.match(copy.title, /support/i);
+  assert.match(copy.body, /Producer/);
+  assert.match(copy.body, /Sandbox Starter/);
+  assert.match(copy.action, /billing@pymthouse\.com/);
 });

@@ -246,6 +246,7 @@ async function findExistingOwnerWalletSubscription(input: {
         s.status === "trialing" ||
         s.status === "scheduled" ||
         s.status === "pending" ||
+        s.status === "canceled" ||
         !s.status,
     );
     if (!active?.id) {

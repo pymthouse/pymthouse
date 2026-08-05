@@ -104,13 +104,37 @@ test("ownerCanChangePaidPlan stays true while Paid is active with scheduled Star
     {
       openMeterPlanKey: "pymthouse_owner_paid_producer",
       appPublicClientId: null,
+      status: "active",
     },
     {
       openMeterPlanKey: "pymthouse_owner_starter",
       appPublicClientId: null,
+      status: "scheduled",
     },
   ];
   assert.equal(ownerCanChangePaidPlan(pendingDowngrade), true);
   assert.equal(ownerEligibleForPaidUpgrade(pendingDowngrade), false);
   assert.equal(ownerCanAccessPlanCheckout(pendingDowngrade), true);
+});
+
+test("canceled Paid + scheduled Starter stays Upgrade-eligible (resume blocked)", () => {
+  const stuck = [
+    {
+      openMeterPlanKey: "pymthouse_owner_paid_producer",
+      appPublicClientId: null,
+      status: "canceled",
+    },
+    {
+      openMeterPlanKey: "pymthouse_owner_starter",
+      appPublicClientId: null,
+      status: "scheduled",
+    },
+  ];
+  assert.equal(ownerCanChangePaidPlan(stuck), false);
+  assert.equal(ownerEligibleForPaidUpgrade(stuck), true);
+  assert.equal(
+    ownerCurrentPaidPlanKey(stuck),
+    "pymthouse_owner_paid_producer",
+  );
+  assert.equal(ownerCanAccessPlanCheckout(stuck), true);
 });

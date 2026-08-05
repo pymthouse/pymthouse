@@ -2,17 +2,18 @@ import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billin
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
 import {
-  changeKonnectSubscription,
-  konnectSubscriptionStartIso,
+  cancelKonnectSubscription,
+  deleteKonnectSubscription,
+  estimateNextBillingCycleIso,
+  konnectSubscriptionBillingAnchorIso,
   restoreKonnectSubscription,
+  unscheduleKonnectSubscriptionCancelation,
 } from "./konnect-subscriptions";
 import { isOwnerPaidPlanKey } from "./owner-paid-key";
 import {
   ensureOwnerStarterPlanSynced,
-  invalidateOwnerStarterPlanCache,
   isOwnerStarterPlanKey,
 } from "./owner-starter-plan";
-import { isOpenMeterPlanNotFoundError } from "./plan-errors";
 import {
   listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
@@ -70,14 +71,20 @@ function isScheduledSubscriptionStatus(status: string): boolean {
   return s === "scheduled" || s === "pending";
 }
 
+function isCanceledSubscriptionStatus(status: string): boolean {
+  return status.toLowerCase() === "canceled";
+}
+
 function pickWalletSubs(
   listed: OpenMeterSubscriptionView[],
 ): {
   activePaid: OpenMeterSubscriptionView | null;
+  canceledPaid: OpenMeterSubscriptionView | null;
   activeStarter: OpenMeterSubscriptionView | null;
   scheduledStarter: OpenMeterSubscriptionView | null;
 } {
   let activePaid: OpenMeterSubscriptionView | null = null;
+  let canceledPaid: OpenMeterSubscriptionView | null = null;
   let activeStarter: OpenMeterSubscriptionView | null = null;
   let scheduledStarter: OpenMeterSubscriptionView | null = null;
 
@@ -85,9 +92,13 @@ function pickWalletSubs(
     const status = sub.status || "";
     const isLive = isLiveSubscriptionStatus(status);
     const isScheduled = isScheduledSubscriptionStatus(status);
+    const isCanceled = isCanceledSubscriptionStatus(status);
 
     if (isLive && isOwnerPaidPlanKey(sub.planKey) && !activePaid) {
       activePaid = sub;
+    }
+    if (isCanceled && isOwnerPaidPlanKey(sub.planKey) && !canceledPaid) {
+      canceledPaid = sub;
     }
     if (isLive && isOwnerStarterPlanKey(sub.planKey) && !activeStarter) {
       activeStarter = sub;
@@ -97,13 +108,14 @@ function pickWalletSubs(
     }
   }
 
-  return { activePaid, activeStarter, scheduledStarter };
+  return { activePaid, canceledPaid, activeStarter, scheduledStarter };
 }
 
 /**
- * Schedule Sandbox Starter for the owner wallet at `next_billing_cycle`.
- * Current Owner Paid plan stays active until then. Does **not** apply the free
- * billing profile — that runs lazily once Starter is the active plan.
+ * Schedule end-of-cycle cancel of Owner Paid (Konnect `cancel` +
+ * `next_billing_cycle`). Sandbox Starter is created lazily once Paid ends —
+ * do **not** `/change` onto Starter (Konnect cannot delete scheduled
+ * successors, which blocks resume/re-upgrade).
  */
 export async function downgradeOwnerToStarterPlan(input: {
   ownerUserId: string;
@@ -138,9 +150,10 @@ export async function downgradeOwnerToStarterPlan(input: {
     client,
     customer.id,
   );
-  const { activePaid, activeStarter, scheduledStarter } = pickWalletSubs(listed);
+  const { activePaid, canceledPaid, activeStarter, scheduledStarter } =
+    pickWalletSubs(listed);
 
-  if (activeStarter?.id && !activePaid) {
+  if (activeStarter?.id && !activePaid && !canceledPaid) {
     return {
       openmeterSubscriptionId: activeStarter.id,
       planKey: activeStarter.planKey || "",
@@ -148,6 +161,24 @@ export async function downgradeOwnerToStarterPlan(input: {
       openmeterPlanId: activeStarter.planId || "",
       effectiveAt: null,
       alreadyStarter: true,
+    };
+  }
+
+  // Already cancel-at-period-end (or legacy change-based with canceled Paid).
+  if (canceledPaid?.id && !activePaid) {
+    const includedUsdMicros =
+      await resolveOwnerStarterIncludedUsdMicros(ownerUserId);
+    const starter = await ensureOwnerStarterPlanSynced(includedUsdMicros);
+    return {
+      openmeterSubscriptionId: canceledPaid.id,
+      planKey: canceledPaid.planKey || "",
+      scheduledPlanKey: scheduledStarter?.planKey || starter.key,
+      openmeterPlanId: scheduledStarter?.planId || starter.openmeterPlanId,
+      effectiveAt:
+        scheduledStarter?.activeFrom ??
+        canceledPaid.activeTo ??
+        null,
+      alreadyScheduled: true,
     };
   }
 
@@ -173,77 +204,43 @@ export async function downgradeOwnerToStarterPlan(input: {
     await resolveOwnerStarterIncludedUsdMicros(ownerUserId);
   const starter = await ensureOwnerStarterPlanSynced(includedUsdMicros);
 
-  return changePaidSubscriptionToStarterNextCycle({
+  return cancelPaidSubscriptionAtNextCycle({
     subscriptionId: activePaid.id,
-    customerId: customer.id,
     currentPlanKey: activePaid.planKey || "",
     currentActiveTo: activePaid.activeTo,
     starter,
   });
 }
 
-async function changePaidSubscriptionToStarterNextCycle(input: {
+async function cancelPaidSubscriptionAtNextCycle(input: {
   subscriptionId: string;
-  customerId: string;
   currentPlanKey: string;
   currentActiveTo: string | null;
   starter: { key: string; openmeterPlanId: string; includedUsdMicros: string };
 }): Promise<OwnerStarterDowngradeResult> {
-  let openmeterPlanId = input.starter.openmeterPlanId;
-  let scheduledPlanKey = input.starter.key;
-  let change;
-
+  let canceled;
   try {
-    change = await changeKonnectSubscription({
+    canceled = await cancelKonnectSubscription({
       subscriptionId: input.subscriptionId,
-      customerId: input.customerId,
-      planId: openmeterPlanId,
       timing: "next_billing_cycle",
     });
   } catch (err) {
-    if (!isOpenMeterPlanNotFoundError(err)) {
-      console.error("Owner Starter downgrade failed", err);
-      throw new OwnerStarterDowngradeError(
-        "downgrade_failed",
-        "Could not schedule Sandbox Starter",
-      );
-    }
-    invalidateOwnerStarterPlanCache();
-    const resynced = await ensureOwnerStarterPlanSynced(
-      input.starter.includedUsdMicros,
+    console.error("Owner Starter downgrade failed", err);
+    throw new OwnerStarterDowngradeError(
+      "downgrade_failed",
+      "Could not schedule Sandbox Starter",
     );
-    openmeterPlanId = resynced.openmeterPlanId;
-    scheduledPlanKey = resynced.key;
-    try {
-      change = await changeKonnectSubscription({
-        subscriptionId: input.subscriptionId,
-        customerId: input.customerId,
-        planId: openmeterPlanId,
-        timing: "next_billing_cycle",
-      });
-    } catch (retryErr) {
-      console.error("Owner Starter downgrade retry failed", retryErr);
-      throw new OwnerStarterDowngradeError(
-        "downgrade_failed",
-        "Could not schedule Sandbox Starter",
-      );
-    }
   }
 
-  const nextId =
-    change.next?.id?.trim() ||
-    change.current?.id?.trim() ||
-    input.subscriptionId;
-
-  // Prefer the scheduled next's start; fall back to current activeTo (cycle end).
   const effectiveAt =
-    konnectSubscriptionStartIso(change.next) || input.currentActiveTo;
+    input.currentActiveTo ||
+    estimateNextBillingCycleIso(konnectSubscriptionBillingAnchorIso(canceled));
 
   return {
-    openmeterSubscriptionId: nextId,
+    openmeterSubscriptionId: canceled.id?.trim() || input.subscriptionId,
     planKey: input.currentPlanKey,
-    scheduledPlanKey,
-    openmeterPlanId,
+    scheduledPlanKey: input.starter.key,
+    openmeterPlanId: input.starter.openmeterPlanId,
     effectiveAt,
     alreadyScheduled: false,
   };
@@ -292,24 +289,41 @@ export type OwnerPaidResumeResult = {
   planName: string | null;
 };
 
-/** Paid sub to restore when a Starter downgrade is scheduled; null if none. */
+/** Paid sub to unschedule/restore when a downgrade is pending; null if none. */
 export function resolveOwnerPaidResumeTarget(
   listed: OpenMeterSubscriptionView[],
-): { subscriptionId: string; planKey: string } | null {
-  const { activePaid, scheduledStarter } = pickWalletSubs(listed);
-  if (!activePaid?.id || !scheduledStarter?.id) {
-    return null;
+): {
+  subscriptionId: string;
+  planKey: string;
+  scheduledStarterId: string | null;
+} | null {
+  const { activePaid, canceledPaid, scheduledStarter } = pickWalletSubs(listed);
+
+  // Legacy change-based: live Paid + scheduled Starter successor.
+  if (activePaid?.id && scheduledStarter?.id) {
+    return {
+      subscriptionId: activePaid.id,
+      planKey: activePaid.planKey || "",
+      scheduledStarterId: scheduledStarter.id,
+    };
   }
-  return {
-    subscriptionId: activePaid.id,
-    planKey: activePaid.planKey || "",
-  };
+
+  // Cancel-at-period-end, or change-based where Paid already shows canceled.
+  if (canceledPaid?.id) {
+    return {
+      subscriptionId: canceledPaid.id,
+      planKey: canceledPaid.planKey || "",
+      scheduledStarterId: scheduledStarter?.id ?? null,
+    };
+  }
+
+  return null;
 }
 
 /**
- * Cancel a scheduled end-of-cycle Starter downgrade by restoring the active
- * Owner Paid subscription (OpenMeter deletes the scheduled successor).
- * No charge — the current paid plan continues.
+ * Undo a pending end-of-cycle downgrade.
+ * Prefer Konnect `unschedule-cancelation` (cancel-at-period-end). When a legacy
+ * scheduled Starter successor exists, try delete then unschedule, then restore.
  */
 export async function resumeOwnerPaidAfterScheduledDowngrade(input: {
   ownerUserId: string;
@@ -359,16 +373,52 @@ export async function resumeOwnerPaidAfterScheduledDowngrade(input: {
   }
 
   try {
-    const restored = await restoreKonnectSubscription({
+    if (target.scheduledStarterId) {
+      try {
+        await deleteKonnectSubscription({
+          subscriptionId: target.scheduledStarterId,
+        });
+      } catch (deleteErr) {
+        console.warn(
+          "Owner Paid resume: delete scheduled Starter failed",
+          deleteErr instanceof Error ? deleteErr.message : deleteErr,
+        );
+        try {
+          await restoreKonnectSubscription({
+            subscriptionId: target.subscriptionId,
+          });
+          return {
+            resumed: true,
+            openmeterSubscriptionId: target.subscriptionId,
+            planKey: target.planKey,
+            planName: null,
+          };
+        } catch (restoreErr) {
+          console.warn(
+            "Owner Paid resume: restore failed after scheduled delete miss",
+            restoreErr instanceof Error ? restoreErr.message : restoreErr,
+          );
+          throw new OwnerPaidResumeError(
+            "resume_failed",
+            "Could not cancel the scheduled downgrade — email billing@pymthouse.com and we’ll unblock your account.",
+          );
+        }
+      }
+    }
+
+    const resumed = await unscheduleKonnectSubscriptionCancelation({
       subscriptionId: target.subscriptionId,
     });
     return {
       resumed: true,
-      openmeterSubscriptionId: restored.id?.trim() || target.subscriptionId,
+      openmeterSubscriptionId: resumed.id?.trim() || target.subscriptionId,
       planKey: target.planKey,
       planName: null,
     };
   } catch (err) {
+    if (err instanceof OwnerPaidResumeError) {
+      throw err;
+    }
     console.error("Owner Paid resume failed", err);
     throw new OwnerPaidResumeError(
       "resume_failed",
@@ -401,6 +451,11 @@ export type OwnerPendingDowngrade = {
   planKey: string;
   effectiveAt: string | null;
   currentPlanName: string | null;
+  /**
+   * True when a scheduled Starter successor exists. Konnect Metering cannot
+   * delete/restore that successor via API — resume/re-upgrade need support.
+   */
+  resumeBlocked: boolean;
 };
 
 export type OwnerPendingDowngradeSubscriptionRow = {
@@ -414,7 +469,7 @@ export type OwnerPendingDowngradeSubscriptionRow = {
 
 /**
  * Split wallet billing rows: hide scheduled Starter from the plan card list and
- * surface it as a pending end-of-cycle downgrade.
+ * surface cancel-at-period-end / legacy scheduled-Starter as pending downgrade.
  */
 export function deriveOwnerPendingDowngrade<
   T extends OwnerPendingDowngradeSubscriptionRow,
@@ -428,9 +483,19 @@ export function deriveOwnerPendingDowngrade<
   const wallet = input.subscriptions.filter(
     (row) => row.appPublicClientId == null,
   );
-  const paid = wallet.find(
+  const livePaid = wallet.find(
     (row) =>
       isOwnerPaidPlanKey(row.openMeterPlanKey) &&
+      isLiveSubscriptionStatus(row.status),
+  );
+  const canceledPaid = wallet.find(
+    (row) =>
+      isOwnerPaidPlanKey(row.openMeterPlanKey) &&
+      isCanceledSubscriptionStatus(row.status),
+  );
+  const liveStarter = wallet.find(
+    (row) =>
+      isOwnerStarterPlanKey(row.openMeterPlanKey) &&
       isLiveSubscriptionStatus(row.status),
   );
   const scheduledStarter = wallet.find(
@@ -439,16 +504,36 @@ export function deriveOwnerPendingDowngrade<
       isScheduledSubscriptionStatus(row.status),
   );
 
-  const pendingDowngrade =
-    paid && scheduledStarter && scheduledStarter.openMeterPlanKey
-      ? {
-          planName: input.starterPlanName,
-          planKey: scheduledStarter.openMeterPlanKey,
-          effectiveAt:
-            scheduledStarter.activeFrom ?? paid.activeTo ?? null,
-          currentPlanName: paid.planName,
-        }
-      : null;
+  const paidForPending = livePaid ?? canceledPaid;
+  let pendingDowngrade: OwnerPendingDowngrade | null = null;
+
+  if (
+    paidForPending &&
+    scheduledStarter?.openMeterPlanKey &&
+    (livePaid || canceledPaid)
+  ) {
+    pendingDowngrade = {
+      planName: input.starterPlanName,
+      planKey: scheduledStarter.openMeterPlanKey,
+      effectiveAt:
+        scheduledStarter.activeFrom ?? paidForPending.activeTo ?? null,
+      currentPlanName: paidForPending.planName,
+      resumeBlocked: true,
+    };
+  } else if (
+    canceledPaid &&
+    !livePaid &&
+    !liveStarter &&
+    !scheduledStarter
+  ) {
+    pendingDowngrade = {
+      planName: input.starterPlanName,
+      planKey: "pymthouse_owner_starter",
+      effectiveAt: canceledPaid.activeTo ?? null,
+      currentPlanName: canceledPaid.planName,
+      resumeBlocked: false,
+    };
+  }
 
   if (!pendingDowngrade) {
     return {

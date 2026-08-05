@@ -10,6 +10,8 @@ export type KonnectSubscription = {
   plan_id?: string;
   planId?: string;
   settlement_mode?: string;
+  billing_anchor?: string | Date | null;
+  billingAnchor?: string | Date | null;
   /** When the subscription period starts (ISO), when Konnect provides it. */
   activeFrom?: string | Date | null;
   active_from?: string | Date | null;
@@ -80,8 +82,24 @@ export async function cancelKonnectSubscription(input: {
 }
 
 /**
+ * Delete a subscription that cannot be canceled via state transitions
+ * (typical for `scheduled` successors left after a botched upgrade/downgrade).
+ */
+export async function deleteKonnectSubscription(input: {
+  subscriptionId: string;
+}): Promise<void> {
+  await konnectAdminFetch<unknown>(
+    `/subscriptions/${encodeURIComponent(input.subscriptionId)}`,
+    { method: "DELETE" },
+    "subscription-delete",
+  );
+}
+
+/**
  * Continue a subscription and delete conflicting scheduled successors.
  * Used to undo a next-cycle plan change (e.g. scheduled Starter downgrade).
+ * Not exposed on Konnect Metering today (404) — prefer
+ * {@link unscheduleKonnectSubscriptionCancelation} for cancel-at-period-end.
  */
 export async function restoreKonnectSubscription(input: {
   subscriptionId: string;
@@ -91,6 +109,44 @@ export async function restoreKonnectSubscription(input: {
     { method: "POST" },
     "subscription-restore",
   );
+}
+
+/**
+ * Undo a `cancel` scheduled for `next_billing_cycle` (Konnect-supported).
+ * Fails with 409 when a scheduled successor from `/change` still exists.
+ */
+export async function unscheduleKonnectSubscriptionCancelation(input: {
+  subscriptionId: string;
+}): Promise<KonnectSubscription> {
+  return konnectAdminFetch<KonnectSubscription>(
+    `/subscriptions/${encodeURIComponent(input.subscriptionId)}/unschedule-cancelation`,
+    { method: "POST", body: "{}" },
+    "subscription-unschedule-cancelation",
+  );
+}
+
+/** Billing-anchor ISO from a Konnect subscription row, when present. */
+export function konnectSubscriptionBillingAnchorIso(
+  sub: KonnectSubscription | null | undefined,
+): string | null {
+  if (!sub) return null;
+  const raw = sub.billingAnchor ?? sub.billing_anchor ?? null;
+  if (!raw) return null;
+  if (raw instanceof Date) return raw.toISOString();
+  const trimmed = String(raw).trim();
+  return trimmed || null;
+}
+
+/** Estimate next cycle start as billing_anchor + 1 calendar month (UTC). */
+export function estimateNextBillingCycleIso(
+  billingAnchorIso: string | null | undefined,
+): string | null {
+  if (!billingAnchorIso?.trim()) return null;
+  const anchor = new Date(billingAnchorIso);
+  if (Number.isNaN(anchor.getTime())) return null;
+  const next = new Date(anchor);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  return next.toISOString();
 }
 
 export async function listActiveKonnectSubscriptions(): Promise<

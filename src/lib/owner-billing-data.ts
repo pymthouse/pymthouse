@@ -710,7 +710,17 @@ async function listActiveSubscriptionsForCustomer(input: {
       input.client,
       input.customerId,
     );
-    return listed.filter((item) => isOpenMeterSubscriptionActive(item.status));
+    return listed.filter((item) => {
+      if (isOpenMeterSubscriptionActive(item.status)) {
+        return true;
+      }
+      // Keep canceled Owner Paid so pending-downgrade / resume-blocked UX can
+      // see the paid plan when only a scheduled Starter successor is "active".
+      return (
+        (item.status || "").toLowerCase() === "canceled" &&
+        isOwnerPaidPlanKey(item.planKey)
+      );
+    });
   } catch (err) {
     console.warn(
       "owner-billing: subscription list failed",

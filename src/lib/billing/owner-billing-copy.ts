@@ -71,3 +71,23 @@ export function planCheckoutLinkBillingMethodCopy(mode: "upgrade" | "change"): {
 export function planCheckoutBillingMethodOnFileHint(): string {
   return "Used for plan fee and overage.";
 }
+
+/** Support inbox for billing unblock (scheduled plan-change stuck states). */
+export const OWNER_BILLING_SUPPORT_EMAIL = "billing@pymthouse.com";
+
+/**
+ * When Konnect left a scheduled Starter successor that resume/upgrade cannot
+ * clear via API — prompt the owner to contact support instead of a dead button.
+ */
+export function ownerPendingDowngradeBlockedCopy(input: {
+  currentPlanName?: string | null;
+  scheduledPlanName?: string | null;
+}): { title: string; body: string; action: string } {
+  const paid = input.currentPlanName?.trim() || "your paid plan";
+  const starter = input.scheduledPlanName?.trim() || "Sandbox Starter";
+  return {
+    title: "Plan change needs support to finish",
+    body: `A scheduled switch to ${starter} is blocking resume and re-upgrade for ${paid}. This cannot be cleared automatically right now.`,
+    action: `Email ${OWNER_BILLING_SUPPORT_EMAIL} and we’ll unblock your account.`,
+  };
+}
