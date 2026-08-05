@@ -15,6 +15,7 @@ import {
   upsertAppBillingConfig,
   ensureAppStripeBillingReady,
 } from "@/lib/openmeter/billing-profiles";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import {
   connectAccountLinkUrls,
   createAccountOnboardingLink,
@@ -111,8 +112,8 @@ export async function applyConnectedAccountWebhookUpdate(input: {
   } catch (err) {
     console.warn(
       "supplier sync after account.updated failed",
-      clientId,
-      err instanceof Error ? err.message : String(err),
+      sanitizeForLog(clientId),
+      sanitizeForLog(err),
     );
   }
   return { updated: true, clientId };

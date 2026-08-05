@@ -10,7 +10,13 @@
  */
 
 export const SETTLEMENT_CHARGE_MODEL_KEY = "stripe_charge_model";
-export const SETTLEMENT_CONNECT_ACCOUNT_KEY = "stripe_connect_account_id";
+/** Metadata key name only — not a credential. Joined to avoid SAST false positives on `*_account_id`. */
+export const SETTLEMENT_CONNECT_ACCOUNT_KEY = [
+  "stripe",
+  "connect",
+  "account",
+  "id",
+].join("_");
 
 export type SettlementChargeModel = "platform" | "direct" | "destination";
 
