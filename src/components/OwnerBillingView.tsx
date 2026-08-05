@@ -103,20 +103,23 @@ function SubscriptionCard({
 
 function billingIntroCopy(
   pressure: ReturnType<typeof resolveOwnerBillingPressure>,
+  starterPlanName: string,
 ): string {
   if (pressure === "blocked") {
-    return "Sandbox Starter allowance is used up. Usage is paused until you Upgrade to a paid plan (you’ll add a payment method during Upgrade if needed).";
+    return `${starterPlanName} allowance is used up. Usage is paused until you Upgrade to a paid plan (you’ll add a payment method during Upgrade if needed).`;
   }
   if (pressure === "chargeable") {
     return "Prepaid credits, active subscriptions, and platform invoices for your account. Overage invoices charge your default payment method.";
   }
-  return "Prepaid credits, active subscriptions, and platform invoices for your account. On Sandbox Starter, usage stops when included allowance and credits run out — Upgrade to a paid plan to continue with overage invoicing.";
+  return `Prepaid credits, active subscriptions, and platform invoices for your account. On ${starterPlanName}, usage stops when included allowance and credits run out — Upgrade to a paid plan to continue with overage invoicing.`;
 }
 
 function PaymentMethodRequiredBanner({
   paymentMethodPanel,
+  starterPlanName,
 }: Readonly<{
   paymentMethodPanel?: ReactNode;
+  starterPlanName: string;
 }>) {
   return (
     <output className="mb-6 block w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 sm:px-5">
@@ -126,7 +129,7 @@ function PaymentMethodRequiredBanner({
             Upgrade to continue
           </h2>
           <p className="mt-1 text-sm text-amber-200/90">
-            Sandbox Starter allowance used up. Upgrade to a paid plan to resume
+            {starterPlanName} allowance used up. Upgrade to a paid plan to resume
             usage (monthly fee + overage invoicing). You’ll add a payment method
             during Upgrade if one isn’t on file yet.
           </p>
@@ -363,7 +366,7 @@ export default function OwnerBillingView({
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-100">Billing</h1>
         <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-          {billingIntroCopy(pressure)}
+          {billingIntroCopy(pressure, data.ownerStarterPlanName)}
         </p>
         {data.openMeterConfigured ? (
           <p className="mt-2 text-xs text-zinc-600">
@@ -388,11 +391,15 @@ export default function OwnerBillingView({
           <Suspense fallback={null}>
             <OwnerPaidUpgradePanel
               eligibleForUpgrade={eligibleForUpgrade}
+              starterPlanName={data.ownerStarterPlanName}
             />
           </Suspense>
 
           {needsPaymentMethod ? (
-            <PaymentMethodRequiredBanner paymentMethodPanel={paymentMethodPanel} />
+            <PaymentMethodRequiredBanner
+              paymentMethodPanel={paymentMethodPanel}
+              starterPlanName={data.ownerStarterPlanName}
+            />
           ) : null}
 
           <OwnerPaymentCreditsSection

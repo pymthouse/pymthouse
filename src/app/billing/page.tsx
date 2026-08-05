@@ -31,6 +31,7 @@ export default async function BillingPage() {
           creditAllowance: null,
           paymentMethods: [],
           subscriptions: [],
+          ownerStarterPlanName: "Owner Sandbox Starter",
           ownedApps: [],
           invoices: [],
           ledger: [],

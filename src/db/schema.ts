@@ -660,6 +660,8 @@ export const ownerBillingConfig = pgTable(
 export const platformBillingSettings = pgTable("platform_billing_settings", {
   id: text("id").primaryKey(),
   ownerStarterIncludedUsdMicros: text("owner_starter_included_usd_micros").notNull(),
+  /** OpenMeter + UI display name; NULL → OWNER_STARTER_PLAN_NAME fallback. */
+  ownerStarterPlanName: text("owner_starter_plan_name"),
   updatedBy: text("updated_by").references(() => users.id),
   updatedAt: text("updated_at")
     .notNull()

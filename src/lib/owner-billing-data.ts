@@ -34,8 +34,11 @@ import {
   defaultStarterIncludedUsdMicros,
   planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
-import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
+import {
+  isOwnerStarterPlanKey,
+} from "@/lib/openmeter/owner-starter-key";
 import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
+import { resolvePlatformOwnerStarterPlanName } from "@/lib/billing/platform-owner-starter-default";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   isOpenMeterSubscriptionActive,
@@ -89,6 +92,8 @@ export type OwnerBillingPayload = {
   /** Every attached Stripe payment method (Plane A), default flagged. */
   paymentMethods: OwnerPaymentMethodListItem[];
   subscriptions: OwnerBillingSubscriptionRow[];
+  /** Platform Owner Starter display name (admin-configurable). */
+  ownerStarterPlanName: string;
   /**
    * Apps this owner owns, with how each one bills its end users. Every app
    * here rolls its network cost up to the platform subscription above.
@@ -468,7 +473,10 @@ async function resolvePlanName(input: {
 
   const key = input.planKey?.toLowerCase() ?? "";
   if (key.includes("starter") || isOwnerStarterPlanKey(input.planKey)) {
-    return { planName: "Owner Sandbox Starter", isStarterDefault: true };
+    return {
+      planName: await resolvePlatformOwnerStarterPlanName(),
+      isStarterDefault: true,
+    };
   }
   if (isOwnerPaidPlanKey(input.planKey)) {
     return { planName: "Owner Paid", isStarterDefault: false };
@@ -894,6 +902,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       creditAllowance,
       paymentMethods,
       subscriptions,
+      ownerStarterPlanName: await resolvePlatformOwnerStarterPlanName(),
       ownedApps: ownedApps.map((app) => ({
         id: app.developerAppId,
         name: app.name,

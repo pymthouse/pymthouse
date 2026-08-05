@@ -11,9 +11,11 @@ import { useRouter, useSearchParams } from "next/navigation";
  */
 export default function OwnerPaidUpgradePanel({
   eligibleForUpgrade,
+  starterPlanName = "Owner Sandbox Starter",
 }: Readonly<{
   hasPaymentMethod?: boolean;
   eligibleForUpgrade: boolean;
+  starterPlanName?: string;
 }>) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -43,7 +45,7 @@ export default function OwnerPaidUpgradePanel({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-emerald-100">
-              Upgrade from Sandbox Starter
+              Upgrade from {starterPlanName}
             </h2>
             <p className="mt-1 text-sm text-zinc-400">
               Pick a monthly plan, link a payment method, then confirm. Overage

@@ -5,6 +5,7 @@ import { db } from "@/db/index";
 import { platformBillingSettings, users } from "@/db/schema";
 import {
   PLATFORM_BILLING_SETTINGS_ID,
+  normalizeOwnerStarterPlanName,
   resolvePlatformOwnerStarterDefault,
   setPlatformOwnerStarterIncludedUsdMicros,
 } from "@/lib/billing/platform-owner-starter-default";
@@ -21,6 +22,7 @@ test("platform owner starter default resolves env/fallback without a DB row", as
   try {
     const resolved = await resolvePlatformOwnerStarterDefault();
     assert.equal(resolved.ownerStarterIncludedUsdMicros, "5000000");
+    assert.equal(resolved.ownerStarterPlanName, "Owner Sandbox Starter");
     assert.equal(resolved.source, "fallback");
   } finally {
     if (prior === undefined) {
@@ -50,13 +52,25 @@ test("platform owner starter default prefers DB over env", async (t) => {
 
   const saved = await setPlatformOwnerStarterIncludedUsdMicros({
     ownerStarterIncludedUsdMicros: "25000000",
+    ownerStarterPlanName: "Developer Free Tier",
     updatedBy: ` ${adminId} `,
   });
   assert.equal(saved.source, "db");
   assert.equal(saved.ownerStarterIncludedUsdMicros, "25000000");
+  assert.equal(saved.ownerStarterPlanName, "Developer Free Tier");
   assert.equal(saved.updatedBy, adminId);
 
   const resolved = await resolvePlatformOwnerStarterDefault();
   assert.equal(resolved.source, "db");
   assert.equal(resolved.ownerStarterIncludedUsdMicros, "25000000");
+  assert.equal(resolved.ownerStarterPlanName, "Developer Free Tier");
+});
+
+test("normalizeOwnerStarterPlanName falls back and rejects overlong names", () => {
+  assert.equal(normalizeOwnerStarterPlanName(""), "Owner Sandbox Starter");
+  assert.equal(normalizeOwnerStarterPlanName("  Free  Tier  "), "Free Tier");
+  assert.throws(
+    () => normalizeOwnerStarterPlanName("x".repeat(81)),
+    /at most 80/,
+  );
 });

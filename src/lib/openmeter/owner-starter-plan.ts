@@ -2,7 +2,10 @@ import type { OpenMeter } from "@openmeter/sdk";
 
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
-import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
+import {
+  resolvePlatformOwnerStarterIncludedUsdMicros,
+  resolvePlatformOwnerStarterPlanName,
+} from "@/lib/billing/platform-owner-starter-default";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { applyFreeBillingProfileToCustomer } from "./billing-profiles";
 import {
@@ -35,7 +38,6 @@ import {
 } from "./subscription-read";
 import {
   OWNER_STARTER_PLAN_KEY,
-  OWNER_STARTER_PLAN_NAME,
   isOwnerStarterPlanKey,
   ownerStarterPlanKeyForAmount,
 } from "./owner-starter-key";
@@ -135,7 +137,7 @@ async function ensureOwnerStarterPlanSyncedUncached(input: {
   let openmeterPlanId = await createOwnerAllowancePlan({
     client,
     planKey: input.planKey,
-    planName: OWNER_STARTER_PLAN_NAME,
+    planName: await resolvePlatformOwnerStarterPlanName(),
     planKind: "owner_starter",
     featureId,
     includedUsdMicros: input.includedUsdMicros,
@@ -161,13 +163,16 @@ async function ensureOwnerStarterPlanSyncedUncached(input: {
 export async function forceSyncOwnerStarterPlan(
   includedUsdMicros: string,
 ): Promise<OwnerStarterPlanRef> {
-  const platformDefault = await resolvePlatformOwnerStarterIncludedUsdMicros();
+  const [platformDefault, planName] = await Promise.all([
+    resolvePlatformOwnerStarterIncludedUsdMicros(),
+    resolvePlatformOwnerStarterPlanName(),
+  ]);
   const amount = includedUsdMicros.trim();
   const planKey = ownerStarterPlanKeyForAmount(amount, platformDefault);
 
   const synced = await forceSyncOwnerAllowancePlan({
     planKey,
-    planName: OWNER_STARTER_PLAN_NAME,
+    planName,
     planKind: "owner_starter",
     includedUsdMicros: amount,
     warnLabel: "owner starter",

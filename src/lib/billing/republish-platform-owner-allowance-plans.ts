@@ -3,7 +3,7 @@ import { eq, or } from "drizzle-orm";
 import { db } from "@/db/index";
 import { ownerBillingConfig, users } from "@/db/schema";
 import {
-  resolvePlatformOwnerStarterIncludedUsdMicros,
+  resolvePlatformOwnerStarterDefault,
   setPlatformOwnerStarterIncludedUsdMicros,
 } from "@/lib/billing/platform-owner-starter-default";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
@@ -47,6 +47,7 @@ export function ownerPaidForceSyncWarning(err: unknown): PlatformOwnerAllowanceW
 
 export type RepublishPlatformOwnerAllowancePlansResult = {
   ownerStarterIncludedUsdMicros: string;
+  ownerStarterPlanName: string;
   planKey: string;
   openmeterPlanId: string;
   ownerPaidPlanKey: string;
@@ -88,6 +89,7 @@ export function hasStarterAllowanceOverride(
  */
 export async function republishPlatformOwnerAllowancePlans(input: {
   ownerStarterIncludedUsdMicros: string;
+  ownerStarterPlanName?: string;
   updatedBy: string;
   resyncSubscribers?: boolean;
 }): Promise<RepublishPlatformOwnerAllowancePlansResult> {
@@ -96,9 +98,10 @@ export async function republishPlatformOwnerAllowancePlans(input: {
   // Persist first so forceSync classifies the new amount as the base key, then
   // roll back if Starter OpenMeter sync fails so spendable allowance cannot
   // drift ahead of the published plan discount.
-  const previous = await resolvePlatformOwnerStarterIncludedUsdMicros();
+  const previous = await resolvePlatformOwnerStarterDefault();
   const settings = await setPlatformOwnerStarterIncludedUsdMicros({
     ownerStarterIncludedUsdMicros: input.ownerStarterIncludedUsdMicros,
+    ownerStarterPlanName: input.ownerStarterPlanName,
     updatedBy: input.updatedBy,
   });
   invalidateOwnerStarterPlanCache();
@@ -110,7 +113,8 @@ export async function republishPlatformOwnerAllowancePlans(input: {
     );
   } catch (err) {
     await setPlatformOwnerStarterIncludedUsdMicros({
-      ownerStarterIncludedUsdMicros: previous,
+      ownerStarterIncludedUsdMicros: previous.ownerStarterIncludedUsdMicros,
+      ownerStarterPlanName: previous.ownerStarterPlanName,
       updatedBy: input.updatedBy,
     });
     invalidateOwnerStarterPlanCache();
@@ -145,6 +149,7 @@ export async function republishPlatformOwnerAllowancePlans(input: {
 
   return {
     ownerStarterIncludedUsdMicros: settings.ownerStarterIncludedUsdMicros,
+    ownerStarterPlanName: settings.ownerStarterPlanName,
     planKey: plan.key,
     openmeterPlanId: plan.openmeterPlanId,
     ownerPaidPlanKey: OWNER_PAID_PLAN_KEY,

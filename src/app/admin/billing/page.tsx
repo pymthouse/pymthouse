@@ -15,6 +15,7 @@ import {
 
 type PlatformResponse = {
   ownerStarterIncludedUsdMicros: string;
+  ownerStarterPlanName: string;
   source: "db" | "env" | "fallback";
   updatedBy: string | null;
   updatedAt: string | null;
@@ -66,6 +67,7 @@ export default function AdminPlatformBillingPage() {
 
   const [platform, setPlatform] = useState<PlatformResponse | null>(null);
   const [defaultDisplay, setDefaultDisplay] = useState("5.00");
+  const [starterPlanName, setStarterPlanName] = useState("Owner Sandbox Starter");
   const [savingPlatform, setSavingPlatform] = useState(false);
   const [resyncSubscribers, setResyncSubscribers] = useState(false);
   const [migrate, setMigrate] = useState<MigrateStats | null>(null);
@@ -94,6 +96,7 @@ export default function AdminPlatformBillingPage() {
     const data = (await res.json()) as PlatformResponse;
     setPlatform(data);
     setDefaultDisplay(usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros));
+    setStarterPlanName(data.ownerStarterPlanName || "Owner Sandbox Starter");
   }, []);
 
   const loadOwners = useCallback(async (q: string, pageNum: number) => {
@@ -182,17 +185,25 @@ export default function AdminPlatformBillingPage() {
         setPlatformStatus("Enter a valid USD amount (e.g. 5.00)");
         return;
       }
+      const name = starterPlanName.trim();
+      if (!name) {
+        setError("Enter a plan name (e.g. Developer Free Tier)");
+        setPlatformStatus("Enter a plan name");
+        return;
+      }
       const res = await fetch("/api/v1/admin/billing/platform", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ownerStarterIncludedUsdMicros: micros,
+          ownerStarterPlanName: name,
           resync: resyncSubscribers,
         }),
       });
       let data: {
         error?: string;
         ownerStarterIncludedUsdMicros?: string;
+        ownerStarterPlanName?: string;
         source?: "db" | "env" | "fallback";
         planKey?: string;
         resyncSubscribers?: boolean;
@@ -213,19 +224,22 @@ export default function AdminPlatformBillingPage() {
       if (!data.ownerStarterIncludedUsdMicros || !data.planKey) {
         throw new Error("Save response was missing plan details");
       }
+      const savedName = data.ownerStarterPlanName || name;
       setPlatform({
         ownerStarterIncludedUsdMicros: data.ownerStarterIncludedUsdMicros,
+        ownerStarterPlanName: savedName,
         source: data.source ?? "db",
         updatedBy: null,
         updatedAt: new Date().toISOString(),
         planKey: data.planKey,
       });
       setDefaultDisplay(usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros));
+      setStarterPlanName(savedName);
       const migrateStats = data.migrate ?? null;
       setMigrate(migrateStats);
 
       const statusParts = [
-        `Saved ${usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros)} USD`,
+        `Saved “${savedName}” · ${usdMicrosToCentsDisplay(data.ownerStarterIncludedUsdMicros)} USD`,
         `plan ${data.planKey} republished`,
       ];
       if (data.resyncSubscribers && migrateStats) {
@@ -349,7 +363,7 @@ export default function AdminPlatformBillingPage() {
             Owner Starter platform default
           </h2>
           <p className="text-sm text-zinc-500">
-            Applies to new developer Sandbox Starter wallets only. Owner Paid
+            Applies to new developer wallets on this free plan only. Owner Paid
             allowances and monthly fees are configured in{" "}
             <strong className="font-medium text-zinc-300">
               Owner Paid subscription tiers
@@ -360,6 +374,18 @@ export default function AdminPlatformBillingPage() {
             and best-effort re-syncs active Paid tiers.
           </p>
           <div className="flex flex-wrap items-end gap-3">
+            <label className="block text-sm">
+              <span className="text-zinc-400">Name</span>
+              <input
+                type="text"
+                className="mt-1 block w-56 rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/40"
+                value={starterPlanName}
+                onChange={(e) => setStarterPlanName(e.target.value)}
+                disabled={savingPlatform}
+                placeholder="Developer Free Tier"
+                maxLength={80}
+              />
+            </label>
             <label className="block text-sm">
               <span className="text-zinc-400">Included allowance (USD)</span>
               <input
