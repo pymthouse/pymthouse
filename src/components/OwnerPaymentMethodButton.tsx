@@ -7,15 +7,15 @@ import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-sessi
 
 /**
  * Owner billing header action for payment methods.
- * On Sandbox Starter without a card, the primary CTA is Upgrade (not attach-card).
- * Updating an existing card stays a direct Stripe Checkout setup.
+ * On owners eligible for Paid Upgrade without a card, the primary CTA is Upgrade
+ * (not attach-card). Updating an existing card stays a direct Stripe Checkout setup.
  */
 export default function OwnerPaymentMethodButton({
   hasPaymentMethod = false,
   upgradeFirst = false,
 }: Readonly<{
   hasPaymentMethod?: boolean;
-  /** Sandbox Starter + no card: open Upgrade flow instead of Stripe setup. */
+  /** Offer Upgrade when the owner is not already on Owner Paid. */
   upgradeFirst?: boolean;
 }>) {
   const [busy, setBusy] = useState(false);

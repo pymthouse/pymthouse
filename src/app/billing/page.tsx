@@ -7,7 +7,7 @@ import FundAccountOnRampPanel from "@/components/apps/FundAccountOnRampPanel";
 import OwnerBillingView from "@/components/OwnerBillingView";
 import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
-import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
+import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 function isTurnkeyFundingConfigured(): boolean {
@@ -58,9 +58,7 @@ export default async function BillingPage() {
     ) : null;
 
   const hasPaymentMethod = data.paymentMethods.length > 0;
-  const onSandboxStarter = data.subscriptions.some((row) =>
-    isOwnerStarterPlanKey(row.openMeterPlanKey),
-  );
+  const eligibleForUpgrade = ownerEligibleForPaidUpgrade(data.subscriptions);
 
   return (
     <OwnerBillingView
@@ -69,7 +67,7 @@ export default async function BillingPage() {
         data.openMeterConfigured ? (
           <OwnerPaymentMethodButton
             hasPaymentMethod={hasPaymentMethod}
-            upgradeFirst={onSandboxStarter && !hasPaymentMethod}
+            upgradeFirst={eligibleForUpgrade && !hasPaymentMethod}
           />
         ) : null
       }

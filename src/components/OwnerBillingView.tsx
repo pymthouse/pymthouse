@@ -12,10 +12,10 @@ import OwnerPaidUpgradePanel from "@/components/OwnerPaidUpgradeEffect";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
 import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
+import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { CreditAllowanceSummary } from "@/lib/openmeter/credit-allowance-summary";
-import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import type { OwnerBillingPayload } from "@/lib/owner-billing-data";
 
 function hasDisplayablePrepaidCredit(
@@ -356,9 +356,7 @@ export default function OwnerBillingView({
     data.paymentMethods.find((m) => m.isDefault) ??
     data.paymentMethods[0] ??
     null;
-  const onSandboxStarter = data.subscriptions.some((row) =>
-    isOwnerStarterPlanKey(row.openMeterPlanKey),
-  );
+  const eligibleForUpgrade = ownerEligibleForPaidUpgrade(data.subscriptions);
 
   return (
     <DashboardLayout>
@@ -390,7 +388,7 @@ export default function OwnerBillingView({
           <Suspense fallback={null}>
             <OwnerPaidUpgradePanel
               hasPaymentMethod={data.paymentMethods.length > 0}
-              onSandboxStarter={onSandboxStarter}
+              eligibleForUpgrade={eligibleForUpgrade}
             />
           </Suspense>
 

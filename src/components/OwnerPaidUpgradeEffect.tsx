@@ -25,10 +25,11 @@ type OwnerTier = {
  */
 export default function OwnerPaidUpgradePanel({
   hasPaymentMethod,
-  onSandboxStarter,
+  eligibleForUpgrade,
 }: Readonly<{
   hasPaymentMethod: boolean;
-  onSandboxStarter: boolean;
+  /** Offer Upgrade when the owner wallet is not already on Owner Paid. */
+  eligibleForUpgrade: boolean;
 }>) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -56,11 +57,11 @@ export default function OwnerPaidUpgradePanel({
   useEffect(() => {
     if (!pmAttached) return;
     setCardSavedNotice(true);
-    if (openUpgrade || onSandboxStarter) {
+    if (openUpgrade || eligibleForUpgrade) {
       setOpen(true);
     }
     router.replace("/billing");
-  }, [pmAttached, openUpgrade, onSandboxStarter, router]);
+  }, [pmAttached, openUpgrade, eligibleForUpgrade, router]);
 
   useEffect(() => {
     if (!openUpgrade || pmAttached) return;
@@ -123,7 +124,7 @@ export default function OwnerPaidUpgradePanel({
     }
   }, [open, hasPaymentMethod, loadTiers]);
 
-  if (!onSandboxStarter) {
+  if (!eligibleForUpgrade) {
     return cardSavedNotice ? (
       <p className="mb-4 text-sm text-emerald-400/90">
         Payment method saved.
