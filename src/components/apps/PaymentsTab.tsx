@@ -115,16 +115,12 @@ function applyStatusToForm(
   nextStatus: StripeStatus,
   set: {
     progressiveBilling: (v: boolean) => void;
-    applicationFeeBps: (v: string) => void;
     billingMode: (v: "owner_rollup" | "merchant") => void;
-    endUserCap: (v: string) => void;
     thresholdDisplay: (v: string) => void;
   },
 ): void {
   set.progressiveBilling(nextStatus.progressiveBilling ?? true);
-  set.applicationFeeBps(String(nextStatus.applicationFeeBps ?? 0));
   set.billingMode(nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup");
-  set.endUserCap(String(nextStatus.endUserCap ?? 25));
   set.thresholdDisplay(
     nextStatus.invoiceThresholdUsdMicros
       ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
@@ -239,9 +235,7 @@ async function requestSaveBillingSettings(input: {
   appId: string;
   progressiveBilling: boolean;
   thresholdDisplay: string;
-  applicationFeeBps: string;
   billingMode: "owner_rollup" | "merchant";
-  endUserCap: string;
   setters: BusySetters & {
     setSettingsSaved: (v: string | null) => void;
     setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
@@ -259,9 +253,7 @@ async function requestSaveBillingSettings(input: {
       body: JSON.stringify({
         progressiveBilling: input.progressiveBilling,
         invoiceThresholdUsdMicros,
-        applicationFeeBps: Number.parseInt(input.applicationFeeBps, 10) || 0,
         billingMode: input.billingMode,
-        endUserCap: Number.parseInt(input.endUserCap, 10) || 25,
       }),
     });
     const body = await res.json();
@@ -308,13 +300,11 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [applicationFeeBps, setApplicationFeeBps] = useState("0");
   const [progressiveBilling, setProgressiveBilling] = useState(true);
   const [thresholdDisplay, setThresholdDisplay] = useState("");
   const [billingMode, setBillingMode] = useState<"owner_rollup" | "merchant">(
     "owner_rollup",
   );
-  const [endUserCap, setEndUserCap] = useState("25");
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -332,9 +322,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       setStatus(nextStatus);
       applyStatusToForm(nextStatus, {
         progressiveBilling: setProgressiveBilling,
-        applicationFeeBps: setApplicationFeeBps,
         billingMode: setBillingMode,
-        endUserCap: setEndUserCap,
         thresholdDisplay: setThresholdDisplay,
       });
       if (invoicesRes.ok) {
@@ -377,19 +365,15 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       invoices={invoices}
       error={error}
       busy={busy}
-      applicationFeeBps={applicationFeeBps}
       progressiveBilling={progressiveBilling}
       thresholdDisplay={thresholdDisplay}
       billingMode={billingMode}
-      endUserCap={endUserCap}
       settingsSaved={settingsSaved}
       setBusy={setBusy}
       setError={setError}
       setStatus={setStatus}
       setSettingsSaved={setSettingsSaved}
       setBillingMode={setBillingMode}
-      setEndUserCap={setEndUserCap}
-      setApplicationFeeBps={setApplicationFeeBps}
       setProgressiveBilling={setProgressiveBilling}
       setThresholdDisplay={setThresholdDisplay}
       reload={load}
@@ -462,25 +446,17 @@ function PaymentsConnectActions(props: Readonly<{
 function PaymentsBillingModeForm(props: Readonly<{
   busy: boolean;
   billingMode: "owner_rollup" | "merchant";
-  endUserCap: string;
-  applicationFeeBps: string;
   connectReadyForMerchant: boolean;
   settingsSaved: string | null;
   setBillingMode: (v: "owner_rollup" | "merchant") => void;
-  setEndUserCap: (v: string) => void;
-  setApplicationFeeBps: (v: string) => void;
   onSave: () => void;
 }>) {
   const {
     busy,
     billingMode,
-    endUserCap,
-    applicationFeeBps,
     connectReadyForMerchant,
     settingsSaved,
     setBillingMode,
-    setEndUserCap,
-    setApplicationFeeBps,
     onSave,
   } = props;
   return (
@@ -501,33 +477,6 @@ function PaymentsBillingModeForm(props: Readonly<{
           </option>
         </select>
       </label>
-      <label className="block text-sm">
-        <span className="text-muted-foreground">End-user cap (owner roll-up)</span>
-        <input
-          type="number"
-          min={1}
-          max={1000000}
-          className="mt-1 w-40 rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-          value={endUserCap}
-          onChange={(e) => setEndUserCap(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      <label className="block text-sm">
-        <span className="text-muted-foreground">Platform application fee (bps)</span>
-        <input
-          type="number"
-          min={0}
-          max={10000}
-          className="mt-1 w-40 rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
-          value={applicationFeeBps}
-          onChange={(e) => setApplicationFeeBps(e.target.value)}
-          disabled={busy}
-        />
-      </label>
-      <p className="text-xs text-muted-foreground">
-        100 bps = 1%. Applied on Connect payment intents / invoices.
-      </p>
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -677,19 +626,15 @@ function PaymentsTabLoaded(props: Readonly<{
   invoices: InvoiceRow[];
   error: string | null;
   busy: boolean;
-  applicationFeeBps: string;
   progressiveBilling: boolean;
   thresholdDisplay: string;
   billingMode: "owner_rollup" | "merchant";
-  endUserCap: string;
   settingsSaved: string | null;
   setBusy: (v: boolean) => void;
   setError: (v: string | null) => void;
   setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
   setSettingsSaved: (v: string | null) => void;
   setBillingMode: (v: "owner_rollup" | "merchant") => void;
-  setEndUserCap: (v: string) => void;
-  setApplicationFeeBps: (v: string) => void;
   setProgressiveBilling: (v: boolean) => void;
   setThresholdDisplay: (v: string) => void;
   reload: () => Promise<void>;
@@ -701,19 +646,15 @@ function PaymentsTabLoaded(props: Readonly<{
     invoices,
     error,
     busy,
-    applicationFeeBps,
     progressiveBilling,
     thresholdDisplay,
     billingMode,
-    endUserCap,
     settingsSaved,
     setBusy,
     setError,
     setStatus,
     setSettingsSaved,
     setBillingMode,
-    setEndUserCap,
-    setApplicationFeeBps,
     setProgressiveBilling,
     setThresholdDisplay,
     reload,
@@ -727,9 +668,7 @@ function PaymentsTabLoaded(props: Readonly<{
       appId,
       progressiveBilling,
       thresholdDisplay,
-      applicationFeeBps,
       billingMode,
-      endUserCap,
       setters: { setBusy, setError, setSettingsSaved, setStatus },
     });
   const showDetails =
@@ -775,13 +714,9 @@ function PaymentsTabLoaded(props: Readonly<{
           <PaymentsBillingModeForm
             busy={busy}
             billingMode={billingMode}
-            endUserCap={endUserCap}
-            applicationFeeBps={applicationFeeBps}
             connectReadyForMerchant={connectReadyForMerchant}
             settingsSaved={settingsSaved}
             setBillingMode={setBillingMode}
-            setEndUserCap={setEndUserCap}
-            setApplicationFeeBps={setApplicationFeeBps}
             onSave={save}
           />
         )}
