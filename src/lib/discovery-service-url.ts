@@ -28,7 +28,13 @@ export function buildDiscoverOrchestratorsUrl(signerUrl: string): string {
 
   parsed.search = "";
   parsed.hash = "";
-  const basePath = parsed.pathname.replace(/\/+$/, "");
+  let basePath = parsed.pathname;
+  while (basePath.length > 1 && basePath.endsWith("/")) {
+    basePath = basePath.slice(0, -1);
+  }
+  if (basePath === "/") {
+    basePath = "";
+  }
   parsed.pathname = `${basePath}/discover-orchestrators`;
   return parsed.toString();
 }

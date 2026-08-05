@@ -105,7 +105,7 @@ export const TokenExchangeRequestSchema = z
     resource: z.string().optional().openapi({
       description: "Must match configured signer audience when provided.",
     }),
-    discovery_url: z.string().url().optional().openapi({
+    discovery_url: z.url().optional().openapi({
       description:
         "Optional override for SignerSession.discovery_url. Defaults to `{signer_url}/discover-orchestrators`.",
     }),
