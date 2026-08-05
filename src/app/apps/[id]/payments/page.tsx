@@ -2,6 +2,6 @@
 
 import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
 
-export default function AppPlansPage() {
-  return <AppSettingsPageClient tab="plans" />;
+export default function AppPaymentsPage() {
+  return <AppSettingsPageClient tab="payments" />;
 }

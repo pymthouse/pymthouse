@@ -3,6 +3,7 @@ import { and, count, eq } from "drizzle-orm";
 import { writeAuditLog } from "@/lib/audit";
 import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients } from "@/db/schema";
+import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import { getAppBillingConfig, upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
@@ -144,7 +145,7 @@ function actionUrlForReason(
   if (reason === "owner_payment_method_required") {
     return `${base}/billing`;
   }
-  return `${base}/apps/${encodeURIComponent(publicClientId)}/settings?tab=billing`;
+  return appSettingsAbsoluteUrl(base, publicClientId, "payments");
 }
 
 function messageForReason(reason: ActivationReason): string {

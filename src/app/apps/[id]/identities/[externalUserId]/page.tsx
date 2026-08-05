@@ -185,7 +185,7 @@ export default async function AppIdentityDetailPage({
           <span className="text-zinc-500">API key</span>
           <span className="mx-2 text-zinc-700">·</span>
           <Link
-            href={`/apps/${id}?tab=credentials`}
+            href={`/apps/${id}/credentials`}
             className="font-mono text-xs text-emerald-400 transition-colors hover:text-emerald-300"
           >
             {identity.apiKey.label || identity.apiKey.keyPrefix || identity.apiKey.id}

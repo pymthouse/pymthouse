@@ -2,6 +2,7 @@
  * Stripe Connected Accounts helpers for merchant billing (hybrid: OM meters, Connect charges).
  * Uses platform STRIPE_SECRET_KEY. Direct charges on acct_… with optional application fee.
  */
+import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
 export type StripeOnboardingMethod = "account_link" | "oauth";
@@ -571,10 +572,13 @@ export function connectAccountLinkUrls(clientId: string): {
   returnUrl: string;
 } {
   const origin = getPublicOrigin();
-  const base = `${origin}/apps/${encodeURIComponent(clientId)}/settings?tab=payments`;
   return {
-    refreshUrl: `${base}&connect=refresh`,
-    returnUrl: `${base}&connected=1`,
+    refreshUrl: appSettingsAbsoluteUrl(origin, clientId, "payments", {
+      connect: "refresh",
+    }),
+    returnUrl: appSettingsAbsoluteUrl(origin, clientId, "payments", {
+      connected: "1",
+    }),
   };
 }
 

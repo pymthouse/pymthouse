@@ -1,7 +1,7 @@
 "use client";
 
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep, {
@@ -15,6 +15,11 @@ import {
   type AppFormData,
   type AppState,
 } from "./AppWizard";
+import {
+  appSettingsPath,
+  normalizeAppSettingsTab,
+  type AppSettingsTab,
+} from "@/lib/apps/settings-paths";
 
 interface Props {
   appId: string;
@@ -33,7 +38,7 @@ interface Props {
   canManageBilling?: boolean;
   /** App owner identity used when minting owner-scoped API keys from Credentials tab. */
   ownerExternalUserId?: string | null;
-  /** Initial tab to display (e.g. "plans" from URL query param). */
+  /** Initial tab to display (from path `/apps/{id}/payments` or legacy `?tab=`). */
   initialTab?: string;
 }
 
@@ -67,22 +72,12 @@ const INTEGRATION_TABS = [
   { id: "credentials", label: "Credentials & URLs" },
   { id: "plans", label: "Billing Plans" },
   { id: "payments", label: "Payments" },
-] as const;
+] as const satisfies ReadonlyArray<{ id: AppSettingsTab; label: string }>;
 
-type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
+type IntegrationSection = AppSettingsTab;
 
 function resolveInitialTab(tab: string | undefined): IntegrationSection {
-  if (tab === "network-discovery") {
-    return "plans";
-  }
-  if (tab === "auth") {
-    return "profile";
-  }
-  const validTabs = INTEGRATION_TABS.map((t) => t.id);
-  if (tab && validTabs.includes(tab as IntegrationSection)) {
-    return tab as IntegrationSection;
-  }
-  return "profile";
+  return normalizeAppSettingsTab(tab);
 }
 
 export default function AppSettingsScreen({
@@ -100,7 +95,6 @@ export default function AppSettingsScreen({
   initialTab,
 }: Readonly<Props>) {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [formData, setFormData] = useState<AppFormData>(() =>
     mergeFormData(initialData, initialInitiateLoginUri ?? null, initialDeviceThirdPartyInitiateLogin),
@@ -131,22 +125,19 @@ export default function AppSettingsScreen({
 
       if (updateUrl) {
         const nextParams = new URLSearchParams(searchParams.toString());
-        if (section === "profile") {
-          nextParams.delete("tab");
-        } else {
-          nextParams.set("tab", section);
-        }
+        nextParams.delete("tab");
         if (section !== "credentials") {
           nextParams.delete("client");
         }
         const query = nextParams.toString();
-        const nextUrl = query ? `${pathname}?${query}` : pathname;
+        const path = appSettingsPath(appId, section);
+        const nextUrl = query ? `${path}?${query}` : path;
         router.replace(nextUrl, { scroll: false });
       }
 
       requestAnimationFrame(() => tabRefs.current[section]?.focus());
     },
-    [pathname, router, searchParams],
+    [appId, router, searchParams],
   );
 
   const credentialsTabRefs = useRef<
@@ -158,18 +149,19 @@ export default function AppSettingsScreen({
       setCredentialsClient(client);
       if (updateUrl) {
         const nextParams = new URLSearchParams(searchParams.toString());
-        nextParams.set("tab", "credentials");
+        nextParams.delete("tab");
         if (client === "public") {
           nextParams.delete("client");
         } else {
           nextParams.set("client", client);
         }
         const query = nextParams.toString();
-        router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+        const path = appSettingsPath(appId, "credentials");
+        router.replace(query ? `${path}?${query}` : path, { scroll: false });
       }
       requestAnimationFrame(() => credentialsTabRefs.current[client]?.focus());
     },
-    [pathname, router, searchParams],
+    [appId, router, searchParams],
   );
 
   useEffect(() => {

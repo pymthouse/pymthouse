@@ -74,9 +74,9 @@ test("connectAccountLinkUrls and connectOAuthCallbackUrl use public origin", (t)
   withEnv(t, { NEXTAUTH_URL: "https://builder.example" });
   assert.deepEqual(connectAccountLinkUrls("app_1"), {
     refreshUrl:
-      "https://builder.example/apps/app_1/settings?tab=payments&connect=refresh",
+      "https://builder.example/apps/app_1/payments?connect=refresh",
     returnUrl:
-      "https://builder.example/apps/app_1/settings?tab=payments&connected=1",
+      "https://builder.example/apps/app_1/payments?connected=1",
   });
   assert.equal(
     connectOAuthCallbackUrl("app_1"),
