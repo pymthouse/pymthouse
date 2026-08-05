@@ -11,6 +11,7 @@ import {
   OWNER_BILLING_SUPPORT_EMAIL,
   ownerPendingDowngradeBlockedCopy,
 } from "@/lib/billing/owner-billing-copy";
+import { buildOwnerTierCheckoutBullets } from "@/lib/billing/owner-tier-plan-copy";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-session";
 
@@ -21,6 +22,7 @@ type OwnerTier = {
   description: string | null;
   monthlyFeeUsd: string;
   includedUsdMicros: string;
+  overageRateUsd?: string | null;
 };
 
 export type UpgradePaymentMethodSummary = {
@@ -446,10 +448,10 @@ function NoticeBanner({
 const PLAN_DETAIL: Record<string, { headline: string; bullets: string[] }> = {
   // Longer / more specific keys first — `pymthouse_owner_paid_producer`
   // must not match the generic `pymthouse_owner_paid` prefix.
+  // Numeric included-usage copy is derived live; these are marketing only.
   pymthouse_owner_paid_producer: {
     headline: "Paid-tier access for building and testing",
     bullets: [
-      "3 USD included usage — roughly 3 M API calls",
       "Monetisation features available immediately",
       "Designed for pre-launch and monetisation testing",
     ],
@@ -457,7 +459,6 @@ const PLAN_DETAIL: Record<string, { headline: string; bullets: string[] }> = {
   pymthouse_owner_paid: {
     headline: "Full network access for production apps",
     bullets: [
-      "5 USD included usage — roughly 5 M API calls at standard rate",
       "Unlimited developer identities and API keys",
       "Overage billed per-call, no monthly cap",
     ],
@@ -470,7 +471,7 @@ function getPlanDetail(key: string) {
     (a, b) => b.length - a.length,
   );
   for (const prefix of prefixes) {
-    if (key === prefix || key.startsWith(prefix)) {
+    if (key === prefix || key.startsWith(`${prefix}_`)) {
       return PLAN_DETAIL[prefix] ?? null;
     }
   }
@@ -484,33 +485,43 @@ function TierDescription({
   tier: OwnerTier;
   detail: { headline: string; bullets: string[] } | null;
 }>) {
-  if (detail) {
-    return (
-      <ul className="mt-2 space-y-0.5">
-        {detail.bullets.map((b) => (
-          <li
-            key={b}
-            className="flex items-start gap-1.5 text-xs text-zinc-400"
-          >
-            <span className="mt-0.5 text-emerald-500/70" aria-hidden="true">
-              ·
-            </span>
-            {b}
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  if (tier.description) {
+  const bullets = buildOwnerTierCheckoutBullets({
+    includedUsdMicros: tier.includedUsdMicros,
+    overageRateUsd: tier.overageRateUsd,
+    description: tier.description,
+    featureBullets: detail?.bullets,
+  });
+  // Free / zero-allowance tiers keep a plain description when provided.
+  if (
+    (!tier.includedUsdMicros || tier.includedUsdMicros === "0") &&
+    tier.description
+  ) {
     return (
       <p className="mt-1.5 text-xs text-zinc-400">{tier.description}</p>
     );
   }
+  if (bullets.length === 0) {
+    return (
+      <p className="mt-1.5 text-xs text-zinc-400">
+        {formatUsdMicrosSummary(tier.includedUsdMicros)} included usage each
+        billing cycle. Overage billed to your card.
+      </p>
+    );
+  }
   return (
-    <p className="mt-1.5 text-xs text-zinc-400">
-      {formatUsdMicrosSummary(tier.includedUsdMicros)} included usage each
-      billing cycle. Overage billed to your card.
-    </p>
+    <ul className="mt-2 space-y-0.5">
+      {bullets.map((b) => (
+        <li
+          key={b}
+          className="flex items-start gap-1.5 text-xs text-zinc-400"
+        >
+          <span className="mt-0.5 text-emerald-500/70" aria-hidden="true">
+            ·
+          </span>
+          {b}
+        </li>
+      ))}
+    </ul>
   );
 }
 

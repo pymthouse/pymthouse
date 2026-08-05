@@ -69,6 +69,7 @@ export default function AdminOwnerTiersSection() {
   const [editName, setEditName] = useState("");
   const [editMonthlyFeeUsd, setEditMonthlyFeeUsd] = useState("");
   const [editIncludedDisplay, setEditIncludedDisplay] = useState("");
+  const [editDescription, setEditDescription] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,6 +100,7 @@ export default function AdminOwnerTiersSection() {
     setEditName(tier.name);
     setEditMonthlyFeeUsd(tier.monthlyFeeUsd);
     setEditIncludedDisplay(usdMicrosToCentsDisplay(tier.includedUsdMicros));
+    setEditDescription(tier.description ?? "");
     setError(null);
     setMessage(null);
   }
@@ -108,6 +110,7 @@ export default function AdminOwnerTiersSection() {
     setEditName("");
     setEditMonthlyFeeUsd("");
     setEditIncludedDisplay("");
+    setEditDescription("");
   }
 
   async function saveEditTier(tier: Tier) {
@@ -126,12 +129,17 @@ export default function AdminOwnerTiersSection() {
       setError("Enter a valid included allowance (e.g. 5.00)");
       return;
     }
+    const nextDescription = editDescription.trim() || null;
+    const prevDescription = tier.description?.trim() || null;
 
     const patch: Record<string, unknown> = {};
     if (nextName !== tier.name) patch.name = nextName;
     if (nextFee !== tier.monthlyFeeUsd) patch.monthlyFeeUsd = nextFee;
     if (nextIncluded !== tier.includedUsdMicros) {
       patch.includedUsdMicros = nextIncluded;
+    }
+    if (nextDescription !== prevDescription) {
+      patch.description = nextDescription;
     }
     if (Object.keys(patch).length === 0) {
       cancelEditTier();
@@ -245,8 +253,10 @@ export default function AdminOwnerTiersSection() {
         Flat monthly fee + included usage. Developers pick a tier on Upgrade.
         Keys must be <code className="text-zinc-300">pymthouse_owner_paid</code>{" "}
         or <code className="text-zinc-300">pymthouse_owner_paid_&lt;slug&gt;</code>.
-        Edit an existing tier to change price or allowance — do not recreate the
-        same key. Saving syncs the OpenMeter plan (flat fee + usage discount).
+        Edit an existing tier to change price, allowance, or checkout bullets —
+        do not recreate the same key. The included-usage line on Upgrade is
+        always generated from the live allowance (and overage rate). Saving fee
+        or allowance syncs the OpenMeter plan.
       </p>
 
       {error ? (
@@ -323,6 +333,25 @@ export default function AdminOwnerTiersSection() {
                             }
                             disabled={isBusy}
                           />
+                        </label>
+                        <label className="block sm:col-span-2">
+                          <span className="text-xs text-zinc-500">
+                            Checkout bullets (optional, one per line)
+                          </span>
+                          <textarea
+                            className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-sm text-zinc-100"
+                            rows={3}
+                            value={editDescription}
+                            onChange={(e) => setEditDescription(e.target.value)}
+                            disabled={isBusy}
+                            placeholder={
+                              "Unlimited developer identities and API keys\nOverage billed per-call, no monthly cap"
+                            }
+                          />
+                          <span className="mt-1 block text-[11px] text-zinc-600">
+                            Included-usage line is generated from the allowance
+                            above. These lines appear under it on Upgrade.
+                          </span>
                         </label>
                         <p className="sm:col-span-2 font-mono text-xs text-zinc-500">
                           {tier.key}
@@ -488,7 +517,9 @@ export default function AdminOwnerTiersSection() {
           </label>
         </div>
         <label className="block text-sm">
-          <span className="text-zinc-400">Description (optional)</span>
+          <span className="text-zinc-400">
+            Checkout bullets (optional, one per line)
+          </span>
           <input
             className="mt-1 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm"
             value={draft.description}
@@ -496,6 +527,7 @@ export default function AdminOwnerTiersSection() {
               setDraft({ ...draft, description: e.target.value })
             }
             disabled={creating}
+            placeholder="Extra marketing bullets under the auto included-usage line"
           />
         </label>
         <button
