@@ -878,79 +878,6 @@ export const turnkeyFundingEvents = pgTable(
   ],
 );
 
-/**
- * Durable outbox for OpenMeter Invoice Notifications + Stripe Connect payment
- * events. Claimed by the Railway invoicing worker via FOR UPDATE SKIP LOCKED.
- */
-export const invoiceEvents = pgTable(
-  "invoice_events",
-  {
-    id: text("id").primaryKey(),
-    /** openmeter | stripe */
-    source: text("source").notNull(),
-    /** Provider event id (OM notification id or Stripe evt_…). */
-    externalEventId: text("external_event_id").notNull(),
-    eventType: text("event_type").notNull(),
-    payload: jsonb("payload").notNull(),
-    /** pending | processing | done | failed | dead */
-    status: text("status").notNull().default("pending"),
-    attempts: integer("attempts").notNull().default(0),
-    nextAttemptAt: text("next_attempt_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    claimedBy: text("claimed_by"),
-    lastError: text("last_error"),
-    createdAt: text("created_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    updatedAt: text("updated_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    uniqueIndex("idx_invoice_events_source_external").on(t.source, t.externalEventId),
-    index("idx_invoice_events_claim").on(t.status, t.nextAttemptAt),
-  ],
-);
-
-/**
- * Maps OpenMeter invoices to Stripe Connect PaymentIntents / hosted invoices
- * for merchant-plane Custom Invoicing collection.
- */
-export const merchantInvoices = pgTable(
-  "merchant_invoices",
-  {
-    id: text("id").primaryKey(),
-    openmeterInvoiceId: text("openmeter_invoice_id").notNull(),
-    appId: text("app_id")
-      .notNull()
-      .references(() => developerApps.id),
-    openmeterCustomerId: text("openmeter_customer_id"),
-    stripeConnectedAccountId: text("stripe_connected_account_id"),
-    stripeCustomerId: text("stripe_customer_id"),
-    stripePaymentIntentId: text("stripe_payment_intent_id"),
-    stripeInvoiceId: text("stripe_invoice_id"),
-    /** Mirrors OM lifecycle + charge substates (e.g. payment_processing.pending). */
-    state: text("state").notNull().default("created"),
-    amountUsdMicros: text("amount_usd_micros"),
-    currency: text("currency").notNull().default("USD"),
-    applicationFeeAmount: integer("application_fee_amount").notNull().default(0),
-    lastError: text("last_error"),
-    createdAt: text("created_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    updatedAt: text("updated_at")
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-  },
-  (t) => [
-    uniqueIndex("idx_merchant_invoices_om_id").on(t.openmeterInvoiceId),
-    index("idx_merchant_invoices_app").on(t.appId),
-    index("idx_merchant_invoices_pi").on(t.stripePaymentIntentId),
-    index("idx_merchant_invoices_state").on(t.state),
-  ],
-);
-
 /** Fiat on-ramp session ledger for MoonPay / Turnkey attribution and settlement. */
 export const onrampSessions = pgTable(
   "onramp_sessions",
@@ -1118,7 +1045,3 @@ export type PriceOracleSnapshot = typeof priceOracleSnapshots.$inferSelect;
 export type NewPriceOracleSnapshot = typeof priceOracleSnapshots.$inferInsert;
 export type AppOpenMeterConfig = typeof appOpenMeterConfig.$inferSelect;
 export type UsageIngestReceipt = typeof usageIngestReceipts.$inferSelect;
-export type InvoiceEvent = typeof invoiceEvents.$inferSelect;
-export type NewInvoiceEvent = typeof invoiceEvents.$inferInsert;
-export type MerchantInvoice = typeof merchantInvoices.$inferSelect;
-export type NewMerchantInvoice = typeof merchantInvoices.$inferInsert;

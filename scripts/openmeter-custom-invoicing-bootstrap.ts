@@ -1,13 +1,17 @@
 /**
  * Bootstrap Konnect Custom Invoicing for the merchant plane:
- * 1. Notification webhook channel → PUBLIC_ORIGIN/webhooks/openmeter
+ * 1. Notification webhook channel → settlement producer (required URL)
  * 2. Install Custom Invoicing app (hooks disabled initially)
  * 3. Non-default merchant billing profile referencing that app
  * 4. Invoice created + updated notification rules
  *
- * Prints env vars to set: OPENMETER_CUSTOM_INVOICING_APP_ID,
- * OPENMETER_MERCHANT_BILLING_PROFILE_ID, OPENMETER_WEBHOOK_SECRET.
+ * Collection is owned by pymthouse/settlement (Kafka producer + Go worker).
+ * This script only provisions OM/Konnect side config for pymthouse.
  *
+ * Prints env vars to set: OPENMETER_CUSTOM_INVOICING_APP_ID,
+ * OPENMETER_MERCHANT_BILLING_PROFILE_ID.
+ *
+ * @see https://github.com/pymthouse/settlement
  * @see https://developer.konghq.com/metering-and-billing/custom-invoicing/
  * @see https://developer.konghq.com/metering-and-billing/notifications/
  */
@@ -17,7 +21,6 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-import { getPublicOrigin } from "../src/lib/oidc/issuer-urls";
 import {
   createKonnectMerchantCustomInvoicingProfile,
   listKonnectApps,
@@ -62,6 +65,25 @@ function requireKonnect(): { baseUrl: string; apiKey: string } {
     );
   }
   return { baseUrl: normalizeKonnectMeteringUrl(raw), apiKey };
+}
+
+/**
+ * Public HTTPS URL of the settlement producer OpenMeter ingress
+ * (e.g. https://settlement.example.com/webhooks/openmeter).
+ */
+function requireSettlementOpenMeterWebhookUrl(): string {
+  const url =
+    process.env.SETTLEMENT_OPENMETER_WEBHOOK_URL?.trim() ||
+    process.env.OPENMETER_NOTIFICATION_WEBHOOK_URL?.trim() ||
+    "";
+  if (!url.startsWith("https://")) {
+    throw new Error(
+      "SETTLEMENT_OPENMETER_WEBHOOK_URL must be the https URL of the " +
+        "pymthouse/settlement producer OpenMeter webhook ingress " +
+        "(not a pymthouse app route).",
+    );
+  }
+  return url.replace(/\/$/, "");
 }
 
 async function listNotificationChannels(): Promise<NotificationChannel[]> {
@@ -178,10 +200,10 @@ async function main(): Promise<void> {
   requireKonnect();
 
   const webhookSecret =
+    process.env.SETTLEMENT_OPENMETER_WEBHOOK_SECRETS?.split(",")[0]?.trim() ||
     process.env.OPENMETER_WEBHOOK_SECRET?.trim() ||
     `whsec_${randomBytes(24).toString("base64url")}`;
-  const origin = getPublicOrigin().replace(/\/$/, "");
-  const webhookUrl = `${origin}/webhooks/openmeter`;
+  const webhookUrl = requireSettlementOpenMeterWebhookUrl();
 
   console.log("[bootstrap] Ensuring notification channel →", webhookUrl);
   const { channelId, created } = await ensureNotificationChannel({
@@ -210,10 +232,13 @@ async function main(): Promise<void> {
   console.log("[bootstrap] Ensuring invoice.created / invoice.updated rules…");
   await ensureInvoiceRules(channelId);
 
-  console.log("\nSet these env vars (Vercel + Railway invoicing worker):\n");
+  console.log("\nSet these env vars on pymthouse (Vercel):\n");
   console.log(`OPENMETER_CUSTOM_INVOICING_APP_ID=${appId}`);
   console.log(`OPENMETER_MERCHANT_BILLING_PROFILE_ID=${profileId}`);
-  console.log(`OPENMETER_WEBHOOK_SECRET=${webhookSecret}`);
+  console.log(
+    "\nConfigure the same webhook secret on pymthouse/settlement producer:\n",
+  );
+  console.log(`SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${webhookSecret}`);
   console.log(
     "\nPin merchant-mode end-user customers via assignMerchantCustomInvoicingProfile",
   );

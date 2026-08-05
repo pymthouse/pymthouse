@@ -135,13 +135,3 @@ export function resolveCustomInvoicingAppId(): string | null {
 export function resolveMerchantBillingProfileId(): string | null {
   return process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() || null;
 }
-
-export function requireOpenMeterWebhookSecret(): string {
-  const secret = process.env.OPENMETER_WEBHOOK_SECRET?.trim();
-  if (!secret) {
-    throw new Error(
-      "OPENMETER_WEBHOOK_SECRET is required (shared secret configured on the Konnect notification channel)",
-    );
-  }
-  return secret;
-}

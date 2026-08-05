@@ -1,8 +1,8 @@
 import type { OpenMeter } from "@openmeter/sdk";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { developerApps, merchantInvoices, oidcClients } from "@/db/schema";
+import { developerApps, oidcClients } from "@/db/schema";
 import {
   classifyInvoiceLineKind,
   type InvoiceLineSummary,
@@ -44,10 +44,6 @@ export type TenantInvoiceDto = {
   invoiceType?: string;
   /** Expanded charge lines when `expand=lines` is available. */
   lines?: InvoiceLineSummary[];
-  /** Merchant Custom Invoicing collection state from local ledger (when present). */
-  collectionState?: string;
-  stripePaymentIntentId?: string;
-  stripeInvoiceId?: string;
 };
 
 type OmInvoiceLineLike = {
@@ -269,25 +265,6 @@ async function listInvoicesForCustomerIds(input: {
   const totalCount = allItems.length;
   const offset = (page - 1) * pageSize;
   const items = allItems.slice(offset, offset + pageSize);
-
-  const omIds = items.map((item) => item.id);
-  if (omIds.length > 0) {
-    const mappings = await db
-      .select()
-      .from(merchantInvoices)
-      .where(inArray(merchantInvoices.openmeterInvoiceId, omIds));
-    const byOmId = new Map(
-      mappings.map((row) => [row.openmeterInvoiceId, row] as const),
-    );
-    for (const item of items) {
-      const mapping = byOmId.get(item.id);
-      if (mapping) {
-        item.collectionState = mapping.state;
-        item.stripePaymentIntentId = mapping.stripePaymentIntentId ?? undefined;
-        item.stripeInvoiceId = mapping.stripeInvoiceId ?? undefined;
-      }
-    }
-  }
 
   return { items, page, pageSize, totalCount };
 }

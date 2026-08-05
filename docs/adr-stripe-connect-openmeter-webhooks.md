@@ -151,18 +151,15 @@ Verify `Stripe-Signature` over the raw body (`src/lib/stripe/webhook.ts`).
 
 | Event | Handler intent | Neon / OM effect |
 |---|---|---|
-| `account.updated` | `applyConnectedAccountWebhookUpdate` | Refresh `stripe_charges_enabled`, `stripe_details_submitted`, `stripe_payouts_enabled`; set `stripe_connect_status` |
-| `account.application.deauthorized` | Ledger insert | Audit trail; readiness cleared via subsequent `account.updated` |
-| `checkout.session.completed` | Ledger insert | Worker / future retail subscription ensure |
-| `payment_intent.succeeded` / `payment_failed` / `requires_action` | Ledger → invoicing worker | Report Custom Invoicing `payment/status` (paid / failed / action_required) |
-| `charge.dispute.created` | Ledger → worker | Report `payment_uncollectible` |
+| `account.updated` | `applyConnectedAccountWebhookUpdate` | Refresh `stripe_charges_enabled`, `stripe_details_submitted`, `stripe_payouts_enabled`; set `stripe_connect_status`; sync OM billing-profile supplier when KYC is complete |
 
 **Readiness predicate** (merchant checkout / activation gate): Connected Account id
 present, `charges_enabled`, and `details_submitted`.
 `payouts_enabled` is recorded but **not** required (see activation-gate.md).
 
-**Idempotency:** `invoice_events` unique on `(source, external_event_id)` for both
-OpenMeter notification ids and Stripe `evt_…` ids.
+PaymentIntent / charge / dispute events for Custom Invoicing collection are **not**
+handled here — they belong on the settlement producer Stripe ingress
+([pymthouse/settlement](https://github.com/pymthouse/settlement)).
 
 ### Plane C — Merchant Custom Invoicing (OpenMeter invoices → Connect collection)
 
@@ -173,14 +170,15 @@ OM pauses at `payment_processing.pending` (and optionally draft/issuing sync hoo
 
 | Stream | Endpoint | Role |
 |---|---|---|
-| OpenMeter Invoice Notifications | `POST /webhooks/openmeter` | Thin ingress → `invoice_events` |
-| Stripe Connect (Plane B) | `POST /webhooks/stripe` | PaymentIntent outcomes → same ledger |
-| Railway `invoicing-worker` | claims via `FOR UPDATE SKIP LOCKED` | Off-session direct charge + `application_fee_amount`; reports `POST …/apps/custom-invoicing/{id}/payment/status` |
+| OpenMeter Invoice Notifications | settlement producer OpenMeter ingress | Kafka `billing.openmeter.invoices.v1` |
+| Stripe payment events | settlement producer Stripe ingress | Kafka `billing.stripe.events.v1` |
+| `pymthouse/settlement` worker | consumes both topics | Off-session Connect charge + `POST …/apps/custom-invoicing/{id}/payment/status` |
 
-Bootstrap: `npm run openmeter:custom-invoicing:bootstrap`. Env:
-`OPENMETER_CUSTOM_INVOICING_APP_ID`, `OPENMETER_MERCHANT_BILLING_PROFILE_ID`,
-`OPENMETER_WEBHOOK_SECRET`. Pin end-user customers with
-`assignMerchantCustomInvoicingProfile` (customer overrides — never org default).
+Bootstrap: `npm run openmeter:custom-invoicing:bootstrap` (requires
+`SETTLEMENT_OPENMETER_WEBHOOK_URL`). Env on pymthouse:
+`OPENMETER_CUSTOM_INVOICING_APP_ID`, `OPENMETER_MERCHANT_BILLING_PROFILE_ID`.
+Pin end-user customers with `assignMerchantCustomInvoicingProfile` (customer
+overrides — never org default).
 
 Plane A (owner cost rail via native OM Stripe app) is **unchanged**.
 
@@ -239,20 +237,17 @@ and keep the same OM metering + Connect readiness model.
   `src/lib/openmeter/billing-supplier.ts`
 - Settlement metadata keys: `src/lib/openmeter/settlement-metadata.ts`
   (`stripe_charge_model`, `stripe_connect_account_id`) — Plane A Stripe-app
-  profiles never stamp these; merchant Custom Invoicing does. Durable settlement
-  lives in [pymthouse/settlement](https://github.com/pymthouse/settlement); the
-  Railway `invoicing-worker` is the interim collector.
+  profiles never stamp these; merchant Custom Invoicing does. Collection is
+  owned by [pymthouse/settlement](https://github.com/pymthouse/settlement)
+  (Kafka producer + Go worker) — there is no in-repo Railway invoicing worker.
 - Customer Stripe app data: `src/lib/openmeter/stripe-customer-data.ts`
 - Owner PM attach: `src/lib/openmeter/owner-payment-method.ts`,
   `POST /api/v1/me/billing/payment-method`
 - Merchant Account Links + Checkout: `src/lib/stripe/merchant-connect.ts`,
   `src/lib/stripe/connect-accounts.ts`
-- Connect webhook verify / ledger ingress: `src/lib/stripe/webhook.ts`,
+- Connect webhook verify (account.updated only): `src/lib/stripe/webhook.ts`,
   `src/app/webhooks/stripe/route.ts`
-- Custom Invoicing client: `src/lib/openmeter/custom-invoicing.ts`
-- OpenMeter invoice notifications: `src/app/webhooks/openmeter/route.ts`
-- Ledger + worker: `src/lib/invoicing/*`, `scripts/invoicing-worker.ts`,
-  `deploy/invoicing-worker/`
+- Custom Invoicing client helpers: `src/lib/openmeter/custom-invoicing.ts`
 - Activation gate: `src/lib/activation/app-activation.ts`,
   [`docs/activation-gate.md`](./activation-gate.md)
 
@@ -268,15 +263,16 @@ and keep the same OM metering + Connect readiness model.
 - [x] Payments tab copy: “Merchant Stripe Connect” vs OpenMeter Stripe billing
 - [x] Owner Stripe payment-method attach on `/billing` (Plane A)
 - [x] MoonPay gated to platform admin only
-- [x] Plane B ledger for payment_intent.* / deauth / checkout.completed
-- [x] Merchant Custom Invoicing (Konnect) + Railway worker + Connect charges
+- [x] Merchant Custom Invoicing (Konnect) + settlement metadata + Connect supplier sync
+- [x] Collection via pymthouse/settlement (not an in-repo Railway worker)
 
 ### Remaining
 
 - [ ] Stripe Dashboard: dedicated Connect webhook endpoint (connected-account
-      events) pointed at production `/webhooks/stripe`; document secret rotation.
-- [ ] Konnect: run `openmeter:custom-invoicing:bootstrap` in each env; set
-      `OPENMETER_*` / `STRIPE_CONNECT_WEBHOOK_SECRET` on Vercel + Railway.
+      events) pointed at production `/webhooks/stripe` for `account.updated`;
+      payment events point at the settlement producer.
+- [ ] Deploy pymthouse/settlement; run `openmeter:custom-invoicing:bootstrap`
+      with `SETTLEMENT_OPENMETER_WEBHOOK_URL`; set `OPENMETER_*` on Vercel.
 - [ ] Wire `assignMerchantCustomInvoicingProfile` into merchant end-user
       provisioning when `billing_mode=merchant`.
 - [ ] Cutover audit (#324): flag apps where OM would auto-charge the same
@@ -287,11 +283,11 @@ and keep the same OM metering + Connect readiness model.
 
 1. Owner network invoices collect only via Plane A (platform Stripe + OM app).
 2. Builder retail payments collect only via Plane B (connected account), including
-   OM-generated invoices completed via Custom Invoicing + Connect charges.
+   OM-generated invoices completed via Custom Invoicing + pymthouse/settlement.
 3. No end user is charged twice for the same plan period.
 4. `canSellPaidPlans` tracks Connect readiness from Plane B webhooks, not OM app
    install status (`billingReady`).
 5. Engineers and UI never call OM app install “Stripe Connect.”
 6. MoonPay is never presented as the primary owner funding path.
-7. Invoice event processing is durable (ledger + SKIP LOCKED worker) and
+7. Invoice collection is durable in pymthouse/settlement (Kafka + Go worker) and
    idempotent under webhook retries.

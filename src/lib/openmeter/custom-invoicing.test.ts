@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  customInvoicingRequestUrl,
-  requireOpenMeterWebhookSecret,
-} from "./custom-invoicing";
+import { customInvoicingRequestUrl } from "./custom-invoicing";
 
 test("customInvoicingRequestUrl strips /api/v1 for Konnect bases", () => {
   const savedUrl = process.env.OPENMETER_URL;
@@ -45,20 +42,6 @@ test("customInvoicingRequestUrl keeps /api/v1 for self-hosted", () => {
       delete process.env.OPENMETER_API_KEY;
     } else {
       process.env.OPENMETER_API_KEY = savedKey;
-    }
-  }
-});
-
-test("requireOpenMeterWebhookSecret throws when unset", () => {
-  const saved = process.env.OPENMETER_WEBHOOK_SECRET;
-  delete process.env.OPENMETER_WEBHOOK_SECRET;
-  try {
-    assert.throws(() => requireOpenMeterWebhookSecret(), /OPENMETER_WEBHOOK_SECRET/);
-  } finally {
-    if (saved === undefined) {
-      delete process.env.OPENMETER_WEBHOOK_SECRET;
-    } else {
-      process.env.OPENMETER_WEBHOOK_SECRET = saved;
     }
   }
 });

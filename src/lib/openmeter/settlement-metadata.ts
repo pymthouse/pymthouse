@@ -1,6 +1,6 @@
 /**
- * Metadata keys consumed by pymthouse/settlement (and the #335 Railway worker)
- * when resolving Stripe Connect charge routing for Custom Invoicing invoices.
+ * Metadata keys consumed by pymthouse/settlement when resolving Stripe Connect
+ * charge routing for Custom Invoicing invoices.
  *
  * Invoice metadata wins over customer metadata over env default — OpenMeter
  * freezes the invoice at creation, so stamp these before the first merchant
