@@ -19,17 +19,7 @@ import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
-/** Default OFF — set `NETWORK_AGENT_REGISTER_ENABLED=1` to enable. */
-export function isNetworkAgentRegisterEnabled(): boolean {
-  const raw = process.env.NETWORK_AGENT_REGISTER_ENABLED;
-  if (raw === undefined || raw === "") {
-    return false;
-  }
-  return raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "yes";
-}
-
 export type NetworkAgentRegisterErrorCode =
-  | "disabled"
   | "rate_limited"
   | "invalid_public_key"
   | "invalid_challenge"
@@ -291,14 +281,6 @@ export function createRegisterChallenge(input: {
   alg: "Ed25519";
   fingerprint: string;
 } {
-  if (!isNetworkAgentRegisterEnabled()) {
-    throw new NetworkAgentRegisterError(
-      "disabled",
-      "Agent network registration is disabled",
-      404,
-    );
-  }
-
   purgeExpiredChallenges();
 
   const rawPk = normalizeEd25519PublicKey(input.publicKey);
@@ -358,14 +340,6 @@ export async function registerNetworkAgent(input: {
   label?: string | null;
   clientIp?: string;
 }): Promise<NetworkAgentRegisterResult> {
-  if (!isNetworkAgentRegisterEnabled()) {
-    throw new NetworkAgentRegisterError(
-      "disabled",
-      "Agent network registration is disabled",
-      404,
-    );
-  }
-
   const ip = input.clientIp?.trim() || "unknown";
   const rawPk = normalizeEd25519PublicKey(input.publicKey);
   const fingerprint = publicKeyFingerprint(rawPk);
