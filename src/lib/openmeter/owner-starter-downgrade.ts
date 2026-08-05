@@ -1,7 +1,7 @@
 import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
-import { changeKonnectSubscription } from "./konnect-subscriptions";
+import { changeKonnectSubscription, restoreKonnectSubscription } from "./konnect-subscriptions";
 import { isOwnerPaidPlanKey } from "./owner-paid-key";
 import {
   ensureOwnerStarterPlanSynced,
@@ -239,6 +239,130 @@ export function ownerStarterDowngradeHttpStatus(
       return 503;
     case "no_subscription":
     case "not_on_paid":
+      return 404;
+    case "confirm_required":
+      return 400;
+    default:
+      return 502;
+  }
+}
+
+export type OwnerPaidResumeErrorCode =
+  | "confirm_required"
+  | "openmeter_unavailable"
+  | "nothing_to_resume"
+  | "resume_failed";
+
+export class OwnerPaidResumeError extends Error {
+  readonly code: OwnerPaidResumeErrorCode;
+
+  constructor(
+    code: OwnerPaidResumeErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OwnerPaidResumeError";
+    this.code = code;
+  }
+}
+
+export type OwnerPaidResumeResult = {
+  resumed: true;
+  openmeterSubscriptionId: string;
+  planKey: string;
+  planName: string | null;
+};
+
+/** Paid sub to restore when a Starter downgrade is scheduled; null if none. */
+export function resolveOwnerPaidResumeTarget(
+  listed: OpenMeterSubscriptionView[],
+): { subscriptionId: string; planKey: string } | null {
+  const { activePaid, scheduledStarter } = pickWalletSubs(listed);
+  if (!activePaid?.id || !scheduledStarter?.id) {
+    return null;
+  }
+  return {
+    subscriptionId: activePaid.id,
+    planKey: activePaid.planKey || "",
+  };
+}
+
+/**
+ * Cancel a scheduled end-of-cycle Starter downgrade by restoring the active
+ * Owner Paid subscription (OpenMeter deletes the scheduled successor).
+ * No charge — the current paid plan continues.
+ */
+export async function resumeOwnerPaidAfterScheduledDowngrade(input: {
+  ownerUserId: string;
+  confirm?: boolean;
+}): Promise<OwnerPaidResumeResult> {
+  if (input.confirm !== true) {
+    throw new OwnerPaidResumeError(
+      "confirm_required",
+      "Confirm to keep your paid plan and cancel the scheduled downgrade",
+    );
+  }
+
+  if (!isHostedAdminClientAvailable()) {
+    throw new OwnerPaidResumeError(
+      "openmeter_unavailable",
+      "OpenMeter is not configured",
+    );
+  }
+
+  const ownerUserId = input.ownerUserId.trim();
+  if (!ownerUserId) {
+    throw new OwnerPaidResumeError(
+      "resume_failed",
+      "ownerUserId is required",
+    );
+  }
+
+  const client = getHostedAdminClient();
+  const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
+  const customer = await ensureOwnerCustomer(
+    client,
+    ownerUserId,
+    publicClientIds,
+  );
+
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    client,
+    customer.id,
+  );
+  const target = resolveOwnerPaidResumeTarget(listed);
+
+  if (!target) {
+    throw new OwnerPaidResumeError(
+      "nothing_to_resume",
+      "No scheduled downgrade to cancel",
+    );
+  }
+
+  try {
+    const restored = await restoreKonnectSubscription({
+      subscriptionId: target.subscriptionId,
+    });
+    return {
+      resumed: true,
+      openmeterSubscriptionId: restored.id?.trim() || target.subscriptionId,
+      planKey: target.planKey,
+      planName: null,
+    };
+  } catch (err) {
+    console.error("Owner Paid resume failed", err);
+    throw new OwnerPaidResumeError(
+      "resume_failed",
+      "Could not cancel the scheduled downgrade",
+    );
+  }
+}
+
+export function ownerPaidResumeHttpStatus(code: OwnerPaidResumeErrorCode): number {
+  switch (code) {
+    case "openmeter_unavailable":
+      return 503;
+    case "nothing_to_resume":
       return 404;
     case "confirm_required":
       return 400;

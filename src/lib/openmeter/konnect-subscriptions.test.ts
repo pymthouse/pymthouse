@@ -6,6 +6,7 @@ import {
   countActiveKonnectSubscriptionsForPlan,
   listActiveKonnectSubscriptions,
   parseSubscriptionTiming,
+  restoreKonnectSubscription,
   subscriptionMatchesOpenMeterPlanId,
 } from "./konnect-subscriptions";
 
@@ -47,7 +48,7 @@ test("subscriptionMatchesOpenMeterPlanId reads plan_id or planId", () => {
   );
 });
 
-test("changeKonnectSubscription and cancelKonnectSubscription call admin API", async (t) => {
+test("changeKonnectSubscription cancel and restore call admin API", async (t) => {
   withKonnectEnv(t);
   const calls: Array<{ url: string; body: string }> = [];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -65,11 +66,13 @@ test("changeKonnectSubscription and cancelKonnectSubscription call admin API", a
     timing: "immediate",
   });
   await cancelKonnectSubscription({ subscriptionId: "sub_1" });
+  await restoreKonnectSubscription({ subscriptionId: "sub_1" });
 
   assert.match(calls[0]!.url, /\/subscriptions\/sub_1\/change$/);
   assert.match(calls[0]!.body, /"timing":"immediate"/);
   assert.match(calls[1]!.url, /\/subscriptions\/sub_1\/cancel$/);
   assert.match(calls[1]!.body, /next_billing_cycle/);
+  assert.match(calls[2]!.url, /\/subscriptions\/sub_1\/restore$/);
 });
 
 test("listActiveKonnectSubscriptions pages and filters statuses", async (t) => {

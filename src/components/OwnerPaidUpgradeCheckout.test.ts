@@ -7,6 +7,7 @@ import {
   confirmButtonLabel,
   isCheckoutFreePlanKey,
   isPaidPlanSelectionReady,
+  isResumePendingDowngradeSelection,
 } from "@/components/OwnerPaidUpgradeCheckout";
 
 test("isPaidPlanSelectionReady rejects the current paid tier", () => {
@@ -17,6 +18,21 @@ test("isPaidPlanSelectionReady rejects the current paid tier", () => {
   assert.equal(
     isPaidPlanSelectionReady(OWNER_CHECKOUT_FREE_PLAN_KEY, "pymthouse_owner_paid_producer"),
     true,
+  );
+});
+
+test("isResumePendingDowngradeSelection only when pending + current tier", () => {
+  assert.equal(
+    isResumePendingDowngradeSelection("pymthouse_owner_paid_producer", "pymthouse_owner_paid_producer", true),
+    true,
+  );
+  assert.equal(
+    isResumePendingDowngradeSelection("pymthouse_owner_paid_producer", "pymthouse_owner_paid_producer", false),
+    false,
+  );
+  assert.equal(
+    isResumePendingDowngradeSelection("pymthouse_owner_paid_studio", "pymthouse_owner_paid_producer", true),
+    false,
   );
 });
 
@@ -43,7 +59,25 @@ test("confirmButtonLabel uses Free downgrade copy", () => {
   assert.equal(isCheckoutFreePlanKey("pymthouse_owner_paid_producer"), false);
 });
 
-test("confirmBlockingHint tells users to pick a different plan", () => {
+test("confirmButtonLabel uses Resume copy for pending downgrade", () => {
+  assert.equal(
+    confirmButtonLabel(false, "2.50", "change", {
+      resumePendingDowngrade: true,
+      planName: "Producer",
+    }),
+    "Resume Producer — no charge today",
+  );
+  assert.equal(
+    confirmButtonLabel(true, "2.50", "change", { resumePendingDowngrade: true }),
+    "Resuming…",
+  );
+});
+
+test("confirmBlockingHint clears when resume is available", () => {
+  assert.equal(
+    confirmBlockingHint(false, true, true, { resumePendingDowngrade: true }),
+    "",
+  );
   assert.equal(
     confirmBlockingHint(false, true, true),
     "Select a different plan to continue.",

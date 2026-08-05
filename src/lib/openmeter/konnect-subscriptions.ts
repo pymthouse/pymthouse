@@ -64,6 +64,20 @@ export async function cancelKonnectSubscription(input: {
   );
 }
 
+/**
+ * Continue a subscription and delete conflicting scheduled successors.
+ * Used to undo a next-cycle plan change (e.g. scheduled Starter downgrade).
+ */
+export async function restoreKonnectSubscription(input: {
+  subscriptionId: string;
+}): Promise<KonnectSubscription> {
+  return konnectAdminFetch<KonnectSubscription>(
+    `/subscriptions/${encodeURIComponent(input.subscriptionId)}/restore`,
+    { method: "POST" },
+    "subscription-restore",
+  );
+}
+
 export async function listActiveKonnectSubscriptions(): Promise<
   KonnectSubscription[]
 > {

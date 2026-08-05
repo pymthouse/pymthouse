@@ -10,6 +10,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import InfoTooltip from "@/components/InfoTooltip";
 import OwnerPaidUpgradePanel from "@/components/OwnerPaidUpgradeEffect";
 import OwnerPaymentMethodsCard from "@/components/OwnerPaymentMethodsCard";
+import OwnerResumePendingDowngradeButton from "@/components/OwnerResumePendingDowngradeButton";
 import CycleRange from "@/components/billing/CycleRange";
 import { allocateCreditBalancesForSubscriptions } from "@/lib/billing/cost-waterfall";
 import {
@@ -455,6 +456,9 @@ export default function OwnerBillingView({
                 {data.pendingDowngrade.currentPlanName ?? "your paid plan"}{" "}
                 until then.
               </p>
+              <OwnerResumePendingDowngradeButton
+                currentPlanName={data.pendingDowngrade.currentPlanName}
+              />
             </div>
           ) : null}
 

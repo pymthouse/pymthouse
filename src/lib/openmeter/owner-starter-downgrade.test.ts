@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  OwnerPaidResumeError,
   OwnerStarterDowngradeError,
   deriveOwnerPendingDowngrade,
   downgradeOwnerToStarterPlan,
+  ownerPaidResumeHttpStatus,
   ownerStarterDowngradeHttpStatus,
+  resolveOwnerPaidResumeTarget,
+  resumeOwnerPaidAfterScheduledDowngrade,
 } from "@/lib/openmeter/owner-starter-downgrade";
+import type { OpenMeterSubscriptionView } from "@/lib/openmeter/subscription-read";
 
 test("downgradeOwnerToStarterPlan rejects without confirm", async () => {
   await assert.rejects(
@@ -112,4 +117,54 @@ test("deriveOwnerPendingDowngrade is null without scheduled Starter", () => {
   });
   assert.equal(pendingDowngrade, null);
   assert.equal(displaySubscriptions.length, 1);
+});
+
+test("resolveOwnerPaidResumeTarget needs paid + scheduled Starter", () => {
+  const withBoth: OpenMeterSubscriptionView[] = [
+    {
+      id: "sub_paid",
+      status: "active",
+      customerId: "cust_1",
+      planKey: "pymthouse_owner_paid_producer",
+      planId: "plan_paid",
+      activeFrom: null,
+      activeTo: "2026-09-01T00:00:00.000Z",
+    },
+    {
+      id: "sub_starter",
+      status: "scheduled",
+      customerId: "cust_1",
+      planKey: "pymthouse_owner_starter",
+      planId: "plan_starter",
+      activeFrom: "2026-09-01T00:00:00.000Z",
+      activeTo: null,
+    },
+  ];
+  assert.deepEqual(resolveOwnerPaidResumeTarget(withBoth), {
+    subscriptionId: "sub_paid",
+    planKey: "pymthouse_owner_paid_producer",
+  });
+  assert.equal(
+    resolveOwnerPaidResumeTarget(withBoth.slice(0, 1)),
+    null,
+  );
+});
+
+test("resumeOwnerPaidAfterScheduledDowngrade rejects without confirm", async () => {
+  await assert.rejects(
+    () =>
+      resumeOwnerPaidAfterScheduledDowngrade({
+        ownerUserId: "user_test",
+        confirm: false,
+      }),
+    (err: unknown) =>
+      err instanceof OwnerPaidResumeError && err.code === "confirm_required",
+  );
+});
+
+test("ownerPaidResumeHttpStatus maps known codes", () => {
+  assert.equal(ownerPaidResumeHttpStatus("confirm_required"), 400);
+  assert.equal(ownerPaidResumeHttpStatus("nothing_to_resume"), 404);
+  assert.equal(ownerPaidResumeHttpStatus("openmeter_unavailable"), 503);
+  assert.equal(ownerPaidResumeHttpStatus("resume_failed"), 502);
 });

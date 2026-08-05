@@ -152,7 +152,9 @@ export function confirmBlockingHint(
   planStepDone: boolean,
   cardStepDone: boolean,
   selectedIsCurrent: boolean,
+  opts?: { resumePendingDowngrade?: boolean },
 ): string {
+  if (opts?.resumePendingDowngrade) return "";
   if (selectedIsCurrent) return "Select a different plan to continue.";
   if (!planStepDone) return "Select a plan to continue.";
   if (!cardStepDone) return "Link a payment method to continue.";
@@ -167,15 +169,38 @@ export function isPaidPlanSelectionReady(
   return Boolean(selectedKey && selectedKey !== (currentPlanKey ?? ""));
 }
 
+/** Keeping the current paid plan while a Starter downgrade is scheduled. */
+export function isResumePendingDowngradeSelection(
+  selectedKey: string | null | undefined,
+  currentPlanKey: string | null | undefined,
+  hasPendingDowngrade: boolean,
+): boolean {
+  return Boolean(
+    hasPendingDowngrade &&
+      selectedKey &&
+      currentPlanKey &&
+      selectedKey === currentPlanKey,
+  );
+}
+
 export function confirmButtonLabel(
   busy: boolean,
   monthlyFeeUsd: string | null,
   mode: "upgrade" | "change",
-  opts?: { downgradeToFree?: boolean },
+  opts?: {
+    downgradeToFree?: boolean;
+    resumePendingDowngrade?: boolean;
+    planName?: string | null;
+  },
 ): string {
   if (busy) {
+    if (opts?.resumePendingDowngrade) return "Resuming…";
     if (opts?.downgradeToFree) return "Scheduling…";
     return mode === "change" ? "Changing…" : "Upgrading…";
+  }
+  if (opts?.resumePendingDowngrade) {
+    const name = opts.planName?.trim() || "your plan";
+    return `Resume ${name} — no charge today`;
   }
   if (opts?.downgradeToFree) {
     return "Confirm — keep plan until cycle ends";
@@ -510,13 +535,39 @@ function OrderSummary({
   paymentMethod,
   hasPaymentMethod,
   downgradeToFree = false,
+  resumePendingDowngrade = false,
 }: Readonly<{
   selected: OwnerTier | null;
   paymentMethod: UpgradePaymentMethodSummary | null;
   hasPaymentMethod: boolean;
   downgradeToFree?: boolean;
+  resumePendingDowngrade?: boolean;
 }>) {
   if (!selected) return null;
+  if (resumePendingDowngrade) {
+    return (
+      <div className="rounded-xl border border-white/6 bg-white/2.5 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Order summary
+        </p>
+        <div className="mt-3 space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm text-zinc-300">{selected.name}</span>
+            <span className="text-sm font-medium text-zinc-100">Keep</span>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Cancels the scheduled switch to Free. Your current plan continues —
+            nothing is charged today.
+          </p>
+        </div>
+        <div className="my-3 border-t border-white/6" />
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-sm text-zinc-200">Charged today</span>
+          <span className="font-semibold text-zinc-100">$0</span>
+        </div>
+      </div>
+    );
+  }
   if (downgradeToFree) {
     return (
       <div className="rounded-xl border border-white/6 bg-white/2.5 p-4">
@@ -632,6 +683,7 @@ function PlanPicker({
   busy,
   radioGroupId,
   currentPlanKey,
+  allowSelectCurrent = false,
   onSelectTier,
 }: Readonly<{
   loadingTiers: boolean;
@@ -640,6 +692,8 @@ function PlanPicker({
   busy: boolean;
   radioGroupId: string;
   currentPlanKey: string | null;
+  /** When a downgrade is scheduled, current plan must stay selectable to Resume. */
+  allowSelectCurrent?: boolean;
   onSelectTier: (key: string) => void;
 }>) {
   if (loadingTiers) {
@@ -681,7 +735,7 @@ function PlanPicker({
               tier={tier}
               selected={tier.key === selectedKey}
               onSelect={() => onSelectTier(tier.key)}
-              disabled={busy || isCurrent}
+              disabled={busy || (isCurrent && !allowSelectCurrent)}
               isCurrent={isCurrent}
               inputName={radioGroupId}
             />
@@ -787,6 +841,7 @@ function ConfirmActions({
   currentPlanKey,
   confirmRegionId,
   downgradeToFree,
+  resumePendingDowngrade,
   onConfirm,
 }: Readonly<{
   canConfirm: boolean;
@@ -798,12 +853,14 @@ function ConfirmActions({
   currentPlanKey: string | null;
   confirmRegionId: string;
   downgradeToFree?: boolean;
+  resumePendingDowngrade?: boolean;
   onConfirm: () => void;
 }>) {
   const hint = confirmBlockingHint(
     planStepDone,
     cardStepDone,
     Boolean(selected && currentPlanKey && selected.key === currentPlanKey),
+    { resumePendingDowngrade },
   );
   return (
     <div
@@ -818,11 +875,13 @@ function ConfirmActions({
       {busy ? (
         <p className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Spinner />
-          {downgradeToFree
-            ? "Scheduling Free — do not close this tab."
-            : mode === "change"
-              ? "Changing plan — do not close this tab."
-              : "Upgrading — do not close this tab."}
+          {resumePendingDowngrade
+            ? "Keeping your plan — do not close this tab."
+            : downgradeToFree
+              ? "Scheduling Free — do not close this tab."
+              : mode === "change"
+                ? "Changing plan — do not close this tab."
+                : "Upgrading — do not close this tab."}
         </p>
       ) : (
         <span />
@@ -851,6 +910,8 @@ function ConfirmActions({
           {busy ? <Spinner /> : null}
           {confirmButtonLabel(busy, selected?.monthlyFeeUsd ?? null, mode, {
             downgradeToFree,
+            resumePendingDowngrade,
+            planName: selected?.name,
           })}
         </button>
       </div>
@@ -866,6 +927,7 @@ export default function OwnerPaidUpgradeCheckout({
   initialPlanKey,
   pmAttached,
   starterPlanName = "Owner Sandbox Starter",
+  pendingDowngrade = null,
 }: Readonly<{
   mode?: "upgrade" | "change";
   currentPlanKey?: string | null;
@@ -874,6 +936,12 @@ export default function OwnerPaidUpgradeCheckout({
   initialPlanKey: string | null;
   pmAttached: boolean;
   starterPlanName?: string;
+  pendingDowngrade?: {
+    planName: string;
+    planKey: string;
+    effectiveAt: string | null;
+    currentPlanName: string | null;
+  } | null;
 }>) {
   const router = useRouter();
   const radioGroupId = useId();
@@ -933,6 +1001,13 @@ export default function OwnerPaidUpgradeCheckout({
       const list = body.tiers ?? [];
       setTiers(list);
       setSelectedKey((prev) => {
+        if (pendingDowngrade && currentPlanKey && list.some((t) => t.key === currentPlanKey)) {
+          if (currentPlanKey !== lastKeyedPlanRef.current) {
+            idempotencyKeyRef.current = makeIdempotencyKey(currentPlanKey);
+            lastKeyedPlanRef.current = currentPlanKey;
+          }
+          return currentPlanKey;
+        }
         if (
           prev &&
           list.some((t) => t.key === prev) &&
@@ -956,7 +1031,7 @@ export default function OwnerPaidUpgradeCheckout({
     } finally {
       setLoadingTiers(false);
     }
-  }, [currentPlanKey]);
+  }, [currentPlanKey, pendingDowngrade]);
 
   useEffect(() => {
     void loadTiers();
@@ -987,8 +1062,16 @@ export default function OwnerPaidUpgradeCheckout({
   const selected =
     displayTiers.find((t) => t.key === selectedKey) ?? null;
   const downgradeToFree = isCheckoutFreePlanKey(selectedKey);
-  const planStepDone = isPaidPlanSelectionReady(selectedKey, currentPlanKey);
-  const cardStepDone = downgradeToFree || hasPaymentMethod;
+  const resumePendingDowngrade = isResumePendingDowngradeSelection(
+    selectedKey,
+    currentPlanKey,
+    Boolean(pendingDowngrade),
+  );
+  const planStepDone =
+    resumePendingDowngrade ||
+    isPaidPlanSelectionReady(selectedKey, currentPlanKey);
+  const cardStepDone =
+    downgradeToFree || resumePendingDowngrade || hasPaymentMethod;
   const canConfirm = planStepDone && cardStepDone && !busy;
 
   function upgradeUrlWithPlan(extra: Record<string, string> = {}): string {
@@ -1033,11 +1116,33 @@ export default function OwnerPaidUpgradeCheckout({
 
   async function confirmUpgrade() {
     if (!selected || busy) return;
-    if (!downgradeToFree && !hasPaymentMethod) return;
+    if (!downgradeToFree && !resumePendingDowngrade && !hasPaymentMethod) {
+      return;
+    }
     setBusy(true);
     setErrorCode(null);
     setNotice(null);
     try {
+      if (resumePendingDowngrade) {
+        const res = await fetch("/api/v1/me/billing/resume-paid-plan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKeyRef.current,
+          },
+          body: JSON.stringify({ confirm: true }),
+        });
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setErrorCode(classifyError(body.error || "Resume failed"));
+          setBusy(false);
+          return;
+        }
+        router.push("/billing?resumed=1");
+        router.refresh();
+        return;
+      }
+
       if (downgradeToFree) {
         const res = await fetch("/api/v1/me/billing/downgrade-to-starter", {
           method: "POST",
@@ -1141,6 +1246,7 @@ export default function OwnerPaidUpgradeCheckout({
               busy={busy}
               radioGroupId={radioGroupId}
               currentPlanKey={currentPlanKey}
+              allowSelectCurrent={Boolean(pendingDowngrade)}
               onSelectTier={onSelectTier}
             />
           </section>
@@ -1159,6 +1265,22 @@ export default function OwnerPaidUpgradeCheckout({
               <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
                 Not required to schedule Free. Your current plan continues until
                 the cycle ends.
+              </p>
+            </section>
+          ) : resumePendingDowngrade ? (
+            <section aria-labelledby="step-pm-heading">
+              <div className="mb-3 flex items-center gap-2">
+                <StepBadge n={2} done />
+                <h2
+                  id="step-pm-heading"
+                  className="text-sm font-semibold text-zinc-200"
+                >
+                  Payment method
+                </h2>
+              </div>
+              <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
+                Not required to resume. Cancels the scheduled Free switch — no
+                charge today.
               </p>
             </section>
           ) : (
@@ -1189,6 +1311,7 @@ export default function OwnerPaidUpgradeCheckout({
               paymentMethod={paymentMethod}
               hasPaymentMethod={hasPaymentMethod}
               downgradeToFree={downgradeToFree}
+              resumePendingDowngrade={resumePendingDowngrade}
             />
           </div>
 
@@ -1202,6 +1325,7 @@ export default function OwnerPaidUpgradeCheckout({
             currentPlanKey={currentPlanKey}
             confirmRegionId={confirmRegionId}
             downgradeToFree={downgradeToFree}
+            resumePendingDowngrade={resumePendingDowngrade}
             onConfirm={() => void confirmUpgrade()}
           />
 
@@ -1215,6 +1339,7 @@ export default function OwnerPaidUpgradeCheckout({
               paymentMethod={paymentMethod}
               hasPaymentMethod={hasPaymentMethod}
               downgradeToFree={downgradeToFree}
+              resumePendingDowngrade={resumePendingDowngrade}
             />
             {!loadingTiers && tiers.length >= 2 ? (
               <div className="mt-4 rounded-lg border border-white/5 bg-white/1.5 px-3 py-3 text-xs text-zinc-600">
