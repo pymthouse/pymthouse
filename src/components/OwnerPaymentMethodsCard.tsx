@@ -34,7 +34,7 @@ function paymentMethodDetail(pm: OwnerPaymentMethodListItem): string | null {
 
 function paymentMethodStatusLabel(pm: OwnerPaymentMethodListItem): string {
   if (pm.isDefault) {
-    return "Default for platform overage invoices";
+    return "Default for plan fee & overage";
   }
   if (isLinkPaymentMethod(pm)) {
     return "Stripe Link wallet";
@@ -132,7 +132,7 @@ function RemovePaymentMethodDialog({
         </h3>
         <p id={descriptionId} className="mt-2 text-sm leading-relaxed text-zinc-400">
           {paymentMethod.isDefault
-            ? "This is your default payment method. Platform overage invoices will not charge automatically until you pick another."
+            ? "This is your default payment method. Plan renewals and overage will not charge automatically until you pick another."
             : "This payment method will be detached from your account. You can add it again later."}
           {detail ? (
             <>
@@ -300,8 +300,8 @@ export default function OwnerPaymentMethodsCard({
       ) : null}
       {paymentMethods.length === 1 ? (
         <p className="mt-3 text-[11px] text-zinc-600">
-          Add a second payment method before removing this one — overage invoices
-          need a method to charge.
+          Add a second payment method before removing this one — plan renewals
+          and overage need a method to charge.
         </p>
       ) : null}
       {pendingRemove ? (

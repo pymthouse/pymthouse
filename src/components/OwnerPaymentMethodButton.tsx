@@ -1,18 +1,27 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
+import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-session";
+
 /**
- * Owner billing: start OpenMeter Stripe Checkout (setup) to attach a card,
- * then upgrade Sandbox Starter → Owner Paid.
+ * Owner billing header action for payment methods.
+ * When Upgrade is available and no card is on file, link to the dedicated
+ * checkout page. Otherwise start Stripe setup Checkout directly.
  */
 export default function OwnerPaymentMethodButton({
   hasPaymentMethod = false,
+  upgradeFirst = false,
 }: Readonly<{
   hasPaymentMethod?: boolean;
+  /** Offer Upgrade when the owner is not already on Owner Paid. */
+  upgradeFirst?: boolean;
 }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const useUpgradeCta = upgradeFirst && !hasPaymentMethod;
 
   async function startCheckout() {
     setBusy(true);
@@ -33,10 +42,11 @@ export default function OwnerPaymentMethodButton({
       if (!res.ok) {
         throw new Error(body.error || "Could not start Stripe Checkout");
       }
-      if (!body.checkoutUrl) {
-        throw new Error("Checkout URL missing");
+      const checkoutUrl = stripeCheckoutRedirectUrl(body.checkoutUrl ?? "");
+      if (!checkoutUrl) {
+        throw new Error("Checkout URL missing or invalid");
       }
-      window.location.assign(body.checkoutUrl);
+      window.location.assign(checkoutUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
@@ -44,10 +54,25 @@ export default function OwnerPaymentMethodButton({
   }
 
   let buttonLabel = "Add payment method";
-  if (busy) {
+  if (useUpgradeCta) {
+    buttonLabel = "Upgrade";
+  } else if (busy) {
     buttonLabel = "Opening Stripe…";
   } else if (hasPaymentMethod) {
     buttonLabel = "Update payment method";
+  }
+
+  if (useUpgradeCta) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <Link
+          href="/billing/upgrade"
+          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground"
+        >
+          {buttonLabel}
+        </Link>
+      </div>
+    );
   }
 
   return (

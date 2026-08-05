@@ -4,9 +4,12 @@ import {
   cancelKonnectSubscription,
   changeKonnectSubscription,
   countActiveKonnectSubscriptionsForPlan,
+  estimateNextBillingCycleIso,
   listActiveKonnectSubscriptions,
   parseSubscriptionTiming,
+  restoreKonnectSubscription,
   subscriptionMatchesOpenMeterPlanId,
+  unscheduleKonnectSubscriptionCancelation,
 } from "./konnect-subscriptions";
 
 function withKonnectEnv(t: test.TestContext): void {
@@ -32,6 +35,23 @@ test("parseSubscriptionTiming accepts only known values", () => {
   assert.throws(() => parseSubscriptionTiming("later"), /timing must be/);
 });
 
+test("estimateNextBillingCycleIso clamps end-of-month anchors", () => {
+  assert.equal(estimateNextBillingCycleIso(null), null);
+  assert.equal(estimateNextBillingCycleIso("not-a-date"), null);
+  assert.equal(
+    estimateNextBillingCycleIso("2025-01-31T00:00:00.000Z"),
+    "2025-02-28T00:00:00.000Z",
+  );
+  assert.equal(
+    estimateNextBillingCycleIso("2024-01-31T12:30:00.000Z"),
+    "2024-02-29T12:30:00.000Z",
+  );
+  assert.equal(
+    estimateNextBillingCycleIso("2025-03-31T00:00:00.000Z"),
+    "2025-04-30T00:00:00.000Z",
+  );
+});
+
 test("subscriptionMatchesOpenMeterPlanId reads plan_id or planId", () => {
   assert.equal(
     subscriptionMatchesOpenMeterPlanId({ id: "s1", status: "active", customer_id: "c1", plan_id: "plan_a" }, "plan_a"),
@@ -47,7 +67,7 @@ test("subscriptionMatchesOpenMeterPlanId reads plan_id or planId", () => {
   );
 });
 
-test("changeKonnectSubscription and cancelKonnectSubscription call admin API", async (t) => {
+test("changeKonnectSubscription cancel and restore call admin API", async (t) => {
   withKonnectEnv(t);
   const calls: Array<{ url: string; body: string }> = [];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -65,11 +85,15 @@ test("changeKonnectSubscription and cancelKonnectSubscription call admin API", a
     timing: "immediate",
   });
   await cancelKonnectSubscription({ subscriptionId: "sub_1" });
+  await restoreKonnectSubscription({ subscriptionId: "sub_1" });
+  await unscheduleKonnectSubscriptionCancelation({ subscriptionId: "sub_1" });
 
   assert.match(calls[0]!.url, /\/subscriptions\/sub_1\/change$/);
   assert.match(calls[0]!.body, /"timing":"immediate"/);
   assert.match(calls[1]!.url, /\/subscriptions\/sub_1\/cancel$/);
   assert.match(calls[1]!.body, /next_billing_cycle/);
+  assert.match(calls[2]!.url, /\/metering\/v1\/subscriptions\/sub_1\/restore$/);
+  assert.match(calls[3]!.url, /\/subscriptions\/sub_1\/unschedule-cancelation$/);
 });
 
 test("listActiveKonnectSubscriptions pages and filters statuses", async (t) => {

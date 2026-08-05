@@ -45,12 +45,13 @@ MoonPay top-up path. Builder apps reuse it unchanged.
 | Owner plan | Spendable = 0 | Mint / activation cost check |
 | --- | --- | --- |
 | **Owner Sandbox Starter** | Hard stop | Fail mint (`trial_credits_exhausted`) and block new end-user provisioning |
-| **Owner Paid** + chargeable PM | Allow past zero | `ownerWalletAllowsOverageInvoicing` → overage invoices; mint may continue |
+| **Owner Paid tier** + chargeable PM | Allow past zero | `ownerWalletAllowsOverageInvoicing` (any `pymthouse_owner_paid*`) → overage invoices; mint may continue |
 
-A card alone while still on Sandbox Starter does **not** unlock overage — upgrade to
-Owner Paid is required. Verified by `mintAllowanceGateDecision` /
-`enforceMintAllowanceGate` (`src/lib/oidc/mint-user-signer-token.ts`) and
-`resolveAppActivation` (`src/lib/activation/app-activation.ts`). Unit coverage:
+A card alone while still on Sandbox Starter does **not** unlock overage — an explicit
+**Upgrade** to an Owner Paid tier is required (attach PM ≠ subscribe). Verified by
+`mintAllowanceGateDecision` / `enforceMintAllowanceGate`
+(`src/lib/oidc/mint-user-signer-token.ts`) and `resolveAppActivation`
+(`src/lib/activation/app-activation.ts`). Unit coverage:
 `mint-user-signer-token.test.ts` (zero spendable reject vs `allowsOverageInvoicing`
 allow) and `app-activation.test.ts` (empty wallet + Paid/PM allows provision).
 
@@ -105,7 +106,8 @@ connectReady =
 
 ownerBillable =
      ownerSpendableUsdMicros > 0
-  || ownerHasChargeablePaymentMethod
+  || ownerWalletAllowsOverageInvoicing
+     // Owner Paid tier (`pymthouse_owner_paid*`) + chargeable PM — not card alone on Starter
 
 canProvisionEndUsers =
      is_platform_default
@@ -129,13 +131,14 @@ Notes:
 - `ownerSpendableUsdMicros` reuses `getSpendableUsdMicros` — included plan allowance
   plus prepaid credits — so the gate agrees with the existing signer mint gate rather
   than introducing a second definition of solvency.
-- An empty wallet alone does **not** block **when** the owner is on **Owner Paid** with a
-  chargeable payment method (`ownerWalletAllowsOverageInvoicing`). Sandbox Starter with
-  spendable=0 is a hard stop even if a card is already attached (upgrade required). Only
+- An empty wallet alone does **not** block **when** the owner is on an **Owner Paid
+  tier** (`pymthouse_owner_paid*`) with a chargeable payment method
+  (`ownerWalletAllowsOverageInvoicing`). Sandbox Starter with spendable=0 is a hard
+  stop even if a card is already attached (explicit Upgrade required). Only
   an owner with neither spendable balance nor Paid+PM overage path is unbillable — that
   is what the cost rail refuses, because the usage would be uncollectable by construction.
 - Chargeability for the overage path uses `ownerWalletAllowsOverageInvoicing`
-  (`owner-paid-plan.ts`), which requires the Owner Paid subscription **and** a chargeable
+  (`owner-paid-plan.ts`), which requires an Owner Paid tier subscription **and** a chargeable
   Stripe default PM. The cheaper prepaid/balance read runs first; PM/overage lookup runs
   only after spendable is exhausted. Lookup returns `null` when platform billing is
   unconfigured or Stripe/OpenMeter is unreachable, and `null` fails open on the

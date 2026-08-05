@@ -2,7 +2,11 @@ export type OwnerPaidUpgradeErrorCode =
   | "payment_method_required"
   | "openmeter_unavailable"
   | "no_subscription"
-  | "upgrade_failed";
+  | "confirm_required"
+  | "tier_unavailable"
+  | "upgrade_in_progress"
+  | "upgrade_failed"
+  | "subscription_conflict";
 
 /** Map Owner Paid upgrade error codes to HTTP status codes. */
 export function ownerPaidUpgradeHttpStatus(
@@ -15,6 +19,12 @@ export function ownerPaidUpgradeHttpStatus(
       return 503;
     case "no_subscription":
       return 404;
+    case "upgrade_in_progress":
+    case "subscription_conflict":
+      return 409;
+    case "confirm_required":
+    case "tier_unavailable":
+      return 400;
     default:
       return 400;
   }

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { withSessionAdminGuard } from "@/lib/api-guards";
-import { resolvePlatformOwnerStarterDefault } from "@/lib/billing/platform-owner-starter-default";
+import {
+  normalizeOwnerStarterPlanName,
+  resolvePlatformOwnerStarterDefault,
+} from "@/lib/billing/platform-owner-starter-default";
 import { republishPlatformOwnerAllowancePlans } from "@/lib/billing/republish-platform-owner-allowance-plans";
+import { readOptionalStringField } from "@/lib/billing/owner-tier-body";
 import {
   OWNER_PAID_PLAN_KEY,
   peekOwnerPaidPlanPublished,
@@ -18,6 +22,7 @@ export const GET = withSessionAdminGuard(async () => {
   const paid = await peekOwnerPaidPlanPublished();
   return NextResponse.json({
     ownerStarterIncludedUsdMicros: resolved.ownerStarterIncludedUsdMicros,
+    ownerStarterPlanName: resolved.ownerStarterPlanName,
     source: resolved.source,
     updatedBy: resolved.updatedBy,
     updatedAt: resolved.updatedAt,
@@ -56,16 +61,31 @@ export const PATCH = withSessionAdminGuard(async (request, context) => {
     );
   }
 
+  const nameRaw = readOptionalStringField(body, "ownerStarterPlanName");
+  let ownerStarterPlanName: string | undefined;
+  if (nameRaw !== undefined) {
+    try {
+      ownerStarterPlanName = normalizeOwnerStarterPlanName(nameRaw);
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 400 },
+      );
+    }
+  }
+
   const resyncSubscribers = body.resync === true || body.resyncSubscribers === true;
 
   try {
     const result = await republishPlatformOwnerAllowancePlans({
       ownerStarterIncludedUsdMicros: micros,
+      ownerStarterPlanName,
       updatedBy: context.userId,
       resyncSubscribers,
     });
     return NextResponse.json({
       ownerStarterIncludedUsdMicros: result.ownerStarterIncludedUsdMicros,
+      ownerStarterPlanName: result.ownerStarterPlanName,
       source: "db" as const,
       planKey: result.planKey,
       openmeterPlanId: result.openmeterPlanId,

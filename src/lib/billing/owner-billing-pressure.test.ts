@@ -23,6 +23,25 @@ test("chargeable whenever a payment method is on file", () => {
   );
 });
 
+test("chargeable when chargeability is true even if listed methods are empty", () => {
+  // Callers OR listed methods with hasChargeableBillingMethod before passing
+  // hasPaymentMethod — pressure itself only sees the boolean.
+  assert.equal(
+    resolveOwnerBillingPressure({
+      hasPaymentMethod: true,
+      creditBalanceUsdMicros: "0",
+      subscriptions: [
+        {
+          appPublicClientId: null,
+          discountUsdMicros: "5000000",
+          usedUsdMicros: "5000000",
+        },
+      ],
+    }),
+    "chargeable",
+  );
+});
+
 test("solvent while plan allowance remains", () => {
   assert.equal(
     resolveOwnerBillingPressure({

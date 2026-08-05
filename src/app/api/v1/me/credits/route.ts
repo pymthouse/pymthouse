@@ -4,7 +4,10 @@ import { getServerSession } from "next-auth";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { authOptions } from "@/lib/next-auth-options";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
-import { listOwnerPaymentMethods } from "@/lib/openmeter/owner-payment-method";
+import {
+  listOwnerPaymentMethods,
+  ownerHasChargeablePaymentMethod,
+} from "@/lib/openmeter/owner-payment-method";
 import { listOwnerActiveSubscriptions } from "@/lib/owner-billing-data";
 
 /**
@@ -20,26 +23,34 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [creditAllowance, subscriptions, paymentMethods] = await Promise.all([
-    getOwnerPrepaidCreditBalance(userId),
-    listOwnerActiveSubscriptions(userId).catch((err) => {
-      console.warn(
-        "me/credits: subscription lookup failed",
-        err instanceof Error ? err.message : String(err),
-      );
-      return [];
-    }),
-    listOwnerPaymentMethods(userId).catch((err) => {
-      console.warn(
-        "me/credits: payment method lookup failed",
-        err instanceof Error ? err.message : String(err),
-      );
-      return [];
-    }),
-  ]);
+  const [creditAllowance, subscriptions, paymentMethods, chargeable] =
+    await Promise.all([
+      getOwnerPrepaidCreditBalance(userId),
+      listOwnerActiveSubscriptions(userId).catch((err) => {
+        console.warn(
+          "me/credits: subscription lookup failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return [];
+      }),
+      listOwnerPaymentMethods(userId).catch((err) => {
+        console.warn(
+          "me/credits: payment method lookup failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return [];
+      }),
+      ownerHasChargeablePaymentMethod(userId).catch((err) => {
+        console.warn(
+          "me/credits: chargeability lookup failed",
+          err instanceof Error ? err.message : String(err),
+        );
+        return false;
+      }),
+    ]);
 
   const billingPressure = resolveOwnerBillingPressure({
-    hasPaymentMethod: paymentMethods.length > 0,
+    hasPaymentMethod: paymentMethods.length > 0 || chargeable === true,
     creditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
     subscriptions,
   });

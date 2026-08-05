@@ -3,7 +3,7 @@ import { eq, or } from "drizzle-orm";
 import { db } from "@/db/index";
 import { ownerBillingConfig, users } from "@/db/schema";
 import {
-  resolvePlatformOwnerStarterIncludedUsdMicros,
+  resolvePlatformOwnerStarterDefault,
   setPlatformOwnerStarterIncludedUsdMicros,
 } from "@/lib/billing/platform-owner-starter-default";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
@@ -14,7 +14,7 @@ import {
 } from "@/lib/openmeter/konnect-subscriptions";
 import { isBaseOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import {
-  forceSyncOwnerPaidPlan,
+  forceSyncAllOwnerPaidTiers,
   OWNER_PAID_PLAN_KEY,
 } from "@/lib/openmeter/owner-paid-plan";
 import {
@@ -47,6 +47,7 @@ export function ownerPaidForceSyncWarning(err: unknown): PlatformOwnerAllowanceW
 
 export type RepublishPlatformOwnerAllowancePlansResult = {
   ownerStarterIncludedUsdMicros: string;
+  ownerStarterPlanName: string;
   planKey: string;
   openmeterPlanId: string;
   ownerPaidPlanKey: string;
@@ -82,13 +83,13 @@ export function hasStarterAllowanceOverride(
 }
 
 /**
- * Persist the new platform Developer wallet default and republish both Owner
- * Starter (atomic) and Owner Paid (best-effort) catalog plans. When
- * `resyncSubscribers` is true, also migrate every active subscription still on
- * the Starter base key (not amount-keyed override plans).
+ * Persist the new platform Developer wallet default and republish Owner
+ * Starter (atomic). Owner Paid tiers are synced best-effort from their own
+ * catalog rows (not from the Starter default).
  */
 export async function republishPlatformOwnerAllowancePlans(input: {
   ownerStarterIncludedUsdMicros: string;
+  ownerStarterPlanName?: string;
   updatedBy: string;
   resyncSubscribers?: boolean;
 }): Promise<RepublishPlatformOwnerAllowancePlansResult> {
@@ -97,9 +98,10 @@ export async function republishPlatformOwnerAllowancePlans(input: {
   // Persist first so forceSync classifies the new amount as the base key, then
   // roll back if Starter OpenMeter sync fails so spendable allowance cannot
   // drift ahead of the published plan discount.
-  const previous = await resolvePlatformOwnerStarterIncludedUsdMicros();
+  const previous = await resolvePlatformOwnerStarterDefault();
   const settings = await setPlatformOwnerStarterIncludedUsdMicros({
     ownerStarterIncludedUsdMicros: input.ownerStarterIncludedUsdMicros,
+    ownerStarterPlanName: input.ownerStarterPlanName,
     updatedBy: input.updatedBy,
   });
   invalidateOwnerStarterPlanCache();
@@ -111,7 +113,8 @@ export async function republishPlatformOwnerAllowancePlans(input: {
     );
   } catch (err) {
     await setPlatformOwnerStarterIncludedUsdMicros({
-      ownerStarterIncludedUsdMicros: previous,
+      ownerStarterIncludedUsdMicros: previous.ownerStarterIncludedUsdMicros,
+      ownerStarterPlanName: previous.ownerStarterPlanName,
       updatedBy: input.updatedBy,
     });
     invalidateOwnerStarterPlanCache();
@@ -120,14 +123,22 @@ export async function republishPlatformOwnerAllowancePlans(input: {
 
   let ownerPaidOpenmeterPlanId: string | null = null;
   let ownerPaidIncludedUsdMicros: string | null = null;
+  let ownerPaidPlanKey: string = OWNER_PAID_PLAN_KEY;
   try {
-    const paid = await forceSyncOwnerPaidPlan(
-      settings.ownerStarterIncludedUsdMicros,
-    );
-    ownerPaidOpenmeterPlanId = paid.openmeterPlanId;
-    ownerPaidIncludedUsdMicros = paid.includedUsdMicros;
+    const paid = await forceSyncAllOwnerPaidTiers();
+    for (const err of paid.errors) {
+      warnings.push({
+        code: "owner_paid_force_sync_failed",
+        message: `Owner Paid tier ${err.key}: ${err.message}`,
+      });
+    }
+    const defaultPaid =
+      paid.synced.find((s) => s.key === OWNER_PAID_PLAN_KEY) ?? paid.synced[0];
+    ownerPaidOpenmeterPlanId = defaultPaid?.openmeterPlanId ?? null;
+    ownerPaidIncludedUsdMicros = defaultPaid?.includedUsdMicros ?? null;
+    ownerPaidPlanKey = defaultPaid?.key ?? OWNER_PAID_PLAN_KEY;
   } catch (err) {
-    console.warn("openmeter: Owner Paid force-sync failed after platform default change");
+    console.warn("openmeter: Owner Paid tiers force-sync failed after platform default change");
     warnings.push(ownerPaidForceSyncWarning(err));
   }
 
@@ -140,9 +151,10 @@ export async function republishPlatformOwnerAllowancePlans(input: {
 
   return {
     ownerStarterIncludedUsdMicros: settings.ownerStarterIncludedUsdMicros,
+    ownerStarterPlanName: settings.ownerStarterPlanName,
     planKey: plan.key,
     openmeterPlanId: plan.openmeterPlanId,
-    ownerPaidPlanKey: OWNER_PAID_PLAN_KEY,
+    ownerPaidPlanKey,
     ownerPaidOpenmeterPlanId,
     ownerPaidIncludedUsdMicros,
     migrate,

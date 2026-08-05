@@ -1,152 +1,101 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-const PAYMENT_METHOD_SYNC_ATTEMPTS = 5;
-const PAYMENT_METHOD_SYNC_BASE_DELAY_MS = 1000;
-
-type UpgradeAttemptResult =
-  | { kind: "ok" }
-  | { kind: "retry"; delayMs: number }
-  | { kind: "fail"; message: string };
-
-async function attemptOwnerPaidUpgrade(
-  attempt: number,
-): Promise<UpgradeAttemptResult> {
-  const res = await fetch("/api/v1/me/billing/upgrade-paid", {
-    method: "POST",
-  });
-  const body = (await res.json().catch(() => ({}))) as {
-    error?: string;
-    code?: string;
-  };
-  if (res.ok) {
-    return { kind: "ok" };
-  }
-  if (body.code !== "payment_method_required") {
-    return {
-      kind: "fail",
-      message: body.error || "Could not upgrade to Owner Paid",
-    };
-  }
-  if (attempt + 1 >= PAYMENT_METHOD_SYNC_ATTEMPTS) {
-    return {
-      kind: "fail",
-      message: "Payment method is not ready yet. Retry in a moment.",
-    };
-  }
-  return {
-    kind: "retry",
-    delayMs: PAYMENT_METHOD_SYNC_BASE_DELAY_MS * (attempt + 1),
-  };
-}
-
-async function runOwnerPaidUpgradeAttempts(
-  isCancelled: () => boolean,
-): Promise<"ok" | "cancelled"> {
-  for (let attempt = 0; attempt < PAYMENT_METHOD_SYNC_ATTEMPTS; attempt += 1) {
-    if (isCancelled()) {
-      return "cancelled";
-    }
-    const result = await attemptOwnerPaidUpgrade(attempt);
-    if (result.kind === "retry") {
-      await new Promise((resolve) => setTimeout(resolve, result.delayMs));
-      continue;
-    }
-    if (result.kind === "fail") {
-      throw new Error(result.message);
-    }
-    return "ok";
-  }
-  throw new Error("Could not upgrade to Owner Paid");
-}
-
 /**
- * After Stripe Checkout returns (`?pm=attached`), upgrade Sandbox Starter →
- * Owner Paid. Also upgrades when a payment method is already on file but the
- * wallet is still on Sandbox Starter.
+ * Billing-page plan CTA: Upgrade from Starter, or Change plan when already Paid.
+ * Also surfaces a one-shot notice when returning from Stripe without ?upgrade=1
+ * on the checkout URL (legacy /billing?pm=attached).
  */
-export default function OwnerPaidUpgradeEffect({
-  hasPaymentMethod,
-  onSandboxStarter,
+export default function OwnerPaidUpgradePanel({
+  eligibleForUpgrade,
+  canChangePlan = false,
+  starterPlanName = "Owner Sandbox Starter",
+  currentPlanName,
 }: Readonly<{
-  hasPaymentMethod: boolean;
-  onSandboxStarter: boolean;
+  hasPaymentMethod?: boolean;
+  eligibleForUpgrade: boolean;
+  canChangePlan?: boolean;
+  starterPlanName?: string;
+  currentPlanName?: string | null;
 }>) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const attempted = useRef(false);
-
   const pmAttached = searchParams.get("pm") === "attached";
-  const shouldUpgrade =
-    hasPaymentMethod && (onSandboxStarter || pmAttached);
+  const [cardSavedNotice, setCardSavedNotice] = useState(false);
 
   useEffect(() => {
-    if (!shouldUpgrade || attempted.current) {
+    if (!pmAttached) return;
+    setCardSavedNotice(true);
+    // Prefer the dedicated checkout page for the rest of Upgrade / Change.
+    if (eligibleForUpgrade || canChangePlan) {
+      router.replace("/billing/upgrade?pm=attached");
       return;
     }
-    attempted.current = true;
-    let cancelled = false;
+    router.replace("/billing");
+  }, [pmAttached, eligibleForUpgrade, canChangePlan, router]);
 
-    async function upgrade() {
-      setBusy(true);
-      setError(null);
-      try {
-        const outcome = await runOwnerPaidUpgradeAttempts(() => cancelled);
-        if (outcome === "ok" && !cancelled) {
-          router.replace("/billing");
-          router.refresh();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      } finally {
-        if (!cancelled) {
-          setBusy(false);
-        }
-      }
-    }
-
-    void upgrade();
-    return () => {
-      cancelled = true;
-    };
-  }, [shouldUpgrade, router]);
-
-  if (!shouldUpgrade && !error) {
-    return null;
-  }
-
-  if (busy) {
+  if (eligibleForUpgrade) {
     return (
-      <p className="mb-4 text-sm text-zinc-400">
-        Upgrading to Owner Paid…
-      </p>
+      <div id="owner-paid-upgrade" className="mb-6 scroll-mt-6">
+        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-4 sm:px-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-emerald-100">
+                Upgrade from {starterPlanName}
+              </h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                Pick a monthly plan, link a payment method, then confirm. That
+                method pays the plan fee and overage after included usage.
+              </p>
+            </div>
+            <Link
+              href="/billing/upgrade"
+              className="shrink-0 rounded-md bg-emerald-500/20 px-4 py-2 text-center text-sm text-emerald-200 hover:bg-emerald-500/30"
+            >
+              Upgrade
+            </Link>
+          </div>
+        </div>
+      </div>
     );
   }
 
-  if (error) {
+  if (canChangePlan) {
     return (
-      <output className="mb-4 block rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-        {error}{" "}
-        <button
-          type="button"
-          className="underline"
-          onClick={() => {
-            attempted.current = false;
-            setError(null);
-            router.refresh();
-          }}
-        >
-          Retry
-        </button>
-      </output>
+      <div id="owner-paid-change-plan" className="mb-6 scroll-mt-6">
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-4 sm:px-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-zinc-100">
+                Change plan
+                {currentPlanName ? (
+                  <span className="font-normal text-zinc-500">
+                    {" "}
+                    · on {currentPlanName}
+                  </span>
+                ) : null}
+              </h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                Switch to another monthly plan anytime. Confirming starts a new
+                billing cycle and charges that plan&apos;s fee.
+              </p>
+            </div>
+            <Link
+              href="/billing/upgrade"
+              className="shrink-0 rounded-md border border-white/10 bg-white/5 px-4 py-2 text-center text-sm text-zinc-200 hover:bg-white/10"
+            >
+              Change plan
+            </Link>
+          </div>
+        </div>
+      </div>
     );
   }
 
-  return null;
+  return cardSavedNotice ? (
+    <p className="mb-4 text-sm text-emerald-400/90">Payment method saved.</p>
+  ) : null;
 }

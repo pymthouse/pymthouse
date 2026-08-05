@@ -8,7 +8,10 @@ import {
   KONNECT_SETTLEMENT_MODE_CREDIT_THEN_INVOICE,
   NETWORK_FEE_USD_MICROS_METER,
 } from "./constants";
-import { buildKonnectUsageRateCard } from "./konnect-plan-body";
+import {
+  buildKonnectFlatFeeRateCard,
+  buildKonnectUsageRateCard,
+} from "./konnect-plan-body";
 import {
   ensureKonnectTenantCatalog,
   findKonnectFeatureIdByKey,
@@ -34,6 +37,11 @@ export type OwnerAllowancePlanRef = {
   includedUsdMicros: string;
 };
 
+export type OwnerAllowancePlanKind =
+  | "owner_starter"
+  | "owner_paid"
+  | "owner_paid_tier";
+
 export function parseOwnerAllowanceIncludedMicros(raw: string): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
@@ -45,11 +53,43 @@ export function parseOwnerAllowanceIncludedMicros(raw: string): number {
 export function buildOwnerAllowancePlanBody(input: {
   planKey: string;
   planName: string;
-  planKind: "owner_starter" | "owner_paid";
+  planKind: OwnerAllowancePlanKind;
   featureId: string;
   includedUsdMicros: number;
   unitAmount: string;
+  /** Flat monthly fee (USD decimal). When set, prepends a subscription_fee card. */
+  monthlyFeeUsd?: string | null;
+  tierId?: string | null;
 }): Record<string, unknown> {
+  const rateCards: Array<Record<string, unknown>> = [];
+  const monthlyFee = input.monthlyFeeUsd?.trim();
+  if (monthlyFee && Number(monthlyFee) > 0) {
+    rateCards.push(
+      buildKonnectFlatFeeRateCard({
+        key: "subscription_fee",
+        name: `${input.planName} subscription`,
+        amount: monthlyFee,
+      }),
+    );
+  }
+  rateCards.push(
+    buildKonnectUsageRateCard({
+      key: DEFAULT_TRIAL_FEATURE_KEY,
+      name: "Network usage",
+      featureId: input.featureId,
+      unitAmount: input.unitAmount,
+      includedUsdMicros: input.includedUsdMicros,
+    }),
+  );
+
+  const metadata: Record<string, string> = {
+    pymthouse_plan_kind: input.planKind,
+    meter_slug: NETWORK_FEE_USD_MICROS_METER,
+  };
+  if (input.tierId?.trim()) {
+    metadata.tier_id = input.tierId.trim();
+  }
+
   return {
     key: input.planKey,
     name: input.planName,
@@ -60,21 +100,10 @@ export function buildOwnerAllowancePlanBody(input: {
       {
         key: "default",
         name: "Default",
-        rate_cards: [
-          buildKonnectUsageRateCard({
-            key: DEFAULT_TRIAL_FEATURE_KEY,
-            name: "Network usage",
-            featureId: input.featureId,
-            unitAmount: input.unitAmount,
-            includedUsdMicros: input.includedUsdMicros,
-          }),
-        ],
+        rate_cards: rateCards,
       },
     ],
-    metadata: {
-      pymthouse_plan_kind: input.planKind,
-      meter_slug: NETWORK_FEE_USD_MICROS_METER,
-    },
+    metadata,
   };
 }
 
@@ -93,6 +122,22 @@ export function readUsageDiscountUsdMicrosFromPlanBody(
   return null;
 }
 
+/**
+ * Read the flat `subscription_fee` amount from an OpenMeter/Konnect plan body.
+ * Used to detect fee drift between Neon tiers and published OM plans.
+ */
+export function readFlatFeeUsdFromPlanBody(plan: unknown): string | null {
+  if (!plan || typeof plan !== "object") return null;
+  const phases = readPlanPhases(plan);
+  if (!phases) return null;
+
+  for (const phase of phases) {
+    const fee = readSubscriptionFeeFromPhase(phase);
+    if (fee != null) return fee;
+  }
+  return null;
+}
+
 function readPlanPhases(plan: object): unknown[] | null {
   const phases =
     (plan as { phases?: unknown }).phases ??
@@ -100,14 +145,50 @@ function readPlanPhases(plan: object): unknown[] | null {
   return Array.isArray(phases) ? phases : null;
 }
 
-function readUsageDiscountFromPhase(phase: unknown): string | null {
-  if (!phase || typeof phase !== "object") return null;
+function readRateCardsFromPhase(phase: unknown): unknown[] {
+  if (!phase || typeof phase !== "object") return [];
   const cards =
     (phase as { rateCards?: unknown }).rateCards ??
     (phase as { rate_cards?: unknown }).rate_cards ??
     [];
-  if (!Array.isArray(cards)) return null;
-  for (const card of cards) {
+  return Array.isArray(cards) ? cards : [];
+}
+
+function readCardKey(card: object): string {
+  const key = (card as { key?: unknown }).key;
+  if (typeof key === "string") return key;
+  const Key = (card as { Key?: unknown }).Key;
+  return typeof Key === "string" ? Key : "";
+}
+
+function readPriceAmountUsd(price: unknown): string | null {
+  if (!price || typeof price !== "object") return null;
+  const amount = (price as { amount?: unknown }).amount;
+  if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {
+    return amount.toFixed(2);
+  }
+  if (typeof amount === "string") {
+    const n = Number(amount.trim());
+    if (Number.isFinite(n) && n > 0) return n.toFixed(2);
+  }
+  return null;
+}
+
+function readSubscriptionFeeFromPhase(phase: unknown): string | null {
+  for (const card of readRateCardsFromPhase(phase)) {
+    if (!card || typeof card !== "object") continue;
+    if (readCardKey(card) !== "subscription_fee") continue;
+    const price =
+      (card as { price?: unknown }).price ??
+      (card as { Price?: unknown }).Price;
+    const fee = readPriceAmountUsd(price);
+    if (fee != null) return fee;
+  }
+  return null;
+}
+
+function readUsageDiscountFromPhase(phase: unknown): string | null {
+  for (const card of readRateCardsFromPhase(phase)) {
     const micros = readUsageDiscountFromRateCard(card);
     if (micros != null) return micros;
   }
@@ -141,7 +222,12 @@ export async function findOpenMeterPlanByKey(
       pageSize: 50,
     } as Parameters<OpenMeter["plans"]["list"]>[0]);
     const items = (listed as { items?: Array<FoundOpenMeterPlan> })?.items ?? [];
-    const exact = items.find((item) => item.key === planKey);
+    const matches = items.filter((item) => item.key === planKey && item.id);
+    // Prefer active — list can return archived versions (e.g. @1) first.
+    const exact =
+      matches.find((item) => item.status === "active") ??
+      matches.find((item) => openMeterPlanNeedsPublish(item.status)) ??
+      matches[0];
     if (exact?.id) {
       return exact;
     }
@@ -193,10 +279,13 @@ export async function createOwnerAllowancePlan(input: {
   client: OpenMeter;
   planKey: string;
   planName: string;
-  planKind: "owner_starter" | "owner_paid";
+  planKind: OwnerAllowancePlanKind;
   featureId: string;
   includedUsdMicros: string;
   createFailedMessage: string;
+  monthlyFeeUsd?: string | null;
+  unitAmount?: string;
+  tierId?: string | null;
 }): Promise<string> {
   const body = buildOwnerAllowancePlanBody({
     planKey: input.planKey,
@@ -204,7 +293,9 @@ export async function createOwnerAllowancePlan(input: {
     planKind: input.planKind,
     featureId: input.featureId,
     includedUsdMicros: parseOwnerAllowanceIncludedMicros(input.includedUsdMicros),
-    unitAmount: defaultRetailRateUsd(),
+    unitAmount: input.unitAmount?.trim() || defaultRetailRateUsd(),
+    monthlyFeeUsd: input.monthlyFeeUsd,
+    tierId: input.tierId,
   });
 
   try {
@@ -236,25 +327,43 @@ export async function forceSyncOwnerAllowancePlanWithClient(
   input: {
     planKey: string;
     planName: string;
-    planKind: "owner_starter" | "owner_paid";
+    planKind: OwnerAllowancePlanKind;
     featureId: string;
     includedUsdMicros: string;
     warnLabel: string;
+    monthlyFeeUsd?: string | null;
+    unitAmount?: string;
+    tierId?: string | null;
   },
 ): Promise<OwnerAllowancePlanRef> {
   const amount = input.includedUsdMicros.trim();
+  const unitAmount = input.unitAmount?.trim() || defaultRetailRateUsd();
   const body = buildOwnerAllowancePlanBody({
     planKey: input.planKey,
     planName: input.planName,
     planKind: input.planKind,
     featureId: input.featureId,
     includedUsdMicros: parseOwnerAllowanceIncludedMicros(amount),
-    unitAmount: defaultRetailRateUsd(),
+    unitAmount,
+    monthlyFeeUsd: input.monthlyFeeUsd,
+    tierId: input.tierId,
   });
 
   const existing = await findOpenMeterPlanByKey(client, input.planKey);
   let openmeterPlanId = existing?.id;
   const createFailedMessage = `Failed to create ${input.planName} plan`;
+  const createArgs = {
+    client,
+    planKey: input.planKey,
+    planName: input.planName,
+    planKind: input.planKind,
+    featureId: input.featureId,
+    includedUsdMicros: amount,
+    createFailedMessage,
+    monthlyFeeUsd: input.monthlyFeeUsd,
+    unitAmount,
+    tierId: input.tierId,
+  };
 
   if (openmeterPlanId) {
     try {
@@ -270,27 +379,10 @@ export async function forceSyncOwnerAllowancePlanWithClient(
       ) {
         throw updateErr;
       }
-      // Published versions are immutable — create a new draft under the same key.
-      openmeterPlanId = await createOwnerAllowancePlan({
-        client,
-        planKey: input.planKey,
-        planName: input.planName,
-        planKind: input.planKind,
-        featureId: input.featureId,
-        includedUsdMicros: amount,
-        createFailedMessage,
-      });
+      openmeterPlanId = await createOwnerAllowancePlan(createArgs);
     }
   } else {
-    openmeterPlanId = await createOwnerAllowancePlan({
-      client,
-      planKey: input.planKey,
-      planName: input.planName,
-      planKind: input.planKind,
-      featureId: input.featureId,
-      includedUsdMicros: amount,
-      createFailedMessage,
-    });
+    openmeterPlanId = await createOwnerAllowancePlan(createArgs);
   }
 
   openmeterPlanId = await publishOpenMeterPlanBestEffort(
@@ -313,9 +405,12 @@ export async function forceSyncOwnerAllowancePlanWithClient(
 export async function forceSyncOwnerAllowancePlan(input: {
   planKey: string;
   planName: string;
-  planKind: "owner_starter" | "owner_paid";
+  planKind: OwnerAllowancePlanKind;
   includedUsdMicros: string;
   warnLabel: string;
+  monthlyFeeUsd?: string | null;
+  unitAmount?: string;
+  tierId?: string | null;
 }): Promise<OwnerAllowancePlanRef> {
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
@@ -337,11 +432,7 @@ export async function forceSyncOwnerAllowancePlan(input: {
   }
 
   return forceSyncOwnerAllowancePlanWithClient(client, {
-    planKey: input.planKey,
-    planName: input.planName,
-    planKind: input.planKind,
+    ...input,
     featureId,
-    includedUsdMicros: input.includedUsdMicros,
-    warnLabel: input.warnLabel,
   });
 }

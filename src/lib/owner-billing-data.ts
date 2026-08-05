@@ -34,8 +34,17 @@ import {
   defaultStarterIncludedUsdMicros,
   planDisplayNameWithStarter,
 } from "@/lib/starter-default-plan-display";
-import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
+import {
+  isOwnerStarterPlanKey,
+} from "@/lib/openmeter/owner-starter-key";
 import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
+import { resolvePlatformOwnerStarterPlanName } from "@/lib/billing/platform-owner-starter-default";
+import { getOwnerSubscriptionTierByKey } from "@/lib/billing/owner-subscription-tiers";
+import { applyFreeBillingProfileToCustomer } from "@/lib/openmeter/billing-profiles";
+import {
+  deriveOwnerPendingDowngrade,
+  type OwnerPendingDowngrade,
+} from "@/lib/openmeter/owner-starter-downgrade";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   isOpenMeterSubscriptionActive,
@@ -57,9 +66,17 @@ import {
 } from "@/lib/openmeter/invoices";
 import {
   listOwnerPaymentMethods,
+  ownerHasChargeablePaymentMethod,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
   type OwnerPaymentMethodListItem,
 } from "@/lib/openmeter/owner-payment-method";
+import {
+  listOwnerStripeInvoices,
+  type OwnerStripeInvoiceItem,
+} from "@/lib/stripe/owner-platform-invoices";
+
+/** Soft timeout for OpenMeter invoice list (Konnect /billing/invoices). */
+const OWNER_INVOICE_LOOKUP_BUDGET_MS = 8_000;
 
 export type OwnerBillingSubscriptionRow = {
   subscriptionId: string;
@@ -88,7 +105,15 @@ export type OwnerBillingPayload = {
   creditAllowance: CreditAllowanceSummary | null;
   /** Every attached Stripe payment method (Plane A), default flagged. */
   paymentMethods: OwnerPaymentMethodListItem[];
+  /**
+   * True when Konnect/Stripe has a default payment method that can charge
+   * plan fee and overage invoices — even if the listed methods array is empty
+   * after a soft timeout.
+   */
+  hasChargeableBillingMethod: boolean;
   subscriptions: OwnerBillingSubscriptionRow[];
+  /** Platform Owner Starter display name (admin-configurable). */
+  ownerStarterPlanName: string;
   /**
    * Apps this owner owns, with how each one bills its end users. Every app
    * here rolls its network cost up to the platform subscription above.
@@ -101,6 +126,16 @@ export type OwnerBillingPayload = {
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
   /**
+   * True when the OpenMeter invoice list soft-timed out or failed — UI should
+   * not claim “no invoices yet” as if the account is empty.
+   */
+  invoicesDegraded: boolean;
+  /**
+   * Paid/open Stripe invoices on the owner platform customer (collection rail).
+   * Merged with `invoices` in the Platform invoices UI.
+   */
+  stripeInvoices: OwnerStripeInvoiceItem[];
+  /**
    * Chronological credit/usage/invoice history with a running prepaid balance.
    * Usage rows are derived from meter data — see transactions-ledger.
    */
@@ -111,6 +146,11 @@ export type OwnerBillingPayload = {
    * shared owner prepaid wallet via billing identity.
    */
   fundingClientId: string | null;
+  /**
+   * Scheduled end-of-cycle downgrade to Sandbox Starter (Paid remains active
+   * until `effectiveAt`).
+   */
+  pendingDowngrade: OwnerPendingDowngrade | null;
 };
 
 export type OwnerBillingResult =
@@ -282,10 +322,10 @@ async function querySubjectCycleUsage(input: {
  * Convert to signed USD micros for the ledger; unparseable totals become 0
  * rather than breaking the page.
  */
-function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
-  const raw = invoice.totalAmount?.trim();
-  if (!raw) return "0";
-  const match = /^(-?)(\d*)(?:\.(\d*))?$/.exec(raw);
+function decimalDollarsToUsdMicros(raw: string | null | undefined): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return "0";
+  const match = /^(-?)(\d*)(?:\.(\d*))?$/.exec(trimmed);
   if (!match) return "0";
   const [, sign, wholePart = "", fracPart = ""] = match;
   try {
@@ -296,6 +336,10 @@ function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
   } catch {
     return "0";
   }
+}
+
+function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
+  return decimalDollarsToUsdMicros(invoice.totalAmount);
 }
 
 /**
@@ -468,10 +512,17 @@ async function resolvePlanName(input: {
 
   const key = input.planKey?.toLowerCase() ?? "";
   if (key.includes("starter") || isOwnerStarterPlanKey(input.planKey)) {
-    return { planName: "Owner Sandbox Starter", isStarterDefault: true };
+    return {
+      planName: await resolvePlatformOwnerStarterPlanName(),
+      isStarterDefault: true,
+    };
   }
-  if (isOwnerPaidPlanKey(input.planKey)) {
-    return { planName: "Owner Paid", isStarterDefault: false };
+  if (isOwnerPaidPlanKey(input.planKey) && input.planKey) {
+    const tier = await getOwnerSubscriptionTierByKey(input.planKey);
+    return {
+      planName: tier?.name?.trim() || "Owner Paid",
+      isStarterDefault: false,
+    };
   }
   return {
     planName: input.planKey?.trim() || "Subscription",
@@ -659,7 +710,17 @@ async function listActiveSubscriptionsForCustomer(input: {
       input.client,
       input.customerId,
     );
-    return listed.filter((item) => isOpenMeterSubscriptionActive(item.status));
+    return listed.filter((item) => {
+      if (isOpenMeterSubscriptionActive(item.status)) {
+        return true;
+      }
+      // Keep canceled Owner Paid so pending-downgrade / resume-blocked UX can
+      // see the paid plan when only a scheduled Starter successor is "active".
+      return (
+        (item.status || "").toLowerCase() === "canceled" &&
+        isOwnerPaidPlanKey(item.planKey)
+      );
+    });
   } catch (err) {
     console.warn(
       "owner-billing: subscription list failed",
@@ -797,11 +858,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   // either leaves holes in the ledger's event chain and its running balances
   // cannot be trusted.
   let ledgerInputsDegraded = false;
+  let invoicesDegraded = false;
   const [
     creditAllowance,
     paymentMethods,
+    chargeableLookup,
     subscriptions,
     invoicesResult,
+    stripeInvoices,
     creditGrants,
   ] = await Promise.all([
       getOwnerPrepaidCreditBalance(userId).catch((err) => {
@@ -820,6 +884,12 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         "payment method lookup",
       ),
       withSoftTimeout(
+        ownerHasChargeablePaymentMethod(userId),
+        OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
+        null as boolean | null,
+        "payment method chargeability",
+      ),
+      withSoftTimeout(
         listOwnerActiveSubscriptions(userId, {
           ownedApps,
           ownerWalletSubjects,
@@ -833,11 +903,23 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
           client: adminClient,
           ownerUserId: userId,
           page: 1,
-          pageSize: 10,
+          pageSize: 20,
         }),
-        2_500,
+        OWNER_INVOICE_LOOKUP_BUDGET_MS,
         emptyInvoices,
         "invoice lookup",
+        () => {
+          invoicesDegraded = true;
+        },
+      ),
+      withSoftTimeout(
+        listOwnerStripeInvoices(userId),
+        OWNER_INVOICE_LOOKUP_BUDGET_MS,
+        [] as OwnerStripeInvoiceItem[],
+        "stripe invoice lookup",
+        () => {
+          invoicesDegraded = true;
+        },
       ),
       withSoftTimeout(
         listOwnerCreditGrants(userId),
@@ -866,8 +948,42 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   );
 
   // Allowance from the owner-wallet subscription (the one credits settle against).
+  const ownerStarterPlanName = await resolvePlatformOwnerStarterPlanName();
+  const { displaySubscriptions, pendingDowngrade } = deriveOwnerPendingDowngrade({
+    subscriptions,
+    starterPlanName: ownerStarterPlanName,
+  });
+
   const walletSubscription =
-    subscriptions.find((row) => row.appPublicClientId == null) ?? subscriptions[0];
+    displaySubscriptions.find((row) => row.appPublicClientId == null) ??
+    displaySubscriptions[0];
+
+  // Once Starter is the live plan, restore the free hard-gate profile (skipped
+  // when downgrade was only scheduled for next cycle).
+  if (
+    walletSubscription &&
+    walletSubscription.appPublicClientId == null &&
+    isOwnerStarterPlanKey(walletSubscription.openMeterPlanKey)
+  ) {
+    const status = walletSubscription.status.toLowerCase();
+    if (status === "active" || status === "trialing" || !status) {
+      await withSoftTimeout(
+        (async () => {
+          const customer = await ensureOpenMeterCustomer(
+            adminClient,
+            buildOwnerCustomerKey(userId),
+          );
+          await applyFreeBillingProfileToCustomer({
+            client: adminClient,
+            customerId: customer.id,
+          });
+        })(),
+        5_000,
+        undefined as void,
+        "starter free billing profile reconcile",
+      );
+    }
+  }
 
   const ledger = buildLedgerEntries({
     grants: creditGrants,
@@ -880,6 +996,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       issuedAt: invoice.issuedAt,
       periodStart: invoice.periodStart,
       periodEnd: invoice.periodEnd,
+      invoiceType: invoice.invoiceType ?? null,
+      lines: (invoice.lines ?? []).map((line) => ({
+        id: line.id,
+        name: line.name,
+        description: line.description,
+        totalAmountUsdMicros: decimalDollarsToUsdMicros(line.totalAmount),
+        kind: line.kind,
+      })),
     })),
     planIncludedUsdMicros: walletSubscription?.discountUsdMicros ?? null,
     endingCreditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
@@ -893,16 +1017,22 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       cycle,
       creditAllowance,
       paymentMethods,
-      subscriptions,
+      hasChargeableBillingMethod:
+        paymentMethods.length > 0 || chargeableLookup === true,
+      subscriptions: displaySubscriptions,
+      ownerStarterPlanName,
       ownedApps: ownedApps.map((app) => ({
         id: app.developerAppId,
         name: app.name,
         billingMode: app.billingMode,
       })),
       invoices: invoicesResult.items,
+      invoicesDegraded,
+      stripeInvoices,
       ledger,
       openMeterConfigured: true,
       fundingClientId: ownedApps[0]?.developerAppId ?? null,
+      pendingDowngrade,
     },
   };
 }

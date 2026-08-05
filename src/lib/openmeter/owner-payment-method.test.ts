@@ -5,6 +5,7 @@ import {
   buildOwnerPaymentMethodList,
   collapseDuplicateLinkMethods,
   listOwnerPaymentMethods,
+  resolveOwnerBillingCheckoutReturnUrl,
   toOwnerPaymentMethodItem,
   toStripeApiUrl,
 } from "./owner-payment-method";
@@ -219,6 +220,44 @@ test("buildOwnerPaymentMethodList returns [] when nothing is attached", async ()
   });
 });
 
+test("buildOwnerPaymentMethodList hydrates Konnect default via retrieve when list empty", async () => {
+  await withStripeKey(async () => {
+    const stripe = fakeStripe({
+      "/payment_methods?limit=100": { data: [] },
+      "/v1/customers/cus_1": { invoice_settings: {} },
+      "/v1/payment_methods/pm_card": { ...CARD, customer: "cus_1" },
+    });
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: "cus_1",
+      konnectDefaultPaymentMethodId: "pm_card",
+      deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
+    });
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.id, "pm_card");
+    assert.equal(items[0]?.isDefault, true);
+    assert.equal(items[0]?.last4, "4242");
+    assert.ok(
+      stripe.calls.some((path) => path.includes("/v1/payment_methods/pm_card")),
+    );
+  });
+});
+
+test("buildOwnerPaymentMethodList ignores retrieved default for another customer", async () => {
+  await withStripeKey(async () => {
+    const stripe = fakeStripe({
+      "/payment_methods?limit=100": { data: [] },
+      "/v1/customers/cus_1": { invoice_settings: {} },
+      "/v1/payment_methods/pm_card": { ...CARD, customer: "cus_other" },
+    });
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: "cus_1",
+      konnectDefaultPaymentMethodId: "pm_card",
+      deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
+    });
+    assert.deepEqual(items, []);
+  });
+});
+
 test("listOwnerPaymentMethods returns [] without Stripe key", async () => {
   const previousSecret = process.env.STRIPE_SECRET_KEY;
   const previousApi = process.env.STRIPE_API_KEY;
@@ -236,6 +275,48 @@ test("listOwnerPaymentMethods returns [] without Stripe key", async () => {
       delete process.env.STRIPE_API_KEY;
     } else {
       process.env.STRIPE_API_KEY = previousApi;
+    }
+  }
+});
+
+test("resolveOwnerBillingCheckoutReturnUrl allows /billing/upgrade callbacks", () => {
+  const previous = process.env.NEXTAUTH_URL;
+  process.env.NEXTAUTH_URL = "https://app.example";
+  try {
+    const fallback = "https://app.example/billing";
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://app.example/billing/upgrade?plan=owner_paid_50&pm=attached",
+        fallback,
+      ),
+      "https://app.example/billing/upgrade?plan=owner_paid_50&pm=attached",
+    );
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://evil.example/billing",
+        fallback,
+      ),
+      fallback,
+    );
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://app.example/apps",
+        fallback,
+      ),
+      fallback,
+    );
+    assert.equal(
+      resolveOwnerBillingCheckoutReturnUrl(
+        "https://app.example/billing-evil",
+        fallback,
+      ),
+      fallback,
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NEXTAUTH_URL;
+    } else {
+      process.env.NEXTAUTH_URL = previous;
     }
   }
 });

@@ -274,6 +274,27 @@
       "when": 1786000000000,
       "tag": "0037_platform_billing_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0038_owner_subscription_tiers",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0039_owner_paid_upgrade_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0040_owner_starter_plan_name",
+      "breakpoints": true
     }
   ]
 }

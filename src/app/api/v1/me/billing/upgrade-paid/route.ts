@@ -21,18 +21,33 @@ function sessionUserId(session: unknown): string | undefined {
 }
 
 /**
- * Upgrade the signed-in owner from Sandbox Starter → Owner Paid.
- * Requires a chargeable payment method (Add payment method first).
+ * Upgrade the signed-in owner from Sandbox Starter → a selected Owner Paid tier.
+ * Body: `{ planKey, confirm: true }`. Requires a chargeable payment method.
  */
-export async function POST() {
+export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   const userId = sessionUserId(session);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let body: { planKey?: unknown; confirm?: unknown } = {};
   try {
-    const result = await upgradeOwnerToPaidPlan({ ownerUserId: userId });
+    body = (await req.json()) as { planKey?: unknown; confirm?: unknown };
+  } catch {
+    body = {};
+  }
+
+  const planKey =
+    typeof body.planKey === "string" ? body.planKey.trim() : undefined;
+  const confirm = body.confirm === true;
+
+  try {
+    const result = await upgradeOwnerToPaidPlan({
+      ownerUserId: userId,
+      planKey,
+      confirm,
+    });
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof OwnerPaidUpgradeError) {

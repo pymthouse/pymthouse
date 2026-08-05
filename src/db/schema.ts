@@ -660,11 +660,91 @@ export const ownerBillingConfig = pgTable(
 export const platformBillingSettings = pgTable("platform_billing_settings", {
   id: text("id").primaryKey(),
   ownerStarterIncludedUsdMicros: text("owner_starter_included_usd_micros").notNull(),
+  /** OpenMeter + UI display name; NULL → OWNER_STARTER_PLAN_NAME fallback. */
+  ownerStarterPlanName: text("owner_starter_plan_name"),
   updatedBy: text("updated_by").references(() => users.id),
   updatedAt: text("updated_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
 });
+
+/**
+ * Platform Owner Paid subscription tiers (flat monthly fee + included usage).
+ * Sandbox Starter remains separate; these are Upgrade targets only.
+ */
+export const ownerSubscriptionTiers = pgTable(
+  "owner_subscription_tiers",
+  {
+    id: text("id").primaryKey(),
+    /** OpenMeter plan key, e.g. pymthouse_owner_paid or pymthouse_owner_paid_growth. */
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** Flat monthly fee as a decimal USD string, e.g. "20.00". */
+    monthlyFeeUsd: text("monthly_fee_usd").notNull(),
+    includedUsdMicros: text("included_usd_micros").notNull(),
+    /** NULL = platform default retail rate. */
+    overageRateUsd: text("overage_rate_usd"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: integer("active").notNull().default(1),
+    openmeterPlanId: text("openmeter_plan_id"),
+    openmeterPlanVersion: integer("openmeter_plan_version"),
+    lastSyncedAt: text("last_synced_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_owner_subscription_tiers_key").on(t.key),
+    index("idx_owner_subscription_tiers_active_sort").on(t.active, t.sortOrder),
+  ],
+);
+
+/**
+ * Durable Owner Paid Upgrade operations.
+ * Unique per (owner, plan_key). Completed claims may be reclaimed when the
+ * owner's active OpenMeter subscription is on a different plan (A→B→A), so
+ * re-selecting a prior tier is not blocked after moving away from it.
+ */
+export const ownerPaidUpgradeOperations = pgTable(
+  "owner_paid_upgrade_operations",
+  {
+    id: text("id").primaryKey(),
+    /** Stable key: `owner_paid_upgrade:{ownerUserId}:{planKey}`. */
+    idempotencyKey: text("idempotency_key").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    planKey: text("plan_key").notNull(),
+    /** pending | completed | failed */
+    status: text("status").notNull().default("pending"),
+    openmeterSubscriptionId: text("openmeter_subscription_id"),
+    openmeterPlanId: text("openmeter_plan_id"),
+    monthlyFeeUsd: text("monthly_fee_usd"),
+    alreadyPaid: integer("already_paid").notNull().default(0),
+    error: text("error"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_owner_paid_upgrade_operations_idempotency_key").on(
+      t.idempotencyKey,
+    ),
+    uniqueIndex("idx_owner_paid_upgrade_operations_owner_plan").on(
+      t.ownerUserId,
+      t.planKey,
+    ),
+    index("idx_owner_paid_upgrade_operations_owner_status").on(
+      t.ownerUserId,
+      t.status,
+    ),
+  ],
+);
 
 export const appBillingOauthStates = pgTable(
   "app_billing_oauth_states",

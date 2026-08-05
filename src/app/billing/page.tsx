@@ -7,6 +7,8 @@ import FundAccountOnRampPanel from "@/components/apps/FundAccountOnRampPanel";
 import OwnerBillingView from "@/components/OwnerBillingView";
 import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
+import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
+import { OWNER_STARTER_PLAN_NAME } from "@/lib/openmeter/owner-starter-key";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 function isTurnkeyFundingConfigured(): boolean {
@@ -29,12 +31,17 @@ export default async function BillingPage() {
           cycle: { start: new Date().toISOString(), end: new Date().toISOString() },
           creditAllowance: null,
           paymentMethods: [],
+          hasChargeableBillingMethod: false,
           subscriptions: [],
+          ownerStarterPlanName: OWNER_STARTER_PLAN_NAME,
           ownedApps: [],
           invoices: [],
+          invoicesDegraded: false,
+          stripeInvoices: [],
           ledger: [],
           openMeterConfigured: false,
           fundingClientId: null,
+          pendingDowngrade: null,
         }}
       />
     );
@@ -56,12 +63,20 @@ export default async function BillingPage() {
       />
     ) : null;
 
+  const hasPaymentMethod = data.paymentMethods.length > 0;
+  const hasBillingMethod =
+    hasPaymentMethod || data.hasChargeableBillingMethod;
+  const eligibleForUpgrade = ownerEligibleForPaidUpgrade(data.subscriptions);
+
   return (
     <OwnerBillingView
       data={data}
       paymentMethodPanel={
         data.openMeterConfigured ? (
-          <OwnerPaymentMethodButton hasPaymentMethod={data.paymentMethods.length > 0} />
+          <OwnerPaymentMethodButton
+            hasPaymentMethod={hasBillingMethod}
+            upgradeFirst={eligibleForUpgrade && !hasBillingMethod}
+          />
         ) : null
       }
       adminFundPanel={adminFundPanel}

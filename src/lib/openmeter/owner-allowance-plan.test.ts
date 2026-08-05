@@ -11,6 +11,7 @@ import {
   parseOwnerAllowanceIncludedMicros,
   publishOpenMeterPlanBestEffort,
   readUsageDiscountUsdMicrosFromPlanBody,
+  readFlatFeeUsdFromPlanBody,
 } from "@/lib/openmeter/owner-allowance-plan";
 import { DEFAULT_TRIAL_FEATURE_KEY } from "@/lib/openmeter/constants";
 
@@ -45,10 +46,35 @@ test("buildOwnerAllowancePlanBody sets kind metadata and rate card", () => {
     "owner_paid",
   );
   const phases = body.phases as Array<{
-    rate_cards: Array<{ key: string; feature: { id: string } }>;
+    rate_cards: Array<{ key: string; feature?: { id: string }; price?: { type: string } }>;
   }>;
+  assert.equal(phases[0]?.rate_cards.length, 1);
   assert.equal(phases[0]?.rate_cards[0]?.key, DEFAULT_TRIAL_FEATURE_KEY);
-  assert.equal(phases[0]?.rate_cards[0]?.feature.id, "feat_1");
+});
+
+test("buildOwnerAllowancePlanBody prepends flat fee for paid tiers", () => {
+  const body = buildOwnerAllowancePlanBody({
+    planKey: "pymthouse_owner_paid_growth",
+    planName: "Growth",
+    planKind: "owner_paid_tier",
+    featureId: "feat_1",
+    includedUsdMicros: 10_000_000,
+    unitAmount: "0.000001",
+    monthlyFeeUsd: "29.00",
+    tierId: "tier_1",
+  });
+  const phases = body.phases as Array<{
+    rate_cards: Array<{ key: string; price?: { type: string; amount?: string } }>;
+  }>;
+  assert.equal(phases[0]?.rate_cards.length, 2);
+  assert.equal(phases[0]?.rate_cards[0]?.key, "subscription_fee");
+  assert.equal(phases[0]?.rate_cards[0]?.price?.type, "flat");
+  assert.equal(phases[0]?.rate_cards[0]?.price?.amount, "29.00");
+  assert.equal(phases[0]?.rate_cards[1]?.key, DEFAULT_TRIAL_FEATURE_KEY);
+  assert.equal(
+    (body.metadata as { tier_id?: string }).tier_id,
+    "tier_1",
+  );
 });
 
 test("findOpenMeterPlanByKey returns exact list match", async () => {
@@ -65,6 +91,25 @@ test("findOpenMeterPlanByKey returns exact list match", async () => {
 
   const found = await findOpenMeterPlanByKey(client, "k1");
   assert.equal(found?.id, "plan_1");
+});
+
+test("findOpenMeterPlanByKey prefers active over archived versions", async () => {
+  const client = {
+    plans: {
+      list: async () => ({
+        items: [
+          { id: "plan_v1", key: "k1", status: "archived", version: 1 },
+          { id: "plan_v2", key: "k1", status: "active", version: 2 },
+        ],
+      }),
+      get: async () => {
+        throw new Error("should not get");
+      },
+    },
+  } as unknown as OpenMeter;
+
+  const found = await findOpenMeterPlanByKey(client, "k1");
+  assert.equal(found?.id, "plan_v2");
 });
 
 test("findOpenMeterPlanByKey falls back to get when list misses", async () => {
@@ -193,6 +238,35 @@ test("readUsageDiscountUsdMicrosFromPlanBody reads snake_case and camelCase", ()
     "7500000",
   );
   assert.equal(readUsageDiscountUsdMicrosFromPlanBody({}), null);
+});
+
+test("readFlatFeeUsdFromPlanBody reads subscription_fee flat amount", () => {
+  assert.equal(
+    readFlatFeeUsdFromPlanBody({
+      phases: [
+        {
+          rate_cards: [
+            { key: "subscription_fee", price: { type: "flat", amount: "20" } },
+            { key: "network_spend", discounts: { usage: 5_000_000 } },
+          ],
+        },
+      ],
+    }),
+    "20.00",
+  );
+  assert.equal(
+    readFlatFeeUsdFromPlanBody({
+      phases: [
+        {
+          rateCards: [
+            { key: "subscription_fee", price: { type: "flat", amount: 29.5 } },
+          ],
+        },
+      ],
+    }),
+    "29.50",
+  );
+  assert.equal(readFlatFeeUsdFromPlanBody({ phases: [{ rate_cards: [] }] }), null);
 });
 
 test("forceSyncOwnerAllowancePlanWithClient updates an existing plan", async () => {
