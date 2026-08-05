@@ -122,6 +122,14 @@ export function mapOpenMeterInvoiceLines(
   return out;
 }
 
+function invoiceScalarString(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
 function mapInvoiceRecord(inv: {
   id: string;
   number?: string | null;
@@ -135,19 +143,21 @@ function mapInvoiceRecord(inv: {
   type?: unknown;
   lines?: unknown;
 }): TenantInvoiceDto {
+  const invoiceType =
+    inv.type == null ? undefined : invoiceScalarString(inv.type, "");
   return {
     id: inv.id,
     number: inv.number ?? undefined,
-    status: String(inv.status ?? "unknown"),
-    currency: String(inv.currency ?? "USD"),
-    totalAmount: String(inv.totals?.total ?? "0"),
+    status: invoiceScalarString(inv.status, "unknown"),
+    currency: invoiceScalarString(inv.currency, "USD"),
+    totalAmount: invoiceScalarString(inv.totals?.total, "0"),
     customerId: inv.customer?.id,
     customerKey: inv.customer?.key,
     issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
     periodStart: inv.period?.from?.toISOString?.() ?? undefined,
     periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
     externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
-    invoiceType: inv.type != null ? String(inv.type) : undefined,
+    invoiceType: invoiceType || undefined,
     lines: mapOpenMeterInvoiceLines(inv.lines),
   };
 }
@@ -310,6 +320,48 @@ export async function listOwnerWalletInvoices(input: {
   });
 }
 
+async function findInvoiceInCustomerChunk(input: {
+  client: OpenMeter;
+  customers: string[];
+  allowedCustomerIds: string[];
+  invoiceId: string;
+}): Promise<TenantInvoiceDto | null | undefined> {
+  let page = 1;
+  for (;;) {
+    let result: Awaited<ReturnType<typeof input.client.billing.invoices.list>>;
+    try {
+      result = await input.client.billing.invoices.list({
+        customers: input.customers,
+        page,
+        pageSize: 100,
+        order: "DESC",
+        orderBy: "createdAt",
+        expand: ["lines"],
+      });
+    } catch {
+      return null;
+    }
+    const items = result?.items ?? [];
+    const match = items.find((inv) => inv.id === input.invoiceId);
+    if (match?.id) {
+      const invoiceCustomerId = match.customer?.id?.trim();
+      if (
+        invoiceCustomerId &&
+        input.allowedCustomerIds.includes(invoiceCustomerId)
+      ) {
+        return mapInvoiceRecord(match);
+      }
+      return null;
+    }
+    if (items.length < 100 || page >= 50) return undefined;
+    page += 1;
+  }
+}
+
+/**
+ * Fetch one platform invoice by id, only when it belongs to the owner's wallet
+ * customers. Avoids the page-size cap on {@link listOwnerWalletInvoices}.
+ */
 /**
  * Fetch one platform invoice by id, only when it belongs to the owner's wallet
  * customers. Avoids the page-size cap on {@link listOwnerWalletInvoices}.
@@ -329,38 +381,13 @@ export async function getOwnerWalletInvoice(input: {
   if (customerIds.length === 0) return null;
 
   for (const idChunk of chunk(customerIds, 50)) {
-    let page = 1;
-    for (;;) {
-      let result: Awaited<
-        ReturnType<typeof input.client.billing.invoices.list>
-      >;
-      try {
-        result = await input.client.billing.invoices.list({
-          customers: idChunk,
-          page,
-          pageSize: 100,
-          order: "DESC",
-          orderBy: "createdAt",
-          expand: ["lines"],
-        });
-      } catch {
-        return null;
-      }
-      const items = result?.items ?? [];
-      const match = items.find((inv) => inv.id === invoiceId);
-      if (match?.id) {
-        const invoiceCustomerId = match.customer?.id?.trim();
-        if (
-          invoiceCustomerId &&
-          customerIds.includes(invoiceCustomerId)
-        ) {
-          return mapInvoiceRecord(match);
-        }
-        return null;
-      }
-      if (items.length < 100 || page >= 50) break;
-      page += 1;
-    }
+    const found = await findInvoiceInCustomerChunk({
+      client: input.client,
+      customers: idChunk,
+      allowedCustomerIds: customerIds,
+      invoiceId,
+    });
+    if (found !== undefined) return found;
   }
 
   return null;

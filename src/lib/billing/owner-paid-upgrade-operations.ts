@@ -97,6 +97,46 @@ function completedRowIncomplete(): ReturnType<typeof and> {
   );
 }
 
+async function tryReclaimOwnerPaidUpgradeOperation(input: {
+  existingId: string;
+  reclaimCompletedForPlanChange: boolean;
+  now: string;
+}): Promise<string | null> {
+  const staleThreshold = new Date(Date.now() - STALE_PENDING_MS).toISOString();
+  const reclaimConditions = [
+    eq(ownerPaidUpgradeOperations.status, "failed"),
+    and(
+      eq(ownerPaidUpgradeOperations.status, "pending"),
+      lt(ownerPaidUpgradeOperations.updatedAt, staleThreshold),
+    ),
+    completedRowIncomplete(),
+  ];
+  if (input.reclaimCompletedForPlanChange) {
+    reclaimConditions.push(eq(ownerPaidUpgradeOperations.status, "completed"));
+  }
+
+  const claimed = await db
+    .update(ownerPaidUpgradeOperations)
+    .set({
+      status: "pending",
+      error: null,
+      openmeterSubscriptionId: null,
+      openmeterPlanId: null,
+      monthlyFeeUsd: null,
+      alreadyPaid: 0,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(ownerPaidUpgradeOperations.id, input.existingId),
+        or(...reclaimConditions),
+      ),
+    )
+    .returning({ id: ownerPaidUpgradeOperations.id });
+
+  return claimed[0]?.id ?? null;
+}
+
 /**
  * Claim an owner+plan Upgrade slot before calling Konnect.
  * - First caller proceeds with a pending row.
@@ -170,40 +210,13 @@ export async function claimOwnerPaidUpgradeOperation(input: {
     return { action: "reject", reason: "in_progress" };
   }
 
-  const staleThreshold = new Date(Date.now() - STALE_PENDING_MS).toISOString();
-  const reclaimConditions = [
-    eq(ownerPaidUpgradeOperations.status, "failed"),
-    and(
-      eq(ownerPaidUpgradeOperations.status, "pending"),
-      lt(ownerPaidUpgradeOperations.updatedAt, staleThreshold),
-    ),
-    completedRowIncomplete(),
-  ];
-  if (reclaimCompletedForPlanChange) {
-    reclaimConditions.push(eq(ownerPaidUpgradeOperations.status, "completed"));
-  }
-
-  const claimed = await db
-    .update(ownerPaidUpgradeOperations)
-    .set({
-      status: "pending",
-      error: null,
-      openmeterSubscriptionId: null,
-      openmeterPlanId: null,
-      monthlyFeeUsd: null,
-      alreadyPaid: 0,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(ownerPaidUpgradeOperations.id, existing.id),
-        or(...reclaimConditions),
-      ),
-    )
-    .returning({ id: ownerPaidUpgradeOperations.id });
-
-  if (claimed[0]?.id) {
-    return { action: "proceed", operationId: claimed[0].id };
+  const reclaimedId = await tryReclaimOwnerPaidUpgradeOperation({
+    existingId: existing.id,
+    reclaimCompletedForPlanChange,
+    now,
+  });
+  if (reclaimedId) {
+    return { action: "proceed", operationId: reclaimedId };
   }
 
   const again = await db

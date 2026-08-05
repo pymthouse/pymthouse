@@ -472,7 +472,7 @@ export function deriveOwnerPendingDowngrade<
       isOwnerPaidPlanKey(row.openMeterPlanKey) &&
       isCanceledSubscriptionStatus(row.status),
   );
-  const liveStarter = wallet.find(
+  const hasLiveStarter = wallet.some(
     (row) =>
       isOwnerStarterPlanKey(row.openMeterPlanKey) &&
       isLiveSubscriptionStatus(row.status),
@@ -502,7 +502,7 @@ export function deriveOwnerPendingDowngrade<
   } else if (
     canceledPaid &&
     !livePaid &&
-    !liveStarter &&
+    !hasLiveStarter &&
     !scheduledStarter
   ) {
     pendingDowngrade = {

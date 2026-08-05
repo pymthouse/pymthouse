@@ -105,21 +105,26 @@ const ERROR_COPY: Record<ErrorCode, ErrorSpec> = {
   },
 };
 
-function classifyError(raw: string | undefined, code?: string | null): ErrorCode {
-  const fromCode = (code ?? "").trim().toLowerCase();
-  if (fromCode === "payment_method_required") return "payment_method_required";
-  if (fromCode === "openmeter_unavailable") return "openmeter_unavailable";
-  if (fromCode === "no_subscription") return "no_subscription";
-  if (fromCode === "confirm_required") return "confirm_required";
-  if (fromCode === "tier_unavailable" || fromCode === "plan_unavailable") {
-    return "tier_unavailable";
+function classifyErrorByCode(code: string): ErrorCode | null {
+  switch (code) {
+    case "payment_method_required":
+    case "openmeter_unavailable":
+    case "no_subscription":
+    case "confirm_required":
+    case "upgrade_in_progress":
+    case "upgrade_failed":
+    case "subscription_conflict":
+    case "already_subscribed":
+      return code;
+    case "tier_unavailable":
+    case "plan_unavailable":
+      return "tier_unavailable";
+    default:
+      return null;
   }
-  if (fromCode === "upgrade_in_progress") return "upgrade_in_progress";
-  if (fromCode === "upgrade_failed") return "upgrade_failed";
-  if (fromCode === "subscription_conflict") return "subscription_conflict";
-  if (fromCode === "already_subscribed") return "already_subscribed";
+}
 
-  const msg = (raw ?? "").toLowerCase();
+function classifyErrorByMessage(msg: string): ErrorCode {
   if (msg.includes("payment_method_required")) return "payment_method_required";
   if (msg.includes("openmeter_unavailable")) return "openmeter_unavailable";
   if (msg.includes("no_subscription")) return "no_subscription";
@@ -140,6 +145,12 @@ function classifyError(raw: string | undefined, code?: string | null): ErrorCode
   if (msg.includes("rate limit") || msg.includes("429")) return "rate_limited";
   if (msg.includes("failed to fetch") || msg.includes("network")) return "network";
   return "unknown";
+}
+
+function classifyError(raw: string | undefined, code?: string | null): ErrorCode {
+  const fromCode = classifyErrorByCode((code ?? "").trim().toLowerCase());
+  if (fromCode) return fromCode;
+  return classifyErrorByMessage((raw ?? "").toLowerCase());
 }
 
 /** Client idempotency token — crypto UUID, not Math.random (Sonar S2245). */
@@ -521,6 +532,7 @@ function TierCard({
   const detail = getPlanDetail(tier.key);
   return (
     <label
+      aria-label={`${tier.name} plan`}
       className={[
         "group relative flex cursor-pointer flex-col gap-2 rounded-xl border px-4 py-4 transition-all",
         "focus-within:ring-2 focus-within:ring-emerald-500/60 focus-within:ring-offset-1 focus-within:ring-offset-transparent",
@@ -808,6 +820,78 @@ function PlanPicker({
   );
 }
 
+function CheckoutPaymentMethodPanel(input: Readonly<{
+  downgradeToFree?: boolean;
+  resumePendingDowngrade?: boolean;
+  cardStepDone: boolean;
+  mode: "upgrade" | "change";
+  pmOnFile: boolean;
+  pmSummary: UpgradePaymentMethodSummary | null;
+  pmBusy: boolean;
+  busy: boolean;
+  onLink: () => void;
+}>) {
+  if (input.downgradeToFree) {
+    return (
+      <section aria-labelledby="step-pm-heading">
+        <div className="mb-3 flex items-center gap-2">
+          <StepBadge n={2} done />
+          <h2
+            id="step-pm-heading"
+            className="text-sm font-semibold text-zinc-200"
+          >
+            Payment method
+          </h2>
+        </div>
+        <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
+          Not required to schedule Free. Your current plan continues until the
+          cycle ends.
+        </p>
+      </section>
+    );
+  }
+  if (input.resumePendingDowngrade) {
+    return (
+      <section aria-labelledby="step-pm-heading">
+        <div className="mb-3 flex items-center gap-2">
+          <StepBadge n={2} done />
+          <h2
+            id="step-pm-heading"
+            className="text-sm font-semibold text-zinc-200"
+          >
+            Payment method
+          </h2>
+        </div>
+        <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
+          Not required to resume. Cancels the scheduled Free switch — no charge
+          today.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section aria-labelledby="step-pm-heading">
+      <div className="mb-3 flex items-center gap-2">
+        <StepBadge n={2} done={input.cardStepDone} />
+        <h2
+          id="step-pm-heading"
+          className="text-sm font-semibold text-zinc-200"
+        >
+          Payment method
+        </h2>
+      </div>
+      <PaymentMethodStep
+        mode={input.mode}
+        hasPaymentMethod={input.pmOnFile}
+        paymentMethod={input.pmSummary}
+        pmBusy={input.pmBusy}
+        busy={input.busy}
+        onLink={input.onLink}
+      />
+    </section>
+  );
+}
+
 function PaymentMethodStep({
   mode,
   hasPaymentMethod,
@@ -893,6 +977,23 @@ function PaymentMethodStep({
   );
 }
 
+function confirmBusyLabel(input: {
+  resumePendingDowngrade?: boolean;
+  downgradeToFree?: boolean;
+  mode: "upgrade" | "change";
+}): string {
+  if (input.resumePendingDowngrade) {
+    return "Keeping your plan — do not close this tab.";
+  }
+  if (input.downgradeToFree) {
+    return "Scheduling Free — do not close this tab.";
+  }
+  if (input.mode === "change") {
+    return "Changing plan — do not close this tab.";
+  }
+  return "Upgrading — do not close this tab.";
+}
+
 function ConfirmActions({
   canConfirm,
   busy,
@@ -924,6 +1025,11 @@ function ConfirmActions({
     Boolean(selected && currentPlanKey && selected.key === currentPlanKey),
     { resumePendingDowngrade },
   );
+  const busyLabel = confirmBusyLabel({
+    resumePendingDowngrade,
+    downgradeToFree,
+    mode,
+  });
   return (
     <div
       id={confirmRegionId}
@@ -937,13 +1043,7 @@ function ConfirmActions({
       {busy ? (
         <p className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Spinner />
-          {resumePendingDowngrade
-            ? "Keeping your plan — do not close this tab."
-            : downgradeToFree
-              ? "Scheduling Free — do not close this tab."
-              : mode === "change"
-                ? "Changing plan — do not close this tab."
-                : "Upgrading — do not close this tab."}
+          {busyLabel}
         </p>
       ) : (
         <span />
@@ -1353,9 +1453,8 @@ export default function OwnerPaidUpgradeCheckout({
       {notice ? <NoticeBanner>{notice}</NoticeBanner> : null}
       {errorCode ? <ErrorBanner code={errorCode} /> : null}
       {pendingDowngrade?.resumeBlocked ? (
-        <div
-          role="status"
-          className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3 text-sm"
+        <output
+          className="mb-4 block rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3 text-sm"
         >
           {(() => {
             const copy = ownerPendingDowngradeBlockedCopy({
@@ -1377,7 +1476,7 @@ export default function OwnerPaidUpgradeCheckout({
               </>
             );
           })()}
-        </div>
+        </output>
       ) : null}
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
@@ -1404,59 +1503,17 @@ export default function OwnerPaidUpgradeCheckout({
             />
           </section>
 
-          {downgradeToFree ? (
-            <section aria-labelledby="step-pm-heading">
-              <div className="mb-3 flex items-center gap-2">
-                <StepBadge n={2} done />
-                <h2
-                  id="step-pm-heading"
-                  className="text-sm font-semibold text-zinc-200"
-                >
-                  Payment method
-                </h2>
-              </div>
-              <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
-                Not required to schedule Free. Your current plan continues until
-                the cycle ends.
-              </p>
-            </section>
-          ) : resumePendingDowngrade ? (
-            <section aria-labelledby="step-pm-heading">
-              <div className="mb-3 flex items-center gap-2">
-                <StepBadge n={2} done />
-                <h2
-                  id="step-pm-heading"
-                  className="text-sm font-semibold text-zinc-200"
-                >
-                  Payment method
-                </h2>
-              </div>
-              <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
-                Not required to resume. Cancels the scheduled Free switch — no
-                charge today.
-              </p>
-            </section>
-          ) : (
-          <section aria-labelledby="step-pm-heading">
-            <div className="mb-3 flex items-center gap-2">
-              <StepBadge n={2} done={cardStepDone} />
-              <h2
-                id="step-pm-heading"
-                className="text-sm font-semibold text-zinc-200"
-              >
-                Payment method
-              </h2>
-            </div>
-            <PaymentMethodStep
-              mode={mode}
-              hasPaymentMethod={pmOnFile}
-              paymentMethod={pmSummary}
-              pmBusy={pmBusy}
-              busy={busy}
-              onLink={() => void startPaymentMethodCheckout()}
-            />
-          </section>
-          )}
+          <CheckoutPaymentMethodPanel
+            downgradeToFree={downgradeToFree}
+            resumePendingDowngrade={resumePendingDowngrade}
+            cardStepDone={cardStepDone}
+            mode={mode}
+            pmOnFile={pmOnFile}
+            pmSummary={pmSummary}
+            pmBusy={pmBusy}
+            busy={busy}
+            onLink={() => void startPaymentMethodCheckout()}
+          />
 
           <div className="block lg:hidden">
             <OrderSummary

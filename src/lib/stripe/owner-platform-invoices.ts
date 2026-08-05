@@ -55,12 +55,12 @@ function mapStripeInvoice(row: StripeInvoiceApiRow): OwnerStripeInvoiceItem | nu
   const id = row.id?.trim();
   if (!id) return null;
   const status = (row.status ?? "unknown").trim() || "unknown";
-  const amountCents =
-    typeof row.amount_paid === "number"
-      ? row.amount_paid
-      : typeof row.amount_due === "number"
-        ? row.amount_due
-        : 0;
+  let amountCents = 0;
+  if (typeof row.amount_paid === "number") {
+    amountCents = row.amount_paid;
+  } else if (typeof row.amount_due === "number") {
+    amountCents = row.amount_due;
+  }
   const createdSec = typeof row.created === "number" ? row.created : 0;
   return {
     id,
