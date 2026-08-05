@@ -34,7 +34,6 @@ const BUILDER_OPERATION_KEYS = new Set([
   "GET /api/v1/marketplace",
   "GET /api/v1/marketplace/{id}",
   "GET /api/v1/pipeline-catalog",
-  "GET /api/v1/pipeline-pricing",
   "GET /api/v1/prices/eth-usd",
   "POST /api/v1/auth/validate",
   "GET /api/v1/apps/{clientId}",

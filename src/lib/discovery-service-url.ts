@@ -1,24 +1,57 @@
 /**
- * Livepeer discovery-service URL for SignerSession / python-gateway `--token`.
+ * Remote-signer discovery URL: `{signer_url}/discover-orchestrators`.
  *
- * Configure the full raw endpoint (optional query), e.g.
- * `https://discovery-service-production-8955.up.railway.app/v1/discovery/raw`
- * Returned as-is (trimmed). No path rewriting.
+ * Matches go-livepeer remote discovery (`GET /discover-orchestrators`).
+ * Optional repeated `caps` query params are applied by callers / gateways.
  */
 
-const ENV_KEYS = [
-  "DISCOVERY_URL",
-  "DISCOVERY_SERVICE_URL",
-  "LIVEPEER_DISCOVERY_SERVICE_URL",
-  "ORCH_WEBHOOK_URL",
-] as const;
-
-export function getDiscoveryRawUrl(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  for (const key of ENV_KEYS) {
-    const value = env[key]?.trim();
-    if (value) return value;
+/**
+ * Build the discover-orchestrators URL for a remote signer base URL.
+ * Appends `/discover-orchestrators` to the signer base path (path preserved).
+ * Query strings and fragments are stripped so they cannot absorb the endpoint.
+ */
+export function buildDiscoverOrchestratorsUrl(signerUrl: string): string {
+  const trimmed = signerUrl.trim();
+  if (!trimmed) {
+    throw new Error("signer URL is required to build discover-orchestrators URL");
   }
-  return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("signer URL must be an absolute http(s) URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("signer URL must be an http(s) URL");
+  }
+
+  parsed.search = "";
+  parsed.hash = "";
+  let basePath = parsed.pathname;
+  while (basePath.length > 1 && basePath.endsWith("/")) {
+    basePath = basePath.slice(0, -1);
+  }
+  if (basePath === "/") {
+    basePath = "";
+  }
+  parsed.pathname = `${basePath}/discover-orchestrators`;
+  return parsed.toString();
+}
+
+/** Normalize caller-supplied capability strings for remote-signer `caps` filters. */
+export function normalizeDiscoveryCaps(
+  caps: readonly string[] | undefined | null,
+): string[] | undefined {
+  if (!caps?.length) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of caps) {
+    if (typeof raw !== "string") continue;
+    const cap = raw.trim();
+    if (!cap || seen.has(cap)) continue;
+    seen.add(cap);
+    out.push(cap);
+  }
+  return out.length > 0 ? out : undefined;
 }

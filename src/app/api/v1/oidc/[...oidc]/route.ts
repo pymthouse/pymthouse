@@ -236,6 +236,8 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
             requestedTokenType: exchangeParams.get("requested_token_type") || "",
             resource: resourceParam || "",
             audiences: exchangeParams.getAll("audience"),
+            discovery_url: exchangeParams.get("discovery_url") || undefined,
+            caps: exchangeParams.getAll("caps"),
             correlationId: createCorrelationId(),
           });
           return NextResponse.json(result, {

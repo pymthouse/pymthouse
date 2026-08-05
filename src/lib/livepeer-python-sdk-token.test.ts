@@ -8,40 +8,15 @@ import {
   getLivepeerPythonSdkDiscoveryUrl,
 } from "@/lib/livepeer-python-sdk-token";
 
-function withEnv(
-  overrides: Record<string, string | undefined>,
-  fn: () => void,
-) {
-  const prior: Record<string, string | undefined> = {};
-  for (const key of Object.keys(overrides)) {
-    prior[key] = process.env[key];
-    const next = overrides[key];
-    if (next === undefined) delete process.env[key];
-    else process.env[key] = next;
-  }
-  try {
-    fn();
-  } finally {
-    for (const key of Object.keys(overrides)) {
-      const value = prior[key];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
-
-test("buildLivepeerPythonSdkTokenPayload uses composite key in Bearer header", () => {
+test("buildLivepeerPythonSdkTokenPayload defaults discovery to signer discover-orchestrators", () => {
   const payload = buildLivepeerPythonSdkTokenPayload({
     apiKey: "app_abcdef0123456789abcdef01_pmth_deadbeef",
-    signer: "https://pymthouse-production.up.railway.app/",
-    discovery:
-      "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw?serviceType=legacy",
+    signer: "https://signer.pymthouse.com/",
   });
 
   assert.deepEqual(payload, {
-    signer: "https://pymthouse-production.up.railway.app/",
-    discovery:
-      "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw?serviceType=legacy",
+    signer: "https://signer.pymthouse.com/",
+    discovery: "https://signer.pymthouse.com/discover-orchestrators",
     signer_headers: {
       Authorization:
         "Bearer app_abcdef0123456789abcdef01_pmth_deadbeef",
@@ -49,7 +24,7 @@ test("buildLivepeerPythonSdkTokenPayload uses composite key in Bearer header", (
   });
 });
 
-test("buildLivepeerPythonSdkTokenPayload omits discovery when unset", () => {
+test("buildLivepeerPythonSdkTokenPayload omits discovery when null", () => {
   const payload = buildLivepeerPythonSdkTokenPayload({
     apiKey: "app_x_pmth_y",
     signer: "https://signer.example",
@@ -59,12 +34,23 @@ test("buildLivepeerPythonSdkTokenPayload omits discovery when unset", () => {
   assert.equal(payload.signer, "https://signer.example");
 });
 
+test("buildLivepeerPythonSdkTokenPayload includes caps when provided", () => {
+  const payload = buildLivepeerPythonSdkTokenPayload({
+    apiKey: "app_x_pmth_y",
+    signer: "https://signer.example",
+    caps: [" live-video-to-video/streamdiffusion ", "text-to-image/flux"],
+  });
+  assert.deepEqual(payload.caps, [
+    "live-video-to-video/streamdiffusion",
+    "text-to-image/flux",
+  ]);
+});
+
 test("encodeLivepeerPythonSdkToken round-trips via base64 JSON", () => {
   const payload = buildLivepeerPythonSdkTokenPayload({
     apiKey: "app_9adb48bd0123456789abcdef_pmth_d20bf6fc",
-    signer: "https://pymthouse-production.up.railway.app/",
-    discovery:
-      "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw?serviceType=legacy",
+    signer: "https://signer.pymthouse.com/",
+    caps: ["live-video-to-video/scope"],
   });
   const encoded = encodeLivepeerPythonSdkToken(payload);
   const decoded = JSON.parse(
@@ -77,60 +63,20 @@ test("createLivepeerPythonSdkToken returns base64 string", () => {
   const token = createLivepeerPythonSdkToken({
     apiKey: "app_a_pmth_b",
     signer: "https://signer.example",
-    discovery: "https://discovery.example/v1",
+    discovery: "https://custom.example/discover-orchestrators",
   });
   assert.match(token, /^[A-Za-z0-9+/=]+$/);
   const decoded = JSON.parse(Buffer.from(token, "base64").toString("utf8"));
   assert.equal(decoded.signer_headers.Authorization, "Bearer app_a_pmth_b");
-});
-
-test("getLivepeerPythonSdkDiscoveryUrl prefers DISCOVERY_URL as-is", () => {
-  withEnv(
-    {
-      DISCOVERY_URL: "https://discovery.example/v1/discovery/raw",
-      DISCOVERY_SERVICE_URL: "https://other.example/v1/discovery/raw",
-      ORCH_WEBHOOK_URL: "https://orch.example/v1/discovery/raw",
-    },
-    () => {
-      assert.equal(
-        getLivepeerPythonSdkDiscoveryUrl(),
-        "https://discovery.example/v1/discovery/raw",
-      );
-    },
+  assert.equal(
+    decoded.discovery,
+    "https://custom.example/discover-orchestrators",
   );
 });
 
-test("getLivepeerPythonSdkDiscoveryUrl accepts DISCOVERY_SERVICE_URL", () => {
-  withEnv(
-    {
-      DISCOVERY_URL: undefined,
-      DISCOVERY_SERVICE_URL:
-        "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw",
-      ORCH_WEBHOOK_URL: undefined,
-    },
-    () => {
-      assert.equal(
-        getLivepeerPythonSdkDiscoveryUrl(),
-        "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw",
-      );
-    },
-  );
-});
-
-test("getLivepeerPythonSdkDiscoveryUrl falls back to ORCH_WEBHOOK_URL", () => {
-  withEnv(
-    {
-      DISCOVERY_URL: undefined,
-      DISCOVERY_SERVICE_URL: undefined,
-      LIVEPEER_DISCOVERY_SERVICE_URL: undefined,
-      ORCH_WEBHOOK_URL:
-        "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw?serviceType=legacy",
-    },
-    () => {
-      assert.equal(
-        getLivepeerPythonSdkDiscoveryUrl(),
-        "https://discovery-service-production-8955.up.railway.app/v1/discovery/raw?serviceType=legacy",
-      );
-    },
+test("getLivepeerPythonSdkDiscoveryUrl derives from signer URL", () => {
+  assert.equal(
+    getLivepeerPythonSdkDiscoveryUrl("https://signer.example/"),
+    "https://signer.example/discover-orchestrators",
   );
 });

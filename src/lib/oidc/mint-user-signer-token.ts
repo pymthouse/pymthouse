@@ -19,6 +19,7 @@ import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowanc
 import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
+import { buildDiscoverOrchestratorsUrl } from "@/lib/discovery-service-url";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export { SIGN_MINT_USER_TOKEN_SCOPE };
@@ -114,13 +115,15 @@ function signerSessionFromMint(
   minted: Awaited<ReturnType<typeof mintSignerJwtForExternalUser>>,
   publicClientId: string,
 ) {
+  const signerUrl = getClientSignerApiUrl(publicClientId);
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,
     expires_in: minted.expires_in,
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-    signer_url: getClientSignerApiUrl(publicClientId),
+    signer_url: signerUrl,
+    discovery_url: buildDiscoverOrchestratorsUrl(signerUrl),
     issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
   });
 }

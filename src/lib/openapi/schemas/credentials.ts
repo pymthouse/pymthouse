@@ -66,8 +66,16 @@ export const SignerSessionSchema = z
     }),
     discovery_url: z.string().url().optional().openapi({
       description:
-        "Livepeer discovery-service raw endpoint (…/v1/discovery/raw), not OIDC issuer metadata.",
+        "Remote-signer discover-orchestrators URL (default `{signer_url}/discover-orchestrators`). Not OIDC issuer metadata.",
     }),
+    caps: z
+      .array(z.string().min(1))
+      .optional()
+      .openapi({
+        description:
+          "Optional capability filters for remote-signer discovery (repeated `caps` query params, OR semantics).",
+        examples: [["live-video-to-video/streamdiffusion"]],
+      }),
     issued_token_type: z
       .literal("urn:ietf:params:oauth:token-type:access_token")
       .optional()
@@ -97,6 +105,17 @@ export const TokenExchangeRequestSchema = z
     resource: z.string().optional().openapi({
       description: "Must match configured signer audience when provided.",
     }),
+    discovery_url: z.url().optional().openapi({
+      description:
+        "Optional override for SignerSession.discovery_url. Defaults to `{signer_url}/discover-orchestrators`.",
+    }),
+    caps: z
+      .array(z.string().min(1))
+      .optional()
+      .openapi({
+        description:
+          "Optional repeated capability filters forwarded onto SignerSession.caps (remote-signer `caps` query).",
+      }),
   })
   .openapi("TokenExchangeRequest");
 

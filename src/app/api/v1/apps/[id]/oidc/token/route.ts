@@ -103,6 +103,8 @@ export async function POST(
       requestedTokenType: form.get("requested_token_type") || "",
       resource: form.get("resource") || "",
       audiences: form.getAll("audience"),
+      discovery_url: form.get("discovery_url") || undefined,
+      caps: form.getAll("caps"),
       correlationId,
     });
 
