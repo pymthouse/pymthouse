@@ -1,12 +1,13 @@
 /**
- * Network pipeline catalog from Livepeer discovery-service raw.
+ * Network pipeline catalog from remote-signer discovery.
  *
- * GET DISCOVERY_URL (`…/v1/discovery/raw`) → orchestrator rows with
+ * GET `{signer}/discover-orchestrators` → orchestrator rows with
  * `capabilities[]`, aggregated into pipeline/model catalog entries for
  * Plans / Network discovery UI and app manifests.
  */
 
-import { getDiscoveryRawUrl } from "@/lib/discovery-service-url";
+import { buildDiscoverOrchestratorsUrl } from "@/lib/discovery-service-url";
+import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 const REQUEST_TIMEOUT_MS = Math.max(
   3000,
@@ -19,18 +20,6 @@ export interface PipelineCatalogEntry {
   name: string;
   models: string[];
   regions?: string[];
-}
-
-export interface PricingRow {
-  orchAddress: string;
-  orchName?: string;
-  pipeline: string;
-  model: string;
-  /** Wei per pricing unit as a bigint-compatible string. */
-  priceWeiPerUnit: string;
-  /** Pixels per pricing unit as a bigint-compatible string. */
-  pixelsPerUnit: string;
-  isWarm?: boolean;
 }
 
 interface CacheEntry<T> {
@@ -70,7 +59,7 @@ export function splitCapability(capability: string): {
 }
 
 /**
- * Aggregate discovery-service raw orch rows into catalog entries.
+ * Aggregate discover-orchestrators rows into catalog entries.
  * Exported for unit tests.
  */
 export function catalogFromDiscoveryRaw(raw: unknown): PipelineCatalogEntry[] {
@@ -110,12 +99,12 @@ export function catalogFromDiscoveryRaw(raw: unknown): PipelineCatalogEntry[] {
   return entries;
 }
 
-async function fetchDiscoveryRawJson(): Promise<unknown> {
-  const url = getDiscoveryRawUrl();
-  if (!url) {
-    throw new Error(
-      "DISCOVERY_URL (or DISCOVERY_SERVICE_URL) is not configured",
-    );
+async function fetchDiscoveryJson(): Promise<unknown> {
+  let url: string;
+  try {
+    url = buildDiscoverOrchestratorsUrl(getClientSignerApiUrl());
+  } catch {
+    throw new Error("Signer URL is not configured for pipeline catalog discovery");
   }
 
   let lastErr: unknown;
@@ -126,7 +115,7 @@ async function fetchDiscoveryRawJson(): Promise<unknown> {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!res.ok) {
-        throw new Error(`Discovery raw returned HTTP ${res.status}`);
+        throw new Error(`Discover-orchestrators returned HTTP ${res.status}`);
       }
       return res.json();
     } catch (err) {
@@ -143,15 +132,15 @@ async function fetchDiscoveryRawJson(): Promise<unknown> {
       lastErr.message.includes("aborted due to timeout")
     ) {
       throw new Error(
-        `Discovery raw timed out after ${REQUEST_TIMEOUT_MS}ms`,
+        `Discover-orchestrators timed out after ${REQUEST_TIMEOUT_MS}ms`,
       );
     }
-    throw new Error(`Discovery raw failed: ${lastErr.message}`);
+    throw new Error(`Discover-orchestrators failed: ${lastErr.message}`);
   }
-  throw new Error("Discovery raw failed");
+  throw new Error("Discover-orchestrators failed");
 }
 
-/** Fetch (and cache) the network pipeline catalog from discovery-service raw. */
+/** Fetch (and cache) the network pipeline catalog from remote-signer discovery. */
 export async function fetchPipelineCatalog(): Promise<PipelineCatalogEntry[]> {
   if (fetchPipelineCatalogForTests) {
     return fetchPipelineCatalogForTests();
@@ -159,38 +148,8 @@ export async function fetchPipelineCatalog(): Promise<PipelineCatalogEntry[]> {
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.data;
   }
-  const raw = await fetchDiscoveryRawJson();
+  const raw = await fetchDiscoveryJson();
   const entries = catalogFromDiscoveryRaw(raw);
   catalogCache = { data: entries, expiresAt: Date.now() + CATALOG_TTL_MS };
   return entries;
-}
-
-/**
- * Per-orchestrator pricing rows. Discovery raw has no pricing payload;
- * returns an empty list (kept for API compatibility).
- */
-export async function fetchDashboardPricing(): Promise<PricingRow[]> {
-  return [];
-}
-
-/**
- * Find pricing rows that match a pipeline/model, optionally filtered to a
- * specific orchestrator address.  Returns only valid rows.
- */
-export function filterPricingRows(
-  rows: PricingRow[],
-  pipeline: string,
-  model: string,
-  orchAddress?: string,
-): PricingRow[] {
-  return rows.filter((r) => {
-    if (r.pipeline !== pipeline || r.model !== model) return false;
-    if (
-      orchAddress &&
-      r.orchAddress.toLowerCase() !== orchAddress.toLowerCase()
-    ) {
-      return false;
-    }
-    return true;
-  });
 }

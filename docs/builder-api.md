@@ -169,10 +169,12 @@ Exchange a user access JWT **or** a per-app-user API key (`pmth_*`) for a short-
 | `subject_token` | User access JWT **or** per-app-user API key (`pmth_*`) |
 | `subject_token_type` | `urn:ietf:params:oauth:token-type:access_token` |
 | `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
+| `discovery_url` | Optional override for network discovery (defaults to `{signer_url}/discover-orchestrators`) |
+| `caps` | Optional; repeatable capability filters for remote-signer discovery (`caps=pipeline/model`) |
 
 Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange. Do not use client secrets (`pmth_cs_*`) as `subject_token`.
 
-Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (Livepeer network discovery, not OIDC metadata), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
+Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (defaults to `{signer_url}/discover-orchestrators`; not OIDC metadata), optional `caps` (remote-signer capability filters), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
 
 Example (bare API key on the issuer token endpoint — personal key, no `{clientId}` in the URL):
 
@@ -666,7 +668,7 @@ The previous process-local in-memory enforcement cache (`manifest_cache_unavaila
 Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
 1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Billing requires both fields for **`usage_billing_events`**.
-2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** remains for UIs but discovery-service raw has no pricing rows (empty list).
+2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation.
 3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
 4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing still succeeds regardless.
 
@@ -688,12 +690,11 @@ Billable **`usage_billing_events`** rows are created when the signing request re
 
 PymtHouse uses these fields for attribution and billing-event grouping together with the negotiated ticket price from the request. The go-livepeer remote signer is not required to sign pipeline/model metadata for v1.
 
-### Network catalog and pricing routes
+### Network catalog route
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/v1/pipeline-catalog` | Network pipeline catalog from discovery-service raw (cached 5 min). Used by Plans UI dropdowns. |
-| `GET /api/v1/pipeline-pricing?pipeline=...&model=...` | Pricing rows for UI estimates (empty until a discovery-backed pricing source exists). |
+| `GET /api/v1/pipeline-catalog` | Network pipeline catalog from remote-signer `GET /discover-orchestrators` (cached 5 min). Used by Plans UI dropdowns. |
 
 ### Usage API — pipeline/model grouping
 
@@ -1065,10 +1066,9 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
-- [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts) (discovery-service raw → pipeline catalog; TTL cache)
+- [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts) (remote-signer discover-orchestrators → pipeline catalog; TTL cache)
 - [`src/app/api/v1/prices/eth-usd/route.ts`](../src/app/api/v1/prices/eth-usd/route.ts)
 - [`src/app/api/v1/pipeline-catalog/route.ts`](../src/app/api/v1/pipeline-catalog/route.ts)
-- [`src/app/api/v1/pipeline-pricing/route.ts`](../src/app/api/v1/pipeline-pricing/route.ts)
 
 **Gateway payment metadata (cross-repo)**
 

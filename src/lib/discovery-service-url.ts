@@ -1,24 +1,44 @@
 /**
- * Livepeer discovery-service URL for SignerSession / python-gateway `--token`.
+ * Remote-signer discovery URL: `{signer_url}/discover-orchestrators`.
  *
- * Configure the full raw endpoint (optional query), e.g.
- * `https://discovery-service-production-8955.up.railway.app/v1/discovery/raw`
- * Returned as-is (trimmed). No path rewriting.
+ * Matches go-livepeer remote discovery (`GET /discover-orchestrators`).
+ * Optional repeated `caps` query params are applied by callers / gateways.
  */
 
-const ENV_KEYS = [
-  "DISCOVERY_URL",
-  "DISCOVERY_SERVICE_URL",
-  "LIVEPEER_DISCOVERY_SERVICE_URL",
-  "ORCH_WEBHOOK_URL",
-] as const;
-
-export function getDiscoveryRawUrl(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  for (const key of ENV_KEYS) {
-    const value = env[key]?.trim();
-    if (value) return value;
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
   }
-  return undefined;
+  return value.slice(0, end);
+}
+
+/**
+ * Build the discover-orchestrators URL for a remote signer base URL.
+ * Preserves an existing path on the signer origin (uses URL join on origin only).
+ */
+export function buildDiscoverOrchestratorsUrl(signerUrl: string): string {
+  const trimmed = signerUrl.trim();
+  if (!trimmed) {
+    throw new Error("signer URL is required to build discover-orchestrators URL");
+  }
+  const base = trimTrailingSlashes(trimmed);
+  return `${base}/discover-orchestrators`;
+}
+
+/** Normalize caller-supplied capability strings for remote-signer `caps` filters. */
+export function normalizeDiscoveryCaps(
+  caps: readonly string[] | undefined | null,
+): string[] | undefined {
+  if (!caps?.length) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of caps) {
+    if (typeof raw !== "string") continue;
+    const cap = raw.trim();
+    if (!cap || seen.has(cap)) continue;
+    seen.add(cap);
+    out.push(cap);
+  }
+  return out.length > 0 ? out : undefined;
 }

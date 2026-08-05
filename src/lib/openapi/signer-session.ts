@@ -1,4 +1,5 @@
 import type { SignerSession } from "@/lib/openapi/schemas/credentials-types";
+import { normalizeDiscoveryCaps } from "@/lib/discovery-service-url";
 
 export function buildSignerSessionEnvelope(input: {
   access_token: string;
@@ -8,6 +9,7 @@ export function buildSignerSessionEnvelope(input: {
   lifetimeGrantedUsdMicros?: string;
   signer_url?: string;
   discovery_url?: string;
+  caps?: readonly string[];
   issued_token_type?: SignerSession["issued_token_type"];
   correlation_id?: string;
 }): SignerSession {
@@ -31,6 +33,10 @@ export function buildSignerSessionEnvelope(input: {
   const discoveryUrl = input.discovery_url?.trim();
   if (discoveryUrl) {
     body.discovery_url = discoveryUrl;
+  }
+  const caps = normalizeDiscoveryCaps(input.caps);
+  if (caps) {
+    body.caps = caps;
   }
   if (input.issued_token_type) {
     body.issued_token_type = input.issued_token_type;
