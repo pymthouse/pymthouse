@@ -235,6 +235,13 @@ and keep the same OM metering + Connect readiness model.
 
 - OM app install / Konnect link: `src/lib/openmeter/stripe-app-install.ts`
 - Billing profiles / owners profile: `src/lib/openmeter/billing-profiles.ts`
+- Supplier sync (Connect → OM profile): `src/lib/openmeter/supplier-sync.ts`,
+  `src/lib/openmeter/billing-supplier.ts`
+- Settlement metadata keys: `src/lib/openmeter/settlement-metadata.ts`
+  (`stripe_charge_model`, `stripe_connect_account_id`) — Plane A Stripe-app
+  profiles never stamp these; merchant Custom Invoicing does. Durable settlement
+  lives in [pymthouse/settlement](https://github.com/pymthouse/settlement); the
+  Railway `invoicing-worker` is the interim collector.
 - Customer Stripe app data: `src/lib/openmeter/stripe-customer-data.ts`
 - Owner PM attach: `src/lib/openmeter/owner-payment-method.ts`,
   `POST /api/v1/me/billing/payment-method`
