@@ -22,6 +22,12 @@ test("isStripeCheckoutUrl allows only https checkout.stripe.com hosts", () => {
     stripeCheckoutRedirectUrl("https://checkout.stripe.com/c/pay/cs_test"),
     "https://checkout.stripe.com/c/pay/cs_test",
   );
+  assert.equal(
+    stripeCheckoutRedirectUrl(
+      "https://checkout.stripe.com/c/pay/cs_live_abc#fidkdWxOYHwnPyd1blpx",
+    ),
+    "https://checkout.stripe.com/c/pay/cs_live_abc#fidkdWxOYHwnPyd1blpx",
+  );
   assert.equal(stripeCheckoutRedirectUrl("https://evil.example/"), null);
 });
 

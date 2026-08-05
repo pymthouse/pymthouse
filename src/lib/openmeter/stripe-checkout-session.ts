@@ -24,6 +24,8 @@ export function isStripeCheckoutUrl(url: string): boolean {
  * Returns a same-origin-safe Stripe Checkout URL, or null if the input is not
  * an https `checkout.stripe.com` URL. Rebuilds the URL from allowlisted parts
  * so callers do not pass a remote string straight into location.assign.
+ *
+ * Must preserve the `#` fragment — Stripe Checkout embeds session state there.
  */
 export function stripeCheckoutRedirectUrl(url: string): string | null {
   try {
@@ -33,7 +35,7 @@ export function stripeCheckoutRedirectUrl(url: string): string | null {
     if (host !== "checkout.stripe.com" && !host.endsWith(".checkout.stripe.com")) {
       return null;
     }
-    return `https://${host}${parsed.pathname}${parsed.search}`;
+    return `https://${host}${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return null;
   }
