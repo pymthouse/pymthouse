@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import AppSettingsScreen from "@/components/apps/AppSettingsScreen";
 import AppStatusBadge from "@/components/apps/AppStatusBadge";
 import type { AppFormData, AppState } from "@/components/apps/AppWizard";
-import {
-  appSettingsPath,
-  normalizeAppSettingsTab,
-  type AppSettingsTab,
-} from "@/lib/apps/settings-paths";
+import type { AppSettingsTab } from "@/lib/apps/settings-paths";
 import { DEFAULT_PUBLIC_GRANT_TYPES } from "@/lib/oidc/grants";
 import { DEFAULT_OIDC_SCOPES, ensureOpenIdScope } from "@/lib/oidc/scopes";
 
@@ -27,31 +23,14 @@ type LoadedApp = {
   ownerExternalUserId: string | null;
 };
 
-/**
- * Shared app settings shell. Tab comes from the path (`/apps/{id}/payments`);
- * legacy `?tab=` is redirected to the path equivalent.
- */
+/** Shared app settings shell. Tab comes from the path (`/apps/{id}/payments`). */
 export default function AppSettingsPageClient({
   tab,
 }: Readonly<{ tab: AppSettingsTab }>) {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [appData, setAppData] = useState<LoadedApp | null>(null);
-
-  // Legacy `?tab=` → path tab (preserve connected/error/client query params).
-  useEffect(() => {
-    const legacyTab = searchParams.get("tab");
-    if (!legacyTab) return;
-    const normalized = normalizeAppSettingsTab(legacyTab);
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("tab");
-    const qs = next.toString();
-    const path = appSettingsPath(id, normalized);
-    router.replace(qs ? `${path}?${qs}` : path);
-  }, [id, router, searchParams]);
 
   useEffect(() => {
     fetch(`/api/v1/apps/${id}`)

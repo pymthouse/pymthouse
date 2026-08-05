@@ -1,14 +1,8 @@
-import { redirect } from "next/navigation";
+"use client";
 
-/**
- * Discovery profiles now live under Billing Plans.
- * Keep this URL as a redirect for bookmarks.
- */
-export default async function AppDiscoveryProfilesRedirectPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  redirect(`/apps/${id}/plans`);
+import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
+
+/** Discovery profiles live under Billing Plans. */
+export default function AppDiscoveryProfilesPage() {
+  return <AppSettingsPageClient tab="plans" />;
 }

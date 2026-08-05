@@ -1,11 +1,8 @@
-import { redirect } from "next/navigation";
+"use client";
 
-/** Profile tab canonical URL is `/apps/[id]`. */
-export default async function AppProfileRedirectPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  redirect(`/apps/${id}`);
+import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
+
+/** Alias of App profile (`/apps/[id]`). */
+export default function AppProfilePage() {
+  return <AppSettingsPageClient tab="profile" />;
 }

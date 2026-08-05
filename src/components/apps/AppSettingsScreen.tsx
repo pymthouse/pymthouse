@@ -38,7 +38,7 @@ interface Props {
   canManageBilling?: boolean;
   /** App owner identity used when minting owner-scoped API keys from Credentials tab. */
   ownerExternalUserId?: string | null;
-  /** Initial tab to display (from path `/apps/{id}/payments` or legacy `?tab=`). */
+  /** Initial tab to display (from path `/apps/{id}/payments`). */
   initialTab?: string;
 }
 
@@ -125,7 +125,6 @@ export default function AppSettingsScreen({
 
       if (updateUrl) {
         const nextParams = new URLSearchParams(searchParams.toString());
-        nextParams.delete("tab");
         if (section !== "credentials") {
           nextParams.delete("client");
         }
@@ -149,7 +148,6 @@ export default function AppSettingsScreen({
       setCredentialsClient(client);
       if (updateUrl) {
         const nextParams = new URLSearchParams(searchParams.toString());
-        nextParams.delete("tab");
         if (client === "public") {
           nextParams.delete("client");
         } else {
