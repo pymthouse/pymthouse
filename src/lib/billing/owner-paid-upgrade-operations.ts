@@ -25,7 +25,8 @@ function isUniqueViolation(error: unknown): boolean {
   const codes: string[] = [];
   const messages: string[] = [];
   let cur: unknown = error;
-  for (let i = 0; i < 4 && cur; i++) {
+  for (let depth = 0; depth < 4; depth++) {
+    if (cur == null) break;
     if (cur instanceof Error) {
       messages.push(cur.message);
       const withCause = cur as Error & { cause?: unknown; code?: string };
@@ -33,7 +34,7 @@ function isUniqueViolation(error: unknown): boolean {
       cur = withCause.cause;
       continue;
     }
-    if (cur && typeof cur === "object") {
+    if (typeof cur === "object") {
       const obj = cur as { message?: unknown; code?: unknown; cause?: unknown };
       if (typeof obj.message === "string") messages.push(obj.message);
       if (typeof obj.code === "string") codes.push(obj.code);
