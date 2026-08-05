@@ -119,9 +119,7 @@ Creating an app marks onboarding complete with `persona=builder`. Builders can s
 
 ## Agent network registration (headless)
 
-Agents without a browser/Turnkey session can mint an Explorer-style network identity on the **platform default app** by proving possession of an Ed25519 public key. This creates an `app_users` row only — **not** a dashboard `users` / Turnkey account. The human path `POST /api/v1/network/key` is unchanged.
-
-**Enable:** set `NETWORK_AGENT_REGISTER_ENABLED=1` (default off).
+Agents without a browser/Turnkey session can mint an Explorer-style network identity on the **platform default app** by proving possession of an Ed25519 public key. This creates an `app_users` row only — **not** a dashboard `users` / Turnkey account. The human path `POST /api/v1/network/key` is unchanged. Rate limits (per IP / fingerprint) and challenge TTL are the abuse controls.
 
 ```bash
 # 1) Generate an Ed25519 keypair (example with OpenSSL / Node)
@@ -160,5 +158,5 @@ Returns `persona`, `onboardingCompletedAt`, `needsOnboarding`, `defaultAppClient
 - Public preview: `/start` → Turnkey → `/onboarding?persona=explorer|builder`
 - Dashboard wizard: `/onboarding`
 - Personal Access Token: `POST /api/v1/network/key` (My Apps card)
-- Agent register (no Turnkey): `GET/POST /api/v1/network/register*` (`NETWORK_AGENT_REGISTER_ENABLED=1`)
+- Agent register (no Turnkey): `GET/POST /api/v1/network/register*`
 - Existing accounts: `/login` (Sign in)

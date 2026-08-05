@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   NetworkAgentRegisterError,
   clientIpFromRequest,
-  isNetworkAgentRegisterEnabled,
   registerNetworkAgent,
 } from "@/lib/network-agent-register";
 
@@ -20,13 +19,6 @@ type RegisterBody = {
  * Does not create a platform `users` / Turnkey account.
  */
 export async function POST(request: NextRequest) {
-  if (!isNetworkAgentRegisterEnabled()) {
-    return NextResponse.json(
-      { error: "Agent network registration is disabled" },
-      { status: 404 },
-    );
-  }
-
   let body: RegisterBody;
   try {
     body = (await request.json()) as RegisterBody;

@@ -47,7 +47,7 @@ defineRouteMetadata("get", "/api/v1/network/register/challenge", {
   tags: [OPENAPI_TAGS.network],
   summary: "Agent network registration challenge",
   description:
-    "Issue a short-lived Ed25519 challenge for headless agent registration on the platform default app. Gated by `NETWORK_AGENT_REGISTER_ENABLED`.",
+    "Issue a short-lived Ed25519 challenge for headless agent registration on the platform default app.",
   request: {
     query: z.object({
       publicKey: z.string().openapi({
@@ -64,7 +64,6 @@ defineRouteMetadata("get", "/api/v1/network/register/challenge", {
       },
     },
     400: { description: "Missing or invalid publicKey" },
-    404: { description: "Feature disabled" },
     429: { description: "Rate limited" },
   },
 });
@@ -73,7 +72,7 @@ defineRouteMetadata("post", "/api/v1/network/register", {
   tags: [OPENAPI_TAGS.network],
   summary: "Register network agent",
   description:
-    "Prove Ed25519 key possession and mint a one-time composite API key on the platform default app. Does not create a dashboard/Turnkey `users` account. Gated by `NETWORK_AGENT_REGISTER_ENABLED`.",
+    "Prove Ed25519 key possession and mint a one-time composite API key on the platform default app. Does not create a dashboard/Turnkey `users` account.",
   request: {
     body: {
       content: {
@@ -90,7 +89,6 @@ defineRouteMetadata("post", "/api/v1/network/register", {
     },
     400: { description: "Invalid body or challenge" },
     401: { description: "Bad signature" },
-    404: { description: "Feature disabled" },
     409: { description: "Public key already registered" },
     429: { description: "Rate limited" },
   },

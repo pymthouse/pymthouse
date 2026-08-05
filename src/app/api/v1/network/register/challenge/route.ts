@@ -4,7 +4,6 @@ import {
   NetworkAgentRegisterError,
   clientIpFromRequest,
   createRegisterChallenge,
-  isNetworkAgentRegisterEnabled,
 } from "@/lib/network-agent-register";
 
 /**
@@ -12,13 +11,6 @@ import {
  * Requires `?publicKey=` (hex or base64 raw/SPKI Ed25519 public key).
  */
 export async function GET(request: NextRequest) {
-  if (!isNetworkAgentRegisterEnabled()) {
-    return NextResponse.json(
-      { error: "Agent network registration is disabled" },
-      { status: 404 },
-    );
-  }
-
   const publicKey = request.nextUrl.searchParams.get("publicKey")?.trim() || "";
   if (!publicKey) {
     return NextResponse.json(
