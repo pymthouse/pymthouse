@@ -172,12 +172,18 @@ export async function syncTenantSupplierFromConnect(input: {
   await upsertAppBillingConfig(input.clientId, {
     supplierCountry: country,
     supplierName,
-    supplierBusinessType: identity.businessType,
-    supplierAddressLine1: identity.addressLine1,
-    supplierAddressLine2: identity.addressLine2,
-    supplierAddressCity: identity.addressCity,
-    supplierAddressState: identity.addressState,
-    supplierAddressPostalCode: identity.addressPostalCode,
+    supplierBusinessType:
+      identity.businessType ?? config.supplierBusinessType ?? null,
+    supplierAddressLine1:
+      identity.addressLine1 ?? config.supplierAddressLine1 ?? null,
+    supplierAddressLine2:
+      identity.addressLine2 ?? config.supplierAddressLine2 ?? null,
+    supplierAddressCity:
+      identity.addressCity ?? config.supplierAddressCity ?? null,
+    supplierAddressState:
+      identity.addressState ?? config.supplierAddressState ?? null,
+    supplierAddressPostalCode:
+      identity.addressPostalCode ?? config.supplierAddressPostalCode ?? null,
     supplierTaxIdOnFileAtStripe: identity.taxIdProvided,
     // Never overwrite developer-supplied tax id.
     supplierSyncedAt: new Date().toISOString(),

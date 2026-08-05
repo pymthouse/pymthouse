@@ -349,17 +349,20 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   }, [appId]);
 
   useEffect(() => {
-    load().catch(() => undefined);
     if (globalThis.window === undefined) {
+      void load().catch(() => undefined);
       return;
     }
     const params = new URLSearchParams(globalThis.location.search);
-    if (params.get("error")) {
-      setError(paymentsTabErrorMessage(params.get("error")));
+    const errorCode = params.get("error");
+    if (errorCode) {
+      setError(
+        paymentsTabErrorMessage(errorCode) ??
+          "Stripe Connect returned an error. Try again.",
+      );
     }
-    if (params.get("connected") === "1" || params.get("connect") === "refresh") {
-      load().catch(() => undefined);
-    }
+    // Single load: return-from-onboarding and initial mount share one fetch.
+    void load().catch(() => undefined);
   }, [load]);
 
   if (loading) {
@@ -718,7 +721,7 @@ function PaymentsTabLoaded(props: Readonly<{
 
   const flags = connectUiFlags(status);
   const busySetters = { setBusy, setError };
-  const connectReadyForMerchant = Boolean(status?.activation?.connectReady);
+  const connectReadyForMerchant = flags.merchantReady;
   const save = () =>
     void requestSaveBillingSettings({
       appId,

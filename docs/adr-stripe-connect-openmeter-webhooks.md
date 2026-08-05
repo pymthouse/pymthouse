@@ -265,6 +265,9 @@ and keep the same OM metering + Connect readiness model.
 - [x] MoonPay gated to platform admin only
 - [x] Merchant Custom Invoicing (Konnect) + settlement metadata + Connect supplier sync
 - [x] Collection via pymthouse/settlement (not an in-repo Railway worker)
+- [x] Wire `assignMerchantCustomInvoicingProfile` into merchant end-user
+      provisioning when `billing_mode=merchant` (via `prepareAppCustomerStripeBilling`
+      on checkout / paid plan change — Starter stays on the free profile by design)
 
 ### Remaining
 
@@ -273,8 +276,6 @@ and keep the same OM metering + Connect readiness model.
       payment events point at the settlement producer.
 - [ ] Deploy pymthouse/settlement; run `openmeter:custom-invoicing:bootstrap`
       with `SETTLEMENT_OPENMETER_WEBHOOK_URL`; set `OPENMETER_*` on Vercel.
-- [ ] Wire `assignMerchantCustomInvoicingProfile` into merchant end-user
-      provisioning when `billing_mode=merchant`.
 - [ ] Cutover audit (#324): flag apps where OM would auto-charge the same
       customer that Connect already bills.
 - [ ] x402 / stablecoin payment methods on Plane A and Plane B (design above).

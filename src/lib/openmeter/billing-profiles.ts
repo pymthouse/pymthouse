@@ -2,6 +2,7 @@ import {
   platformDefaultApplicationFeeBps,
   platformDefaultEndUserCap,
 } from "@/lib/billing/platform-billing-defaults";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
@@ -369,7 +370,12 @@ export async function prepareAppCustomerStripeBilling(input: {
     null;
 
   // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
-  if (config?.billingMode === "merchant" && merchantProfileId) {
+  if (config?.billingMode === "merchant") {
+    if (!merchantProfileId) {
+      throw new Error(
+        "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
+      );
+    }
     await assignMerchantCustomInvoicingProfile({
       client: input.client,
       customerId: input.customerId,
@@ -386,7 +392,7 @@ export async function prepareAppCustomerStripeBilling(input: {
       if (chargeModel !== "direct") {
         console.warn(
           "merchant customer settlement metadata: supplier incomplete; using destination",
-          input.clientId,
+          sanitizeForLog(input.clientId),
         );
       }
       await ensureCustomerMetadata(

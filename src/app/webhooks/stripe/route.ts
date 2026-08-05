@@ -25,10 +25,15 @@ export const runtime = "nodejs";
  */
 function resolveConnectWebhookSecret(): string {
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  if (connectSecret?.startsWith("whsec_")) {
-    return connectSecret;
+  if (!connectSecret) {
+    return requireStripeWebhookSecret();
   }
-  return requireStripeWebhookSecret();
+  if (!connectSecret.startsWith("whsec_")) {
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  return connectSecret;
 }
 
 export async function POST(request: Request): Promise<Response> {

@@ -433,10 +433,16 @@ export async function ensureCustomerMetadata(
   if (!customer?.id) {
     throw new Error(`OpenMeter customer not found: ${customerId}`);
   }
+  const subjectKeys = customer.usageAttribution?.subjectKeys ?? [];
+  if (!customer.name?.trim() && !customer.key?.trim() && subjectKeys.length === 0) {
+    throw new Error(
+      `OpenMeter customer ${customerId} has no name, key, or subject keys; refusing metadata replace`,
+    );
+  }
   await ensureCustomerUsageAttribution(
     client,
     customer,
-    customer.usageAttribution?.subjectKeys ?? [],
+    subjectKeys,
     metadata,
   );
 }

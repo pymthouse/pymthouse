@@ -140,6 +140,13 @@ async function ensureNotificationChannel(input: {
     (ch) => ch.name === CHANNEL_NAME || ch.url === input.url,
   );
   if (existing?.id) {
+    const existingUrl = existing.url?.trim();
+    if (existingUrl && existingUrl !== input.url) {
+      throw new Error(
+        `Notification channel ${existing.id} (${CHANNEL_NAME}) points at ` +
+          `${existingUrl}, not ${input.url}. Update or delete it in Konnect, then re-run.`,
+      );
+    }
     // Prefer the channel's real signing secret over whatever we invented.
     const fresh =
       existing.signingSecret != null && existing.signingSecret !== ""
@@ -205,9 +212,10 @@ async function ensureInvoiceRules(channelId: string): Promise<void> {
     ).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       // Idempotent: rule may already exist.
-      if (!/\(409\)|\(400\).*already|duplicate/i.test(message)) {
-        console.warn(`[bootstrap] rule ${type}: ${message}`);
+      if (/\(409\)|\(400\).*already|duplicate/i.test(message)) {
+        return;
       }
+      throw err instanceof Error ? err : new Error(message);
     });
   }
 }
@@ -272,12 +280,16 @@ async function main(): Promise<void> {
     "[bootstrap] Ensuring notification channel →",
     sanitizeForLog(webhookUrl),
   );
-  const { channelId, created, signingSecret } = await ensureNotificationChannel({
+  const {
+    channelId,
+    created: channelCreated,
+    signingSecret,
+  } = await ensureNotificationChannel({
     url: webhookUrl,
     webhookSecret,
   });
   console.log(
-    `[bootstrap] Channel ${sanitizeForLog(channelId)} (${created ? "created" : "existing"})`,
+    `[bootstrap] Channel ${sanitizeForLog(channelId)} (${channelCreated ? "created" : "existing"})`,
   );
 
   console.log("[bootstrap] Installing / resolving Custom Invoicing app…");
@@ -312,9 +324,15 @@ async function main(): Promise<void> {
   console.log(
     "\nConfigure the channel signing secret on pymthouse/settlement producer:\n",
   );
-  console.log(
-    `SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${sanitizeForLog(signingSecret)}`,
-  );
+  if (channelCreated) {
+    console.log(
+      `SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${sanitizeForLog(signingSecret)}`,
+    );
+  } else {
+    console.log(
+      "SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=<use existing channel secret; not re-printed>",
+    );
+  }
   console.log(
     "\nThen enable draft + issuing sync hooks on the Custom Invoicing app in Konnect",
   );

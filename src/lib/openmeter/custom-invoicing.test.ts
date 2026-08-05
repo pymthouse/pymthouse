@@ -17,8 +17,16 @@ test("customInvoicingRequestUrl strips /api/v1 for Konnect bases", () => {
       "https://us.api.konghq.com/v3/openmeter/apps/custom-invoicing/01G65Z755AFWAKHE12NY0CQ9FH/payment/status",
     );
   } finally {
-    process.env.OPENMETER_URL = savedUrl;
-    process.env.OPENMETER_API_KEY = savedKey;
+    if (savedUrl === undefined) {
+      delete process.env.OPENMETER_URL;
+    } else {
+      process.env.OPENMETER_URL = savedUrl;
+    }
+    if (savedKey === undefined) {
+      delete process.env.OPENMETER_API_KEY;
+    } else {
+      process.env.OPENMETER_API_KEY = savedKey;
+    }
   }
 });
 

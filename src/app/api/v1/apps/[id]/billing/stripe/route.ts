@@ -124,16 +124,17 @@ async function applyBillingModeField(
     const { supplierGaps, supplierIsComplete } = await import(
       "@/lib/openmeter/billing-supplier"
     );
-    const gaps = supplierGaps({
+    const pendingTaxId =
+      fields.supplierTaxId !== undefined
+        ? fields.supplierTaxId
+        : config?.supplierTaxId;
+    const supplierInput = {
       country: config?.supplierCountry,
       name: config?.supplierName,
-      taxId: config?.supplierTaxId,
-    });
-    if (!supplierIsComplete({
-      country: config?.supplierCountry,
-      name: config?.supplierName,
-      taxId: config?.supplierTaxId,
-    })) {
+      taxId: pendingTaxId,
+    };
+    const gaps = supplierGaps(supplierInput);
+    if (!supplierIsComplete(supplierInput)) {
       return {
         ok: false,
         response: NextResponse.json(

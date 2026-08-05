@@ -26,6 +26,7 @@ async function main() {
     `${dryRun ? "DRY-RUN" : "APPLY"}: ${rows.length} app(s) with connected accounts`,
   );
 
+  let failures = 0;
   for (const row of rows) {
     const accountId = row.accountId?.trim();
     if (!accountId) continue;
@@ -42,11 +43,15 @@ async function main() {
         `${row.clientId}: ${result.status} gaps=${result.gaps.join(",") || "none"}`,
       );
     } catch (err) {
+      failures += 1;
       console.error(
         `${row.clientId}: FAILED`,
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+  if (failures > 0) {
+    throw new Error(`supplier backfill failed for ${failures} app(s)`);
   }
 }
 

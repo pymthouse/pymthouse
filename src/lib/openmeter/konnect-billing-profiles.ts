@@ -105,8 +105,16 @@ export function selectReadyKonnectStripeApp(apps: KonnectBillingApp[]): string |
 export function selectKonnectCustomInvoicingApp(
   apps: KonnectBillingApp[],
 ): string | null {
-  const custom = apps.find((app) => isKonnectCustomInvoicingApp(app));
-  return custom?.id ?? null;
+  const ready = apps.find(
+    (app) => isKonnectCustomInvoicingApp(app) && app.status === "ready",
+  );
+  if (ready?.id) return ready.id;
+  // Some installs omit status; accept those, but never unauthorized.
+  const fallback = apps.find(
+    (app) =>
+      isKonnectCustomInvoicingApp(app) && app.status !== "unauthorized",
+  );
+  return fallback?.id ?? null;
 }
 
 function uniqueAppIdsFromProfiles(profiles: KonnectBillingProfileListItem[]): string[] {
