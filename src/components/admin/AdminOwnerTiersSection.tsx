@@ -67,6 +67,8 @@ export default function AdminOwnerTiersSection() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [editMonthlyFeeUsd, setEditMonthlyFeeUsd] = useState("");
+  const [editIncludedDisplay, setEditIncludedDisplay] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,32 +94,53 @@ export default function AdminOwnerTiersSection() {
     void load();
   }, [load]);
 
-  function startEditName(tier: Tier) {
+  function startEditTier(tier: Tier) {
     setEditingId(tier.id);
     setEditName(tier.name);
+    setEditMonthlyFeeUsd(tier.monthlyFeeUsd);
+    setEditIncludedDisplay(usdMicrosToCentsDisplay(tier.includedUsdMicros));
     setError(null);
     setMessage(null);
   }
 
-  function cancelEditName() {
+  function cancelEditTier() {
     setEditingId(null);
     setEditName("");
+    setEditMonthlyFeeUsd("");
+    setEditIncludedDisplay("");
   }
 
-  async function saveEditName(tier: Tier) {
-    const next = editName.trim();
-    if (!next) {
+  async function saveEditTier(tier: Tier) {
+    const nextName = editName.trim();
+    if (!nextName) {
       setError("Name is required");
       return;
     }
-    if (next === tier.name) {
-      cancelEditName();
+    const nextFee = editMonthlyFeeUsd.trim();
+    if (!nextFee) {
+      setError("Monthly fee is required");
       return;
     }
-    const ok = await patchTier(tier.id, { name: next });
+    const nextIncluded = usdCentsDisplayToMicros(editIncludedDisplay);
+    if (!nextIncluded) {
+      setError("Enter a valid included allowance (e.g. 5.00)");
+      return;
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (nextName !== tier.name) patch.name = nextName;
+    if (nextFee !== tier.monthlyFeeUsd) patch.monthlyFeeUsd = nextFee;
+    if (nextIncluded !== tier.includedUsdMicros) {
+      patch.includedUsdMicros = nextIncluded;
+    }
+    if (Object.keys(patch).length === 0) {
+      cancelEditTier();
+      return;
+    }
+
+    const ok = await patchTier(tier.id, patch);
     if (!ok) return;
-    setEditingId(null);
-    setEditName("");
+    cancelEditTier();
   }
 
   async function createTier() {
@@ -204,7 +227,7 @@ export default function AdminOwnerTiersSection() {
         throw new Error(body.error || "Failed to deactivate");
       }
       setMessage("Tier deactivated");
-      if (editingId === id) cancelEditName();
+      if (editingId === id) cancelEditTier();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -222,7 +245,8 @@ export default function AdminOwnerTiersSection() {
         Flat monthly fee + included usage. Developers pick a tier on Upgrade.
         Keys must be <code className="text-zinc-300">pymthouse_owner_paid</code>{" "}
         or <code className="text-zinc-300">pymthouse_owner_paid_&lt;slug&gt;</code>.
-        Saving syncs the OpenMeter plan (flat fee + usage discount).
+        Edit an existing tier to change price or allowance — do not recreate the
+        same key. Saving syncs the OpenMeter plan (flat fee + usage discount).
       </p>
 
       {error ? (
@@ -249,46 +273,87 @@ export default function AdminOwnerTiersSection() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     {isEditing ? (
-                      <label className="block">
-                        <span className="sr-only">Tier name</span>
-                        <input
-                          className="w-full max-w-md rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-sm text-zinc-100"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          disabled={isBusy}
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void saveEditName(tier);
-                            }
-                            if (e.key === "Escape") {
-                              e.preventDefault();
-                              cancelEditName();
-                            }
-                          }}
-                        />
-                      </label>
-                    ) : (
-                      <p className="font-medium text-zinc-100">
-                        {tier.name}{" "}
-                        <span className="font-mono text-xs text-zinc-500">
-                          {tier.key}
-                        </span>
-                        {!tier.active ? (
-                          <span className="ml-2 text-xs text-amber-400">
-                            inactive
+                      <div className="grid max-w-xl gap-2 sm:grid-cols-2">
+                        <label className="block sm:col-span-2">
+                          <span className="text-xs text-zinc-500">Name</span>
+                          <input
+                            className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-sm text-zinc-100"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            disabled={isBusy}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void saveEditTier(tier);
+                              }
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelEditTier();
+                              }
+                            }}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-zinc-500">
+                            Monthly fee (USD)
                           </span>
-                        ) : null}
-                      </p>
+                          <input
+                            className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-sm text-zinc-100"
+                            value={editMonthlyFeeUsd}
+                            onChange={(e) =>
+                              setEditMonthlyFeeUsd(
+                                sanitizeUsdCentsInput(e.target.value),
+                              )
+                            }
+                            disabled={isBusy}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-zinc-500">
+                            Included allowance (USD)
+                          </span>
+                          <input
+                            className="mt-1 w-full rounded-md border border-white/15 bg-black/40 px-2.5 py-1.5 text-sm text-zinc-100"
+                            value={editIncludedDisplay}
+                            onChange={(e) =>
+                              setEditIncludedDisplay(
+                                sanitizeUsdCentsInput(e.target.value),
+                              )
+                            }
+                            disabled={isBusy}
+                          />
+                        </label>
+                        <p className="sm:col-span-2 font-mono text-xs text-zinc-500">
+                          {tier.key}
+                          {!tier.active ? (
+                            <span className="ml-2 text-amber-400">inactive</span>
+                          ) : null}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-medium text-zinc-100">
+                          {tier.name}{" "}
+                          <span className="font-mono text-xs text-zinc-500">
+                            {tier.key}
+                          </span>
+                          {!tier.active ? (
+                            <span className="ml-2 text-xs text-amber-400">
+                              inactive
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="mt-1 text-zinc-400">
+                          ${tier.monthlyFeeUsd}/mo · $
+                          {usdMicrosToCentsDisplay(tier.includedUsdMicros)}{" "}
+                          included
+                          {tier.openmeterPlanId
+                            ? ` · OM ${tier.openmeterPlanId.slice(0, 8)}…`
+                            : " · not synced"}
+                        </p>
+                      </>
                     )}
-                    <p className="mt-1 text-zinc-400">
-                      ${tier.monthlyFeeUsd}/mo · $
-                      {usdMicrosToCentsDisplay(tier.includedUsdMicros)} included
-                      {tier.openmeterPlanId
-                        ? ` · OM ${tier.openmeterPlanId.slice(0, 8)}…`
-                        : " · not synced"}
-                    </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {isEditing ? (
@@ -297,15 +362,15 @@ export default function AdminOwnerTiersSection() {
                           type="button"
                           className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-300 disabled:opacity-50"
                           disabled={isBusy}
-                          onClick={() => void saveEditName(tier)}
+                          onClick={() => void saveEditTier(tier)}
                         >
-                          Save name
+                          Save & sync
                         </button>
                         <button
                           type="button"
                           className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
                           disabled={isBusy}
-                          onClick={cancelEditName}
+                          onClick={cancelEditTier}
                         >
                           Cancel
                         </button>
@@ -315,15 +380,15 @@ export default function AdminOwnerTiersSection() {
                         type="button"
                         className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
                         disabled={isBusy}
-                        onClick={() => startEditName(tier)}
+                        onClick={() => startEditTier(tier)}
                       >
-                        Edit name
+                        Edit
                       </button>
                     )}
                     <button
                       type="button"
                       className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 disabled:opacity-50"
-                      disabled={isBusy || !tier.active}
+                      disabled={isBusy || !tier.active || isEditing}
                       onClick={() => void patchTier(tier.id, { sync: true })}
                     >
                       Re-sync

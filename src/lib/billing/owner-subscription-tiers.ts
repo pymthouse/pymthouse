@@ -176,6 +176,12 @@ export async function createOwnerSubscriptionTier(
     throw new Error("overageRateUsd must be a positive USD amount or empty");
   }
   const now = new Date().toISOString();
+  const existing = await getOwnerSubscriptionTierByKey(key);
+  if (existing) {
+    throw new Error(
+      `Tier key "${key}" already exists — edit that tier’s fee/allowance instead of creating again`,
+    );
+  }
   const row = {
     id: randomUUID(),
     key,
