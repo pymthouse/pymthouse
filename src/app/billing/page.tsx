@@ -37,6 +37,7 @@ export default async function BillingPage() {
           ledger: [],
           openMeterConfigured: false,
           fundingClientId: null,
+          pendingDowngrade: null,
         }}
       />
     );

@@ -98,3 +98,19 @@ test("ownerCurrentPaidPlanKey and change/access helpers", () => {
   assert.equal(ownerCanChangePaidPlan(starter), false);
   assert.equal(ownerCanAccessPlanCheckout(starter), true);
 });
+
+test("ownerCanChangePaidPlan stays true while Paid is active with scheduled Starter", () => {
+  const pendingDowngrade = [
+    {
+      openMeterPlanKey: "pymthouse_owner_paid_producer",
+      appPublicClientId: null,
+    },
+    {
+      openMeterPlanKey: "pymthouse_owner_starter",
+      appPublicClientId: null,
+    },
+  ];
+  assert.equal(ownerCanChangePaidPlan(pendingDowngrade), true);
+  assert.equal(ownerEligibleForPaidUpgrade(pendingDowngrade), false);
+  assert.equal(ownerCanAccessPlanCheckout(pendingDowngrade), true);
+});

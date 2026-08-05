@@ -167,10 +167,24 @@ export function confirmButtonLabel(
   busy: boolean,
   monthlyFeeUsd: string | null,
   mode: "upgrade" | "change",
+  opts?: { downgradeToFree?: boolean },
 ): string {
-  if (busy) return mode === "change" ? "Changing…" : "Upgrading…";
+  if (busy) {
+    if (opts?.downgradeToFree) return "Scheduling…";
+    return mode === "change" ? "Changing…" : "Upgrading…";
+  }
+  if (opts?.downgradeToFree) {
+    return "Confirm — keep plan until cycle ends";
+  }
   if (monthlyFeeUsd) return `Confirm — charge $${monthlyFeeUsd} today`;
   return mode === "change" ? "Confirm change" : "Confirm upgrade";
+}
+
+/** Sentinel key for the Free / Sandbox Starter card on Change-plan checkout. */
+export const OWNER_CHECKOUT_FREE_PLAN_KEY = "pymthouse_owner_starter";
+
+export function isCheckoutFreePlanKey(planKey: string | null | undefined): boolean {
+  return (planKey?.trim() || "") === OWNER_CHECKOUT_FREE_PLAN_KEY;
 }
 
 function SkeletonRow() {
@@ -468,10 +482,19 @@ function TierCard({
           <TierDescription tier={tier} detail={detail} />
         </div>
         <div className="shrink-0 text-right">
-          <span className="text-lg font-semibold text-emerald-300">
-            ${tier.monthlyFeeUsd}
-          </span>
-          <span className="block text-xs text-zinc-500">/month</span>
+          {isCheckoutFreePlanKey(tier.key) ? (
+            <>
+              <span className="text-lg font-semibold text-zinc-200">Free</span>
+              <span className="block text-xs text-zinc-500">after cycle</span>
+            </>
+          ) : (
+            <>
+              <span className="text-lg font-semibold text-emerald-300">
+                ${tier.monthlyFeeUsd}
+              </span>
+              <span className="block text-xs text-zinc-500">/month</span>
+            </>
+          )}
         </div>
       </div>
     </label>
@@ -482,12 +505,39 @@ function OrderSummary({
   selected,
   paymentMethod,
   hasPaymentMethod,
+  downgradeToFree = false,
 }: Readonly<{
   selected: OwnerTier | null;
   paymentMethod: UpgradePaymentMethodSummary | null;
   hasPaymentMethod: boolean;
+  downgradeToFree?: boolean;
 }>) {
   if (!selected) return null;
+  if (downgradeToFree) {
+    return (
+      <div className="rounded-xl border border-white/6 bg-white/2.5 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Order summary
+        </p>
+        <div className="mt-3 space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm text-zinc-300">{selected.name}</span>
+            <span className="text-sm font-medium text-zinc-100">$0</span>
+          </div>
+          <p className="text-xs text-zinc-500">
+            You keep your current paid plan until this billing cycle ends. Then
+            usage hard-gates when included allowance and credits run out — no
+            overage invoicing.
+          </p>
+        </div>
+        <div className="my-3 border-t border-white/6" />
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-sm text-zinc-200">Charged today</span>
+          <span className="font-semibold text-zinc-100">$0</span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="rounded-xl border border-white/6 bg-white/2.5 p-4">
       <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -723,6 +773,7 @@ function ConfirmActions({
   mode,
   currentPlanKey,
   confirmRegionId,
+  downgradeToFree,
   onConfirm,
 }: Readonly<{
   canConfirm: boolean;
@@ -733,6 +784,7 @@ function ConfirmActions({
   mode: "upgrade" | "change";
   currentPlanKey: string | null;
   confirmRegionId: string;
+  downgradeToFree?: boolean;
   onConfirm: () => void;
 }>) {
   const hint = confirmBlockingHint(
@@ -753,9 +805,11 @@ function ConfirmActions({
       {busy ? (
         <p className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Spinner />
-          {mode === "change"
-            ? "Changing plan — do not close this tab."
-            : "Upgrading — do not close this tab."}
+          {downgradeToFree
+            ? "Scheduling Free — do not close this tab."
+            : mode === "change"
+              ? "Changing plan — do not close this tab."
+              : "Upgrading — do not close this tab."}
         </p>
       ) : (
         <span />
@@ -782,7 +836,9 @@ function ConfirmActions({
           aria-describedby={confirmRegionId}
         >
           {busy ? <Spinner /> : null}
-          {confirmButtonLabel(busy, selected?.monthlyFeeUsd ?? null, mode)}
+          {confirmButtonLabel(busy, selected?.monthlyFeeUsd ?? null, mode, {
+            downgradeToFree,
+          })}
         </button>
       </div>
     </div>
@@ -796,6 +852,7 @@ export default function OwnerPaidUpgradeCheckout({
   paymentMethod,
   initialPlanKey,
   pmAttached,
+  starterPlanName = "Owner Sandbox Starter",
 }: Readonly<{
   mode?: "upgrade" | "change";
   currentPlanKey?: string | null;
@@ -803,6 +860,7 @@ export default function OwnerPaidUpgradeCheckout({
   paymentMethod: UpgradePaymentMethodSummary | null;
   initialPlanKey: string | null;
   pmAttached: boolean;
+  starterPlanName?: string;
 }>) {
   const router = useRouter();
   const radioGroupId = useId();
@@ -901,9 +959,23 @@ export default function OwnerPaidUpgradeCheckout({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot pm return
   }, [pmAttached, router]);
 
-  const selected = tiers.find((t) => t.key === selectedKey) ?? null;
+  const freeTier: OwnerTier = {
+    id: "owner-starter-free",
+    key: OWNER_CHECKOUT_FREE_PLAN_KEY,
+    name: starterPlanName,
+    description:
+      "Keep your current plan until this cycle ends, then return to included-only usage with a hard gate (no overage invoicing).",
+    monthlyFeeUsd: "0",
+    includedUsdMicros: "0",
+  };
+  const displayTiers =
+    mode === "change" ? [...tiers, freeTier] : tiers;
+
+  const selected =
+    displayTiers.find((t) => t.key === selectedKey) ?? null;
+  const downgradeToFree = isCheckoutFreePlanKey(selectedKey);
   const planStepDone = isPaidPlanSelectionReady(selectedKey, currentPlanKey);
-  const cardStepDone = hasPaymentMethod;
+  const cardStepDone = downgradeToFree || hasPaymentMethod;
   const canConfirm = planStepDone && cardStepDone && !busy;
 
   function upgradeUrlWithPlan(extra: Record<string, string> = {}): string {
@@ -947,11 +1019,32 @@ export default function OwnerPaidUpgradeCheckout({
   }
 
   async function confirmUpgrade() {
-    if (!selected || !hasPaymentMethod || busy) return;
+    if (!selected || busy) return;
+    if (!downgradeToFree && !hasPaymentMethod) return;
     setBusy(true);
     setErrorCode(null);
     setNotice(null);
     try {
+      if (downgradeToFree) {
+        const res = await fetch("/api/v1/me/billing/downgrade-to-starter", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKeyRef.current,
+          },
+          body: JSON.stringify({ confirm: true }),
+        });
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setErrorCode(classifyError(body.error || "Downgrade failed"));
+          setBusy(false);
+          return;
+        }
+        router.push("/billing?downgraded=1");
+        router.refresh();
+        return;
+      }
+
       const res = await fetch("/api/v1/me/billing/upgrade-paid", {
         method: "POST",
         headers: {
@@ -1030,7 +1123,7 @@ export default function OwnerPaidUpgradeCheckout({
             </div>
             <PlanPicker
               loadingTiers={loadingTiers}
-              tiers={tiers}
+              tiers={displayTiers}
               selectedKey={selectedKey}
               busy={busy}
               radioGroupId={radioGroupId}
@@ -1039,6 +1132,23 @@ export default function OwnerPaidUpgradeCheckout({
             />
           </section>
 
+          {downgradeToFree ? (
+            <section aria-labelledby="step-pm-heading">
+              <div className="mb-3 flex items-center gap-2">
+                <StepBadge n={2} done />
+                <h2
+                  id="step-pm-heading"
+                  className="text-sm font-semibold text-zinc-200"
+                >
+                  Payment method
+                </h2>
+              </div>
+              <p className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-3 text-sm text-zinc-400">
+                Not required to schedule Free. Your current plan continues until
+                the cycle ends.
+              </p>
+            </section>
+          ) : (
           <section aria-labelledby="step-pm-heading">
             <div className="mb-3 flex items-center gap-2">
               <StepBadge n={2} done={cardStepDone} />
@@ -1057,12 +1167,14 @@ export default function OwnerPaidUpgradeCheckout({
               onLink={() => void startPaymentMethodCheckout()}
             />
           </section>
+          )}
 
           <div className="block lg:hidden">
             <OrderSummary
               selected={selected}
               paymentMethod={paymentMethod}
               hasPaymentMethod={hasPaymentMethod}
+              downgradeToFree={downgradeToFree}
             />
           </div>
 
@@ -1075,6 +1187,7 @@ export default function OwnerPaidUpgradeCheckout({
             mode={mode}
             currentPlanKey={currentPlanKey}
             confirmRegionId={confirmRegionId}
+            downgradeToFree={downgradeToFree}
             onConfirm={() => void confirmUpgrade()}
           />
 
@@ -1087,6 +1200,7 @@ export default function OwnerPaidUpgradeCheckout({
               selected={selected}
               paymentMethod={paymentMethod}
               hasPaymentMethod={hasPaymentMethod}
+              downgradeToFree={downgradeToFree}
             />
             {!loadingTiers && tiers.length >= 2 ? (
               <div className="mt-4 rounded-lg border border-white/5 bg-white/1.5 px-3 py-3 text-xs text-zinc-600">

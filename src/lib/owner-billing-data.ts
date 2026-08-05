@@ -40,6 +40,11 @@ import {
 import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
 import { resolvePlatformOwnerStarterPlanName } from "@/lib/billing/platform-owner-starter-default";
 import { getOwnerSubscriptionTierByKey } from "@/lib/billing/owner-subscription-tiers";
+import { applyFreeBillingProfileToCustomer } from "@/lib/openmeter/billing-profiles";
+import {
+  deriveOwnerPendingDowngrade,
+  type OwnerPendingDowngrade,
+} from "@/lib/openmeter/owner-starter-downgrade";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   isOpenMeterSubscriptionActive,
@@ -117,6 +122,11 @@ export type OwnerBillingPayload = {
    * shared owner prepaid wallet via billing identity.
    */
   fundingClientId: string | null;
+  /**
+   * Scheduled end-of-cycle downgrade to Sandbox Starter (Paid remains active
+   * until `effectiveAt`).
+   */
+  pendingDowngrade: OwnerPendingDowngrade | null;
 };
 
 export type OwnerBillingResult =
@@ -883,8 +893,42 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   );
 
   // Allowance from the owner-wallet subscription (the one credits settle against).
+  const ownerStarterPlanName = await resolvePlatformOwnerStarterPlanName();
+  const { displaySubscriptions, pendingDowngrade } = deriveOwnerPendingDowngrade({
+    subscriptions,
+    starterPlanName: ownerStarterPlanName,
+  });
+
   const walletSubscription =
-    subscriptions.find((row) => row.appPublicClientId == null) ?? subscriptions[0];
+    displaySubscriptions.find((row) => row.appPublicClientId == null) ??
+    displaySubscriptions[0];
+
+  // Once Starter is the live plan, restore the free hard-gate profile (skipped
+  // when downgrade was only scheduled for next cycle).
+  if (
+    walletSubscription &&
+    walletSubscription.appPublicClientId == null &&
+    isOwnerStarterPlanKey(walletSubscription.openMeterPlanKey)
+  ) {
+    const status = walletSubscription.status.toLowerCase();
+    if (status === "active" || status === "trialing" || !status) {
+      try {
+        const customer = await ensureOpenMeterCustomer(
+          adminClient,
+          buildOwnerCustomerKey(userId),
+        );
+        await applyFreeBillingProfileToCustomer({
+          client: adminClient,
+          customerId: customer.id,
+        });
+      } catch (err) {
+        console.warn(
+          "owner-billing: free billing profile apply failed",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  }
 
   const ledger = buildLedgerEntries({
     grants: creditGrants,
@@ -918,8 +962,8 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       cycle,
       creditAllowance,
       paymentMethods,
-      subscriptions,
-      ownerStarterPlanName: await resolvePlatformOwnerStarterPlanName(),
+      subscriptions: displaySubscriptions,
+      ownerStarterPlanName,
       ownedApps: ownedApps.map((app) => ({
         id: app.developerAppId,
         name: app.name,
@@ -929,6 +973,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       ledger,
       openMeterConfigured: true,
       fundingClientId: ownedApps[0]?.developerAppId ?? null,
+      pendingDowngrade,
     },
   };
 }

@@ -440,6 +440,23 @@ export default function OwnerBillingView({
             />
           </Suspense>
 
+          {data.pendingDowngrade ? (
+            <div className="mb-6 rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-4 sm:px-5">
+              <h2 className="text-sm font-semibold text-zinc-100">
+                Downgrade scheduled
+              </h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                Switching to {data.pendingDowngrade.planName}
+                {data.pendingDowngrade.effectiveAt
+                  ? ` on ${new Date(data.pendingDowngrade.effectiveAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`
+                  : " at the end of this billing cycle"}
+                . You keep{" "}
+                {data.pendingDowngrade.currentPlanName ?? "your paid plan"}{" "}
+                until then.
+              </p>
+            </div>
+          ) : null}
+
           {needsPaymentMethod ? (
             <PaymentMethodRequiredBanner
               paymentMethodPanel={paymentMethodPanel}
