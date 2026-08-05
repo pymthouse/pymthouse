@@ -280,6 +280,10 @@ export function collapseDuplicateLinkMethods(
  * customer, with the default flagged. Stripe's invoice default wins over the
  * Konnect app_data pointer when both exist. Duplicate Link methods are
  * collapsed to one (see collapseDuplicateLinkMethods).
+ *
+ * When the list endpoint returns nothing (or omits the known default id) but
+ * Konnect/Stripe still has a default payment method id, retrieve that method
+ * so billing UI does not falsely show "no payment method on file".
  */
 export async function buildOwnerPaymentMethodList(input: {
   stripeCustomerId: string;
@@ -295,7 +299,27 @@ export async function buildOwnerPaymentMethodList(input: {
     listStripeCustomerPaymentMethods(input.stripeCustomerId, input.deps),
   ]);
   const defaultId = stripeDefaultId ?? input.konnectDefaultPaymentMethodId;
-  const mapped = listed
+  const byId = new Map<string, StripePaymentMethod>();
+  for (const pm of listed) {
+    const id = pm.id?.trim();
+    if (id) byId.set(id, pm);
+  }
+
+  if (defaultId && !byId.has(defaultId)) {
+    const retrieved = await retrieveStripePaymentMethod(defaultId, input.deps);
+    const retrievedId = retrieved?.id?.trim();
+    const customer = retrieved?.customer?.trim() || null;
+    if (
+      retrieved &&
+      retrievedId &&
+      customer &&
+      customer === input.stripeCustomerId
+    ) {
+      byId.set(retrievedId, retrieved);
+    }
+  }
+
+  const mapped = [...byId.values()]
     .map((pm) => toOwnerPaymentMethodItem(pm, defaultId))
     .filter((item): item is OwnerPaymentMethodListItem => item !== null);
   const { kept, orphanLinkIds } = collapseDuplicateLinkMethods(mapped);
@@ -445,10 +469,10 @@ async function requireOwnedPaymentMethod(
 }
 
 /**
- * Detach one payment method so overage invoices stop charging it. When it was
- * the default, both Stripe's invoice default and the Konnect app_data pointer
- * are cleared — leaving either behind lets OpenMeter keep billing a detached
- * method.
+ * Detach one payment method so plan fee and overage invoices stop charging it.
+ * When it was the default, both Stripe's invoice default and the Konnect
+ * app_data pointer are cleared — leaving either behind lets OpenMeter keep
+ * billing a detached method.
  */
 export async function unlinkOwnerPaymentMethod(
   ownerUserId: string,
@@ -522,9 +546,10 @@ export async function unlinkOwnerPaymentMethod(
 }
 
 /**
- * Make one attached payment method the default for overage invoices: sets
- * Stripe's customer invoice default and mirrors the pointer into Konnect
- * app_data so OpenMeter invoicing agrees with what the billing page shows.
+ * Make one attached payment method the default for plan fee and overage
+ * invoices: sets Stripe's customer invoice default and mirrors the pointer
+ * into Konnect app_data so OpenMeter invoicing agrees with what the billing
+ * page shows.
  */
 export async function setOwnerDefaultPaymentMethod(
   ownerUserId: string,

@@ -5,6 +5,10 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import {
+  planCheckoutBillingMethodOnFileHint,
+  planCheckoutLinkBillingMethodCopy,
+} from "@/lib/billing/owner-billing-copy";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import { stripeCheckoutRedirectUrl } from "@/lib/openmeter/stripe-checkout-session";
 
@@ -689,24 +693,35 @@ function PlanPicker({
 }
 
 function PaymentMethodStep({
+  mode,
   hasPaymentMethod,
   paymentMethod,
   pmBusy,
   busy,
   onLink,
 }: Readonly<{
+  mode: "upgrade" | "change";
   hasPaymentMethod: boolean;
   paymentMethod: UpgradePaymentMethodSummary | null;
   pmBusy: boolean;
   busy: boolean;
   onLink: () => void;
 }>) {
-  if (hasPaymentMethod && paymentMethod) {
+  if (hasPaymentMethod) {
     return (
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/6 bg-white/2.5 px-4 py-3">
-        <div className="flex items-center gap-2.5 text-sm text-zinc-200">
-          <CardIcon type={paymentMethod.type} />
-          <span>{paymentMethodLabel(paymentMethod)}</span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2.5 text-sm text-zinc-200">
+            {paymentMethod ? <CardIcon type={paymentMethod.type} /> : null}
+            <span>
+              {paymentMethod
+                ? paymentMethodLabel(paymentMethod)
+                : "Payment method on file"}
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-zinc-600">
+            {planCheckoutBillingMethodOnFileHint()}
+          </p>
         </div>
         <button
           type="button"
@@ -719,13 +734,11 @@ function PaymentMethodStep({
       </div>
     );
   }
+  const empty = planCheckoutLinkBillingMethodCopy(mode);
   return (
     <div className="rounded-xl border border-white/6 bg-white/2.5 px-4 py-4">
-      <p className="text-sm text-zinc-400">No payment method on file.</p>
-      <p className="mt-0.5 text-xs text-zinc-600">
-        Adding a card does not charge you. You confirm the charge in the next
-        step.
-      </p>
+      <p className="text-sm text-zinc-400">{empty.title}</p>
+      <p className="mt-0.5 text-xs text-zinc-600">{empty.detail}</p>
       <button
         type="button"
         className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-300 transition-colors hover:border-emerald-500/60 hover:bg-emerald-500/15 disabled:pointer-events-none disabled:opacity-50"
@@ -756,7 +769,7 @@ function PaymentMethodStep({
               />
               <path d="M1 7.5h14" stroke="currentColor" strokeWidth="1.2" />
             </svg>
-            Link payment method via Stripe
+            {empty.button}
           </>
         )}
       </button>
@@ -1160,6 +1173,7 @@ export default function OwnerPaidUpgradeCheckout({
               </h2>
             </div>
             <PaymentMethodStep
+              mode={mode}
               hasPaymentMethod={hasPaymentMethod}
               paymentMethod={paymentMethod}
               pmBusy={pmBusy}

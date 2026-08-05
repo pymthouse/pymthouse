@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** Make one attached payment method the default for overage invoices. */
+/** Make one attached payment method the default for plan fee & overage. */
 export async function PATCH(request: NextRequest) {
   const session = await getServerSession(authOptions);
   const userId = sessionUserId(session);
@@ -141,10 +141,10 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    // Removing the only method would leave overage invoices with nothing to
-    // charge. Enforced here as well as in the UI so the API cannot be used to
-    // reach that state. Empty list is treated as unverifiable (lookup errors
-    // also return []) — fail closed rather than detach blindly.
+    // Removing the only method would leave plan renewals and overage with
+    // nothing to charge. Enforced here as well as in the UI so the API cannot
+    // be used to reach that state. Empty list is treated as unverifiable
+    // (lookup errors also return []) — fail closed rather than detach blindly.
     const existing = await listOwnerPaymentMethods(userId);
     if (existing.length === 0) {
       return NextResponse.json(

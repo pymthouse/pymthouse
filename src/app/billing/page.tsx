@@ -30,6 +30,7 @@ export default async function BillingPage() {
           cycle: { start: new Date().toISOString(), end: new Date().toISOString() },
           creditAllowance: null,
           paymentMethods: [],
+          hasChargeableBillingMethod: false,
           subscriptions: [],
           ownerStarterPlanName: "Owner Sandbox Starter",
           ownedApps: [],
@@ -60,6 +61,8 @@ export default async function BillingPage() {
     ) : null;
 
   const hasPaymentMethod = data.paymentMethods.length > 0;
+  const hasBillingMethod =
+    hasPaymentMethod || data.hasChargeableBillingMethod;
   const eligibleForUpgrade = ownerEligibleForPaidUpgrade(data.subscriptions);
 
   return (
@@ -68,8 +71,8 @@ export default async function BillingPage() {
       paymentMethodPanel={
         data.openMeterConfigured ? (
           <OwnerPaymentMethodButton
-            hasPaymentMethod={hasPaymentMethod}
-            upgradeFirst={eligibleForUpgrade && !hasPaymentMethod}
+            hasPaymentMethod={hasBillingMethod}
+            upgradeFirst={eligibleForUpgrade && !hasBillingMethod}
           />
         ) : null
       }

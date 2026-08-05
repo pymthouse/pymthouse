@@ -47,8 +47,8 @@ export default function OwnerPaidUpgradePanel({
                 Upgrade from {starterPlanName}
               </h2>
               <p className="mt-1 text-sm text-zinc-400">
-                Pick a monthly plan, link a payment method, then confirm. Overage
-                invoices to your card after included usage.
+                Pick a monthly plan, link a payment method, then confirm. That
+                method pays the plan fee and overage after included usage.
               </p>
             </div>
             <Link

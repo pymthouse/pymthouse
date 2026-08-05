@@ -49,12 +49,14 @@ export default async function BillingUpgradePage({
   const mode = ownerEligibleForPaidUpgrade(data.subscriptions)
     ? "upgrade"
     : "change";
+  const hasBillingMethod =
+    data.paymentMethods.length > 0 || data.hasChargeableBillingMethod;
 
   return (
     <OwnerPaidUpgradeCheckout
       mode={mode}
       currentPlanKey={currentPlanKey}
-      hasPaymentMethod={data.paymentMethods.length > 0}
+      hasPaymentMethod={hasBillingMethod}
       paymentMethod={
         defaultPm
           ? {

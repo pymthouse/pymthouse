@@ -66,6 +66,7 @@ import {
 } from "@/lib/openmeter/invoices";
 import {
   listOwnerPaymentMethods,
+  ownerHasChargeablePaymentMethod,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
   type OwnerPaymentMethodListItem,
 } from "@/lib/openmeter/owner-payment-method";
@@ -97,6 +98,12 @@ export type OwnerBillingPayload = {
   creditAllowance: CreditAllowanceSummary | null;
   /** Every attached Stripe payment method (Plane A), default flagged. */
   paymentMethods: OwnerPaymentMethodListItem[];
+  /**
+   * True when Konnect/Stripe has a default payment method that can charge
+   * plan fee and overage invoices — even if the listed methods array is empty
+   * after a soft timeout.
+   */
+  hasChargeableBillingMethod: boolean;
   subscriptions: OwnerBillingSubscriptionRow[];
   /** Platform Owner Starter display name (admin-configurable). */
   ownerStarterPlanName: string;
@@ -827,6 +834,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   const [
     creditAllowance,
     paymentMethods,
+    chargeableLookup,
     subscriptions,
     invoicesResult,
     creditGrants,
@@ -845,6 +853,12 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
         [] as OwnerPaymentMethodListItem[],
         "payment method lookup",
+      ),
+      withSoftTimeout(
+        ownerHasChargeablePaymentMethod(userId),
+        OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
+        null as boolean | null,
+        "payment method chargeability",
       ),
       withSoftTimeout(
         listOwnerActiveSubscriptions(userId, {
@@ -962,6 +976,8 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       cycle,
       creditAllowance,
       paymentMethods,
+      hasChargeableBillingMethod:
+        paymentMethods.length > 0 || chargeableLookup === true,
       subscriptions: displaySubscriptions,
       ownerStarterPlanName,
       ownedApps: ownedApps.map((app) => ({

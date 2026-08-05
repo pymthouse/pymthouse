@@ -131,10 +131,10 @@ function PaymentMethodRequiredBanner({
   currentPlanName?: string | null;
 }>) {
   const title = onPaidPlan
-    ? "Payment method required for overage"
+    ? "Payment method required"
     : "Upgrade to continue";
   const body = onPaidPlan
-    ? `${currentPlanName?.trim() || "Your paid plan"} included allowance is used up. Link a payment method so overage can invoice to your card.`
+    ? `${currentPlanName?.trim() || "Your paid plan"} included allowance is used up. Link a payment method so plan renewals and overage can charge your card.`
     : `${starterPlanName} allowance used up. Upgrade to a paid plan to resume usage (monthly fee + overage invoicing). You’ll add a payment method during Upgrade if one isn’t on file yet.`;
 
   return (
@@ -187,8 +187,8 @@ function OwnerPaymentCreditsSection({
           <InfoTooltip
             label={
               onPaidPlan
-                ? "Prepaid credits (when present) burn first under credit_then_invoice settlement. Update your card anytime once one is on file — overage invoices after included usage."
-                : "Upgrade to a paid plan for monthly included usage and automatic overage invoices. Prepaid credits (when present) burn first under credit_then_invoice settlement. Update your card anytime once one is on file."
+                ? "Prepaid credits (when present) burn first under credit_then_invoice settlement. Your default payment method pays the monthly plan fee and overage after included usage."
+                : "Upgrade to a paid plan for monthly included usage. One payment method pays the plan fee and overage. Prepaid credits (when present) burn first under credit_then_invoice settlement."
             }
             wide
           />
@@ -370,13 +370,14 @@ export default function OwnerBillingView({
   adminFundPanel,
 }: Readonly<{
   data: OwnerBillingPayload;
-  /** Stripe Checkout (setup) to attach a card for platform overage invoices. */
+  /** Stripe Checkout (setup) to attach a payment method for plan fee & overage. */
   paymentMethodPanel?: ReactNode;
   /** Admin-only MoonPay signer refill tooling (hidden from normal owners). */
   adminFundPanel?: ReactNode;
 }>) {
   const pressure = resolveOwnerBillingPressure({
-    hasPaymentMethod: data.paymentMethods.length > 0,
+    hasPaymentMethod:
+      data.paymentMethods.length > 0 || data.hasChargeableBillingMethod,
     creditBalanceUsdMicros: data.creditAllowance?.balanceUsdMicros ?? null,
     subscriptions: data.subscriptions,
   });
