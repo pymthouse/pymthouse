@@ -34,6 +34,7 @@ import {
   selectKonnectCustomInvoicingApp,
 } from "../src/lib/openmeter/konnect-billing-profiles";
 import { konnectMeteringV1Fetch } from "../src/lib/openmeter/konnect-admin-client";
+import { sanitizeForLog } from "../src/lib/sanitize-for-log";
 import {
   getHostedOpenMeterUrl,
   isKonnectMeteringUrl,
@@ -267,13 +268,16 @@ async function main(): Promise<void> {
     newWebhookSigningSecret();
   const webhookUrl = requireSettlementOpenMeterWebhookUrl();
 
-  console.log("[bootstrap] Ensuring notification channel →", webhookUrl);
+  console.log(
+    "[bootstrap] Ensuring notification channel →",
+    sanitizeForLog(webhookUrl),
+  );
   const { channelId, created, signingSecret } = await ensureNotificationChannel({
     url: webhookUrl,
     webhookSecret,
   });
   console.log(
-    `[bootstrap] Channel ${channelId} (${created ? "created" : "existing"})`,
+    `[bootstrap] Channel ${sanitizeForLog(channelId)} (${created ? "created" : "existing"})`,
   );
 
   console.log("[bootstrap] Installing / resolving Custom Invoicing app…");
@@ -281,26 +285,36 @@ async function main(): Promise<void> {
   try {
     appId = await installCustomInvoicingApp();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[bootstrap] Marketplace install failed (${message}); resolving existing…`);
+    console.warn(
+      `[bootstrap] Marketplace install failed (${sanitizeForLog(err)}); resolving existing…`,
+    );
     appId = await resolveKonnectCustomInvoicingAppId();
   }
-  console.log("[bootstrap] Custom Invoicing app:", appId);
+  console.log("[bootstrap] Custom Invoicing app:", sanitizeForLog(appId));
 
   console.log("[bootstrap] Ensuring merchant billing profile (non-default)…");
   const profileId = await ensureMerchantProfile(appId);
-  console.log("[bootstrap] Merchant billing profile:", profileId);
+  console.log(
+    "[bootstrap] Merchant billing profile:",
+    sanitizeForLog(profileId),
+  );
 
   console.log("[bootstrap] Ensuring invoice.created / invoice.updated rules…");
   await ensureInvoiceRules(channelId);
 
   console.log("\nSet these env vars on pymthouse (Vercel):\n");
-  console.log(`OPENMETER_CUSTOM_INVOICING_APP_ID=${appId}`);
-  console.log(`OPENMETER_MERCHANT_BILLING_PROFILE_ID=${profileId}`);
+  console.log(
+    `OPENMETER_CUSTOM_INVOICING_APP_ID=${sanitizeForLog(appId)}`,
+  );
+  console.log(
+    `OPENMETER_MERCHANT_BILLING_PROFILE_ID=${sanitizeForLog(profileId)}`,
+  );
   console.log(
     "\nConfigure the channel signing secret on pymthouse/settlement producer:\n",
   );
-  console.log(`SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${signingSecret}`);
+  console.log(
+    `SETTLEMENT_OPENMETER_WEBHOOK_SECRETS=${sanitizeForLog(signingSecret)}`,
+  );
   console.log(
     "\nThen enable draft + issuing sync hooks on the Custom Invoicing app in Konnect",
   );
