@@ -146,7 +146,7 @@ export async function verifyOpenMeterSubscriptionId(
     if (!sub?.id) {
       return null;
     }
-    return enrichSubscriptionPlanKey(client, mapSubscriptionItem(sub));
+    return await enrichSubscriptionPlanKey(client, mapSubscriptionItem(sub));
   } catch {
     return null;
   }

@@ -1,10 +1,15 @@
 import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
-import { changeKonnectSubscription, restoreKonnectSubscription } from "./konnect-subscriptions";
+import {
+  changeKonnectSubscription,
+  konnectSubscriptionStartIso,
+  restoreKonnectSubscription,
+} from "./konnect-subscriptions";
 import { isOwnerPaidPlanKey } from "./owner-paid-key";
 import {
   ensureOwnerStarterPlanSynced,
+  invalidateOwnerStarterPlanCache,
   isOwnerStarterPlanKey,
 } from "./owner-starter-plan";
 import { isOpenMeterPlanNotFoundError } from "./plan-errors";
@@ -55,6 +60,16 @@ function assertDowngradeConfirm(confirm: boolean | undefined): void {
   }
 }
 
+function isLiveSubscriptionStatus(status: string): boolean {
+  const s = status.toLowerCase();
+  return s === "active" || s === "trialing" || !s;
+}
+
+function isScheduledSubscriptionStatus(status: string): boolean {
+  const s = status.toLowerCase();
+  return s === "scheduled" || s === "pending";
+}
+
 function pickWalletSubs(
   listed: OpenMeterSubscriptionView[],
 ): {
@@ -67,9 +82,9 @@ function pickWalletSubs(
   let scheduledStarter: OpenMeterSubscriptionView | null = null;
 
   for (const sub of listed) {
-    const status = (sub.status || "").toLowerCase();
-    const isLive = status === "active" || status === "trialing" || !status;
-    const isScheduled = status === "scheduled" || status === "pending";
+    const status = sub.status || "";
+    const isLive = isLiveSubscriptionStatus(status);
+    const isScheduled = isScheduledSubscriptionStatus(status);
 
     if (isLive && isOwnerPaidPlanKey(sub.planKey) && !activePaid) {
       activePaid = sub;
@@ -111,10 +126,6 @@ export async function downgradeOwnerToStarterPlan(input: {
     );
   }
 
-  const includedUsdMicros =
-    await resolveOwnerStarterIncludedUsdMicros(ownerUserId);
-  const starter = await ensureOwnerStarterPlanSynced(includedUsdMicros);
-
   const client = getHostedAdminClient();
   const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
   const customer = await ensureOwnerCustomer(
@@ -132,9 +143,9 @@ export async function downgradeOwnerToStarterPlan(input: {
   if (activeStarter?.id && !activePaid) {
     return {
       openmeterSubscriptionId: activeStarter.id,
-      planKey: activeStarter.planKey || starter.key,
-      scheduledPlanKey: starter.key,
-      openmeterPlanId: activeStarter.planId || starter.openmeterPlanId,
+      planKey: activeStarter.planKey || "",
+      scheduledPlanKey: activeStarter.planKey || "",
+      openmeterPlanId: activeStarter.planId || "",
       effectiveAt: null,
       alreadyStarter: true,
     };
@@ -151,12 +162,16 @@ export async function downgradeOwnerToStarterPlan(input: {
     return {
       openmeterSubscriptionId: activePaid.id,
       planKey: activePaid.planKey || "",
-      scheduledPlanKey: scheduledStarter.planKey || starter.key,
-      openmeterPlanId: starter.openmeterPlanId,
+      scheduledPlanKey: scheduledStarter.planKey || "",
+      openmeterPlanId: scheduledStarter.planId || "",
       effectiveAt: scheduledStarter.activeFrom ?? activePaid.activeTo ?? null,
       alreadyScheduled: true,
     };
   }
+
+  const includedUsdMicros =
+    await resolveOwnerStarterIncludedUsdMicros(ownerUserId);
+  const starter = await ensureOwnerStarterPlanSynced(includedUsdMicros);
 
   return changePaidSubscriptionToStarterNextCycle({
     subscriptionId: activePaid.id,
@@ -172,7 +187,7 @@ async function changePaidSubscriptionToStarterNextCycle(input: {
   customerId: string;
   currentPlanKey: string;
   currentActiveTo: string | null;
-  starter: { key: string; openmeterPlanId: string };
+  starter: { key: string; openmeterPlanId: string; includedUsdMicros: string };
 }): Promise<OwnerStarterDowngradeResult> {
   let openmeterPlanId = input.starter.openmeterPlanId;
   let scheduledPlanKey = input.starter.key;
@@ -193,7 +208,10 @@ async function changePaidSubscriptionToStarterNextCycle(input: {
         "Could not schedule Sandbox Starter",
       );
     }
-    const resynced = await ensureOwnerStarterPlanSynced();
+    invalidateOwnerStarterPlanCache();
+    const resynced = await ensureOwnerStarterPlanSynced(
+      input.starter.includedUsdMicros,
+    );
     openmeterPlanId = resynced.openmeterPlanId;
     scheduledPlanKey = resynced.key;
     try {
@@ -218,7 +236,8 @@ async function changePaidSubscriptionToStarterNextCycle(input: {
     input.subscriptionId;
 
   // Prefer the scheduled next's start; fall back to current activeTo (cycle end).
-  const effectiveAt = input.currentActiveTo;
+  const effectiveAt =
+    konnectSubscriptionStartIso(change.next) || input.currentActiveTo;
 
   return {
     openmeterSubscriptionId: nextId,
@@ -383,16 +402,6 @@ export type OwnerPendingDowngrade = {
   effectiveAt: string | null;
   currentPlanName: string | null;
 };
-
-function isLiveSubscriptionStatus(status: string): boolean {
-  const s = status.toLowerCase();
-  return s === "active" || s === "trialing" || !s;
-}
-
-function isScheduledSubscriptionStatus(status: string): boolean {
-  const s = status.toLowerCase();
-  return s === "scheduled" || s === "pending";
-}
 
 export type OwnerPendingDowngradeSubscriptionRow = {
   appPublicClientId?: string | null;

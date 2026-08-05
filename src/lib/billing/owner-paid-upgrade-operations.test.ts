@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
@@ -24,7 +25,7 @@ test("ownerPaidUpgradeIdempotencyKey is owner+plan scoped", () => {
 });
 
 dbTest("claimOwnerPaidUpgradeOperation returns completed result on retry", async (t) => {
-  const ownerUserId = `owner_upg_${Date.now().toString(36)}`;
+  const ownerUserId = `owner_upg_${randomUUID()}`;
   const planKey = "pymthouse_owner_paid";
 
   const first = await claimOwnerPaidUpgradeOperation({ ownerUserId, planKey });
@@ -57,7 +58,7 @@ dbTest("claimOwnerPaidUpgradeOperation returns completed result on retry", async
 });
 
 dbTest("claimOwnerPaidUpgradeOperation rejects fresh in-progress", async (t) => {
-  const ownerUserId = `owner_upg_ip_${Date.now().toString(36)}`;
+  const ownerUserId = `owner_upg_ip_${randomUUID()}`;
   const planKey = "pymthouse_owner_paid_growth";
 
   const first = await claimOwnerPaidUpgradeOperation({ ownerUserId, planKey });
@@ -75,7 +76,7 @@ dbTest("claimOwnerPaidUpgradeOperation rejects fresh in-progress", async (t) => 
 });
 
 dbTest("failed upgrade operation can be reclaimed", async (t) => {
-  const ownerUserId = `owner_upg_fail_${Date.now().toString(36)}`;
+  const ownerUserId = `owner_upg_fail_${randomUUID()}`;
   const planKey = "pymthouse_owner_paid";
 
   const first = await claimOwnerPaidUpgradeOperation({ ownerUserId, planKey });
@@ -99,3 +100,55 @@ dbTest("failed upgrade operation can be reclaimed", async (t) => {
     assert.equal(second.operationId, first.operationId);
   }
 });
+
+dbTest(
+  "completed claim for plan A is reclaimed after moving to plan B (A→B→A)",
+  async (t) => {
+    const ownerUserId = `owner_upg_aba_${randomUUID()}`;
+    const planA = "pymthouse_owner_paid_a";
+    const planB = "pymthouse_owner_paid_b";
+
+    const first = await claimOwnerPaidUpgradeOperation({
+      ownerUserId,
+      planKey: planA,
+    });
+    assert.equal(first.action, "proceed");
+    if (first.action !== "proceed") return;
+
+    t.after(async () => {
+      await db
+        .delete(ownerPaidUpgradeOperations)
+        .where(eq(ownerPaidUpgradeOperations.ownerUserId, ownerUserId));
+    });
+
+    await completeOwnerPaidUpgradeOperation({
+      operationId: first.operationId,
+      result: {
+        openmeterSubscriptionId: "sub_a",
+        planKey: planA,
+        openmeterPlanId: "plan_a",
+        monthlyFeeUsd: "20.00",
+        alreadyPaid: false,
+      },
+    });
+
+    // Still on A → completed claim returns (idempotent).
+    const stillOnA = await claimOwnerPaidUpgradeOperation({
+      ownerUserId,
+      planKey: planA,
+      currentPlanKey: planA,
+    });
+    assert.equal(stillOnA.action, "return");
+
+    // Moved to B → re-selecting A reclaims the completed row.
+    const backToA = await claimOwnerPaidUpgradeOperation({
+      ownerUserId,
+      planKey: planA,
+      currentPlanKey: planB,
+    });
+    assert.equal(backToA.action, "proceed");
+    if (backToA.action === "proceed") {
+      assert.equal(backToA.operationId, first.operationId);
+    }
+  },
+);

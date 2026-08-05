@@ -40,6 +40,17 @@ test("billingIntroCopy on Starter still mentions starter plan and Upgrade", () =
   assert.match(copy, /Upgrade/);
 });
 
+test("billingIntroCopy on Starter chargeable points at Upgrade, not plan fees", () => {
+  const copy = billingIntroCopy({
+    pressure: "chargeable",
+    starterPlanName: "Owner Sandbox Starter",
+    onPaidPlan: false,
+  });
+  assert.match(copy, /Upgrade/i);
+  assert.match(copy, /payment method is ready for a future Upgrade/i);
+  assert.doesNotMatch(copy, /pays plan fees and overage/i);
+});
+
 test("billingCreditsEmptyHint distinguishes Paid vs Starter", () => {
   const paid = billingCreditsEmptyHint({
     onPaidPlan: true,
@@ -49,10 +60,16 @@ test("billingCreditsEmptyHint distinguishes Paid vs Starter", () => {
   assert.match(paid, /payment method/);
   assert.doesNotMatch(paid, /Upgrade to a paid plan/);
 
-  const starter = billingCreditsEmptyHint({ onPaidPlan: false });
-  assert.match(starter, /Starter included usage/);
+  const starter = billingCreditsEmptyHint({
+    onPaidPlan: false,
+    starterPlanName: "Developer Free Tier",
+  });
+  assert.match(starter, /Developer Free Tier included usage/);
   assert.match(starter, /Upgrade to a paid plan/);
   assert.match(starter, /plan fee and overage/);
+
+  const fallback = billingCreditsEmptyHint({ onPaidPlan: false });
+  assert.match(fallback, /Starter included usage/);
 });
 
 test("planCheckoutLinkBillingMethodCopy frames Change as confirm this purchase", () => {

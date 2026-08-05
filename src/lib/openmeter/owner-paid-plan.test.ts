@@ -59,7 +59,7 @@ test("upgradeOwnerToPaidPlan rejects without confirm", async () => {
   );
 });
 
-test("upgradeOwnerToPaidPlan rejects blank ownerUserId", async () => {
+test("upgradeOwnerToPaidPlan rejects when OpenMeter is unavailable before blank-id check", async () => {
   resetOwnerPaidPlanCacheForTests();
   await assert.rejects(
     () =>

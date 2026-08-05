@@ -10,7 +10,22 @@ export type KonnectSubscription = {
   plan_id?: string;
   planId?: string;
   settlement_mode?: string;
+  /** When the subscription period starts (ISO), when Konnect provides it. */
+  activeFrom?: string | Date | null;
+  active_from?: string | Date | null;
+  start?: string | Date | null;
 };
+
+export function konnectSubscriptionStartIso(
+  sub: KonnectSubscription | null | undefined,
+): string | null {
+  if (!sub) return null;
+  const raw = sub.activeFrom ?? sub.active_from ?? sub.start ?? null;
+  if (!raw) return null;
+  if (raw instanceof Date) return raw.toISOString();
+  const trimmed = String(raw).trim();
+  return trimmed || null;
+}
 
 export type KonnectSubscriptionChangeResult = {
   current?: KonnectSubscription;

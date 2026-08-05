@@ -123,6 +123,7 @@ export async function republishPlatformOwnerAllowancePlans(input: {
 
   let ownerPaidOpenmeterPlanId: string | null = null;
   let ownerPaidIncludedUsdMicros: string | null = null;
+  let ownerPaidPlanKey: string = OWNER_PAID_PLAN_KEY;
   try {
     const paid = await forceSyncAllOwnerPaidTiers();
     for (const err of paid.errors) {
@@ -135,6 +136,7 @@ export async function republishPlatformOwnerAllowancePlans(input: {
       paid.synced.find((s) => s.key === OWNER_PAID_PLAN_KEY) ?? paid.synced[0];
     ownerPaidOpenmeterPlanId = defaultPaid?.openmeterPlanId ?? null;
     ownerPaidIncludedUsdMicros = defaultPaid?.includedUsdMicros ?? null;
+    ownerPaidPlanKey = defaultPaid?.key ?? OWNER_PAID_PLAN_KEY;
   } catch (err) {
     console.warn("openmeter: Owner Paid tiers force-sync failed after platform default change");
     warnings.push(ownerPaidForceSyncWarning(err));
@@ -152,7 +154,7 @@ export async function republishPlatformOwnerAllowancePlans(input: {
     ownerStarterPlanName: settings.ownerStarterPlanName,
     planKey: plan.key,
     openmeterPlanId: plan.openmeterPlanId,
-    ownerPaidPlanKey: OWNER_PAID_PLAN_KEY,
+    ownerPaidPlanKey,
     ownerPaidOpenmeterPlanId,
     ownerPaidIncludedUsdMicros,
     migrate,

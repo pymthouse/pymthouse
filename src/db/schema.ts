@@ -705,7 +705,9 @@ export const ownerSubscriptionTiers = pgTable(
 
 /**
  * Durable Owner Paid Upgrade operations.
- * Unique per (owner, plan_key); claim before Konnect change, return completed on retry.
+ * Unique per (owner, plan_key). Completed claims may be reclaimed when the
+ * owner's active OpenMeter subscription is on a different plan (A→B→A), so
+ * re-selecting a prior tier is not blocked after moving away from it.
  */
 export const ownerPaidUpgradeOperations = pgTable(
   "owner_paid_upgrade_operations",

@@ -9,6 +9,7 @@ import {
 } from "@/lib/billing/owner-subscription-tiers";
 import {
   readNullableStringField,
+  readOptionalBooleanField,
   readOptionalNumberField,
   readRequiredStringField,
 } from "@/lib/billing/owner-tier-body";
@@ -38,6 +39,14 @@ export const POST = withSessionAdminGuard(async (request) => {
   }
 
   try {
+    if ("active" in body && typeof body.active !== "boolean") {
+      return NextResponse.json(
+        { error: "active must be a boolean when provided" },
+        { status: 400 },
+      );
+    }
+    const active = readOptionalBooleanField(body, "active") ?? true;
+
     const tier = await createOwnerSubscriptionTier({
       key: readRequiredStringField(body, "key"),
       name: readRequiredStringField(body, "name"),
@@ -46,7 +55,7 @@ export const POST = withSessionAdminGuard(async (request) => {
       includedUsdMicros: readRequiredStringField(body, "includedUsdMicros"),
       overageRateUsd: readNullableStringField(body, "overageRateUsd") ?? null,
       sortOrder: readOptionalNumberField(body, "sortOrder"),
-      active: body.active !== false,
+      active,
     });
 
     try {

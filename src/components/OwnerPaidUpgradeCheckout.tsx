@@ -137,15 +137,30 @@ function billingDateLabel(): string {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: "UTC",
   });
 }
 
+function monthlyFeeUsdToMicros(monthlyFeeUsd: string): bigint | null {
+  const normalized = monthlyFeeUsd.trim();
+  const match = /^(\d+)(?:\.(\d{1,6}))?$/.exec(normalized);
+  if (!match) return null;
+  const whole = BigInt(match[1] ?? "0");
+  const fracRaw = (match[2] ?? "").padEnd(6, "0");
+  return whole * 1_000_000n + BigInt(fracRaw || "0");
+}
+
 function tierHasSurplusIncludedUsage(tier: OwnerTier): boolean {
-  const included = Number.parseFloat(
-    formatUsdMicrosSummary(tier.includedUsdMicros).replaceAll("$", ""),
-  );
-  const fee = Number.parseFloat(tier.monthlyFeeUsd);
-  return included > fee;
+  const included = (() => {
+    try {
+      return BigInt(tier.includedUsdMicros.trim());
+    } catch {
+      return null;
+    }
+  })();
+  const feeMicros = monthlyFeeUsdToMicros(tier.monthlyFeeUsd);
+  if (included == null || feeMicros == null) return false;
+  return included > feeMicros;
 }
 
 export function confirmBlockingHint(
@@ -159,6 +174,24 @@ export function confirmBlockingHint(
   if (!planStepDone) return "Select a plan to continue.";
   if (!cardStepDone) return "Link a payment method to continue.";
   return "";
+}
+
+/**
+ * Card step is done when a method is on file, or Stripe just redirected back
+ * with `pm=attached` (SSR list can lag the Checkout success URL).
+ */
+export function checkoutCardStepDone(input: {
+  downgradeToFree: boolean;
+  resumePendingDowngrade: boolean;
+  hasPaymentMethod: boolean;
+  pmAttached: boolean;
+}): boolean {
+  return (
+    input.downgradeToFree ||
+    input.resumePendingDowngrade ||
+    input.hasPaymentMethod ||
+    input.pmAttached
+  );
 }
 
 /** True when the selected Owner Paid tier is not already the current plan. */
@@ -627,10 +660,14 @@ function OrderSummary({
         Billing cycle starts {billingDateLabel()}. Next invoice on the same date
         next month.
       </p>
-      {hasPaymentMethod && paymentMethod ? (
+      {hasPaymentMethod ? (
         <div className="mt-3 flex items-center gap-2 text-xs text-zinc-500">
-          <CardIcon type={paymentMethod.type} />
-          <span>{paymentMethodLabel(paymentMethod)}</span>
+          {paymentMethod ? <CardIcon type={paymentMethod.type} /> : null}
+          <span>
+            {paymentMethod
+              ? paymentMethodLabel(paymentMethod)
+              : "Payment method on file"}
+          </span>
         </div>
       ) : null}
     </div>
@@ -958,17 +995,87 @@ export default function OwnerPaidUpgradeCheckout({
       ? "Payment method saved. Select a plan and press Confirm to finish."
       : null,
   );
+  // Sticky after Stripe return: SSR `hasPaymentMethod` often lags Checkout
+  // success, and router.replace strips `pm=attached` before a remount would
+  // re-read it — so we must not rely on the query flag alone after first paint.
+  const [pmOnFile, setPmOnFile] = useState(
+    () => hasPaymentMethod || pmAttached,
+  );
+  const [pmSummary, setPmSummary] = useState(paymentMethod);
 
   const idempotencyKeyRef = useRef(makeIdempotencyKey(initialPlanKey ?? ""));
   const lastKeyedPlanRef = useRef(initialPlanKey ?? "");
 
   function setSelectedKeyWithRotate(key: string) {
     setSelectedKey(key);
-    if (key !== lastKeyedPlanRef.current) {
-      idempotencyKeyRef.current = makeIdempotencyKey(key);
-      lastKeyedPlanRef.current = key;
-    }
   }
+
+  useEffect(() => {
+    if (selectedKey === lastKeyedPlanRef.current) return;
+    idempotencyKeyRef.current = makeIdempotencyKey(selectedKey);
+    lastKeyedPlanRef.current = selectedKey;
+  }, [selectedKey]);
+
+  useEffect(() => {
+    if (!hasPaymentMethod) return;
+    setPmOnFile(true);
+    setPmSummary(paymentMethod);
+  }, [hasPaymentMethod, paymentMethod]);
+
+  useEffect(() => {
+    if (!pmAttached) return;
+    setPmOnFile(true);
+
+    let cancelled = false;
+    async function refreshPaymentMethod() {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        try {
+          const res = await fetch("/api/v1/me/billing/payment-method");
+          const body = (await res.json().catch(() => ({}))) as {
+            paymentMethods?: Array<{
+              brand?: string | null;
+              last4?: string | null;
+              type?: string;
+              isDefault?: boolean;
+            }>;
+          };
+          const methods = body.paymentMethods ?? [];
+          if (methods.length > 0) {
+            const pick =
+              methods.find((m) => m.isDefault) ?? methods[0] ?? null;
+            if (!cancelled) {
+              setPmOnFile(true);
+              setPmSummary(
+                pick
+                  ? {
+                      brand: pick.brand ?? null,
+                      last4: pick.last4 ?? null,
+                      type: pick.type ?? "card",
+                    }
+                  : null,
+              );
+            }
+            return;
+          }
+        } catch {
+          // retry
+        }
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        if (cancelled) return;
+      }
+    }
+    void refreshPaymentMethod();
+
+    const plan = selectedKey || initialPlanKey;
+    const next = plan
+      ? `/billing/upgrade?plan=${encodeURIComponent(plan)}`
+      : "/billing/upgrade";
+    router.replace(next);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot pm return
+  }, [pmAttached, router]);
 
   useEffect(() => {
     if (!busy) return;
@@ -1002,10 +1109,6 @@ export default function OwnerPaidUpgradeCheckout({
       setTiers(list);
       setSelectedKey((prev) => {
         if (pendingDowngrade && currentPlanKey && list.some((t) => t.key === currentPlanKey)) {
-          if (currentPlanKey !== lastKeyedPlanRef.current) {
-            idempotencyKeyRef.current = makeIdempotencyKey(currentPlanKey);
-            lastKeyedPlanRef.current = currentPlanKey;
-          }
           return currentPlanKey;
         }
         if (
@@ -1019,10 +1122,6 @@ export default function OwnerPaidUpgradeCheckout({
           list.find((t) => t.key !== currentPlanKey)?.key ||
           list[0]?.key ||
           "";
-        if (preferred && preferred !== lastKeyedPlanRef.current) {
-          idempotencyKeyRef.current = makeIdempotencyKey(preferred);
-          lastKeyedPlanRef.current = preferred;
-        }
         return preferred;
       });
     } catch (err) {
@@ -1036,16 +1135,6 @@ export default function OwnerPaidUpgradeCheckout({
   useEffect(() => {
     void loadTiers();
   }, [loadTiers]);
-
-  useEffect(() => {
-    if (!pmAttached) return;
-    const plan = selectedKey || initialPlanKey;
-    const next = plan
-      ? `/billing/upgrade?plan=${encodeURIComponent(plan)}`
-      : "/billing/upgrade";
-    router.replace(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot pm return
-  }, [pmAttached, router]);
 
   const freeTier: OwnerTier = {
     id: "owner-starter-free",
@@ -1070,8 +1159,12 @@ export default function OwnerPaidUpgradeCheckout({
   const planStepDone =
     resumePendingDowngrade ||
     isPaidPlanSelectionReady(selectedKey, currentPlanKey);
-  const cardStepDone =
-    downgradeToFree || resumePendingDowngrade || hasPaymentMethod;
+  const cardStepDone = checkoutCardStepDone({
+    downgradeToFree,
+    resumePendingDowngrade,
+    hasPaymentMethod: pmOnFile,
+    pmAttached: false,
+  });
   const canConfirm = planStepDone && cardStepDone && !busy;
 
   function upgradeUrlWithPlan(extra: Record<string, string> = {}): string {
@@ -1116,7 +1209,7 @@ export default function OwnerPaidUpgradeCheckout({
 
   async function confirmUpgrade() {
     if (!selected || busy) return;
-    if (!downgradeToFree && !resumePendingDowngrade && !hasPaymentMethod) {
+    if (!downgradeToFree && !resumePendingDowngrade && !pmOnFile) {
       return;
     }
     setBusy(true);
@@ -1296,8 +1389,8 @@ export default function OwnerPaidUpgradeCheckout({
             </div>
             <PaymentMethodStep
               mode={mode}
-              hasPaymentMethod={hasPaymentMethod}
-              paymentMethod={paymentMethod}
+              hasPaymentMethod={pmOnFile}
+              paymentMethod={pmSummary}
               pmBusy={pmBusy}
               busy={busy}
               onLink={() => void startPaymentMethodCheckout()}
@@ -1308,8 +1401,8 @@ export default function OwnerPaidUpgradeCheckout({
           <div className="block lg:hidden">
             <OrderSummary
               selected={selected}
-              paymentMethod={paymentMethod}
-              hasPaymentMethod={hasPaymentMethod}
+              paymentMethod={pmSummary}
+              hasPaymentMethod={pmOnFile}
               downgradeToFree={downgradeToFree}
               resumePendingDowngrade={resumePendingDowngrade}
             />
@@ -1336,8 +1429,8 @@ export default function OwnerPaidUpgradeCheckout({
           <div className="sticky top-6">
             <OrderSummary
               selected={selected}
-              paymentMethod={paymentMethod}
-              hasPaymentMethod={hasPaymentMethod}
+              paymentMethod={pmSummary}
+              hasPaymentMethod={pmOnFile}
               downgradeToFree={downgradeToFree}
               resumePendingDowngrade={resumePendingDowngrade}
             />

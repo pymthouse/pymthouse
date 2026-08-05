@@ -328,25 +328,40 @@ export async function getOwnerWalletInvoice(input: {
   );
   if (customerIds.length === 0) return null;
 
-  let inv: Awaited<ReturnType<typeof input.client.billing.invoices.get>>;
-  try {
-    // SDK `get` only types RequestOptions; expand is a query param on the HTTP API.
-    // Spread must include path or it replaces the SDK's params object.
-    inv = await input.client.billing.invoices.get(invoiceId, {
-      params: {
-        path: { invoiceId },
-        query: { expand: ["lines"] },
-      },
-    } as never);
-  } catch {
-    return null;
+  for (const idChunk of chunk(customerIds, 50)) {
+    let page = 1;
+    for (;;) {
+      let result: Awaited<
+        ReturnType<typeof input.client.billing.invoices.list>
+      >;
+      try {
+        result = await input.client.billing.invoices.list({
+          customers: idChunk,
+          page,
+          pageSize: 100,
+          order: "DESC",
+          orderBy: "createdAt",
+          expand: ["lines"],
+        });
+      } catch {
+        return null;
+      }
+      const items = result?.items ?? [];
+      const match = items.find((inv) => inv.id === invoiceId);
+      if (match?.id) {
+        const invoiceCustomerId = match.customer?.id?.trim();
+        if (
+          invoiceCustomerId &&
+          customerIds.includes(invoiceCustomerId)
+        ) {
+          return mapInvoiceRecord(match);
+        }
+        return null;
+      }
+      if (items.length < 100 || page >= 50) break;
+      page += 1;
+    }
   }
-  if (!inv?.id) return null;
 
-  const invoiceCustomerId = inv.customer?.id?.trim();
-  if (!invoiceCustomerId || !customerIds.includes(invoiceCustomerId)) {
-    return null;
-  }
-
-  return mapInvoiceRecord(inv);
+  return null;
 }

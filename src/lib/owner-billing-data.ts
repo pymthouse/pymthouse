@@ -70,6 +70,13 @@ import {
   OWNER_PAYMENT_METHOD_BUDGET_MS,
   type OwnerPaymentMethodListItem,
 } from "@/lib/openmeter/owner-payment-method";
+import {
+  listOwnerStripeInvoices,
+  type OwnerStripeInvoiceItem,
+} from "@/lib/stripe/owner-platform-invoices";
+
+/** Soft timeout for OpenMeter invoice list (Konnect /billing/invoices). */
+const OWNER_INVOICE_LOOKUP_BUDGET_MS = 8_000;
 
 export type OwnerBillingSubscriptionRow = {
   subscriptionId: string;
@@ -118,6 +125,16 @@ export type OwnerBillingPayload = {
   }>;
   /** Platform → developer invoices for the shared owner prepaid wallet. */
   invoices: TenantInvoiceDto[];
+  /**
+   * True when the OpenMeter invoice list soft-timed out or failed — UI should
+   * not claim “no invoices yet” as if the account is empty.
+   */
+  invoicesDegraded: boolean;
+  /**
+   * Paid/open Stripe invoices on the owner platform customer (collection rail).
+   * Merged with `invoices` in the Platform invoices UI.
+   */
+  stripeInvoices: OwnerStripeInvoiceItem[];
   /**
    * Chronological credit/usage/invoice history with a running prepaid balance.
    * Usage rows are derived from meter data — see transactions-ledger.
@@ -831,12 +848,14 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   // either leaves holes in the ledger's event chain and its running balances
   // cannot be trusted.
   let ledgerInputsDegraded = false;
+  let invoicesDegraded = false;
   const [
     creditAllowance,
     paymentMethods,
     chargeableLookup,
     subscriptions,
     invoicesResult,
+    stripeInvoices,
     creditGrants,
   ] = await Promise.all([
       getOwnerPrepaidCreditBalance(userId).catch((err) => {
@@ -874,11 +893,20 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
           client: adminClient,
           ownerUserId: userId,
           page: 1,
-          pageSize: 10,
+          pageSize: 20,
         }),
-        2_500,
+        OWNER_INVOICE_LOOKUP_BUDGET_MS,
         emptyInvoices,
         "invoice lookup",
+        () => {
+          invoicesDegraded = true;
+        },
+      ),
+      withSoftTimeout(
+        listOwnerStripeInvoices(userId),
+        OWNER_INVOICE_LOOKUP_BUDGET_MS,
+        [] as OwnerStripeInvoiceItem[],
+        "stripe invoice lookup",
       ),
       withSoftTimeout(
         listOwnerCreditGrants(userId),
@@ -926,21 +954,21 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
   ) {
     const status = walletSubscription.status.toLowerCase();
     if (status === "active" || status === "trialing" || !status) {
-      try {
-        const customer = await ensureOpenMeterCustomer(
-          adminClient,
-          buildOwnerCustomerKey(userId),
-        );
-        await applyFreeBillingProfileToCustomer({
-          client: adminClient,
-          customerId: customer.id,
-        });
-      } catch (err) {
-        console.warn(
-          "owner-billing: free billing profile apply failed",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
+      await withSoftTimeout(
+        (async () => {
+          const customer = await ensureOpenMeterCustomer(
+            adminClient,
+            buildOwnerCustomerKey(userId),
+          );
+          await applyFreeBillingProfileToCustomer({
+            client: adminClient,
+            customerId: customer.id,
+          });
+        })(),
+        5_000,
+        undefined as void,
+        "starter free billing profile reconcile",
+      );
     }
   }
 
@@ -986,6 +1014,8 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
         billingMode: app.billingMode,
       })),
       invoices: invoicesResult.items,
+      invoicesDegraded,
+      stripeInvoices,
       ledger,
       openMeterConfigured: true,
       fundingClientId: ownedApps[0]?.developerAppId ?? null,

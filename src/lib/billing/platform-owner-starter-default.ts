@@ -29,6 +29,7 @@ function normalizeMicros(raw: string | null | undefined): string | null {
 
 /**
  * Normalize a Starter plan display name. Empty / missing → default constant.
+ * Throws when a **caller-supplied** name exceeds the max length.
  * @internal Exported for unit tests.
  */
 export function normalizeOwnerStarterPlanName(
@@ -40,6 +41,22 @@ export function normalizeOwnerStarterPlanName(
     throw new Error(
       `ownerStarterPlanName must be at most ${OWNER_STARTER_PLAN_NAME_MAX_LEN} characters`,
     );
+  }
+  return trimmed;
+}
+
+/**
+ * Read-path coercion for stored names: truncate overlong values instead of
+ * throwing so a bad row cannot break billing resolution.
+ * @internal Exported for unit tests.
+ */
+export function coerceOwnerStarterPlanName(
+  raw: string | null | undefined,
+): string {
+  const trimmed = raw?.trim().replaceAll(/\s+/g, " ") ?? "";
+  if (!trimmed) return OWNER_STARTER_PLAN_NAME;
+  if (trimmed.length > OWNER_STARTER_PLAN_NAME_MAX_LEN) {
+    return trimmed.slice(0, OWNER_STARTER_PLAN_NAME_MAX_LEN);
   }
   return trimmed;
 }
@@ -76,7 +93,7 @@ export async function resolvePlatformOwnerStarterDefault(): Promise<ResolvedPlat
     .limit(1);
 
   const row = rows[0];
-  const planName = normalizeOwnerStarterPlanName(row?.ownerStarterPlanName);
+  const planName = coerceOwnerStarterPlanName(row?.ownerStarterPlanName);
   const fromDb = normalizeMicros(row?.ownerStarterIncludedUsdMicros);
   if (fromDb) {
     return {

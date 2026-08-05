@@ -27,16 +27,34 @@ test("downgradeOwnerToStarterPlan rejects without confirm", async () => {
 });
 
 test("downgradeOwnerToStarterPlan rejects when OpenMeter is unavailable", async () => {
-  await assert.rejects(
-    () =>
-      downgradeOwnerToStarterPlan({
-        ownerUserId: "user_test",
-        confirm: true,
-      }),
-    (err: unknown) =>
-      err instanceof OwnerStarterDowngradeError &&
-      err.code === "openmeter_unavailable",
-  );
+  const env = process.env as { NODE_ENV?: string; OPENMETER_TEST_LIVE?: string };
+  const prevNodeEnv = env.NODE_ENV;
+  const prevLive = env.OPENMETER_TEST_LIVE;
+  env.NODE_ENV = "test";
+  delete env.OPENMETER_TEST_LIVE;
+  try {
+    await assert.rejects(
+      () =>
+        downgradeOwnerToStarterPlan({
+          ownerUserId: "user_test",
+          confirm: true,
+        }),
+      (err: unknown) =>
+        err instanceof OwnerStarterDowngradeError &&
+        err.code === "openmeter_unavailable",
+    );
+  } finally {
+    if (prevNodeEnv === undefined) {
+      delete env.NODE_ENV;
+    } else {
+      env.NODE_ENV = prevNodeEnv;
+    }
+    if (prevLive === undefined) {
+      delete env.OPENMETER_TEST_LIVE;
+    } else {
+      env.OPENMETER_TEST_LIVE = prevLive;
+    }
+  }
 });
 
 test("OwnerStarterDowngradeError preserves code", () => {

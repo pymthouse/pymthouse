@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import nodeTest from "node:test";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { platformBillingSettings, users } from "@/db/schema";
 import {
   PLATFORM_BILLING_SETTINGS_ID,
+  coerceOwnerStarterPlanName,
   normalizeOwnerStarterPlanName,
   resolvePlatformOwnerStarterDefault,
   setPlatformOwnerStarterIncludedUsdMicros,
@@ -64,13 +66,30 @@ test("platform owner starter default prefers DB over env", async (t) => {
   assert.equal(resolved.source, "db");
   assert.equal(resolved.ownerStarterIncludedUsdMicros, "25000000");
   assert.equal(resolved.ownerStarterPlanName, "Developer Free Tier");
+
+  const withoutName = await setPlatformOwnerStarterIncludedUsdMicros({
+    ownerStarterIncludedUsdMicros: "30000000",
+    updatedBy: adminId,
+  });
+  assert.equal(withoutName.ownerStarterIncludedUsdMicros, "30000000");
+  assert.equal(withoutName.ownerStarterPlanName, "Developer Free Tier");
+  assert.equal(withoutName.updatedBy, adminId);
+
+  const resolvedAgain = await resolvePlatformOwnerStarterDefault();
+  assert.equal(resolvedAgain.ownerStarterIncludedUsdMicros, "30000000");
+  assert.equal(resolvedAgain.ownerStarterPlanName, "Developer Free Tier");
 });
 
-test("normalizeOwnerStarterPlanName falls back and rejects overlong names", () => {
+nodeTest("normalizeOwnerStarterPlanName falls back and rejects overlong names", () => {
   assert.equal(normalizeOwnerStarterPlanName(""), "Owner Sandbox Starter");
   assert.equal(normalizeOwnerStarterPlanName("  Free  Tier  "), "Free Tier");
   assert.throws(
     () => normalizeOwnerStarterPlanName("x".repeat(81)),
     /at most 80/,
   );
+});
+
+nodeTest("coerceOwnerStarterPlanName truncates overlong stored names", () => {
+  assert.equal(coerceOwnerStarterPlanName(""), "Owner Sandbox Starter");
+  assert.equal(coerceOwnerStarterPlanName("x".repeat(81)).length, 80);
 });

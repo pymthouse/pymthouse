@@ -217,6 +217,7 @@ function OwnerPaymentCreditsSection({
               {billingCreditsEmptyHint({
                 onPaidPlan,
                 currentPlanName,
+                starterPlanName: data.ownerStarterPlanName,
               })}
             </p>
           </div>
@@ -491,11 +492,15 @@ export default function OwnerBillingView({
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold text-zinc-200">Platform invoices</h2>
               <InfoTooltip
-                label="Invoices from PymtHouse to your developer account (overage and top-ups). End-user invoices billed through your Merchant Stripe Connect account appear on each app’s Payments tab."
+                label="Invoices from PymtHouse to your developer account (plan fee and overage via OpenMeter, collected on Stripe). End-user invoices billed through your Merchant Stripe Connect account appear on each app’s Payments tab."
                 wide
               />
             </div>
-            <PlatformInvoicesTable invoices={data.invoices} />
+            <PlatformInvoicesTable
+              invoices={data.invoices}
+              stripeInvoices={data.stripeInvoices}
+              invoicesDegraded={data.invoicesDegraded}
+            />
           </section>
 
           <section className="mt-8">

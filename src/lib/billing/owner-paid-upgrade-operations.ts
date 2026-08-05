@@ -26,11 +26,15 @@ function isUniqueViolation(error: unknown): boolean {
   const messages: string[] = [];
   collectErrorCodesAndMessages(error, codes, messages, 0);
   if (codes.includes("23505")) return true;
-  return messages.some(
-    (m) =>
-      m.toLowerCase().includes("unique") ||
-      m.toLowerCase().includes("duplicate"),
-  );
+  return messages.some((m) => {
+    const lower = m.toLowerCase();
+    // Constraint-shaped only — avoid matching "unique"/"duplicate" in prose.
+    return (
+      /\bunique (constraint|violation|index)\b/.test(lower) ||
+      /\bduplicate key\b/.test(lower) ||
+      /\bviolates unique constraint\b/.test(lower)
+    );
+  });
 }
 
 function collectErrorCodesAndMessages(
@@ -81,16 +85,35 @@ function resultFromRow(
   };
 }
 
+function completedRowIncomplete(): ReturnType<typeof and> {
+  return and(
+    eq(ownerPaidUpgradeOperations.status, "completed"),
+    or(
+      isNull(ownerPaidUpgradeOperations.openmeterSubscriptionId),
+      isNull(ownerPaidUpgradeOperations.openmeterPlanId),
+      isNull(ownerPaidUpgradeOperations.monthlyFeeUsd),
+      isNull(ownerPaidUpgradeOperations.planKey),
+    ),
+  );
+}
+
 /**
  * Claim an owner+plan Upgrade slot before calling Konnect.
  * - First caller proceeds with a pending row.
- * - Completed retries return the stored result.
+ * - Completed retries return the stored result when still on that plan.
  * - Fresh in-progress claims are rejected.
- * - Failed / stale pending claims may be reclaimed.
+ * - Failed / stale pending / incomplete completed claims may be reclaimed.
+ * - Completed claims for a plan may be reclaimed when `currentPlanKey` differs
+ *   (A → B → A) so the unique owner/plan row no longer blocks re-selection.
  */
 export async function claimOwnerPaidUpgradeOperation(input: {
   ownerUserId: string;
   planKey: string;
+  /**
+   * Active OpenMeter plan key for the owner wallet. When set and different from
+   * `planKey`, a completed claim for `planKey` is reclaimed instead of returned.
+   */
+  currentPlanKey?: string | null;
 }): Promise<
   | { action: "proceed"; operationId: string }
   | { action: "return"; result: OwnerPaidUpgradeResult }
@@ -98,6 +121,9 @@ export async function claimOwnerPaidUpgradeOperation(input: {
 > {
   const ownerUserId = input.ownerUserId.trim();
   const planKey = input.planKey.trim();
+  const currentPlanKey = input.currentPlanKey?.trim() || "";
+  const reclaimCompletedForPlanChange =
+    Boolean(currentPlanKey) && currentPlanKey !== planKey;
   const idempotencyKey = ownerPaidUpgradeIdempotencyKey(ownerUserId, planKey);
   const now = new Date().toISOString();
   const operationId = randomUUID();
@@ -132,7 +158,7 @@ export async function claimOwnerPaidUpgradeOperation(input: {
 
   if (existing.status === "completed") {
     const result = resultFromRow(existing);
-    if (result) {
+    if (result && !reclaimCompletedForPlanChange) {
       return { action: "return", result };
     }
   }
@@ -145,6 +171,18 @@ export async function claimOwnerPaidUpgradeOperation(input: {
   }
 
   const staleThreshold = new Date(Date.now() - STALE_PENDING_MS).toISOString();
+  const reclaimConditions = [
+    eq(ownerPaidUpgradeOperations.status, "failed"),
+    and(
+      eq(ownerPaidUpgradeOperations.status, "pending"),
+      lt(ownerPaidUpgradeOperations.updatedAt, staleThreshold),
+    ),
+    completedRowIncomplete(),
+  ];
+  if (reclaimCompletedForPlanChange) {
+    reclaimConditions.push(eq(ownerPaidUpgradeOperations.status, "completed"));
+  }
+
   const claimed = await db
     .update(ownerPaidUpgradeOperations)
     .set({
@@ -159,17 +197,7 @@ export async function claimOwnerPaidUpgradeOperation(input: {
     .where(
       and(
         eq(ownerPaidUpgradeOperations.id, existing.id),
-        or(
-          eq(ownerPaidUpgradeOperations.status, "failed"),
-          and(
-            eq(ownerPaidUpgradeOperations.status, "pending"),
-            lt(ownerPaidUpgradeOperations.updatedAt, staleThreshold),
-          ),
-          and(
-            eq(ownerPaidUpgradeOperations.status, "completed"),
-            isNull(ownerPaidUpgradeOperations.openmeterSubscriptionId),
-          ),
-        ),
+        or(...reclaimConditions),
       ),
     )
     .returning({ id: ownerPaidUpgradeOperations.id });
@@ -186,7 +214,9 @@ export async function claimOwnerPaidUpgradeOperation(input: {
   const row = again[0];
   if (row?.status === "completed") {
     const result = resultFromRow(row);
-    if (result) return { action: "return", result };
+    if (result && !reclaimCompletedForPlanChange) {
+      return { action: "return", result };
+    }
   }
   return { action: "reject", reason: "in_progress" };
 }

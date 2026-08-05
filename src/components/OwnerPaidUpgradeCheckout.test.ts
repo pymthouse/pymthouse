@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   OWNER_CHECKOUT_FREE_PLAN_KEY,
+  checkoutCardStepDone,
   confirmBlockingHint,
   confirmButtonLabel,
   isCheckoutFreePlanKey,
@@ -81,5 +82,35 @@ test("confirmBlockingHint clears when resume is available", () => {
   assert.equal(
     confirmBlockingHint(false, true, true),
     "Select a different plan to continue.",
+  );
+});
+
+test("checkoutCardStepDone treats Stripe pm=attached as card complete", () => {
+  assert.equal(
+    checkoutCardStepDone({
+      downgradeToFree: false,
+      resumePendingDowngrade: false,
+      hasPaymentMethod: false,
+      pmAttached: true,
+    }),
+    true,
+  );
+  assert.equal(
+    checkoutCardStepDone({
+      downgradeToFree: false,
+      resumePendingDowngrade: false,
+      hasPaymentMethod: false,
+      pmAttached: false,
+    }),
+    false,
+  );
+  assert.equal(
+    checkoutCardStepDone({
+      downgradeToFree: false,
+      resumePendingDowngrade: false,
+      hasPaymentMethod: true,
+      pmAttached: false,
+    }),
+    true,
   );
 });

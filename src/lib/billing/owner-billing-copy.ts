@@ -27,7 +27,7 @@ export function billingIntroCopy(input: {
     return `${input.starterPlanName} allowance is used up. Usage is paused until you Upgrade to a paid plan (you’ll add a payment method during Upgrade if needed).`;
   }
   if (input.pressure === "chargeable") {
-    return "Prepaid credits, active subscriptions, and platform invoices for your account. Your default payment method pays plan fees and overage.";
+    return "Prepaid credits, active subscriptions, and platform invoices for your account. Your payment method is ready for a future Upgrade — it is not charged for plan fees until you Upgrade.";
   }
   return `Prepaid credits, active subscriptions, and platform invoices for your account. On ${input.starterPlanName}, usage stops when included allowance and credits run out — Upgrade to a paid plan to continue with overage invoicing.`;
 }
@@ -36,12 +36,14 @@ export function billingIntroCopy(input: {
 export function billingCreditsEmptyHint(input: {
   onPaidPlan: boolean;
   currentPlanName?: string | null;
+  starterPlanName?: string | null;
 }): string {
   if (input.onPaidPlan) {
     const paidName = input.currentPlanName?.trim() || "your plan";
     return `No prepaid credit balance yet. Included usage on ${paidName} comes from your plan allowance. Link a payment method for renewals and overage after the included allowance.`;
   }
-  return "No prepaid credit balance yet. Starter included usage comes from your plan allowance. Upgrade to a paid plan when you need more — your payment method pays the plan fee and overage after included usage.";
+  const starterName = input.starterPlanName?.trim() || "Starter";
+  return `No prepaid credit balance yet. ${starterName} included usage comes from your plan allowance. Upgrade to a paid plan when you need more — your payment method pays the plan fee and overage after included usage.`;
 }
 
 /** Change/Upgrade checkout: empty payment-method step. */

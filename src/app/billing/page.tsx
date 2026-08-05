@@ -8,6 +8,7 @@ import OwnerBillingView from "@/components/OwnerBillingView";
 import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
 import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
+import { OWNER_STARTER_PLAN_NAME } from "@/lib/openmeter/owner-starter-key";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 function isTurnkeyFundingConfigured(): boolean {
@@ -32,9 +33,11 @@ export default async function BillingPage() {
           paymentMethods: [],
           hasChargeableBillingMethod: false,
           subscriptions: [],
-          ownerStarterPlanName: "Owner Sandbox Starter",
+          ownerStarterPlanName: OWNER_STARTER_PLAN_NAME,
           ownedApps: [],
           invoices: [],
+          invoicesDegraded: false,
+          stripeInvoices: [],
           ledger: [],
           openMeterConfigured: false,
           fundingClientId: null,

@@ -410,11 +410,27 @@ export async function upgradeOwnerToPaidPlan(input: {
     };
   }
 
+  // planKey often missing on Konnect list/get — fall back to OpenMeter plan id.
+  if (
+    !existing.planKey &&
+    existing.openmeterPlanId &&
+    existing.openmeterPlanId === plan.openmeterPlanId
+  ) {
+    return {
+      openmeterSubscriptionId: existing.id,
+      planKey: plan.key,
+      openmeterPlanId: plan.openmeterPlanId,
+      monthlyFeeUsd,
+      alreadyPaid: true,
+    };
+  }
+
   return runClaimedOwnerPaidUpgrade({
     ownerUserId,
     plan,
     monthlyFeeUsd,
     existingId: existing.id,
+    existingPlanKey: existing.planKey,
     customerId: customer.id,
   });
 }
@@ -511,11 +527,13 @@ async function runClaimedOwnerPaidUpgrade(input: {
   plan: OwnerPaidPlanRef;
   monthlyFeeUsd: string;
   existingId: string;
+  existingPlanKey: string;
   customerId: string;
 }): Promise<OwnerPaidUpgradeResult> {
   const claim = await claimOwnerPaidUpgradeOperation({
     ownerUserId: input.ownerUserId,
     planKey: input.plan.key,
+    currentPlanKey: input.existingPlanKey,
   });
   if (claim.action === "return") {
     return claim.result;
@@ -528,15 +546,14 @@ async function runClaimedOwnerPaidUpgrade(input: {
   }
 
   const operationId = claim.operationId;
+  let result: OwnerPaidUpgradeResult;
   try {
-    const result = await changeSubscriptionToPaidTier({
+    result = await changeSubscriptionToPaidTier({
       subscriptionId: input.existingId,
       customerId: input.customerId,
       plan: input.plan,
       monthlyFeeUsd: input.monthlyFeeUsd,
     });
-    await completeOwnerPaidUpgradeOperation({ operationId, result });
-    return result;
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Owner Paid upgrade failed";
@@ -554,6 +571,16 @@ async function runClaimedOwnerPaidUpgrade(input: {
       "Owner Paid upgrade failed",
     );
   }
+
+  try {
+    await completeOwnerPaidUpgradeOperation({ operationId, result });
+  } catch (completeErr) {
+    console.error(
+      "Owner Paid upgrade completed in Konnect but operation row update failed",
+      completeErr,
+    );
+  }
+  return result;
 }
 
 async function changeSubscriptionToPaidTier(input: {

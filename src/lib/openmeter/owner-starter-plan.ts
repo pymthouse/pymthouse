@@ -3,6 +3,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { resolveOwnerStarterIncludedUsdMicros } from "@/lib/billing/owner-billing-config";
 import {
+  resolvePlatformOwnerStarterDefault,
   resolvePlatformOwnerStarterIncludedUsdMicros,
   resolvePlatformOwnerStarterPlanName,
 } from "@/lib/billing/platform-owner-starter-default";
@@ -163,16 +164,16 @@ async function ensureOwnerStarterPlanSyncedUncached(input: {
 export async function forceSyncOwnerStarterPlan(
   includedUsdMicros: string,
 ): Promise<OwnerStarterPlanRef> {
-  const [platformDefault, planName] = await Promise.all([
-    resolvePlatformOwnerStarterIncludedUsdMicros(),
-    resolvePlatformOwnerStarterPlanName(),
-  ]);
+  const platformDefault = await resolvePlatformOwnerStarterDefault();
   const amount = includedUsdMicros.trim();
-  const planKey = ownerStarterPlanKeyForAmount(amount, platformDefault);
+  const planKey = ownerStarterPlanKeyForAmount(
+    amount,
+    platformDefault.ownerStarterIncludedUsdMicros,
+  );
 
   const synced = await forceSyncOwnerAllowancePlan({
     planKey,
-    planName,
+    planName: platformDefault.ownerStarterPlanName,
     planKind: "owner_starter",
     includedUsdMicros: amount,
     warnLabel: "owner starter",
@@ -249,13 +250,6 @@ async function findExistingOwnerWalletSubscription(input: {
     );
     if (!active?.id) {
       return null;
-    }
-    if (isOwnerStarterPlanKey(active.planKey)) {
-      return {
-        id: active.id,
-        planKey: active.planKey ?? "",
-        openmeterPlanId: active.planId ?? "",
-      };
     }
     return {
       id: active.id,

@@ -17,6 +17,38 @@ import {
 
 const STRIPE_API_ORIGIN = "https://api.stripe.com";
 
+/** Serialize payment-method mutations per owner (in-process). */
+const ownerPaymentMethodLocks = new Map<string, Promise<unknown>>();
+
+async function withOwnerPaymentMethodLock<T>(
+  ownerUserId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const key = ownerUserId.trim();
+  const previous = ownerPaymentMethodLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(
+    () => gate,
+    () => gate,
+  );
+  ownerPaymentMethodLocks.set(key, chained);
+  await previous.then(
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (ownerPaymentMethodLocks.get(key) === chained) {
+      ownerPaymentMethodLocks.delete(key);
+    }
+  }
+}
+
 /**
  * Build a Stripe REST URL from a relative `/v1/…` path only.
  * Rejects scheme/host injection so path segments (customer ids, etc.) cannot
@@ -484,65 +516,72 @@ export async function unlinkOwnerPaymentMethod(
     throw new Error("ownerUserId and paymentMethodId are required");
   }
 
-  const deps = liveStripeDeps(MUTATION_BUDGET_MS);
-  const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
-  if (!refs || !(await requireOwnedPaymentMethod(refs, pmId, deps))) {
-    return { unlinked: false, paymentMethodId: null };
-  }
+  return withOwnerPaymentMethodLock(trimmed, async () => {
+    const deps = liveStripeDeps(MUTATION_BUDGET_MS);
+    const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
+    if (!refs || !(await requireOwnedPaymentMethod(refs, pmId, deps))) {
+      return { unlinked: false, paymentMethodId: null };
+    }
 
-  // Atomic last-method guard: re-list under the mutation budget so concurrent
-  // DELETEs cannot both pass a stale route-level check.
-  const { items: attached } = await buildOwnerPaymentMethodList({
-    stripeCustomerId: refs.stripeCustomerId,
-    konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-    deps,
-  });
-  if (attached.length <= 1 && attached.some((pm) => pm.id === pmId)) {
-    throw new Error(
-      "This is your only payment method. Add another before removing this one.",
-    );
-  }
-
-  const detached = await stripeRequestJson<{ id?: string }>({
-    method: "POST",
-    path: `/v1/payment_methods/${encodeURIComponent(pmId)}/detach`,
-    deps,
-  });
-  if (!detached?.id) {
-    throw new Error("Stripe could not detach the payment method");
-  }
-
-  // Best-effort: when the default was removed, do not leave a dangling pointer.
-  const stripeDefaultId = await getCustomerDefaultPaymentMethodId(
-    refs.stripeCustomerId,
-    deps,
-  );
-  if (stripeDefaultId === pmId) {
-    await stripeRequestJson({
-      method: "POST",
-      path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
-      body: new URLSearchParams({
-        "invoice_settings[default_payment_method]": "",
-      }),
+    // Re-list under the owner lock so concurrent DELETEs each recheck count
+    // immediately before detach. Empty / unverifiable → fail closed.
+    const { items: attached } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: refs.stripeCustomerId,
+      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
       deps,
     });
-  }
-
-  if (stripeDefaultId === pmId || refs.konnectDefaultPaymentMethodId === pmId) {
-    try {
-      await clearKonnectStripeDefaultPaymentMethod({
-        customerId: refs.customerId,
-        stripeCustomerId: refs.stripeCustomerId,
-      });
-    } catch (err) {
-      console.warn(
-        "owner-payment-method: Konnect default clear failed",
-        sanitizeForLog(err),
+    if (attached.length === 0) {
+      throw new Error(
+        "Unable to verify payment methods right now. Try again shortly.",
       );
     }
-  }
+    if (attached.length === 1 && attached[0]?.id === pmId) {
+      throw new Error(
+        "This is your only payment method. Add another before removing this one.",
+      );
+    }
 
-  return { unlinked: true, paymentMethodId: pmId };
+    const detached = await stripeRequestJson<{ id?: string }>({
+      method: "POST",
+      path: `/v1/payment_methods/${encodeURIComponent(pmId)}/detach`,
+      deps,
+    });
+    if (!detached?.id) {
+      throw new Error("Stripe could not detach the payment method");
+    }
+
+    // Best-effort: when the default was removed, do not leave a dangling pointer.
+    const stripeDefaultId = await getCustomerDefaultPaymentMethodId(
+      refs.stripeCustomerId,
+      deps,
+    );
+    if (stripeDefaultId === pmId) {
+      await stripeRequestJson({
+        method: "POST",
+        path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
+        body: new URLSearchParams({
+          "invoice_settings[default_payment_method]": "",
+        }),
+        deps,
+      });
+    }
+
+    if (stripeDefaultId === pmId || refs.konnectDefaultPaymentMethodId === pmId) {
+      try {
+        await clearKonnectStripeDefaultPaymentMethod({
+          customerId: refs.customerId,
+          stripeCustomerId: refs.stripeCustomerId,
+        });
+      } catch (err) {
+        console.warn(
+          "owner-payment-method: Konnect default clear failed",
+          sanitizeForLog(err),
+        );
+      }
+    }
+
+    return { unlinked: true, paymentMethodId: pmId };
+  });
 }
 
 /**
