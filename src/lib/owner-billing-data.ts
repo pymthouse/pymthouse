@@ -39,6 +39,7 @@ import {
 } from "@/lib/openmeter/owner-starter-key";
 import { isOwnerPaidPlanKey } from "@/lib/openmeter/owner-paid-key";
 import { resolvePlatformOwnerStarterPlanName } from "@/lib/billing/platform-owner-starter-default";
+import { getOwnerSubscriptionTierByKey } from "@/lib/billing/owner-subscription-tiers";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import {
   isOpenMeterSubscriptionActive,
@@ -478,8 +479,12 @@ async function resolvePlanName(input: {
       isStarterDefault: true,
     };
   }
-  if (isOwnerPaidPlanKey(input.planKey)) {
-    return { planName: "Owner Paid", isStarterDefault: false };
+  if (isOwnerPaidPlanKey(input.planKey) && input.planKey) {
+    const tier = await getOwnerSubscriptionTierByKey(input.planKey);
+    return {
+      planName: tier?.name?.trim() || "Owner Paid",
+      isStarterDefault: false,
+    };
   }
   return {
     planName: input.planKey?.trim() || "Subscription",

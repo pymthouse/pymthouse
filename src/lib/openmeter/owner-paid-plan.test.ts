@@ -18,6 +18,7 @@ test("isOwnerPaidPlanKey matches the platform Paid key and tier suffixes", () =>
   assert.equal(isOwnerPaidPlanKey(OWNER_PAID_PLAN_KEY), true);
   assert.equal(isOwnerPaidPlanKey("pymthouse_owner_paid"), true);
   assert.equal(isOwnerPaidPlanKey("pymthouse_owner_paid_growth"), true);
+  assert.equal(isOwnerPaidPlanKey("pymthouse_owner_paid_producer"), true);
   assert.equal(isOwnerPaidPlanKey("pymthouse_owner_starter"), false);
   assert.equal(isOwnerPaidPlanKey(""), false);
   assert.equal(isOwnerPaidPlanKey(null), false);

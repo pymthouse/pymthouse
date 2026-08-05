@@ -146,18 +146,42 @@ export async function verifyOpenMeterSubscriptionId(
     if (!sub?.id) {
       return null;
     }
-    return mapSubscriptionItem(sub);
+    return enrichSubscriptionPlanKey(client, mapSubscriptionItem(sub));
   } catch {
     return null;
   }
+}
+
+/**
+ * Konnect list/get payloads often expose `plan_id` without `plan.key`.
+ * Resolve the key so callers (billing UI, upgrade eligibility) can classify
+ * Owner Paid tiers correctly.
+ */
+async function enrichSubscriptionPlanKey(
+  client: OpenMeter,
+  item: OpenMeterSubscriptionView,
+): Promise<OpenMeterSubscriptionView> {
+  if (item.planKey || !item.planId) {
+    return item;
+  }
+  const planKey = await resolveOpenMeterPlanKey(client, item.planId);
+  if (!planKey) {
+    return item;
+  }
+  return { ...item, planKey };
 }
 
 export async function listOpenMeterSubscriptionsForCustomer(
   client: OpenMeter,
   customerId: string,
 ): Promise<OpenMeterSubscriptionView[]> {
-  const listed = await client.customers.listSubscriptions(customerId, { pageSize: 100 });
-  return (listed?.items ?? []).map((item) => mapSubscriptionItem(item));
+  const listed = await client.customers.listSubscriptions(customerId, {
+    pageSize: 100,
+  });
+  const mapped = (listed?.items ?? []).map((item) => mapSubscriptionItem(item));
+  return Promise.all(
+    mapped.map((item) => enrichSubscriptionPlanKey(client, item)),
+  );
 }
 
 export async function findOpenMeterSubscriptionByPlanKey(

@@ -321,6 +321,16 @@ function NoticeBanner({
 }
 
 const PLAN_DETAIL: Record<string, { headline: string; bullets: string[] }> = {
+  // Longer / more specific keys first — `pymthouse_owner_paid_producer`
+  // must not match the generic `pymthouse_owner_paid` prefix.
+  pymthouse_owner_paid_producer: {
+    headline: "Paid-tier access for building and testing",
+    bullets: [
+      "3 USD included usage — roughly 3 M API calls",
+      "Monetisation features available immediately",
+      "Designed for pre-launch and monetisation testing",
+    ],
+  },
   pymthouse_owner_paid: {
     headline: "Full network access for production apps",
     bullets: [
@@ -329,19 +339,17 @@ const PLAN_DETAIL: Record<string, { headline: string; bullets: string[] }> = {
       "Overage billed per-call, no monthly cap",
     ],
   },
-  pymthouse_producer: {
-    headline: "Paid-tier access for building and testing",
-    bullets: [
-      "3 USD included usage — roughly 3 M API calls",
-      "Monetisation features available immediately",
-      "Designed for pre-launch and monetisation testing",
-    ],
-  },
 };
 
 function getPlanDetail(key: string) {
-  for (const [prefix, detail] of Object.entries(PLAN_DETAIL)) {
-    if (key.startsWith(prefix)) return detail;
+  // Longer prefixes first so producer does not inherit owner_paid copy.
+  const prefixes = Object.keys(PLAN_DETAIL).sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const prefix of prefixes) {
+    if (key === prefix || key.startsWith(prefix)) {
+      return PLAN_DETAIL[prefix] ?? null;
+    }
   }
   return null;
 }

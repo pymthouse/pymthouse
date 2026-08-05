@@ -565,8 +565,9 @@ async function changeSubscriptionToPaidTier(input: {
   let openmeterPlanId = input.plan.openmeterPlanId;
   let resultPlanKey = input.plan.key;
   let resultMonthlyFee = input.monthlyFeeUsd;
+  let change;
   try {
-    await changeKonnectSubscription({
+    change = await changeKonnectSubscription({
       subscriptionId: input.subscriptionId,
       customerId: input.customerId,
       planId: openmeterPlanId,
@@ -581,7 +582,7 @@ async function changeSubscriptionToPaidTier(input: {
     openmeterPlanId = resynced.openmeterPlanId;
     resultPlanKey = resynced.key;
     resultMonthlyFee = resynced.monthlyFeeUsd || input.monthlyFeeUsd;
-    await changeKonnectSubscription({
+    change = await changeKonnectSubscription({
       subscriptionId: input.subscriptionId,
       customerId: input.customerId,
       planId: openmeterPlanId,
@@ -589,8 +590,14 @@ async function changeSubscriptionToPaidTier(input: {
     });
   }
 
+  // Immediate change supersedes the prior subscription; persist the successor.
+  const nextId =
+    change.next?.id?.trim() ||
+    change.current?.id?.trim() ||
+    input.subscriptionId;
+
   return {
-    openmeterSubscriptionId: input.subscriptionId,
+    openmeterSubscriptionId: nextId,
     planKey: resultPlanKey,
     openmeterPlanId,
     monthlyFeeUsd: resultMonthlyFee,

@@ -211,8 +211,11 @@ async function findExistingOwnerWalletSubscription(input: {
     ) {
       return {
         id: verified.id,
-        planKey: verified.planKey ?? input.planKey,
-        openmeterPlanId: verified.planId ?? input.openmeterPlanId,
+        // Never invent the target Starter key — Konnect often omits plan.key;
+        // falling back to input.planKey mislabels Producer/Paid wallets as Starter
+        // and triggers a destructive subscription-change onto Starter.
+        planKey: verified.planKey ?? "",
+        openmeterPlanId: verified.planId ?? "",
       };
     }
   }
@@ -226,8 +229,8 @@ async function findExistingOwnerWalletSubscription(input: {
   if (existing?.id) {
     return {
       id: existing.id,
-      planKey: existing.planKey ?? input.planKey,
-      openmeterPlanId: existing.planId ?? input.openmeterPlanId,
+      planKey: existing.planKey ?? "",
+      openmeterPlanId: existing.planId ?? "",
     };
   }
 
@@ -250,14 +253,14 @@ async function findExistingOwnerWalletSubscription(input: {
     if (isOwnerStarterPlanKey(active.planKey)) {
       return {
         id: active.id,
-        planKey: active.planKey ?? input.planKey,
-        openmeterPlanId: active.planId ?? input.openmeterPlanId,
+        planKey: active.planKey ?? "",
+        openmeterPlanId: active.planId ?? "",
       };
     }
     return {
       id: active.id,
-      planKey: active.planKey ?? input.planKey,
-      openmeterPlanId: active.planId ?? input.openmeterPlanId,
+      planKey: active.planKey ?? "",
+      openmeterPlanId: active.planId ?? "",
     };
   } catch {
     return null;

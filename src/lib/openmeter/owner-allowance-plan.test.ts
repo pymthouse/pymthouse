@@ -93,6 +93,25 @@ test("findOpenMeterPlanByKey returns exact list match", async () => {
   assert.equal(found?.id, "plan_1");
 });
 
+test("findOpenMeterPlanByKey prefers active over archived versions", async () => {
+  const client = {
+    plans: {
+      list: async () => ({
+        items: [
+          { id: "plan_v1", key: "k1", status: "archived", version: 1 },
+          { id: "plan_v2", key: "k1", status: "active", version: 2 },
+        ],
+      }),
+      get: async () => {
+        throw new Error("should not get");
+      },
+    },
+  } as unknown as OpenMeter;
+
+  const found = await findOpenMeterPlanByKey(client, "k1");
+  assert.equal(found?.id, "plan_v2");
+});
+
 test("findOpenMeterPlanByKey falls back to get when list misses", async () => {
   const client = {
     plans: {

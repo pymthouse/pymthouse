@@ -38,6 +38,15 @@ test("ownerEligibleForPaidUpgrade is false on Owner Paid", () => {
     ]),
     false,
   );
+  assert.equal(
+    ownerEligibleForPaidUpgrade([
+      {
+        openMeterPlanKey: "pymthouse_owner_paid_producer",
+        appPublicClientId: null,
+      },
+    ]),
+    false,
+  );
 });
 
 test("ownerEligibleForPaidUpgrade ignores app-scoped paid rows when wallet is Starter", () => {

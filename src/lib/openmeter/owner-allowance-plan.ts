@@ -222,7 +222,12 @@ export async function findOpenMeterPlanByKey(
       pageSize: 50,
     } as Parameters<OpenMeter["plans"]["list"]>[0]);
     const items = (listed as { items?: Array<FoundOpenMeterPlan> })?.items ?? [];
-    const exact = items.find((item) => item.key === planKey);
+    const matches = items.filter((item) => item.key === planKey && item.id);
+    // Prefer active — list can return archived versions (e.g. @1) first.
+    const exact =
+      matches.find((item) => item.status === "active") ??
+      matches.find((item) => openMeterPlanNeedsPublish(item.status)) ??
+      matches[0];
     if (exact?.id) {
       return exact;
     }
