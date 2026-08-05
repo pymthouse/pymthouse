@@ -62,7 +62,7 @@ export default function OwnerPaymentMethodButton({
 
   let buttonLabel = "Add payment method";
   if (useUpgradeCta) {
-    buttonLabel = "Upgrade to Paid";
+    buttonLabel = "Upgrade";
   } else if (busy) {
     buttonLabel = "Opening Stripe…";
   } else if (hasPaymentMethod) {

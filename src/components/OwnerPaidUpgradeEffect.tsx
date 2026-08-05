@@ -222,7 +222,7 @@ export default function OwnerPaidUpgradePanel({
             className="shrink-0 rounded-md bg-emerald-500/20 px-4 py-2 text-sm text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-50"
             onClick={openChooser}
           >
-            Upgrade to Paid
+            Upgrade
           </button>
         </div>
       </div>
@@ -243,7 +243,7 @@ export default function OwnerPaidUpgradePanel({
                   id="owner-upgrade-title"
                   className="text-lg font-semibold text-zinc-100"
                 >
-                  Upgrade to Paid
+                  Upgrade
                 </h3>
                 <p className="mt-1 text-sm text-zinc-500">
                   Add a payment method, then you’ll pick a monthly plan. Attaching
