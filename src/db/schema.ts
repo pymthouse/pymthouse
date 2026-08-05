@@ -596,6 +596,29 @@ export const appBillingConfig = pgTable(
     endUserCap: integer("end_user_cap").notNull().default(25),
     /** ISO timestamp of first cost-rail denial notification. */
     activationNotifiedAt: text("activation_notified_at"),
+    /**
+     * Merchant supplier identity — who is legally selling on this app's invoices.
+     * Synced from the Stripe connected account; tax id is developer-supplied.
+     */
+    /** ISO 3166-1 alpha-2, from the connected account. Immutable at Stripe. */
+    supplierCountry: text("supplier_country"),
+    /** Registered entity name, or the individual's name for sole traders. */
+    supplierName: text("supplier_name"),
+    /** individual | company | non_profit | government_entity */
+    supplierBusinessType: text("supplier_business_type"),
+    supplierAddressLine1: text("supplier_address_line1"),
+    supplierAddressLine2: text("supplier_address_line2"),
+    supplierAddressCity: text("supplier_address_city"),
+    supplierAddressState: text("supplier_address_state"),
+    supplierAddressPostalCode: text("supplier_address_postal_code"),
+    /** Developer-supplied VAT/tax number — Stripe exposes only a boolean. */
+    supplierTaxId: text("supplier_tax_id"),
+    /** Stripe reported company.tax_id_provided / vat_id_provided. */
+    supplierTaxIdOnFileAtStripe: boolean("supplier_tax_id_on_file_at_stripe")
+      .notNull()
+      .default(false),
+    /** ISO timestamp of the last successful sync from the connected account. */
+    supplierSyncedAt: text("supplier_synced_at"),
     connectedAt: text("connected_at"),
     createdAt: text("created_at")
       .notNull()

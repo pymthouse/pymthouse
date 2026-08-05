@@ -17,21 +17,26 @@ import {
 import { getHostedOpenMeterUrl } from "./constants";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
+  type BillingProfileSupplierInput,
+  buildOpenMeterSupplierAddress,
+} from "./billing-supplier";
+import {
   ensureKonnectCustomerStripeBilling,
   ensureStripeCustomerAppData,
   setKonnectCustomerBillingProfile,
 } from "./stripe-customer-data";
 
-/** ISO 3166-1 alpha-2; required on billing profile supplier for OpenMeter invoicing. */
-function billingSupplierCountryCode(): string {
-  const raw = process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY?.trim() || "US";
-  return raw.toUpperCase();
-}
+export type { BillingProfileSupplierInput } from "./billing-supplier";
 
-export function buildBillingProfileSupplier(displayName: string) {
+export function buildBillingProfileSupplier(
+  displayName: string,
+  supplier?: BillingProfileSupplierInput,
+) {
+  const taxId = supplier?.taxId?.trim();
   return {
     name: displayName,
-    addresses: [{ country: billingSupplierCountryCode() }],
+    addresses: [buildOpenMeterSupplierAddress(supplier)],
+    ...(taxId ? { taxId: { code: taxId } } : {}),
   };
 }
 
@@ -370,6 +375,29 @@ export async function prepareAppCustomerStripeBilling(input: {
       customerId: input.customerId,
       billingProfileId: merchantProfileId,
     });
+    const accountId = config.stripeConnectedAccountId?.trim();
+    if (accountId) {
+      const { resolveMerchantChargeModel } = await import("./supplier-sync");
+      const { merchantSettlementMetadata } = await import(
+        "./settlement-metadata"
+      );
+      const { ensureCustomerMetadata } = await import("./customers");
+      const chargeModel = resolveMerchantChargeModel(config);
+      if (chargeModel !== "direct") {
+        console.warn(
+          "merchant customer settlement metadata: supplier incomplete; using destination",
+          input.clientId,
+        );
+      }
+      await ensureCustomerMetadata(
+        input.client,
+        input.customerId,
+        merchantSettlementMetadata({
+          connectedAccountId: accountId,
+          chargeModel,
+        }),
+      );
+    }
     return;
   }
 

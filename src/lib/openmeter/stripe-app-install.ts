@@ -438,6 +438,10 @@ export async function getStripeConnectStatus(clientId: string) {
     activation = null;
   }
 
+  const { supplierStatusPayload } = await import(
+    "@/lib/openmeter/supplier-sync"
+  );
+
   return {
     status,
     billingReady,
@@ -457,5 +461,6 @@ export async function getStripeConnectStatus(clientId: string) {
     billingMode: config?.billingMode === "merchant" ? "merchant" : "owner_rollup",
     endUserCap: config?.endUserCap ?? DEFAULT_END_USER_CAP,
     activation,
+    ...supplierStatusPayload(config ?? {}),
   };
 }

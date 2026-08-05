@@ -31,6 +31,7 @@ type BillingPatchFields = {
   applicationFeeBps?: number;
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
+  supplierTaxId?: string | null;
 };
 
 type ParseResult =
@@ -120,6 +121,31 @@ async function applyBillingModeField(
         ),
       };
     }
+    const { supplierGaps, supplierIsComplete } = await import(
+      "@/lib/openmeter/billing-supplier"
+    );
+    const gaps = supplierGaps({
+      country: config?.supplierCountry,
+      name: config?.supplierName,
+      taxId: config?.supplierTaxId,
+    });
+    if (!supplierIsComplete({
+      country: config?.supplierCountry,
+      name: config?.supplierName,
+      taxId: config?.supplierTaxId,
+    })) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error:
+              "Switching to merchant mode requires a complete invoice supplier (country, legal name, and tax id where required). Complete Connect onboarding and set supplierTaxId if needed.",
+            supplierGaps: gaps,
+          },
+          { status: 400 },
+        ),
+      };
+    }
   }
   return null;
 }
@@ -149,14 +175,15 @@ async function parseBillingPatchBody(
     body.invoiceThresholdUsdMicros === undefined &&
     body.applicationFeeBps === undefined &&
     body.billingMode === undefined &&
-    body.endUserCap === undefined
+    body.endUserCap === undefined &&
+    body.supplierTaxId === undefined
   ) {
     return {
       ok: false,
       response: NextResponse.json(
         {
           error:
-            "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, and/or endUserCap to update",
+            "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
         },
         { status: 400 },
       ),
@@ -164,6 +191,22 @@ async function parseBillingPatchBody(
   }
 
   const fields: BillingPatchFields = {};
+
+  if (body.supplierTaxId !== undefined) {
+    if (body.supplierTaxId !== null && typeof body.supplierTaxId !== "string") {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "supplierTaxId must be a string or null" },
+          { status: 400 },
+        ),
+      };
+    }
+    fields.supplierTaxId =
+      typeof body.supplierTaxId === "string"
+        ? body.supplierTaxId.trim() || null
+        : null;
+  }
 
   if (body.progressiveBilling !== undefined) {
     const parsed = parseProgressiveBillingInput(body.progressiveBilling);
@@ -245,6 +288,7 @@ async function persistBillingPatch(
     applicationFeeBps,
     billingMode,
     endUserCap,
+    supplierTaxId,
   } = fields;
   // Persist OpenMeter profile settings before Neon billingMode/endUserCap so
   // a failed OM write cannot leave the app on a new revenue plane.
@@ -259,6 +303,13 @@ async function persistBillingPatch(
           applicationFeeBps,
         })
       : {};
+
+  if (supplierTaxId !== undefined) {
+    const { setAppSupplierTaxId } = await import(
+      "@/lib/openmeter/supplier-sync"
+    );
+    await setAppSupplierTaxId({ clientId: appId, taxId: supplierTaxId });
+  }
 
   if (billingMode !== undefined || endUserCap !== undefined) {
     await upsertAppBillingConfig(appId, {

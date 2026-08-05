@@ -99,6 +99,22 @@ export async function applyConnectedAccountWebhookUpdate(input: {
     payoutsEnabled: input.payoutsEnabled,
     detailsSubmitted: input.detailsSubmitted,
   });
+  // Best-effort supplier sync — must not block Connect onboarding.
+  try {
+    const { syncTenantSupplierFromConnect } = await import(
+      "@/lib/openmeter/supplier-sync"
+    );
+    await syncTenantSupplierFromConnect({
+      clientId,
+      accountId: input.accountId,
+    });
+  } catch (err) {
+    console.warn(
+      "supplier sync after account.updated failed",
+      clientId,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
   return { updated: true, clientId };
 }
 

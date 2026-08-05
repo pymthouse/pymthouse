@@ -1,4 +1,8 @@
 import { konnectAdminConfig, konnectAdminFetch } from "./konnect-admin-client";
+import {
+  type BillingProfileSupplierInput,
+  buildKonnectSupplierAddress,
+} from "./billing-supplier";
 
 type KonnectPage<T> = {
   data?: T[];
@@ -39,8 +43,9 @@ export type KonnectCreateBillingProfileBody = {
   supplier: {
     name: string;
     addresses: {
-      billing_address: { country: string };
+      billing_address: Record<string, string>;
     };
+    tax_id?: { code: string };
   };
   workflow: {
     invoicing: {
@@ -60,9 +65,16 @@ export type KonnectCreateBillingProfileBody = {
 const KONNECT_STRIPE_INSTALL_DOCS =
   "https://developer.konghq.com/metering-and-billing/stripe-integration/";
 
-function billingSupplierCountryCode(): string {
-  const raw = process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY?.trim() || "US";
-  return raw.toUpperCase();
+function buildKonnectSupplier(
+  name: string,
+  supplier?: BillingProfileSupplierInput,
+): KonnectCreateBillingProfileBody["supplier"] {
+  const taxId = supplier?.taxId?.trim();
+  return {
+    name,
+    addresses: { billing_address: buildKonnectSupplierAddress(supplier) },
+    ...(taxId ? { tax_id: { code: taxId } } : {}),
+  };
 }
 
 function billingFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -210,17 +222,13 @@ export function buildKonnectCreateBillingProfileBody(input: {
   stripeAppId: string;
   name?: string;
   progressiveBilling?: boolean;
+  supplier?: BillingProfileSupplierInput;
 }): KonnectCreateBillingProfileBody {
   const supplierName = input.name || `Tenant ${input.clientId}`;
   return {
     name: input.name || `pymthouse-${input.clientId}`,
     default: false,
-    supplier: {
-      name: supplierName,
-      addresses: {
-        billing_address: { country: billingSupplierCountryCode() },
-      },
-    },
+    supplier: buildKonnectSupplier(supplierName, input.supplier),
     workflow: {
       invoicing: {
         auto_advance: true,
@@ -246,17 +254,14 @@ export function buildKonnectMerchantCustomInvoicingProfileBody(input: {
   name?: string;
   progressiveBilling?: boolean;
   collectionMethod?: "charge_automatically" | "send_invoice";
+  supplier?: BillingProfileSupplierInput;
 }): KonnectCreateBillingProfileBody {
   const appId = input.customInvoicingAppId;
+  const supplierName = input.name || "PymtHouse Merchant";
   return {
     name: input.name || "pymthouse-merchant-custom-invoicing",
     default: false,
-    supplier: {
-      name: input.name || "PymtHouse Merchant",
-      addresses: {
-        billing_address: { country: billingSupplierCountryCode() },
-      },
-    },
+    supplier: buildKonnectSupplier(supplierName, input.supplier),
     workflow: {
       invoicing: {
         auto_advance: true,
@@ -311,6 +316,7 @@ export async function createKonnectMerchantCustomInvoicingProfile(input: {
   name?: string;
   progressiveBilling?: boolean;
   collectionMethod?: "charge_automatically" | "send_invoice";
+  supplier?: BillingProfileSupplierInput;
 }): Promise<string> {
   const body = buildKonnectMerchantCustomInvoicingProfileBody(input);
   const profile = await billingFetch<KonnectBillingProfile>("/profiles", {
@@ -379,12 +385,14 @@ export async function createKonnectBillingProfile(input: {
   openmeterStripeAppId: string;
   name?: string;
   progressiveBilling?: boolean;
+  supplier?: BillingProfileSupplierInput;
 }): Promise<string> {
   const body = buildKonnectCreateBillingProfileBody({
     clientId: input.clientId,
     stripeAppId: input.openmeterStripeAppId,
     name: input.name,
     progressiveBilling: input.progressiveBilling,
+    supplier: input.supplier,
   });
   const profile = await billingFetch<KonnectBillingProfile>("/profiles", {
     method: "POST",
@@ -433,6 +441,37 @@ export async function updateKonnectBillingProfileProgressiveBilling(input: {
     body: JSON.stringify({
       ...replaceable,
       workflow,
+    }),
+  });
+}
+
+/** Replace the supplier on an existing Konnect billing profile (read-modify-write). */
+export async function updateKonnectBillingProfileSupplier(input: {
+  profileId: string;
+  name: string;
+  supplier?: BillingProfileSupplierInput;
+}): Promise<void> {
+  const existing = await billingFetch<Record<string, unknown>>(
+    `/profiles/${encodeURIComponent(input.profileId)}`,
+  );
+  if (!existing || typeof existing !== "object") {
+    throw new Error("Konnect billing profile not found");
+  }
+
+  const {
+    id: _id,
+    created_at: _createdAt,
+    updated_at: _updatedAt,
+    deleted_at: _deletedAt,
+    apps: _apps,
+    ...replaceable
+  } = existing;
+
+  await billingFetch(`/profiles/${encodeURIComponent(input.profileId)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      ...replaceable,
+      supplier: buildKonnectSupplier(input.name, input.supplier),
     }),
   });
 }
