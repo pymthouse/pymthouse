@@ -72,6 +72,19 @@ function checkoutErrorResponse(err: unknown): NextResponse {
   ) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
+  if (
+    /default payment method/i.test(message) ||
+    /invalid billing setup/i.test(message)
+  ) {
+    console.error("checkout failed:", message);
+    return NextResponse.json(
+      {
+        error:
+          "A payment method is required before changing plans; complete Stripe Checkout first",
+      },
+      { status: 409 },
+    );
+  }
   if (/\b409\b/.test(message) || /conflict error/i.test(message)) {
     console.error("checkout failed:", message);
     return NextResponse.json(

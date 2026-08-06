@@ -14,7 +14,9 @@ import { getHostedOpenMeterUrl } from "./constants";
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
+  cancelKonnectSubscription,
   changeKonnectSubscription,
+  deleteKonnectSubscription,
   type SubscriptionChangeTiming,
 } from "./konnect-subscriptions";
 import { isOpenMeterConflictError } from "./plan-errors";
@@ -23,6 +25,7 @@ import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
+  type OpenMeterSubscriptionView,
 } from "./subscription-read";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
@@ -151,6 +154,59 @@ async function loadActiveTargetPlan(input: {
   return plan;
 }
 
+/**
+ * Konnect `/subscriptions/{id}/change` onto a paid plan requires a default
+ * Stripe payment method. Checkout exists to collect that PM, so when the
+ * customer is still on Starter (or another plan) without a card, cancel the
+ * current subscription and create the target instead of calling `/change`.
+ */
+async function clearOpenMeterSubscriptionForCheckout(
+  subscription: OpenMeterSubscriptionView,
+): Promise<void> {
+  const subscriptionId = subscription.id.trim();
+  if (!subscriptionId) {
+    return;
+  }
+  try {
+    await cancelKonnectSubscription({
+      subscriptionId,
+      timing: "immediate",
+    });
+    return;
+  } catch (cancelErr) {
+    console.warn(
+      "checkout: immediate cancel failed, trying delete",
+      subscriptionId,
+      cancelErr instanceof Error ? cancelErr.message : cancelErr,
+    );
+  }
+  await deleteKonnectSubscription({ subscriptionId });
+}
+
+async function checkoutAfterPlanChange(
+  input: {
+    clientId: string;
+    externalUserId: string;
+    planId: string;
+    successUrl?: string;
+    cancelUrl?: string;
+  },
+): Promise<{ checkoutUrl: string; subscriptionId?: string }> {
+  const changed = await changeAppUserSubscriptionPlan(input);
+  const checkoutUrl = changed.checkoutUrl?.trim();
+  if (!checkoutUrl) {
+    throw new Error(
+      "Plan change succeeded but Stripe Checkout was not started",
+    );
+  }
+  return {
+    checkoutUrl,
+    ...(changed.subscriptionId
+      ? { subscriptionId: changed.subscriptionId }
+      : {}),
+  };
+}
+
 export async function createEndUserCheckout(input: {
   clientId: string;
   externalUserId: string;
@@ -162,34 +218,6 @@ export async function createEndUserCheckout(input: {
     clientId: input.clientId,
     planId: input.planId,
   });
-
-  // End users usually already have a Starter subscription from provision.
-  // Creating a second subscription 409s on Konnect — change (or resume) instead.
-  const existing = await getPrimaryOpenMeterSubscriptionForAppUser({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  if (existing) {
-    const existingLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
-      input.clientId,
-      existing,
-    );
-    if (existingLocalPlanId !== plan.id) {
-      const changed = await changeAppUserSubscriptionPlan(input);
-      const checkoutUrl = changed.checkoutUrl?.trim();
-      if (!checkoutUrl) {
-        throw new Error(
-          "Plan change succeeded but Stripe Checkout was not started",
-        );
-      }
-      return {
-        checkoutUrl,
-        ...(changed.subscriptionId
-          ? { subscriptionId: changed.subscriptionId }
-          : {}),
-      };
-    }
-  }
 
   const client = getHostedAdminClient();
   const customer = await ensureOpenMeterCustomerForAppUser({
@@ -209,6 +237,32 @@ export async function createEndUserCheckout(input: {
     customerId: customer.id,
     customerKey: customer.key,
   });
+
+  // End users usually already have a Starter subscription from provision.
+  // Creating a second subscription 409s on Konnect; `/change` onto Paid
+  // requires a default payment method — which Checkout is about to collect.
+  let existing = await getPrimaryOpenMeterSubscriptionForAppUser({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  if (existing) {
+    const existingLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+      input.clientId,
+      existing,
+    );
+    if (existingLocalPlanId !== plan.id) {
+      const needsPaymentMethod = planRequiresPaymentMethod(plan);
+      const defaultPaymentMethodId = needsPaymentMethod
+        ? await getKonnectDefaultPaymentMethodId(customer.id)
+        : null;
+      if (needsPaymentMethod && !defaultPaymentMethodId) {
+        await clearOpenMeterSubscriptionForCheckout(existing);
+        existing = null;
+      } else {
+        return checkoutAfterPlanChange(input);
+      }
+    }
+  }
 
   const billingConfig = await getAppBillingConfig(input.clientId);
   const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
@@ -242,22 +296,24 @@ export async function createEndUserCheckout(input: {
         input.clientId,
         raced,
       );
-      if (racedLocalPlanId !== plan.id) {
-        const changed = await changeAppUserSubscriptionPlan(input);
-        const checkoutUrl = changed.checkoutUrl?.trim();
-        if (!checkoutUrl) {
-          throw new Error(
-            "Plan change succeeded but Stripe Checkout was not started",
-          );
+      if (racedLocalPlanId === plan.id) {
+        subscriptionId = raced.id;
+      } else {
+        const needsPaymentMethod = planRequiresPaymentMethod(plan);
+        const defaultPaymentMethodId = needsPaymentMethod
+          ? await getKonnectDefaultPaymentMethodId(customer.id)
+          : null;
+        if (needsPaymentMethod && !defaultPaymentMethodId) {
+          await clearOpenMeterSubscriptionForCheckout(raced);
+          const created = await client.subscriptions.create({
+            customerId: customer.id,
+            plan: { key: planKey },
+          });
+          subscriptionId = created?.id?.trim() || "";
+        } else {
+          return checkoutAfterPlanChange(input);
         }
-        return {
-          checkoutUrl,
-          ...(changed.subscriptionId
-            ? { subscriptionId: changed.subscriptionId }
-            : {}),
-        };
       }
-      subscriptionId = raced.id;
     }
   }
   if (!subscriptionId) {
