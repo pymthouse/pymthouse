@@ -1,51 +1,44 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getToken } from "next-auth/jwt";
-import { getNextAuthSecret } from "@/lib/next-auth-secret";
 
-const SESSION_COOKIE_NAMES = [
-  "next-auth.session-token",
-  "__Secure-next-auth.session-token",
-] as const;
+import {
+  buildApiCorsHeaders,
+  resolveBuilderApiCorsOrigin,
+} from "@/lib/api-cors";
 
-const nextAuthSecret = getNextAuthSecret({ suppressDevWarning: true });
-
+/**
+ * Node.js request proxy: conditional CORS for `/api/v1/*`.
+ *
+ * - App routes `/api/v1/apps/{clientId}/…`: Origin must be on that app's domain allowlist
+ *   (App Settings → Domain allowlist), or localhost.
+ * - Other `/api/v1/…`: platform allow (env, NEXTAUTH_URL, localhost, *.kongportals.com)
+ *   or Origin present on any app's allowlist.
+ */
 export async function proxy(request: NextRequest) {
-  const hasSessionCookie = SESSION_COOKIE_NAMES.some((name) =>
-    Boolean(request.cookies.get(name)?.value),
-  );
-  if (!hasSessionCookie || !nextAuthSecret) {
+  const { pathname } = request.nextUrl;
+  if (!pathname.startsWith("/api/v1")) {
     return NextResponse.next();
   }
 
-  try {
-    const token = await getToken({ req: request, secret: nextAuthSecret });
-    if (token) {
-      return NextResponse.next();
-    }
-  } catch {
-    // Invalid/mismatched encrypted cookie should be removed below.
-  }
+  const origin = request.headers.get("origin");
+  const allowOrigin = await resolveBuilderApiCorsOrigin(origin, pathname);
+  const corsHeaders = allowOrigin ? buildApiCorsHeaders(allowOrigin) : null;
 
-  const response = NextResponse.next();
-  const isHttps = request.nextUrl.protocol === "https:";
-
-  for (const name of SESSION_COOKIE_NAMES) {
-    response.cookies.set({
-      name,
-      value: "",
-      maxAge: 0,
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: isHttps,
+  if (request.method === "OPTIONS") {
+    return new NextResponse(null, {
+      status: 204,
+      headers: corsHeaders ?? { Vary: "Origin" },
     });
   }
 
+  const response = NextResponse.next();
+  if (corsHeaders) {
+    for (const [key, value] of Object.entries(corsHeaders)) {
+      response.headers.set(key, value);
+    }
+  }
   return response;
 }
 
 export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)",
-  ],
+  matcher: ["/api/v1/:path*"],
 };

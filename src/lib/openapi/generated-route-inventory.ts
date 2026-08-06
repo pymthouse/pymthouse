@@ -72,6 +72,7 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("get", "/api/v1/me/credits", "me/credits/route.ts", true, "excluded prefix: me/"),
   inventoryOp("get", "/api/v1/me/keys", "me/keys/route.ts", true, "excluded prefix: me/"),
   inventoryOp("get", "/api/v1/me/usage/requests", "me/usage/requests/route.ts", true, "excluded prefix: me/"),
+  inventoryOp("get", "/api/v1/network/register/challenge", "network/register/challenge/route.ts"),
   inventoryOp("get", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/oidc/interaction/{uid}", "oidc/interaction/[uid]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("get", "/api/v1/onboarding", "onboarding/route.ts", true, "excluded prefix: onboarding/"),
@@ -120,7 +121,8 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("post", "/api/v1/me/billing/payment-method", "me/billing/payment-method/route.ts", true, "excluded prefix: me/"),
   inventoryOp("post", "/api/v1/me/billing/resume-paid-plan", "me/billing/resume-paid-plan/route.ts", true, "excluded prefix: me/"),
   inventoryOp("post", "/api/v1/me/billing/upgrade-paid", "me/billing/upgrade-paid/route.ts", true, "excluded prefix: me/"),
-  inventoryOp("post", "/api/v1/network/key", "network/key/route.ts", true, "excluded prefix: network/"),
+  inventoryOp("post", "/api/v1/network/key", "network/key/route.ts", true, "excluded prefix: network/key/"),
+  inventoryOp("post", "/api/v1/network/register", "network/register/route.ts"),
   inventoryOp("post", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("post", "/api/v1/oidc/device/verify", "oidc/device/verify/route.ts", true, "excluded prefix: oidc/"),
   inventoryOp("post", "/api/v1/oidc/interaction/{uid}", "oidc/interaction/[uid]/route.ts", true, "excluded prefix: oidc/"),
@@ -138,6 +140,6 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("put", "/api/v1/oidc/{...oidc}", "oidc/[...oidc]/route.ts", true, "excluded prefix: oidc/"),
 ];
 
-export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = ["DELETE /api/v1/apps/{clientId}/users","DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}","GET /api/v1/apps/{clientId}/billing","GET /api/v1/apps/{clientId}/discovery-profiles","GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}","GET /api/v1/apps/{clientId}/manifest","GET /api/v1/apps/{clientId}/me/usage","GET /api/v1/apps/{clientId}/me/usage/balance","GET /api/v1/apps/{clientId}/me/usage/requests","GET /api/v1/apps/{clientId}/plans","GET /api/v1/apps/{clientId}/users","GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances","GET /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription","GET /api/v1/builder/apps/{clientId}/usage","GET /api/v1/builder/apps/{clientId}/usage/balance","GET /api/v1/end-users","GET /api/v1/health","GET /api/v1/marketplace","GET /api/v1/marketplace/{id}","GET /api/v1/pipeline-catalog","GET /api/v1/prices/eth-usd","GET /api/v1/user/usage","GET /api/v1/user/usage/balance","GET /api/v1/user/usage/requests","POST /api/v1/apps/{clientId}/billing/checkout","POST /api/v1/apps/{clientId}/oidc/token","POST /api/v1/apps/{clientId}/users","POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances","POST /api/v1/apps/{clientId}/users/{externalUserId}/keys","POST /api/v1/apps/{clientId}/users/{externalUserId}/token","POST /api/v1/auth/validate","POST /api/v1/end-users","PUT /api/v1/apps/{clientId}/users"];
+export const OPENAPI_PUBLIC_ROUTE_KEYS: readonly string[] = ["DELETE /api/v1/apps/{clientId}/users","DELETE /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}","GET /api/v1/apps/{clientId}/billing","GET /api/v1/apps/{clientId}/discovery-profiles","GET /api/v1/apps/{clientId}/discovery-profiles/{profileId}","GET /api/v1/apps/{clientId}/manifest","GET /api/v1/apps/{clientId}/me/usage","GET /api/v1/apps/{clientId}/me/usage/balance","GET /api/v1/apps/{clientId}/me/usage/requests","GET /api/v1/apps/{clientId}/plans","GET /api/v1/apps/{clientId}/users","GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances","GET /api/v1/apps/{clientId}/users/{externalUserId}/keys","GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription","GET /api/v1/builder/apps/{clientId}/usage","GET /api/v1/builder/apps/{clientId}/usage/balance","GET /api/v1/end-users","GET /api/v1/health","GET /api/v1/marketplace","GET /api/v1/marketplace/{id}","GET /api/v1/network/register/challenge","GET /api/v1/pipeline-catalog","GET /api/v1/prices/eth-usd","GET /api/v1/user/usage","GET /api/v1/user/usage/balance","GET /api/v1/user/usage/requests","POST /api/v1/apps/{clientId}/billing/checkout","POST /api/v1/apps/{clientId}/oidc/token","POST /api/v1/apps/{clientId}/users","POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances","POST /api/v1/apps/{clientId}/users/{externalUserId}/keys","POST /api/v1/apps/{clientId}/users/{externalUserId}/token","POST /api/v1/auth/validate","POST /api/v1/end-users","POST /api/v1/network/register","PUT /api/v1/apps/{clientId}/users"];
 
-export const OPENAPI_PUBLIC_ROUTE_COUNT = 35;
+export const OPENAPI_PUBLIC_ROUTE_COUNT = 37;
