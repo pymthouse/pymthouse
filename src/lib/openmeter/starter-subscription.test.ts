@@ -150,6 +150,17 @@ const planNotFoundError = () => new Error("plan not found");
 const stripeBillingError = () =>
   new Error("customers need a default payment method");
 
+function ensureForApp(
+  app: SeededDeveloperApp,
+  hintOpenMeterSubscriptionId?: string,
+) {
+  return sut.ensureStarterSubscriptionForAppUser({
+    clientId: app.clientId,
+    externalUserId: "external-1",
+    ...(hintOpenMeterSubscriptionId ? { hintOpenMeterSubscriptionId } : {}),
+  });
+}
+
 async function seedApp(): Promise<{
   app: SeededDeveloperApp;
   starter: typeof plans.$inferSelect;
@@ -241,10 +252,7 @@ dbTest("ensureStarterSubscriptionForAppUser returns the local plan when OpenMete
   t.after(() => cleanupTestApp(app));
   adminClient.isHostedAdminClientAvailable = () => false;
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.deepEqual(result, {
     openmeterSubscriptionId: null,
     planId: starter.id,
@@ -299,10 +307,7 @@ dbTest("ensureStarterSubscriptionForAppUser rejects an unsynced Starter plan", a
 
   await assert.rejects(
     () =>
-      sut.ensureStarterSubscriptionForAppUser({
-        clientId: app.clientId,
-        externalUserId: "external-1",
-      }),
+      ensureForApp(app),
     /Starter plan is not synced to OpenMeter/,
   );
 });
@@ -316,10 +321,7 @@ dbTest("ensureStarterSubscriptionForAppUser reuses an existing subscription", as
     customerId: CUSTOMER_ID,
   });
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.deepEqual(result, {
     openmeterSubscriptionId: "sub_existing",
     planId: starter.id,
@@ -340,11 +342,7 @@ dbTest("ensureStarterSubscriptionForAppUser trusts a verified hint", async (t) =
     throw new Error("should not query by plan key when the hint verifies");
   };
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-    hintOpenMeterSubscriptionId: "sub_hint",
-  });
+  const result = await ensureForApp(app, "sub_hint");
   assert.equal(result.openmeterSubscriptionId, "sub_hint");
 });
 
@@ -362,11 +360,7 @@ dbTest("ensureStarterSubscriptionForAppUser ignores a hint for another customer"
     customerId: CUSTOMER_ID,
   });
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-    hintOpenMeterSubscriptionId: "sub_hint",
-  });
+  const result = await ensureForApp(app, "sub_hint");
   assert.equal(result.openmeterSubscriptionId, "sub_by_key");
 });
 
@@ -374,10 +368,7 @@ dbTest("ensureStarterSubscriptionForAppUser creates a subscription by plan id", 
   const { app, starter } = await seedApp();
   t.after(() => cleanupTestApp(app));
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.deepEqual(result, {
     openmeterSubscriptionId: "sub_created",
     planId: starter.id,
@@ -396,10 +387,7 @@ dbTest("ensureStarterSubscriptionForAppUser rejects a create with no id", async 
 
   await assert.rejects(
     () =>
-      sut.ensureStarterSubscriptionForAppUser({
-        clientId: app.clientId,
-        externalUserId: "external-1",
-      }),
+      ensureForApp(app),
     /Failed to create OpenMeter Starter subscription/,
   );
 });
@@ -418,10 +406,7 @@ dbTest("ensureStarterSubscriptionForAppUser adopts the winner of a create confli
     throw conflictError();
   };
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.equal(result.openmeterSubscriptionId, "sub_raced");
   assert.equal(result.created, false);
 });
@@ -435,10 +420,7 @@ dbTest("ensureStarterSubscriptionForAppUser rethrows a conflict with no winner",
 
   await assert.rejects(
     () =>
-      sut.ensureStarterSubscriptionForAppUser({
-        clientId: app.clientId,
-        externalUserId: "external-1",
-      }),
+      ensureForApp(app),
     /already exists/,
   );
   assert.deepEqual(freeProfileApplied, []);
@@ -456,10 +438,7 @@ dbTest("ensureStarterSubscriptionForAppUser retries a Stripe setup error on the 
     return { id: "sub_after_profile", status: "active", customerId: CUSTOMER_ID };
   };
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.equal(result.openmeterSubscriptionId, "sub_after_profile");
   assert.deepEqual(freeProfileApplied, [CUSTOMER_ID]);
 });
@@ -480,10 +459,7 @@ dbTest("ensureStarterSubscriptionForAppUser adopts a conflict raised by the retr
     throw attempt === 1 ? stripeBillingError() : conflictError();
   };
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.equal(result.openmeterSubscriptionId, "sub_raced_retry");
   assert.equal(result.created, false);
 });
@@ -501,10 +477,7 @@ dbTest("ensureStarterSubscriptionForAppUser rethrows a failing retry", async (t)
 
   await assert.rejects(
     () =>
-      sut.ensureStarterSubscriptionForAppUser({
-        clientId: app.clientId,
-        externalUserId: "external-1",
-      }),
+      ensureForApp(app),
     /retry create exploded/,
   );
 });
@@ -528,10 +501,7 @@ dbTest("ensureStarterSubscriptionForAppUser re-syncs the plan on a plan-not-foun
     return { id: "sub_after_resync", status: "active", customerId: CUSTOMER_ID };
   };
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.deepEqual(result, {
     openmeterSubscriptionId: "sub_after_resync",
     planId: starter.id,
@@ -553,10 +523,7 @@ dbTest("ensureStarterSubscriptionForAppUser surfaces a failed recovery sync", as
 
   await assert.rejects(
     () =>
-      sut.ensureStarterSubscriptionForAppUser({
-        clientId: app.clientId,
-        externalUserId: "external-1",
-      }),
+      ensureForApp(app),
     /resync rejected/,
   );
 });
@@ -570,10 +537,7 @@ dbTest("ensureStarterSubscriptionForAppUser rethrows an unrelated create error",
 
   await assert.rejects(
     () =>
-      sut.ensureStarterSubscriptionForAppUser({
-        clientId: app.clientId,
-        externalUserId: "external-1",
-      }),
+      ensureForApp(app),
     /openmeter exploded/,
   );
 });
@@ -599,10 +563,7 @@ dbTest("ensureStarterSubscriptionForAppUser falls back to the plan key after a b
     return { id: "sub_by_key", status: "active", customerId: CUSTOMER_ID };
   };
 
-  const result = await sut.ensureStarterSubscriptionForAppUser({
-    clientId: app.clientId,
-    externalUserId: "external-1",
-  });
+  const result = await ensureForApp(app);
   assert.equal(result.openmeterSubscriptionId, "sub_by_key");
   assert.deepEqual(created[1]?.plan, {
     key: buildOpenMeterPlanKey(app.clientId, starter.id),

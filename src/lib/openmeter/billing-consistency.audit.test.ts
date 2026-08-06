@@ -192,6 +192,29 @@ function codes(findings: Array<{ code: string }>): string[] {
   return findings.map((f) => f.code);
 }
 
+/** Audit scoped to one seeded owner + app so parallel test files cannot bleed in. */
+function auditOwnerApp(app: SeededDeveloperApp) {
+  return sut.auditBillingConsistency({
+    ownerId: app.userId,
+    clientId: app.clientId,
+  });
+}
+
+async function seedPhaseOutPlan(
+  app: SeededDeveloperApp,
+  overrides: Partial<typeof plans.$inferInsert> = {},
+): Promise<void> {
+  await db.insert(plans).values({
+    id: `plan-phaseout-${randomUUID()}`,
+    clientId: app.clientId,
+    name: `Legacy ${randomUUID().slice(0, 8)}`,
+    status: "phase_out",
+    phaseOutAt: "2020-01-01T00:00:00.000Z",
+    openmeterPlanId: "plan_legacy_pro",
+    ...overrides,
+  });
+}
+
 dbTest("auditBillingConsistency reports an unconfigured OpenMeter", async () => {
   adminClient.isHostedAdminClientAvailable = () => false;
   const findings = await sut.auditBillingConsistency({ ownerId: "user-anything" });
@@ -248,10 +271,7 @@ dbTest("auditBillingConsistency is quiet for a healthy owner wallet", async (t) 
     usageDiscountUsdMicros: STARTER_MICROS,
   });
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.deepEqual(codes(findings), []);
 });
 
@@ -263,10 +283,7 @@ dbTest("auditBillingConsistency flags a Starter plan missing from Konnect", asyn
     { id: "sub_owner", status: "active", planId: null, planKey: null },
   ];
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("starter_openmeter_plan_missing"));
   assert.ok(codes(findings).includes("owner_subscription_missing_plan_id"));
   assert.ok(starter.openmeterPlanId);
@@ -280,10 +297,7 @@ dbTest("auditBillingConsistency flags an unsynced Starter row", async (t) => {
     .set({ openmeterPlanId: null })
     .where(eq(plans.id, starter.id));
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("starter_openmeter_plan_id_missing"));
 });
 
@@ -307,10 +321,7 @@ dbTest("auditBillingConsistency reports a missing owner customer", async (t) => 
   t.after(() => cleanupTestApp(app));
   customers.findOpenMeterCustomerByKey = async () => null;
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("owner_customer_missing"));
 });
 
@@ -321,10 +332,7 @@ dbTest("auditBillingConsistency reports a failed owner customer lookup", async (
     throw new Error("konnect customers list failed");
   };
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   const lookup = findings.find((f) => f.code === "owner_customer_lookup_failed");
   assert.equal(lookup?.message, "konnect customers list failed");
 });
@@ -335,10 +343,7 @@ dbTest("auditBillingConsistency flags a chargeable owner without Stripe app data
   stripeCustomerData.getStripeCustomerAppDataId = async () => null;
   paymentMethod.ownerHasChargeablePaymentMethod = async () => true;
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("owner_missing_stripe_app_data"));
 });
 
@@ -348,10 +353,7 @@ dbTest("auditBillingConsistency ignores missing Stripe app data without a card",
   stripeCustomerData.getStripeCustomerAppDataId = async () => null;
   paymentMethod.ownerHasChargeablePaymentMethod = async () => null;
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(!codes(findings).includes("owner_missing_stripe_app_data"));
 });
 
@@ -363,10 +365,7 @@ dbTest("auditBillingConsistency warns about a sandbox profile with a card", asyn
   stripeCustomerData.getKonnectCustomerBillingProfileId = async () => "bp_sandbox";
   paymentMethod.ownerHasChargeablePaymentMethod = async () => true;
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("owner_sandbox_billing_profile"));
 });
 
@@ -378,10 +377,7 @@ dbTest("auditBillingConsistency ignores a non-sandbox billing profile", async (t
   stripeCustomerData.getKonnectCustomerBillingProfileId = async () => "bp_stripe";
   paymentMethod.ownerHasChargeablePaymentMethod = async () => true;
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(!codes(findings).includes("owner_sandbox_billing_profile"));
 });
 
@@ -392,10 +388,7 @@ dbTest("auditBillingConsistency reports no active owner subscription", async (t)
     { id: "sub_cancelled", status: "canceled" },
   ];
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("owner_no_active_subscription"));
 });
 
@@ -412,10 +405,7 @@ dbTest("auditBillingConsistency warns on duplicate active owner subscriptions", 
     { id: "sub_b", status: "trialing", planId: "plan_owner_starter", planKey: null },
   ];
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   const duplicate = findings.find(
     (f) => f.code === "owner_multiple_active_subscriptions",
   );
@@ -428,10 +418,7 @@ dbTest("auditBillingConsistency names subjects carrying unattributed usage", asy
   customers.listOwnedPublicClientIds = async () => [app.clientId];
   usageBySubject.set(`owner:${app.userId}`, 250_000n);
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   const leak = findings.find((f) => f.code === "usage_on_unattributed_subject");
   assert.deepEqual(leak?.details?.unattributed, [`owner:${app.userId}`]);
 });
@@ -441,10 +428,7 @@ dbTest("auditBillingConsistency treats an unreadable meter as no usage", async (
   t.after(() => cleanupTestApp(app));
   meterQueryFails = true;
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(!codes(findings).includes("usage_on_unattributed_subject"));
 });
 
@@ -457,10 +441,7 @@ dbTest("auditBillingConsistency flags a blocking spendable gate", async (t) => {
     usageAttribution: { subjectKeys: [key, `owner:${key}`] },
   });
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   const gate = findings.find(
     (f) => f.code === "spendable_gate_blocks_with_unused_allowance",
   );
@@ -476,10 +457,7 @@ dbTest("auditBillingConsistency reads credit balances into the gate check", asyn
   spendable.getRemainingPlanDiscountUsdMicros = async () => 3_000_000n;
   spendable.getSpendableUsdMicros = async () => "5000000";
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(!codes(findings).includes("spendable_sum_mismatch"));
   assert.ok(!codes(findings).includes("spendable_gate_blocks_with_unused_allowance"));
 });
@@ -487,15 +465,7 @@ dbTest("auditBillingConsistency reads credit balances into the gate check", asyn
 dbTest("auditBillingConsistency reports phase-out plans past their deadline", async (t) => {
   const { app } = await seedOwnerWithStarter();
   t.after(() => cleanupTestApp(app));
-  const phaseOutId = `plan-phaseout-${randomUUID()}`;
-  await db.insert(plans).values({
-    id: phaseOutId,
-    clientId: app.clientId,
-    name: "Legacy Pro",
-    status: "phase_out",
-    phaseOutAt: "2020-01-01T00:00:00.000Z",
-    openmeterPlanId: "plan_legacy_pro",
-  });
+  await seedPhaseOutPlan(app);
   konnectSubscriptions.countActiveKonnectSubscriptionsForPlan = async () => 4;
 
   const findings = await sut.auditBillingConsistency({ clientId: app.clientId });
@@ -508,14 +478,7 @@ dbTest("auditBillingConsistency reports phase-out plans past their deadline", as
 dbTest("auditBillingConsistency warns when the subscriber count is unreadable", async (t) => {
   const { app } = await seedOwnerWithStarter();
   t.after(() => cleanupTestApp(app));
-  await db.insert(plans).values({
-    id: `plan-phaseout-${randomUUID()}`,
-    clientId: app.clientId,
-    name: "Legacy Pro",
-    status: "phase_out",
-    phaseOutAt: "2020-01-01T00:00:00.000Z",
-    openmeterPlanId: "plan_legacy_pro",
-  });
+  await seedPhaseOutPlan(app);
   konnectSubscriptions.countActiveKonnectSubscriptionsForPlan = async () => {
     throw new Error("konnect subscriptions list failed");
   };
@@ -530,21 +493,8 @@ dbTest("auditBillingConsistency warns when the subscriber count is unreadable", 
 dbTest("auditBillingConsistency ignores phase-out plans before the deadline", async (t) => {
   const { app } = await seedOwnerWithStarter();
   t.after(() => cleanupTestApp(app));
-  await db.insert(plans).values({
-    id: `plan-phaseout-${randomUUID()}`,
-    clientId: app.clientId,
-    name: "Future Pro",
-    status: "phase_out",
-    phaseOutAt: "2099-01-01T00:00:00.000Z",
-    openmeterPlanId: "plan_future_pro",
-  });
-  await db.insert(plans).values({
-    id: `plan-phaseout-${randomUUID()}`,
-    clientId: app.clientId,
-    name: "Unsynced Pro",
-    status: "phase_out",
-    phaseOutAt: "2020-01-01T00:00:00.000Z",
-  });
+  await seedPhaseOutPlan(app, { phaseOutAt: "2099-01-01T00:00:00.000Z" });
+  await seedPhaseOutPlan(app, { openmeterPlanId: null });
 
   const findings = await sut.auditBillingConsistency({ clientId: app.clientId });
   assert.ok(!codes(findings).includes("phase_out_subscribers_past_deadline"));
@@ -558,10 +508,7 @@ dbTest("auditBillingConsistency warns when the Owner Paid plan is unpublished", 
     throw new Error("konnect plans list failed");
   };
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("owner_paid_plan_missing"));
 });
 
@@ -577,10 +524,7 @@ dbTest("auditBillingConsistency flags Owner Paid allowance drift", async (t) => 
     usageDiscountUsdMicros: STARTER_MICROS,
   });
 
-  const findings = await sut.auditBillingConsistency({
-    ownerId: app.userId,
-    clientId: app.clientId,
-  });
+  const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("owner_paid_plan_allowance_drift"));
 });
 

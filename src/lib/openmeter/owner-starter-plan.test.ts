@@ -166,6 +166,42 @@ const conflictError = () => new Error("conflict error: subscription already exis
 const planNotFoundError = () => new Error("plan not found");
 const stripeBillingError = () => new Error("invalid billing setup");
 
+/** The common case: the Owner Starter plan for the resolved amount is published. */
+function withPublishedPlan(planId = PLAN_ID): void {
+  allowancePlan.findOpenMeterPlanByKey = async () => ({
+    id: planId,
+    status: "active",
+  });
+}
+
+/** Owner is on the base Starter plan but their allowance now maps elsewhere. */
+function withOffAmountStarter(): void {
+  ownerBillingConfig.resolveOwnerStarterIncludedUsdMicros = async () => "9000000";
+  withPublishedPlan("plan_amount_keyed");
+  subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
+    { id: "sub_base", status: "active", planKey: STARTER_KEY, planId: PLAN_ID },
+  ];
+}
+
+/** Konnect refuses the in-place subscription change. */
+function withFailingChange(): void {
+  konnectSubscriptions.changeKonnectSubscription = async () => {
+    throw new Error("change rejected");
+  };
+}
+
+/** Drive `subscriptions.create` through one outcome per attempt (last repeats). */
+function createSequence(
+  ...steps: Array<() => Promise<{ id?: string } | null>>
+): void {
+  let attempt = 0;
+  subscriptionsCreate = async () => {
+    const step = steps[Math.min(attempt, steps.length - 1)]!;
+    attempt += 1;
+    return step();
+  };
+}
+
 test("ensureOwnerStarterPlanSynced rejects when OpenMeter is unavailable", async () => {
   adminClient.isHostedAdminClientAvailable = () => false;
   await assert.rejects(
@@ -192,10 +228,7 @@ test("ensureOwnerStarterPlanSynced rejects when the trial feature is missing", a
 
 test("ensureOwnerStarterPlanSynced reuses a published plan without publishing", async () => {
   let published = 0;
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   allowancePlan.publishOpenMeterPlanBestEffort = async (
     _client: unknown,
     planId: string,
@@ -253,10 +286,7 @@ test("ensureOwnerStarterPlanSynced creates and publishes an amount-keyed plan", 
 test("ensureOwnerStarterPlanSynced falls back to the platform default amount", async () => {
   platformDefault.resolvePlatformOwnerStarterIncludedUsdMicros = async () =>
     "7000000";
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
 
   const ref = await sut.ensureOwnerStarterPlanSynced();
   assert.equal(ref.key, STARTER_KEY);
@@ -311,10 +341,7 @@ test("ensureOwnerStarterSubscription returns empty when OpenMeter is unavailable
 });
 
 test("ensureOwnerStarterSubscription keeps a matching Starter on the free profile", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionRead.findOpenMeterSubscriptionByPlanKey = async () => ({
     id: "sub_starter",
     planKey: STARTER_KEY,
@@ -333,10 +360,7 @@ test("ensureOwnerStarterSubscription keeps a matching Starter on the free profil
 });
 
 test("ensureOwnerStarterSubscription trusts a verified hint subscription", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionRead.verifyOpenMeterSubscriptionId = async () => ({
     id: "sub_hint",
     customerId: CUSTOMER_ID,
@@ -361,10 +385,7 @@ test("ensureOwnerStarterSubscription trusts a verified hint subscription", async
 });
 
 test("ensureOwnerStarterSubscription ignores a hint owned by another customer", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionRead.verifyOpenMeterSubscriptionId = async () => ({
     id: "sub_other",
     customerId: "cust_someone_else",
@@ -385,10 +406,7 @@ test("ensureOwnerStarterSubscription ignores a hint owned by another customer", 
 });
 
 test("ensureOwnerStarterSubscription leaves an unknown wallet subscription alone", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
     { id: "sub_expired", status: "expired", planKey: STARTER_KEY, planId: PLAN_ID },
     { id: "sub_unknown", status: "pending", planKey: "some_app_plan", planId: "p9" },
@@ -404,14 +422,7 @@ test("ensureOwnerStarterSubscription leaves an unknown wallet subscription alone
 });
 
 test("ensureOwnerStarterSubscription changes an off-amount Starter in place", async () => {
-  ownerBillingConfig.resolveOwnerStarterIncludedUsdMicros = async () => "9000000";
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: "plan_amount_keyed",
-    status: "active",
-  });
-  subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
-    { id: "sub_base", status: "active", planKey: STARTER_KEY, planId: PLAN_ID },
-  ];
+  withOffAmountStarter();
 
   const result = await sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID });
   assert.deepEqual(result, {
@@ -427,17 +438,8 @@ test("ensureOwnerStarterSubscription changes an off-amount Starter in place", as
 });
 
 test("ensureOwnerStarterSubscription recreates then cancels when the change fails", async () => {
-  ownerBillingConfig.resolveOwnerStarterIncludedUsdMicros = async () => "9000000";
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: "plan_amount_keyed",
-    status: "active",
-  });
-  subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
-    { id: "sub_base", status: "active", planKey: STARTER_KEY, planId: PLAN_ID },
-  ];
-  konnectSubscriptions.changeKonnectSubscription = async () => {
-    throw new Error("change rejected");
-  };
+  withOffAmountStarter();
+  withFailingChange();
   subscriptionsCreate = async () => ({ id: "sub_recreated" });
 
   const result = await sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID });
@@ -451,17 +453,8 @@ test("ensureOwnerStarterSubscription recreates then cancels when the change fail
 });
 
 test("ensureOwnerStarterSubscription keeps the recreated subscription when cancel fails", async () => {
-  ownerBillingConfig.resolveOwnerStarterIncludedUsdMicros = async () => "9000000";
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: "plan_amount_keyed",
-    status: "active",
-  });
-  subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
-    { id: "sub_base", status: "active", planKey: STARTER_KEY, planId: PLAN_ID },
-  ];
-  konnectSubscriptions.changeKonnectSubscription = async () => {
-    throw new Error("change rejected");
-  };
+  withOffAmountStarter();
+  withFailingChange();
   subscriptionsCancel = async () => {
     throw new Error("cancel rejected");
   };
@@ -472,17 +465,8 @@ test("ensureOwnerStarterSubscription keeps the recreated subscription when cance
 });
 
 test("ensureOwnerStarterSubscription surfaces the change error when recreate fails", async () => {
-  ownerBillingConfig.resolveOwnerStarterIncludedUsdMicros = async () => "9000000";
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: "plan_amount_keyed",
-    status: "active",
-  });
-  subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
-    { id: "sub_base", status: "active", planKey: STARTER_KEY, planId: PLAN_ID },
-  ];
-  konnectSubscriptions.changeKonnectSubscription = async () => {
-    throw new Error("change rejected");
-  };
+  withOffAmountStarter();
+  withFailingChange();
   subscriptionsCreate = async () => {
     throw new Error("recreate rejected");
   };
@@ -495,10 +479,7 @@ test("ensureOwnerStarterSubscription surfaces the change error when recreate fai
 });
 
 test("ensureOwnerStarterSubscription tolerates a failing subscription list", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => {
     throw new Error("list unavailable");
   };
@@ -514,10 +495,7 @@ test("ensureOwnerStarterSubscription tolerates a failing subscription list", asy
 });
 
 test("ensureOwnerStarterSubscription skips creation when createIfMissing is false", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
 
   const result = await sut.ensureOwnerStarterSubscription({
     ownerUserId: OWNER_ID,
@@ -533,10 +511,7 @@ test("ensureOwnerStarterSubscription skips creation when createIfMissing is fals
 });
 
 test("ensureOwnerStarterSubscription rejects when create returns no id", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionsCreate = async () => null;
 
   await assert.rejects(
@@ -554,14 +529,12 @@ test("ensureOwnerStarterSubscription resyncs the plan on a plan-not-found create
     lookups.push(planKey);
     return { id: PLAN_ID, status: "active" };
   };
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) {
+  createSequence(
+    async () => {
       throw planNotFoundError();
-    }
-    return { id: "sub_after_resync" };
-  };
+    },
+    async () => ({ id: "sub_after_resync" }),
+  );
 
   const result = await sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID });
   assert.deepEqual(result, {
@@ -574,10 +547,7 @@ test("ensureOwnerStarterSubscription resyncs the plan on a plan-not-found create
 });
 
 test("ensureOwnerStarterSubscription adopts the winner of a create race", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   let queried = 0;
   subscriptionRead.findOpenMeterSubscriptionByPlanKey = async () => {
     queried += 1;
@@ -597,10 +567,7 @@ test("ensureOwnerStarterSubscription adopts the winner of a create race", async 
 });
 
 test("ensureOwnerStarterSubscription rethrows a conflict with no winning subscription", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionsCreate = async () => {
     throw conflictError();
   };
@@ -612,18 +579,13 @@ test("ensureOwnerStarterSubscription rethrows a conflict with no winning subscri
 });
 
 test("ensureOwnerStarterSubscription retries a Stripe billing error on the free profile", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) {
+  withPublishedPlan();
+  createSequence(
+    async () => {
       throw stripeBillingError();
-    }
-    return { id: "sub_after_profile" };
-  };
+    },
+    async () => ({ id: "sub_after_profile" }),
+  );
 
   const result = await sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID });
   assert.equal(result.openmeterSubscriptionId, "sub_after_profile");
@@ -632,18 +594,13 @@ test("ensureOwnerStarterSubscription retries a Stripe billing error on the free 
 });
 
 test("ensureOwnerStarterSubscription rejects when the billing retry returns no id", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) {
+  withPublishedPlan();
+  createSequence(
+    async () => {
       throw stripeBillingError();
-    }
-    return {};
-  };
+    },
+    async () => ({}),
+  );
 
   await assert.rejects(
     () => sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID }),
@@ -652,10 +609,7 @@ test("ensureOwnerStarterSubscription rejects when the billing retry returns no i
 });
 
 test("ensureOwnerStarterSubscription rethrows an unrecognized create error", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   subscriptionsCreate = async () => {
     throw new Error("openmeter exploded");
   };
@@ -667,18 +621,13 @@ test("ensureOwnerStarterSubscription rethrows an unrecognized create error", asy
 });
 
 test("plan-sync recovery rejects when the resynced create returns no id", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) {
+  withPublishedPlan();
+  createSequence(
+    async () => {
       throw planNotFoundError();
-    }
-    return {};
-  };
+    },
+    async () => ({}),
+  );
 
   await assert.rejects(
     () => sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID }),
@@ -687,17 +636,16 @@ test("plan-sync recovery rejects when the resynced create returns no id", async 
 });
 
 test("plan-sync recovery applies the free profile on a Stripe billing error", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) throw planNotFoundError();
-    if (attempt === 2) throw stripeBillingError();
-    return { id: "sub_recovered" };
-  };
+  withPublishedPlan();
+  createSequence(
+    async () => {
+      throw planNotFoundError();
+    },
+    async () => {
+      throw stripeBillingError();
+    },
+    async () => ({ id: "sub_recovered" }),
+  );
 
   const result = await sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID });
   assert.equal(result.openmeterSubscriptionId, "sub_recovered");
@@ -705,17 +653,16 @@ test("plan-sync recovery applies the free profile on a Stripe billing error", as
 });
 
 test("plan-sync recovery rejects when the profile retry returns no id", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) throw planNotFoundError();
-    if (attempt === 2) throw stripeBillingError();
-    return null;
-  };
+  withPublishedPlan();
+  createSequence(
+    async () => {
+      throw planNotFoundError();
+    },
+    async () => {
+      throw stripeBillingError();
+    },
+    async () => null,
+  );
 
   await assert.rejects(
     () => sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID }),
@@ -724,16 +671,15 @@ test("plan-sync recovery rejects when the profile retry returns no id", async ()
 });
 
 test("plan-sync recovery rethrows a non-billing create error", async () => {
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
-  let attempt = 0;
-  subscriptionsCreate = async () => {
-    attempt += 1;
-    if (attempt === 1) throw planNotFoundError();
-    throw new Error("second create exploded");
-  };
+  withPublishedPlan();
+  createSequence(
+    async () => {
+      throw planNotFoundError();
+    },
+    async () => {
+      throw new Error("second create exploded");
+    },
+  );
 
   await assert.rejects(
     () => sut.ensureOwnerStarterSubscription({ ownerUserId: OWNER_ID }),
@@ -743,10 +689,7 @@ test("plan-sync recovery rethrows a non-billing create error", async () => {
 
 test("ensureOwnerStarterSubscription forwards owned client ids to the customer ensure", async () => {
   const seen: Array<string[]> = [];
-  allowancePlan.findOpenMeterPlanByKey = async () => ({
-    id: PLAN_ID,
-    status: "active",
-  });
+  withPublishedPlan();
   customers.ensureOwnerCustomer = async (
     _client: unknown,
     _ownerUserId: string,

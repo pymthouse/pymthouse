@@ -153,6 +153,36 @@ async function seedPaidPlan(
   return rows[0]!;
 }
 
+/**
+ * Seed an app whose end-user is already on `currentPriceAmount` and wants to
+ * move to `targetPriceAmount`, with the current OpenMeter subscription resolved.
+ */
+async function seedPlanChange(
+  t: { after: (fn: () => Promise<void> | void) => void },
+  amounts: { currentPriceAmount: string; targetPriceAmount: string },
+): Promise<{
+  app: SeededDeveloperApp;
+  current: typeof plans.$inferSelect;
+  target: typeof plans.$inferSelect;
+}> {
+  const app = await seedDeveloperAppWithClient();
+  t.after(() => cleanupTestApp(app));
+  const current = await seedPaidPlan(app.clientId, {
+    priceAmount: amounts.currentPriceAmount,
+    type: amounts.currentPriceAmount === "0" ? "free" : "subscription",
+  });
+  const target = await seedPaidPlan(app.clientId, {
+    priceAmount: amounts.targetPriceAmount,
+    type: amounts.targetPriceAmount === "0" ? "free" : "subscription",
+  });
+  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
+    id: "om_sub_current",
+  });
+  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
+    current.id;
+  return { app, current, target };
+}
+
 async function readCachedSubscription(
   app: SeededDeveloperApp,
   externalUserId: string,
@@ -403,18 +433,10 @@ dbTest("changeAppUserSubscriptionPlan requires Konnect routes", async (t) => {
 });
 
 dbTest("changeAppUserSubscriptionPlan downgrades at the next billing cycle", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const current = await seedPaidPlan(app.clientId, { priceAmount: "50" });
-  const target = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target } = await seedPlanChange(t, {
+    currentPriceAmount: "50",
+    targetPriceAmount: "0",
   });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
-    current.id;
   konnectSubscriptions.changeKonnectSubscription = async (input) => {
     konnectChanges.push(input);
     return { next: { id: "om_sub_next" } };
@@ -435,17 +457,10 @@ dbTest("changeAppUserSubscriptionPlan downgrades at the next billing cycle", asy
 });
 
 dbTest("changeAppUserSubscriptionPlan keeps the cached row on a later change", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const first = await seedPaidPlan(app.clientId, { priceAmount: "5" });
-  const second = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target: second } = await seedPlanChange(t, {
+    currentPriceAmount: "5",
+    targetPriceAmount: "0",
   });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () => first.id;
 
   await sut.changeAppUserSubscriptionPlan({
     clientId: app.clientId,
@@ -473,18 +488,10 @@ dbTest("changeAppUserSubscriptionPlan keeps the cached row on a later change", a
 });
 
 dbTest("changeAppUserSubscriptionPlan collects a card when upgrading to a paid plan", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const current = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target } = await seedPlanChange(t, {
+    currentPriceAmount: "0",
+    targetPriceAmount: "30",
   });
-  const target = await seedPaidPlan(app.clientId, { priceAmount: "30" });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
-    current.id;
 
   const result = await sut.changeAppUserSubscriptionPlan({
     clientId: app.clientId,
@@ -501,18 +508,10 @@ dbTest("changeAppUserSubscriptionPlan collects a card when upgrading to a paid p
 });
 
 dbTest("changeAppUserSubscriptionPlan skips checkout when a card is on file", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const current = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target } = await seedPlanChange(t, {
+    currentPriceAmount: "0",
+    targetPriceAmount: "30",
   });
-  const target = await seedPaidPlan(app.clientId, { priceAmount: "30" });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
-    current.id;
   stripeCustomerData.getKonnectDefaultPaymentMethodId = async () => "pm_existing";
 
   const result = await sut.changeAppUserSubscriptionPlan({
@@ -527,18 +526,10 @@ dbTest("changeAppUserSubscriptionPlan skips checkout when a card is on file", as
 });
 
 dbTest("changeAppUserSubscriptionPlan uses Connect checkout for a merchant app", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const current = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target } = await seedPlanChange(t, {
+    currentPriceAmount: "0",
+    targetPriceAmount: "30",
   });
-  const target = await seedPaidPlan(app.clientId, { priceAmount: "30" });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
-    current.id;
   merchantConnect.isMerchantConnectPaymentsReady = () => true;
 
   const result = await sut.changeAppUserSubscriptionPlan({
@@ -553,18 +544,10 @@ dbTest("changeAppUserSubscriptionPlan uses Connect checkout for a merchant app",
 });
 
 dbTest("changeAppUserSubscriptionPlan blocks a paid upgrade for a connect-only app", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const current = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target } = await seedPlanChange(t, {
+    currentPriceAmount: "0",
+    targetPriceAmount: "30",
   });
-  const target = await seedPaidPlan(app.clientId, { priceAmount: "30" });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
-    current.id;
   merchantConnect.connectPaymentsOnlyEnabled = () => true;
 
   await assert.rejects(
@@ -579,18 +562,10 @@ dbTest("changeAppUserSubscriptionPlan blocks a paid upgrade for a connect-only a
 });
 
 dbTest("changeAppUserSubscriptionPlan falls back to the current subscription id", async (t) => {
-  const app = await seedDeveloperAppWithClient();
-  t.after(() => cleanupTestApp(app));
-  const current = await seedPaidPlan(app.clientId, { priceAmount: "5" });
-  const target = await seedPaidPlan(app.clientId, {
-    priceAmount: "0",
-    type: "free",
+  const { app, target } = await seedPlanChange(t, {
+    currentPriceAmount: "5",
+    targetPriceAmount: "0",
   });
-  subscriptionRead.getPrimaryOpenMeterSubscriptionForAppUser = async () => ({
-    id: "om_sub_current",
-  });
-  subscriptionRead.resolveLocalPlanIdFromOpenMeterSubscription = async () =>
-    current.id;
   konnectSubscriptions.changeKonnectSubscription = async (input) => {
     konnectChanges.push(input);
     return {};
