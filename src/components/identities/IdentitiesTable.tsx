@@ -100,7 +100,7 @@ function IdentityApiKeyCell({
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Link
-        href={`/apps/${appId}?tab=credentials`}
+        href={`/apps/${appId}/credentials`}
         className="font-mono text-xs text-zinc-300 hover:text-emerald-400 transition-colors"
         title={row.apiKey.keyPrefix ?? undefined}
       >

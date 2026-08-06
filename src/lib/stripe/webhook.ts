@@ -26,6 +26,23 @@ export function requireStripeWebhookSecret(): string {
 }
 
 /**
+ * Prefer a dedicated Connect endpoint secret; fall back to the platform
+ * webhook secret only when `STRIPE_CONNECT_WEBHOOK_SECRET` is unset/empty.
+ */
+export function resolveConnectWebhookSecret(): string {
+  const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
+  if (!connectSecret) {
+    return requireStripeWebhookSecret();
+  }
+  if (!connectSecret.startsWith("whsec_")) {
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  return connectSecret;
+}
+
+/**
  * Verify Stripe-Signature (t=…,v1=…). Accepts any matching v1 (rotation can
  * send multiple). Returns false on any mismatch / skew.
  */

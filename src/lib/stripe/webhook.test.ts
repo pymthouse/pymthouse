@@ -5,6 +5,7 @@ import { paymentsTabErrorMessage } from "./payments-tab-errors";
 import {
   merchantConnectOAuthErrorCode,
   parseStripeAccountUpdated,
+  resolveConnectWebhookSecret,
   sanitizeStripeOAuthProviderError,
   verifyStripeWebhookSignature,
 } from "./webhook";
@@ -135,4 +136,25 @@ test("paymentsTabErrorMessage ignores free-form phishing text", () => {
     null,
   );
   assert.equal(paymentsTabErrorMessage(null), null);
+});
+
+test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (t) => {
+  const prevConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  const prevPlatform = process.env.STRIPE_WEBHOOK_SECRET;
+  t.after(() => {
+    if (prevConnect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+    else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = prevConnect;
+    if (prevPlatform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
+    else process.env.STRIPE_WEBHOOK_SECRET = prevPlatform;
+  });
+
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
+  delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  assert.equal(resolveConnectWebhookSecret(), "whsec_platform");
+
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
+  assert.equal(resolveConnectWebhookSecret(), "whsec_connect");
+
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "not-a-whsec";
+  assert.throws(() => resolveConnectWebhookSecret(), /must start with whsec_/);
 });

@@ -2,6 +2,7 @@ import {
   platformDefaultApplicationFeeBps,
   platformDefaultEndUserCap,
 } from "@/lib/billing/platform-billing-defaults";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
@@ -17,21 +18,26 @@ import {
 import { getHostedOpenMeterUrl } from "./constants";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
+  type BillingProfileSupplierInput,
+  buildOpenMeterSupplierAddress,
+} from "./billing-supplier";
+import {
   ensureKonnectCustomerStripeBilling,
   ensureStripeCustomerAppData,
   setKonnectCustomerBillingProfile,
 } from "./stripe-customer-data";
 
-/** ISO 3166-1 alpha-2; required on billing profile supplier for OpenMeter invoicing. */
-function billingSupplierCountryCode(): string {
-  const raw = process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY?.trim() || "US";
-  return raw.toUpperCase();
-}
+export type { BillingProfileSupplierInput } from "./billing-supplier";
 
-export function buildBillingProfileSupplier(displayName: string) {
+export function buildBillingProfileSupplier(
+  displayName: string,
+  supplier?: BillingProfileSupplierInput,
+) {
+  const taxId = supplier?.taxId?.trim();
   return {
     name: displayName,
-    addresses: [{ country: billingSupplierCountryCode() }],
+    addresses: [buildOpenMeterSupplierAddress(supplier)],
+    ...(taxId ? { taxId: { code: taxId } } : {}),
   };
 }
 
@@ -357,6 +363,50 @@ export async function prepareAppCustomerStripeBilling(input: {
   customerKey?: string;
   name?: string;
 }): Promise<void> {
+  const config = await getAppBillingConfig(input.clientId);
+  const merchantProfileId =
+    config?.openmeterMerchantBillingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+    null;
+
+  // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
+  if (config?.billingMode === "merchant") {
+    if (!merchantProfileId) {
+      throw new Error(
+        "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
+      );
+    }
+    await assignMerchantCustomInvoicingProfile({
+      client: input.client,
+      customerId: input.customerId,
+      billingProfileId: merchantProfileId,
+    });
+    const accountId = config.stripeConnectedAccountId?.trim();
+    if (accountId) {
+      const { resolveMerchantChargeModel } = await import("./supplier-sync");
+      const { merchantSettlementMetadata } = await import(
+        "./settlement-metadata"
+      );
+      const { ensureCustomerMetadata } = await import("./customers");
+      const chargeModel = resolveMerchantChargeModel(config);
+      if (chargeModel !== "direct") {
+        console.warn(
+          "merchant customer settlement metadata: supplier incomplete; using destination",
+          sanitizeForLog(input.clientId),
+        );
+      }
+      await ensureCustomerMetadata(
+        input.client,
+        input.customerId,
+        merchantSettlementMetadata({
+          connectedAccountId: accountId,
+          chargeModel,
+        }),
+      );
+    }
+    return;
+  }
+
   const ready = await ensureAppStripeBillingReady({ clientId: input.clientId });
   const useKonnect = shouldUseKonnectRoutes(
     getHostedOpenMeterUrl(),
@@ -657,4 +707,29 @@ export async function upsertAppBillingConfig(
     updatedAt: now,
     ...values,
   });
+}
+
+/**
+ * Pin an end-user OM customer to the shared merchant Custom Invoicing billing
+ * profile (never the org default). Requires OPENMETER_MERCHANT_BILLING_PROFILE_ID.
+ */
+export async function assignMerchantCustomInvoicingProfile(input: {
+  client: OpenMeter;
+  customerId: string;
+  billingProfileId?: string;
+}): Promise<string> {
+  const profileId =
+    input.billingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim();
+  if (!profileId) {
+    throw new Error(
+      "OPENMETER_MERCHANT_BILLING_PROFILE_ID is required to assign merchant Custom Invoicing overrides",
+    );
+  }
+  await assignCustomerBillingProfileOverride({
+    client: input.client,
+    customerId: input.customerId,
+    billingProfileId: profileId,
+  });
+  return profileId;
 }

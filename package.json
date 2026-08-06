@@ -21,6 +21,7 @@
     "api-keys:hard-cutover": "npx tsx scripts/api-keys-hard-cutover.ts",
     "oidc:seed": "npx tsx scripts/seed-oidc.ts",
     "openmeter:bootstrap": "npx tsx scripts/openmeter-bootstrap.ts",
+    "openmeter:custom-invoicing:bootstrap": "npx tsx scripts/openmeter-custom-invoicing-bootstrap.ts",
     "openmeter:ensure-customer": "npx tsx scripts/openmeter-ensure-customer.ts",
     "openmeter:migrate-starter-prepaid": "npx tsx scripts/openmeter-migrate-starter-prepaid.ts",
     "openmeter:fix-starter-allowance": "npx tsx scripts/openmeter-fix-starter-allowance.ts",

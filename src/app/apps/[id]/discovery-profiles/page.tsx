@@ -1,14 +1,8 @@
-import { redirect } from "next/navigation";
+"use client";
 
-/**
- * Network discovery allowlist now lives on the main app page under Billing
- * Plans (`?tab=plans`). Keep this URL as a redirect for bookmarks.
- */
-export default async function AppDiscoveryProfilesRedirectPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  redirect(`/apps/${id}?tab=plans`);
+import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
+
+/** Discovery profiles live under Billing Plans. */
+export default function AppDiscoveryProfilesPage() {
+  return <AppSettingsPageClient tab="plans" />;
 }
