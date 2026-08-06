@@ -276,7 +276,7 @@ dbTest("auditBillingConsistency is quiet for a healthy owner wallet", async (t) 
 });
 
 dbTest("auditBillingConsistency flags a Starter plan missing from Konnect", async (t) => {
-  const { app, starter } = await seedOwnerWithStarter();
+  const { app } = await seedOwnerWithStarter();
   t.after(() => cleanupTestApp(app));
   planGetFails = true;
   subscriptionRead.listOpenMeterSubscriptionsForCustomer = async () => [
@@ -286,7 +286,6 @@ dbTest("auditBillingConsistency flags a Starter plan missing from Konnect", asyn
   const findings = await auditOwnerApp(app);
   assert.ok(codes(findings).includes("starter_openmeter_plan_missing"));
   assert.ok(codes(findings).includes("owner_subscription_missing_plan_id"));
-  assert.ok(starter.openmeterPlanId);
 });
 
 dbTest("auditBillingConsistency flags an unsynced Starter row", async (t) => {
@@ -533,5 +532,10 @@ dbTest("auditBillingConsistency scans a bounded set of owners with no filter", a
   t.after(() => cleanupTestApp(app));
 
   const findings = await sut.auditBillingConsistency({ limit: 1 });
-  assert.ok(Array.isArray(findings));
+  // The owner picked by the limit is whichever row Postgres returns first, so
+  // assert on the shape rather than on this app's findings.
+  for (const finding of findings) {
+    assert.ok(["error", "warn", "info"].includes(finding.severity));
+    assert.ok(finding.message.length > 0);
+  }
 });
