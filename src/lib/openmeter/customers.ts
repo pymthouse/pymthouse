@@ -420,6 +420,33 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
   );
 }
 
+/**
+ * Merge metadata onto an existing OpenMeter customer without changing subjects.
+ * Used to stamp settlement charge-model keys for merchant Custom Invoicing.
+ */
+export async function ensureCustomerMetadata(
+  client: OpenMeter,
+  customerId: string,
+  metadata: Record<string, string>,
+): Promise<void> {
+  const customer = (await client.customers.get(customerId)) as OpenMeterCustomerRecord;
+  if (!customer?.id) {
+    throw new Error(`OpenMeter customer not found: ${customerId}`);
+  }
+  const subjectKeys = customer.usageAttribution?.subjectKeys ?? [];
+  if (!customer.name?.trim() && !customer.key?.trim() && subjectKeys.length === 0) {
+    throw new Error(
+      `OpenMeter customer ${customerId} has no name, key, or subject keys; refusing metadata replace`,
+    );
+  }
+  await ensureCustomerUsageAttribution(
+    client,
+    customer,
+    subjectKeys,
+    metadata,
+  );
+}
+
 export async function assignCustomerBillingProfileOverride(input: {
   client: OpenMeter;
   customerId: string;

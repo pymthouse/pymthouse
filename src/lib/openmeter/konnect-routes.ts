@@ -57,6 +57,10 @@ export function rewriteKonnectPathname(pathname: string, method: string): string
 
   path = path.replace(/\/billing\/customers\/([^/]+)(?=\/|$)/, "/customers/$1/billing");
 
+  // Custom Invoicing completion endpoints keep `/apps/custom-invoicing/...`
+  // after the version strip (no further rewrite needed). Notification channels
+  // similarly land at `/notification/...`.
+
   const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(path);
   if (customerSubscriptions && method.toUpperCase() === "GET") {
     return path.replace(/\/customers\/[^/]+\/subscriptions$/, "/subscriptions");

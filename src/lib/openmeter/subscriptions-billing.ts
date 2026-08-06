@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
 import { plans, subscriptions } from "@/db/schema";
+import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { getHostedAdminClient } from "./admin-client";
 import {
@@ -201,11 +202,11 @@ export async function createEndUserCheckout(input: {
   const success =
     input.successUrl ||
     billingConfig?.checkoutSuccessUrl ||
-    `${origin}/apps/${input.clientId}/settings?tab=payments`;
+    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
   const cancel =
     input.cancelUrl ||
     billingConfig?.checkoutCancelUrl ||
-    `${origin}/apps/${input.clientId}/settings?tab=payments`;
+    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
 
   let checkoutUrl: string;
   let stripeCheckoutSessionId: string | null = null;
@@ -358,11 +359,11 @@ export async function changeAppUserSubscriptionPlan(input: {
     const success =
       input.successUrl ||
       billingConfig?.checkoutSuccessUrl ||
-      `${origin}/apps/${input.clientId}/settings?tab=payments`;
+      appSettingsAbsoluteUrl(origin, input.clientId, "payments");
     const cancel =
       input.cancelUrl ||
       billingConfig?.checkoutCancelUrl ||
-      `${origin}/apps/${input.clientId}/settings?tab=payments`;
+      appSettingsAbsoluteUrl(origin, input.clientId, "payments");
 
     if (isMerchantConnectPaymentsReady(billingConfig)) {
       const connectCheckout = await createMerchantConnectCheckoutForUser({
