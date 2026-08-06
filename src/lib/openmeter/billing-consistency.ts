@@ -804,25 +804,21 @@ async function auditOwnerStarterPlans(
   return findings;
 }
 
-type OwnerCustomerAuditContext = {
-  customerId: string;
-  customerKey: string;
-  attributedSubjects: string[];
-};
-
-async function resolveOwnerCustomerForAudit(
+async function auditOwnerSubscriptions(
   client: OpenMeter,
   ownerId: string,
-): Promise<
-  | { ok: true; context: OwnerCustomerAuditContext }
-  | { ok: false; findings: BillingConsistencyFinding[] }
-> {
+  starters: LocalStarterPlanRef[],
+): Promise<BillingConsistencyFinding[]> {
+  const findings: BillingConsistencyFinding[] = [];
   const customerKey = buildOwnerCustomerKey(ownerId);
+
+  let customerId: string;
+  let attributedSubjects: string[] = [];
   try {
     const customer = (await findOpenMeterCustomerByKey(client, customerKey)) as
       | { id?: string; usageAttribution?: { subjectKeys?: string[] } }
       | null;
-    const attributedSubjects = [
+    attributedSubjects = [
       ...new Set(
         (customer?.usageAttribution?.subjectKeys ?? [])
           .map((key) => key.trim())
@@ -830,194 +826,97 @@ async function resolveOwnerCustomerForAudit(
       ),
     ];
     if (!customer?.id) {
-      return {
-        ok: false,
-        findings: [
-          {
-            code: "owner_customer_missing",
-            severity: "error",
-            ownerId,
-            message: `No Konnect customer for bare key ${customerKey}`,
-            details: { customerKey },
-            remediation: FIX_MIGRATE,
-          },
-        ],
-      };
-    }
-    return {
-      ok: true,
-      context: { customerId: customer.id, customerKey, attributedSubjects },
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      findings: [
+      return [
         {
-          code: "owner_customer_lookup_failed",
+          code: "owner_customer_missing",
           severity: "error",
           ownerId,
-          message:
-            err instanceof Error ? err.message : "Failed to look up owner customer",
+          message: `No Konnect customer for bare key ${customerKey}`,
           details: { customerKey },
+          remediation: FIX_MIGRATE,
         },
-      ],
-    };
-  }
-}
-
-async function missingStripeAppDataFindings(input: {
-  client: OpenMeter;
-  ownerId: string;
-  customerId: string;
-  customerKey: string;
-}): Promise<BillingConsistencyFinding[]> {
-  const stripeCus = await getStripeCustomerAppDataId({
-    client: input.client,
-    customerId: input.customerId,
-  });
-  if (stripeCus) {
-    return [];
-  }
-
-  // Missing Stripe app data is only a defect for an owner who has something
-  // chargeable. Owners without a payment method deliberately stay on the free
-  // billing profile — Konnect rejects a Starter subscription for a customer
-  // pinned to a Stripe profile with no default payment method — so
-  // migrate-sandbox-to-stripe skips them by design. Reporting those as errors
-  // pointed at a remediation that can never apply.
-  // `null` (Stripe/OpenMeter unreachable) is treated as not-chargeable, the
-  // same fail-open choice the migration makes.
-  const chargeable = await ownerHasChargeablePaymentMethod(input.ownerId);
-  if (chargeable !== true) {
-    return [];
-  }
-
-  return [
-    {
-      code: "owner_missing_stripe_app_data",
-      severity: "error",
-      ownerId: input.ownerId,
-      message: `Owner customer ${input.customerKey} has a payment method but no Stripe customer app data (cus_…)`,
-      details: { customerId: input.customerId, customerKey: input.customerKey },
-      remediation: FIX_SANDBOX_TO_STRIPE,
-    },
-  ];
-}
-
-async function sandboxProfileFindings(input: {
-  ownerId: string;
-  customerId: string;
-  customerKey: string;
-}): Promise<BillingConsistencyFinding[]> {
-  if (
-    !shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
-  ) {
-    return [];
-  }
-
-  const profileId = await getKonnectCustomerBillingProfileId(input.customerId);
-  const sandboxId = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
-  if (!profileId || !sandboxId || profileId !== sandboxId) {
-    return [];
-  }
-
-  // Sandbox is correct for Owner Sandbox Starter. Flag only when the owner
-  // already has a chargeable card (should be on owners Stripe / Paid).
-  const chargeable = await ownerHasChargeablePaymentMethod(input.ownerId);
-  if (chargeable !== true) {
-    return [];
-  }
-
-  return [
-    {
-      code: "owner_sandbox_billing_profile",
-      severity: "warn",
-      ownerId: input.ownerId,
-      message: `Owner customer ${input.customerKey} has a payment method but still uses sandbox billing profile ${profileId}`,
-      details: { customerId: input.customerId, profileId },
-      remediation: FIX_SANDBOX_TO_STRIPE,
-    },
-  ];
-}
-
-function activeSubsFindings(input: {
-  ownerId: string;
-  customerKey: string;
-  active: OpenMeterSubscriptionView[];
-}): BillingConsistencyFinding[] {
-  if (input.active.length === 0) {
+      ];
+    }
+    customerId = customer.id;
+  } catch (err) {
     return [
       {
-        code: "owner_no_active_subscription",
+        code: "owner_customer_lookup_failed",
         severity: "error",
-        ownerId: input.ownerId,
-        message: `No active subscription on ${input.customerKey}`,
-        remediation: FIX_STARTER,
+        ownerId,
+        message:
+          err instanceof Error ? err.message : "Failed to look up owner customer",
+        details: { customerKey },
       },
     ];
   }
-  if (input.active.length <= 1) {
-    return [];
-  }
-  return [
-    {
-      code: "owner_multiple_active_subscriptions",
-      severity: "warn",
-      ownerId: input.ownerId,
-      message: `${input.active.length} active subscriptions on ${input.customerKey}`,
-      details: { subscriptionIds: input.active.map((s) => s.id) },
-      remediation: FIX_DEDUPE,
-    },
-  ];
-}
 
-async function usageAttributionFindings(input: {
-  client: OpenMeter;
-  ownerId: string;
-  customerKey: string;
-  attributedSubjects: string[];
-}): Promise<BillingConsistencyFinding[]> {
-  const ownedPublicClientIds = await listOwnedPublicClientIds(input.ownerId);
-  const subjectsWithUsage = await findSubjectsWithUsage(
-    input.client,
-    buildOwnerMeterSubjects(input.ownerId, ownedPublicClientIds),
-  );
-  return classifyUsageAttributionConsistency({
-    ownerId: input.ownerId,
-    customerKey: input.customerKey,
-    attributedSubjects: input.attributedSubjects,
-    subjectsWithUsage,
-  });
-}
-
-async function auditOwnerSubscriptions(
-  client: OpenMeter,
-  ownerId: string,
-  starters: LocalStarterPlanRef[],
-): Promise<BillingConsistencyFinding[]> {
-  const resolved = await resolveOwnerCustomerForAudit(client, ownerId);
-  if (!resolved.ok) {
-    return resolved.findings;
+  const stripeCus = await getStripeCustomerAppDataId({ client, customerId });
+  if (!stripeCus) {
+    // Missing Stripe app data is only a defect for an owner who has something
+    // chargeable. Owners without a payment method deliberately stay on the free
+    // billing profile — Konnect rejects a Starter subscription for a customer
+    // pinned to a Stripe profile with no default payment method — so
+    // migrate-sandbox-to-stripe skips them by design. Reporting those as errors
+    // pointed at a remediation that can never apply.
+    // `null` (Stripe/OpenMeter unreachable) is treated as not-chargeable, the
+    // same fail-open choice the migration makes.
+    const chargeable = await ownerHasChargeablePaymentMethod(ownerId);
+    if (chargeable === true) {
+      findings.push({
+        code: "owner_missing_stripe_app_data",
+        severity: "error",
+        ownerId,
+        message: `Owner customer ${customerKey} has a payment method but no Stripe customer app data (cus_…)`,
+        details: { customerId, customerKey },
+        remediation: FIX_SANDBOX_TO_STRIPE,
+      });
+    }
   }
 
-  const { customerId, customerKey, attributedSubjects } = resolved.context;
-  const findings: BillingConsistencyFinding[] = [];
-
-  findings.push(
-    ...(await missingStripeAppDataFindings({
-      client,
-      ownerId,
-      customerId,
-      customerKey,
-    })),
-  );
-  findings.push(
-    ...(await sandboxProfileFindings({ ownerId, customerId, customerKey })),
-  );
+  if (
+    shouldUseKonnectRoutes(getHostedOpenMeterUrl(), process.env.OPENMETER_API_KEY)
+  ) {
+    const profileId = await getKonnectCustomerBillingProfileId(customerId);
+    const sandboxId = process.env.OPENMETER_FREE_BILLING_PROFILE_ID?.trim();
+    if (profileId && sandboxId && profileId === sandboxId) {
+      // Sandbox is correct for Owner Sandbox Starter. Flag only when the owner
+      // already has a chargeable card (should be on owners Stripe / Paid).
+      const chargeable = await ownerHasChargeablePaymentMethod(ownerId);
+      if (chargeable === true) {
+        findings.push({
+          code: "owner_sandbox_billing_profile",
+          severity: "warn",
+          ownerId,
+          message: `Owner customer ${customerKey} has a payment method but still uses sandbox billing profile ${profileId}`,
+          details: { customerId, profileId },
+          remediation: FIX_SANDBOX_TO_STRIPE,
+        });
+      }
+    }
+  }
 
   const subs = await listOpenMeterSubscriptionsForCustomer(client, customerId);
   const active = subs.filter((s) => isOpenMeterSubscriptionActive(s.status));
-  findings.push(...activeSubsFindings({ ownerId, customerKey, active }));
+
+  if (active.length === 0) {
+    findings.push({
+      code: "owner_no_active_subscription",
+      severity: "error",
+      ownerId,
+      message: `No active subscription on ${customerKey}`,
+      remediation: FIX_STARTER,
+    });
+  } else if (active.length > 1) {
+    findings.push({
+      code: "owner_multiple_active_subscriptions",
+      severity: "warn",
+      ownerId,
+      message: `${active.length} active subscriptions on ${customerKey}`,
+      details: { subscriptionIds: active.map((s) => s.id) },
+      remediation: FIX_DEDUPE,
+    });
+  }
 
   for (const sub of active) {
     const remote = sub.planId
@@ -1040,13 +939,18 @@ async function auditOwnerSubscriptions(
   // is not attributed is metered but never invoiced. This must report clean
   // before buildOwnerMeterSubjects can be reduced to the canonical key.
   // See docs/adr-owner-vs-app-billing.md.
+  const ownedPublicClientIds = await listOwnedPublicClientIds(ownerId);
+  const subjectsWithUsage = await findSubjectsWithUsage(
+    client,
+    buildOwnerMeterSubjects(ownerId, ownedPublicClientIds),
+  );
   findings.push(
-    ...(await usageAttributionFindings({
-      client,
+    ...classifyUsageAttributionConsistency({
       ownerId,
       customerKey,
       attributedSubjects,
-    })),
+      subjectsWithUsage,
+    }),
   );
 
   return findings;

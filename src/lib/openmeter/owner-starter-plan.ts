@@ -266,233 +266,6 @@ async function findExistingOwnerWalletSubscription(input: {
  * Subscribe the shared owner customer to the Owner Starter plan for their
  * resolved allowance (platform default or per-owner override).
  */
-type OwnerWalletSubscriptionRef = {
-  id: string;
-  planKey: string;
-  openmeterPlanId: string;
-};
-
-type OwnerStarterSubscriptionResult = {
-  openmeterSubscriptionId: string | null;
-  planKey: string;
-  openmeterPlanId: string;
-  created: boolean;
-};
-
-async function recreateOwnerStarterAfterChangeFailure(input: {
-  client: OpenMeter;
-  customerId: string;
-  plan: OwnerStarterPlanRef;
-  existingId: string;
-  changeErr: unknown;
-}): Promise<OwnerStarterSubscriptionResult> {
-  try {
-    const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
-      client: input.client,
-      customerId: input.customerId,
-      planKey: input.plan.key,
-    });
-    try {
-      await input.client.subscriptions.cancel(input.existingId, {
-        timing: "immediate",
-      });
-    } catch (cancelErr) {
-      console.warn(
-        "openmeter: owner starter old subscription cancel after recreate failed",
-        cancelErr,
-      );
-    }
-    return {
-      openmeterSubscriptionId: createdSub.id,
-      planKey: input.plan.key,
-      openmeterPlanId: input.plan.openmeterPlanId,
-      created: true,
-    };
-  } catch {
-    // Keep the existing subscription; surface the original change failure.
-    throw input.changeErr;
-  }
-}
-
-async function changeOrRecreateOwnerStarter(input: {
-  client: OpenMeter;
-  customerId: string;
-  plan: OwnerStarterPlanRef;
-  existing: OwnerWalletSubscriptionRef;
-}): Promise<OwnerStarterSubscriptionResult> {
-  await applyFreeBillingProfileToCustomer({
-    client: input.client,
-    customerId: input.customerId,
-  });
-  try {
-    await changeKonnectSubscription({
-      subscriptionId: input.existing.id,
-      customerId: input.customerId,
-      planId: input.plan.openmeterPlanId,
-      timing: "immediate",
-    });
-    return {
-      openmeterSubscriptionId: input.existing.id,
-      planKey: input.plan.key,
-      openmeterPlanId: input.plan.openmeterPlanId,
-      created: false,
-    };
-  } catch (changeErr) {
-    console.warn(
-      "openmeter: owner starter subscription change failed; recreating without cancel-first",
-      changeErr,
-    );
-    // Create the replacement first; cancel the old subscription only after
-    // the new one exists so a create failure cannot leave the owner with none.
-    return recreateOwnerStarterAfterChangeFailure({
-      client: input.client,
-      customerId: input.customerId,
-      plan: input.plan,
-      existingId: input.existing.id,
-      changeErr,
-    });
-  }
-}
-
-async function reconcileExistingOwnerWalletSubscription(input: {
-  client: OpenMeter;
-  customerId: string;
-  plan: OwnerStarterPlanRef;
-  existing: OwnerWalletSubscriptionRef;
-}): Promise<OwnerStarterSubscriptionResult | null> {
-  // Already on Owner Paid — do not recreate Sandbox Starter or re-pin sandbox.
-  if (isOwnerPaidPlanKey(input.existing.planKey)) {
-    return {
-      openmeterSubscriptionId: input.existing.id,
-      planKey: input.existing.planKey,
-      openmeterPlanId: input.existing.openmeterPlanId,
-      created: false,
-    };
-  }
-
-  if (
-    isOwnerStarterPlanKey(input.existing.planKey) &&
-    input.existing.planKey === input.plan.key &&
-    input.existing.openmeterPlanId === input.plan.openmeterPlanId
-  ) {
-    // Keep Sandbox Starter on the free profile (org default may be Stripe).
-    await applyFreeBillingProfileToCustomer({
-      client: input.client,
-      customerId: input.customerId,
-    });
-    return {
-      openmeterSubscriptionId: input.existing.id,
-      planKey: input.existing.planKey,
-      openmeterPlanId: input.existing.openmeterPlanId,
-      created: false,
-    };
-  }
-
-  if (isOwnerStarterPlanKey(input.existing.planKey)) {
-    return changeOrRecreateOwnerStarter({
-      client: input.client,
-      customerId: input.customerId,
-      plan: input.plan,
-      existing: input.existing,
-    });
-  }
-
-  if (input.existing.id) {
-    // Unknown active wallet subscription — leave it alone.
-    return {
-      openmeterSubscriptionId: input.existing.id,
-      planKey: input.existing.planKey,
-      openmeterPlanId: input.existing.openmeterPlanId,
-      created: false,
-    };
-  }
-
-  return null;
-}
-
-async function createOwnerStarterSubscriptionFresh(input: {
-  client: OpenMeter;
-  customerId: string;
-  plan: OwnerStarterPlanRef;
-  includedUsdMicros: string;
-}): Promise<OwnerStarterSubscriptionResult> {
-  // New Sandbox Starter must not inherit the org Stripe default without cus_….
-  await applyFreeBillingProfileToCustomer({
-    client: input.client,
-    customerId: input.customerId,
-  });
-
-  try {
-    const createdSub = await input.client.subscriptions.create({
-      customerId: input.customerId,
-      plan: { key: input.plan.key },
-    });
-    if (!createdSub?.id) {
-      throw new Error("Failed to create Owner Starter subscription");
-    }
-    return {
-      openmeterSubscriptionId: createdSub.id,
-      planKey: input.plan.key,
-      openmeterPlanId: input.plan.openmeterPlanId,
-      created: true,
-    };
-  } catch (err) {
-    if (isOpenMeterPlanNotFoundError(err)) {
-      invalidateOwnerStarterPlanCache();
-      const resynced = await ensureOwnerStarterPlanSynced(input.includedUsdMicros);
-      const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
-        client: input.client,
-        customerId: input.customerId,
-        planKey: resynced.key,
-      });
-      return {
-        openmeterSubscriptionId: createdSub.id,
-        planKey: resynced.key,
-        openmeterPlanId: resynced.openmeterPlanId,
-        created: true,
-      };
-    }
-    if (isOpenMeterConflictError(err)) {
-      const raced = await findOpenMeterSubscriptionByPlanKey(
-        input.client,
-        input.customerId,
-        input.plan.key,
-        { openmeterPlanId: input.plan.openmeterPlanId },
-      );
-      if (raced?.id) {
-        return {
-          openmeterSubscriptionId: raced.id,
-          planKey: input.plan.key,
-          openmeterPlanId: input.plan.openmeterPlanId,
-          created: false,
-        };
-      }
-    }
-    if (isOpenMeterStripeBillingError(err)) {
-      await applyFreeBillingProfileToCustomer({
-        client: input.client,
-        customerId: input.customerId,
-      });
-      const createdSub = await input.client.subscriptions.create({
-        customerId: input.customerId,
-        plan: { key: input.plan.key },
-      });
-      if (!createdSub?.id) {
-        throw new Error(
-          "Failed to create Owner Starter subscription after billing profile apply",
-        );
-      }
-      return {
-        openmeterSubscriptionId: createdSub.id,
-        planKey: input.plan.key,
-        openmeterPlanId: input.plan.openmeterPlanId,
-        created: true,
-      };
-    }
-    throw err;
-  }
-}
-
 export async function ensureOwnerStarterSubscription(input: {
   ownerUserId: string;
   publicClientIds?: string[];
@@ -534,14 +307,94 @@ export async function ensureOwnerStarterSubscription(input: {
   });
 
   if (existing) {
-    const reconciled = await reconcileExistingOwnerWalletSubscription({
-      client,
-      customerId: customer.id,
-      plan,
-      existing,
-    });
-    if (reconciled) {
-      return reconciled;
+    // Already on Owner Paid — do not recreate Sandbox Starter or re-pin sandbox.
+    if (isOwnerPaidPlanKey(existing.planKey)) {
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey,
+        openmeterPlanId: existing.openmeterPlanId,
+        created: false,
+      };
+    }
+
+    if (
+      isOwnerStarterPlanKey(existing.planKey) &&
+      existing.planKey === plan.key &&
+      existing.openmeterPlanId === plan.openmeterPlanId
+    ) {
+      // Keep Sandbox Starter on the free profile (org default may be Stripe).
+      await applyFreeBillingProfileToCustomer({
+        client,
+        customerId: customer.id,
+      });
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey,
+        openmeterPlanId: existing.openmeterPlanId,
+        created: false,
+      };
+    }
+
+    if (isOwnerStarterPlanKey(existing.planKey)) {
+      await applyFreeBillingProfileToCustomer({
+        client,
+        customerId: customer.id,
+      });
+      try {
+        await changeKonnectSubscription({
+          subscriptionId: existing.id,
+          customerId: customer.id,
+          planId: plan.openmeterPlanId,
+          timing: "immediate",
+        });
+        return {
+          openmeterSubscriptionId: existing.id,
+          planKey: plan.key,
+          openmeterPlanId: plan.openmeterPlanId,
+          created: false,
+        };
+      } catch (changeErr) {
+        console.warn(
+          "openmeter: owner starter subscription change failed; recreating without cancel-first",
+          changeErr,
+        );
+        // Create the replacement first; cancel the old subscription only after
+        // the new one exists so a create failure cannot leave the owner with none.
+        try {
+          const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
+            client,
+            customerId: customer.id,
+            planKey: plan.key,
+          });
+          try {
+            await client.subscriptions.cancel(existing.id, {
+              timing: "immediate",
+            });
+          } catch (cancelErr) {
+            console.warn(
+              "openmeter: owner starter old subscription cancel after recreate failed",
+              cancelErr,
+            );
+          }
+          return {
+            openmeterSubscriptionId: createdSub.id,
+            planKey: plan.key,
+            openmeterPlanId: plan.openmeterPlanId,
+            created: true,
+          };
+        } catch {
+          // Keep the existing subscription; surface the original change failure.
+          throw changeErr;
+        }
+      }
+    } else if (existing.id) {
+      // Unknown active wallet subscription — leave it alone.
+      return {
+        openmeterSubscriptionId: existing.id,
+        planKey: existing.planKey,
+        openmeterPlanId: existing.openmeterPlanId,
+        created: false,
+      };
     }
   }
 
@@ -554,12 +407,81 @@ export async function ensureOwnerStarterSubscription(input: {
     };
   }
 
-  return createOwnerStarterSubscriptionFresh({
+  // New Sandbox Starter must not inherit the org Stripe default without cus_….
+  await applyFreeBillingProfileToCustomer({
     client,
     customerId: customer.id,
-    plan,
-    includedUsdMicros,
   });
+
+  try {
+    const createdSub = await client.subscriptions.create({
+      customerId: customer.id,
+      plan: { key: plan.key },
+    });
+    if (!createdSub?.id) {
+      throw new Error("Failed to create Owner Starter subscription");
+    }
+    return {
+      openmeterSubscriptionId: createdSub.id,
+      planKey: plan.key,
+      openmeterPlanId: plan.openmeterPlanId,
+      created: true,
+    };
+  } catch (err) {
+    if (isOpenMeterPlanNotFoundError(err)) {
+      invalidateOwnerStarterPlanCache();
+      const resynced = await ensureOwnerStarterPlanSynced(includedUsdMicros);
+      const createdSub = await createOwnerStarterSubscriptionWithBillingRecovery({
+        client,
+        customerId: customer.id,
+        planKey: resynced.key,
+      });
+      return {
+        openmeterSubscriptionId: createdSub.id,
+        planKey: resynced.key,
+        openmeterPlanId: resynced.openmeterPlanId,
+        created: true,
+      };
+    }
+    if (isOpenMeterConflictError(err)) {
+      const raced = await findOpenMeterSubscriptionByPlanKey(
+        client,
+        customer.id,
+        plan.key,
+        { openmeterPlanId: plan.openmeterPlanId },
+      );
+      if (raced?.id) {
+        return {
+          openmeterSubscriptionId: raced.id,
+          planKey: plan.key,
+          openmeterPlanId: plan.openmeterPlanId,
+          created: false,
+        };
+      }
+    }
+    if (isOpenMeterStripeBillingError(err)) {
+      await applyFreeBillingProfileToCustomer({
+        client,
+        customerId: customer.id,
+      });
+      const createdSub = await client.subscriptions.create({
+        customerId: customer.id,
+        plan: { key: plan.key },
+      });
+      if (!createdSub?.id) {
+        throw new Error(
+          "Failed to create Owner Starter subscription after billing profile apply",
+        );
+      }
+      return {
+        openmeterSubscriptionId: createdSub.id,
+        planKey: plan.key,
+        openmeterPlanId: plan.openmeterPlanId,
+        created: true,
+      };
+    }
+    throw err;
+  }
 }
 
 async function createOwnerStarterSubscriptionWithBillingRecovery(input: {

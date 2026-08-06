@@ -147,54 +147,6 @@ function subscriptionViewFromCreateResult(
   };
 }
 
-async function createStarterSubscriptionOnce(input: {
-  client: OpenMeter;
-  customerId: string;
-  starter: typeof plans.$inferSelect;
-  planKey: string;
-}): Promise<OpenMeterSubscriptionView> {
-  const createdSub = await createStarterOpenMeterSubscription(input);
-  if (!createdSub?.id) {
-    throw new Error("Failed to create OpenMeter Starter subscription");
-  }
-  return subscriptionViewFromCreateResult(
-    createdSub,
-    input.planKey,
-    input.starter.openmeterPlanId,
-  );
-}
-
-async function existingStarterOnConflict(input: {
-  client: OpenMeter;
-  customerId: string;
-  starter: typeof plans.$inferSelect;
-  planKey: string;
-}): Promise<OpenMeterSubscriptionView | null> {
-  const existing = await findOpenMeterSubscriptionByPlanKey(
-    input.client,
-    input.customerId,
-    input.planKey,
-    { openmeterPlanId: input.starter.openmeterPlanId },
-  );
-  return existing ?? null;
-}
-
-async function starterSubscriptionOnConflict(input: {
-  client: OpenMeter;
-  customerId: string;
-  starter: typeof plans.$inferSelect;
-  planKey: string;
-}): Promise<{
-  subscription: OpenMeterSubscriptionView;
-  created: boolean;
-} | null> {
-  const existing = await existingStarterOnConflict(input);
-  if (!existing) {
-    return null;
-  }
-  return { subscription: existing, created: false };
-}
-
 /**
  * Create a Starter subscription. On the Konnect Stripe-setup 409
  * ({@link isOpenMeterStripeBillingError}), apply the sandbox free billing
@@ -212,14 +164,29 @@ async function createStarterSubscriptionWithBillingRecovery(input: {
   created: boolean;
 }> {
   try {
-    const subscription = await createStarterSubscriptionOnce(input);
-    return { subscription, created: true };
+    const createdSub = await createStarterOpenMeterSubscription(input);
+    if (!createdSub?.id) {
+      throw new Error("Failed to create OpenMeter Starter subscription");
+    }
+    return {
+      subscription: subscriptionViewFromCreateResult(
+        createdSub,
+        input.planKey,
+        input.starter.openmeterPlanId,
+      ),
+      created: true,
+    };
   } catch (err) {
-    const conflictResult = isOpenMeterConflictError(err)
-      ? await starterSubscriptionOnConflict(input)
-      : null;
-    if (conflictResult) {
-      return conflictResult;
+    if (isOpenMeterConflictError(err)) {
+      const existing = await findOpenMeterSubscriptionByPlanKey(
+        input.client,
+        input.customerId,
+        input.planKey,
+        { openmeterPlanId: input.starter.openmeterPlanId },
+      );
+      if (existing) {
+        return { subscription: existing, created: false };
+      }
     }
 
     if (!isOpenMeterStripeBillingError(err)) {
@@ -231,14 +198,31 @@ async function createStarterSubscriptionWithBillingRecovery(input: {
       customerId: input.customerId,
     });
     try {
-      const subscription = await createStarterSubscriptionOnce(input);
-      return { subscription, created: true };
+      const createdSub = await createStarterOpenMeterSubscription(input);
+      if (!createdSub?.id) {
+        throw new Error(
+          "Failed to create OpenMeter Starter subscription after billing profile apply",
+        );
+      }
+      return {
+        subscription: subscriptionViewFromCreateResult(
+          createdSub,
+          input.planKey,
+          input.starter.openmeterPlanId,
+        ),
+        created: true,
+      };
     } catch (retryErr) {
-      const retryConflict = isOpenMeterConflictError(retryErr)
-        ? await starterSubscriptionOnConflict(input)
-        : null;
-      if (retryConflict) {
-        return retryConflict;
+      if (isOpenMeterConflictError(retryErr)) {
+        const existingAfterRetry = await findOpenMeterSubscriptionByPlanKey(
+          input.client,
+          input.customerId,
+          input.planKey,
+          { openmeterPlanId: input.starter.openmeterPlanId },
+        );
+        if (existingAfterRetry) {
+          return { subscription: existingAfterRetry, created: false };
+        }
       }
       throw retryErr;
     }
