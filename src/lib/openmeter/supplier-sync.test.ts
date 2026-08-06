@@ -42,6 +42,28 @@ test("supplierGaps: missing country and name", () => {
   assert.deepEqual(supplierGaps({}), ["country", "name"]);
 });
 
+test("Connect identity map clears country/name gaps (US)", () => {
+  const identity = __testMapAccountIdentity({
+    country: "US",
+    details_submitted: true,
+    company: {
+      name: "Acme LLC",
+      tax_id_provided: true,
+      address: { country: "US", line1: "1 Main" },
+    },
+  });
+  assert.equal(identity.country, "US");
+  assert.equal(identity.legalName, "Acme LLC");
+  assert.deepEqual(
+    supplierGaps({
+      country: identity.country,
+      name: identity.legalName,
+      taxId: null,
+    }),
+    [],
+  );
+});
+
 test("requiresSupplierTaxId covers EU and commons", () => {
   assert.equal(requiresSupplierTaxId("de"), true);
   assert.equal(requiresSupplierTaxId("US"), false);

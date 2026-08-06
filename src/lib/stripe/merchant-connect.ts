@@ -67,11 +67,36 @@ async function syncConnectedAccountFlags(
     payoutsEnabled: status.payoutsEnabled,
     detailsSubmitted: status.detailsSubmitted,
   });
+  // Keep invoice supplier columns in sync whenever we refresh Connect flags
+  // (return URL, Account Link refresh, GET status). Webhook path uses the
+  // same helper — without this, merchant mode sees empty country/name.
+  await syncSupplierBestEffort(clientId, accountId);
   return {
     chargesEnabled: status.chargesEnabled,
     payoutsEnabled: status.payoutsEnabled,
     detailsSubmitted: status.detailsSubmitted,
   };
+}
+
+async function syncSupplierBestEffort(
+  clientId: string,
+  accountId: string,
+): Promise<void> {
+  try {
+    const { syncTenantSupplierFromConnect } = await import(
+      "@/lib/openmeter/supplier-sync"
+    );
+    await syncTenantSupplierFromConnect({
+      clientId,
+      accountId,
+    });
+  } catch (err) {
+    console.warn(
+      "supplier sync after Connect flag refresh failed",
+      sanitizeForLog(clientId),
+      sanitizeForLog(err),
+    );
+  }
 }
 
 /**
@@ -100,22 +125,7 @@ export async function applyConnectedAccountWebhookUpdate(input: {
     payoutsEnabled: input.payoutsEnabled,
     detailsSubmitted: input.detailsSubmitted,
   });
-  // Best-effort supplier sync — must not block Connect onboarding.
-  try {
-    const { syncTenantSupplierFromConnect } = await import(
-      "@/lib/openmeter/supplier-sync"
-    );
-    await syncTenantSupplierFromConnect({
-      clientId,
-      accountId: input.accountId,
-    });
-  } catch (err) {
-    console.warn(
-      "supplier sync after account.updated failed",
-      sanitizeForLog(clientId),
-      sanitizeForLog(err),
-    );
-  }
+  await syncSupplierBestEffort(clientId, input.accountId);
   return { updated: true, clientId };
 }
 

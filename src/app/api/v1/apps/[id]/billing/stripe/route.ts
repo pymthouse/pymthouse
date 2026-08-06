@@ -24,6 +24,7 @@ import {
 } from "@/lib/openmeter/stripe-app-install";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
 import { isConnectReady } from "@/lib/activation/app-activation";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 type BillingPatchFields = {
   progressiveBilling?: boolean;
@@ -108,7 +109,7 @@ async function applyBillingModeField(
   }
   fields.billingMode = value;
   if (fields.billingMode === "merchant") {
-    const config = await getAppBillingConfig(appId);
+    let config = await getAppBillingConfig(appId);
     if (!isConnectReady(config)) {
       return {
         ok: false,
@@ -120,6 +121,26 @@ async function applyBillingModeField(
           { status: 400 },
         ),
       };
+    }
+    // Self-heal: Connect may be ready before webhook/status synced supplier
+    // country/name into Neon. Refresh from Stripe before gating.
+    const accountId = config?.stripeConnectedAccountId?.trim();
+    if (accountId) {
+      try {
+        const { syncTenantSupplierFromConnect } = await import(
+          "@/lib/openmeter/supplier-sync"
+        );
+        await syncTenantSupplierFromConnect({
+          clientId: appId,
+          accountId,
+        });
+        config = await getAppBillingConfig(appId);
+      } catch (err) {
+        console.warn(
+          "supplier sync before merchant mode switch failed",
+          sanitizeForLog(err instanceof Error ? err.message : String(err)),
+        );
+      }
     }
     const { supplierGaps, supplierIsComplete } = await import(
       "@/lib/openmeter/billing-supplier"
