@@ -59,8 +59,9 @@ test("deriveSyncState maps pending when active plan has no OM id", () => {
   assert.equal(sync.status, "pending");
 });
 
-test("stable feature keys when flag enabled", () => {
+test("stable feature keys when flag enabled", (t) => {
   if (!billingStableFeatureKeysEnabled()) {
+    t.skip("billing stable feature keys disabled");
     return;
   }
   const key = resolveCapabilityFeatureKey({

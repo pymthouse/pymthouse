@@ -873,7 +873,7 @@ function PaymentsTabLoaded(props: Readonly<{
             <a href="/billing" className="text-emerald-400 hover:text-emerald-300">
               Billing
             </a>
-            .
+            {"."}
           </p>
         </div>
         <PaymentsInvoicesList invoices={invoices} />

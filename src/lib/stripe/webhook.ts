@@ -17,7 +17,7 @@ export type StripeAccountUpdatedPayload = {
 
 export function requireStripeWebhookSecret(): string {
   const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-  if (!secret || !secret.startsWith("whsec_")) {
+  if (!secret?.startsWith("whsec_")) {
     throw new Error(
       "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
     );

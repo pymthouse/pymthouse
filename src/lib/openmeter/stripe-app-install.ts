@@ -415,11 +415,14 @@ export async function getStripeConnectStatus(clientId: string) {
   const accountId = config?.stripeConnectedAccountId?.trim() || null;
   // Merchant Connect only — do not treat legacy OpenMeter Stripe-app installs
   // (stripe_connect_status=connected, no acct_…) as merchant-ready.
-  const status = accountId
-    ? config?.stripeChargesEnabled
-      ? "connected"
-      : "pending"
-    : "disconnected";
+  let status: "connected" | "pending" | "disconnected";
+  if (!accountId) {
+    status = "disconnected";
+  } else if (config?.stripeChargesEnabled) {
+    status = "connected";
+  } else {
+    status = "pending";
+  }
 
   const openmeterStripeAppId = config?.openmeterStripeAppId ?? null;
   const openmeterBillingProfileId = config?.openmeterBillingProfileId ?? null;

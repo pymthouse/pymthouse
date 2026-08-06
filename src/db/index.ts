@@ -20,16 +20,12 @@ const globalForDb = globalThis as unknown as {
 };
 
 function getPostgresClient() {
-  if (!globalForDb.pymthousePostgres) {
-    globalForDb.pymthousePostgres = postgres(requireDatabaseUrl(), { max: 10 });
-  }
+  globalForDb.pymthousePostgres ??= postgres(requireDatabaseUrl(), { max: 10 });
   return globalForDb.pymthousePostgres;
 }
 
 function getDb(): Db {
-  if (!globalForDb.pymthouseDb) {
-    globalForDb.pymthouseDb = drizzle(getPostgresClient(), { schema });
-  }
+  globalForDb.pymthouseDb ??= drizzle(getPostgresClient(), { schema });
   return globalForDb.pymthouseDb;
 }
 

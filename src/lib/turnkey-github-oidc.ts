@@ -15,7 +15,11 @@ export const TURNKEY_GITHUB_PROVIDER_NAME = "GitHub";
 const ID_TOKEN_TTL_SECONDS = 5 * 60;
 
 function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
+  let out = value;
+  while (out.endsWith("/")) {
+    out = out.slice(0, -1);
+  }
+  return out;
 }
 
 /** Public issuer URL Turnkey fetches for discovery + JWKS. Must be internet-reachable. */

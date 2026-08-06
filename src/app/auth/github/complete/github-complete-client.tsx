@@ -21,14 +21,12 @@ import {
 let githubHandoffPromise: Promise<string | null> | null = null;
 
 function consumeGithubHandoffSession(): Promise<string | null> {
-  if (!githubHandoffPromise) {
-    githubHandoffPromise = (async () => {
-      const res = await fetch("/api/auth/github/session", { method: "POST" });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { sessionToken?: string };
-      return data.sessionToken ?? null;
-    })().catch(() => null);
-  }
+  githubHandoffPromise ??= (async () => {
+    const res = await fetch("/api/auth/github/session", { method: "POST" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { sessionToken?: string };
+    return data.sessionToken ?? null;
+  })().catch(() => null);
   return githubHandoffPromise;
 }
 

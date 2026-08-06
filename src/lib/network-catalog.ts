@@ -58,34 +58,36 @@ export function splitCapability(capability: string): {
   };
 }
 
-/**
- * Aggregate discover-orchestrators rows into catalog entries.
- * Exported for unit tests.
- */
-export function catalogFromDiscoveryRaw(raw: unknown): PipelineCatalogEntry[] {
-  if (!Array.isArray(raw)) {
-    throw new Error("Discovery raw response is not an array");
+function addCapabilityToCatalog(
+  byPipeline: Map<string, Set<string>>,
+  capability: string,
+): void {
+  const split = splitCapability(capability);
+  if (!split) return;
+  let models = byPipeline.get(split.pipeline);
+  if (!models) {
+    models = new Set();
+    byPipeline.set(split.pipeline, models);
   }
+  models.add(split.model);
+}
 
-  const byPipeline = new Map<string, Set<string>>();
-
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const caps = (item as { capabilities?: unknown }).capabilities;
-    if (!Array.isArray(caps)) continue;
-    for (const cap of caps) {
-      if (typeof cap !== "string") continue;
-      const split = splitCapability(cap);
-      if (!split) continue;
-      let models = byPipeline.get(split.pipeline);
-      if (!models) {
-        models = new Set();
-        byPipeline.set(split.pipeline, models);
-      }
-      models.add(split.model);
-    }
+function ingestDiscoveryItem(
+  byPipeline: Map<string, Set<string>>,
+  item: unknown,
+): void {
+  if (!item || typeof item !== "object") return;
+  const caps = (item as { capabilities?: unknown }).capabilities;
+  if (!Array.isArray(caps)) return;
+  for (const cap of caps) {
+    if (typeof cap !== "string") continue;
+    addCapabilityToCatalog(byPipeline, cap);
   }
+}
 
+function entriesFromPipelineMap(
+  byPipeline: Map<string, Set<string>>,
+): PipelineCatalogEntry[] {
   const entries: PipelineCatalogEntry[] = [];
   for (const [id, models] of [...byPipeline.entries()].sort((a, b) =>
     a[0].localeCompare(b[0]),
@@ -97,6 +99,22 @@ export function catalogFromDiscoveryRaw(raw: unknown): PipelineCatalogEntry[] {
     });
   }
   return entries;
+}
+
+/**
+ * Aggregate discover-orchestrators rows into catalog entries.
+ * Exported for unit tests.
+ */
+export function catalogFromDiscoveryRaw(raw: unknown): PipelineCatalogEntry[] {
+  if (!Array.isArray(raw)) {
+    throw new TypeError("Discovery raw response is not an array");
+  }
+
+  const byPipeline = new Map<string, Set<string>>();
+  for (const item of raw) {
+    ingestDiscoveryItem(byPipeline, item);
+  }
+  return entriesFromPipelineMap(byPipeline);
 }
 
 async function fetchDiscoveryJson(): Promise<unknown> {

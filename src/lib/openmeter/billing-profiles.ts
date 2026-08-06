@@ -596,17 +596,13 @@ export async function updateAppBillingProfileSettings(input: {
   }
 
   const progressiveBilling =
-    input.progressiveBilling === undefined
-      ? existing.progressiveBilling
-      : input.progressiveBilling;
+    input.progressiveBilling ?? existing.progressiveBilling;
   const invoiceThresholdUsdMicros =
-    input.invoiceThresholdUsdMicros === undefined
-      ? existing.invoiceThresholdUsdMicros
-      : input.invoiceThresholdUsdMicros;
+    input.invoiceThresholdUsdMicros !== undefined
+      ? input.invoiceThresholdUsdMicros
+      : existing.invoiceThresholdUsdMicros;
   const applicationFeeBps =
-    input.applicationFeeBps === undefined
-      ? (existing.applicationFeeBps ?? 0)
-      : input.applicationFeeBps;
+    input.applicationFeeBps ?? existing.applicationFeeBps ?? 0;
 
   const progressiveChanged =
     input.progressiveBilling !== undefined &&
@@ -662,9 +658,9 @@ async function syncProgressiveBillingToOpenMeterProfile(input: {
     default: profile.default ?? false,
     supplier: profile.supplier,
     workflow: {
-      ...(profile.workflow ?? {}),
+      ...profile.workflow,
       invoicing: {
-        ...(profile.workflow?.invoicing ?? {}),
+        ...profile.workflow?.invoicing,
         progressiveBilling: input.progressiveBilling,
       },
     },

@@ -188,6 +188,92 @@ async function settleOnRampPurchase(input: {
     : null;
 }
 
+type MoonPayFundFlowInput = {
+  turnkeyClient: TurnkeyHttpClient;
+  clientId: string;
+  ownerExternalUserId: string;
+  wallets: { accounts: { address: string }[] }[];
+  refreshWallets: () => Promise<{ accounts: { address: string }[] }[]>;
+  getSession: () => Promise<{ organizationId?: string | null } | null | undefined>;
+  pollUntilTerminal: (
+    client: TurnkeyHttpClient,
+    transactionId: string,
+    organizationId: string,
+    signal: AbortSignal,
+  ) => Promise<string>;
+  pollAbort: AbortSignal;
+  checkoutWindow: Window | null;
+  setCheckoutUrl: (url: string) => void;
+  setStatusMessage: (message: string) => void;
+  setPhase: (phase: FundPhase) => void;
+};
+
+async function runMoonPayFundFlow(input: MoonPayFundFlowInput): Promise<string | null> {
+  const amount = SANDBOX_ONRAMP_USD_AMOUNT;
+  input.setPhase("funding");
+  input.setStatusMessage("Preparing MoonPay checkout…");
+
+  const walletAddress = await resolveDepositWallet({
+    wallets: input.wallets,
+    refreshWallets: input.refreshWallets,
+  });
+  const session = await input.getSession();
+  const organizationId = session?.organizationId;
+  if (!organizationId) {
+    throw new Error("Turnkey session is missing organization context.");
+  }
+
+  const initResult = await input.turnkeyClient.initFiatOnRamp({
+    organizationId,
+    onrampProvider: FiatOnRampProvider.MOONPAY,
+    walletAddress,
+    network: FiatOnRampBlockchainNetwork.ETHEREUM,
+    cryptoCurrencyCode: FiatOnRampCryptoCurrency.ETHEREUM,
+    fiatCurrencyCode: FiatOnRampCurrency.USD,
+    fiatCurrencyAmount: amount,
+    sandboxMode: true,
+  });
+  if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
+    throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
+  }
+
+  const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
+  input.setCheckoutUrl(onRampUrl);
+
+  const sessionId = await registerOnRampSession({
+    clientId: input.clientId,
+    ownerExternalUserId: input.ownerExternalUserId,
+    walletAddress,
+    onRampTransactionId: initResult.onRampTransactionId,
+    organizationId,
+    amount,
+  });
+
+  if (input.checkoutWindow && !input.checkoutWindow.closed) {
+    input.checkoutWindow.location.href = onRampUrl;
+    input.setStatusMessage("Complete the purchase in the MoonPay window…");
+  } else {
+    input.setStatusMessage(
+      "Checkout ready — open the MoonPay link below, then wait here for confirmation.",
+    );
+  }
+
+  const terminalStatus = await input.pollUntilTerminal(
+    input.turnkeyClient,
+    initResult.onRampTransactionId,
+    organizationId,
+    input.pollAbort,
+  );
+  closeCheckoutWindow(input.checkoutWindow);
+  if (terminalStatus !== "COMPLETED") {
+    throw new Error(`MoonPay purchase ${terminalStatus.toLowerCase()}.`);
+  }
+
+  input.setPhase("settling");
+  input.setStatusMessage("Purchase completed. Crediting your account…");
+  return settleOnRampPurchase({ clientId: input.clientId, sessionId });
+}
+
 const POLL_INTERVAL_MS = 3000;
 /** Stop waiting for a stuck Turnkey status after this long. */
 const POLL_DEADLINE_MS = 15 * 60 * 1000;
@@ -315,68 +401,23 @@ export default function FundAccountOnRampPanel({
     const pollAbort = new AbortController();
     pollAbortRef.current = pollAbort;
 
-    const amount = SANDBOX_ONRAMP_USD_AMOUNT;
     const checkoutWindow = openMoonPayCheckoutWindow();
-    setPhase("funding");
-    setStatusMessage("Preparing MoonPay checkout…");
 
     try {
-      const walletAddress = await resolveDepositWallet({ wallets, refreshWallets });
-      const session = await getSession();
-      const organizationId = session?.organizationId;
-      if (!organizationId) {
-        throw new Error("Turnkey session is missing organization context.");
-      }
-
-      const initResult = await turnkeyClient.initFiatOnRamp({
-        organizationId,
-        onrampProvider: FiatOnRampProvider.MOONPAY,
-        walletAddress,
-        network: FiatOnRampBlockchainNetwork.ETHEREUM,
-        cryptoCurrencyCode: FiatOnRampCryptoCurrency.ETHEREUM,
-        fiatCurrencyCode: FiatOnRampCurrency.USD,
-        fiatCurrencyAmount: amount,
-        sandboxMode: true,
-      });
-      if (!initResult.onRampUrl || !initResult.onRampTransactionId) {
-        throw new Error("Turnkey did not return an on-ramp URL or transaction id.");
-      }
-
-      const onRampUrl = assertSafeOnRampUrl(initResult.onRampUrl);
-      setCheckoutUrl(onRampUrl);
-
-      const sessionId = await registerOnRampSession({
+      const granted = await runMoonPayFundFlow({
+        turnkeyClient,
         clientId,
         ownerExternalUserId,
-        walletAddress,
-        onRampTransactionId: initResult.onRampTransactionId,
-        organizationId,
-        amount,
+        wallets,
+        refreshWallets,
+        getSession,
+        pollUntilTerminal,
+        pollAbort: pollAbort.signal,
+        checkoutWindow,
+        setCheckoutUrl,
+        setStatusMessage,
+        setPhase,
       });
-
-      if (checkoutWindow && !checkoutWindow.closed) {
-        checkoutWindow.location.href = onRampUrl;
-        setStatusMessage("Complete the purchase in the MoonPay window…");
-      } else {
-        setStatusMessage(
-          "Checkout ready — open the MoonPay link below, then wait here for confirmation.",
-        );
-      }
-
-      const terminalStatus = await pollUntilTerminal(
-        turnkeyClient,
-        initResult.onRampTransactionId,
-        organizationId,
-        pollAbort.signal,
-      );
-      closeCheckoutWindow(checkoutWindow);
-      if (terminalStatus !== "COMPLETED") {
-        throw new Error(`MoonPay purchase ${terminalStatus.toLowerCase()}.`);
-      }
-
-      setPhase("settling");
-      setStatusMessage("Purchase completed. Crediting your account…");
-      const granted = await settleOnRampPurchase({ clientId, sessionId });
       setLastGrantedUsdMicros(granted);
       setPhase("done");
       setStatusMessage("Prepaid credits updated.");

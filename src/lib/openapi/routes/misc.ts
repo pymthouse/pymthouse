@@ -6,7 +6,7 @@ import {
 } from "@/lib/openapi/schemas/misc";
 import { z } from "@/lib/openapi/zod";
 
-const jsonObject = z.object({}).passthrough();
+const jsonObject = z.looseObject({});
 
 defineRouteMetadata("get", "/api/v1/health", {
   tags: ["Platform"],

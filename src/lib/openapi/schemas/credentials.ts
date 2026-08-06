@@ -61,10 +61,10 @@ export const SignerSessionSchema = z
     lifetimeGrantedUsdMicros: z.string().optional().openapi({
       description: "PymtHouse extension: lifetime granted balance in USD micros.",
     }),
-    signer_url: z.string().url().optional().openapi({
+    signer_url: z.url().optional().openapi({
       description: "Public remote-signer base URL.",
     }),
-    discovery_url: z.string().url().optional().openapi({
+    discovery_url: z.url().optional().openapi({
       description:
         "Remote-signer discover-orchestrators URL (default `{signer_url}/discover-orchestrators`). Not OIDC issuer metadata.",
     }),

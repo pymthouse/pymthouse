@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   basicAuthHeader,
   cleanupTestApp,
@@ -11,7 +11,7 @@ import {
   __testSetOpenMeterUsageRows,
 } from "@/lib/openmeter/usage-read";
 
-run("builder usage API is M2M-only and returns OpenMeter rows", async (t) => {
+test("builder usage API is M2M-only and returns OpenMeter rows", async (t) => {
   const { GET } = await import("@/app/api/v1/builder/apps/[id]/usage/route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));
