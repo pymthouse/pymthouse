@@ -83,11 +83,36 @@ function redirectToStripeConnectUrl(url: string): void {
   );
 }
 
-function PaymentsActivationBanner({
+/** Primary action styling for this tab's save buttons. */
+const BUTTON_CLASS =
+  "inline-flex items-center rounded-md bg-emerald-500/15 px-3 py-2 text-sm font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/30 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-emerald-500/15";
+
+const FIELD_CLASS =
+  "mt-1 w-full max-w-xs rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30";
+
+function CapabilityValue({ allowed }: Readonly<{ allowed: boolean }>) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-sm ${
+        allowed ? "text-emerald-400" : "text-zinc-400"
+      }`}
+    >
+      <span aria-hidden>{allowed ? "✓" : "—"}</span>
+      {allowed ? "Allowed" : "Blocked"}
+    </span>
+  );
+}
+
+/**
+ * Activation status as a neutral definition grid (dark UI).
+ * Warning styling is reserved for blocked cases that need an action.
+ */
+function PaymentsActivationCard({
   activation,
 }: Readonly<{ activation: ActivationInfo }>) {
   const modeLabel =
-    activation.billingMode === "merchant" ? "merchant" : "owner roll-up";
+    activation.billingMode === "merchant" ? "Merchant" : "Owner roll-up";
+  const blocked = !activation.canProvisionEndUsers || !activation.canSellPaidPlans;
   const sellHint = activation.connectReady
     ? "Switch billing mode to merchant to unlock paid plan checkout."
     : "Connect Stripe and complete onboarding to sell paid plans.";
@@ -97,24 +122,45 @@ function PaymentsActivationBanner({
       : "Owner wallet has no spendable balance — top up credits to provision more users.";
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
-      <h3 className="text-sm font-semibold text-amber-950">Activation</h3>
-      <p className="text-sm text-amber-900">
-        Mode: <span className="font-mono">{modeLabel}</span>
-        {" · "}
-        Provision end users: {activation.canProvisionEndUsers ? "allowed" : "blocked"}
-        {" · "}
-        Sell paid plans: {activation.canSellPaidPlans ? "allowed" : "blocked"}
-        {" · "}
-        Users {activation.appUserCount}/{activation.endUserCap}
-      </p>
-      {!activation.canSellPaidPlans && (
-        <p className="text-sm text-amber-900">{sellHint}</p>
-      )}
-      {!activation.canProvisionEndUsers && (
-        <p className="text-sm text-amber-900">{provisionHint}</p>
-      )}
-    </div>
+    <section className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+      <h3 className="text-sm font-semibold text-zinc-200">Activation</h3>
+      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Billing mode</dt>
+          <dd className="text-sm text-zinc-200">{modeLabel}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">End users</dt>
+          <dd className="font-mono text-sm tabular-nums text-zinc-200">
+            {activation.appUserCount.toLocaleString("en-US")} /{" "}
+            {activation.endUserCap.toLocaleString("en-US")}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Provision end users</dt>
+          <dd>
+            <CapabilityValue allowed={activation.canProvisionEndUsers} />
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-xs text-zinc-500">Sell paid plans</dt>
+          <dd>
+            <CapabilityValue allowed={activation.canSellPaidPlans} />
+          </dd>
+        </div>
+      </dl>
+
+      {blocked ? (
+        <div className="mt-3 space-y-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+          {!activation.canProvisionEndUsers ? (
+            <p className="text-xs text-amber-300">{provisionHint}</p>
+          ) : null}
+          {!activation.canSellPaidPlans ? (
+            <p className="text-xs text-amber-300">{sellHint}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -170,9 +216,9 @@ function connectUiFlags(status: StripeStatus | null) {
 }
 
 function connectBadgeClass(flags: ReturnType<typeof connectUiFlags>): string {
-  if (flags.merchantReady) return "bg-green-100 text-green-800";
-  if (flags.pendingOnboarding) return "bg-amber-100 text-amber-900";
-  return "bg-gray-100 text-gray-700";
+  if (flags.merchantReady) return "bg-emerald-500/15 text-emerald-300";
+  if (flags.pendingOnboarding) return "bg-amber-500/15 text-amber-300";
+  return "bg-white/10 text-zinc-400";
 }
 
 function connectBadgeLabel(
@@ -291,21 +337,21 @@ async function requestSaveBillingSettings(input: {
 
 function PaymentsInvoicesList({ invoices }: Readonly<{ invoices: InvoiceRow[] }>) {
   if (invoices.length === 0) {
-    return <p className="text-sm text-muted-foreground">No customer invoices yet.</p>;
+    return <p className="text-sm text-zinc-500">No customer invoices yet.</p>;
   }
   return (
-    <ul className="divide-y text-sm">
+    <ul className="divide-y divide-white/[0.06] text-sm">
       {invoices.map((inv) => (
         <li key={inv.id} className="py-2 flex justify-between gap-4">
           <div className="min-w-0">
-            <span className="font-mono">{inv.number ?? inv.id}</span>
+            <span className="font-mono text-zinc-200">{inv.number ?? inv.id}</span>
             {inv.customerKey ? (
-              <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+              <p className="mt-0.5 truncate font-mono text-xs text-zinc-500">
                 {inv.customerKey}
               </p>
             ) : null}
           </div>
-          <span className="shrink-0">
+          <span className="shrink-0 text-zinc-400">
             {inv.totalAmount} {inv.currency} · {inv.status}
           </span>
         </li>
@@ -376,7 +422,7 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   }, [load]);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading payments…</p>;
+    return <p className="text-sm text-zinc-500">Loading payments…</p>;
   }
 
   return (
@@ -418,7 +464,7 @@ function PaymentsConnectActions(props: Readonly<{
       {!flags.hasAccount && (
         <button
           type="button"
-          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+          className="rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50"
           disabled={busy}
           onClick={() =>
             void postConnectRedirect(
@@ -439,7 +485,7 @@ function PaymentsConnectActions(props: Readonly<{
       {flags.pendingOnboarding && (
         <button
           type="button"
-          className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+          className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50"
           disabled={busy}
           onClick={() =>
             void postConnectRedirect(
@@ -456,7 +502,7 @@ function PaymentsConnectActions(props: Readonly<{
       {flags.canDisconnect && (
         <button
           type="button"
-          className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+          className="rounded-md border border-white/10 px-3 py-2 text-sm text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
           disabled={busy}
           onClick={() => void requestDisconnectStripe(appId, busySetters, reload)}
         >
@@ -493,11 +539,11 @@ function PaymentsBillingModeForm(props: Readonly<{
     connectReadyForMerchant &&
     (supplierTaxIdRequired || billingMode === "merchant");
   return (
-    <div className="pt-2 border-t space-y-3">
+    <div className="pt-2 border-t border-white/[0.06] space-y-3">
       <label className="block text-sm">
-        <span className="text-muted-foreground">Billing mode</span>
+        <span className="text-zinc-500">Billing mode</span>
         <select
-          className="mt-1 w-full max-w-xs rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+          className={FIELD_CLASS}
           value={billingMode}
           onChange={(e) =>
             setBillingMode(e.target.value === "merchant" ? "merchant" : "owner_rollup")
@@ -512,20 +558,20 @@ function PaymentsBillingModeForm(props: Readonly<{
       </label>
       {showTaxId ? (
         <label className="block text-sm">
-          <span className="text-muted-foreground">
+          <span className="text-zinc-500">
             Supplier tax ID
             {supplierTaxIdRequired ? " (required for invoices)" : " (optional)"}
           </span>
           <input
             type="text"
-            className="mt-1 w-full max-w-xs rounded-md border bg-background px-3 py-2 text-sm font-mono focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30"
+            className={`${FIELD_CLASS} font-mono`}
             value={supplierTaxId}
             onChange={(e) => setSupplierTaxId(e.target.value)}
             disabled={busy}
             placeholder="e.g. VAT / EIN"
             autoComplete="off"
           />
-          <span className="mt-1 block text-xs text-muted-foreground">
+          <span className="mt-1 block text-xs text-zinc-500">
             Stripe does not share the verified tax ID — enter the value that should
             appear on customer invoices.
           </span>
@@ -534,14 +580,14 @@ function PaymentsBillingModeForm(props: Readonly<{
       <div className="flex items-center gap-3">
         <button
           type="button"
-          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+          className={BUTTON_CLASS}
           disabled={busy}
           onClick={onSave}
         >
           Save billing settings
         </button>
         {settingsSaved ? (
-          <span className="text-xs text-emerald-600">{settingsSaved}</span>
+          <span className="text-xs text-emerald-400">{settingsSaved}</span>
         ) : null}
       </div>
     </div>
@@ -571,16 +617,16 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
     onSave,
   } = props;
   return (
-    <div className="rounded-lg border p-4 space-y-3">
+    <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
       <div>
-        <h3 className="text-base font-semibold">Mid-cycle invoicing</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <h3 className="text-base font-semibold text-zinc-100">Mid-cycle invoicing</h3>
+        <p className="mt-1 text-xs text-zinc-500">
           Progressive billing allows OpenMeter to invoice unpaid usage before the
           billing cycle ends. Set an optional dollar threshold; the clearinghouse
           worker charges when gathering invoices reach that amount.
         </p>
       </div>
-      <label className="flex items-start gap-2 text-sm">
+      <label className="flex items-start gap-2 text-sm text-zinc-200">
         <input
           type="checkbox"
           className="mt-0.5"
@@ -593,17 +639,17 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
         />
         <span>
           Enable progressive billing
-          <span className="block text-xs text-muted-foreground">
+          <span className="block text-xs text-zinc-500">
             Synced to this app&apos;s OpenMeter billing profile.
           </span>
         </span>
       </label>
       <div>
-        <label htmlFor="invoice-threshold" className="block text-xs text-muted-foreground mb-1">
+        <label htmlFor="invoice-threshold" className="block text-xs text-zinc-500 mb-1">
           Invoice when unpaid usage reaches (USD)
         </label>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">$</span>
+          <span className="text-sm text-zinc-500">$</span>
           <input
             id="invoice-threshold"
             type="text"
@@ -615,7 +661,7 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
               setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));
               setSettingsSaved(null);
             }}
-            className="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
+            className="w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
           />
         </div>
       </div>
@@ -623,14 +669,14 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            className={BUTTON_CLASS}
             disabled={busy}
             onClick={onSave}
           >
             Save invoicing settings
           </button>
           {settingsSaved ? (
-            <span className="text-xs text-emerald-600">{settingsSaved}</span>
+            <span className="text-xs text-emerald-400">{settingsSaved}</span>
           ) : null}
         </div>
       )}
@@ -642,30 +688,34 @@ function PaymentsStatusDetails({ status }: Readonly<{ status: StripeStatus | nul
   return (
     <dl className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-2">
       <div>
-        <dt className="text-muted-foreground">Connected account</dt>
-        <dd className="font-mono text-xs break-all">
+        <dt className="text-zinc-500">Connected account</dt>
+        <dd className="font-mono text-xs break-all text-zinc-300">
           {status?.stripeConnectedAccountId ?? "—"}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Onboarding</dt>
-        <dd>{status?.stripeOnboardingMethod ?? "—"}</dd>
+        <dt className="text-zinc-500">Onboarding</dt>
+        <dd className="text-zinc-300">{status?.stripeOnboardingMethod ?? "—"}</dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Charges</dt>
-        <dd>{status?.stripeChargesEnabled ? "Enabled" : "Paused / pending"}</dd>
+        <dt className="text-zinc-500">Charges</dt>
+        <dd className="text-zinc-300">
+          {status?.stripeChargesEnabled ? "Enabled" : "Paused / pending"}
+        </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Payouts</dt>
-        <dd>{status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}</dd>
+        <dt className="text-zinc-500">Payouts</dt>
+        <dd className="text-zinc-300">
+          {status?.stripePayoutsEnabled ? "Enabled" : "Paused / pending"}
+        </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Invoice supplier</dt>
-        <dd>
+        <dt className="text-zinc-500">Invoice supplier</dt>
+        <dd className="text-zinc-300">
           {[status?.supplierName, status?.supplierCountry].filter(Boolean).join(" · ") ||
             "—"}
           {status?.supplierComplete === false ? (
-            <span className="ml-1 text-amber-800">
+            <span className="ml-1 text-amber-300">
               (incomplete
               {status.supplierGaps?.length
                 ? `: ${status.supplierGaps.join(", ")}`
@@ -676,14 +726,14 @@ function PaymentsStatusDetails({ status }: Readonly<{ status: StripeStatus | nul
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">OM billing profile</dt>
-        <dd className="font-mono text-xs break-all">
+        <dt className="text-zinc-500">OM billing profile</dt>
+        <dd className="font-mono text-xs break-all text-zinc-300">
           {status?.openmeterBillingProfileId ?? "—"}
         </dd>
       </div>
       <div>
-        <dt className="text-muted-foreground">Connected</dt>
-        <dd>{status?.connectedAt ?? "—"}</dd>
+        <dt className="text-zinc-500">Connected</dt>
+        <dd className="text-zinc-300">{status?.connectedAt ?? "—"}</dd>
       </div>
     </dl>
   );
@@ -752,14 +802,14 @@ function PaymentsTabLoaded(props: Readonly<{
   return (
     <div className="space-y-6">
       {status?.activation && (
-        <PaymentsActivationBanner activation={status.activation} />
+        <PaymentsActivationCard activation={status.activation} />
       )}
 
-      <div className="rounded-lg border p-4 space-y-3">
+      <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold">Merchant Stripe Connect</h3>
-            <p className="text-sm text-muted-foreground">
+            <h3 className="text-base font-semibold text-zinc-100">Merchant Stripe Connect</h3>
+            <p className="text-sm text-zinc-500">
               Collect from your end users on a Stripe Connected Account (Plane B).
               OpenMeter Stripe billing (Plane A) meters usage and invoices you for
               network cost separately. Complete Stripe-hosted onboarding (Account Links)
@@ -814,13 +864,13 @@ function PaymentsTabLoaded(props: Readonly<{
         />
       )}
 
-      <div className="rounded-lg border p-4 space-y-3">
+      <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
         <div>
-          <h3 className="text-base font-semibold">Customer invoices</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <h3 className="text-base font-semibold text-zinc-100">Customer invoices</h3>
+          <p className="mt-1 text-xs text-zinc-500">
             End users billed through this app&apos;s Stripe Connect account. Platform invoices
             for your developer prepaid wallet are on{" "}
-            <a href="/billing" className="text-emerald-500 hover:text-emerald-400">
+            <a href="/billing" className="text-emerald-400 hover:text-emerald-300">
               Billing
             </a>
             .
@@ -829,7 +879,7 @@ function PaymentsTabLoaded(props: Readonly<{
         <PaymentsInvoicesList invoices={invoices} />
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-rose-400">{error}</p>}
     </div>
   );
 }
