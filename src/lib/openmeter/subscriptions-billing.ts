@@ -6,6 +6,7 @@ import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { getHostedAdminClient } from "./admin-client";
 import {
+  applyFreeBillingProfileToCustomer,
   applyTenantBillingProfileToCustomer,
   getAppBillingConfig,
   prepareAppCustomerStripeBilling,
@@ -191,12 +192,14 @@ async function checkoutAfterPlanChange(
     successUrl?: string;
     cancelUrl?: string;
   },
+  fallbackSuccessUrl: string,
 ): Promise<{ checkoutUrl: string; subscriptionId?: string }> {
   const changed = await changeAppUserSubscriptionPlan(input);
-  const checkoutUrl = changed.checkoutUrl?.trim();
+  const checkoutUrl =
+    changed.checkoutUrl?.trim() || fallbackSuccessUrl.trim();
   if (!checkoutUrl) {
     throw new Error(
-      "Plan change succeeded but Stripe Checkout was not started",
+      "Plan change succeeded but no Checkout or success URL is available",
     );
   }
   return {
@@ -231,16 +234,46 @@ export async function createEndUserCheckout(input: {
     customerId: customer.id,
     customerKey: customer.key,
   });
-  await applyTenantBillingProfileToCustomer({
-    client,
-    clientId: input.clientId,
-    customerId: customer.id,
-    customerKey: customer.key,
-  });
+
+  const billingConfig = await getAppBillingConfig(input.clientId);
+  const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
+  if (!merchantReady && connectPaymentsOnlyEnabled(billingConfig)) {
+    throw new Error(
+      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
+    );
+  }
+
+  const origin = getPublicOrigin();
+  const success =
+    input.successUrl ||
+    billingConfig?.checkoutSuccessUrl ||
+    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+  const cancel =
+    input.cancelUrl ||
+    billingConfig?.checkoutCancelUrl ||
+    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+
+  const needsPaymentMethod = planRequiresPaymentMethod(plan);
+  const defaultPaymentMethodId = needsPaymentMethod
+    ? await getKonnectDefaultPaymentMethodId(customer.id)
+    : null;
+  // Stripe-backed tenant profiles reject customers without a default PM.
+  // Collect the card under the sandbox free profile, then Checkout attaches it.
+  if (needsPaymentMethod && !defaultPaymentMethodId) {
+    await applyFreeBillingProfileToCustomer({
+      client,
+      customerId: customer.id,
+    });
+  } else {
+    await applyTenantBillingProfileToCustomer({
+      client,
+      clientId: input.clientId,
+      customerId: customer.id,
+      customerKey: customer.key,
+    });
+  }
 
   // End users usually already have a Starter subscription from provision.
-  // Creating a second subscription 409s on Konnect; `/change` onto Paid
-  // requires a default payment method — which Checkout is about to collect.
   let existing = await getPrimaryOpenMeterSubscriptionForAppUser({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -251,25 +284,13 @@ export async function createEndUserCheckout(input: {
       existing,
     );
     if (existingLocalPlanId !== plan.id) {
-      const needsPaymentMethod = planRequiresPaymentMethod(plan);
-      const defaultPaymentMethodId = needsPaymentMethod
-        ? await getKonnectDefaultPaymentMethodId(customer.id)
-        : null;
       if (needsPaymentMethod && !defaultPaymentMethodId) {
         await clearOpenMeterSubscriptionForCheckout(existing);
         existing = null;
       } else {
-        return checkoutAfterPlanChange(input);
+        return checkoutAfterPlanChange(input, success);
       }
     }
-  }
-
-  const billingConfig = await getAppBillingConfig(input.clientId);
-  const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
-  if (!merchantReady && connectPaymentsOnlyEnabled(billingConfig)) {
-    throw new Error(
-      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
-    );
   }
 
   let subscriptionId = existing?.id?.trim() || "";
@@ -298,37 +319,21 @@ export async function createEndUserCheckout(input: {
       );
       if (racedLocalPlanId === plan.id) {
         subscriptionId = raced.id;
+      } else if (needsPaymentMethod && !defaultPaymentMethodId) {
+        await clearOpenMeterSubscriptionForCheckout(raced);
+        const created = await client.subscriptions.create({
+          customerId: customer.id,
+          plan: { key: planKey },
+        });
+        subscriptionId = created?.id?.trim() || "";
       } else {
-        const needsPaymentMethod = planRequiresPaymentMethod(plan);
-        const defaultPaymentMethodId = needsPaymentMethod
-          ? await getKonnectDefaultPaymentMethodId(customer.id)
-          : null;
-        if (needsPaymentMethod && !defaultPaymentMethodId) {
-          await clearOpenMeterSubscriptionForCheckout(raced);
-          const created = await client.subscriptions.create({
-            customerId: customer.id,
-            plan: { key: planKey },
-          });
-          subscriptionId = created?.id?.trim() || "";
-        } else {
-          return checkoutAfterPlanChange(input);
-        }
+        return checkoutAfterPlanChange(input, success);
       }
     }
   }
   if (!subscriptionId) {
     throw new Error("Failed to create OpenMeter subscription");
   }
-
-  const origin = getPublicOrigin();
-  const success =
-    input.successUrl ||
-    billingConfig?.checkoutSuccessUrl ||
-    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
-  const cancel =
-    input.cancelUrl ||
-    billingConfig?.checkoutCancelUrl ||
-    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
 
   let checkoutUrl: string;
   let stripeCheckoutSessionId: string | null = null;
