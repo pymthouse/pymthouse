@@ -30,7 +30,7 @@ function userPath(suffix: string) {
 const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
 type MetadataRoute = [
-  method: "get" | "post" | "put" | "delete",
+  method: "get" | "post" | "put" | "patch" | "delete",
   path: string,
   tag: string,
   summary: string,
@@ -163,6 +163,60 @@ defineRouteMetadata("get", builderAppPath("/usage/balance"), {
 registerMetadataRoutes([
   ["get", appPath("/billing"), OPENAPI_TAGS.billing, "Billing profile"],
   ["post", appPath("/billing/checkout"), OPENAPI_TAGS.billing, "Create billing checkout"],
+  [
+    "get",
+    appPath("/billing/owner-tiers"),
+    OPENAPI_TAGS.billing,
+    "List Owner Paid tiers",
+  ],
+  [
+    "get",
+    appPath("/billing/owner-subscription"),
+    OPENAPI_TAGS.billing,
+    "Owner subscription switching status",
+  ],
+  [
+    "get",
+    appPath("/billing/payment-method"),
+    OPENAPI_TAGS.billing,
+    "List owner payment methods",
+  ],
+  [
+    "post",
+    appPath("/billing/payment-method"),
+    OPENAPI_TAGS.billing,
+    "Start owner payment-method setup",
+  ],
+  [
+    "patch",
+    appPath("/billing/payment-method"),
+    OPENAPI_TAGS.billing,
+    "Set default owner payment method",
+  ],
+  [
+    "delete",
+    appPath("/billing/payment-method"),
+    OPENAPI_TAGS.billing,
+    "Unlink owner payment method",
+  ],
+  [
+    "post",
+    appPath("/billing/upgrade-paid"),
+    OPENAPI_TAGS.billing,
+    "Upgrade or change Owner Paid plan",
+  ],
+  [
+    "post",
+    appPath("/billing/downgrade-to-starter"),
+    OPENAPI_TAGS.billing,
+    "Schedule Starter downgrade",
+  ],
+  [
+    "post",
+    appPath("/billing/resume-paid-plan"),
+    OPENAPI_TAGS.billing,
+    "Resume Owner Paid (cancel pending downgrade)",
+  ],
   ["get", appPath("/plans"), OPENAPI_TAGS.billing, "List plans"],
   ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],
 ]);
