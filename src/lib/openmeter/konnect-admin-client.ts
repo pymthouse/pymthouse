@@ -1,5 +1,6 @@
 import {
   getHostedOpenMeterUrl,
+  isKonnectMeteringUrl,
   normalizeKonnectMeteringUrl,
 } from "./constants";
 
@@ -22,6 +23,57 @@ export function konnectAdminConfig(): { baseUrl: string; apiKey: string } {
 export function konnectMeteringV1BaseUrl(): string {
   const openmeterBase = normalizeKonnectMeteringUrl(getHostedOpenMeterUrl());
   return `${new URL(openmeterBase).origin}/metering/v1`;
+}
+
+/**
+ * Resolve a Konnect API path against a configured base URL.
+ * Rejects scheme/host injection so path segments cannot redirect the request
+ * off the configured OpenMeter / Konnect origin (tssecurity:S8476).
+ * @internal Exported for unit tests.
+ */
+export function toKonnectApiUrl(baseUrl: string, path: string): string {
+  const trimmedPath = path.trim();
+  if (
+    !trimmedPath.startsWith("/") ||
+    trimmedPath.startsWith("//") ||
+    trimmedPath.includes("://") ||
+    trimmedPath.includes("\\") ||
+    trimmedPath.includes("..")
+  ) {
+    throw new Error("Invalid Konnect API path");
+  }
+
+  let base: URL;
+  try {
+    // Trailing slash so a leading-/ path is joined under the base pathname
+    // (`…/v3/openmeter` + `/customers` → `…/v3/openmeter/customers`), not
+    // replaced at the origin root.
+    base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+  } catch {
+    throw new Error("Invalid Konnect API base URL");
+  }
+
+  const url = new URL(trimmedPath.slice(1), base);
+  if (url.origin !== base.origin) {
+    throw new Error("Konnect API origin mismatch");
+  }
+
+  const basePathPrefix = base.pathname.replace(/\/$/, "") || "";
+  if (basePathPrefix && !url.pathname.startsWith(`${basePathPrefix}/`) && url.pathname !== basePathPrefix) {
+    throw new Error("Konnect API path escaped configured base path");
+  }
+
+  // Pin to Kong Konnect (or local OpenMeter in tests/dev). Env-configured
+  // OPENMETER_URL must already be a Konnect metering URL in production; this
+  // is a second belt so a mis-set env cannot send the Bearer token elsewhere.
+  const host = url.hostname.toLowerCase();
+  const isLocal =
+    host === "127.0.0.1" || host === "localhost" || host === "host.docker.internal";
+  if (!isLocal && !isKonnectMeteringUrl(url.origin)) {
+    throw new Error("Konnect API host is not allowlisted");
+  }
+
+  return url.href;
 }
 
 async function konnectFetchJson<T>(
@@ -61,7 +113,8 @@ export async function konnectAdminFetch<T>(
   label = "admin",
 ): Promise<T> {
   const { baseUrl } = konnectAdminConfig();
-  return konnectFetchJson<T>(`${baseUrl}${path}`, path, init, label);
+  const url = toKonnectApiUrl(baseUrl, path);
+  return konnectFetchJson<T>(url, path, init, label);
 }
 
 export async function konnectMeteringV1Fetch<T>(
@@ -70,5 +123,6 @@ export async function konnectMeteringV1Fetch<T>(
   label = "metering-v1",
 ): Promise<T> {
   const baseUrl = konnectMeteringV1BaseUrl();
-  return konnectFetchJson<T>(`${baseUrl}${path}`, path, init, label);
+  const url = toKonnectApiUrl(baseUrl, path);
+  return konnectFetchJson<T>(url, path, init, label);
 }

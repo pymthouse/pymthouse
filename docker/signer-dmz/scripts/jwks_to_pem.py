@@ -119,7 +119,9 @@ def _build_opener(parsed: urllib.parse.ParseResult) -> urllib.request.OpenerDire
     if parsed.scheme == "https":
         # Always verify certificates and hostnames (no CERT_NONE / check_hostname=False).
         # Local/dev JWKS should use http://localhost or http://host.docker.internal.
+        # Pin TLS ≥ 1.2 so weak SSL/TLS protocols cannot be negotiated (python:S4423).
         ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         return urllib.request.build_opener(
             redirect_handler,
             urllib.request.HTTPHandler(),
