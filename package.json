@@ -46,8 +46,8 @@
     "validate:env": "node scripts/validate-env.js",
     "openapi:generate": "npx tsx scripts/generate-openapi-routes.ts",
     "check:openapi": "npm run openapi:generate && npx tsx scripts/check-openapi.ts",
-    "test": "node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\"",
-    "test:coverage": "mkdir -p coverage && c8 --reporter=text --reporter=lcov --report-dir=coverage --include='src/**' --exclude='**/*.test.ts' --exclude='**/*.test.mjs' node --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\""
+    "test": "node --experimental-test-module-mocks --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\"",
+    "test:coverage": "mkdir -p coverage && c8 --reporter=text --reporter=lcov --report-dir=coverage --include='src/**' --exclude='**/*.test.ts' --exclude='**/*.test.mjs' node --experimental-test-module-mocks --import ./src/test-env.ts --import tsx --test --test-force-exit \"src/**/*.test.ts\" \"src/**/*.test.mjs\""
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
