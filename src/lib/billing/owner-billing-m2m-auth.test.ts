@@ -15,7 +15,7 @@ test("authorizeOwnerBillingM2m accepts matching Basic credentials", async (t) =>
   });
 
   const auth = await authorizeOwnerBillingM2m(
-    new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/owner-tiers`, {
+    new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/tiers`, {
       headers: {
         Authorization: basicAuthHeader(app.clientId, app.clientSecret),
       },
@@ -35,7 +35,7 @@ test("authorizeOwnerBillingM2m rejects session-less / wrong client", async (t) =
 
   assert.equal(
     await authorizeOwnerBillingM2m(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/owner-tiers`),
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/tiers`),
       app.clientId,
     ),
     null,
@@ -43,7 +43,7 @@ test("authorizeOwnerBillingM2m rejects session-less / wrong client", async (t) =
 
   assert.equal(
     await authorizeOwnerBillingM2m(
-      new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/owner-tiers`, {
+      new Request(`http://localhost/api/v1/apps/${app.clientId}/billing/tiers`, {
         headers: {
           Authorization: basicAuthHeader(app.clientId, app.clientSecret),
         },

@@ -25,7 +25,7 @@ async function paymentMethodIdFromRequest(
 }
 
 /**
- * GET /api/v1/apps/{clientId}/billing/payment-method
+ * GET /api/v1/apps/{clientId}/billing/payment-methods
  * List payment methods on the app owner wallet. Auth: M2M Basic only.
  */
 export async function GET(
@@ -43,7 +43,7 @@ export async function GET(
 }
 
 /**
- * POST /api/v1/apps/{clientId}/billing/payment-method
+ * POST /api/v1/apps/{clientId}/billing/payment-methods
  * Start Stripe Checkout (setup) for the app owner wallet.
  * Body: optional `{ successUrl, cancelUrl }`. Auth: M2M Basic only.
  */
@@ -86,7 +86,7 @@ export async function POST(
 }
 
 /**
- * PATCH /api/v1/apps/{clientId}/billing/payment-method
+ * PATCH /api/v1/apps/{clientId}/billing/payment-methods
  * Set default payment method (`?id=` or `{ paymentMethodId }`).
  */
 export async function PATCH(
@@ -126,7 +126,7 @@ export async function PATCH(
 }
 
 /**
- * DELETE /api/v1/apps/{clientId}/billing/payment-method
+ * DELETE /api/v1/apps/{clientId}/billing/payment-methods
  * Detach a payment method (`?id=` or `{ paymentMethodId }`).
  */
 export async function DELETE(

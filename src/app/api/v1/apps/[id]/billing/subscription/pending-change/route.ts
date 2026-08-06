@@ -12,12 +12,12 @@ import {
 } from "@/lib/openmeter/owner-starter-downgrade";
 
 /**
- * POST /api/v1/apps/{clientId}/billing/resume-paid-plan
+ * DELETE /api/v1/apps/{clientId}/billing/subscription/pending-change
  *
  * Cancel a scheduled Sandbox Starter downgrade for the app owner wallet.
  * Body: `{ confirm: true }`. Auth: M2M Basic only.
  */
-export async function POST(
+export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {

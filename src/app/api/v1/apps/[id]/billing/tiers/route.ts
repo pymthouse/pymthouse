@@ -7,7 +7,7 @@ import {
 } from "@/lib/billing/owner-subscription-tiers";
 
 /**
- * GET /api/v1/apps/{clientId}/billing/owner-tiers
+ * GET /api/v1/apps/{clientId}/billing/tiers
  *
  * List selectable Owner Paid tiers for M2M-driven Upgrade / Change plan.
  * Auth: M2M Basic only (app owner wallet).

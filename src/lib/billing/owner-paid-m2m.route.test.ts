@@ -21,22 +21,26 @@ test("owner-paid M2M routes reject missing/wrong Basic auth", async (t) => {
     await cleanupTestApp(app);
   });
 
-  const { GET: getTiers } = await import("@/app/api/v1/apps/[id]/billing/owner-tiers/route");
-  const { POST: upgrade } = await import("@/app/api/v1/apps/[id]/billing/upgrade-paid/route");
+  const { GET: getTiers } = await import(
+    "@/app/api/v1/apps/[id]/billing/tiers/route"
+  );
+  const { PUT: putSubscription } = await import(
+    "@/app/api/v1/apps/[id]/billing/subscription/route"
+  );
 
   const unauth = await getTiers(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/owner-tiers`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/tiers`,
     ),
     { params: Promise.resolve({ id: app.clientId }) },
   );
   assert.equal(unauth.status, 404);
 
-  const wrongApp = await upgrade(
+  const wrongApp = await putSubscription(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/upgrade-paid`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
       {
-        method: "POST",
+        method: "PUT",
         headers: authHeaders(app.clientId, app.clientSecret),
         body: JSON.stringify({ planKey: "pymthouse_owner_paid", confirm: true }),
       },
@@ -46,21 +50,24 @@ test("owner-paid M2M routes reject missing/wrong Basic auth", async (t) => {
   assert.equal(wrongApp.status, 404);
 });
 
-test("owner-paid M2M upgrade/downgrade/resume require confirm: true", async (t) => {
+test("owner-paid M2M subscription mutations require confirm: true", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(async () => {
     await cleanupTestApp(app);
   });
 
-  const { POST: upgrade } = await import("@/app/api/v1/apps/[id]/billing/upgrade-paid/route");
-  const { POST: downgrade } = await import("@/app/api/v1/apps/[id]/billing/downgrade-to-starter/route");
-  const { POST: resume } = await import("@/app/api/v1/apps/[id]/billing/resume-paid-plan/route");
+  const { PUT: putSubscription, DELETE: deleteSubscription } = await import(
+    "@/app/api/v1/apps/[id]/billing/subscription/route"
+  );
+  const { DELETE: deletePendingChange } = await import(
+    "@/app/api/v1/apps/[id]/billing/subscription/pending-change/route"
+  );
 
-  const upgradeRes = await upgrade(
+  const upgradeRes = await putSubscription(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/upgrade-paid`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
       {
-        method: "POST",
+        method: "PUT",
         headers: authHeaders(app.clientId, app.clientSecret),
         body: JSON.stringify({ planKey: "pymthouse_owner_paid" }),
       },
@@ -71,11 +78,11 @@ test("owner-paid M2M upgrade/downgrade/resume require confirm: true", async (t) 
   const upgradeBody = (await upgradeRes.json()) as { code?: string };
   assert.equal(upgradeBody.code, "confirm_required");
 
-  const downgradeRes = await downgrade(
+  const downgradeRes = await deleteSubscription(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/downgrade-to-starter`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
       {
-        method: "POST",
+        method: "DELETE",
         headers: authHeaders(app.clientId, app.clientSecret),
         body: JSON.stringify({}),
       },
@@ -86,11 +93,11 @@ test("owner-paid M2M upgrade/downgrade/resume require confirm: true", async (t) 
   const downgradeBody = (await downgradeRes.json()) as { code?: string };
   assert.equal(downgradeBody.code, "confirm_required");
 
-  const resumeRes = await resume(
+  const resumeRes = await deletePendingChange(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/resume-paid-plan`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/subscription/pending-change`,
       {
-        method: "POST",
+        method: "DELETE",
         headers: authHeaders(app.clientId, app.clientSecret),
         body: JSON.stringify({ confirm: false }),
       },
@@ -102,18 +109,20 @@ test("owner-paid M2M upgrade/downgrade/resume require confirm: true", async (t) 
   assert.equal(resumeBody.code, "confirm_required");
 });
 
-test("owner-tiers M2M lists selectable tiers with Basic auth", async (t) => {
+test("billing/tiers M2M lists selectable tiers with Basic auth", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(async () => {
     await cleanupTestApp(app);
   });
 
-  const { GET } = await import("@/app/api/v1/apps/[id]/billing/owner-tiers/route");
+  const { GET } = await import("@/app/api/v1/apps/[id]/billing/tiers/route");
   const res = await GET(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/owner-tiers`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/tiers`,
       {
-        headers: { Authorization: basicAuthHeader(app.clientId, app.clientSecret) },
+        headers: {
+          Authorization: basicAuthHeader(app.clientId, app.clientSecret),
+        },
       },
     ),
     { params: Promise.resolve({ id: app.clientId }) },
@@ -123,17 +132,19 @@ test("owner-tiers M2M lists selectable tiers with Basic auth", async (t) => {
   assert.ok(Array.isArray(body.tiers));
 });
 
-test("payment-method PATCH/DELETE require paymentMethodId under M2M", async (t) => {
+test("payment-methods PATCH/DELETE require paymentMethodId under M2M", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(async () => {
     await cleanupTestApp(app);
   });
 
-  const { PATCH, DELETE } = await import("@/app/api/v1/apps/[id]/billing/payment-method/route");
+  const { PATCH, DELETE } = await import(
+    "@/app/api/v1/apps/[id]/billing/payment-methods/route"
+  );
 
   const patchRes = await PATCH(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/payment-method`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/payment-methods`,
       {
         method: "PATCH",
         headers: authHeaders(app.clientId, app.clientSecret),
@@ -146,7 +157,7 @@ test("payment-method PATCH/DELETE require paymentMethodId under M2M", async (t) 
 
   const deleteRes = await DELETE(
     new NextRequest(
-      `http://localhost/api/v1/apps/${app.clientId}/billing/payment-method`,
+      `http://localhost/api/v1/apps/${app.clientId}/billing/payment-methods`,
       {
         method: "DELETE",
         headers: authHeaders(app.clientId, app.clientSecret),
