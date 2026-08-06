@@ -187,14 +187,16 @@ export default function AppWizard({ initialData }: Readonly<Props>) {
     set("allowedScopes", ensureOpenIdScope(joinScopes(next)));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      const webRedirects = formData.confidentialWebHelper
-        ? (webRedirectDraft.trim() ? [webRedirectDraft.trim()] : [])
-        : [];
+      let webRedirects: string[] = [];
+      if (formData.confidentialWebHelper) {
+        const trimmed = webRedirectDraft.trim();
+        webRedirects = trimmed ? [trimmed] : [];
+      }
 
       const payload: AppFormData = {
         ...formData,

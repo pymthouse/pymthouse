@@ -46,6 +46,27 @@ type OpenApiDoc = ReturnType<typeof generateOpenApiDocument> & {
 
 type PathItem = NonNullable<OpenApiDoc["paths"]>[string];
 
+function filterPathItem(
+  path: string,
+  item: PathItem,
+  allowed: Set<OpenApiAudience>,
+): PathItem | null {
+  const filtered: Record<string, unknown> = { ...item };
+  let keep = false;
+  for (const method of HTTP_METHODS) {
+    if (!(method in filtered)) {
+      continue;
+    }
+    const audience = classifyOpenApiOperation(method, path);
+    if (audience && allowed.has(audience)) {
+      keep = true;
+    } else {
+      delete filtered[method];
+    }
+  }
+  return keep ? (filtered as PathItem) : null;
+}
+
 function filterOperations(
   paths: OpenApiDoc["paths"],
   audiences: OpenApiAudience[],
@@ -59,21 +80,9 @@ function filterOperations(
     if (!item || typeof item !== "object") {
       continue;
     }
-    const filtered: Record<string, unknown> = { ...item };
-    let keep = false;
-    for (const method of HTTP_METHODS) {
-      if (!(method in filtered)) {
-        continue;
-      }
-      const audience = classifyOpenApiOperation(method, path);
-      if (audience && allowed.has(audience)) {
-        keep = true;
-      } else {
-        delete filtered[method];
-      }
-    }
-    if (keep) {
-      next[path] = filtered as PathItem;
+    const filtered = filterPathItem(path, item, allowed);
+    if (filtered) {
+      next[path] = filtered;
     }
   }
   return next;

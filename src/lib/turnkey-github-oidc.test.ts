@@ -148,9 +148,13 @@ describe("Turnkey GitHub OIDC issuer", () => {
 });
 
 describe("mintTurnkeyGithubOidcToken", () => {
-  it("issues a verifiable RS256 id token with nonce binding", async () => {
+  it("issues a verifiable RS256 id token with nonce binding", async (t) => {
     // Uses DB-backed signing keys when a real DATABASE_URL is available.
-    if (process.env.PYMTHOUSE_TEST_DATABASE_URL_UNSET === "1") {
+    if (
+      process.env.PYMTHOUSE_TEST_DATABASE_URL_UNSET === "1" ||
+      !process.env.DATABASE_URL?.trim()
+    ) {
+      t.skip("DATABASE_URL unset for this job");
       return;
     }
 

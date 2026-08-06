@@ -10,14 +10,14 @@ import {
   __testSetOpenMeterUsageRows,
 } from "@/lib/openmeter/usage-read";
 import { hashToken } from "@/lib/token-hash";
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
   createAppUser,
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 
-run("/user/usage accepts bare Bearer and scopes to that user", async (t) => {
+test("/user/usage accepts bare Bearer and scopes to that user", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));

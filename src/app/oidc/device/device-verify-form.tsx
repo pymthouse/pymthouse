@@ -124,7 +124,7 @@ export default function DeviceVerifyForm() {
     });
   }, [prefilled, deviceInfo, step, status, authorize]);
 
-  function handleSubmitCode(e: React.FormEvent) {
+  function handleSubmitCode(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     const cleaned = normalizeUserCode(userCode.trim());
     setUserCode(cleaned);

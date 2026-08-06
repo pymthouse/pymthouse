@@ -69,6 +69,68 @@ export function neonSubscriptionStatusAfterPlanChange(input: {
   return input.checkoutUrl ? "pending" : "active";
 }
 
+async function checkoutUrlAfterPlanChange(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  clientId: string;
+  externalUserId: string;
+  targetPlan: Awaited<ReturnType<typeof loadActiveTargetPlan>>;
+  customer: { id: string; key: string };
+  successUrl?: string;
+  cancelUrl?: string;
+}): Promise<{ checkoutUrl?: string; stripeCheckoutSessionId?: string | null }> {
+  if (!planRequiresPaymentMethod(input.targetPlan)) {
+    return {};
+  }
+
+  const billingConfig = await getAppBillingConfig(input.clientId);
+  const origin = getPublicOrigin();
+  const success =
+    input.successUrl ||
+    billingConfig?.checkoutSuccessUrl ||
+    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+  const cancel =
+    input.cancelUrl ||
+    billingConfig?.checkoutCancelUrl ||
+    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+
+  if (isMerchantConnectPaymentsReady(billingConfig)) {
+    const connectCheckout = await createMerchantConnectCheckoutForUser({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      successUrl: success,
+      cancelUrl: cancel,
+      openmeterCustomerId: input.customer.id,
+      openmeterCustomerKey: input.customer.key,
+    });
+    return {
+      checkoutUrl: connectCheckout.checkoutUrl,
+      stripeCheckoutSessionId: connectCheckout.sessionId,
+    };
+  }
+
+  const paymentMethodId = await getKonnectDefaultPaymentMethodId(input.customer.id);
+  if (paymentMethodId) {
+    return {};
+  }
+
+  if (connectPaymentsOnlyEnabled(billingConfig)) {
+    throw new Error(
+      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
+    );
+  }
+
+  const checkout = await createOpenMeterStripeCheckoutSession({
+    client: input.client,
+    customerId: input.customer.id,
+    successUrl: success,
+    cancelUrl: cancel,
+  });
+  return {
+    checkoutUrl: checkout.checkoutUrl,
+    stripeCheckoutSessionId: checkout.sessionId,
+  };
+}
+
 async function upsertNeonSubscriptionCache(input: {
   clientId: string;
   externalUserId: string;
@@ -350,51 +412,15 @@ export async function changeAppUserSubscriptionPlan(input: {
     current.id;
   const effectiveAt = new Date().toISOString();
 
-  let checkoutUrl: string | undefined;
-  let stripeCheckoutSessionId: string | null | undefined;
-
-  if (planRequiresPaymentMethod(targetPlan)) {
-    const billingConfig = await getAppBillingConfig(input.clientId);
-    const origin = getPublicOrigin();
-    const success =
-      input.successUrl ||
-      billingConfig?.checkoutSuccessUrl ||
-      appSettingsAbsoluteUrl(origin, input.clientId, "payments");
-    const cancel =
-      input.cancelUrl ||
-      billingConfig?.checkoutCancelUrl ||
-      appSettingsAbsoluteUrl(origin, input.clientId, "payments");
-
-    if (isMerchantConnectPaymentsReady(billingConfig)) {
-      const connectCheckout = await createMerchantConnectCheckoutForUser({
-        clientId: input.clientId,
-        externalUserId: input.externalUserId,
-        successUrl: success,
-        cancelUrl: cancel,
-        openmeterCustomerId: customer.id,
-        openmeterCustomerKey: customer.key,
-      });
-      checkoutUrl = connectCheckout.checkoutUrl;
-      stripeCheckoutSessionId = connectCheckout.sessionId;
-    } else {
-      const paymentMethodId = await getKonnectDefaultPaymentMethodId(customer.id);
-      if (!paymentMethodId) {
-        if (connectPaymentsOnlyEnabled(billingConfig)) {
-          throw new Error(
-            "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
-          );
-        }
-        const checkout = await createOpenMeterStripeCheckoutSession({
-          client,
-          customerId: customer.id,
-          successUrl: success,
-          cancelUrl: cancel,
-        });
-        checkoutUrl = checkout.checkoutUrl;
-        stripeCheckoutSessionId = checkout.sessionId;
-      }
-    }
-  }
+  const { checkoutUrl, stripeCheckoutSessionId } = await checkoutUrlAfterPlanChange({
+    client,
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    targetPlan,
+    customer,
+    successUrl: input.successUrl,
+    cancelUrl: input.cancelUrl,
+  });
 
   await upsertNeonSubscriptionCache({
     clientId: input.clientId,

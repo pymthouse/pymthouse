@@ -203,13 +203,15 @@ test("computeUsdMicrosFromWei: small wei amount stays exact fractional", () => {
   const smallWei = 1_000_000n; // 0.000_000_000_001 ETH
   const result = computeUsdMicrosFromWei(smallWei, 3000);
   assert.ok(typeof result === "number");
-  assert.ok(result > 0 && result < 1);
+  assert.ok(result > 0);
+  assert.ok(result < 1);
 });
 
 test("computeUsdMicrosFromWei: sub-micro fees stay fractional (no per-ticket ceil)", () => {
   // 1 wei at $1 → exact micros = 1e-18; must not round up here.
   const exact = computeUsdMicrosFromWei(1n, 1);
-  assert.ok(exact > 0 && exact < 1);
+  assert.ok(exact > 0);
+  assert.ok(exact < 1);
   assert.equal(ceilExactUsdMicros(exact), 1n);
 });
 

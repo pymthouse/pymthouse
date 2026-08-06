@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { NextRequest } from "next/server";
 
-import { run } from "@/test-utils/db-guard";
+import { test } from "@/test-utils/db-guard";
 import {
   cleanupTestApp,
   createAppUser,
@@ -13,7 +13,7 @@ import { db } from "@/db/index";
 import { apiKeys } from "@/db/schema";
 import { hashToken } from "@/lib/token-hash";
 
-run("me usage balance rejects externalUserId override with bare Bearer", async (t) => {
+test("me usage balance rejects externalUserId override with bare Bearer", async (t) => {
   const { GET } = await import("./route");
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(() => cleanupTestApp(app));

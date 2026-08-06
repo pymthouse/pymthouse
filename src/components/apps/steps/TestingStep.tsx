@@ -897,7 +897,7 @@ function M2mTokenTestResult({
           remote signer, or as <span className="font-mono text-sky-200/80">subject_token</span> at <span className="font-mono text-sky-200/80">
             POST /api/v1/apps/{`{clientId}`}/oidc/token
           </span>
-          .
+          {"."}
         </p>
       ) : null}
       {tokenKind === "signer_session" ? (

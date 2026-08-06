@@ -16,7 +16,7 @@ type KonnectCustomerBillingData = {
 function requireStripeSecretKey(): string {
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key || !key.startsWith("sk_")) {
+  if (!key?.startsWith("sk_")) {
     throw new Error(
       "STRIPE_SECRET_KEY is required to provision Stripe customer data " +
         "(must be sk_… for the same Stripe account installed in Konnect/OpenMeter).",

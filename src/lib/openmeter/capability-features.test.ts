@@ -30,8 +30,9 @@ test("buildAppCapabilityFeatureKey matches OpenMeter slug pattern", () => {
   assert.match(key, OPENMETER_SLUG_KEY_PATTERN);
 });
 
-test("resolveCapabilityFeatureKey uses app-scoped key when stable keys enabled", () => {
+test("resolveCapabilityFeatureKey uses app-scoped key when stable keys enabled", (t) => {
   if (!billingStableFeatureKeysEnabled()) {
+    t.skip("billing stable feature keys disabled");
     return;
   }
   assert.equal(

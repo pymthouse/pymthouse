@@ -53,10 +53,11 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const type =
+  const rawType =
     parsed && typeof parsed === "object" && "type" in parsed
-      ? String((parsed as { type?: unknown }).type ?? "")
-      : "";
+      ? (parsed as { type?: unknown }).type
+      : undefined;
+  const type = typeof rawType === "string" ? rawType : "";
 
   if (type === "account.updated") {
     const account = parseStripeAccountUpdated(rawBody);

@@ -29,7 +29,7 @@ export async function POST(
     .where(eq(plans.id, planId))
     .limit(1);
   const plan = planRows[0];
-  if (!plan || plan.clientId !== auth.app.id) {
+  if (plan?.clientId !== auth.app.id) {
     return NextResponse.json({ error: "Plan not found" }, { status: 404 });
   }
 

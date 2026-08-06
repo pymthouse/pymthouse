@@ -3,7 +3,7 @@ import {
   OpenApiGeneratorV3,
   type RouteConfig,
 } from "@asteasolutions/zod-to-openapi";
-import type { ZodTypeAny } from "zod";
+import type { z } from "zod";
 
 import { BUILDER_INFO_DESCRIPTION } from "@/lib/openapi/tags";
 
@@ -32,7 +32,7 @@ export function defineRoute(input: DefineRouteInput): void {
   openApiRegistry.registerPath(input);
 }
 
-export function registerSchema<T extends ZodTypeAny>(
+export function registerSchema<T extends z.ZodType>(
   name: string,
   schema: T,
 ): T {

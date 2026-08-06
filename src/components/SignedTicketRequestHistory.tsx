@@ -567,6 +567,188 @@ function downloadRequestsCsv(requests: SignedTicketRequestRow[]): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function HistoryToolbar({
+  copy,
+  fromDate,
+  toDate,
+  rangeActive,
+  viewMode,
+  requests,
+  onFromDateChange,
+  onToDateChange,
+  onClearRange,
+  onDownloadCsv,
+  onViewModeChange,
+}: Readonly<{
+  copy: ReturnType<typeof historyCopy>;
+  fromDate: string;
+  toDate: string;
+  rangeActive: boolean;
+  viewMode: ViewMode;
+  requests: SignedTicketRequestRow[];
+  onFromDateChange: (value: string) => void;
+  onToDateChange: (value: string) => void;
+  onClearRange: () => void;
+  onDownloadCsv: () => void;
+  onViewModeChange: (mode: ViewMode) => void;
+}>) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-400"
+            title="Rows are limited to this identity scope. Change it with the identity filter above."
+          >
+            <span className="text-zinc-600">Scope</span>
+            {copy.scopeChip}
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+            <span className="sr-only">From date</span>
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => onFromDateChange(e.target.value)}
+              className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
+            />
+          </label>
+          <span className="text-[11px] text-zinc-600">→</span>
+          <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+            <span className="sr-only">To date</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => onToDateChange(e.target.value)}
+              className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
+            />
+          </label>
+          {rangeActive ? (
+            <button
+              type="button"
+              onClick={onClearRange}
+              className="text-[11px] text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+            >
+              Clear range
+            </button>
+          ) : null}
+          {viewMode === "request" && requests.length > 0 ? (
+            <button
+              type="button"
+              onClick={onDownloadCsv}
+              className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+            >
+              Export CSV
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="inline-flex rounded-lg border border-zinc-700 p-0.5 self-start">
+        <button
+          type="button"
+          onClick={() => onViewModeChange("session")}
+          className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
+            viewMode === "session"
+              ? "bg-zinc-700 text-zinc-100"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          Sessions
+        </button>
+        <button
+          type="button"
+          onClick={() => onViewModeChange("request")}
+          className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
+            viewMode === "request"
+              ? "bg-zinc-700 text-zinc-100"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          All requests
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HistoryBody({
+  openMeterConfigured,
+  loading,
+  error,
+  itemsEmpty,
+  emptyCopy,
+  viewMode,
+  sessions,
+  requests,
+  nextCursor,
+  loadingMore,
+  onLoadMore,
+  historyScope,
+  resolvedClientIds,
+}: Readonly<{
+  openMeterConfigured: boolean;
+  loading: boolean;
+  error: string | null;
+  itemsEmpty: boolean;
+  emptyCopy: string;
+  viewMode: ViewMode;
+  sessions: SignedTicketSessionRow[];
+  requests: SignedTicketRequestRow[];
+  nextCursor: string | null;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  historyScope: HistoryScope;
+  resolvedClientIds: string[];
+}>) {
+  if (!openMeterConfigured) {
+    return (
+      <p className="text-sm text-zinc-500 py-6 text-center">
+        Usage metering is not configured, so per-request history is unavailable.
+      </p>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="animate-pulse space-y-3 py-2">
+        {["a", "b", "c"].map((key) => (
+          <div key={key} className="h-10 rounded-lg bg-zinc-800/80" />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return <p className="text-sm text-rose-400 py-4 text-center">{error}</p>;
+  }
+  if (itemsEmpty) {
+    return <p className="text-sm text-zinc-500 py-6 text-center">{emptyCopy}</p>;
+  }
+  if (viewMode === "session") {
+    return (
+      <SessionTable
+        items={sessions}
+        nextCursor={nextCursor}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
+        historyScope={historyScope}
+        resolvedClientIds={resolvedClientIds}
+      />
+    );
+  }
+  return (
+    <RequestTable
+      items={requests}
+      nextCursor={nextCursor}
+      loadingMore={loadingMore}
+      onLoadMore={onLoadMore}
+      showIdentity
+    />
+  );
+}
+
 export default function SignedTicketRequestHistory({
   clientId,
   clientIds,
@@ -714,126 +896,38 @@ export default function SignedTicketRequestHistory({
 
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 sm:p-5">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-sm font-semibold text-zinc-200">{copy.title}</h2>
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-black/20 px-2 py-0.5 text-[11px] text-zinc-400"
-              title="Rows are limited to this identity scope. Change it with the identity filter above."
-            >
-              <span className="text-zinc-600">Scope</span>
-              {copy.scopeChip}
-            </span>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1 text-[11px] text-zinc-500">
-              <span className="sr-only">From date</span>
-              <input
-                type="date"
-                value={fromDate}
-                max={toDate || undefined}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
-              />
-            </label>
-            <span className="text-[11px] text-zinc-600">→</span>
-            <label className="flex items-center gap-1 text-[11px] text-zinc-500">
-              <span className="sr-only">To date</span>
-              <input
-                type="date"
-                value={toDate}
-                min={fromDate || undefined}
-                onChange={(e) => setToDate(e.target.value)}
-                className="rounded-md border border-zinc-700 bg-black/20 px-2 py-1 text-[11px] text-zinc-300"
-              />
-            </label>
-            {rangeActive ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setFromDate("");
-                  setToDate("");
-                }}
-                className="text-[11px] text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
-              >
-                Clear range
-              </button>
-            ) : null}
-            {viewMode === "request" && requests.length > 0 ? (
-              <button
-                type="button"
-                onClick={downloadCsv}
-                className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
-              >
-                Export CSV
-              </button>
-            ) : null}
-          </div>
-        </div>
-        <div className="inline-flex rounded-lg border border-zinc-700 p-0.5 self-start">
-          <button
-            type="button"
-            onClick={() => setViewMode("session")}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
-              viewMode === "session"
-                ? "bg-zinc-700 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            Sessions
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("request")}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
-              viewMode === "request"
-                ? "bg-zinc-700 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            All requests
-          </button>
-        </div>
-      </div>
+      <HistoryToolbar
+        copy={copy}
+        fromDate={fromDate}
+        toDate={toDate}
+        rangeActive={rangeActive}
+        viewMode={viewMode}
+        requests={requests}
+        onFromDateChange={setFromDate}
+        onToDateChange={setToDate}
+        onClearRange={() => {
+          setFromDate("");
+          setToDate("");
+        }}
+        onDownloadCsv={downloadCsv}
+        onViewModeChange={setViewMode}
+      />
 
-      {!openMeterConfigured ? (
-        <p className="text-sm text-zinc-500 py-6 text-center">
-          Usage metering is not configured, so per-request history is unavailable.
-        </p>
-      ) : null}
-      {openMeterConfigured && loading ? (
-        <div className="animate-pulse space-y-3 py-2">
-          {["a", "b", "c"].map((key) => (
-            <div key={key} className="h-10 rounded-lg bg-zinc-800/80" />
-          ))}
-        </div>
-      ) : null}
-      {openMeterConfigured && !loading && error ? (
-        <p className="text-sm text-rose-400 py-4 text-center">{error}</p>
-      ) : null}
-      {openMeterConfigured && !loading && !error && itemsEmpty ? (
-        <p className="text-sm text-zinc-500 py-6 text-center">{emptyCopy}</p>
-      ) : null}
-      {openMeterConfigured && !loading && !error && !itemsEmpty && viewMode === "session" ? (
-        <SessionTable
-          items={sessions}
-          nextCursor={nextCursor}
-          loadingMore={loadingMore}
-          onLoadMore={() => void onLoadMore()}
-          historyScope={historyScope}
-          resolvedClientIds={resolvedClientIds}
-        />
-      ) : null}
-      {openMeterConfigured && !loading && !error && !itemsEmpty && viewMode === "request" ? (
-        <RequestTable
-          items={requests}
-          nextCursor={nextCursor}
-          loadingMore={loadingMore}
-          onLoadMore={() => void onLoadMore()}
-          showIdentity
-        />
-      ) : null}
+      <HistoryBody
+        openMeterConfigured={openMeterConfigured}
+        loading={loading}
+        error={error}
+        itemsEmpty={itemsEmpty}
+        emptyCopy={emptyCopy}
+        viewMode={viewMode}
+        sessions={sessions}
+        requests={requests}
+        nextCursor={nextCursor}
+        loadingMore={loadingMore}
+        onLoadMore={() => void onLoadMore()}
+        historyScope={historyScope}
+        resolvedClientIds={resolvedClientIds}
+      />
     </section>
   );
 }

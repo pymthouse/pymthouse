@@ -117,7 +117,7 @@ export const __testMapAccountIdentity = mapAccountIdentity;
 function requireStripeSecretKey(): string {
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key || !key.startsWith("sk_")) {
+  if (!key?.startsWith("sk_")) {
     throw new Error(
       "STRIPE_SECRET_KEY is required for Stripe Connect (must be sk_… platform key)",
     );

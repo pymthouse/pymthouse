@@ -10,7 +10,7 @@ export function buildSignerSessionEnvelope(input: {
   signer_url?: string;
   discovery_url?: string;
   caps?: readonly string[];
-  issued_token_type?: SignerSession["issued_token_type"];
+  issued_token_type?: NonNullable<SignerSession["issued_token_type"]>;
   correlation_id?: string;
 }): SignerSession {
   const scope = input.scope.trim() || "sign:job";
