@@ -159,6 +159,7 @@ if [ -z "${SIGNER_UPSTREAM:-}" ] && [ -x /usr/local/bin/livepeer ]; then
   _byoc_default=0
   case "${RAILWAY_SERVICE_NAME:-}" in
     pymthouse-signer-test|pymthouse-signer-test-preview-only) _byoc_default=1 ;;
+    *) _byoc_default=0 ;;
   esac
   _byoc="${BYOC_PER_CAP_PRICING:-$_byoc_default}"
   if [ "$_byoc" = "1" ] || [ "$_byoc" = "true" ]; then
