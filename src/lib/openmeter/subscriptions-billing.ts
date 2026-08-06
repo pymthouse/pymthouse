@@ -17,6 +17,7 @@ import {
   changeKonnectSubscription,
   type SubscriptionChangeTiming,
 } from "./konnect-subscriptions";
+import { isOpenMeterConflictError } from "./plan-errors";
 import { buildOpenMeterPlanKey } from "./plans-sync";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
@@ -162,6 +163,34 @@ export async function createEndUserCheckout(input: {
     planId: input.planId,
   });
 
+  // End users usually already have a Starter subscription from provision.
+  // Creating a second subscription 409s on Konnect — change (or resume) instead.
+  const existing = await getPrimaryOpenMeterSubscriptionForAppUser({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  if (existing) {
+    const existingLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+      input.clientId,
+      existing,
+    );
+    if (existingLocalPlanId !== plan.id) {
+      const changed = await changeAppUserSubscriptionPlan(input);
+      const checkoutUrl = changed.checkoutUrl?.trim();
+      if (!checkoutUrl) {
+        throw new Error(
+          "Plan change succeeded but Stripe Checkout was not started",
+        );
+      }
+      return {
+        checkoutUrl,
+        ...(changed.subscriptionId
+          ? { subscriptionId: changed.subscriptionId }
+          : {}),
+      };
+    }
+  }
+
   const client = getHostedAdminClient();
   const customer = await ensureOpenMeterCustomerForAppUser({
     client,
@@ -189,12 +218,49 @@ export async function createEndUserCheckout(input: {
     );
   }
 
-  const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
-  const subscription = await client.subscriptions.create({
-    customerId: customer.id,
-    plan: { key: planKey },
-  });
-  if (!subscription?.id) {
+  let subscriptionId = existing?.id?.trim() || "";
+  if (!subscriptionId) {
+    const planKey = buildOpenMeterPlanKey(input.clientId, plan.id);
+    try {
+      const subscription = await client.subscriptions.create({
+        customerId: customer.id,
+        plan: { key: planKey },
+      });
+      subscriptionId = subscription?.id?.trim() || "";
+    } catch (err) {
+      if (!isOpenMeterConflictError(err)) {
+        throw err;
+      }
+      const raced = await getPrimaryOpenMeterSubscriptionForAppUser({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+      });
+      if (!raced) {
+        throw err;
+      }
+      const racedLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+        input.clientId,
+        raced,
+      );
+      if (racedLocalPlanId !== plan.id) {
+        const changed = await changeAppUserSubscriptionPlan(input);
+        const checkoutUrl = changed.checkoutUrl?.trim();
+        if (!checkoutUrl) {
+          throw new Error(
+            "Plan change succeeded but Stripe Checkout was not started",
+          );
+        }
+        return {
+          checkoutUrl,
+          ...(changed.subscriptionId
+            ? { subscriptionId: changed.subscriptionId }
+            : {}),
+        };
+      }
+      subscriptionId = raced.id;
+    }
+  }
+  if (!subscriptionId) {
     throw new Error("Failed to create OpenMeter subscription");
   }
 
@@ -237,12 +303,12 @@ export async function createEndUserCheckout(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
     planId: plan.id,
-    openmeterSubscriptionId: subscription.id,
+    openmeterSubscriptionId: subscriptionId,
     status: "pending",
     stripeCheckoutSessionId,
   });
 
-  return { checkoutUrl, subscriptionId: subscription.id };
+  return { checkoutUrl, subscriptionId };
 }
 
 export type ChangeAppUserSubscriptionPlanResult = {

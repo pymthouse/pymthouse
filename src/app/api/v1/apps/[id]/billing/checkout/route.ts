@@ -67,9 +67,20 @@ function checkoutErrorResponse(err: unknown): NextResponse {
     message.includes("Plan not found") ||
     message.includes("not active") ||
     message.includes("phased out") ||
-    message.includes("not synced")
+    message.includes("not synced") ||
+    message.includes("already on this plan")
   ) {
     return NextResponse.json({ error: message }, { status: 400 });
+  }
+  if (/\b409\b/.test(message) || /conflict error/i.test(message)) {
+    console.error("checkout failed:", message);
+    return NextResponse.json(
+      {
+        error:
+          "Customer already has an active subscription; retry checkout or change plan",
+      },
+      { status: 409 },
+    );
   }
   console.error("checkout failed:", message);
   return NextResponse.json({ error: "Checkout failed" }, { status: 502 });
