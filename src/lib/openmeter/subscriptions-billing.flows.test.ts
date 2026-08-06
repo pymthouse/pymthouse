@@ -90,7 +90,10 @@ const subscriptionRead = stubs.module("@/lib/openmeter/subscription-read", {
 });
 
 const checkoutSession = stubs.module("@/lib/openmeter/stripe-checkout-session", {
-  createOpenMeterStripeCheckoutSession: async (): Promise<{
+  createOpenMeterStripeCheckoutSession: async (_input: {
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{
     checkoutUrl: string;
     sessionId: string | null;
   }> => ({

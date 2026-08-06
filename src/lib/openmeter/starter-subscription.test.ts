@@ -109,7 +109,11 @@ const billingIdentity = stubs.module("@/lib/openmeter/billing-identity", {
 });
 
 const ownerStarterPlan = stubs.module("@/lib/openmeter/owner-starter-plan", {
-  ensureOwnerStarterSubscription: async (): Promise<{
+  ensureOwnerStarterSubscription: async (_input: {
+    ownerUserId: string;
+    publicClientIds: string[];
+    hintOpenMeterSubscriptionId?: string | null;
+  }): Promise<{
     openmeterSubscriptionId: string | null;
     planKey: string;
     openmeterPlanId: string;

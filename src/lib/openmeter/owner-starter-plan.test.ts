@@ -94,11 +94,14 @@ const konnectSubscriptions = stubs.module(
 );
 
 const allowancePlan = stubs.module("@/lib/openmeter/owner-allowance-plan", {
-  findOpenMeterPlanByKey: async (): Promise<{
-    id: string;
-    status?: string;
-  } | null> => null,
-  createOwnerAllowancePlan: async (): Promise<string> => PLAN_ID,
+  findOpenMeterPlanByKey: async (
+    _client: unknown,
+    _planKey: string,
+  ): Promise<{ id: string; status?: string } | null> => null,
+  createOwnerAllowancePlan: async (_input: {
+    planKey: string;
+    includedUsdMicros: string;
+  }): Promise<string> => PLAN_ID,
   publishOpenMeterPlanBestEffort: async (
     _client: unknown,
     planId: string,
@@ -107,6 +110,7 @@ const allowancePlan = stubs.module("@/lib/openmeter/owner-allowance-plan", {
     status === "draft",
   forceSyncOwnerAllowancePlan: async (input: {
     planKey: string;
+    planName: string;
     includedUsdMicros: string;
   }): Promise<{
     key: string;
@@ -120,7 +124,11 @@ const allowancePlan = stubs.module("@/lib/openmeter/owner-allowance-plan", {
 });
 
 const customers = stubs.module("@/lib/openmeter/customers", {
-  ensureOwnerCustomer: async (): Promise<{ id: string }> => ({ id: CUSTOMER_ID }),
+  ensureOwnerCustomer: async (
+    _client: unknown,
+    _ownerUserId: string,
+    _publicClientIds: string[],
+  ): Promise<{ id: string }> => ({ id: CUSTOMER_ID }),
 });
 
 const subscriptionRead = stubs.module("@/lib/openmeter/subscription-read", {
