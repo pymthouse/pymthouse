@@ -148,7 +148,45 @@ registerMetadataRoutes([
   ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", { includeExternalUserId: true }],
   ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", { includeExternalUserId: true }],
   ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
+  [
+    "get",
+    userPath("/invoices"),
+    OPENAPI_TAGS.billing,
+    "List end-user invoices",
+    { includeExternalUserId: true },
+  ],
+  [
+    "get",
+    userPath("/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "List end-user payment methods",
+    { includeExternalUserId: true },
+  ],
+  [
+    "post",
+    userPath("/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Start end-user payment-method setup",
+    { includeExternalUserId: true, body: ownerPaymentMethodSetupBody },
+  ],
 ]);
+
+defineRouteMetadata("get", userPath("/invoices/{invoiceId}/hosted-url"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Get end-user invoice hosted URL",
+  security: m2mSecurity,
+  request: {
+    params: z.object({
+      clientId,
+      externalUserId,
+      invoiceId: z.string().min(1).openapi({
+        param: { name: "invoiceId", in: "path" },
+        description: "OpenMeter invoice id.",
+      }),
+    }),
+  },
+  responses: { 200: jsonSuccess, ...builderErrorResponses },
+});
 
 const usageQueryParams = z.object({
   ...usageDateRangeQueryParams,

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
+import {
+  paymentMethodCheckoutErrorResponse,
+  paymentMethodDefaultErrorResponse,
+  paymentMethodUnlinkErrorResponse,
+} from "@/lib/billing/payment-method-http";
 import { authOptions } from "@/lib/next-auth-options";
 import {
   createOwnerPaymentMethodCheckout,
@@ -77,19 +82,7 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    let status = 502;
-    if (
-      message.includes("STRIPE_") ||
-      message.includes("OPENMETER_") ||
-      message.includes("No ready Stripe") ||
-      message.includes("No Stripe app")
-    ) {
-      status = 400;
-    } else if (message.includes("Cannot reach OpenMeter")) {
-      status = 503;
-    }
-    return NextResponse.json({ error: message }, { status });
+    return paymentMethodCheckoutErrorResponse(err);
   }
 }
 
@@ -119,8 +112,7 @@ export async function PATCH(request: NextRequest) {
     }
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 502 });
+    return paymentMethodDefaultErrorResponse(err);
   }
 }
 
@@ -152,13 +144,6 @@ export async function DELETE(request: NextRequest) {
     }
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("Unable to verify payment methods")) {
-      return NextResponse.json({ error: message }, { status: 503 });
-    }
-    if (message.includes("only payment method")) {
-      return NextResponse.json({ error: message }, { status: 409 });
-    }
-    return NextResponse.json({ error: message }, { status: 502 });
+    return paymentMethodUnlinkErrorResponse(err);
   }
 }

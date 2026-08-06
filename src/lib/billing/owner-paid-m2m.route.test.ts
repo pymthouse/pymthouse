@@ -224,3 +224,144 @@ test("payment-methods PATCH/DELETE require paymentMethodId under M2M", async (t)
   );
   assert.equal(deleteRes.status, 400);
 });
+
+test("billing/subscription GET and payment-methods GET succeed under M2M", async (t) => {
+  const app = await seedOwnerPaidM2mApp(t);
+
+  const { GET: getSubscription } = await import(
+    "@/app/api/v1/apps/[id]/billing/subscription/route"
+  );
+  const { GET: getPaymentMethods } = await import(
+    "@/app/api/v1/apps/[id]/billing/payment-methods/route"
+  );
+
+  const subRes = await getSubscription(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
+      {
+        headers: {
+          Authorization: basicAuthHeader(app.m2mClientId, app.m2mClientSecret),
+        },
+      },
+    ),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(subRes.status, 200);
+  const subBody = (await subRes.json()) as {
+    ownerUserId?: string;
+    subscriptions?: unknown;
+  };
+  assert.equal(subBody.ownerUserId, app.userId);
+  assert.ok(Array.isArray(subBody.subscriptions));
+
+  const pmRes = await getPaymentMethods(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/billing/payment-methods`,
+      {
+        headers: {
+          Authorization: basicAuthHeader(app.m2mClientId, app.m2mClientSecret),
+        },
+      },
+    ),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(pmRes.status, 200);
+  const pmBody = (await pmRes.json()) as { paymentMethods?: unknown };
+  assert.ok(Array.isArray(pmBody.paymentMethods));
+});
+
+test("end-user invoices and payment-methods routes reject unauthenticated calls", async (t) => {
+  const app = await seedOwnerPaidM2mApp(t);
+  const externalUserId = "eu_billing_1";
+
+  const { GET: getInvoices } = await import(
+    "@/app/api/v1/apps/[id]/users/[externalUserId]/invoices/route"
+  );
+  const { GET: getPaymentMethods, POST: postPaymentMethods } = await import(
+    "@/app/api/v1/apps/[id]/users/[externalUserId]/payment-methods/route"
+  );
+  const { GET: getHostedUrl } = await import(
+    "@/app/api/v1/apps/[id]/users/[externalUserId]/invoices/[invoiceId]/hosted-url/route"
+  );
+
+  const invUnauth = await getInvoices(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/users/${externalUserId}/invoices`,
+    ),
+    {
+      params: Promise.resolve({
+        id: app.clientId,
+        externalUserId,
+      }),
+    },
+  );
+  assert.equal(invUnauth.status, 404);
+
+  const pmUnauth = await getPaymentMethods(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/users/${externalUserId}/payment-methods`,
+    ),
+    {
+      params: Promise.resolve({
+        id: app.clientId,
+        externalUserId,
+      }),
+    },
+  );
+  assert.equal(pmUnauth.status, 404);
+
+  const hostedUnauth = await getHostedUrl(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/users/${externalUserId}/invoices/inv_1/hosted-url`,
+    ),
+    {
+      params: Promise.resolve({
+        id: app.clientId,
+        externalUserId,
+        invoiceId: "inv_1",
+      }),
+    },
+  );
+  assert.equal(hostedUnauth.status, 404);
+
+  // M2M credentials authorize; list/checkout may 200 or 503 depending on OM/Stripe.
+  const pmAuth = await getPaymentMethods(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/users/${externalUserId}/payment-methods`,
+      {
+        headers: {
+          Authorization: basicAuthHeader(app.m2mClientId, app.m2mClientSecret),
+        },
+      },
+    ),
+    {
+      params: Promise.resolve({
+        id: app.clientId,
+        externalUserId,
+      }),
+    },
+  );
+  assert.ok(pmAuth.status === 200 || pmAuth.status === 503);
+  if (pmAuth.status === 200) {
+    const body = (await pmAuth.json()) as { paymentMethods?: unknown };
+    assert.ok(Array.isArray(body.paymentMethods));
+  }
+
+  const postAuth = await postPaymentMethods(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/users/${externalUserId}/payment-methods`,
+      {
+        method: "POST",
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
+        body: JSON.stringify({}),
+      },
+    ),
+    {
+      params: Promise.resolve({
+        id: app.clientId,
+        externalUserId,
+      }),
+    },
+  );
+  assert.ok([200, 400, 502, 503].includes(postAuth.status));
+});

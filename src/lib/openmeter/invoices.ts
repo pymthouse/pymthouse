@@ -11,7 +11,10 @@ import {
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
 } from "@/lib/openmeter/customer-key";
-import { listTenantCustomerIds } from "./customers";
+import {
+  ensureOpenMeterCustomerForAppUser,
+  listTenantCustomerIds,
+} from "./customers";
 
 /**
  * Invoice line rounding policy:
@@ -362,10 +365,6 @@ async function findInvoiceInCustomerChunk(input: {
  * Fetch one platform invoice by id, only when it belongs to the owner's wallet
  * customers. Avoids the page-size cap on {@link listOwnerWalletInvoices}.
  */
-/**
- * Fetch one platform invoice by id, only when it belongs to the owner's wallet
- * customers. Avoids the page-size cap on {@link listOwnerWalletInvoices}.
- */
 export async function getOwnerWalletInvoice(input: {
   client: OpenMeter;
   ownerUserId: string;
@@ -380,6 +379,92 @@ export async function getOwnerWalletInvoice(input: {
   );
   if (customerIds.length === 0) return null;
 
+  for (const idChunk of chunk(customerIds, 50)) {
+    const found = await findInvoiceInCustomerChunk({
+      client: input.client,
+      customers: idChunk,
+      allowedCustomerIds: customerIds,
+      invoiceId,
+    });
+    if (found !== undefined) return found;
+  }
+
+  return null;
+}
+
+type EnsureAppUserCustomer = typeof ensureOpenMeterCustomerForAppUser;
+
+/**
+ * End-user invoices for one app user (`{publicClientId}:{externalUserId}`).
+ * Resolves the customer via {@link ensureOpenMeterCustomerForAppUser}.
+ */
+export async function listAppUserInvoices(input: {
+  client: OpenMeter;
+  clientId: string;
+  externalUserId: string;
+  page?: number;
+  pageSize?: number;
+  /** @internal test seam */
+  ensureCustomer?: EnsureAppUserCustomer;
+}): Promise<{
+  items: TenantInvoiceDto[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}> {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 20;
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return { items: [], page, pageSize, totalCount: 0 };
+  }
+
+  const ensureCustomer = input.ensureCustomer ?? ensureOpenMeterCustomerForAppUser;
+  const customer = await ensureCustomer({
+    client: input.client,
+    clientId,
+    externalUserId,
+  });
+  const customerId = customer.id?.trim();
+  if (!customerId) {
+    return { items: [], page, pageSize, totalCount: 0 };
+  }
+
+  return listInvoicesForCustomerIds({
+    client: input.client,
+    customerIds: [customerId],
+    page,
+    pageSize,
+  });
+}
+
+/**
+ * Fetch one invoice by id, only when it belongs to this app user's customer.
+ */
+export async function getAppUserInvoice(input: {
+  client: OpenMeter;
+  clientId: string;
+  externalUserId: string;
+  invoiceId: string;
+  /** @internal test seam */
+  ensureCustomer?: EnsureAppUserCustomer;
+}): Promise<TenantInvoiceDto | null> {
+  const invoiceId = input.invoiceId.trim();
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!invoiceId || !clientId || !externalUserId) return null;
+
+  const ensureCustomer = input.ensureCustomer ?? ensureOpenMeterCustomerForAppUser;
+  const customer = await ensureCustomer({
+    client: input.client,
+    clientId,
+    externalUserId,
+  });
+  const customerId = customer.id?.trim();
+  if (!customerId) return null;
+
+  const customerIds = [customerId];
   for (const idChunk of chunk(customerIds, 50)) {
     const found = await findInvoiceInCustomerChunk({
       client: input.client,
