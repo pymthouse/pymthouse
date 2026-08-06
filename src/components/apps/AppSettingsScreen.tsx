@@ -510,9 +510,8 @@ export default function AppSettingsScreen({
           </div>
 
           <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 overflow-hidden">
-            <div
+            <nav
               className="flex flex-wrap gap-0 border-b border-zinc-800 bg-zinc-900/50"
-              role="navigation"
               aria-label="OIDC client credentials"
             >
               {credentialsClientTabs.map((tab) => {
@@ -541,7 +540,7 @@ export default function AppSettingsScreen({
                     </Link>
                   );
                 })}
-            </div>
+            </nav>
 
             <div
               id={`credentials-client-panel-${credentialsClient}`}

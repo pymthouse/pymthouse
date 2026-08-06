@@ -90,6 +90,87 @@ function parseIntegerField(
   return { ok: true, value: n };
 }
 
+async function refreshConfigAfterSupplierSync(
+  appId: string,
+  config: Awaited<ReturnType<typeof getAppBillingConfig>>,
+): Promise<Awaited<ReturnType<typeof getAppBillingConfig>>> {
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  if (!accountId) {
+    return config;
+  }
+  try {
+    const { syncTenantSupplierFromConnect } = await import(
+      "@/lib/openmeter/supplier-sync"
+    );
+    await syncTenantSupplierFromConnect({
+      clientId: appId,
+      accountId,
+    });
+    return await getAppBillingConfig(appId);
+  } catch (err) {
+    console.warn(
+      "supplier sync before merchant mode switch failed",
+      sanitizeForLog(err instanceof Error ? err.message : String(err)),
+    );
+    return config;
+  }
+}
+
+async function rejectIfSupplierIncomplete(
+  config: Awaited<ReturnType<typeof getAppBillingConfig>>,
+  fields: BillingPatchFields,
+): Promise<ParseResult | null> {
+  const { supplierGaps, supplierIsComplete } = await import(
+    "@/lib/openmeter/billing-supplier"
+  );
+  const pendingTaxId =
+    fields.supplierTaxId !== undefined
+      ? fields.supplierTaxId
+      : config?.supplierTaxId;
+  const supplierInput = {
+    country: config?.supplierCountry,
+    name: config?.supplierName,
+    taxId: pendingTaxId,
+  };
+  if (supplierIsComplete(supplierInput)) {
+    return null;
+  }
+  return {
+    ok: false,
+    response: NextResponse.json(
+      {
+        error:
+          "Switching to merchant mode requires a complete invoice supplier (country, legal name, and tax id where required). Complete Connect onboarding and set supplierTaxId if needed.",
+        supplierGaps: supplierGaps(supplierInput),
+      },
+      { status: 400 },
+    ),
+  };
+}
+
+async function ensureMerchantModeReady(
+  appId: string,
+  fields: BillingPatchFields,
+): Promise<ParseResult | null> {
+  let config = await getAppBillingConfig(appId);
+  if (!isConnectReady(config)) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error:
+            "Switching to merchant mode requires a ready Stripe Connected Account (charges enabled and details submitted)",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+  // Self-heal: Connect may be ready before webhook/status synced supplier
+  // country/name into Neon. Refresh from Stripe before gating.
+  config = await refreshConfigAfterSupplierSync(appId, config);
+  return rejectIfSupplierIncomplete(config, fields);
+}
+
 async function applyBillingModeField(
   value: unknown,
   appId: string,
@@ -108,68 +189,10 @@ async function applyBillingModeField(
     };
   }
   fields.billingMode = value;
-  if (fields.billingMode === "merchant") {
-    let config = await getAppBillingConfig(appId);
-    if (!isConnectReady(config)) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            error:
-              "Switching to merchant mode requires a ready Stripe Connected Account (charges enabled and details submitted)",
-          },
-          { status: 400 },
-        ),
-      };
-    }
-    // Self-heal: Connect may be ready before webhook/status synced supplier
-    // country/name into Neon. Refresh from Stripe before gating.
-    const accountId = config?.stripeConnectedAccountId?.trim();
-    if (accountId) {
-      try {
-        const { syncTenantSupplierFromConnect } = await import(
-          "@/lib/openmeter/supplier-sync"
-        );
-        await syncTenantSupplierFromConnect({
-          clientId: appId,
-          accountId,
-        });
-        config = await getAppBillingConfig(appId);
-      } catch (err) {
-        console.warn(
-          "supplier sync before merchant mode switch failed",
-          sanitizeForLog(err instanceof Error ? err.message : String(err)),
-        );
-      }
-    }
-    const { supplierGaps, supplierIsComplete } = await import(
-      "@/lib/openmeter/billing-supplier"
-    );
-    const pendingTaxId =
-      fields.supplierTaxId !== undefined
-        ? fields.supplierTaxId
-        : config?.supplierTaxId;
-    const supplierInput = {
-      country: config?.supplierCountry,
-      name: config?.supplierName,
-      taxId: pendingTaxId,
-    };
-    const gaps = supplierGaps(supplierInput);
-    if (!supplierIsComplete(supplierInput)) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            error:
-              "Switching to merchant mode requires a complete invoice supplier (country, legal name, and tax id where required). Complete Connect onboarding and set supplierTaxId if needed.",
-            supplierGaps: gaps,
-          },
-          { status: 400 },
-        ),
-      };
-    }
+  if (fields.billingMode !== "merchant") {
+    return null;
   }
-  return null;
+  return ensureMerchantModeReady(appId, fields);
 }
 
 function applyIntegerPatchField(
@@ -188,18 +211,79 @@ function applyIntegerPatchField(
   return null;
 }
 
+function hasBillingPatchFields(body: Record<string, unknown>): boolean {
+  return (
+    body.progressiveBilling !== undefined ||
+    body.invoiceThresholdUsdMicros !== undefined ||
+    body.applicationFeeBps !== undefined ||
+    body.billingMode !== undefined ||
+    body.endUserCap !== undefined ||
+    body.supplierTaxId !== undefined
+  );
+}
+
+function applySupplierTaxIdField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (value !== null && typeof value !== "string") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "supplierTaxId must be a string or null" },
+        { status: 400 },
+      ),
+    };
+  }
+  fields.supplierTaxId =
+    typeof value === "string" ? value.trim() || null : null;
+  return null;
+}
+
+function applyProgressiveBillingField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = parseProgressiveBillingInput(value);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: parsed.error }, { status: 400 }),
+    };
+  }
+  fields.progressiveBilling = parsed.value;
+  return null;
+}
+
+function applyInvoiceThresholdField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = parseInvoiceThresholdUsdMicrosInput(value);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: parsed.error }, { status: 400 }),
+    };
+  }
+  fields.invoiceThresholdUsdMicros = parsed.value;
+  return null;
+}
+
 async function parseBillingPatchBody(
   body: Record<string, unknown>,
   appId: string,
 ): Promise<ParseResult> {
-  if (
-    body.progressiveBilling === undefined &&
-    body.invoiceThresholdUsdMicros === undefined &&
-    body.applicationFeeBps === undefined &&
-    body.billingMode === undefined &&
-    body.endUserCap === undefined &&
-    body.supplierTaxId === undefined
-  ) {
+  if (!hasBillingPatchFields(body)) {
     return {
       ok: false,
       response: NextResponse.json(
@@ -214,43 +298,20 @@ async function parseBillingPatchBody(
 
   const fields: BillingPatchFields = {};
 
-  if (body.supplierTaxId !== undefined) {
-    if (body.supplierTaxId !== null && typeof body.supplierTaxId !== "string") {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          { error: "supplierTaxId must be a string or null" },
-          { status: 400 },
-        ),
-      };
-    }
-    fields.supplierTaxId =
-      typeof body.supplierTaxId === "string"
-        ? body.supplierTaxId.trim() || null
-        : null;
-  }
+  const taxErr = applySupplierTaxIdField(body.supplierTaxId, fields);
+  if (taxErr) return taxErr;
 
-  if (body.progressiveBilling !== undefined) {
-    const parsed = parseProgressiveBillingInput(body.progressiveBilling);
-    if (!parsed.ok) {
-      return {
-        ok: false,
-        response: NextResponse.json({ error: parsed.error }, { status: 400 }),
-      };
-    }
-    fields.progressiveBilling = parsed.value;
-  }
+  const progressiveErr = applyProgressiveBillingField(
+    body.progressiveBilling,
+    fields,
+  );
+  if (progressiveErr) return progressiveErr;
 
-  if (body.invoiceThresholdUsdMicros !== undefined) {
-    const parsed = parseInvoiceThresholdUsdMicrosInput(body.invoiceThresholdUsdMicros);
-    if (!parsed.ok) {
-      return {
-        ok: false,
-        response: NextResponse.json({ error: parsed.error }, { status: 400 }),
-      };
-    }
-    fields.invoiceThresholdUsdMicros = parsed.value;
-  }
+  const thresholdErr = applyInvoiceThresholdField(
+    body.invoiceThresholdUsdMicros,
+    fields,
+  );
+  if (thresholdErr) return thresholdErr;
 
   const feeErr = applyIntegerPatchField(
     body.applicationFeeBps,

@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { applyConnectedAccountWebhookUpdate } from "@/lib/stripe/merchant-connect";
 import {
   parseStripeAccountUpdated,
-  requireStripeWebhookSecret,
   resolveConnectWebhookSecret,
   verifyStripeWebhookSignature,
 } from "@/lib/stripe/webhook";

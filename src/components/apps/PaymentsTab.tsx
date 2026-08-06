@@ -638,7 +638,7 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
           }}
         />
         <span>
-          Enable progressive billing
+          Enable progressive billing{/* */}
           <span className="block text-xs text-zinc-500">
             Synced to this app&apos;s OpenMeter billing profile.
           </span>
