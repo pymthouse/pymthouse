@@ -29,6 +29,41 @@ function userPath(suffix: string) {
 
 const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
+const ownerBillingConfirmBody = z
+  .object({
+    confirm: z.literal(true).openapi({
+      description: "Must be true to perform the mutation.",
+    }),
+  })
+  .openapi("OwnerBillingConfirmBody");
+
+const ownerBillingSubscriptionPutBody = z
+  .object({
+    planKey: z.string().min(1).openapi({
+      description: "Owner Paid plan key to upgrade or switch to.",
+    }),
+    confirm: z.literal(true).openapi({
+      description: "Must be true to perform the mutation.",
+    }),
+  })
+  .openapi("OwnerBillingSubscriptionPutBody");
+
+const ownerPaymentMethodSetupBody = z
+  .object({
+    successUrl: z.string().url().optional(),
+    cancelUrl: z.string().url().optional(),
+  })
+  .openapi("OwnerPaymentMethodSetupBody");
+
+const ownerPaymentMethodIdBody = z
+  .object({
+    paymentMethodId: z.string().min(1).openapi({
+      description:
+        "Stripe payment method id. Also accepted as query `id` on PATCH/DELETE.",
+    }),
+  })
+  .openapi("OwnerPaymentMethodIdBody");
+
 type MetadataRoute = [
   method: "get" | "post" | "put" | "patch" | "delete",
   path: string,
@@ -38,6 +73,7 @@ type MetadataRoute = [
     includeExternalUserId?: boolean;
     /** Also document 201 Created (upsert/create handlers). */
     created?: boolean;
+    body?: z.ZodTypeAny;
   },
 ];
 
@@ -51,6 +87,15 @@ function registerMetadataRoutes(routes: MetadataRoute[]): void {
         params: options?.includeExternalUserId
           ? z.object({ clientId, externalUserId })
           : z.object({ clientId }),
+        ...(options?.body
+          ? {
+              body: {
+                content: {
+                  "application/json": { schema: options.body },
+                },
+              },
+            }
+          : {}),
       },
       responses: {
         200: jsonSuccess,
@@ -180,18 +225,21 @@ registerMetadataRoutes([
     appPath("/billing/subscription"),
     OPENAPI_TAGS.billing,
     "Upgrade or change Owner Paid plan",
+    { body: ownerBillingSubscriptionPutBody },
   ],
   [
     "delete",
     appPath("/billing/subscription"),
     OPENAPI_TAGS.billing,
     "Schedule Starter downgrade",
+    { body: ownerBillingConfirmBody },
   ],
   [
     "delete",
     appPath("/billing/subscription/pending-change"),
     OPENAPI_TAGS.billing,
     "Cancel pending Starter downgrade",
+    { body: ownerBillingConfirmBody },
   ],
   [
     "get",
@@ -204,18 +252,21 @@ registerMetadataRoutes([
     appPath("/billing/payment-methods"),
     OPENAPI_TAGS.billing,
     "Start owner payment-method setup",
+    { body: ownerPaymentMethodSetupBody },
   ],
   [
     "patch",
     appPath("/billing/payment-methods"),
     OPENAPI_TAGS.billing,
     "Set default owner payment method",
+    { body: ownerPaymentMethodIdBody },
   ],
   [
     "delete",
     appPath("/billing/payment-methods"),
     OPENAPI_TAGS.billing,
     "Unlink owner payment method",
+    { body: ownerPaymentMethodIdBody },
   ],
   ["get", appPath("/plans"), OPENAPI_TAGS.billing, "List plans"],
   ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],

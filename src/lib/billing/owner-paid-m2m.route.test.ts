@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 
+import {
+  ensureConfidentialWebClient,
+  ensureM2mBackendClient,
+  removeConfidentialWebClient,
+  removeM2mBackendClient,
+  rotateClientSecret,
+} from "@/lib/oidc/clients";
 import { test } from "@/test-utils/db-guard";
 import {
   basicAuthHeader,
   cleanupTestApp,
   seedDeveloperAppWithClient,
+  type SeededDeveloperApp,
 } from "@/test-utils/fixtures";
 
 function authHeaders(clientId: string, clientSecret: string): HeadersInit {
@@ -15,11 +23,48 @@ function authHeaders(clientId: string, clientSecret: string): HeadersInit {
   };
 }
 
-test("owner-paid M2M routes reject missing/wrong Basic auth", async (t) => {
+async function seedOwnerPaidM2mApp(t: {
+  after: (fn: () => Promise<void>) => void;
+}): Promise<
+  SeededDeveloperApp & {
+    m2mClientId: string;
+    m2mClientSecret: string;
+    webClientId: string;
+    webClientSecret: string;
+  }
+> {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
+  const m2m = await ensureM2mBackendClient({
+    appInternalId: app.clientId,
+    appDisplayName: "Owner Paid M2M",
+  });
+  assert.ok(m2m);
+  const m2mClientSecret = await rotateClientSecret(m2m.clientId);
+  assert.ok(m2mClientSecret);
+  const web = await ensureConfidentialWebClient({
+    appInternalId: app.clientId,
+    appDisplayName: "Owner Paid Web",
+    redirectUris: ["https://portal.example.com/cb"],
+  });
+  assert.ok(web);
+  const webClientSecret = await rotateClientSecret(web.clientId);
+  assert.ok(webClientSecret);
   t.after(async () => {
+    await removeConfidentialWebClient(app.clientId).catch(() => undefined);
+    await removeM2mBackendClient(app.clientId).catch(() => undefined);
     await cleanupTestApp(app);
   });
+  return {
+    ...app,
+    m2mClientId: m2m.clientId,
+    m2mClientSecret,
+    webClientId: web.clientId,
+    webClientSecret,
+  };
+}
+
+test("owner-paid M2M routes reject missing/wrong Basic auth", async (t) => {
+  const app = await seedOwnerPaidM2mApp(t);
 
   const { GET: getTiers } = await import(
     "@/app/api/v1/apps/[id]/billing/tiers/route"
@@ -41,7 +86,7 @@ test("owner-paid M2M routes reject missing/wrong Basic auth", async (t) => {
       `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
       {
         method: "PUT",
-        headers: authHeaders(app.clientId, app.clientSecret),
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
         body: JSON.stringify({ planKey: "pymthouse_owner_paid", confirm: true }),
       },
     ),
@@ -50,11 +95,28 @@ test("owner-paid M2M routes reject missing/wrong Basic auth", async (t) => {
   assert.equal(wrongApp.status, 404);
 });
 
+test("owner-paid M2M routes reject another valid client for the same app with 404", async (t) => {
+  const app = await seedOwnerPaidM2mApp(t);
+
+  const { GET: getTiers } = await import(
+    "@/app/api/v1/apps/[id]/billing/tiers/route"
+  );
+  const res = await getTiers(
+    new NextRequest(
+      `http://localhost/api/v1/apps/${app.clientId}/billing/tiers`,
+      {
+        headers: {
+          Authorization: basicAuthHeader(app.webClientId, app.webClientSecret),
+        },
+      },
+    ),
+    { params: Promise.resolve({ id: app.clientId }) },
+  );
+  assert.equal(res.status, 404);
+});
+
 test("owner-paid M2M subscription mutations require confirm: true", async (t) => {
-  const app = await seedDeveloperAppWithClient({ status: "approved" });
-  t.after(async () => {
-    await cleanupTestApp(app);
-  });
+  const app = await seedOwnerPaidM2mApp(t);
 
   const { PUT: putSubscription, DELETE: deleteSubscription } = await import(
     "@/app/api/v1/apps/[id]/billing/subscription/route"
@@ -68,7 +130,7 @@ test("owner-paid M2M subscription mutations require confirm: true", async (t) =>
       `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
       {
         method: "PUT",
-        headers: authHeaders(app.clientId, app.clientSecret),
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
         body: JSON.stringify({ planKey: "pymthouse_owner_paid" }),
       },
     ),
@@ -83,7 +145,7 @@ test("owner-paid M2M subscription mutations require confirm: true", async (t) =>
       `http://localhost/api/v1/apps/${app.clientId}/billing/subscription`,
       {
         method: "DELETE",
-        headers: authHeaders(app.clientId, app.clientSecret),
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
         body: JSON.stringify({}),
       },
     ),
@@ -98,7 +160,7 @@ test("owner-paid M2M subscription mutations require confirm: true", async (t) =>
       `http://localhost/api/v1/apps/${app.clientId}/billing/subscription/pending-change`,
       {
         method: "DELETE",
-        headers: authHeaders(app.clientId, app.clientSecret),
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
         body: JSON.stringify({ confirm: false }),
       },
     ),
@@ -109,11 +171,8 @@ test("owner-paid M2M subscription mutations require confirm: true", async (t) =>
   assert.equal(resumeBody.code, "confirm_required");
 });
 
-test("billing/tiers M2M lists selectable tiers with Basic auth", async (t) => {
-  const app = await seedDeveloperAppWithClient({ status: "approved" });
-  t.after(async () => {
-    await cleanupTestApp(app);
-  });
+test("billing/tiers M2M lists selectable tiers with M2M Basic auth", async (t) => {
+  const app = await seedOwnerPaidM2mApp(t);
 
   const { GET } = await import("@/app/api/v1/apps/[id]/billing/tiers/route");
   const res = await GET(
@@ -121,7 +180,7 @@ test("billing/tiers M2M lists selectable tiers with Basic auth", async (t) => {
       `http://localhost/api/v1/apps/${app.clientId}/billing/tiers`,
       {
         headers: {
-          Authorization: basicAuthHeader(app.clientId, app.clientSecret),
+          Authorization: basicAuthHeader(app.m2mClientId, app.m2mClientSecret),
         },
       },
     ),
@@ -133,10 +192,7 @@ test("billing/tiers M2M lists selectable tiers with Basic auth", async (t) => {
 });
 
 test("payment-methods PATCH/DELETE require paymentMethodId under M2M", async (t) => {
-  const app = await seedDeveloperAppWithClient({ status: "approved" });
-  t.after(async () => {
-    await cleanupTestApp(app);
-  });
+  const app = await seedOwnerPaidM2mApp(t);
 
   const { PATCH, DELETE } = await import(
     "@/app/api/v1/apps/[id]/billing/payment-methods/route"
@@ -147,7 +203,7 @@ test("payment-methods PATCH/DELETE require paymentMethodId under M2M", async (t)
       `http://localhost/api/v1/apps/${app.clientId}/billing/payment-methods`,
       {
         method: "PATCH",
-        headers: authHeaders(app.clientId, app.clientSecret),
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
         body: JSON.stringify({}),
       },
     ),
@@ -160,7 +216,7 @@ test("payment-methods PATCH/DELETE require paymentMethodId under M2M", async (t)
       `http://localhost/api/v1/apps/${app.clientId}/billing/payment-methods`,
       {
         method: "DELETE",
-        headers: authHeaders(app.clientId, app.clientSecret),
+        headers: authHeaders(app.m2mClientId, app.m2mClientSecret),
         body: JSON.stringify({}),
       },
     ),

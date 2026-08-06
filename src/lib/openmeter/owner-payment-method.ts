@@ -600,38 +600,40 @@ export async function setOwnerDefaultPaymentMethod(
     throw new Error("ownerUserId and paymentMethodId are required");
   }
 
-  const deps = liveStripeDeps(MUTATION_BUDGET_MS);
-  const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
-  if (!refs || !(await requireOwnedPaymentMethod(refs, pmId, deps))) {
-    return { updated: false, paymentMethodId: null };
-  }
+  return withOwnerPaymentMethodLock(trimmed, async () => {
+    const deps = liveStripeDeps(MUTATION_BUDGET_MS);
+    const refs = await resolveOwnerStripeRefs(trimmed, deps.signal);
+    if (!refs || !(await requireOwnedPaymentMethod(refs, pmId, deps))) {
+      return { updated: false, paymentMethodId: null };
+    }
 
-  const updated = await stripeRequestJson<{ id?: string }>({
-    method: "POST",
-    path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
-    body: new URLSearchParams({
-      "invoice_settings[default_payment_method]": pmId,
-    }),
-    deps,
-  });
-  if (!updated?.id) {
-    throw new Error("Stripe could not set the default payment method");
-  }
-
-  try {
-    await setKonnectStripeDefaultPaymentMethod({
-      customerId: refs.customerId,
-      stripeCustomerId: refs.stripeCustomerId,
-      paymentMethodId: pmId,
+    const updated = await stripeRequestJson<{ id?: string }>({
+      method: "POST",
+      path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
+      body: new URLSearchParams({
+        "invoice_settings[default_payment_method]": pmId,
+      }),
+      deps,
     });
-  } catch (err) {
-    console.warn(
-      "owner-payment-method: Konnect default sync failed",
-      sanitizeForLog(err),
-    );
-  }
+    if (!updated?.id) {
+      throw new Error("Stripe could not set the default payment method");
+    }
 
-  return { updated: true, paymentMethodId: pmId };
+    try {
+      await setKonnectStripeDefaultPaymentMethod({
+        customerId: refs.customerId,
+        stripeCustomerId: refs.stripeCustomerId,
+        paymentMethodId: pmId,
+      });
+    } catch (err) {
+      console.warn(
+        "owner-payment-method: Konnect default sync failed",
+        sanitizeForLog(err),
+      );
+    }
+
+    return { updated: true, paymentMethodId: pmId };
+  });
 }
 
 /**

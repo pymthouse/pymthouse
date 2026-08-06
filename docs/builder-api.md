@@ -761,7 +761,7 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/apps/{clientId}/billing/payment-methods` | **M2M Basic only** | List / setup-checkout / set-default / unlink payment methods on the **app owner** wallet. Attach PM ≠ Paid — Upgrade still requires explicit `confirm` |
 | `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl`. A **priced target** is gated by `sell_paid_plans` under `enforce_revenue`/`enforce` and denied with `stripe_connect_required`; free, Starter, and draft targets are never gated, so migrating users off a phased-out paid plan stays possible after switching to `owner_rollup` |
 
-**Owner Paid M2M vs session:** human owners still use verb-style `/api/v1/me/billing/*` (`upgrade-paid`, `downgrade-to-starter`, …) + `/billing/upgrade` UI. Confidential backends use the RESTful `/apps/{clientId}/billing/{tiers,subscription,payment-methods}` resources above (M2M Basic; subject = `app.ownerId`). Admin tier catalog CRUD stays on `/api/v1/admin/billing/owner-tiers*` and is not part of Builder M2M.
+**Owner Paid M2M vs session:** human owners still use verb-style `/api/v1/me/billing/*` (`upgrade-paid`, `downgrade-to-starter`, …) + `/billing/upgrade` UI. Confidential backends use the RESTful `/api/v1/apps/{clientId}/billing/{tiers,subscription,payment-methods}` resources above (M2M Basic; subject = `app.ownerId`). Admin tier catalog CRUD stays on `/api/v1/admin/billing/owner-tiers*` and is not part of Builder M2M.
 
 ### App activation gate
 
