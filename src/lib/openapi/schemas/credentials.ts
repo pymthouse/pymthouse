@@ -94,8 +94,15 @@ export const TokenExchangeRequestSchema = z
         "User access JWT, opaque API-key secret, or composite `app_<24hex>_<secret>`.",
     }),
     subject_token_type: z
-      .literal("urn:ietf:params:oauth:token-type:access_token")
-      .openapi({ description: "Subject token type for signer session exchange." }),
+      .union([
+        z.literal("urn:pymthouse:oauth:token-type:api_key"),
+        z.literal("urn:ietf:params:oauth:token-type:access_token"),
+      ])
+      .openapi({
+        description:
+          "RFC 8693 subject token type. Use `urn:pymthouse:oauth:token-type:api_key` for API keys; " +
+          "`urn:ietf:params:oauth:token-type:access_token` for user JWTs (also accepted as a legacy alias for key-shaped subjects).",
+      }),
     requested_token_type: z
       .literal("urn:ietf:params:oauth:token-type:access_token")
       .optional(),

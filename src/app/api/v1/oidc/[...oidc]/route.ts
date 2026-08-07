@@ -45,7 +45,9 @@ import { createCorrelationId } from "@/lib/audit";
 import {
   AppScopedSignerTokenExchangeError,
   handleIssuerApiKeySignerTokenExchange,
+  isApiKeySubjectTokenType,
   looksLikeAppApiKeySubjectToken,
+  SUBJECT_ACCESS_TOKEN_TYPE,
 } from "@/lib/oidc/app-scoped-signer-token-exchange";
 
 const RESOURCE_REQUIRED_GRANTS = new Set([
@@ -223,10 +225,13 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
           });
         }
 
-        // Bare / composite API key → SignerSession (same envelope as app-scoped).
-        // Resolve app from the credential so pathless personal keys work on the
-        // issuer token endpoint under RFC 8693.
-        if (looksLikeAppApiKeySubjectToken(subjectToken)) {
+        // API key → SignerSession (same envelope as app-scoped). Prefer the
+        // canonical RFC 8693 private type; keep legacy access_token + key-shape.
+        const isCanonicalApiKeyExchange = isApiKeySubjectTokenType(subjectTokenType);
+        const isLegacyApiKeyExchange =
+          subjectTokenType.trim() === SUBJECT_ACCESS_TOKEN_TYPE &&
+          looksLikeAppApiKeySubjectToken(subjectToken);
+        if (isCanonicalApiKeyExchange || isLegacyApiKeyExchange) {
           const result = await handleIssuerApiKeySignerTokenExchange({
             clientId,
             clientSecret,
