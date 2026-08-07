@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  appUserPaymentMethodRequiresMerchantConnect,
   createAppUserPaymentMethodCheckout,
   listAppUserPaymentMethods,
   resolveAppUserCheckoutReturnUrl,
@@ -32,6 +33,48 @@ test("createAppUserPaymentMethodCheckout requires ids", async () => {
         externalUserId: "user_1",
       }),
     /clientId and externalUserId are required/,
+  );
+});
+
+test("appUserPaymentMethodRequiresMerchantConnect for merchant and connect-only", (t) => {
+  const previous = process.env.STRIPE_CONNECT_PAYMENTS_ONLY;
+  t.after(() => {
+    if (previous === undefined) {
+      delete process.env.STRIPE_CONNECT_PAYMENTS_ONLY;
+    } else {
+      process.env.STRIPE_CONNECT_PAYMENTS_ONLY = previous;
+    }
+  });
+  delete process.env.STRIPE_CONNECT_PAYMENTS_ONLY;
+
+  assert.equal(appUserPaymentMethodRequiresMerchantConnect(null), false);
+  assert.equal(
+    appUserPaymentMethodRequiresMerchantConnect({
+      billingMode: "owner_rollup",
+    } as never),
+    false,
+  );
+  assert.equal(
+    appUserPaymentMethodRequiresMerchantConnect({
+      billingMode: "merchant",
+    } as never),
+    true,
+  );
+  assert.equal(
+    appUserPaymentMethodRequiresMerchantConnect({
+      billingMode: "owner_rollup",
+      connectPaymentsOnly: true,
+    } as never),
+    true,
+  );
+
+  process.env.STRIPE_CONNECT_PAYMENTS_ONLY = "1";
+  assert.equal(
+    appUserPaymentMethodRequiresMerchantConnect({
+      billingMode: "owner_rollup",
+      connectPaymentsOnly: false,
+    } as never),
+    true,
   );
 });
 

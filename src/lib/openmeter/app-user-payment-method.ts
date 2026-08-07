@@ -5,7 +5,10 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "./admin-client";
-import { prepareAppCustomerStripeBilling } from "./billing-profiles";
+import {
+  getAppBillingConfig,
+  prepareAppCustomerStripeBilling,
+} from "./billing-profiles";
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import {
   ensureOpenMeterCustomer,
@@ -17,6 +20,11 @@ import {
   OWNER_PAYMENT_METHOD_BUDGET_MS,
   type OwnerPaymentMethodListItem,
 } from "./owner-payment-method";
+import {
+  connectPaymentsOnlyEnabled,
+  createMerchantConnectCheckoutForUser,
+  isMerchantConnectPaymentsReady,
+} from "@/lib/stripe/merchant-connect";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import {
   getKonnectDefaultPaymentMethodId,
@@ -40,6 +48,19 @@ function stripeSecretKeyOrNull(): string | null {
     return null;
   }
   return key;
+}
+
+/**
+ * True when add-card checkout must use Merchant Connect (or block) instead of
+ * Konnect Stripe-app Checkout (Custom Invoicing profiles reject the latter).
+ */
+export function appUserPaymentMethodRequiresMerchantConnect(
+  billingConfig: Awaited<ReturnType<typeof getAppBillingConfig>>,
+): boolean {
+  return (
+    connectPaymentsOnlyEnabled(billingConfig) ||
+    billingConfig?.billingMode === "merchant"
+  );
 }
 
 /**
@@ -146,11 +167,39 @@ export async function createAppUserPaymentMethodCheckout(input: {
     customerKey: customer.key,
   });
 
+  const billingConfig = await getAppBillingConfig(clientId);
+  const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
+  if (
+    !merchantReady &&
+    appUserPaymentMethodRequiresMerchantConnect(billingConfig)
+  ) {
+    throw new Error(
+      "Merchant Stripe Connect onboarding is required before adding a payment method",
+    );
+  }
+
   const defaultPm = await getKonnectDefaultPaymentMethodId(customer.id);
   const origin = getPublicOrigin();
   const fallback = appSettingsAbsoluteUrl(origin, clientId, "payments");
   const success = resolveAppUserCheckoutReturnUrl(input.successUrl, fallback);
   const cancel = resolveAppUserCheckoutReturnUrl(input.cancelUrl, fallback);
+
+  if (merchantReady) {
+    const connectCheckout = await createMerchantConnectCheckoutForUser({
+      clientId,
+      externalUserId,
+      successUrl: success,
+      cancelUrl: cancel,
+      openmeterCustomerId: customer.id,
+      openmeterCustomerKey: customer.key,
+    });
+    return {
+      checkoutUrl: connectCheckout.checkoutUrl,
+      sessionId: connectCheckout.sessionId,
+      customerId: customer.id,
+      hasDefaultPaymentMethod: Boolean(defaultPm),
+    };
+  }
 
   const checkout = await createOpenMeterStripeCheckoutSession({
     client,
