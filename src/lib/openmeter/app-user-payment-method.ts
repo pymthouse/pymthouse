@@ -23,6 +23,7 @@ import {
 import {
   connectPaymentsOnlyEnabled,
   createMerchantConnectCheckoutForUser,
+  getAppUserStripeCustomer,
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
@@ -55,7 +56,10 @@ function stripeSecretKeyOrNull(): string | null {
  * Konnect Stripe-app Checkout (Custom Invoicing profiles reject the latter).
  */
 export function appUserPaymentMethodRequiresMerchantConnect(
-  billingConfig: Awaited<ReturnType<typeof getAppBillingConfig>>,
+  billingConfig:
+    | Awaited<ReturnType<typeof getAppBillingConfig>>
+    | null
+    | undefined,
 ): boolean {
   return (
     connectPaymentsOnlyEnabled(billingConfig) ||
@@ -103,11 +107,47 @@ export async function listAppUserPaymentMethods(input: {
   if (!clientId || !externalUserId) {
     return [];
   }
-  if (!isHostedAdminClientAvailable() || !stripeSecretKeyOrNull()) {
+  if (!stripeSecretKeyOrNull()) {
     return [];
   }
 
   try {
+    const billingConfig = await getAppBillingConfig(clientId);
+    if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
+      if (!isMerchantConnectPaymentsReady(billingConfig)) {
+        return [];
+      }
+      const connectedAccountId =
+        billingConfig?.stripeConnectedAccountId?.trim() || "";
+      const merchantCustomer = await getAppUserStripeCustomer({
+        clientId,
+        externalUserId,
+      });
+      if (
+        !connectedAccountId ||
+        merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
+        !merchantCustomer.stripeCustomerId?.trim()
+      ) {
+        return [];
+      }
+
+      const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+      const { items } = await buildOwnerPaymentMethodList({
+        stripeCustomerId: merchantCustomer.stripeCustomerId,
+        konnectDefaultPaymentMethodId: null,
+        defaultFirstPaymentMethod: true,
+        deps: {
+          fetchImpl: fetch,
+          signal,
+          stripeAccount: connectedAccountId,
+        },
+      });
+      return items;
+    }
+
+    if (!isHostedAdminClientAvailable()) {
+      return [];
+    }
     const client = getHostedAdminClient();
     const publicClientId = await resolveOpenMeterMeterClientId(clientId);
     const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);

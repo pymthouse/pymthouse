@@ -186,6 +186,40 @@ test("buildOwnerPaymentMethodList flags Stripe's invoice default", async () => {
   });
 });
 
+test("buildOwnerPaymentMethodList lists merchant customer methods on its Connected Account", async () => {
+  await withStripeKey(async () => {
+    const stripeAccounts: string[] = [];
+    const fetchImpl = async (
+      _input: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const headers = new Headers(init?.headers);
+      stripeAccounts.push(headers.get("Stripe-Account") ?? "");
+      if (_input.includes("/payment_methods?limit=100")) {
+        return Response.json({ data: [CARD] });
+      }
+      return Response.json({ invoice_settings: {} });
+    };
+
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: "cus_connected",
+      konnectDefaultPaymentMethodId: null,
+      defaultFirstPaymentMethod: true,
+      deps: {
+        fetchImpl,
+        signal: AbortSignal.timeout(5_000),
+        stripeAccount: "acct_merchant",
+      },
+    });
+
+    assert.deepEqual(
+      items.map((item) => ({ id: item.id, isDefault: item.isDefault })),
+      [{ id: "pm_card", isDefault: true }],
+    );
+    assert.deepEqual(stripeAccounts, ["acct_merchant", "acct_merchant"]);
+  });
+});
+
 test("buildOwnerPaymentMethodList falls back to the Konnect default", async () => {
   await withStripeKey(async () => {
     const stripe = fakeStripe({

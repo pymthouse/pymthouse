@@ -117,6 +117,8 @@ type StripeFetch = (
 type StripeDeps = {
   fetchImpl: StripeFetch;
   signal: AbortSignal;
+  /** Routes the request to a merchant's Stripe Connected Account. */
+  stripeAccount?: string;
 };
 
 function liveStripeDeps(budgetMs: number): StripeDeps {
@@ -136,6 +138,9 @@ async function stripeRequestJson<T>(input: {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
   };
+  if (input.deps.stripeAccount) {
+    headers["Stripe-Account"] = input.deps.stripeAccount;
+  }
   if (input.body) {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
   }
@@ -321,6 +326,11 @@ export async function buildOwnerPaymentMethodList(input: {
   stripeCustomerId: string;
   /** Default payment method Konnect has on file, when it knows one. */
   konnectDefaultPaymentMethodId: string | null;
+  /**
+   * Use the first attached method when this customer has no persisted default.
+   * Merchant Connect customers have no Konnect app_data default pointer.
+   */
+  defaultFirstPaymentMethod?: boolean;
   deps: StripeDeps;
 }): Promise<{
   items: OwnerPaymentMethodListItem[];
@@ -330,7 +340,10 @@ export async function buildOwnerPaymentMethodList(input: {
     getCustomerDefaultPaymentMethodId(input.stripeCustomerId, input.deps),
     listStripeCustomerPaymentMethods(input.stripeCustomerId, input.deps),
   ]);
-  const defaultId = stripeDefaultId ?? input.konnectDefaultPaymentMethodId;
+  const defaultId =
+    stripeDefaultId ??
+    input.konnectDefaultPaymentMethodId ??
+    (input.defaultFirstPaymentMethod ? listed[0]?.id?.trim() || null : null);
   const byId = new Map<string, StripePaymentMethod>();
   for (const pm of listed) {
     const id = pm.id?.trim();
