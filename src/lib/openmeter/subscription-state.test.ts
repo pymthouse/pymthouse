@@ -394,3 +394,39 @@ test("reactivateOccupyingCanceledSubscription falls back to restore", async (t) 
 test("reactivateOccupyingCanceledSubscription no-ops on blank id", async () => {
   await assert.doesNotReject(() => reactivateOccupyingCanceledSubscription("  "));
 });
+
+test("status predicates cover null/undefined and cancelled spelling", () => {
+  assert.equal(isScheduledSubscriptionStatus(null), false);
+  assert.equal(isScheduledSubscriptionStatus(undefined), false);
+  assert.equal(isCanceledSubscriptionStatus(null), false);
+  assert.equal(isCanceledSubscriptionStatus("CANCELLED"), true);
+  assert.equal(isCanceledSubscriptionStatus("INACTIVE"), true);
+  assert.equal(isKonnectScheduledChangeForbidden("cancel in state scheduled"), true);
+});
+
+test("clearScheduledBeforeMutation clears when canceledPaidId omitted", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(null, { status: 204 });
+  });
+
+  await clearScheduledBeforeMutation({ scheduledIds: ["sched_only"] });
+  assert.equal(urls.length, 1);
+  assert.match(urls[0]!, /\/metering\/v1\/subscriptions\/sched_only$/);
+});
+
+test("pickOccupyingCanceledSubscription skips rows without id", () => {
+  assert.equal(
+    pickOccupyingCanceledSubscription([
+      sub({
+        id: "",
+        planKey: "paid",
+        status: "canceled",
+        activeTo: "2099-01-01T00:00:00.000Z",
+      }),
+    ]),
+    undefined,
+  );
+});

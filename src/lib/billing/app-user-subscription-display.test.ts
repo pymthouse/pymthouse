@@ -108,3 +108,48 @@ test("resolveAppUserSubscriptionActionRequired flags missing and phase_out", () 
     null,
   );
 });
+
+test("buildAppUserSubscriptionPlanPayload preserves phase-out metadata", () => {
+  assert.deepEqual(
+    buildAppUserSubscriptionPlanPayload({
+      plan: {
+        ...paidPlan,
+        status: "phase_out",
+        phaseOutAt: "2026-09-01T00:00:00.000Z",
+        replacementPlanId: "plan_2",
+      },
+      isOwnerStarter: false,
+    }),
+    {
+      id: "plan_1",
+      status: "phase_out",
+      phaseOutAt: "2026-09-01T00:00:00.000Z",
+      replacementPlanId: "plan_2",
+    },
+  );
+});
+
+test("resolveAppUserSubscriptionPlanName uses starter/network display names", () => {
+  assert.equal(
+    resolveAppUserSubscriptionPlanName({
+      plan: {
+        ...paidPlan,
+        name: "__pymthouse_starter__",
+        isStarterDefault: true,
+      },
+      planKey: null,
+    }),
+    "Starter",
+  );
+  assert.equal(
+    resolveAppUserSubscriptionPlanName({
+      plan: {
+        ...paidPlan,
+        name: "__pymthouse_network_default__",
+        isNetworkDefault: true,
+      },
+      planKey: null,
+    }),
+    "Network Discovery",
+  );
+});
