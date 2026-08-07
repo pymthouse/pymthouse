@@ -6,7 +6,12 @@ import {
   isHostedAdminClientAvailable,
 } from "./admin-client";
 import { prepareAppCustomerStripeBilling } from "./billing-profiles";
-import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { buildOpenMeterCustomerKey } from "./customer-key";
+import {
+  ensureOpenMeterCustomer,
+  findOpenMeterCustomerByKey,
+} from "./customers";
+import { resolveOpenMeterMeterClientId } from "./meter-client-id";
 import {
   buildOwnerPaymentMethodList,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
@@ -38,8 +43,35 @@ function stripeSecretKeyOrNull(): string | null {
 }
 
 /**
+ * Accept https (or localhost http) Checkout return URLs; otherwise fall back.
+ * Prevents authenticated callers from redirecting post-checkout to arbitrary
+ * phishing origins.
+ */
+export function resolveAppUserCheckoutReturnUrl(
+  candidate: string | undefined,
+  fallback: string,
+): string {
+  const raw = candidate?.trim();
+  if (!raw) return fallback;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    const isLocalHttp =
+      url.protocol === "http:" &&
+      (host === "localhost" || host === "127.0.0.1" || host === "[::1]");
+    if (url.protocol !== "https:" && !isLocalHttp) {
+      return fallback;
+    }
+    return url.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * List payment methods on the app end-user's Stripe customer (not owner wallet).
- * Returns [] when billing is unavailable or nothing is on file.
+ * Lookup-only — returns [] when the customer does not exist yet.
+ * Best-effort empty list on transport failures (parity with owner list).
  */
 export async function listAppUserPaymentMethods(input: {
   clientId: string;
@@ -56,18 +88,20 @@ export async function listAppUserPaymentMethods(input: {
 
   try {
     const client = getHostedAdminClient();
-    const customer = await ensureOpenMeterCustomerForAppUser({
-      client,
-      clientId,
-      externalUserId,
-    });
+    const publicClientId = await resolveOpenMeterMeterClientId(clientId);
+    const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
+    const customer = await findOpenMeterCustomerByKey(client, customerKey);
+    const customerId = customer?.id?.trim();
+    if (!customerId) {
+      return [];
+    }
     const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-    const konnect = await getKonnectStripeBillingRefs(customer.id, signal);
+    const konnect = await getKonnectStripeBillingRefs(customerId, signal);
     const stripeCustomerId =
       konnect.stripeCustomerId ??
       (await getStripeCustomerAppDataId({
         client,
-        customerId: customer.id,
+        customerId,
       }));
     if (!stripeCustomerId) {
       return [];
@@ -85,8 +119,9 @@ export async function listAppUserPaymentMethods(input: {
 }
 
 /**
- * Start setup-only Stripe Checkout for the app end-user's customer.
- * Does not change the user's plan/subscription.
+ * Start setup-only Stripe Checkout for the app end-user's compound-key customer.
+ * Does not change the user's plan/subscription and never redirects to the
+ * owner-wallet customer path.
  */
 export async function createAppUserPaymentMethodCheckout(input: {
   clientId: string;
@@ -101,11 +136,9 @@ export async function createAppUserPaymentMethodCheckout(input: {
   }
 
   const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomerForAppUser({
-    client,
-    clientId,
-    externalUserId,
-  });
+  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
+  const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
+  const customer = await ensureOpenMeterCustomer(client, customerKey);
   await prepareAppCustomerStripeBilling({
     client,
     clientId,
@@ -115,12 +148,9 @@ export async function createAppUserPaymentMethodCheckout(input: {
 
   const defaultPm = await getKonnectDefaultPaymentMethodId(customer.id);
   const origin = getPublicOrigin();
-  const success =
-    input.successUrl?.trim() ||
-    appSettingsAbsoluteUrl(origin, clientId, "payments");
-  const cancel =
-    input.cancelUrl?.trim() ||
-    appSettingsAbsoluteUrl(origin, clientId, "payments");
+  const fallback = appSettingsAbsoluteUrl(origin, clientId, "payments");
+  const success = resolveAppUserCheckoutReturnUrl(input.successUrl, fallback);
+  const cancel = resolveAppUserCheckoutReturnUrl(input.cancelUrl, fallback);
 
   const checkout = await createOpenMeterStripeCheckoutSession({
     client,

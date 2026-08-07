@@ -21,9 +21,20 @@ test("listAppUserInvoices returns empty for blank ids", async () => {
   });
 });
 
-test("listAppUserInvoices lists invoices for the ensured customer", async () => {
+test("listAppUserInvoices lists invoices for the looked-up compound customer", async () => {
   const listedCustomers: string[][] = [];
+  const gotKeys: string[] = [];
   const client = {
+    customers: {
+      list: async () => ({ items: [] }),
+      get: async (key: string) => {
+        gotKeys.push(key);
+        if (key === "app_1:user_1") {
+          return { id: "cust_eu", key: "app_1:user_1" };
+        }
+        throw new Error("not found");
+      },
+    },
     billing: {
       invoices: {
         list: async (input: { customers: string[] }) => {
@@ -52,27 +63,44 @@ test("listAppUserInvoices lists invoices for the ensured customer", async () => 
     externalUserId: "user_1",
     page: 1,
     pageSize: 10,
-    ensureCustomer: async () => ({ id: "cust_eu", key: "app_1:user_1" }),
   });
 
+  assert.ok(gotKeys.includes("app_1:user_1"));
   assert.deepEqual(listedCustomers, [["cust_eu"]]);
   assert.equal(result.totalCount, 1);
   assert.equal(result.items[0]?.id, "inv_1");
 });
 
-test("listAppUserInvoices returns empty when ensure yields blank customer id", async () => {
+test("listAppUserInvoices returns empty when customer is missing", async () => {
+  const client = {
+    customers: {
+      list: async () => ({ items: [] }),
+      get: async () => {
+        throw new Error("not found");
+      },
+    },
+    billing: { invoices: { list: async () => ({ items: [{ id: "x" }] }) } },
+  };
   const result = await listAppUserInvoices({
-    client: { billing: { invoices: { list: async () => ({ items: [] }) } } } as never,
+    client: client as never,
     clientId: "app_1",
-    externalUserId: "user_1",
-    ensureCustomer: async () => ({ id: "  ", key: "app_1:user_1" }),
+    externalUserId: "missing_user",
   });
   assert.equal(result.totalCount, 0);
   assert.deepEqual(result.items, []);
 });
 
-test("getAppUserInvoice scopes by customer id", async () => {
+test("getAppUserInvoice scopes by compound customer id", async () => {
   const client = {
+    customers: {
+      list: async () => ({ items: [] }),
+      get: async (key: string) => {
+        if (key === "app_1:user_1") {
+          return { id: "cust_eu", key: "app_1:user_1" };
+        }
+        throw new Error("not found");
+      },
+    },
     billing: {
       invoices: {
         list: async () => ({
@@ -104,7 +132,6 @@ test("getAppUserInvoice scopes by customer id", async () => {
       clientId: "app_1",
       externalUserId: "user_1",
       invoiceId: "inv_other",
-      ensureCustomer: async () => ({ id: "cust_eu", key: "app_1:user_1" }),
     }),
     null,
   );
@@ -114,7 +141,6 @@ test("getAppUserInvoice scopes by customer id", async () => {
     clientId: "app_1",
     externalUserId: "user_1",
     invoiceId: "inv_mine",
-    ensureCustomer: async () => ({ id: "cust_eu", key: "app_1:user_1" }),
   });
   assert.equal(mine?.id, "inv_mine");
   assert.equal(mine?.externalInvoicingId, "in_stripe_1");

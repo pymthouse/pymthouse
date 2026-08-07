@@ -32,7 +32,13 @@ export async function GET(
     externalUserId: rawUser,
     invoiceId: rawInvoiceId,
   } = await params;
-  const externalUserId = decodeURIComponent(rawUser);
+  const externalUserId = tryDecodeURIComponent(rawUser)?.trim() ?? "";
+  if (!externalUserId) {
+    return NextResponse.json(
+      { error: "externalUserId is required" },
+      { status: 400 },
+    );
+  }
   const access = await authorizeAppForBilling(_request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -50,12 +56,21 @@ export async function GET(
     );
   }
 
-  const invoice = await getAppUserInvoice({
-    client: getHostedAdminClient(),
-    clientId: access.app.id,
-    externalUserId,
-    invoiceId: decodedId,
-  });
+  let invoice;
+  try {
+    invoice = await getAppUserInvoice({
+      client: getHostedAdminClient(),
+      clientId: access.app.id,
+      externalUserId,
+      invoiceId: decodedId,
+    });
+  } catch (err) {
+    console.warn(
+      "app-user-invoice-links: invoice lookup failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
+  }
   if (!invoice) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

@@ -34,6 +34,11 @@ async function seedOwnerPaidM2mApp(t: {
   }
 > {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(async () => {
+    await removeConfidentialWebClient(app.clientId).catch(() => undefined);
+    await removeM2mBackendClient(app.clientId).catch(() => undefined);
+    await cleanupTestApp(app);
+  });
   const m2m = await ensureM2mBackendClient({
     appInternalId: app.clientId,
     appDisplayName: "Owner Paid M2M",
@@ -49,11 +54,6 @@ async function seedOwnerPaidM2mApp(t: {
   assert.ok(web);
   const webClientSecret = await rotateClientSecret(web.clientId);
   assert.ok(webClientSecret);
-  t.after(async () => {
-    await removeConfidentialWebClient(app.clientId).catch(() => undefined);
-    await removeM2mBackendClient(app.clientId).catch(() => undefined);
-    await cleanupTestApp(app);
-  });
   return {
     ...app,
     m2mClientId: m2m.clientId,

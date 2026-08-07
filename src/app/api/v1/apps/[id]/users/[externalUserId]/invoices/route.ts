@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
+import { tryDecodeURIComponent } from "@/lib/billing-utils";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
@@ -18,7 +19,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const externalUserId = tryDecodeURIComponent(raw)?.trim() ?? "";
+  if (!externalUserId) {
+    return NextResponse.json(
+      { error: "externalUserId is required" },
+      { status: 400 },
+    );
+  }
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -42,7 +49,10 @@ export async function GET(
     });
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 503 });
+    console.warn(
+      "app-user-invoices: list failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
   }
 }
