@@ -5,7 +5,10 @@ import { paymentsTabErrorMessage } from "./payments-tab-errors";
 import {
   merchantConnectOAuthErrorCode,
   parseStripeAccountUpdated,
+  parseStripeCompletedCheckoutSessionId,
+  parseStripePaymentMethodAttached,
   resolveConnectWebhookSecret,
+  resolveStripeWebhookSecrets,
   sanitizeStripeOAuthProviderError,
   verifyStripeWebhookSignature,
 } from "./webhook";
@@ -96,6 +99,58 @@ test("parseStripeAccountUpdated extracts Connect flags", () => {
   assert.equal(parseStripeAccountUpdated('{"type":"customer.created"}'), null);
 });
 
+test("payment-method restore parsing accepts Checkout and SetupIntent metadata", () => {
+  const checkout = JSON.stringify({
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_restore",
+        metadata: {
+          pymthouse_client_id: "app_merchant",
+          external_user_id: "user_1",
+        },
+      },
+    },
+  });
+  assert.deepEqual(parseStripePaymentMethodAttached(checkout), {
+    clientId: "app_merchant",
+    externalUserId: "user_1",
+    checkoutSessionId: "cs_restore",
+  });
+  assert.equal(parseStripeCompletedCheckoutSessionId(checkout), "cs_restore");
+
+  const setupIntent = JSON.stringify({
+    type: "setup_intent.succeeded",
+    data: {
+      object: {
+        id: "seti_restore",
+        metadata: {
+          pymthouse_client_id: "app_owner_rollup",
+          external_user_id: "owner_1",
+        },
+      },
+    },
+  });
+  assert.deepEqual(parseStripePaymentMethodAttached(setupIntent), {
+    clientId: "app_owner_rollup",
+    externalUserId: "owner_1",
+    checkoutSessionId: null,
+  });
+  assert.equal(parseStripeCompletedCheckoutSessionId(setupIntent), null);
+});
+
+test("payment-method restore parsing rejects incomplete metadata", () => {
+  assert.equal(
+    parseStripePaymentMethodAttached(
+      JSON.stringify({
+        type: "checkout.session.completed",
+        data: { object: { id: "cs_missing", metadata: {} } },
+      }),
+    ),
+    null,
+  );
+});
+
 test("merchantConnectOAuthErrorCode never returns raw messages", () => {
   assert.equal(
     merchantConnectOAuthErrorCode(new Error("Invalid or expired OAuth state")),
@@ -157,4 +212,22 @@ test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (
 
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "not-a-whsec";
   assert.throws(() => resolveConnectWebhookSecret(), /must start with whsec_/);
+});
+
+test("resolveStripeWebhookSecrets accepts platform and Connect endpoint secrets", (t) => {
+  const previousConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  const previousPlatform = process.env.STRIPE_WEBHOOK_SECRET;
+  t.after(() => {
+    if (previousConnect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+    else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = previousConnect;
+    if (previousPlatform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
+    else process.env.STRIPE_WEBHOOK_SECRET = previousPlatform;
+  });
+
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
+  assert.deepEqual(resolveStripeWebhookSecrets(), [
+    "whsec_platform",
+    "whsec_connect",
+  ]);
 });

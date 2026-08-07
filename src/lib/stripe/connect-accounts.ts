@@ -429,6 +429,14 @@ export async function createConnectedCheckoutSession(input: {
   body.set("cancel_url", input.cancelUrl);
   if (mode === "setup") {
     body.set("payment_method_types[0]", "card");
+    for (const [key, value] of Object.entries(input.metadata ?? {})) {
+      if (key.trim() && value.trim()) {
+        body.set(
+          `setup_intent_data[metadata][${key.trim()}]`,
+          value.trim(),
+        );
+      }
+    }
   } else {
     const amount = input.amountCents;
     if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {

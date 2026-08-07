@@ -818,6 +818,30 @@ export const appUserStripeCustomers = pgTable(
   ],
 );
 
+/**
+ * Durable lookup for a setup-mode Checkout session. Stripe completion webhooks
+ * use it to resolve the app user without trusting a browser return URL.
+ */
+export const appUserPaymentMethodCheckouts = pgTable(
+  "app_user_payment_method_checkouts",
+  {
+    stripeCheckoutSessionId: text("stripe_checkout_session_id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    externalUserId: text("external_user_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_app_user_payment_method_checkouts_client_user").on(
+      t.clientId,
+      t.externalUserId,
+    ),
+  ],
+);
+
 /** Idempotency audit for OpenMeter signed-ticket ingest (not balance source). */
 export const usageIngestReceipts = pgTable(
   "usage_ingest_receipts",

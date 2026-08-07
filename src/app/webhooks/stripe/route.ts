@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
+import {
+  restoreAppUserBillingProfileAfterPaymentMethodAttached,
+  restoreAppUserBillingProfileForCheckoutSession,
+} from "@/lib/openmeter/app-user-payment-method";
 import { applyConnectedAccountWebhookUpdate } from "@/lib/stripe/merchant-connect";
 import {
+  parseStripeCompletedCheckoutSessionId,
   parseStripeAccountUpdated,
-  resolveConnectWebhookSecret,
+  parseStripePaymentMethodAttached,
+  resolveStripeWebhookSecrets,
   verifyStripeWebhookSignature,
 } from "@/lib/stripe/webhook";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
@@ -16,6 +22,8 @@ export const runtime = "nodejs";
  *
  * Subscribe at least to:
  *   account.updated
+ *   checkout.session.completed
+ *   setup_intent.succeeded
  *
  * PaymentIntent / charge / dispute events for Custom Invoicing settlement are
  * handled by pymthouse/settlement (Kafka producer), not this route.
@@ -25,9 +33,9 @@ export const runtime = "nodejs";
  */
 export async function POST(request: Request): Promise<Response> {
   const tag = "[stripe-webhook]";
-  let secret: string;
+  let secrets: string[];
   try {
-    secret = resolveConnectWebhookSecret();
+    secrets = resolveStripeWebhookSecrets();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(tag, "misconfigured:", sanitizeForLog(message));
@@ -36,13 +44,13 @@ export async function POST(request: Request): Promise<Response> {
 
   const rawBody = await request.text();
   const signatureHeader = request.headers.get("stripe-signature");
-  if (
-    !verifyStripeWebhookSignature({
+  if (!secrets.some((secret) =>
+    verifyStripeWebhookSignature({
       rawBody,
       signatureHeader,
       secret,
-    })
-  ) {
+    }),
+  )) {
     console.warn(tag, "signature rejected");
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
@@ -58,6 +66,35 @@ export async function POST(request: Request): Promise<Response> {
       ? (parsed as { type?: unknown }).type
       : undefined;
   const type = typeof rawType === "string" ? rawType : "";
+
+  const restoreTarget = parseStripePaymentMethodAttached(rawBody);
+  if (restoreTarget) {
+    try {
+      await restoreAppUserBillingProfileAfterPaymentMethodAttached(restoreTarget);
+      return NextResponse.json({
+        received: true,
+        restored: true,
+        clientId: restoreTarget.clientId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(tag, "payment method restore failed:", sanitizeForLog(message));
+      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+    }
+  }
+
+  const checkoutSessionId = parseStripeCompletedCheckoutSessionId(rawBody);
+  if (checkoutSessionId) {
+    try {
+      const restored =
+        await restoreAppUserBillingProfileForCheckoutSession(checkoutSessionId);
+      return NextResponse.json({ received: true, restored });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(tag, "payment method restore failed:", sanitizeForLog(message));
+      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+    }
+  }
 
   if (type === "account.updated") {
     const account = parseStripeAccountUpdated(rawBody);

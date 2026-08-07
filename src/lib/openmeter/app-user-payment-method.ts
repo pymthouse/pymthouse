@@ -1,3 +1,9 @@
+import { eq } from "drizzle-orm";
+import { db } from "@/db/index";
+import {
+  appUserPaymentMethodCheckouts,
+  subscriptions,
+} from "@/db/schema";
 import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
@@ -12,6 +18,7 @@ import {
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import {
   ensureOpenMeterCustomer,
+  ensureOpenMeterCustomerForAppUser,
   findOpenMeterCustomerByKey,
 } from "./customers";
 import { resolveOpenMeterMeterClientId } from "./meter-client-id";
@@ -45,6 +52,88 @@ export type AppUserPaymentMethodCheckoutResult = {
   customerId: string;
   hasDefaultPaymentMethod: boolean;
 };
+
+export type AppUserPaymentMethodRestoreTarget = {
+  clientId: string;
+  externalUserId: string;
+};
+
+async function recordAppUserPaymentMethodCheckout(input: {
+  sessionId: string | null;
+  clientId: string;
+  externalUserId: string;
+}): Promise<void> {
+  if (!input.sessionId) {
+    return;
+  }
+  await db
+    .insert(appUserPaymentMethodCheckouts)
+    .values({
+      stripeCheckoutSessionId: input.sessionId,
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    })
+    .onConflictDoNothing();
+}
+
+/**
+ * Restore the billing profile after Stripe has attached a payment method.
+ * Reassigning the mode-correct profile is safe for webhook retries.
+ */
+export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
+  input: AppUserPaymentMethodRestoreTarget,
+): Promise<void> {
+  const client = getHostedAdminClient();
+  const customer = await ensureOpenMeterCustomerForAppUser({
+    client,
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  await prepareAppCustomerStripeBilling({
+    client,
+    clientId: input.clientId,
+    customerId: customer.id,
+    customerKey: customer.key,
+  });
+}
+
+export async function restoreAppUserBillingProfileForCheckoutSession(
+  sessionId: string,
+): Promise<boolean> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    return false;
+  }
+  const checkoutRows = await db
+    .select({
+      clientId: appUserPaymentMethodCheckouts.clientId,
+      externalUserId: appUserPaymentMethodCheckouts.externalUserId,
+    })
+    .from(appUserPaymentMethodCheckouts)
+    .where(
+      eq(
+        appUserPaymentMethodCheckouts.stripeCheckoutSessionId,
+        normalizedSessionId,
+      ),
+    )
+    .limit(1);
+  const target = checkoutRows[0] ??
+    (
+      await db
+        .select({
+          clientId: subscriptions.clientId,
+          externalUserId: subscriptions.externalUserId,
+        })
+        .from(subscriptions)
+        .where(eq(subscriptions.stripeCheckoutSessionId, normalizedSessionId))
+        .limit(1)
+    )[0];
+  if (!target?.clientId || !target.externalUserId) {
+    return false;
+  }
+  await restoreAppUserBillingProfileAfterPaymentMethodAttached(target);
+  return true;
+}
 
 type AppUserStripeRefs = {
   customerId: string | null;
@@ -356,6 +445,11 @@ export async function createAppUserPaymentMethodCheckout(input: {
       openmeterCustomerId: customer.id,
       openmeterCustomerKey: customer.key,
     });
+    await recordAppUserPaymentMethodCheckout({
+      sessionId: connectCheckout.sessionId,
+      clientId,
+      externalUserId,
+    });
     return {
       checkoutUrl: connectCheckout.checkoutUrl,
       sessionId: connectCheckout.sessionId,
@@ -370,6 +464,11 @@ export async function createAppUserPaymentMethodCheckout(input: {
     successUrl: success,
     cancelUrl: cancel,
     currency: "USD",
+  });
+  await recordAppUserPaymentMethodCheckout({
+    sessionId: checkout.sessionId,
+    clientId,
+    externalUserId,
   });
 
   return {

@@ -359,9 +359,17 @@ test("createConnectedCheckoutSession setup and payment modes", async (t) => {
     successUrl: "https://ok",
     cancelUrl: "https://cancel",
     mode: "setup",
+    metadata: {
+      pymthouse_client_id: "app_merchant",
+      external_user_id: "user_1",
+    },
   });
   assert.equal(setup.sessionId, "cs_test_1");
   assert.match(bodies[0]!, /mode=setup/);
+  assert.match(
+    bodies[0]!,
+    /setup_intent_data%5Bmetadata%5D%5Bpymthouse_client_id%5D=app_merchant/,
+  );
 
   const payment = await createConnectedCheckoutSession({
     accountId: "acct_1",

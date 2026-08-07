@@ -551,25 +551,10 @@ export async function applyTenantBillingProfileToCustomer(input: {
   customerKey?: string;
   name?: string;
 }): Promise<void> {
-  const ready = await ensureAppStripeBillingReady({ clientId: input.clientId });
-  const useKonnect = shouldUseKonnectRoutes(
-    getHostedOpenMeterUrl(),
-    process.env.OPENMETER_API_KEY,
-  );
-  if (useKonnect) {
-    await ensureKonnectCustomerStripeBilling({
-      customerId: input.customerId,
-      customerKey: input.customerKey,
-      name: input.name,
-      billingProfileId: ready.openmeterBillingProfileId,
-    });
-    return;
-  }
-  await assignCustomerBillingProfileOverride({
-    client: input.client,
-    customerId: input.customerId,
-    billingProfileId: ready.openmeterBillingProfileId,
-  });
+  // This helper is used by Checkout flows. A merchant customer must remain
+  // pinned to Custom Invoicing rather than being moved to the tenant Stripe
+  // profile while Checkout is collecting (or has just collected) a card.
+  await prepareAppCustomerStripeBilling(input);
 }
 
 /**
