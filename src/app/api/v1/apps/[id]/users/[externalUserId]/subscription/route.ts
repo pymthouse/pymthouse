@@ -7,6 +7,7 @@ import {
   readConfirmFlag,
   readJsonObject,
 } from "@/lib/billing/owner-billing-m2m-auth";
+import { tryDecodeURIComponent } from "@/lib/billing-utils";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import {
   AppUserSubscriptionCancelError,
@@ -64,7 +65,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const externalUserId = tryDecodeURIComponent(raw)?.trim() ?? "";
+  if (!externalUserId) {
+    return NextResponse.json(
+      { error: "externalUserId is required" },
+      { status: 400 },
+    );
+  }
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -188,7 +195,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = decodeURIComponent(raw);
+  const externalUserId = tryDecodeURIComponent(raw)?.trim() ?? "";
+  if (!externalUserId) {
+    return NextResponse.json(
+      { error: "externalUserId is required" },
+      { status: 400 },
+    );
+  }
   const access = await authorizeAppForBilling(request, clientId);
   if (!access) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

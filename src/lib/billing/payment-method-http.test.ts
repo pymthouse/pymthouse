@@ -12,6 +12,12 @@ test("paymentMethodCheckoutErrorStatus maps known messages", () => {
   assert.equal(paymentMethodCheckoutErrorStatus("STRIPE_SECRET_KEY missing"), 400);
   assert.equal(paymentMethodCheckoutErrorStatus("OPENMETER_URL required"), 400);
   assert.equal(paymentMethodCheckoutErrorStatus("No ready Stripe app"), 400);
+  assert.equal(
+    paymentMethodCheckoutErrorStatus(
+      "Merchant Stripe Connect onboarding is required before adding a payment method",
+    ),
+    403,
+  );
   assert.equal(paymentMethodCheckoutErrorStatus("Cannot reach OpenMeter"), 503);
   assert.equal(paymentMethodCheckoutErrorStatus("boom"), 502);
 });

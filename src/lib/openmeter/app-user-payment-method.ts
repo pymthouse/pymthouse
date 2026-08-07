@@ -18,7 +18,6 @@ import {
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import {
   ensureOpenMeterCustomer,
-  ensureOpenMeterCustomerForAppUser,
   findOpenMeterCustomerByKey,
 } from "./customers";
 import { resolveOpenMeterMeterClientId } from "./meter-client-id";
@@ -78,17 +77,20 @@ async function recordAppUserPaymentMethodCheckout(input: {
 
 /**
  * Restore the billing profile after Stripe has attached a payment method.
+ * Uses the compound `{publicClientId}:{externalUserId}` customer — never the
+ * owner-wallet path — matching {@link createAppUserPaymentMethodCheckout}.
  * Reassigning the mode-correct profile is safe for webhook retries.
  */
 export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
   input: AppUserPaymentMethodRestoreTarget,
 ): Promise<void> {
   const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomerForAppUser({
-    client,
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
+  const customerKey = buildOpenMeterCustomerKey(
+    publicClientId,
+    input.externalUserId,
+  );
+  const customer = await ensureOpenMeterCustomer(client, customerKey);
   await prepareAppCustomerStripeBilling({
     client,
     clientId: input.clientId,

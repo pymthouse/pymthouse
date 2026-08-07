@@ -47,7 +47,9 @@ function stripeSecretKey(): string {
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
   if (!key?.startsWith("sk_")) {
-    throw new Error("STRIPE_SECRET_KEY is required for Stripe Connect");
+    throw new Error(
+      "STRIPE_SECRET_KEY or STRIPE_API_KEY is required for Stripe Connect",
+    );
   }
   return key;
 }
@@ -402,6 +404,42 @@ export async function getAppUserStripeCustomer(input: {
   return rows[0] ?? null;
 }
 
+const STRIPE_INVOICE_PAGE_LIMIT = 100;
+/** Cap Stripe pagination so a pathological customer cannot loop forever. */
+const MAX_MERCHANT_INVOICE_PAGES = 50;
+
+async function listAllMerchantConnectInvoices(
+  accountId: string,
+  stripeCustomerId: string,
+): Promise<StripeConnectInvoice[]> {
+  const invoices: StripeConnectInvoice[] = [];
+  let startingAfter: string | undefined;
+  for (let page = 0; page < MAX_MERCHANT_INVOICE_PAGES; page++) {
+    const params = new URLSearchParams({
+      customer: stripeCustomerId,
+      limit: String(STRIPE_INVOICE_PAGE_LIMIT),
+    });
+    if (startingAfter) {
+      params.set("starting_after", startingAfter);
+    }
+    const result = await stripeConnectInvoiceRequest<{
+      data?: StripeConnectInvoice[];
+      has_more?: boolean;
+    }>(accountId, `/v1/invoices?${params.toString()}`);
+    const batch = result.data ?? [];
+    invoices.push(...batch);
+    if (!result.has_more || batch.length === 0) {
+      break;
+    }
+    const lastId = batch[batch.length - 1]?.id?.trim();
+    if (!lastId) {
+      break;
+    }
+    startingAfter = lastId;
+  }
+  return invoices;
+}
+
 /**
  * List invoices from the merchant's Connected Account for one app user.
  * Merchant billing never reads OpenMeter owner-rollup invoices.
@@ -431,13 +469,10 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
   }
   const offset = (input.page - 1) * input.pageSize;
-  const result = await stripeConnectInvoiceRequest<{
-    data?: StripeConnectInvoice[];
-  }>(
+  const invoices = (await listAllMerchantConnectInvoices(
     accountId,
-    `/v1/invoices?customer=${encodeURIComponent(customer.stripeCustomerId)}&limit=100`,
-  );
-  const invoices = (result.data ?? [])
+    customer.stripeCustomerId,
+  ))
     .map((invoice) => mapMerchantInvoice(invoice))
     .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== null);
   return {

@@ -10,6 +10,9 @@ export function paymentMethodCheckoutErrorStatus(message: string): number {
   ) {
     return 400;
   }
+  if (message.includes("Merchant Stripe Connect onboarding is required")) {
+    return 403;
+  }
   if (message.includes("Cannot reach OpenMeter")) {
     return 503;
   }
