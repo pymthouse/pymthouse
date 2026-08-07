@@ -38,6 +38,7 @@ import {
   normalizePlanBillingCycle,
   type PlanBillingCycle,
 } from "@/lib/openmeter/billing-cycle";
+import { readMutationError } from "@/lib/http/mutation-error";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -150,24 +151,6 @@ async function readFetchJson(res: Response): Promise<{
     }
   }
   return { ok: res.ok, status: res.status, body };
-}
-
-/**
- * Plan mutations can fail with an activation problem+json body, which carries
- * `detail`/`title` instead of `error`. Without this the UI shows a bare status
- * code and the plan silently appears to never have been created.
- */
-function readMutationError(
-  body: Record<string, unknown>,
-  fallback: string,
-): string {
-  for (const key of ["error", "detail", "title"] as const) {
-    const value = body[key];
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-  return fallback;
 }
 
 function usdMicrosToDisplay(micros: string | null | undefined): string {

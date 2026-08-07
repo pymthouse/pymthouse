@@ -1410,6 +1410,9 @@ test("describeOpenMeterError recovers reasons the SDK drops as undefined", async
   assert.ok(circularDescribed.includes("title=T"));
   assert.ok(circularDescribed.includes("type=U"));
   assert.ok(!circularDescribed.includes("raw="));
+
+  // Non-Error values stringify as the primary message.
+  assert.equal(describeOpenMeterError("plain-string"), "plain-string");
 });
 
 test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {

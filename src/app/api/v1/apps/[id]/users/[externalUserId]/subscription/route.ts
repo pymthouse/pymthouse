@@ -26,6 +26,7 @@ import {
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
+import { planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
 
 async function resolveDisplaySubscription(input: {
   clientId: string;
@@ -124,6 +125,11 @@ export async function GET(
     : [];
   const plan = planRows[0] ?? null;
   const isOwnerStarter = isOwnerStarterPlanKey(omSubscription.planKey);
+  const planName = plan
+    ? planDisplayNameWithStarter(plan)
+    : isOwnerStarter
+      ? OWNER_STARTER_PLAN_NAME
+      : null;
 
   const planStatus = plan?.status ?? null;
   const actionRequired =
@@ -170,7 +176,7 @@ export async function GET(
       id: omSubscription.id,
       status: omSubscription.status,
       planId: plan?.id ?? null,
-      planName: plan?.name ?? (isOwnerStarter ? OWNER_STARTER_PLAN_NAME : null),
+      planName,
       // Owner Starter is a platform plan (no Neon row); match local Starter typing.
       planType: plan?.type ?? (isOwnerStarter ? "free" : null),
       openmeterPlanKey: omSubscription.planKey,

@@ -66,11 +66,65 @@ test("status predicates: live excludes scheduled", () => {
 
   assert.equal(isCanceledSubscriptionStatus("canceled"), true);
   assert.equal(isCanceledSubscriptionStatus("cancelled"), true);
+  assert.equal(isCanceledSubscriptionStatus("inactive"), true);
   assert.equal(isCanceledSubscriptionStatus("active"), false);
 
   assert.equal(isPresentSubscriptionStatus("scheduled"), true);
   assert.equal(isPresentSubscriptionStatus("active"), true);
   assert.equal(isPresentSubscriptionStatus("canceled"), false);
+});
+
+test("isOccupyingCanceledSubscription requires future activeTo", async () => {
+  const {
+    isOccupyingCanceledSubscription,
+    pickOccupyingCanceledSubscription,
+  } = await import("./subscription-state");
+  const now = Date.parse("2026-08-07T21:00:00.000Z");
+  assert.equal(
+    isOccupyingCanceledSubscription(
+      {
+        status: "canceled",
+        activeTo: "2026-09-07T17:35:18.109Z",
+      },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    isOccupyingCanceledSubscription(
+      { status: "inactive", activeTo: "2026-09-07T17:35:18.109Z" },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    isOccupyingCanceledSubscription(
+      { status: "canceled", activeTo: "2026-08-01T00:00:00.000Z" },
+      now,
+    ),
+    false,
+  );
+  assert.equal(
+    isOccupyingCanceledSubscription({ status: "canceled", activeTo: null }, now),
+    false,
+  );
+  assert.equal(
+    isOccupyingCanceledSubscription(
+      { status: "active", activeTo: "2026-09-07T17:35:18.109Z" },
+      now,
+    ),
+    false,
+  );
+
+  const picked = pickOccupyingCanceledSubscription([
+    sub({
+      id: "starter_canceled",
+      planKey: "app_starter",
+      status: "canceled",
+      activeTo: "2026-09-07T17:35:18.109Z",
+    }),
+  ]);
+  assert.equal(picked?.id, "starter_canceled");
 });
 
 test("classifySubscriptions never treats scheduled as livePaid", () => {
@@ -256,4 +310,23 @@ test("clearScheduledBeforeMutation clears scheduled when restore fails", async (
   assert.equal(urls.length, 2);
   assert.match(urls[0]!, /\/restore$/);
   assert.match(urls[1]!, /\/metering\/v1\/subscriptions\/sched_successor$/);
+});
+
+test("clearScheduledSubscriptions swallows cancel failure after DELETE fails", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async () =>
+    new Response(JSON.stringify({ detail: "still forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+
+  await assert.doesNotReject(() => clearScheduledSubscriptions(["sched_a"]));
+});
+
+test("pickMutationTargetSubscription falls back to live starter", () => {
+  const listed = [
+    sub({ id: "starter", planKey: "app_starter", status: "active" }),
+  ];
+  assert.equal(pickMutationTargetSubscription(listed, isStarter)?.id, "starter");
 });
