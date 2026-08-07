@@ -9,14 +9,17 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
+import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import { appUserPaymentMethodRequiresMerchantConnect } from "@/lib/openmeter/app-user-payment-method";
 import { getAppUserInvoice } from "@/lib/openmeter/invoices";
 import { retrievePlatformInvoiceLinks } from "@/lib/stripe/connect-accounts";
+import { getMerchantConnectInvoiceLinksForAppUser } from "@/lib/stripe/merchant-connect";
 
 /**
  * GET /api/v1/apps/{clientId}/users/{externalUserId}/invoices/{invoiceId}/hosted-url
  *
- * Resolve Stripe hosted invoice URL / PDF for one invoice belonging to this
- * app user. Auth: `authorizeAppForBilling`.
+ * Resolve Stripe hosted invoice URL / PDF on the app's active billing plane.
+ * Auth: `authorizeAppForBilling`.
  */
 export async function GET(
   request: NextRequest,
@@ -40,10 +43,6 @@ export async function GET(
     return access;
   }
 
-  if (!isHostedAdminClientAvailable()) {
-    return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
-  }
-
   const decodedId = tryDecodeURIComponent(rawInvoiceId)?.trim() ?? "";
   if (!decodedId) {
     return NextResponse.json(
@@ -52,36 +51,22 @@ export async function GET(
     );
   }
 
-  let invoice;
   try {
-    invoice = await getAppUserInvoice({
-      client: getHostedAdminClient(),
-      clientId: access.app.id,
-      externalUserId: access.externalUserId,
-      invoiceId: decodedId,
-    });
-  } catch (err) {
-    console.warn(
-      "app-user-invoice-links: invoice lookup failed",
-      err instanceof Error ? err.message : String(err),
-    );
-    return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
-  }
-  if (!invoice) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  if (!invoice.externalInvoicingId?.trim()) {
-    return NextResponse.json(
-      { error: "This invoice has no Stripe record yet." },
-      { status: 404 },
-    );
-  }
-
-  try {
-    const links = await retrievePlatformInvoiceLinks(
-      invoice.externalInvoicingId,
-    );
+    const config = await getAppBillingConfig(access.app.id);
+    const links = appUserPaymentMethodRequiresMerchantConnect(config)
+      ? await getMerchantConnectInvoiceLinksForAppUser({
+          clientId: access.app.id,
+          externalUserId: access.externalUserId,
+          invoiceId: decodedId,
+        })
+      : await getOwnerRollupInvoiceLinks({
+          clientId: access.app.id,
+          externalUserId: access.externalUserId,
+          invoiceId: decodedId,
+        });
+    if (!links) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     if (!links.hostedInvoiceUrl && !links.invoicePdf) {
       return NextResponse.json(
         { error: "Stripe has no hosted page for this invoice." },
@@ -91,12 +76,27 @@ export async function GET(
     return NextResponse.json(links);
   } catch (err) {
     console.warn(
-      "app-user-invoice-links: Stripe lookup failed",
+      "app-user-invoice-links: invoice lookup failed",
       err instanceof Error ? err.message : String(err),
     );
-    return NextResponse.json(
-      { error: "Invoice link unavailable" },
-      { status: 502 },
-    );
+    return NextResponse.json({ error: "Billing unavailable" }, { status: 503 });
   }
+}
+
+async function getOwnerRollupInvoiceLinks(input: {
+  clientId: string;
+  externalUserId: string;
+  invoiceId: string;
+}): Promise<{ hostedInvoiceUrl: string | null; invoicePdf: string | null } | null> {
+  if (!isHostedAdminClientAvailable()) {
+    throw new Error("Billing unavailable");
+  }
+  const invoice = await getAppUserInvoice({
+    client: getHostedAdminClient(),
+    ...input,
+  });
+  if (!invoice?.externalInvoicingId?.trim()) {
+    return null;
+  }
+  return retrievePlatformInvoiceLinks(invoice.externalInvoicingId);
 }

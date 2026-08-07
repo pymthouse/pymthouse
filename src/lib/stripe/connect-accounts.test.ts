@@ -13,6 +13,7 @@ import {
   exchangeConnectOAuthCode,
   refreshConnectedAccountStatus,
 } from "./connect-accounts";
+import { __testMapMerchantInvoice } from "./merchant-connect";
 
 const ENV_KEYS = [
   "STRIPE_SECRET_KEY",
@@ -47,6 +48,35 @@ function withEnv(
     }
   });
 }
+
+test("merchant invoice mapper preserves Stripe invoice fields for app-user billing", () => {
+  assert.deepEqual(
+    __testMapMerchantInvoice({
+      id: "in_connected",
+      number: "M-42",
+      status: "paid",
+      currency: "usd",
+      total: 1234,
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      period_start: 1_735_603_200,
+      period_end: 1_735_862_400,
+    }),
+    {
+      id: "in_connected",
+      number: "M-42",
+      status: "paid",
+      currency: "USD",
+      totalAmount: "12.34",
+      customerId: "cus_connected",
+      issuedAt: "2025-01-01T00:00:00.000Z",
+      periodStart: "2024-12-31T00:00:00.000Z",
+      periodEnd: "2025-01-03T00:00:00.000Z",
+      externalInvoicingId: "in_connected",
+      invoiceType: "stripe_connect",
+    },
+  );
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
