@@ -38,8 +38,10 @@ import {
 } from "./subscription-read";
 import {
   clearScheduledBeforeMutation,
+  clearScheduledSubscriptions,
   isKonnectScheduledChangeForbidden,
   isLiveSubscriptionStatus,
+  isScheduledSubscriptionStatus,
   listScheduledSubscriptionIds,
   pickMutationTargetSubscription,
 } from "./subscription-state";
@@ -178,16 +180,19 @@ async function loadActiveTargetPlan(input: {
 }
 
 /**
- * Konnect `/subscriptions/{id}/change` onto a paid plan requires a default
- * Stripe payment method. Checkout exists to collect that PM, so when the
- * customer is still on Starter (or another plan) without a card, cancel the
- * current subscription and create the target instead of calling `/change`.
+ * Remove a present OpenMeter subscription so Checkout can create the target
+ * plan. Scheduled rows must use DELETE — Konnect forbids /cancel on them
+ * ("transition cancel in state scheduled not allowed").
  */
 async function clearOpenMeterSubscriptionForCheckout(
   subscription: OpenMeterSubscriptionView,
 ): Promise<void> {
   const subscriptionId = subscription.id.trim();
   if (!subscriptionId) {
+    return;
+  }
+  if (isScheduledSubscriptionStatus(subscription.status)) {
+    await deleteKonnectSubscription({ subscriptionId });
     return;
   }
   try {
@@ -204,6 +209,25 @@ async function clearOpenMeterSubscriptionForCheckout(
     );
   }
   await deleteKonnectSubscription({ subscriptionId });
+}
+
+/**
+ * Drop every scheduled/pending successor for this customer so
+ * `subscriptions.create` cannot 409 on an orphaned scheduled row.
+ */
+async function clearScheduledSubscriptionsForCustomer(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  customerId: string;
+}): Promise<void> {
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    input.client,
+    input.customerId,
+  );
+  const scheduledIds = listScheduledSubscriptionIds(listed);
+  if (scheduledIds.length === 0) {
+    return;
+  }
+  await clearScheduledSubscriptions(scheduledIds);
 }
 
 async function checkoutAfterPlanChange(
@@ -318,13 +342,26 @@ async function resolveExistingCheckoutSubscription(input: {
     input.checkoutInput.clientId,
     existing,
   );
+
+  // Same plan already present (live or scheduled) — reuse for Checkout session.
   if (existingLocalPlanId === input.planId && existing.id.trim()) {
     return { subscriptionId: existing.id.trim() };
   }
+
+  // Scheduled-only (or scheduled successor of another plan): DELETE then create.
+  // Never route these through /change — Konnect 403s, and create 409s if left.
+  if (isScheduledSubscriptionStatus(existing.status)) {
+    await clearOpenMeterSubscriptionForCheckout(existing);
+    return null;
+  }
+
+  // Live sub, no card yet — clear and create target for Checkout to collect PM.
   if (input.needsPaymentMethod && !input.defaultPaymentMethodId) {
     await clearOpenMeterSubscriptionForCheckout(existing);
     return null;
   }
+
+  // Live sub + card: switch via /change (may still return a Checkout URL).
   return {
     checkout: await checkoutAfterPlanChange(input.checkoutInput, input.successUrl),
   };
@@ -354,13 +391,32 @@ async function createCheckoutSubscriptionAfterConflict(input: {
     conflictError = err;
   }
 
+  // Orphaned scheduled rows commonly cause create 409 — clear then retry create.
+  await clearScheduledSubscriptionsForCustomer({
+    client: input.client,
+    customerId: input.customerId,
+  });
+
   const raced = await getPrimaryOpenMeterSubscriptionForAppUser({
     clientId: input.checkoutInput.clientId,
     externalUserId: input.checkoutInput.externalUserId,
   });
+
   if (!raced) {
-    throw conflictError;
+    try {
+      const created = await input.client.subscriptions.create({
+        customerId: input.customerId,
+        plan: { key: input.planKey },
+      });
+      return { subscriptionId: created?.id?.trim() || "" };
+    } catch (retryErr) {
+      if (isOpenMeterConflictError(retryErr)) {
+        throw conflictError;
+      }
+      throw retryErr;
+    }
   }
+
   const racedLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
     input.checkoutInput.clientId,
     raced,
@@ -368,6 +424,18 @@ async function createCheckoutSubscriptionAfterConflict(input: {
   if (racedLocalPlanId === input.planId) {
     return { subscriptionId: raced.id };
   }
+
+  // Still scheduled after clear attempt — force DELETE and create.
+  if (isScheduledSubscriptionStatus(raced.status)) {
+    await clearOpenMeterSubscriptionForCheckout(raced);
+    const created = await input.client.subscriptions.create({
+      customerId: input.customerId,
+      plan: { key: input.planKey },
+    });
+    return { subscriptionId: created?.id?.trim() || "" };
+  }
+
+  // Live different plan with a card: switch via /change.
   if (!input.needsPaymentMethod || input.defaultPaymentMethodId) {
     return {
       checkout: await checkoutAfterPlanChange(
@@ -376,6 +444,7 @@ async function createCheckoutSubscriptionAfterConflict(input: {
       ),
     };
   }
+
   await clearOpenMeterSubscriptionForCheckout(raced);
   const created = await input.client.subscriptions.create({
     customerId: input.customerId,
@@ -403,6 +472,11 @@ async function getOrCreateCheckoutSubscription(input: {
   if (existing) {
     return existing;
   }
+  // Avoid create 409 from orphaned scheduled rows (DELETE, not /change).
+  await clearScheduledSubscriptionsForCustomer({
+    client: input.client,
+    customerId: input.customerId,
+  });
   return createCheckoutSubscriptionAfterConflict({
     client: input.client,
     checkoutInput: input.checkoutInput,

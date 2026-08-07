@@ -109,3 +109,13 @@ test("merchant Checkout retains its Custom Invoicing billing profile", () => {
     true,
   );
 });
+
+test("scheduled status is never a /change target for checkout routing", async () => {
+  const { isScheduledSubscriptionStatus, isLiveSubscriptionStatus } =
+    await import("./subscription-state");
+  // Contract: checkout must DELETE scheduled rows, not call /change.
+  assert.equal(isScheduledSubscriptionStatus("scheduled"), true);
+  assert.equal(isLiveSubscriptionStatus("scheduled"), false);
+  assert.equal(isScheduledSubscriptionStatus("pending"), true);
+  assert.equal(isLiveSubscriptionStatus("pending"), false);
+});
