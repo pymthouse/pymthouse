@@ -13,7 +13,10 @@ import {
   exchangeConnectOAuthCode,
   refreshConnectedAccountStatus,
 } from "./connect-accounts";
-import { __testMapMerchantInvoice } from "./merchant-connect";
+import {
+  __testMapMerchantInvoice,
+  __testMerchantConnectInvoices,
+} from "./merchant-connect";
 
 const ENV_KEYS = [
   "STRIPE_SECRET_KEY",
@@ -78,12 +81,55 @@ test("merchant invoice mapper preserves Stripe invoice fields for app-user billi
   );
 });
 
+test("merchant invoice helpers omit invalid data and normalize timestamps", () => {
+  assert.equal(__testMerchantConnectInvoices.mapMerchantInvoice({}), null);
+  assert.equal(__testMerchantConnectInvoices.invoiceDate(null), undefined);
+  assert.equal(
+    __testMerchantConnectInvoices.invoiceDate(1_735_689_600),
+    "2025-01-01T00:00:00.000Z",
+  );
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
+
+test("merchant invoice request sends Connected Account credentials", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), "https://api.stripe.com/v1/invoices?customer=cus_1");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer sk_test_unit");
+    assert.equal(headers.get("Stripe-Account"), "acct_merchant");
+    return jsonResponse({ data: [] });
+  });
+
+  assert.deepEqual(
+    await __testMerchantConnectInvoices.stripeConnectInvoiceRequest<{
+      data: unknown[];
+    }>("acct_merchant", "/v1/invoices?customer=cus_1"),
+    { data: [] },
+  );
+});
+
+test("merchant invoice request reports Stripe failures", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  t.mock.method(globalThis, "fetch", async () =>
+    jsonResponse({ error: { message: "invoice denied" } }, 403),
+  );
+
+  await assert.rejects(
+    () =>
+      __testMerchantConnectInvoices.stripeConnectInvoiceRequest(
+        "acct_merchant",
+        "/v1/invoices",
+      ),
+    /Stripe Connect invoice request failed \(403\): invoice denied/,
+  );
+});
 
 test("applicationFeeAmountCents computes bps fee", () => {
   assert.equal(

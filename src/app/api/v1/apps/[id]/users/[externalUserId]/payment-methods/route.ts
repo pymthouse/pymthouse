@@ -5,7 +5,6 @@ import {
   isAppUserBillingAccess,
 } from "@/lib/billing/app-user-billing-route";
 import { readJsonObject } from "@/lib/billing/owner-billing-m2m-auth";
-import { paymentMethodCheckoutErrorResponse } from "@/lib/billing/payment-method-http";
 import {
   createAppUserPaymentMethodCheckout,
   listAppUserPaymentMethods,
@@ -13,6 +12,7 @@ import {
   unlinkAppUserPaymentMethod,
 } from "@/lib/openmeter/app-user-payment-method";
 import {
+  paymentMethodCheckoutErrorResponse,
   paymentMethodDefaultErrorResponse,
   paymentMethodUnlinkErrorResponse,
 } from "@/lib/billing/payment-method-http";

@@ -101,6 +101,12 @@ function mapMerchantInvoice(invoice: StripeConnectInvoice) {
 }
 
 /** @internal Exported for unit tests. */
+export const __testMerchantConnectInvoices = {
+  invoiceDate,
+  mapMerchantInvoice,
+  stripeConnectInvoiceRequest,
+};
+/** @internal Exported for unit tests. */
 export const __testMapMerchantInvoice = mapMerchantInvoice;
 
 async function persistConnectedAccountFlags(input: {
