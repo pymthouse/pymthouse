@@ -400,6 +400,22 @@ test("createConnectedCheckoutSession fails without session url", async (t) => {
   );
 });
 
+test("createConnectedCheckoutSession rejects payment mode without a valid amount", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  await assert.rejects(
+    () =>
+      createConnectedCheckoutSession({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        successUrl: "https://ok",
+        cancelUrl: "https://cancel",
+        mode: "payment",
+        amountCents: 0,
+      }),
+    /amountCents must be a positive integer/,
+  );
+});
+
 test("createConnectedInvoice creates item then invoice with fee", async (t) => {
   withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
   const paths: string[] = [];
