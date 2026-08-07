@@ -50,8 +50,8 @@ const ownerBillingSubscriptionPutBody = z
 
 const ownerPaymentMethodSetupBody = z
   .object({
-    successUrl: z.string().url().optional(),
-    cancelUrl: z.string().url().optional(),
+    successUrl: z.url().optional(),
+    cancelUrl: z.url().optional(),
   })
   .openapi("OwnerPaymentMethodSetupBody");
 

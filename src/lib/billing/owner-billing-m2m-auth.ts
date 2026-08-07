@@ -26,7 +26,7 @@ export async function authorizeOwnerBillingM2m(
   }
 
   const clientAuth = await authenticateAppClient(request);
-  if (!clientAuth || clientAuth.appId !== trimmed) {
+  if (clientAuth?.appId !== trimmed) {
     return null;
   }
 
