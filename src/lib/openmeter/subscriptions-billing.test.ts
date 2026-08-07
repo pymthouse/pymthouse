@@ -5,6 +5,7 @@ import {
   defaultSubscriptionChangeTiming,
   neonSubscriptionStatusAfterPlanChange,
   planRequiresPaymentMethod,
+  shouldApplyFreeBillingProfileForCheckout,
 } from "./subscriptions-billing";
 
 test("planRequiresPaymentMethod is false for free/starter/network", () => {
@@ -87,5 +88,24 @@ test("neonSubscriptionStatusAfterPlanChange is pending when checkout is required
   assert.equal(
     neonSubscriptionStatusAfterPlanChange({ checkoutUrl: undefined }),
     "active",
+  );
+});
+
+test("merchant Checkout retains its Custom Invoicing billing profile", () => {
+  assert.equal(
+    shouldApplyFreeBillingProfileForCheckout({
+      isMerchantBilling: true,
+      needsPaymentMethod: true,
+      defaultPaymentMethodId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyFreeBillingProfileForCheckout({
+      isMerchantBilling: false,
+      needsPaymentMethod: true,
+      defaultPaymentMethodId: null,
+    }),
+    true,
   );
 });

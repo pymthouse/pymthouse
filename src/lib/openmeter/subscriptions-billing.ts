@@ -74,6 +74,18 @@ export function neonSubscriptionStatusAfterPlanChange(input: {
   return input.checkoutUrl ? "pending" : "active";
 }
 
+export function shouldApplyFreeBillingProfileForCheckout(input: {
+  isMerchantBilling: boolean;
+  needsPaymentMethod: boolean;
+  defaultPaymentMethodId: string | null;
+}): boolean {
+  return (
+    !input.isMerchantBilling &&
+    input.needsPaymentMethod &&
+    !input.defaultPaymentMethodId
+  );
+}
+
 async function upsertNeonSubscriptionCache(input: {
   clientId: string;
   externalUserId: string;
@@ -223,6 +235,7 @@ type CheckoutSubscriptionResult =
 
 async function resolveCheckoutSettings(input: EndUserCheckoutInput): Promise<{
   merchantReady: boolean;
+  isMerchantBilling: boolean;
   successUrl: string;
   cancelUrl: string;
 }> {
@@ -238,6 +251,7 @@ async function resolveCheckoutSettings(input: EndUserCheckoutInput): Promise<{
   const fallbackUrl = appSettingsAbsoluteUrl(origin, input.clientId, "payments");
   return {
     merchantReady,
+    isMerchantBilling: billingConfig?.billingMode === "merchant",
     successUrl:
       input.successUrl || billingConfig?.checkoutSuccessUrl || fallbackUrl,
     cancelUrl:
@@ -250,10 +264,17 @@ async function applyCheckoutBillingProfile(input: {
   clientId: string;
   customerId: string;
   customerKey: string;
+  isMerchantBilling: boolean;
   needsPaymentMethod: boolean;
   defaultPaymentMethodId: string | null;
 }): Promise<void> {
-  if (input.needsPaymentMethod && !input.defaultPaymentMethodId) {
+  if (
+    shouldApplyFreeBillingProfileForCheckout({
+      isMerchantBilling: input.isMerchantBilling,
+      needsPaymentMethod: input.needsPaymentMethod,
+      defaultPaymentMethodId: input.defaultPaymentMethodId,
+    })
+  ) {
     await applyFreeBillingProfileToCustomer({
       client: input.client,
       customerId: input.customerId,
@@ -451,6 +472,7 @@ export async function createEndUserCheckout(
     clientId: input.clientId,
     customerId: customer.id,
     customerKey: customer.key,
+    isMerchantBilling: checkoutSettings.isMerchantBilling,
     needsPaymentMethod,
     defaultPaymentMethodId,
   });
