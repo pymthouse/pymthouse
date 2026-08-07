@@ -13,6 +13,10 @@ import {
   exchangeConnectOAuthCode,
   refreshConnectedAccountStatus,
 } from "./connect-accounts";
+import {
+  __testMapMerchantInvoice,
+  __testMerchantConnectInvoices,
+} from "./merchant-connect";
 
 const ENV_KEYS = [
   "STRIPE_SECRET_KEY",
@@ -48,12 +52,84 @@ function withEnv(
   });
 }
 
+test("merchant invoice mapper preserves Stripe invoice fields for app-user billing", () => {
+  assert.deepEqual(
+    __testMapMerchantInvoice({
+      id: "in_connected",
+      number: "M-42",
+      status: "paid",
+      currency: "usd",
+      total: 1234,
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      period_start: 1_735_603_200,
+      period_end: 1_735_862_400,
+    }),
+    {
+      id: "in_connected",
+      number: "M-42",
+      status: "paid",
+      currency: "USD",
+      totalAmount: "12.34",
+      customerId: "cus_connected",
+      issuedAt: "2025-01-01T00:00:00.000Z",
+      periodStart: "2024-12-31T00:00:00.000Z",
+      periodEnd: "2025-01-03T00:00:00.000Z",
+      externalInvoicingId: "in_connected",
+      invoiceType: "stripe_connect",
+    },
+  );
+});
+
+test("merchant invoice helpers omit invalid data and normalize timestamps", () => {
+  assert.equal(__testMerchantConnectInvoices.mapMerchantInvoice({}), null);
+  assert.equal(__testMerchantConnectInvoices.invoiceDate(null), undefined);
+  assert.equal(
+    __testMerchantConnectInvoices.invoiceDate(1_735_689_600),
+    "2025-01-01T00:00:00.000Z",
+  );
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
+
+test("merchant invoice request sends Connected Account credentials", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), "https://api.stripe.com/v1/invoices?customer=cus_1");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer sk_test_unit");
+    assert.equal(headers.get("Stripe-Account"), "acct_merchant");
+    return jsonResponse({ data: [] });
+  });
+
+  assert.deepEqual(
+    await __testMerchantConnectInvoices.stripeConnectInvoiceRequest<{
+      data: unknown[];
+    }>("acct_merchant", "/v1/invoices?customer=cus_1"),
+    { data: [] },
+  );
+});
+
+test("merchant invoice request reports Stripe failures", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  t.mock.method(globalThis, "fetch", async () =>
+    jsonResponse({ error: { message: "invoice denied" } }, 403),
+  );
+
+  await assert.rejects(
+    () =>
+      __testMerchantConnectInvoices.stripeConnectInvoiceRequest(
+        "acct_merchant",
+        "/v1/invoices",
+      ),
+    /Stripe Connect invoice request failed \(403\): invoice denied/,
+  );
+});
 
 test("applicationFeeAmountCents computes bps fee", () => {
   assert.equal(
@@ -283,9 +359,17 @@ test("createConnectedCheckoutSession setup and payment modes", async (t) => {
     successUrl: "https://ok",
     cancelUrl: "https://cancel",
     mode: "setup",
+    metadata: {
+      pymthouse_client_id: "app_merchant",
+      external_user_id: "user_1",
+    },
   });
   assert.equal(setup.sessionId, "cs_test_1");
   assert.match(bodies[0]!, /mode=setup/);
+  assert.match(
+    bodies[0]!,
+    /setup_intent_data%5Bmetadata%5D%5Bpymthouse_client_id%5D=app_merchant/,
+  );
 
   const payment = await createConnectedCheckoutSession({
     accountId: "acct_1",
@@ -313,6 +397,22 @@ test("createConnectedCheckoutSession fails without session url", async (t) => {
         cancelUrl: "https://cancel",
       }),
     /Checkout session unavailable/,
+  );
+});
+
+test("createConnectedCheckoutSession rejects payment mode without a valid amount", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  await assert.rejects(
+    () =>
+      createConnectedCheckoutSession({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        successUrl: "https://ok",
+        cancelUrl: "https://cancel",
+        mode: "payment",
+        amountCents: 0,
+      }),
+    /amountCents must be a positive integer/,
   );
 });
 

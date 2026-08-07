@@ -29,6 +29,88 @@ import {
 
 export type MerchantConnectMode = "account_link";
 
+type StripeConnectInvoice = {
+  id?: string;
+  number?: string | null;
+  status?: string | null;
+  currency?: string | null;
+  total?: number | null;
+  customer?: string | null;
+  created?: number | null;
+  period_start?: number | null;
+  period_end?: number | null;
+  hosted_invoice_url?: string | null;
+  invoice_pdf?: string | null;
+};
+
+function stripeSecretKey(): string {
+  const key =
+    process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
+  if (!key?.startsWith("sk_")) {
+    throw new Error(
+      "STRIPE_SECRET_KEY or STRIPE_API_KEY is required for Stripe Connect",
+    );
+  }
+  return key;
+}
+
+function invoiceDate(seconds: number | null | undefined): string | undefined {
+  return typeof seconds === "number"
+    ? new Date(seconds * 1_000).toISOString()
+    : undefined;
+}
+
+async function stripeConnectInvoiceRequest<T>(
+  accountId: string,
+  path: string,
+): Promise<T> {
+  const response = await fetch(`https://api.stripe.com${path}`, {
+    headers: {
+      Authorization: `Bearer ${stripeSecretKey()}`,
+      "Stripe-Account": accountId,
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = (await response.json()) as T & {
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw new Error(
+      `Stripe Connect invoice request failed (${response.status}): ${
+        body.error?.message ?? "unknown error"
+      }`,
+    );
+  }
+  return body;
+}
+
+function mapMerchantInvoice(invoice: StripeConnectInvoice) {
+  const id = invoice.id?.trim();
+  if (!id) return null;
+  return {
+    id,
+    number: invoice.number?.trim() || undefined,
+    status: invoice.status?.trim() || "unknown",
+    currency: invoice.currency?.toUpperCase() || "USD",
+    totalAmount: ((invoice.total ?? 0) / 100).toFixed(2),
+    customerId: invoice.customer?.trim() || undefined,
+    issuedAt: invoiceDate(invoice.created),
+    periodStart: invoiceDate(invoice.period_start),
+    periodEnd: invoiceDate(invoice.period_end),
+    externalInvoicingId: id,
+    invoiceType: "stripe_connect",
+  };
+}
+
+/** @internal Exported for unit tests. */
+export const __testMerchantConnectInvoices = {
+  invoiceDate,
+  mapMerchantInvoice,
+  stripeConnectInvoiceRequest,
+};
+/** @internal Exported for unit tests. */
+export const __testMapMerchantInvoice = mapMerchantInvoice;
+
 async function persistConnectedAccountFlags(input: {
   clientId: string;
   accountId: string;
@@ -320,6 +402,119 @@ export async function getAppUserStripeCustomer(input: {
     )
     .limit(1);
   return rows[0] ?? null;
+}
+
+const STRIPE_INVOICE_PAGE_LIMIT = 100;
+/** Cap Stripe pagination so a pathological customer cannot loop forever. */
+const MAX_MERCHANT_INVOICE_PAGES = 50;
+
+async function listAllMerchantConnectInvoices(
+  accountId: string,
+  stripeCustomerId: string,
+): Promise<StripeConnectInvoice[]> {
+  const invoices: StripeConnectInvoice[] = [];
+  let startingAfter: string | undefined;
+  for (let page = 0; page < MAX_MERCHANT_INVOICE_PAGES; page++) {
+    const params = new URLSearchParams({
+      customer: stripeCustomerId,
+      limit: String(STRIPE_INVOICE_PAGE_LIMIT),
+    });
+    if (startingAfter) {
+      params.set("starting_after", startingAfter);
+    }
+    const result = await stripeConnectInvoiceRequest<{
+      data?: StripeConnectInvoice[];
+      has_more?: boolean;
+    }>(accountId, `/v1/invoices?${params.toString()}`);
+    const batch = result.data ?? [];
+    invoices.push(...batch);
+    if (!result.has_more || batch.length === 0) {
+      break;
+    }
+    const lastId = batch.at(-1)?.id?.trim();
+    if (!lastId) {
+      break;
+    }
+    startingAfter = lastId;
+  }
+  return invoices;
+}
+
+/**
+ * List invoices from the merchant's Connected Account for one app user.
+ * Merchant billing never reads OpenMeter owner-rollup invoices.
+ */
+export async function listMerchantConnectInvoicesForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+  page: number;
+  pageSize: number;
+}): Promise<{
+  items: ReturnType<typeof mapMerchantInvoice>[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}> {
+  const config = await getAppBillingConfig(input.clientId);
+  if (!isMerchantConnectPaymentsReady(config)) {
+    return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
+  }
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  const customer = await getAppUserStripeCustomer(input);
+  if (
+    !accountId ||
+    customer?.stripeConnectedAccountId !== accountId ||
+    !customer.stripeCustomerId?.trim()
+  ) {
+    return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
+  }
+  const offset = (input.page - 1) * input.pageSize;
+  const invoices = (await listAllMerchantConnectInvoices(
+    accountId,
+    customer.stripeCustomerId,
+  ))
+    .map((invoice) => mapMerchantInvoice(invoice))
+    .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== null);
+  return {
+    items: invoices.slice(offset, offset + input.pageSize),
+    page: input.page,
+    pageSize: input.pageSize,
+    totalCount: invoices.length,
+  };
+}
+
+/** Resolve hosted invoice links only after proving the invoice belongs to the user. */
+export async function getMerchantConnectInvoiceLinksForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+  invoiceId: string;
+}): Promise<{ hostedInvoiceUrl: string | null; invoicePdf: string | null } | null> {
+  const config = await getAppBillingConfig(input.clientId);
+  if (!isMerchantConnectPaymentsReady(config)) {
+    return null;
+  }
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  const customer = await getAppUserStripeCustomer(input);
+  const invoiceId = input.invoiceId.trim();
+  if (
+    !accountId ||
+    customer?.stripeConnectedAccountId !== accountId ||
+    !customer.stripeCustomerId?.trim() ||
+    !invoiceId
+  ) {
+    return null;
+  }
+  const invoice = await stripeConnectInvoiceRequest<StripeConnectInvoice>(
+    accountId,
+    `/v1/invoices/${encodeURIComponent(invoiceId)}`,
+  );
+  if (invoice.customer !== customer.stripeCustomerId) {
+    return null;
+  }
+  return {
+    hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+    invoicePdf: invoice.invoice_pdf ?? null,
+  };
 }
 
 export async function ensureMerchantOwnedStripeCustomer(input: {

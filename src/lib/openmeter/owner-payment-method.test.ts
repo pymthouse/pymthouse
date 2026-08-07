@@ -6,8 +6,10 @@ import {
   collapseDuplicateLinkMethods,
   listOwnerPaymentMethods,
   resolveOwnerBillingCheckoutReturnUrl,
+  setStripeCustomerDefaultPaymentMethod,
   toOwnerPaymentMethodItem,
   toStripeApiUrl,
+  unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
 
 type StripeRoute = Record<string, unknown>;
@@ -184,6 +186,112 @@ test("buildOwnerPaymentMethodList flags Stripe's invoice default", async () => {
     // Default leads even when Stripe returned Link first.
     assert.equal(items[0]?.id, "pm_card");
   });
+});
+
+test("buildOwnerPaymentMethodList lists merchant customer methods on its Connected Account", async () => {
+  await withStripeKey(async () => {
+    const stripeAccounts: string[] = [];
+    const fetchImpl = async (
+      _input: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const headers = new Headers(init?.headers);
+      stripeAccounts.push(headers.get("Stripe-Account") ?? "");
+      if (_input.includes("/payment_methods?limit=100")) {
+        return Response.json({ data: [CARD] });
+      }
+      return Response.json({ invoice_settings: {} });
+    };
+
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: "cus_connected",
+      konnectDefaultPaymentMethodId: null,
+      defaultFirstPaymentMethod: true,
+      deps: {
+        fetchImpl,
+        signal: AbortSignal.timeout(5_000),
+        stripeAccount: "acct_merchant",
+      },
+    });
+
+    assert.deepEqual(
+      items.map((item) => ({ id: item.id, isDefault: item.isDefault })),
+      [{ id: "pm_card", isDefault: true }],
+    );
+    assert.deepEqual(stripeAccounts, ["acct_merchant", "acct_merchant"]);
+  });
+});
+
+test("setStripeCustomerDefaultPaymentMethod updates a connected customer", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const requests: Array<{ path: string; stripeAccount: string | null; body: string }> =
+    [];
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    requests.push({
+      path: String(input),
+      stripeAccount: headers.get("Stripe-Account"),
+      body: String(init?.body ?? ""),
+    });
+    if (String(input).includes("/payment_methods/pm_card")) {
+      return Response.json({ ...CARD, customer: "cus_connected" });
+    }
+    return Response.json({ id: "cus_connected" });
+  };
+  const previousKey = process.env.STRIPE_SECRET_KEY;
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
+  t.after(() => {
+    if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousKey;
+  });
+
+  const result = await setStripeCustomerDefaultPaymentMethod({
+    stripeCustomerId: "cus_connected",
+    paymentMethodId: "pm_card",
+    stripeAccount: "acct_merchant",
+  });
+
+  assert.deepEqual(result, { updated: true, paymentMethodId: "pm_card" });
+  assert.equal(requests[0]?.stripeAccount, "acct_merchant");
+  assert.match(
+    requests[1]?.body ?? "",
+    /invoice_settings%5Bdefault_payment_method%5D=pm_card/,
+  );
+});
+
+test("unlinkStripeCustomerPaymentMethod refuses the only attached method", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/payment_methods?limit=100")) {
+      return Response.json({ data: [CARD] });
+    }
+    if (url.includes("/payment_methods/pm_card")) {
+      return Response.json({ ...CARD, customer: "cus_connected" });
+    }
+    return Response.json({ invoice_settings: {} });
+  };
+  const previousKey = process.env.STRIPE_SECRET_KEY;
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
+  t.after(() => {
+    if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousKey;
+  });
+
+  await assert.rejects(
+    unlinkStripeCustomerPaymentMethod({
+      stripeCustomerId: "cus_connected",
+      paymentMethodId: "pm_card",
+      stripeAccount: "acct_merchant",
+    }),
+    /only payment method/,
+  );
 });
 
 test("buildOwnerPaymentMethodList falls back to the Konnect default", async () => {

@@ -15,6 +15,99 @@ export type StripeAccountUpdatedPayload = {
   detailsSubmitted: boolean;
 };
 
+export type StripePaymentMethodAttachedPayload = {
+  clientId: string;
+  externalUserId: string;
+  checkoutSessionId: string | null;
+};
+
+function checkoutRestoreMetadata(
+  value: unknown,
+): StripePaymentMethodAttachedPayload | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const metadata = (value as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+  const clientId = (metadata as Record<string, unknown>).pymthouse_client_id;
+  const externalUserId = (metadata as Record<string, unknown>).external_user_id;
+  if (
+    typeof clientId !== "string" ||
+    !clientId.trim() ||
+    typeof externalUserId !== "string" ||
+    !externalUserId.trim()
+  ) {
+    return null;
+  }
+  const sessionId = (value as { id?: unknown }).id;
+  return {
+    clientId: clientId.trim(),
+    externalUserId: externalUserId.trim(),
+    checkoutSessionId:
+      typeof sessionId === "string" && sessionId.startsWith("cs_")
+        ? sessionId
+        : null,
+  };
+}
+
+/**
+ * Extract an app-user restore target from Stripe's durable completion signals.
+ * Connect Checkout stamps both session and SetupIntent metadata; platform
+ * Checkout is resolved by its persisted Checkout-session id instead.
+ */
+export function parseStripePaymentMethodAttached(
+  rawBody: string,
+): StripePaymentMethodAttachedPayload | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as {
+    type?: unknown;
+    data?: { object?: unknown };
+  };
+  if (
+    event.type !== "checkout.session.completed" &&
+    event.type !== "setup_intent.succeeded"
+  ) {
+    return null;
+  }
+  return checkoutRestoreMetadata(event.data?.object);
+}
+
+/** Extract the completed Checkout session id for persisted-session lookup. */
+export function parseStripeCompletedCheckoutSessionId(
+  rawBody: string,
+): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as {
+    type?: unknown;
+    data?: { object?: { id?: unknown } };
+  };
+  if (event.type !== "checkout.session.completed") {
+    return null;
+  }
+  const sessionId = event.data?.object?.id;
+  return typeof sessionId === "string" && sessionId.startsWith("cs_")
+    ? sessionId
+    : null;
+}
+
 export function requireStripeWebhookSecret(): string {
   const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   if (!secret?.startsWith("whsec_")) {
@@ -40,6 +133,27 @@ export function resolveConnectWebhookSecret(): string {
     );
   }
   return connectSecret;
+}
+
+/**
+ * The shared ingress accepts both platform and Connect events. When Stripe
+ * endpoints use distinct secrets, accept either verified signature.
+ */
+export function resolveStripeWebhookSecrets(): string[] {
+  const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
+  const secrets = [platformSecret, connectSecret].filter(
+    (secret): secret is string => Boolean(secret),
+  );
+  if (secrets.length === 0) {
+    return [requireStripeWebhookSecret()];
+  }
+  for (const secret of secrets) {
+    if (!secret.startsWith("whsec_")) {
+      throw new Error("Stripe webhook secrets must start with whsec_");
+    }
+  }
+  return [...new Set(secrets)];
 }
 
 /**

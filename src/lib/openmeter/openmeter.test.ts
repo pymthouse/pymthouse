@@ -1379,6 +1379,42 @@ test("isOpenMeterConflictError detects duplicate entitlement failures", async ()
   assert.equal(isOpenMeterConflictError(new Error("validation failed")), false);
 });
 
+test("describeOpenMeterError recovers reasons the SDK drops as undefined", async () => {
+  const { describeOpenMeterError } = await import("./plan-errors");
+
+  // Konnect problem body without `detail` — the SDK renders "[409]: undefined".
+  const conflict = new Error(
+    "Request failed (https://us.api.konghq.com/v3/openmeter/subscriptions) [409]: undefined",
+  );
+  Object.assign(conflict, {
+    title: "Conflict",
+    type: "about:blank",
+    __raw: { title: "Conflict", status: 409, extra: "customer already has a subscription" },
+  });
+  const described = describeOpenMeterError(conflict);
+  assert.ok(described.includes("[409]: undefined"));
+  assert.ok(described.includes("title=Conflict"));
+  assert.ok(described.includes("type=about:blank"));
+  assert.ok(described.includes("customer already has a subscription"));
+
+  // A plain Error still describes as its message, with nothing appended.
+  assert.equal(describeOpenMeterError(new Error("boom")), "boom");
+
+  // Non-serializable __raw is skipped without throwing.
+  const circularErr = new Error("wrapped");
+  const circularRaw: { self?: unknown } = {};
+  circularRaw.self = circularRaw;
+  Object.assign(circularErr, { title: "T", type: "U", __raw: circularRaw });
+  const circularDescribed = describeOpenMeterError(circularErr);
+  assert.ok(circularDescribed.includes("wrapped"));
+  assert.ok(circularDescribed.includes("title=T"));
+  assert.ok(circularDescribed.includes("type=U"));
+  assert.ok(!circularDescribed.includes("raw="));
+
+  // Non-Error values stringify as the primary message.
+  assert.equal(describeOpenMeterError("plain-string"), "plain-string");
+});
+
 test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {
   const { isOpenMeterStripeBillingError, isOpenMeterConflictError } = await import("./plan-errors");
   const stripeErr = new Error(

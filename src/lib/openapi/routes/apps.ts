@@ -29,8 +29,43 @@ function userPath(suffix: string) {
 
 const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
+const ownerBillingConfirmBody = z
+  .object({
+    confirm: z.literal(true).openapi({
+      description: "Must be true to perform the mutation.",
+    }),
+  })
+  .openapi("OwnerBillingConfirmBody");
+
+const ownerBillingSubscriptionPutBody = z
+  .object({
+    planKey: z.string().min(1).openapi({
+      description: "Owner Paid plan key to upgrade or switch to.",
+    }),
+    confirm: z.literal(true).openapi({
+      description: "Must be true to perform the mutation.",
+    }),
+  })
+  .openapi("OwnerBillingSubscriptionPutBody");
+
+const ownerPaymentMethodSetupBody = z
+  .object({
+    successUrl: z.url().optional(),
+    cancelUrl: z.url().optional(),
+  })
+  .openapi("OwnerPaymentMethodSetupBody");
+
+const ownerPaymentMethodIdBody = z
+  .object({
+    paymentMethodId: z.string().min(1).openapi({
+      description:
+        "Stripe payment method id. Also accepted as query `id` on PATCH/DELETE.",
+    }),
+  })
+  .openapi("OwnerPaymentMethodIdBody");
+
 type MetadataRoute = [
-  method: "get" | "post" | "put" | "delete",
+  method: "get" | "post" | "put" | "patch" | "delete",
   path: string,
   tag: string,
   summary: string,
@@ -38,6 +73,7 @@ type MetadataRoute = [
     includeExternalUserId?: boolean;
     /** Also document 201 Created (upsert/create handlers). */
     created?: boolean;
+    body?: z.ZodTypeAny;
   },
 ];
 
@@ -51,6 +87,15 @@ function registerMetadataRoutes(routes: MetadataRoute[]): void {
         params: options?.includeExternalUserId
           ? z.object({ clientId, externalUserId })
           : z.object({ clientId }),
+        ...(options?.body
+          ? {
+              body: {
+                content: {
+                  "application/json": { schema: options.body },
+                },
+              },
+            }
+          : {}),
       },
       responses: {
         200: jsonSuccess,
@@ -103,7 +148,45 @@ registerMetadataRoutes([
   ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", { includeExternalUserId: true }],
   ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", { includeExternalUserId: true }],
   ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
+  [
+    "get",
+    userPath("/invoices"),
+    OPENAPI_TAGS.billing,
+    "List end-user invoices",
+    { includeExternalUserId: true },
+  ],
+  [
+    "get",
+    userPath("/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "List end-user payment methods",
+    { includeExternalUserId: true },
+  ],
+  [
+    "post",
+    userPath("/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Start end-user payment-method setup",
+    { includeExternalUserId: true, body: ownerPaymentMethodSetupBody },
+  ],
 ]);
+
+defineRouteMetadata("get", userPath("/invoices/{invoiceId}/hosted-url"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Get end-user invoice hosted URL",
+  security: m2mSecurity,
+  request: {
+    params: z.object({
+      clientId,
+      externalUserId,
+      invoiceId: z.string().min(1).openapi({
+        param: { name: "invoiceId", in: "path" },
+        description: "OpenMeter invoice id.",
+      }),
+    }),
+  },
+  responses: { 200: jsonSuccess, ...builderErrorResponses },
+});
 
 const usageQueryParams = z.object({
   ...usageDateRangeQueryParams,
@@ -163,6 +246,66 @@ defineRouteMetadata("get", builderAppPath("/usage/balance"), {
 registerMetadataRoutes([
   ["get", appPath("/billing"), OPENAPI_TAGS.billing, "Billing profile"],
   ["post", appPath("/billing/checkout"), OPENAPI_TAGS.billing, "Create billing checkout"],
+  [
+    "get",
+    appPath("/billing/tiers"),
+    OPENAPI_TAGS.billing,
+    "List Owner Paid tiers",
+  ],
+  [
+    "get",
+    appPath("/billing/subscription"),
+    OPENAPI_TAGS.billing,
+    "Owner subscription switching status",
+  ],
+  [
+    "put",
+    appPath("/billing/subscription"),
+    OPENAPI_TAGS.billing,
+    "Upgrade or change Owner Paid plan",
+    { body: ownerBillingSubscriptionPutBody },
+  ],
+  [
+    "delete",
+    appPath("/billing/subscription"),
+    OPENAPI_TAGS.billing,
+    "Schedule Starter downgrade",
+    { body: ownerBillingConfirmBody },
+  ],
+  [
+    "delete",
+    appPath("/billing/subscription/pending-change"),
+    OPENAPI_TAGS.billing,
+    "Cancel pending Starter downgrade",
+    { body: ownerBillingConfirmBody },
+  ],
+  [
+    "get",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "List owner payment methods",
+  ],
+  [
+    "post",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Start owner payment-method setup",
+    { body: ownerPaymentMethodSetupBody },
+  ],
+  [
+    "patch",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Set default owner payment method",
+    { body: ownerPaymentMethodIdBody },
+  ],
+  [
+    "delete",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Unlink owner payment method",
+    { body: ownerPaymentMethodIdBody },
+  ],
   ["get", appPath("/plans"), OPENAPI_TAGS.billing, "List plans"],
   ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],
 ]);

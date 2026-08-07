@@ -753,7 +753,18 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect merchant Connect (+ clear OM Stripe profile ids) |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (requires merchant + Connect ready when `ACTIVATION_GATE_MODE` is `enforce_revenue` or `enforce`) |
+| `GET` | `/api/v1/apps/{clientId}/billing/tiers` | **M2M Basic only** | List selectable **Owner Paid** tiers (same catalog as session `/api/v1/me/billing/owner-tiers`) |
+| `GET` | `/api/v1/apps/{clientId}/billing/subscription` | **M2M Basic only** | Owner-wallet switching status: live Paid key, pending Starter downgrade, payment-method readiness |
+| `PUT` | `/api/v1/apps/{clientId}/billing/subscription` | **M2M Basic only** | `{ planKey, confirm: true }` — Starter→Paid or Paid→Paid (idempotent durable op; same codes as session `POST …/me/billing/upgrade-paid`) |
+| `DELETE` | `/api/v1/apps/{clientId}/billing/subscription` | **M2M Basic only** | `{ confirm: true }` — schedule Sandbox Starter at end of cycle |
+| `DELETE` | `/api/v1/apps/{clientId}/billing/subscription/pending-change` | **M2M Basic only** | `{ confirm: true }` — cancel a pending Starter downgrade |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/apps/{clientId}/billing/payment-methods` | **M2M Basic only** | List / setup-checkout / set-default / unlink payment methods on the **app owner** wallet. Attach PM ≠ Paid — Upgrade still requires explicit `confirm` |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/invoices` | M2M / provider | End-user invoice list (`{ items, page, pageSize, totalCount }`) for that app user's OpenMeter customer — not merchant provider-session `/billing/invoices` |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/invoices/{invoiceId}/hosted-url` | M2M / provider | Stripe `{ hostedInvoiceUrl?, invoicePdf? }` for one invoice scoped to that app user |
+| `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/payment-methods` | M2M / provider | List cards / setup-only Checkout for the **end-user** Stripe customer (does not change plan) |
 | `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl`. A **priced target** is gated by `sell_paid_plans` under `enforce_revenue`/`enforce` and denied with `stripe_connect_required`; free, Starter, and draft targets are never gated, so migrating users off a phased-out paid plan stays possible after switching to `owner_rollup` |
+
+**Owner Paid M2M vs session:** human owners still use verb-style `/api/v1/me/billing/*` (`upgrade-paid`, `downgrade-to-starter`, …) + `/billing/upgrade` UI. Confidential backends use the RESTful `/api/v1/apps/{clientId}/billing/{tiers,subscription,payment-methods}` resources above (M2M Basic; subject = `app.ownerId`). Admin tier catalog CRUD stays on `/api/v1/admin/billing/owner-tiers*` and is not part of Builder M2M.
 
 ### App activation gate
 

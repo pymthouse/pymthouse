@@ -408,6 +408,55 @@ export async function createConnectedCustomer(input: {
   return customer.id;
 }
 
+function addCheckoutMetadata(
+  body: URLSearchParams,
+  metadata: Record<string, string> | undefined,
+  prefix = "metadata",
+): void {
+  for (const [key, value] of Object.entries(metadata ?? {})) {
+    if (key.trim() && value.trim()) {
+      body.set(`${prefix}[${key.trim()}]`, value.trim());
+    }
+  }
+}
+
+function addSetupCheckoutFields(
+  body: URLSearchParams,
+  metadata: Record<string, string> | undefined,
+): void {
+  body.set("payment_method_types[0]", "card");
+  addCheckoutMetadata(body, metadata, "setup_intent_data[metadata]");
+}
+
+function addPaymentCheckoutFields(
+  body: URLSearchParams,
+  input: {
+    amountCents?: number;
+    currency?: string;
+    productName?: string;
+    applicationFeeBps?: number;
+  },
+): void {
+  const amount = input.amountCents;
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
+    throw new Error("amountCents must be a positive integer for payment mode");
+  }
+  body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
+  body.set("line_items[0][price_data][unit_amount]", String(amount));
+  body.set(
+    "line_items[0][price_data][product_data][name]",
+    input.productName ?? "Subscription",
+  );
+  body.set("line_items[0][quantity]", "1");
+  const fee = applicationFeeAmountCents({
+    amountCents: amount,
+    applicationFeeBps: input.applicationFeeBps ?? 0,
+  });
+  if (fee > 0) {
+    body.set("payment_intent_data[application_fee_amount]", String(fee));
+  }
+}
+
 export async function createConnectedCheckoutSession(input: {
   accountId: string;
   customerId: string;
@@ -428,32 +477,11 @@ export async function createConnectedCheckoutSession(input: {
   body.set("success_url", input.successUrl);
   body.set("cancel_url", input.cancelUrl);
   if (mode === "setup") {
-    body.set("payment_method_types[0]", "card");
+    addSetupCheckoutFields(body, input.metadata);
   } else {
-    const amount = input.amountCents;
-    if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
-      throw new Error("amountCents must be a positive integer for payment mode");
-    }
-    body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
-    body.set("line_items[0][price_data][unit_amount]", String(amount));
-    body.set(
-      "line_items[0][price_data][product_data][name]",
-      input.productName ?? "Subscription",
-    );
-    body.set("line_items[0][quantity]", "1");
-    const fee = applicationFeeAmountCents({
-      amountCents: amount,
-      applicationFeeBps: input.applicationFeeBps ?? 0,
-    });
-    if (fee > 0) {
-      body.set("payment_intent_data[application_fee_amount]", String(fee));
-    }
+    addPaymentCheckoutFields(body, input);
   }
-  for (const [key, value] of Object.entries(input.metadata ?? {})) {
-    if (key.trim() && value.trim()) {
-      body.set(`metadata[${key.trim()}]`, value.trim());
-    }
-  }
+  addCheckoutMetadata(body, input.metadata);
   const session = await stripeFormRequest<{ id?: string; url?: string }>({
     method: "POST",
     path: "/v1/checkout/sessions",

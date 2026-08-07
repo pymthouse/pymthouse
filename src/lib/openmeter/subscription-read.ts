@@ -8,6 +8,12 @@ import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-clie
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import { buildOpenMeterPlanKey } from "./plan-naming";
+import {
+  isLiveSubscriptionStatus,
+  isPresentSubscriptionStatus,
+  pickMutationTargetSubscription,
+  pickOccupyingCanceledSubscription,
+} from "./subscription-state";
 
 const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
   "active",
@@ -175,8 +181,12 @@ export async function listOpenMeterSubscriptionsForCustomer(
   client: OpenMeter,
   customerId: string,
 ): Promise<OpenMeterSubscriptionView[]> {
+  // Explicit statuses: cancel-at-period-end rows (`canceled`/`inactive` with a
+  // future `activeTo`) still block Konnect `subscriptions.create` and must be
+  // visible to checkout recovery + pendingCancel UI.
   const listed = await client.customers.listSubscriptions(customerId, {
     pageSize: 100,
+    status: ["active", "scheduled", "canceled", "inactive"],
   });
   const mapped = (listed?.items ?? []).map((item) => mapSubscriptionItem(item));
   return Promise.all(
@@ -254,7 +264,13 @@ function pickPrimarySubscription(
   if (subscriptions.length === 0) {
     return null;
   }
-  return [...subscriptions].sort(compareSubscriptionsByActiveFromDesc)[0];
+  // Prefer live (active/trialing) over scheduled — scheduled rows must never be
+  // Konnect `/change` or `/cancel` targets.
+  const live = subscriptions.filter((s) =>
+    isLiveSubscriptionStatus(s.status),
+  );
+  const pool = live.length > 0 ? live : subscriptions;
+  return [...pool].sort(compareSubscriptionsByActiveFromDesc)[0];
 }
 
 function isStarterOpenMeterSubscription(
@@ -309,7 +325,9 @@ export async function resolveLocalPlanIdFromOpenMeterSubscription(
   return null;
 }
 
-/** Prefer an active paid plan subscription over the app starter plan when both exist. */
+/** Prefer an active paid plan subscription over the app starter plan when both exist.
+ * Live rows win over scheduled (mutation-safe for change/cancel).
+ */
 export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
   clientId: string;
   externalUserId: string;
@@ -326,26 +344,45 @@ export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
   });
   const starter = await getOrCreateStarterPlan(input.clientId);
   const starterPlanKey = buildOpenMeterPlanKey(input.clientId, starter.id);
+  const starterOpenMeterPlanId = starter.openmeterPlanId?.trim() || null;
 
-  const active = (await listOpenMeterSubscriptionsForCustomer(client, customer.id)).filter(
-    (item) => isOpenMeterSubscriptionActive(item.status),
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    client,
+    customer.id,
   );
-  if (active.length === 0) {
+  const isStarter = (sub: OpenMeterSubscriptionView) =>
+    isStarterOpenMeterSubscription(sub, starterPlanKey, starterOpenMeterPlanId);
+
+  // Mutation-safe: never return a scheduled row when a live one exists.
+  const mutationTarget = pickMutationTargetSubscription(listed, isStarter);
+  if (mutationTarget) {
+    return mutationTarget;
+  }
+
+  // Display fallback: scheduled-only wallets (no live row yet).
+  const present = listed.filter((item) =>
+    isPresentSubscriptionStatus(item.status),
+  );
+  if (present.length === 0) {
     return null;
   }
 
-  const paid = active.filter(
-    (item) => !isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
-  );
+  const paid = present.filter((item) => !isStarter(item));
   const primaryPaid = pickPrimarySubscription(paid);
   if (primaryPaid) {
     return primaryPaid;
   }
 
-  const starters = active.filter((item) =>
-    isStarterOpenMeterSubscription(item, starterPlanKey, starter.openmeterPlanId),
-  );
-  return pickPrimarySubscription(starters) ?? pickPrimarySubscription(active);
+  const starters = present.filter((item) => isStarter(item));
+  const primaryPresent =
+    pickPrimarySubscription(starters) ?? pickPrimarySubscription(present);
+  if (primaryPresent) {
+    return primaryPresent;
+  }
+
+  // Cancel-at-period-end still occupies the customer slot until activeTo.
+  // Surface it so GET/checkout can restore+change instead of create→409.
+  return pickOccupyingCanceledSubscription(listed) ?? null;
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {

@@ -20,7 +20,7 @@ import {
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import { ensureOwnerCustomer, listOwnedPublicClientIds } from "./customers";
-import { changeKonnectSubscription, cancelKonnectSubscription, deleteKonnectSubscription, restoreKonnectSubscription, unscheduleKonnectSubscriptionCancelation } from "./konnect-subscriptions";
+import { changeKonnectSubscription, restoreKonnectSubscription, unscheduleKonnectSubscriptionCancelation } from "./konnect-subscriptions";
 import {
   findOpenMeterPlanByKey,
   forceSyncOwnerAllowancePlan,
@@ -34,6 +34,14 @@ import {
   verifyOpenMeterSubscriptionId,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
+import {
+  clearScheduledSubscriptions,
+  isKonnectScheduledChangeForbidden,
+  isLiveSubscriptionStatus,
+  isScheduledSubscriptionStatus,
+  listScheduledSubscriptionIds,
+  pickLiveSubscription,
+} from "./subscription-state";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import {
   OWNER_PAID_PLAN_KEY,
@@ -286,16 +294,14 @@ export async function ensureOwnerPaidPlanSynced(): Promise<OwnerPaidPlanRef> {
 export function isLiveOwnerWalletSubscriptionStatus(
   status: string | null | undefined,
 ): boolean {
-  const s = (status || "").toLowerCase();
-  return s === "active" || s === "trialing" || !s;
+  return isLiveSubscriptionStatus(status);
 }
 
 /** Scheduled/pending successors — cannot be `/change`d (Konnect 403). */
 export function isScheduledOwnerWalletSubscriptionStatus(
   status: string | null | undefined,
 ): boolean {
-  const s = (status || "").toLowerCase();
-  return s === "scheduled" || s === "pending";
+  return isScheduledSubscriptionStatus(status);
 }
 
 /**
@@ -307,32 +313,18 @@ export function isScheduledOwnerWalletSubscriptionStatus(
 export function pickLiveOwnerWalletSubscription(
   listed: OpenMeterSubscriptionView[],
 ): OpenMeterSubscriptionView | null {
-  return (
-    listed.find(
-      (s) => Boolean(s.id) && isLiveOwnerWalletSubscriptionStatus(s.status),
-    ) ?? null
-  );
+  return pickLiveSubscription(listed);
 }
 
 /** @internal Exported for unit tests. */
 export function listScheduledOwnerWalletSubscriptionIds(
   listed: OpenMeterSubscriptionView[],
 ): string[] {
-  return listed
-    .filter(
-      (s) =>
-        Boolean(s.id) && isScheduledOwnerWalletSubscriptionStatus(s.status),
-    )
-    .map((s) => s.id);
+  return listScheduledSubscriptionIds(listed);
 }
 
 /** @internal Exported for unit tests. */
-export function isKonnectScheduledChangeForbidden(error: unknown): boolean {
-  const msg = error instanceof Error ? error.message : String(error);
-  return /transition cancel in state scheduled not allowed|cancel in state scheduled/i.test(
-    msg,
-  );
-}
+export { isKonnectScheduledChangeForbidden };
 
 async function findActiveOwnerWalletSubscription(input: {
   client: OpenMeter;
@@ -835,30 +827,7 @@ async function runClaimedOwnerPaidUpgrade(input: {
 async function clearScheduledOwnerSubscriptions(
   subscriptionIds: string[],
 ): Promise<void> {
-  for (const subscriptionId of subscriptionIds) {
-    try {
-      await cancelKonnectSubscription({
-        subscriptionId,
-        timing: "immediate",
-      });
-      continue;
-    } catch (cancelErr) {
-      console.warn(
-        "Owner Paid upgrade: cancel scheduled failed, trying delete",
-        subscriptionId,
-        cancelErr instanceof Error ? cancelErr.message : cancelErr,
-      );
-    }
-    try {
-      await deleteKonnectSubscription({ subscriptionId });
-    } catch (deleteErr) {
-      console.warn(
-        "Owner Paid upgrade: delete scheduled failed",
-        subscriptionId,
-        deleteErr instanceof Error ? deleteErr.message : deleteErr,
-      );
-    }
-  }
+  await clearScheduledSubscriptions(subscriptionIds);
 }
 
 async function assertNoRemainingScheduledSubscriptions(input: {

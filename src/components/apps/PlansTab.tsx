@@ -38,6 +38,7 @@ import {
   normalizePlanBillingCycle,
   type PlanBillingCycle,
 } from "@/lib/openmeter/billing-cycle";
+import { readMutationError } from "@/lib/http/mutation-error";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -1556,11 +1557,7 @@ function CustomPlanCard({
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
-        setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to save (${res.status})`,
-        );
+        setError(readMutationError(data.body, `Failed to save (${res.status})`));
         return;
       }
       if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
@@ -1793,9 +1790,7 @@ function AddPlanPanel({
       const data = await readFetchJson(res);
       if (!data.ok) {
         setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to create (${res.status})`,
+          readMutationError(data.body, `Failed to create (${res.status})`),
         );
         return;
       }

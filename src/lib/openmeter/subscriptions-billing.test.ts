@@ -5,6 +5,7 @@ import {
   defaultSubscriptionChangeTiming,
   neonSubscriptionStatusAfterPlanChange,
   planRequiresPaymentMethod,
+  shouldApplyFreeBillingProfileForCheckout,
 } from "./subscriptions-billing";
 
 test("planRequiresPaymentMethod is false for free/starter/network", () => {
@@ -87,5 +88,49 @@ test("neonSubscriptionStatusAfterPlanChange is pending when checkout is required
   assert.equal(
     neonSubscriptionStatusAfterPlanChange({ checkoutUrl: undefined }),
     "active",
+  );
+});
+
+test("merchant Checkout retains its Custom Invoicing billing profile", () => {
+  assert.equal(
+    shouldApplyFreeBillingProfileForCheckout({
+      isMerchantBilling: true,
+      needsPaymentMethod: true,
+      defaultPaymentMethodId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyFreeBillingProfileForCheckout({
+      isMerchantBilling: false,
+      needsPaymentMethod: true,
+      defaultPaymentMethodId: null,
+    }),
+    true,
+  );
+});
+
+test("scheduled status is never a /change target for checkout routing", async () => {
+  const { isScheduledSubscriptionStatus, isLiveSubscriptionStatus } =
+    await import("./subscription-state");
+  // Contract: checkout must DELETE scheduled rows, not call /change.
+  assert.equal(isScheduledSubscriptionStatus("scheduled"), true);
+  assert.equal(isLiveSubscriptionStatus("scheduled"), false);
+  assert.equal(isScheduledSubscriptionStatus("pending"), true);
+  assert.equal(isLiveSubscriptionStatus("pending"), false);
+});
+
+test("cancel-at-period-end starter still occupies the customer for create", async () => {
+  const { isOccupyingCanceledSubscription } = await import("./subscription-state");
+  // Matches staging Konnect 409: starter activeTo=2026-09-07 blocks create.
+  assert.equal(
+    isOccupyingCanceledSubscription(
+      {
+        status: "canceled",
+        activeTo: "2026-09-07T17:35:18.109927Z",
+      },
+      Date.parse("2026-08-07T21:25:20.000Z"),
+    ),
+    true,
   );
 });
