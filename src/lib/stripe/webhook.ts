@@ -140,33 +140,37 @@ export function resolveConnectWebhookSecret(): string {
  * route receives both Connect account events and platform account events
  * (e.g. top-up `checkout.session.completed`), and each Stripe endpoint signs
  * with its own secret — verification must try every configured one.
+ *
+ * A malformed secret is skipped when the other is valid, so a bad platform
+ * value cannot take down Connect webhooks (and vice versa). Throws only when
+ * no usable secret remains.
  */
 export function resolveStripeWebhookSecrets(): string[] {
   const secrets = new Set<string>();
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  if (connectSecret) {
-    if (!connectSecret.startsWith("whsec_")) {
-      throw new Error(
-        "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
-      );
-    }
+  if (connectSecret?.startsWith("whsec_")) {
     secrets.add(connectSecret);
   }
   const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-  if (platformSecret) {
-    if (!platformSecret.startsWith("whsec_")) {
-      throw new Error(
-        "STRIPE_WEBHOOK_SECRET must start with whsec_ when set",
-      );
-    }
+  if (platformSecret?.startsWith("whsec_")) {
     secrets.add(platformSecret);
   }
-  if (secrets.size === 0) {
+  if (secrets.size > 0) {
+    return [...secrets];
+  }
+  if (connectSecret) {
     throw new Error(
-      "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
     );
   }
-  return [...secrets];
+  if (platformSecret) {
+    throw new Error(
+      "STRIPE_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  throw new Error(
+    "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
+  );
 }
 
 /**

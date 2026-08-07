@@ -235,9 +235,21 @@ test("resolveStripeWebhookSecrets returns every configured secret deduplicated",
   delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_same"]);
 
+  // Bad platform alone still fails closed.
   process.env.STRIPE_WEBHOOK_SECRET = "not-a-whsec";
   assert.throws(() => resolveStripeWebhookSecrets(), /must start with whsec_/);
 
+  // Valid Connect + malformed platform: keep Connect usable (don't 503 everything).
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
+  process.env.STRIPE_WEBHOOK_SECRET = "not-a-whsec";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_connect"]);
+
+  // Valid platform + malformed Connect: keep platform usable.
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "not-a-whsec";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_platform"]);
+
+  delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   delete process.env.STRIPE_WEBHOOK_SECRET;
   assert.throws(() => resolveStripeWebhookSecrets(), /STRIPE_WEBHOOK_SECRET is required/);
 });

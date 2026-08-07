@@ -99,6 +99,20 @@ test("parseTopUpCheckoutSessionCompleted extracts a paid top-up", () => {
   });
 });
 
+test("parseTopUpCheckoutSessionCompleted settles async_payment_succeeded", () => {
+  assert.deepEqual(
+    parseTopUpCheckoutSessionCompleted(
+      topUpEventBody({ type: "checkout.session.async_payment_succeeded" }),
+    ),
+    {
+      sessionId: "cs_test_abc",
+      ownerUserId: "user_1",
+      clientId: "app_pub_1",
+      amountUsdMicros: 25_000_000n,
+    },
+  );
+});
+
 test("parseTopUpCheckoutSessionCompleted ignores non-top-up sessions", () => {
   // Setup-mode Checkout (payment-method save) must never credit.
   assert.equal(

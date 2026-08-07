@@ -127,9 +127,10 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  *   POST {PUBLIC_ORIGIN}/webhooks/stripe
  *
  * Subscribe at least to:
- *   account.updated               (Connect endpoint)
- *   checkout.session.completed    (platform — wallet top-ups / PM setup)
- *   setup_intent.succeeded        (Connect — app-user payment methods)
+ *   account.updated                          (Connect endpoint)
+ *   checkout.session.completed               (platform — top-ups / PM setup)
+ *   checkout.session.async_payment_succeeded (platform — delayed top-ups)
+ *   setup_intent.succeeded                   (Connect — app-user payment methods)
  *
  * PaymentIntent / charge / dispute events for Custom Invoicing settlement are
  * handled by pymthouse/settlement (Kafka producer), not this route.
@@ -163,7 +164,10 @@ export async function POST(request: Request): Promise<Response> {
   if (type === "account.updated") {
     return handleAccountUpdated(rawBody);
   }
-  if (type === "checkout.session.completed") {
+  if (
+    type === "checkout.session.completed" ||
+    type === "checkout.session.async_payment_succeeded"
+  ) {
     return handleCheckoutSessionCompleted(rawBody);
   }
   if (type === "setup_intent.succeeded") {

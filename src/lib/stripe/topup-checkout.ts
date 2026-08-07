@@ -2,10 +2,10 @@
  * Prepaid balance top-up via Stripe Checkout (payment mode) — issues #397/#398.
  *
  * The Builder M2M wallet route creates a payment-mode Checkout Session for a
- * fixed dollar amount; `checkout.session.completed` on the platform webhook
- * settles the paid session into an OpenMeter/Konnect prepaid credit grant on
- * the owner wallet, using the Checkout session id as the grant idempotency
- * key so webhook retries can never double-credit.
+ * fixed dollar amount; platform webhook settlement (`checkout.session.completed`
+ * or `checkout.session.async_payment_succeeded`) credits an OpenMeter/Konnect
+ * prepaid grant on the owner wallet, using the Checkout session id as the
+ * grant idempotency key so webhook retries can never double-credit.
  */
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
@@ -240,12 +240,20 @@ export type TopUpCompletedPayload = {
   amountUsdMicros: bigint;
 };
 
+/** Event types that may carry a paid Checkout session for top-up settlement. */
+const TOP_UP_SETTLEMENT_EVENT_TYPES = new Set([
+  "checkout.session.completed",
+  // Delayed methods (bank debit, etc.): completed fires unpaid first; credit here.
+  "checkout.session.async_payment_succeeded",
+]);
+
 /**
- * Extract a settled top-up from a `checkout.session.completed` event body.
+ * Extract a settled top-up from a Checkout session settlement event body
+ * (`checkout.session.completed` or `checkout.session.async_payment_succeeded`).
  * Returns null for anything that is not a PAID payment-mode PymtHouse top-up
- * (setup-mode sessions, unpaid async methods, foreign metadata). The amount
- * is taken from Stripe's `amount_total` — metadata is cross-checked and a
- * mismatch rejects the event rather than crediting either number.
+ * (setup-mode sessions, unpaid async methods on completed, foreign metadata).
+ * The amount is taken from Stripe's `amount_total` — metadata is cross-checked
+ * and a mismatch rejects the event rather than crediting either number.
  */
 export function parseTopUpCheckoutSessionCompleted(
   rawBody: string,
@@ -276,7 +284,10 @@ export function parseTopUpCheckoutSessionCompleted(
   return { sessionId, ownerUserId, clientId, amountUsdMicros };
 }
 
-/** `checkout.session.completed` body → the session object, only when it is a PAID payment-mode session. */
+/**
+ * Settlement event body → the session object, only when it is a PAID
+ * payment-mode session (`completed` with paid status, or `async_payment_succeeded`).
+ */
 function paidPaymentSessionFromEvent(rawBody: string): Record<string, unknown> | null {
   let parsed: unknown;
   try {
@@ -291,7 +302,7 @@ function paidPaymentSessionFromEvent(rawBody: string): Record<string, unknown> |
     type?: unknown;
     data?: { object?: Record<string, unknown> };
   };
-  if (event.type !== "checkout.session.completed") {
+  if (typeof event.type !== "string" || !TOP_UP_SETTLEMENT_EVENT_TYPES.has(event.type)) {
     return null;
   }
   const session = event.data?.object;
