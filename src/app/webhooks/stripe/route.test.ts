@@ -4,8 +4,7 @@ import { createHmac } from "node:crypto";
 
 import { __setGrantAllowanceUsdMicrosForTests } from "@/lib/openmeter/grant-allowance";
 import { topUpGrantIdempotencyKey } from "@/lib/stripe/topup-checkout";
-
-import { __setTopUpClientOwnedByOwnerForTests } from "./route";
+import { __setTopUpClientOwnedByOwnerForTests } from "@/lib/stripe/topup-ownership";
 
 const CONNECT_SECRET = "whsec_connect_test_secret";
 const PLATFORM_SECRET = "whsec_platform_test_secret";

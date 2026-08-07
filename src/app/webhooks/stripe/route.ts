@@ -4,10 +4,10 @@ import {
   restoreAppUserBillingProfileAfterPaymentMethodAttached,
   restoreAppUserBillingProfileForCheckoutSession,
 } from "@/lib/openmeter/app-user-payment-method";
-import { listOwnedPublicClientIds } from "@/lib/openmeter/customers";
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { applyConnectedAccountWebhookUpdate } from "@/lib/stripe/merchant-connect";
+import { topUpClientOwnedByOwner } from "@/lib/stripe/topup-ownership";
 import {
   parseTopUpCheckoutSessionCompleted,
   topUpGrantIdempotencyKey,
@@ -26,37 +26,9 @@ export const runtime = "nodejs";
 
 const TAG = "[stripe-webhook]";
 
-let topUpClientOwnedByOwnerForTests:
-  | ((clientId: string, ownerUserId: string) => Promise<boolean>)
-  | null = null;
-
-/**
- * Test-only override for top-up ownership checks (Stripe webhook route).
- * Always `null` (inert) outside NODE_ENV=test.
- */
-export function __setTopUpClientOwnedByOwnerForTests(
-  fn: ((clientId: string, ownerUserId: string) => Promise<boolean>) | null,
-): void {
-  if (process.env.NODE_ENV !== "test") {
-    throw new Error("__setTopUpClientOwnedByOwnerForTests is only available in test");
-  }
-  topUpClientOwnedByOwnerForTests = fn;
-}
-
 function logHandlerError(context: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   console.error(TAG, `${context} failed:`, sanitizeForLog(message));
-}
-
-async function topUpClientOwnedByOwner(
-  clientId: string,
-  ownerUserId: string,
-): Promise<boolean> {
-  if (topUpClientOwnedByOwnerForTests) {
-    return topUpClientOwnedByOwnerForTests(clientId, ownerUserId);
-  }
-  const owned = await listOwnedPublicClientIds(ownerUserId);
-  return owned.includes(clientId);
 }
 
 /** Which configured endpoint secret signed this delivery, if any. */

@@ -31,7 +31,7 @@ test("planRequiresPaymentMethod is false for free/starter/network", () => {
   );
 });
 
-test("planRequiresPaymentMethod is true only for paid subscription flat fee", () => {
+test("planRequiresPaymentMethod is true for paid subscription and pay-per-use", () => {
   assert.equal(
     planRequiresPaymentMethod({ type: "subscription", priceAmount: "9.99" }),
     true,
@@ -40,9 +40,14 @@ test("planRequiresPaymentMethod is true only for paid subscription flat fee", ()
     planRequiresPaymentMethod({ type: "subscription", priceAmount: "0" }),
     false,
   );
+  // Usage plans are $0 flat but still need a card for threshold auto-debit.
+  assert.equal(
+    planRequiresPaymentMethod({ type: "usage", priceAmount: "0" }),
+    true,
+  );
   assert.equal(
     planRequiresPaymentMethod({ type: "usage", priceAmount: "9.99" }),
-    false,
+    true,
   );
 });
 
