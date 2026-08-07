@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authorizeAppForBilling } from "@/lib/billing/app-auth";
+import {
+  authorizeAppUserBillingRoute,
+  isAppUserBillingAccess,
+} from "@/lib/billing/app-user-billing-route";
 import { tryDecodeURIComponent } from "@/lib/billing-utils";
 import {
   getHostedAdminClient,
@@ -16,7 +19,7 @@ import { retrievePlatformInvoiceLinks } from "@/lib/stripe/connect-accounts";
  * app user. Auth: `authorizeAppForBilling`.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   {
     params,
   }: {
@@ -32,16 +35,9 @@ export async function GET(
     externalUserId: rawUser,
     invoiceId: rawInvoiceId,
   } = await params;
-  const externalUserId = tryDecodeURIComponent(rawUser)?.trim() ?? "";
-  if (!externalUserId) {
-    return NextResponse.json(
-      { error: "externalUserId is required" },
-      { status: 400 },
-    );
-  }
-  const access = await authorizeAppForBilling(_request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await authorizeAppUserBillingRoute(request, clientId, rawUser);
+  if (!isAppUserBillingAccess(access)) {
+    return access;
   }
 
   if (!isHostedAdminClientAvailable()) {
@@ -61,7 +57,7 @@ export async function GET(
     invoice = await getAppUserInvoice({
       client: getHostedAdminClient(),
       clientId: access.app.id,
-      externalUserId,
+      externalUserId: access.externalUserId,
       invoiceId: decodedId,
     });
   } catch (err) {

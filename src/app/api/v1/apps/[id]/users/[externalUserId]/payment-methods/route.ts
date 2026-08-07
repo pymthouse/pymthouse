@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authorizeAppForBilling } from "@/lib/billing/app-auth";
+import {
+  authorizeAppUserBillingRoute,
+  isAppUserBillingAccess,
+} from "@/lib/billing/app-user-billing-route";
 import { readJsonObject } from "@/lib/billing/owner-billing-m2m-auth";
 import { paymentMethodCheckoutErrorResponse } from "@/lib/billing/payment-method-http";
-import { tryDecodeURIComponent } from "@/lib/billing-utils";
 import {
   createAppUserPaymentMethodCheckout,
   listAppUserPaymentMethods,
@@ -20,22 +22,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = tryDecodeURIComponent(raw)?.trim() ?? "";
-  if (!externalUserId) {
-    return NextResponse.json(
-      { error: "externalUserId is required" },
-      { status: 400 },
-    );
-  }
-  const access = await authorizeAppForBilling(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await authorizeAppUserBillingRoute(request, clientId, raw);
+  if (!isAppUserBillingAccess(access)) {
+    return access;
   }
 
   return NextResponse.json({
     paymentMethods: await listAppUserPaymentMethods({
       clientId: access.app.id,
-      externalUserId,
+      externalUserId: access.externalUserId,
     }),
   });
 }
@@ -51,16 +46,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = tryDecodeURIComponent(raw)?.trim() ?? "";
-  if (!externalUserId) {
-    return NextResponse.json(
-      { error: "externalUserId is required" },
-      { status: 400 },
-    );
-  }
-  const access = await authorizeAppForBilling(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await authorizeAppUserBillingRoute(request, clientId, raw);
+  if (!isAppUserBillingAccess(access)) {
+    return access;
   }
 
   const body = await readJsonObject(request);
@@ -68,7 +56,7 @@ export async function POST(
   try {
     const result = await createAppUserPaymentMethodCheckout({
       clientId: access.app.id,
-      externalUserId,
+      externalUserId: access.externalUserId,
       successUrl:
         typeof body.successUrl === "string" ? body.successUrl : undefined,
       cancelUrl:

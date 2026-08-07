@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authorizeAppForBilling } from "@/lib/billing/app-auth";
-import { tryDecodeURIComponent } from "@/lib/billing-utils";
+import {
+  authorizeAppUserBillingRoute,
+  isAppUserBillingAccess,
+} from "@/lib/billing/app-user-billing-route";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
@@ -19,16 +21,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const externalUserId = tryDecodeURIComponent(raw)?.trim() ?? "";
-  if (!externalUserId) {
-    return NextResponse.json(
-      { error: "externalUserId is required" },
-      { status: 400 },
-    );
-  }
-  const access = await authorizeAppForBilling(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await authorizeAppUserBillingRoute(request, clientId, raw);
+  if (!isAppUserBillingAccess(access)) {
+    return access;
   }
 
   if (!isHostedAdminClientAvailable()) {
@@ -43,7 +38,7 @@ export async function GET(
     const result = await listAppUserInvoices({
       client: getHostedAdminClient(),
       clientId: access.app.id,
-      externalUserId,
+      externalUserId: access.externalUserId,
       page: Number.isFinite(page) && page > 0 ? page : 1,
       pageSize: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 20,
     });

@@ -29,6 +29,27 @@ async function paymentMethodIdFromRequest(
     : null;
 }
 
+async function authorizeOwnerPaymentMethodMutation(
+  request: NextRequest,
+  clientId: string,
+): Promise<
+  | { ownerUserId: string; paymentMethodId: string }
+  | NextResponse
+> {
+  const auth = await authorizeOwnerBillingM2m(request, clientId);
+  if (!auth) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const paymentMethodId = await paymentMethodIdFromRequest(request);
+  if (!paymentMethodId) {
+    return NextResponse.json(
+      { error: "paymentMethodId is required" },
+      { status: 400 },
+    );
+  }
+  return { ownerUserId: auth.ownerUserId, paymentMethodId };
+}
+
 /**
  * GET /api/v1/apps/{clientId}/billing/payment-methods
  * List payment methods on the app owner wallet. Auth: M2M Basic only.
@@ -87,23 +108,15 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await authorizeOwnerBillingM2m(request, clientId);
-  if (!auth) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const paymentMethodId = await paymentMethodIdFromRequest(request);
-  if (!paymentMethodId) {
-    return NextResponse.json(
-      { error: "paymentMethodId is required" },
-      { status: 400 },
-    );
+  const prepared = await authorizeOwnerPaymentMethodMutation(request, clientId);
+  if (prepared instanceof NextResponse) {
+    return prepared;
   }
 
   try {
     const result = await setOwnerDefaultPaymentMethod(
-      auth.ownerUserId,
-      paymentMethodId,
+      prepared.ownerUserId,
+      prepared.paymentMethodId,
     );
     if (!result.updated) {
       return NextResponse.json(
@@ -126,23 +139,15 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const auth = await authorizeOwnerBillingM2m(request, clientId);
-  if (!auth) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const paymentMethodId = await paymentMethodIdFromRequest(request);
-  if (!paymentMethodId) {
-    return NextResponse.json(
-      { error: "paymentMethodId is required" },
-      { status: 400 },
-    );
+  const prepared = await authorizeOwnerPaymentMethodMutation(request, clientId);
+  if (prepared instanceof NextResponse) {
+    return prepared;
   }
 
   try {
     const result = await unlinkOwnerPaymentMethod(
-      auth.ownerUserId,
-      paymentMethodId,
+      prepared.ownerUserId,
+      prepared.paymentMethodId,
     );
     if (!result.unlinked) {
       return NextResponse.json(
