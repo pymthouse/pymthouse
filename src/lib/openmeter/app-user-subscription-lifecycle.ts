@@ -266,7 +266,7 @@ export async function cancelAppUserSubscription(input: {
       client,
       customer.id,
     );
-    ({ livePaid, canceledPaid, liveStarter, scheduledIds } =
+    ({ livePaid, canceledPaid, liveStarter } =
       pickAppUserCancelTargets(
         refreshed,
         starterPlanKey,
