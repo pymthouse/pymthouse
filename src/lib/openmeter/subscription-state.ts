@@ -11,6 +11,7 @@ import {
   cancelKonnectSubscription,
   deleteKonnectSubscription,
   restoreKonnectSubscription,
+  unscheduleKonnectSubscriptionCancelation,
 } from "./konnect-subscriptions";
 import type { OpenMeterSubscriptionView } from "./subscription-read";
 
@@ -71,6 +72,30 @@ export function pickOccupyingCanceledSubscription(
   return listed.find(
     (sub) => Boolean(sub.id) && isOccupyingCanceledSubscription(sub),
   );
+}
+
+/**
+ * Cancel-at-period-end rows still occupy the customer until `activeTo`.
+ * Prefer unschedule-cancelation; fall back to restore (also clears successors).
+ */
+export async function reactivateOccupyingCanceledSubscription(
+  subscriptionId: string,
+): Promise<void> {
+  const id = subscriptionId.trim();
+  if (!id) {
+    return;
+  }
+  try {
+    await unscheduleKonnectSubscriptionCancelation({ subscriptionId: id });
+    return;
+  } catch (unscheduleErr) {
+    console.warn(
+      "subscription-state: unschedule cancelation failed, trying restore",
+      id,
+      unscheduleErr instanceof Error ? unscheduleErr.message : unscheduleErr,
+    );
+  }
+  await restoreKonnectSubscription({ subscriptionId: id });
 }
 
 /**

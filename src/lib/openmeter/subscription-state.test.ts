@@ -14,6 +14,8 @@ import {
   listScheduledSubscriptionIds,
   pickLiveSubscription,
   pickMutationTargetSubscription,
+  pickOccupyingCanceledSubscription,
+  reactivateOccupyingCanceledSubscription,
   resolveResumeTarget,
 } from "@/lib/openmeter/subscription-state";
 
@@ -329,4 +331,66 @@ test("pickMutationTargetSubscription falls back to live starter", () => {
     sub({ id: "starter", planKey: "app_starter", status: "active" }),
   ];
   assert.equal(pickMutationTargetSubscription(listed, isStarter)?.id, "starter");
+});
+
+test("pickOccupyingCanceledSubscription selects future activeTo rows", () => {
+  const listed = [
+    sub({
+      id: "old",
+      planKey: "app_starter",
+      status: "canceled",
+      activeTo: "2020-01-01T00:00:00.000Z",
+    }),
+    sub({
+      id: "still_open",
+      planKey: "app_starter",
+      status: "inactive",
+      activeTo: "2099-01-01T00:00:00.000Z",
+    }),
+  ];
+  assert.equal(pickOccupyingCanceledSubscription(listed)?.id, "still_open");
+});
+
+test("reactivateOccupyingCanceledSubscription unschedules cancelation", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(
+      JSON.stringify({ id: "sub_1", status: "active", customer_id: "c1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await reactivateOccupyingCanceledSubscription("sub_1");
+  assert.equal(urls.length, 1);
+  assert.match(urls[0]!, /\/unschedule-cancelation$/);
+});
+
+test("reactivateOccupyingCanceledSubscription falls back to restore", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("/unschedule-cancelation")) {
+      return new Response(JSON.stringify({ detail: "conflict" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({ id: "sub_1", status: "active", customer_id: "c1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await reactivateOccupyingCanceledSubscription("sub_1");
+  assert.equal(urls.length, 2);
+  assert.match(urls[0]!, /\/unschedule-cancelation$/);
+  assert.match(urls[1]!, /\/metering\/v1\/subscriptions\/sub_1\/restore$/);
+});
+
+test("reactivateOccupyingCanceledSubscription no-ops on blank id", async () => {
+  await assert.doesNotReject(() => reactivateOccupyingCanceledSubscription("  "));
 });

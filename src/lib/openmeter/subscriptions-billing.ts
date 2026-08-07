@@ -24,8 +24,6 @@ import {
   cancelKonnectSubscription,
   changeKonnectSubscription,
   deleteKonnectSubscription,
-  restoreKonnectSubscription,
-  unscheduleKonnectSubscriptionCancelation,
   type SubscriptionChangeTiming,
 } from "./konnect-subscriptions";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
@@ -48,6 +46,7 @@ import {
   listScheduledSubscriptionIds,
   pickMutationTargetSubscription,
   pickOccupyingCanceledSubscription,
+  reactivateOccupyingCanceledSubscription,
 } from "./subscription-state";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
@@ -213,28 +212,6 @@ async function clearOpenMeterSubscriptionForCheckout(
     );
   }
   await deleteKonnectSubscription({ subscriptionId });
-}
-
-/**
- * Cancel-at-period-end rows still occupy the customer until `activeTo`.
- * Konnect rejects overlapping `subscriptions.create` with
- * `only_single_subscription_allowed_per_customer_at_a_time`. Reactivate so
- * `/change` can move them onto the target plan.
- */
-async function reactivateOccupyingCanceledSubscription(
-  subscriptionId: string,
-): Promise<void> {
-  try {
-    await unscheduleKonnectSubscriptionCancelation({ subscriptionId });
-    return;
-  } catch (unscheduleErr) {
-    console.warn(
-      "checkout: unschedule cancelation failed, trying restore",
-      subscriptionId,
-      unscheduleErr instanceof Error ? unscheduleErr.message : unscheduleErr,
-    );
-  }
-  await restoreKonnectSubscription({ subscriptionId });
 }
 
 async function checkoutViaReactivatedCanceledSubscription(input: {
