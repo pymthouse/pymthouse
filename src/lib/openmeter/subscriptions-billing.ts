@@ -24,6 +24,8 @@ import {
   cancelKonnectSubscription,
   changeKonnectSubscription,
   deleteKonnectSubscription,
+  restoreKonnectSubscription,
+  unscheduleKonnectSubscriptionCancelation,
   type SubscriptionChangeTiming,
 } from "./konnect-subscriptions";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
@@ -41,9 +43,11 @@ import {
   clearScheduledSubscriptions,
   isKonnectScheduledChangeForbidden,
   isLiveSubscriptionStatus,
+  isOccupyingCanceledSubscription,
   isScheduledSubscriptionStatus,
   listScheduledSubscriptionIds,
   pickMutationTargetSubscription,
+  pickOccupyingCanceledSubscription,
 } from "./subscription-state";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
@@ -212,6 +216,77 @@ async function clearOpenMeterSubscriptionForCheckout(
 }
 
 /**
+ * Cancel-at-period-end rows still occupy the customer until `activeTo`.
+ * Konnect rejects overlapping `subscriptions.create` with
+ * `only_single_subscription_allowed_per_customer_at_a_time`. Reactivate so
+ * `/change` can move them onto the target plan.
+ */
+async function reactivateOccupyingCanceledSubscription(
+  subscriptionId: string,
+): Promise<void> {
+  try {
+    await unscheduleKonnectSubscriptionCancelation({ subscriptionId });
+    return;
+  } catch (unscheduleErr) {
+    console.warn(
+      "checkout: unschedule cancelation failed, trying restore",
+      subscriptionId,
+      unscheduleErr instanceof Error ? unscheduleErr.message : unscheduleErr,
+    );
+  }
+  await restoreKonnectSubscription({ subscriptionId });
+}
+
+async function checkoutViaReactivatedCanceledSubscription(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  checkoutInput: EndUserCheckoutInput;
+  customerId: string;
+  occupying: OpenMeterSubscriptionView;
+  planId: string;
+  needsPaymentMethod: boolean;
+  defaultPaymentMethodId: string | null;
+  successUrl: string;
+}): Promise<CheckoutSubscriptionResult> {
+  await reactivateOccupyingCanceledSubscription(input.occupying.id.trim());
+
+  const live = await getPrimaryOpenMeterSubscriptionForAppUser({
+    clientId: input.checkoutInput.clientId,
+    externalUserId: input.checkoutInput.externalUserId,
+  });
+  if (!live || !isLiveSubscriptionStatus(live.status)) {
+    throw new Error(
+      "Could not resume the existing subscription before switching plans",
+    );
+  }
+
+  const liveLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.checkoutInput.clientId,
+    live,
+  );
+  if (liveLocalPlanId === input.planId) {
+    return { subscriptionId: live.id.trim() };
+  }
+
+  if (input.needsPaymentMethod && !input.defaultPaymentMethodId) {
+    await clearOpenMeterSubscriptionForCheckout(live);
+    const created = await input.client.subscriptions.create({
+      customerId: input.customerId,
+      plan: {
+        key: buildOpenMeterPlanKey(input.checkoutInput.clientId, input.planId),
+      },
+    });
+    return { subscriptionId: created?.id?.trim() || "" };
+  }
+
+  return {
+    checkout: await checkoutAfterPlanChange(
+      input.checkoutInput,
+      input.successUrl,
+    ),
+  };
+}
+
+/**
  * Drop every scheduled/pending successor for this customer so
  * `subscriptions.create` cannot 409 on an orphaned scheduled row.
  */
@@ -324,7 +399,9 @@ async function applyCheckoutBillingProfile(input: {
 }
 
 async function resolveExistingCheckoutSubscription(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
   checkoutInput: EndUserCheckoutInput;
+  customerId: string;
   planId: string;
   needsPaymentMethod: boolean;
   defaultPaymentMethodId: string | null;
@@ -336,6 +413,20 @@ async function resolveExistingCheckoutSubscription(input: {
   });
   if (!existing) {
     return null;
+  }
+
+  // Cancel-at-period-end still blocks create — restore then /change.
+  if (isOccupyingCanceledSubscription(existing)) {
+    return checkoutViaReactivatedCanceledSubscription({
+      client: input.client,
+      checkoutInput: input.checkoutInput,
+      customerId: input.customerId,
+      occupying: existing,
+      planId: input.planId,
+      needsPaymentMethod: input.needsPaymentMethod,
+      defaultPaymentMethodId: input.defaultPaymentMethodId,
+      successUrl: input.successUrl,
+    });
   }
 
   const existingLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -397,6 +488,24 @@ async function createCheckoutSubscriptionAfterConflict(input: {
     customerId: input.customerId,
   });
 
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    input.client,
+    input.customerId,
+  );
+  const occupyingCanceled = pickOccupyingCanceledSubscription(listed);
+  if (occupyingCanceled) {
+    return checkoutViaReactivatedCanceledSubscription({
+      client: input.client,
+      checkoutInput: input.checkoutInput,
+      customerId: input.customerId,
+      occupying: occupyingCanceled,
+      planId: input.planId,
+      needsPaymentMethod: input.needsPaymentMethod,
+      defaultPaymentMethodId: input.defaultPaymentMethodId,
+      successUrl: input.successUrl,
+    });
+  }
+
   const raced = await getPrimaryOpenMeterSubscriptionForAppUser({
     clientId: input.checkoutInput.clientId,
     externalUserId: input.checkoutInput.externalUserId,
@@ -415,6 +524,19 @@ async function createCheckoutSubscriptionAfterConflict(input: {
       }
       throw retryErr;
     }
+  }
+
+  if (isOccupyingCanceledSubscription(raced)) {
+    return checkoutViaReactivatedCanceledSubscription({
+      client: input.client,
+      checkoutInput: input.checkoutInput,
+      customerId: input.customerId,
+      occupying: raced,
+      planId: input.planId,
+      needsPaymentMethod: input.needsPaymentMethod,
+      defaultPaymentMethodId: input.defaultPaymentMethodId,
+      successUrl: input.successUrl,
+    });
   }
 
   const racedLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -463,7 +585,9 @@ async function getOrCreateCheckoutSubscription(input: {
   successUrl: string;
 }): Promise<CheckoutSubscriptionResult> {
   const existing = await resolveExistingCheckoutSubscription({
+    client: input.client,
     checkoutInput: input.checkoutInput,
+    customerId: input.customerId,
     planId: input.planId,
     needsPaymentMethod: input.needsPaymentMethod,
     defaultPaymentMethodId: input.defaultPaymentMethodId,
@@ -477,6 +601,25 @@ async function getOrCreateCheckoutSubscription(input: {
     client: input.client,
     customerId: input.customerId,
   });
+  // Cancel-at-period-end (incl. Starter) is invisible to "live" helpers but
+  // still blocks create — restore before the create attempt.
+  const preCreateListed = await listOpenMeterSubscriptionsForCustomer(
+    input.client,
+    input.customerId,
+  );
+  const occupyingCanceled = pickOccupyingCanceledSubscription(preCreateListed);
+  if (occupyingCanceled) {
+    return checkoutViaReactivatedCanceledSubscription({
+      client: input.client,
+      checkoutInput: input.checkoutInput,
+      customerId: input.customerId,
+      occupying: occupyingCanceled,
+      planId: input.planId,
+      needsPaymentMethod: input.needsPaymentMethod,
+      defaultPaymentMethodId: input.defaultPaymentMethodId,
+      successUrl: input.successUrl,
+    });
+  }
   return createCheckoutSubscriptionAfterConflict({
     client: input.client,
     checkoutInput: input.checkoutInput,

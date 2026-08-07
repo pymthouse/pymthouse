@@ -301,3 +301,29 @@ test("deriveAppUserPendingCancel returns canceled paid row", () => {
     },
   );
 });
+
+test("deriveAppUserPendingCancel surfaces cancel-at-period-end Starter", () => {
+  assert.deepEqual(
+    deriveAppUserPendingCancel({
+      listed: [
+        sub({
+          id: "starter_canceled",
+          planKey: "app_starter",
+          status: "canceled",
+          activeTo: "2026-09-07T17:35:18.109Z",
+        }),
+      ],
+      starterPlanKey: "app_starter",
+      starterOpenMeterPlanId: null,
+      planId: "starter_local",
+      planName: "Starter",
+    }),
+    {
+      subscriptionId: "starter_canceled",
+      planId: "starter_local",
+      planKey: "app_starter",
+      planName: "Starter",
+      effectiveAt: "2026-09-07T17:35:18.109Z",
+    },
+  );
+});

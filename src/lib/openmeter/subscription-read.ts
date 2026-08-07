@@ -12,6 +12,7 @@ import {
   isLiveSubscriptionStatus,
   isPresentSubscriptionStatus,
   pickMutationTargetSubscription,
+  pickOccupyingCanceledSubscription,
 } from "./subscription-state";
 
 const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
@@ -180,8 +181,12 @@ export async function listOpenMeterSubscriptionsForCustomer(
   client: OpenMeter,
   customerId: string,
 ): Promise<OpenMeterSubscriptionView[]> {
+  // Explicit statuses: cancel-at-period-end rows (`canceled`/`inactive` with a
+  // future `activeTo`) still block Konnect `subscriptions.create` and must be
+  // visible to checkout recovery + pendingCancel UI.
   const listed = await client.customers.listSubscriptions(customerId, {
     pageSize: 100,
+    status: ["active", "scheduled", "canceled", "inactive"],
   });
   const mapped = (listed?.items ?? []).map((item) => mapSubscriptionItem(item));
   return Promise.all(
@@ -369,7 +374,15 @@ export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
   }
 
   const starters = present.filter((item) => isStarter(item));
-  return pickPrimarySubscription(starters) ?? pickPrimarySubscription(present);
+  const primaryPresent =
+    pickPrimarySubscription(starters) ?? pickPrimarySubscription(present);
+  if (primaryPresent) {
+    return primaryPresent;
+  }
+
+  // Cancel-at-period-end still occupies the customer slot until activeTo.
+  // Surface it so GET/checkout can restore+change instead of create→409.
+  return pickOccupyingCanceledSubscription(listed) ?? null;
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {

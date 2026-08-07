@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import { planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
@@ -26,6 +27,7 @@ import {
   isCanceledSubscriptionStatus,
   isKonnectScheduledChangeForbidden,
   isLiveSubscriptionStatus,
+  pickOccupyingCanceledSubscription,
   resolveResumeTarget,
   type StarterMatcher,
 } from "./subscription-state";
@@ -188,13 +190,18 @@ export function deriveAppUserPendingCancel(input: {
     input.starterPlanKey,
     input.starterOpenMeterPlanId,
   );
-  if (!canceledPaid) return null;
+  // Prefer canceled paid; else any cancel-at-period-end row (incl. Starter)
+  // that still occupies the customer until activeTo.
+  const pending =
+    canceledPaid ??
+    pickOccupyingCanceledSubscription(input.listed);
+  if (!pending) return null;
   return {
-    subscriptionId: canceledPaid.id,
+    subscriptionId: pending.id,
     planId: input.planId,
-    planKey: canceledPaid.planKey,
+    planKey: pending.planKey,
     planName: input.planName,
-    effectiveAt: canceledPaid.activeTo,
+    effectiveAt: pending.activeTo,
   };
 }
 
@@ -576,28 +583,49 @@ export async function resolveAppUserPendingCancel(input: {
   clientId: string;
   listed: OpenMeterSubscriptionView[];
 }): Promise<AppUserPendingCancel | null> {
-  const { starterPlanKey, starterOpenMeterPlanId } = await loadStarterKeys(
-    input.clientId,
-  );
+  const { starterPlanKey, starterOpenMeterPlanId, starterLocalPlanId } =
+    await loadStarterKeys(input.clientId);
+
+  // Prefer canceled paid; else cancel-at-period-end Starter (or any occupying
+  // canceled row). Both still own the customer slot until `activeTo`.
   const { canceledPaid } = pickAppUserCancelTargets(
     input.listed,
     starterPlanKey,
     starterOpenMeterPlanId,
   );
-  if (!canceledPaid) return null;
+  const pendingRow =
+    canceledPaid ?? pickOccupyingCanceledSubscription(input.listed);
+  if (!pendingRow) {
+    return null;
+  }
 
-  const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
-    input.clientId,
-    canceledPaid,
-  );
+  const planId =
+    (await resolveLocalPlanIdFromOpenMeterSubscription(
+      input.clientId,
+      pendingRow,
+    )) ??
+    (isAppUserStarterSubscription(
+      pendingRow,
+      starterPlanKey,
+      starterOpenMeterPlanId,
+    )
+      ? starterLocalPlanId
+      : null);
+
   let planName: string | null = null;
   if (planId) {
     const rows = await db
-      .select({ name: plans.name })
+      .select({
+        name: plans.name,
+        isStarterDefault: plans.isStarterDefault,
+        isNetworkDefault: plans.isNetworkDefault,
+      })
       .from(plans)
       .where(eq(plans.id, planId))
       .limit(1);
-    planName = rows[0]?.name ?? null;
+    if (rows[0]) {
+      planName = planDisplayNameWithStarter(rows[0]);
+    }
   }
 
   return deriveAppUserPendingCancel({

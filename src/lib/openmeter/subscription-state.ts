@@ -39,7 +39,38 @@ export function isCanceledSubscriptionStatus(
   status: string | null | undefined,
 ): boolean {
   const s = (status || "").toLowerCase();
-  return s === "canceled" || s === "cancelled";
+  // Konnect also uses `inactive` for cancel-at-period-end rows that still
+  // occupy the customer slot until `activeTo`.
+  return s === "canceled" || s === "cancelled" || s === "inactive";
+}
+
+/**
+ * True when a canceled/inactive row still blocks `subscriptions.create`
+ * (`only_single_subscription_allowed_per_customer_at_a_time`) because its
+ * billing period has not ended yet.
+ */
+export function isOccupyingCanceledSubscription(
+  subscription: Pick<OpenMeterSubscriptionView, "status" | "activeTo">,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!isCanceledSubscriptionStatus(subscription.status)) {
+    return false;
+  }
+  const activeTo = subscription.activeTo?.trim();
+  if (!activeTo) {
+    return false;
+  }
+  const endMs = Date.parse(activeTo);
+  return !Number.isNaN(endMs) && endMs > nowMs;
+}
+
+/** First canceled/inactive subscription whose `activeTo` is still in the future. */
+export function pickOccupyingCanceledSubscription(
+  listed: OpenMeterSubscriptionView[],
+): OpenMeterSubscriptionView | undefined {
+  return listed.find(
+    (sub) => Boolean(sub.id) && isOccupyingCanceledSubscription(sub),
+  );
 }
 
 /**
