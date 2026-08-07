@@ -514,6 +514,120 @@ async function requireOwnedPaymentMethod(
 }
 
 /**
+ * Detach a method from one Stripe customer. This is shared by owner-wallet and
+ * merchant Connected Account billing; callers own any Konnect app-data sync.
+ */
+export async function unlinkStripeCustomerPaymentMethod(input: {
+  stripeCustomerId: string;
+  paymentMethodId: string;
+  stripeAccount?: string;
+}): Promise<{
+  unlinked: boolean;
+  paymentMethodId: string | null;
+  wasDefault: boolean;
+}> {
+  const stripeCustomerId = input.stripeCustomerId.trim();
+  const paymentMethodId = input.paymentMethodId.trim();
+  if (!stripeCustomerId || !paymentMethodId) {
+    throw new Error("stripeCustomerId and paymentMethodId are required");
+  }
+
+  const lockKey = `${input.stripeAccount ?? "platform"}:${stripeCustomerId}`;
+  return withOwnerPaymentMethodLock(lockKey, async () => {
+    const deps: StripeDeps = {
+      ...liveStripeDeps(MUTATION_BUDGET_MS),
+      ...(input.stripeAccount ? { stripeAccount: input.stripeAccount } : {}),
+    };
+    const paymentMethod = await retrieveStripePaymentMethod(paymentMethodId, deps);
+    if (paymentMethod?.customer !== stripeCustomerId) {
+      return { unlinked: false, paymentMethodId: null, wasDefault: false };
+    }
+
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId,
+      konnectDefaultPaymentMethodId: null,
+      deps,
+    });
+    if (items.length === 0) {
+      throw new Error(
+        "Unable to verify payment methods right now. Try again shortly.",
+      );
+    }
+    if (items.length === 1 && items[0]?.id === paymentMethodId) {
+      throw new Error(
+        "This is your only payment method. Add another before removing this one.",
+      );
+    }
+
+    const wasDefault = Boolean(
+      await getCustomerDefaultPaymentMethodId(stripeCustomerId, deps).then(
+        (defaultId) => defaultId === paymentMethodId,
+      ),
+    );
+    const detached = await stripeRequestJson<{ id?: string }>({
+      method: "POST",
+      path: `/v1/payment_methods/${encodeURIComponent(paymentMethodId)}/detach`,
+      deps,
+    });
+    if (!detached?.id) {
+      throw new Error("Stripe could not detach the payment method");
+    }
+
+    if (wasDefault) {
+      await stripeRequestJson({
+        method: "POST",
+        path: `/v1/customers/${encodeURIComponent(stripeCustomerId)}`,
+        body: new URLSearchParams({
+          "invoice_settings[default_payment_method]": "",
+        }),
+        deps,
+      });
+    }
+    return { unlinked: true, paymentMethodId, wasDefault };
+  });
+}
+
+/**
+ * Set one attached method as a Stripe customer's invoice default. Merchant
+ * Connected Account callers pass `stripeAccount`; platform callers do not.
+ */
+export async function setStripeCustomerDefaultPaymentMethod(input: {
+  stripeCustomerId: string;
+  paymentMethodId: string;
+  stripeAccount?: string;
+}): Promise<{ updated: boolean; paymentMethodId: string | null }> {
+  const stripeCustomerId = input.stripeCustomerId.trim();
+  const paymentMethodId = input.paymentMethodId.trim();
+  if (!stripeCustomerId || !paymentMethodId) {
+    throw new Error("stripeCustomerId and paymentMethodId are required");
+  }
+
+  const lockKey = `${input.stripeAccount ?? "platform"}:${stripeCustomerId}`;
+  return withOwnerPaymentMethodLock(lockKey, async () => {
+    const deps: StripeDeps = {
+      ...liveStripeDeps(MUTATION_BUDGET_MS),
+      ...(input.stripeAccount ? { stripeAccount: input.stripeAccount } : {}),
+    };
+    const paymentMethod = await retrieveStripePaymentMethod(paymentMethodId, deps);
+    if (paymentMethod?.customer !== stripeCustomerId) {
+      return { updated: false, paymentMethodId: null };
+    }
+    const updated = await stripeRequestJson<{ id?: string }>({
+      method: "POST",
+      path: `/v1/customers/${encodeURIComponent(stripeCustomerId)}`,
+      body: new URLSearchParams({
+        "invoice_settings[default_payment_method]": paymentMethodId,
+      }),
+      deps,
+    });
+    if (!updated?.id) {
+      throw new Error("Stripe could not set the default payment method");
+    }
+    return { updated: true, paymentMethodId };
+  });
+}
+
+/**
  * Detach one payment method so plan fee and overage invoices stop charging it.
  * When it was the default, both Stripe's invoice default and the Konnect
  * app_data pointer are cleared — leaving either behind lets OpenMeter keep
@@ -536,50 +650,11 @@ export async function unlinkOwnerPaymentMethod(
       return { unlinked: false, paymentMethodId: null };
     }
 
-    // Re-list under the owner lock so concurrent DELETEs each recheck count
-    // immediately before detach. Empty / unverifiable → fail closed.
-    const { items: attached } = await buildOwnerPaymentMethodList({
+    const result = await unlinkStripeCustomerPaymentMethod({
       stripeCustomerId: refs.stripeCustomerId,
-      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-      deps,
+      paymentMethodId: pmId,
     });
-    if (attached.length === 0) {
-      throw new Error(
-        "Unable to verify payment methods right now. Try again shortly.",
-      );
-    }
-    if (attached.length === 1 && attached[0]?.id === pmId) {
-      throw new Error(
-        "This is your only payment method. Add another before removing this one.",
-      );
-    }
-
-    const detached = await stripeRequestJson<{ id?: string }>({
-      method: "POST",
-      path: `/v1/payment_methods/${encodeURIComponent(pmId)}/detach`,
-      deps,
-    });
-    if (!detached?.id) {
-      throw new Error("Stripe could not detach the payment method");
-    }
-
-    // Best-effort: when the default was removed, do not leave a dangling pointer.
-    const stripeDefaultId = await getCustomerDefaultPaymentMethodId(
-      refs.stripeCustomerId,
-      deps,
-    );
-    if (stripeDefaultId === pmId) {
-      await stripeRequestJson({
-        method: "POST",
-        path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
-        body: new URLSearchParams({
-          "invoice_settings[default_payment_method]": "",
-        }),
-        deps,
-      });
-    }
-
-    if (stripeDefaultId === pmId || refs.konnectDefaultPaymentMethodId === pmId) {
+    if (result.wasDefault || refs.konnectDefaultPaymentMethodId === pmId) {
       try {
         await clearKonnectStripeDefaultPaymentMethod({
           customerId: refs.customerId,
@@ -593,7 +668,7 @@ export async function unlinkOwnerPaymentMethod(
       }
     }
 
-    return { unlinked: true, paymentMethodId: pmId };
+    return { unlinked: result.unlinked, paymentMethodId: result.paymentMethodId };
   });
 }
 
@@ -620,17 +695,11 @@ export async function setOwnerDefaultPaymentMethod(
       return { updated: false, paymentMethodId: null };
     }
 
-    const updated = await stripeRequestJson<{ id?: string }>({
-      method: "POST",
-      path: `/v1/customers/${encodeURIComponent(refs.stripeCustomerId)}`,
-      body: new URLSearchParams({
-        "invoice_settings[default_payment_method]": pmId,
-      }),
-      deps,
+    const result = await setStripeCustomerDefaultPaymentMethod({
+      stripeCustomerId: refs.stripeCustomerId,
+      paymentMethodId: pmId,
     });
-    if (!updated?.id) {
-      throw new Error("Stripe could not set the default payment method");
-    }
+    if (!result.updated) return result;
 
     try {
       await setKonnectStripeDefaultPaymentMethod({
@@ -645,7 +714,7 @@ export async function setOwnerDefaultPaymentMethod(
       );
     }
 
-    return { updated: true, paymentMethodId: pmId };
+    return result;
   });
 }
 

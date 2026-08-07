@@ -18,7 +18,9 @@ import { resolveOpenMeterMeterClientId } from "./meter-client-id";
 import {
   buildOwnerPaymentMethodList,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
+  setStripeCustomerDefaultPaymentMethod,
   type OwnerPaymentMethodListItem,
+  unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
 import {
   connectPaymentsOnlyEnabled,
@@ -28,9 +30,11 @@ import {
 } from "@/lib/stripe/merchant-connect";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import {
+  clearKonnectStripeDefaultPaymentMethod,
   getKonnectDefaultPaymentMethodId,
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
+  setKonnectStripeDefaultPaymentMethod,
 } from "./stripe-customer-data";
 
 export type AppUserPaymentMethodListItem = OwnerPaymentMethodListItem;
@@ -40,6 +44,13 @@ export type AppUserPaymentMethodCheckoutResult = {
   sessionId: string | null;
   customerId: string;
   hasDefaultPaymentMethod: boolean;
+};
+
+type AppUserStripeRefs = {
+  customerId: string | null;
+  stripeCustomerId: string;
+  konnectDefaultPaymentMethodId: string | null;
+  stripeAccount: string | undefined;
 };
 
 function stripeSecretKeyOrNull(): string | null {
@@ -177,6 +188,118 @@ export async function listAppUserPaymentMethods(input: {
     console.warn("app-user-payment-method: list failed", sanitizeForLog(err));
     return [];
   }
+}
+
+async function resolveAppUserStripeRefs(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<AppUserStripeRefs | null> {
+  const billingConfig = await getAppBillingConfig(input.clientId);
+  if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
+    if (!isMerchantConnectPaymentsReady(billingConfig)) {
+      return null;
+    }
+    const stripeAccount = billingConfig?.stripeConnectedAccountId?.trim();
+    const merchantCustomer = await getAppUserStripeCustomer(input);
+    if (
+      !stripeAccount ||
+      merchantCustomer?.stripeConnectedAccountId !== stripeAccount ||
+      !merchantCustomer.stripeCustomerId?.trim()
+    ) {
+      return null;
+    }
+    return {
+      customerId: null,
+      stripeCustomerId: merchantCustomer.stripeCustomerId,
+      konnectDefaultPaymentMethodId: null,
+      stripeAccount,
+    };
+  }
+
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const client = getHostedAdminClient();
+  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
+  const customerKey = buildOpenMeterCustomerKey(
+    publicClientId,
+    input.externalUserId,
+  );
+  const customer = await findOpenMeterCustomerByKey(client, customerKey);
+  const customerId = customer?.id?.trim();
+  if (!customerId) {
+    return null;
+  }
+  const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+  const konnect = await getKonnectStripeBillingRefs(customerId, signal);
+  const stripeCustomerId =
+    konnect.stripeCustomerId ??
+    (await getStripeCustomerAppDataId({ client, customerId }));
+  if (!stripeCustomerId) {
+    return null;
+  }
+  return {
+    customerId,
+    stripeCustomerId,
+    konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
+    stripeAccount: undefined,
+  };
+}
+
+/** Detach an app user's payment method from its merchant or platform customer. */
+export async function unlinkAppUserPaymentMethod(input: {
+  clientId: string;
+  externalUserId: string;
+  paymentMethodId: string;
+}): Promise<{ unlinked: boolean; paymentMethodId: string | null }> {
+  const refs = await resolveAppUserStripeRefs(input);
+  if (!refs) {
+    return { unlinked: false, paymentMethodId: null };
+  }
+  const result = await unlinkStripeCustomerPaymentMethod({
+    stripeCustomerId: refs.stripeCustomerId,
+    paymentMethodId: input.paymentMethodId,
+    stripeAccount: refs.stripeAccount,
+  });
+  if (
+    refs.customerId &&
+    (result.wasDefault ||
+      refs.konnectDefaultPaymentMethodId === input.paymentMethodId.trim())
+  ) {
+    await clearKonnectStripeDefaultPaymentMethod({
+      customerId: refs.customerId,
+      stripeCustomerId: refs.stripeCustomerId,
+    });
+  }
+  return {
+    unlinked: result.unlinked,
+    paymentMethodId: result.paymentMethodId,
+  };
+}
+
+/** Set the Stripe invoice default for an app user's merchant or platform customer. */
+export async function setAppUserDefaultPaymentMethod(input: {
+  clientId: string;
+  externalUserId: string;
+  paymentMethodId: string;
+}): Promise<{ updated: boolean; paymentMethodId: string | null }> {
+  const refs = await resolveAppUserStripeRefs(input);
+  if (!refs) {
+    return { updated: false, paymentMethodId: null };
+  }
+  const result = await setStripeCustomerDefaultPaymentMethod({
+    stripeCustomerId: refs.stripeCustomerId,
+    paymentMethodId: input.paymentMethodId,
+    stripeAccount: refs.stripeAccount,
+  });
+  if (result.updated && refs.customerId) {
+    await setKonnectStripeDefaultPaymentMethod({
+      customerId: refs.customerId,
+      stripeCustomerId: refs.stripeCustomerId,
+      paymentMethodId: input.paymentMethodId.trim(),
+    });
+  }
+  return result;
 }
 
 /**
