@@ -136,24 +136,37 @@ export function resolveConnectWebhookSecret(): string {
 }
 
 /**
- * The shared ingress accepts both platform and Connect events. When Stripe
- * endpoints use distinct secrets, accept either verified signature.
+ * All signing secrets the shared webhook route accepts, deduplicated. The
+ * route receives both Connect account events and platform account events
+ * (e.g. top-up `checkout.session.completed`), and each Stripe endpoint signs
+ * with its own secret — verification must try every configured one.
  */
 export function resolveStripeWebhookSecrets(): string[] {
-  const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  const secrets = new Set<string>();
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  const secrets = [platformSecret, connectSecret].filter(
-    (secret): secret is string => Boolean(secret),
-  );
-  if (secrets.length === 0) {
-    return [requireStripeWebhookSecret()];
-  }
-  for (const secret of secrets) {
-    if (!secret.startsWith("whsec_")) {
-      throw new Error("Stripe webhook secrets must start with whsec_");
+  if (connectSecret) {
+    if (!connectSecret.startsWith("whsec_")) {
+      throw new Error(
+        "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+      );
     }
+    secrets.add(connectSecret);
   }
-  return [...new Set(secrets)];
+  const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  if (platformSecret) {
+    if (!platformSecret.startsWith("whsec_")) {
+      throw new Error(
+        "STRIPE_WEBHOOK_SECRET must start with whsec_ when set",
+      );
+    }
+    secrets.add(platformSecret);
+  }
+  if (secrets.size === 0) {
+    throw new Error(
+      "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
+    );
+  }
+  return [...secrets];
 }
 
 /**

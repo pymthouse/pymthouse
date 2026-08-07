@@ -214,20 +214,30 @@ test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (
   assert.throws(() => resolveConnectWebhookSecret(), /must start with whsec_/);
 });
 
-test("resolveStripeWebhookSecrets accepts platform and Connect endpoint secrets", (t) => {
-  const previousConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
-  const previousPlatform = process.env.STRIPE_WEBHOOK_SECRET;
+test("resolveStripeWebhookSecrets returns every configured secret deduplicated", (t) => {
+  const prevConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  const prevPlatform = process.env.STRIPE_WEBHOOK_SECRET;
   t.after(() => {
-    if (previousConnect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
-    else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = previousConnect;
-    if (previousPlatform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
-    else process.env.STRIPE_WEBHOOK_SECRET = previousPlatform;
+    if (prevConnect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+    else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = prevConnect;
+    if (prevPlatform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
+    else process.env.STRIPE_WEBHOOK_SECRET = prevPlatform;
   });
 
-  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
-  assert.deepEqual(resolveStripeWebhookSecrets(), [
-    "whsec_platform",
-    "whsec_connect",
-  ]);
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_connect", "whsec_platform"]);
+
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_same";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_same";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_same"]);
+
+  delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_same"]);
+
+  process.env.STRIPE_WEBHOOK_SECRET = "not-a-whsec";
+  assert.throws(() => resolveStripeWebhookSecrets(), /must start with whsec_/);
+
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  assert.throws(() => resolveStripeWebhookSecrets(), /STRIPE_WEBHOOK_SECRET is required/);
 });

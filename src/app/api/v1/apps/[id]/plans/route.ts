@@ -43,6 +43,11 @@ import {
 } from "@/lib/openmeter/capability-features";
 import { validateCustomPlanName } from "@/lib/openmeter/plan-naming";
 import { parsePlanBillingCycleInput } from "@/lib/openmeter/billing-cycle";
+import {
+  isPayPerUsePlanType,
+  parseChargeThresholdUsdInput,
+  PAY_PER_USE_NOMINAL_BILLING_CYCLE,
+} from "@/lib/billing/pay-per-use-threshold";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -355,6 +360,23 @@ export async function POST(
     return NextResponse.json({ error: billingCycleParsed.error }, { status: 400 });
   }
 
+  // Pay-Per-Use is threshold-driven (#398): the charge threshold replaces the
+  // billing cycle as the invoicing trigger. A nominal internal cycle is kept
+  // only because OpenMeter/Konnect requires a billingCadence on every plan.
+  const chargeThresholdParsed = parseChargeThresholdUsdInput(body.chargeThresholdUsd);
+  if (!chargeThresholdParsed.ok) {
+    return NextResponse.json({ error: chargeThresholdParsed.error }, { status: 400 });
+  }
+  if (chargeThresholdParsed.value !== null && !isPayPerUsePlanType(planType)) {
+    return NextResponse.json(
+      { error: "chargeThresholdUsd is only valid for Pay-Per-Use (type \"usage\") plans" },
+      { status: 400 },
+    );
+  }
+  const effectiveBillingCycle = isPayPerUsePlanType(planType)
+    ? PAY_PER_USE_NOMINAL_BILLING_CYCLE
+    : billingCycleParsed.value;
+
   const rawIncludedUsd = body.includedUsdMicros;
   let includedUsdMicros: string | null = null;
   if (rawIncludedUsd !== undefined && rawIncludedUsd !== null) {
@@ -410,7 +432,8 @@ export async function POST(
         status: planStatus,
         overageRateUsd: overageRate.value,
         includedUsdMicros,
-        billingCycle: billingCycleParsed.value,
+        billingCycle: effectiveBillingCycle,
+        chargeThresholdUsdMicros: chargeThresholdParsed.value,
         discoveryProfileId,
         isNetworkDefault: false,
         isStarterDefault: false,
@@ -664,6 +687,30 @@ export async function PUT(
       }
       billingCyclePut = billingCycleParsed.value;
     }
+    // Threshold-only Pay-Per-Use (#398): the cycle is a nominal internal
+    // no-op boundary — pin it so callers cannot make the cycle the trigger.
+    if (isPayPerUsePlanType(nextType)) {
+      billingCyclePut = PAY_PER_USE_NOMINAL_BILLING_CYCLE;
+    }
+
+    let chargeThresholdPut: string | null | undefined = undefined; // undefined = don't change
+    if (body.chargeThresholdUsd !== undefined) {
+      const chargeThresholdParsed = parseChargeThresholdUsdInput(body.chargeThresholdUsd);
+      if (!chargeThresholdParsed.ok) {
+        return { tag: "validation" as const, error: chargeThresholdParsed.error };
+      }
+      if (chargeThresholdParsed.value !== null && !isPayPerUsePlanType(nextType)) {
+        return {
+          tag: "validation" as const,
+          error: "chargeThresholdUsd is only valid for Pay-Per-Use (type \"usage\") plans",
+        };
+      }
+      chargeThresholdPut = chargeThresholdParsed.value;
+    } else if (!isPayPerUsePlanType(nextType) && existing.chargeThresholdUsdMicros) {
+      // Leaving Pay-Per-Use clears the threshold — it has no meaning on
+      // cycle-billed plan types.
+      chargeThresholdPut = null;
+    }
 
     const rawIncludedUsdPut = body.includedUsdMicros;
     let includedUsdMicrosPut: string | null | undefined = undefined; // undefined = don't change
@@ -784,6 +831,9 @@ export async function PUT(
         overageRateUsd: overageRate.value,
         ...(includedUsdMicrosPut !== undefined ? { includedUsdMicros: includedUsdMicrosPut } : {}),
         ...(billingCyclePut === undefined ? {} : { billingCycle: billingCyclePut }),
+        ...(chargeThresholdPut !== undefined
+          ? { chargeThresholdUsdMicros: chargeThresholdPut }
+          : {}),
         ...(discoveryProfileIdPut !== undefined
           ? { discoveryProfileId: discoveryProfileIdPut }
           : {}),
