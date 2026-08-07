@@ -211,6 +211,151 @@ async function loadStarterKeys(clientId: string): Promise<{
   };
 }
 
+/** DELETE a not-yet-started paid plan (Konnect forbids /cancel on `scheduled`). */
+async function cancelScheduledOnlyPaid(input: {
+  clientId: string;
+  scheduledPaid: OpenMeterSubscriptionView;
+}): Promise<AppUserSubscriptionCancelResult> {
+  try {
+    await deleteKonnectSubscription({ subscriptionId: input.scheduledPaid.id });
+  } catch (err) {
+    console.error("App-user scheduled subscription delete failed", err);
+    throw new AppUserSubscriptionCancelError(
+      "cancel_failed",
+      "Could not cancel the scheduled subscription",
+    );
+  }
+  const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.clientId,
+    input.scheduledPaid,
+  );
+  return {
+    subscriptionId: input.scheduledPaid.id,
+    planId,
+    planKey: input.scheduledPaid.planKey,
+    scheduledPlanKey: null,
+    effectiveAt: input.scheduledPaid.activeFrom ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * Early exits when there is no live paid plan: already on Starter, cancel
+ * already scheduled, or nothing to cancel.
+ */
+async function cancelWhenNoLivePaid(input: {
+  clientId: string;
+  liveStarter: OpenMeterSubscriptionView | undefined;
+  canceledPaid: OpenMeterSubscriptionView | undefined;
+  starterLocalPlanId: string;
+  starterPlanKey: string;
+}): Promise<AppUserSubscriptionCancelResult> {
+  if (input.liveStarter) {
+    return {
+      subscriptionId: input.liveStarter.id,
+      planId: input.starterLocalPlanId,
+      planKey: input.liveStarter.planKey,
+      scheduledPlanKey: input.liveStarter.planKey,
+      effectiveAt: null,
+      alreadyStarter: true,
+    };
+  }
+  if (input.canceledPaid) {
+    const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
+      input.clientId,
+      input.canceledPaid,
+    );
+    return {
+      subscriptionId: input.canceledPaid.id,
+      planId,
+      planKey: input.canceledPaid.planKey,
+      scheduledPlanKey: input.starterPlanKey,
+      effectiveAt: input.canceledPaid.activeTo,
+      alreadyScheduled: true,
+    };
+  }
+  throw new AppUserSubscriptionCancelError(
+    "no_subscription",
+    "No active subscription to cancel",
+  );
+}
+
+async function assertLivePaidCancelable(input: {
+  clientId: string;
+  livePaid: OpenMeterSubscriptionView;
+  starterPlanKey: string;
+  starterOpenMeterPlanId: string | null;
+}): Promise<string | null> {
+  if (
+    isAppUserStarterSubscription(
+      input.livePaid,
+      input.starterPlanKey,
+      input.starterOpenMeterPlanId,
+    )
+  ) {
+    throw new AppUserSubscriptionCancelError(
+      "already_starter",
+      "Starter plans cannot be canceled",
+    );
+  }
+  const localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.clientId,
+    input.livePaid,
+  );
+  if (!localPlanId) {
+    return null;
+  }
+  const rows = await db
+    .select({ isStarterDefault: plans.isStarterDefault })
+    .from(plans)
+    .where(and(eq(plans.id, localPlanId), eq(plans.clientId, input.clientId)))
+    .limit(1);
+  if (rows[0]?.isStarterDefault) {
+    throw new AppUserSubscriptionCancelError(
+      "already_starter",
+      "Starter plans cannot be canceled",
+    );
+  }
+  return localPlanId;
+}
+
+async function scheduleLivePaidCancel(input: {
+  livePaid: OpenMeterSubscriptionView;
+  localPlanId: string | null;
+  starterPlanKey: string;
+}): Promise<AppUserSubscriptionCancelResult> {
+  let canceled;
+  try {
+    canceled = await cancelKonnectSubscription({
+      subscriptionId: input.livePaid.id,
+      timing: "next_billing_cycle",
+    });
+  } catch (err) {
+    if (isKonnectScheduledChangeForbidden(err)) {
+      throw new AppUserSubscriptionCancelError(
+        "cancel_failed",
+        "A scheduled plan change is blocking cancellation. Try again or contact support.",
+      );
+    }
+    console.error("App-user subscription cancel failed", err);
+    throw new AppUserSubscriptionCancelError(
+      "cancel_failed",
+      "Could not schedule subscription cancellation",
+    );
+  }
+
+  const effectiveAt =
+    input.livePaid.activeTo ||
+    estimateNextBillingCycleIso(konnectSubscriptionBillingAnchorIso(canceled));
+
+  return {
+    subscriptionId: canceled.id?.trim() || input.livePaid.id,
+    planId: input.localPlanId,
+    planKey: input.livePaid.planKey,
+    scheduledPlanKey: input.starterPlanKey,
+    effectiveAt,
+  };
+}
+
 /**
  * Schedule end-of-cycle cancel for the app user's paid (non-Starter) plan.
  * Mirrors owner `downgradeOwnerToStarterPlan`: Konnect cancel with
@@ -257,28 +402,8 @@ export async function cancelAppUserSubscription(input: {
   let { livePaid, scheduledPaid, canceledPaid, liveStarter, scheduledIds } =
     pickAppUserCancelTargets(listed, starterPlanKey, starterOpenMeterPlanId);
 
-  // Not-yet-started paid plan: Konnect forbids /cancel on `scheduled` — DELETE.
   if (!livePaid && scheduledPaid) {
-    try {
-      await deleteKonnectSubscription({ subscriptionId: scheduledPaid.id });
-    } catch (err) {
-      console.error("App-user scheduled subscription delete failed", err);
-      throw new AppUserSubscriptionCancelError(
-        "cancel_failed",
-        "Could not cancel the scheduled subscription",
-      );
-    }
-    const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
-      clientId,
-      scheduledPaid,
-    );
-    return {
-      subscriptionId: scheduledPaid.id,
-      planId,
-      planKey: scheduledPaid.planKey,
-      scheduledPlanKey: null,
-      effectiveAt: scheduledPaid.activeFrom ?? new Date().toISOString(),
-    };
+    return cancelScheduledOnlyPaid({ clientId, scheduledPaid });
   }
 
   // Scheduled successors block cancel on a live paid plan. Clear them first.
@@ -291,103 +416,34 @@ export async function cancelAppUserSubscription(input: {
       client,
       customer.id,
     );
-    ({ livePaid, canceledPaid, liveStarter } =
-      pickAppUserCancelTargets(
-        refreshed,
-        starterPlanKey,
-        starterOpenMeterPlanId,
-      ));
-  }
-
-  if (!livePaid && liveStarter) {
-    return {
-      subscriptionId: liveStarter.id,
-      planId: starterLocalPlanId,
-      planKey: liveStarter.planKey,
-      scheduledPlanKey: liveStarter.planKey,
-      effectiveAt: null,
-      alreadyStarter: true,
-    };
-  }
-
-  if (!livePaid && canceledPaid) {
-    const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
-      clientId,
-      canceledPaid,
-    );
-    return {
-      subscriptionId: canceledPaid.id,
-      planId,
-      planKey: canceledPaid.planKey,
-      scheduledPlanKey: starterPlanKey,
-      effectiveAt: canceledPaid.activeTo,
-      alreadyScheduled: true,
-    };
+    ({ livePaid, canceledPaid, liveStarter } = pickAppUserCancelTargets(
+      refreshed,
+      starterPlanKey,
+      starterOpenMeterPlanId,
+    ));
   }
 
   if (!livePaid) {
-    throw new AppUserSubscriptionCancelError(
-      "no_subscription",
-      "No active subscription to cancel",
-    );
+    return cancelWhenNoLivePaid({
+      clientId,
+      liveStarter,
+      canceledPaid,
+      starterLocalPlanId,
+      starterPlanKey,
+    });
   }
 
-  if (isAppUserStarterSubscription(livePaid, starterPlanKey, starterOpenMeterPlanId)) {
-    throw new AppUserSubscriptionCancelError(
-      "already_starter",
-      "Starter plans cannot be canceled",
-    );
-  }
-
-  const localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+  const localPlanId = await assertLivePaidCancelable({
     clientId,
     livePaid,
-  );
-  if (localPlanId) {
-    const rows = await db
-      .select({ isStarterDefault: plans.isStarterDefault })
-      .from(plans)
-      .where(and(eq(plans.id, localPlanId), eq(plans.clientId, clientId)))
-      .limit(1);
-    if (rows[0]?.isStarterDefault) {
-      throw new AppUserSubscriptionCancelError(
-        "already_starter",
-        "Starter plans cannot be canceled",
-      );
-    }
-  }
-
-  let canceled;
-  try {
-    canceled = await cancelKonnectSubscription({
-      subscriptionId: livePaid.id,
-      timing: "next_billing_cycle",
-    });
-  } catch (err) {
-    if (isKonnectScheduledChangeForbidden(err)) {
-      throw new AppUserSubscriptionCancelError(
-        "cancel_failed",
-        "A scheduled plan change is blocking cancellation. Try again or contact support.",
-      );
-    }
-    console.error("App-user subscription cancel failed", err);
-    throw new AppUserSubscriptionCancelError(
-      "cancel_failed",
-      "Could not schedule subscription cancellation",
-    );
-  }
-
-  const effectiveAt =
-    livePaid.activeTo ||
-    estimateNextBillingCycleIso(konnectSubscriptionBillingAnchorIso(canceled));
-
-  return {
-    subscriptionId: canceled.id?.trim() || livePaid.id,
-    planId: localPlanId,
-    planKey: livePaid.planKey,
-    scheduledPlanKey: starterPlanKey,
-    effectiveAt,
-  };
+    starterPlanKey,
+    starterOpenMeterPlanId,
+  });
+  return scheduleLivePaidCancel({
+    livePaid,
+    localPlanId,
+    starterPlanKey,
+  });
 }
 
 export function appUserSubscriptionCancelHttpStatus(

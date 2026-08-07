@@ -1394,10 +1394,22 @@ test("describeOpenMeterError recovers reasons the SDK drops as undefined", async
   const described = describeOpenMeterError(conflict);
   assert.ok(described.includes("[409]: undefined"));
   assert.ok(described.includes("title=Conflict"));
+  assert.ok(described.includes("type=about:blank"));
   assert.ok(described.includes("customer already has a subscription"));
 
   // A plain Error still describes as its message, with nothing appended.
   assert.equal(describeOpenMeterError(new Error("boom")), "boom");
+
+  // Non-serializable __raw is skipped without throwing.
+  const circularErr = new Error("wrapped");
+  const circularRaw: { self?: unknown } = {};
+  circularRaw.self = circularRaw;
+  Object.assign(circularErr, { title: "T", type: "U", __raw: circularRaw });
+  const circularDescribed = describeOpenMeterError(circularErr);
+  assert.ok(circularDescribed.includes("wrapped"));
+  assert.ok(circularDescribed.includes("title=T"));
+  assert.ok(circularDescribed.includes("type=U"));
+  assert.ok(!circularDescribed.includes("raw="));
 });
 
 test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {

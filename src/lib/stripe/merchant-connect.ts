@@ -431,7 +431,7 @@ async function listAllMerchantConnectInvoices(
     if (!result.has_more || batch.length === 0) {
       break;
     }
-    const lastId = batch[batch.length - 1]?.id?.trim();
+    const lastId = batch.at(-1)?.id?.trim();
     if (!lastId) {
       break;
     }

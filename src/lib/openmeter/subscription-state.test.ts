@@ -4,6 +4,8 @@ import test from "node:test";
 import type { OpenMeterSubscriptionView } from "@/lib/openmeter/subscription-read";
 import {
   classifySubscriptions,
+  clearScheduledBeforeMutation,
+  clearScheduledSubscriptions,
   isCanceledSubscriptionStatus,
   isKonnectScheduledChangeForbidden,
   isLiveSubscriptionStatus,
@@ -14,6 +16,23 @@ import {
   pickMutationTargetSubscription,
   resolveResumeTarget,
 } from "@/lib/openmeter/subscription-state";
+
+function withKonnectEnv(t: test.TestContext): void {
+  const savedUrl = process.env.OPENMETER_URL;
+  const savedKey = process.env.OPENMETER_API_KEY;
+  const savedMode = process.env.OPENMETER_ROUTE_MODE;
+  process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
+  process.env.OPENMETER_API_KEY = "km_test_key";
+  process.env.OPENMETER_ROUTE_MODE = "hosted";
+  t.after(() => {
+    if (savedUrl === undefined) delete process.env.OPENMETER_URL;
+    else process.env.OPENMETER_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.OPENMETER_API_KEY;
+    else process.env.OPENMETER_API_KEY = savedKey;
+    if (savedMode === undefined) delete process.env.OPENMETER_ROUTE_MODE;
+    else process.env.OPENMETER_ROUTE_MODE = savedMode;
+  });
+}
 
 function sub(
   partial: Partial<OpenMeterSubscriptionView> & { id: string },
@@ -156,4 +175,85 @@ test("isKonnectScheduledChangeForbidden matches Konnect 403 detail", () => {
     isKonnectScheduledChangeForbidden(new Error("unrelated")),
     false,
   );
+});
+
+test("clearScheduledSubscriptions DELETEs each scheduled id", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(null, { status: 204 });
+  });
+
+  await clearScheduledSubscriptions(["sched_a", "sched_b"]);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0]!, /\/metering\/v1\/subscriptions\/sched_a$/);
+  assert.match(urls[1]!, /\/metering\/v1\/subscriptions\/sched_b$/);
+});
+
+test("clearScheduledSubscriptions falls back to cancel when DELETE fails", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("/cancel")) {
+      return new Response(
+        JSON.stringify({ id: "sched_a", status: "canceled", customer_id: "c1" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ detail: "not deletable" }), {
+      status: 405,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  await clearScheduledSubscriptions(["sched_a"]);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0]!, /\/metering\/v1\/subscriptions\/sched_a$/);
+  assert.match(urls[1]!, /\/subscriptions\/sched_a\/cancel$/);
+});
+
+test("clearScheduledBeforeMutation restores canceled Paid when provided", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(
+      JSON.stringify({ id: "paid_canceled", status: "active", customer_id: "c1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await clearScheduledBeforeMutation({
+    scheduledIds: ["sched_successor"],
+    canceledPaidId: "paid_canceled",
+  });
+  assert.equal(urls.length, 1);
+  assert.match(urls[0]!, /\/metering\/v1\/subscriptions\/paid_canceled\/restore$/);
+});
+
+test("clearScheduledBeforeMutation clears scheduled when restore fails", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("/restore")) {
+      return new Response(JSON.stringify({ detail: "conflict" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(null, { status: 204 });
+  });
+
+  await clearScheduledBeforeMutation({
+    scheduledIds: ["sched_successor"],
+    canceledPaidId: "paid_canceled",
+  });
+  assert.equal(urls.length, 2);
+  assert.match(urls[0]!, /\/restore$/);
+  assert.match(urls[1]!, /\/metering\/v1\/subscriptions\/sched_successor$/);
 });
