@@ -28,7 +28,11 @@ export function clampPageParam(
   fallback: number,
   max: number,
 ): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
+  const trimmed = (raw ?? "").trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
   if (!Number.isFinite(parsed) || parsed < 1) {
     return fallback;
   }

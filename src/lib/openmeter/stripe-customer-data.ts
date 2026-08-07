@@ -90,8 +90,9 @@ async function getKonnectCustomerBilling(
 
 async function getKonnectStripeCustomerId(
   customerId: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const data = await getKonnectCustomerBilling(customerId);
+  const data = await getKonnectCustomerBilling(customerId, signal);
   const id = data.app_data?.stripe?.customer_id?.trim();
   return id || null;
 }
@@ -425,9 +426,10 @@ export async function ensureKonnectCustomerStripeBilling(input: {
 export async function getStripeCustomerAppDataId(input: {
   client: OpenMeter;
   customerId: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   if (isKonnectMode()) {
-    return getKonnectStripeCustomerId(input.customerId);
+    return getKonnectStripeCustomerId(input.customerId, input.signal);
   }
   return getSelfHostedStripeCustomerId(input.client, input.customerId);
 }

@@ -1,7 +1,8 @@
 import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
-  PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
+  OAuthErrorSchema,
+  PublicClientIdPathParamSchema,
 } from "@/lib/openapi/schemas/common";
 import {
   builderErrorResponses,
@@ -14,6 +15,18 @@ import { z } from "@/lib/openapi/zod";
 
 const clientId = PublicClientIdPathParamSchema;
 const externalUserId = ExternalUserIdParamSchema;
+
+/** 502/503 shape from `walletUpstreamErrorResponse` (`{ error: string }`). */
+const walletUpstreamErrorResponses = {
+  502: {
+    description: "Billing provider request failed",
+    content: { "application/json": { schema: OAuthErrorSchema } },
+  },
+  503: {
+    description: "Billing is not available right now",
+    content: { "application/json": { schema: OAuthErrorSchema } },
+  },
+} as const;
 
 function appPath(suffix: string) {
   return `/api/v1/apps/{clientId}${suffix}`;
@@ -316,7 +329,8 @@ defineRouteMetadata("get", appPath("/billing/wallet"), {
   summary: "Owner prepaid wallet summary",
   description:
     "M2M Basic only. Prepaid credit balance, default payment-method status, and " +
-    "resolved Pay-Per-Use settlement behavior (credits first, then auto-debit at the threshold).",
+    "all active Pay-Per-Use plans with resolved settlement behavior " +
+    "(credits first, then auto-debit at the threshold).",
   security: m2mSecurity,
   request: { params: z.object({ clientId }) },
   responses: { 200: jsonSuccess, ...builderErrorResponses },
@@ -368,7 +382,11 @@ defineRouteMetadata("get", appPath("/billing/wallet/invoices"), {
         .openapi({ param: { name: "pageSize", in: "query" } }),
     }),
   },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
 });
 defineRouteMetadata("get", appPath("/billing/wallet/payment-methods"), {
   tags: [OPENAPI_TAGS.billing],
@@ -377,7 +395,11 @@ defineRouteMetadata("get", appPath("/billing/wallet/payment-methods"), {
     "M2M Basic only. Payment methods on file for the app owner, with the default flagged.",
   security: m2mSecurity,
   request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
 });
 defineRouteMetadata("post", appPath("/billing/wallet/payment-methods"), {
   tags: [OPENAPI_TAGS.billing],
@@ -404,7 +426,11 @@ defineRouteMetadata("post", appPath("/billing/wallet/payment-methods"), {
       required: false,
     },
   },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
 });
 
 defineRouteMetadata("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {

@@ -1,0 +1,14 @@
+{
+  "charge_model_key": "stripe_charge_model",
+  "connect_account_key": "stripe_connect_account_id",
+  "stripe_customer_key": "stripe_customer_id",
+  "config_env_defaults": {
+    "SETTLEMENT_CONNECT_ACCOUNT_METADATA_KEY": "stripe_connect_account_id",
+    "SETTLEMENT_CHARGE_MODEL_METADATA_KEY": "stripe_charge_model",
+    "SETTLEMENT_STRIPE_CUSTOMER_METADATA_KEY": "stripe_customer_id"
+  },
+  "e2e": {
+    "charge_model": "direct",
+    "connect_account_id": "acct_e2e_settlement"
+  }
+}

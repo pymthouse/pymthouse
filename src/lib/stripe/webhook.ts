@@ -135,28 +135,41 @@ export function resolveConnectWebhookSecret(): string {
   return connectSecret;
 }
 
+/** Which Stripe endpoint a verified signature came from. */
+export type StripeWebhookSecretKind = "platform" | "connect";
+
+export type StripeWebhookSecret = {
+  secret: string;
+  kind: StripeWebhookSecretKind;
+};
+
 /**
- * All signing secrets the shared webhook route accepts, deduplicated. The
- * route receives both Connect account events and platform account events
- * (e.g. top-up `checkout.session.completed`), and each Stripe endpoint signs
- * with its own secret — verification must try every configured one.
+ * All signing secrets the shared webhook route accepts, deduplicated and
+ * tagged by endpoint. The route receives both Connect account events and
+ * platform account events (e.g. top-up `checkout.session.completed`), and each
+ * Stripe endpoint signs with its own secret — verification must try every
+ * configured one, and prepaid credit settlement must additionally require the
+ * `platform` kind.
+ *
+ * Platform is listed first so it wins the identical-secret edge case (one
+ * endpoint configured for both roles) rather than settling top-ups as Connect.
  *
  * A malformed secret is skipped when the other is valid, so a bad platform
  * value cannot take down Connect webhooks (and vice versa). Throws only when
  * no usable secret remains.
  */
-export function resolveStripeWebhookSecrets(): string[] {
-  const secrets = new Set<string>();
-  const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  if (connectSecret?.startsWith("whsec_")) {
-    secrets.add(connectSecret);
-  }
+export function resolveStripeWebhookSecretsByKind(): StripeWebhookSecret[] {
   const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
+  const resolved: StripeWebhookSecret[] = [];
   if (platformSecret?.startsWith("whsec_")) {
-    secrets.add(platformSecret);
+    resolved.push({ secret: platformSecret, kind: "platform" });
   }
-  if (secrets.size > 0) {
-    return [...secrets];
+  if (connectSecret?.startsWith("whsec_") && connectSecret !== platformSecret) {
+    resolved.push({ secret: connectSecret, kind: "connect" });
+  }
+  if (resolved.length > 0) {
+    return resolved;
   }
   if (connectSecret) {
     throw new Error(
@@ -171,6 +184,11 @@ export function resolveStripeWebhookSecrets(): string[] {
   throw new Error(
     "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
   );
+}
+
+/** Secrets only, for callers that do not care which endpoint signed. */
+export function resolveStripeWebhookSecrets(): string[] {
+  return resolveStripeWebhookSecretsByKind().map((entry) => entry.secret);
 }
 
 /**

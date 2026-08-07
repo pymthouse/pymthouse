@@ -7,6 +7,8 @@
  * prepaid grant on the owner wallet, using the Checkout session id as the
  * grant idempotency key so webhook retries can never double-credit.
  */
+import { randomUUID } from "node:crypto";
+
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
@@ -102,6 +104,7 @@ async function resolveOwnerStripeCustomerId(input: {
   customerId: string;
   customerKey: string;
 }): Promise<string | null> {
+  const signal = AbortSignal.timeout(CHECKOUT_BUDGET_MS);
   try {
     await prepareOwnerCustomerStripeBilling({
       client: getHostedAdminClient(),
@@ -112,7 +115,6 @@ async function resolveOwnerStripeCustomerId(input: {
     console.warn("topup-checkout: billing prepare failed", sanitizeForLog(err));
   }
   try {
-    const signal = AbortSignal.timeout(CHECKOUT_BUDGET_MS);
     const refs = await getKonnectStripeBillingRefs(input.customerId, signal);
     if (refs.stripeCustomerId) {
       return refs.stripeCustomerId;
@@ -125,6 +127,7 @@ async function resolveOwnerStripeCustomerId(input: {
       (await getStripeCustomerAppDataId({
         client: getHostedAdminClient(),
         customerId: input.customerId,
+        signal,
       })) ?? null
     );
   } catch {
@@ -149,6 +152,8 @@ export async function createOwnerTopUpCheckoutSession(input: {
   amountUsdMicros: bigint;
   successUrl?: string;
   cancelUrl?: string;
+  /** Optional Stripe Idempotency-Key; generated when omitted. */
+  idempotencyKey?: string;
 }): Promise<TopUpCheckoutResult> {
   const ownerUserId = input.ownerUserId.trim();
   const publicClientId = input.publicClientId.trim();
@@ -160,6 +165,9 @@ export async function createOwnerTopUpCheckoutSession(input: {
     input.amountUsdMicros > TOP_UP_MAX_USD_MICROS
   ) {
     throw new Error("amountUsdMicros out of range");
+  }
+  if (input.amountUsdMicros % 10_000n !== 0n) {
+    throw new Error("amountUsdMicros must be a whole-cent amount");
   }
   const apiKey = stripeSecretKeyOrNull();
   if (!apiKey) {
@@ -185,7 +193,6 @@ export async function createOwnerTopUpCheckoutSession(input: {
   );
   const cancel = resolveTopUpReturnUrl(input.cancelUrl, `${origin}/billing`);
 
-  // amountUsdMicros is always whole cents here (parseTopUpAmountUsd).
   const amountCents = (input.amountUsdMicros / 10_000n).toString();
   const body = new URLSearchParams({
     mode: "payment",
@@ -204,11 +211,15 @@ export async function createOwnerTopUpCheckoutSession(input: {
     body.set("customer", stripeCustomerId);
   }
 
+  const idempotencyKey =
+    input.idempotencyKey?.trim() ||
+    `pymthouse-topup:${ownerUserId}:${publicClientId}:${input.amountUsdMicros}:${randomUUID()}`;
   const response = await fetch(toStripeApiUrl("/v1/checkout/sessions"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
+      "Idempotency-Key": idempotencyKey,
     },
     body: body.toString(),
     signal: AbortSignal.timeout(CHECKOUT_BUDGET_MS),
@@ -327,6 +338,9 @@ function settledAmountUsdMicros(
 ): bigint | null {
   const amountTotal = session.amount_total;
   if (typeof amountTotal !== "number" || !Number.isInteger(amountTotal) || amountTotal <= 0) {
+    return null;
+  }
+  if (typeof session.currency !== "string" || session.currency.toLowerCase() !== "usd") {
     return null;
   }
   const amountUsdMicros = BigInt(amountTotal) * 10_000n;

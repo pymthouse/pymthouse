@@ -349,7 +349,7 @@ export async function POST(
     }
   }
 
-  const planType = coerceJsonScalarString(body.type, "free");
+  const planType = coerceJsonScalarString(body.type, "free").trim().toLowerCase();
   const overageRate = resolveOverageRateUsdForPost(planType, body);
   if (!overageRate.ok) {
     return NextResponse.json({ error: overageRate.error }, { status: 400 });
@@ -673,7 +673,9 @@ export async function PUT(
     }
 
     const nextType =
-      body.type === undefined ? existing.type : coerceJsonScalarString(body.type);
+      body.type === undefined
+        ? existing.type
+        : coerceJsonScalarString(body.type).trim().toLowerCase();
     const overageRate = resolveOverageRateUsdForPut(nextType, body, existing.overageRateUsd);
     if (!overageRate.ok) {
       return { tag: "validation" as const, error: overageRate.error };

@@ -64,7 +64,8 @@ export function parseChargeThresholdUsdInput(
   if (micros <= 0n) {
     return { ok: false, error: "chargeThresholdUsd must be greater than 0" };
   }
-  if (dollars > MAX_THRESHOLD_USD) {
+  const maxMicros = BigInt(MAX_THRESHOLD_USD) * 1_000_000n;
+  if (micros > maxMicros) {
     return {
       ok: false,
       error: `chargeThresholdUsd must be at most $${MAX_THRESHOLD_USD.toLocaleString("en-US")}`,

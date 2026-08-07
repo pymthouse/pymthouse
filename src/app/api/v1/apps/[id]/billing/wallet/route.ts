@@ -44,11 +44,8 @@ export async function GET(
           eq(plans.status, "active"),
         ),
       )
-      .orderBy(desc(plans.updatedAt))
-      .limit(1),
+      .orderBy(desc(plans.updatedAt)),
   ]);
-
-  const usagePlan = usagePlanRows[0] ?? null;
 
   return NextResponse.json({
     clientId,
@@ -64,16 +61,15 @@ export async function GET(
       /** null = unknown (billing outage) — callers should fail open. */
       hasDefault: hasDefaultPaymentMethod,
     },
-    payPerUse: usagePlan
-      ? {
-          planId: usagePlan.id,
-          planName: usagePlan.name,
-          chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
-          resolvedBehavior: resolvedPayPerUseBehavior(
-            usagePlan.chargeThresholdUsdMicros,
-          ),
-        }
-      : null,
+    /** Every active usage plan on the app (newest `updatedAt` first). */
+    payPerUsePlans: usagePlanRows.map((usagePlan) => ({
+      planId: usagePlan.id,
+      planName: usagePlan.name,
+      chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
+      resolvedBehavior: resolvedPayPerUseBehavior(
+        usagePlan.chargeThresholdUsdMicros,
+      ),
+    })),
     settlement: {
       order: "credits_then_auto_debit",
       description:

@@ -226,7 +226,9 @@ test("resolveStripeWebhookSecrets returns every configured secret deduplicated",
 
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
-  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_connect", "whsec_platform"]);
+  // Platform first: it wins the identical-secret tie-break so a single endpoint
+  // configured for both roles still settles top-ups as `platform`.
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_platform", "whsec_connect"]);
 
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_same";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_same";

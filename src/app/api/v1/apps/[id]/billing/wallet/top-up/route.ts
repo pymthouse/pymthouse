@@ -35,12 +35,14 @@ export async function POST(
   }
 
   try {
+    const idempotencyKey = request.headers.get("Idempotency-Key")?.trim() || undefined;
     const checkout = await createOwnerTopUpCheckoutSession({
       ownerUserId: access.ownerUserId,
       publicClientId: clientId,
       amountUsdMicros: amount.amountUsdMicros,
       successUrl: typeof body.successUrl === "string" ? body.successUrl : undefined,
       cancelUrl: typeof body.cancelUrl === "string" ? body.cancelUrl : undefined,
+      idempotencyKey,
     });
     return NextResponse.json({
       checkoutUrl: checkout.checkoutUrl,

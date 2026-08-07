@@ -83,6 +83,7 @@ function topUpEventBody(overrides: {
         mode: "payment",
         payment_status: "paid",
         amount_total: 2500,
+        currency: "usd",
         metadata,
         ...overrides.session,
       },
@@ -165,6 +166,17 @@ test("parseTopUpCheckoutSessionCompleted requires owner and client identity", ()
   );
   assert.equal(
     parseTopUpCheckoutSessionCompleted(topUpEventBody({ metadata: { client_id: "" } })),
+    null,
+  );
+});
+
+test("parseTopUpCheckoutSessionCompleted requires usd currency", () => {
+  assert.equal(
+    parseTopUpCheckoutSessionCompleted(topUpEventBody({ session: { currency: "eur" } })),
+    null,
+  );
+  assert.equal(
+    parseTopUpCheckoutSessionCompleted(topUpEventBody({ session: { currency: null } })),
     null,
   );
 });

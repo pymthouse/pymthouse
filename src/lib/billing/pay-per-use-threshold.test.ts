@@ -47,6 +47,13 @@ test("parseChargeThresholdUsdInput rejects invalid amounts", () => {
   assert.equal(parseChargeThresholdUsdInput(true).ok, false);
   // 7-digit dollars parse but exceed the $1,000,000 cap
   assert.equal(parseChargeThresholdUsdInput("9999999").ok, false);
+  // Exact dollar cap is allowed; cents past the cap must not slip through
+  // a dollars-only comparison (1_000_000.01 → dollars === MAX).
+  assert.deepEqual(parseChargeThresholdUsdInput("1000000"), {
+    ok: true,
+    value: "1000000000000",
+  });
+  assert.equal(parseChargeThresholdUsdInput("1000000.01").ok, false);
 });
 
 test("formatUsdMicrosForDisplay renders at least two decimals", () => {

@@ -25,8 +25,12 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const paymentMethods = await listOwnerPaymentMethods(access.ownerUserId);
-  return NextResponse.json({ paymentMethods });
+  try {
+    const paymentMethods = await listOwnerPaymentMethods(access.ownerUserId);
+    return NextResponse.json({ paymentMethods });
+  } catch (err) {
+    return walletUpstreamErrorResponse(err, "payment-method list");
+  }
 }
 
 /**
