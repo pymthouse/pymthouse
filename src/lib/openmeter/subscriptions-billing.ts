@@ -4,6 +4,12 @@ import { db } from "@/db/index";
 import { plans, subscriptions } from "@/db/schema";
 import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
+import {
+  connectPaymentsOnlyEnabled,
+  createMerchantConnectCheckoutForUser,
+  isMerchantConnectPaymentsReady,
+} from "@/lib/stripe/merchant-connect";
 import { getHostedAdminClient } from "./admin-client";
 import {
   applyFreeBillingProfileToCustomer,
@@ -20,21 +26,26 @@ import {
   deleteKonnectSubscription,
   type SubscriptionChangeTiming,
 } from "./konnect-subscriptions";
+import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import { isOpenMeterConflictError } from "./plan-errors";
 import { buildOpenMeterPlanKey } from "./plans-sync";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
+  listOpenMeterSubscriptionsForCustomer,
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
+import {
+  clearScheduledBeforeMutation,
+  isKonnectScheduledChangeForbidden,
+  isLiveSubscriptionStatus,
+  isScheduledSubscriptionStatus,
+  listScheduledSubscriptionIds,
+  pickMutationTargetSubscription,
+} from "./subscription-state";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
-import {
-  connectPaymentsOnlyEnabled,
-  createMerchantConnectCheckoutForUser,
-  isMerchantConnectPaymentsReady,
-} from "@/lib/stripe/merchant-connect";
 
 function parsePlanPriceAmount(raw: string | null | undefined): number {
   const n = Number.parseFloat(String(raw ?? "0").trim() || "0");
@@ -529,6 +540,8 @@ export type ChangeAppUserSubscriptionPlanResult = {
 /**
  * Switch an end-user onto another active plan via Konnect subscription change.
  * Falls back to create+checkout when the user has no current subscription.
+ * Clears scheduled successors before `/change` (same state machine as owner
+ * paid upgrade) so Konnect never sees "transition cancel in state scheduled".
  */
 export async function changeAppUserSubscriptionPlan(input: {
   clientId: string;
@@ -543,26 +556,102 @@ export async function changeAppUserSubscriptionPlan(input: {
     planId: input.planId,
   });
 
-  const current = await getPrimaryOpenMeterSubscriptionForAppUser({
+  if (
+    !shouldUseKonnectRoutes(
+      getHostedOpenMeterUrl(),
+      process.env.OPENMETER_API_KEY,
+    )
+  ) {
+    throw new Error(
+      "Plan change requires Konnect routes (set OPENMETER_ROUTE_MODE=hosted " +
+        "or point OPENMETER_URL at a Konnect metering endpoint).",
+    );
+  }
+
+  const client = getHostedAdminClient();
+  const customer = await ensureOpenMeterCustomerForAppUser({
+    client,
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
+  await prepareAppCustomerStripeBilling({
+    client,
+    clientId: input.clientId,
+    customerId: customer.id,
+    customerKey: customer.key,
+  });
+
+  const starter = await getOrCreateStarterPlan(input.clientId);
+  const starterPlanKey = buildOpenMeterPlanKey(input.clientId, starter.id);
+  const starterOpenMeterPlanId = starter.openmeterPlanId?.trim() || null;
+  const isStarter = (sub: OpenMeterSubscriptionView) => {
+    if (isOwnerStarterPlanKey(sub.planKey)) return true;
+    if (sub.planKey && sub.planKey === starterPlanKey) return true;
+    if (starterOpenMeterPlanId && sub.planId === starterOpenMeterPlanId) {
+      return true;
+    }
+    return false;
+  };
+
+  let listed = await listOpenMeterSubscriptionsForCustomer(
+    client,
+    customer.id,
+  );
+  let scheduledIds = listScheduledSubscriptionIds(listed);
+  let current = pickMutationTargetSubscription(listed, isStarter);
+
+  // Clear scheduled successors so `/change` targets a live row only.
+  if (scheduledIds.length > 0) {
+    const canceledPaid = listed.find(
+      (s) =>
+        Boolean(s.id) &&
+        (s.status || "").toLowerCase() === "canceled" &&
+        !isStarter(s),
+    );
+    await clearScheduledBeforeMutation({
+      scheduledIds,
+      canceledPaidId: current ? null : (canceledPaid?.id ?? null),
+    });
+    listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
+    scheduledIds = listScheduledSubscriptionIds(listed);
+    current = pickMutationTargetSubscription(listed, isStarter);
+
+    if (!current && scheduledIds.length > 0) {
+      throw new Error(
+        "A scheduled plan change is blocking this switch and cannot be removed automatically. Contact support.",
+      );
+    }
+  }
 
   if (!current) {
-    const created = await createEndUserCheckout({
+    // Fall back to primary (may be scheduled-only after clear failed soft) or checkout.
+    const primary = await getPrimaryOpenMeterSubscriptionForAppUser({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
-      planId: input.planId,
-      successUrl: input.successUrl,
-      cancelUrl: input.cancelUrl,
     });
-    return {
-      subscriptionId: created.subscriptionId ?? "",
-      planId: targetPlan.id,
-      effectiveAt: new Date().toISOString(),
-      timing: "immediate",
-      checkoutUrl: created.checkoutUrl,
-    };
+    if (!primary || isScheduledSubscriptionStatus(primary.status)) {
+      const created = await createEndUserCheckout({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+        planId: input.planId,
+        successUrl: input.successUrl,
+        cancelUrl: input.cancelUrl,
+      });
+      return {
+        subscriptionId: created.subscriptionId ?? "",
+        planId: targetPlan.id,
+        effectiveAt: new Date().toISOString(),
+        timing: "immediate",
+        checkoutUrl: created.checkoutUrl,
+      };
+    }
+    current = primary;
+  }
+
+  if (!isLiveSubscriptionStatus(current.status)) {
+    throw new Error(
+      "A scheduled plan change is blocking this switch and cannot be removed automatically. Contact support.",
+    );
   }
 
   const currentLocalPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -578,18 +667,6 @@ export async function changeAppUserSubscriptionPlan(input: {
     throw new Error("User is already on this plan");
   }
 
-  if (
-    !shouldUseKonnectRoutes(
-      getHostedOpenMeterUrl(),
-      process.env.OPENMETER_API_KEY,
-    )
-  ) {
-    throw new Error(
-      "Plan change requires Konnect routes (set OPENMETER_ROUTE_MODE=hosted " +
-        "or point OPENMETER_URL at a Konnect metering endpoint).",
-    );
-  }
-
   const timing =
     input.timing ??
     defaultSubscriptionChangeTiming({
@@ -597,25 +674,42 @@ export async function changeAppUserSubscriptionPlan(input: {
       targetPriceAmount: targetPlan.priceAmount,
     });
 
-  const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomerForAppUser({
-    client,
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  await prepareAppCustomerStripeBilling({
-    client,
-    clientId: input.clientId,
-    customerId: customer.id,
-    customerKey: customer.key,
-  });
-
-  const change = await changeKonnectSubscription({
-    subscriptionId: current.id,
-    customerId: customer.id,
-    planId: targetPlan.openmeterPlanId!,
-    timing,
-  });
+  let change;
+  try {
+    change = await changeKonnectSubscription({
+      subscriptionId: current.id,
+      customerId: customer.id,
+      planId: targetPlan.openmeterPlanId!,
+      timing,
+    });
+  } catch (err) {
+    if (!isKonnectScheduledChangeForbidden(err)) {
+      throw err;
+    }
+    // Race: a scheduled successor appeared; clear and fall back to checkout.
+    const retryListed = await listOpenMeterSubscriptionsForCustomer(
+      client,
+      customer.id,
+    );
+    await clearScheduledBeforeMutation({
+      scheduledIds: listScheduledSubscriptionIds(retryListed),
+      canceledPaidId: null,
+    });
+    const created = await createEndUserCheckout({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      planId: input.planId,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
+    });
+    return {
+      subscriptionId: created.subscriptionId ?? "",
+      planId: targetPlan.id,
+      effectiveAt: new Date().toISOString(),
+      timing: "immediate",
+      checkoutUrl: created.checkoutUrl,
+    };
+  }
 
   const nextSubscriptionId =
     change.next?.id?.trim() ||

@@ -149,8 +149,9 @@ test("appUserSubscriptionResumeHttpStatus maps known codes", () => {
 test("subscription status helpers classify live and canceled", () => {
   assert.equal(isAppUserLiveSubscriptionStatus("active"), true);
   assert.equal(isAppUserLiveSubscriptionStatus("trialing"), true);
-  assert.equal(isAppUserLiveSubscriptionStatus("scheduled"), true);
-  assert.equal(isAppUserLiveSubscriptionStatus("pending"), true);
+  // scheduled/pending are NOT live — Konnect forbids cancel/change on them
+  assert.equal(isAppUserLiveSubscriptionStatus("scheduled"), false);
+  assert.equal(isAppUserLiveSubscriptionStatus("pending"), false);
   assert.equal(isAppUserLiveSubscriptionStatus(""), true);
   assert.equal(isAppUserLiveSubscriptionStatus("canceled"), false);
   assert.equal(isAppUserCanceledSubscriptionStatus("canceled"), true);
@@ -203,11 +204,28 @@ test("pickAppUserCancelTargets separates live paid, canceled paid, and starter",
       activeTo: "2026-09-01T00:00:00.000Z",
     }),
     sub({ id: "starter", planKey: "app_starter", status: "active" }),
+    sub({ id: "sched", planKey: "app_starter", status: "scheduled" }),
   ];
   const picked = pickAppUserCancelTargets(listed, "app_starter", null);
   assert.equal(picked.livePaid?.id, "paid");
   assert.equal(picked.canceledPaid?.id, "canceled");
   assert.equal(picked.liveStarter?.id, "starter");
+  assert.equal(picked.scheduledStarter?.id, "sched");
+  assert.deepEqual(picked.scheduledIds, ["sched"]);
+});
+
+test("pickAppUserCancelTargets does not treat scheduled paid as livePaid", () => {
+  const listed = [
+    sub({
+      id: "sched_paid",
+      planKey: "paid",
+      status: "scheduled",
+      activeFrom: "2026-09-01T00:00:00.000Z",
+    }),
+  ];
+  const picked = pickAppUserCancelTargets(listed, "app_starter", null);
+  assert.equal(picked.livePaid, undefined);
+  assert.deepEqual(picked.scheduledIds, ["sched_paid"]);
 });
 
 test("resolveAppUserResumeTarget prefers canceled paid, else live paid + scheduled starter", () => {

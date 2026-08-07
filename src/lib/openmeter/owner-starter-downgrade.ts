@@ -18,6 +18,13 @@ import {
   listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
+import {
+  classifySubscriptions,
+  isCanceledSubscriptionStatus,
+  isLiveSubscriptionStatus,
+  isScheduledSubscriptionStatus,
+  type StarterMatcher,
+} from "./subscription-state";
 
 export type OwnerStarterDowngradeErrorCode =
   | "confirm_required"
@@ -61,20 +68,13 @@ function assertDowngradeConfirm(confirm: boolean | undefined): void {
   }
 }
 
-function isLiveSubscriptionStatus(status: string): boolean {
-  const s = status.toLowerCase();
-  return s === "active" || s === "trialing" || !s;
-}
+const ownerWalletStarterMatcher: StarterMatcher = (sub) =>
+  isOwnerStarterPlanKey(sub.planKey);
 
-function isScheduledSubscriptionStatus(status: string): boolean {
-  const s = status.toLowerCase();
-  return s === "scheduled" || s === "pending";
-}
-
-function isCanceledSubscriptionStatus(status: string): boolean {
-  return status.toLowerCase() === "canceled";
-}
-
+/**
+ * Owner wallet classification. Paid is identified via {@link isOwnerPaidPlanKey}
+ * rather than "not starter", because wallet rows can include non-paid keys.
+ */
 function pickWalletSubs(
   listed: OpenMeterSubscriptionView[],
 ): {
@@ -83,32 +83,36 @@ function pickWalletSubs(
   activeStarter: OpenMeterSubscriptionView | null;
   scheduledStarter: OpenMeterSubscriptionView | null;
 } {
-  let activePaid: OpenMeterSubscriptionView | null = null;
-  let canceledPaid: OpenMeterSubscriptionView | null = null;
-  let activeStarter: OpenMeterSubscriptionView | null = null;
-  let scheduledStarter: OpenMeterSubscriptionView | null = null;
+  const classified = classifySubscriptions(listed, ownerWalletStarterMatcher);
 
-  for (const sub of listed) {
-    const status = sub.status || "";
-    const isLive = isLiveSubscriptionStatus(status);
-    const isScheduled = isScheduledSubscriptionStatus(status);
-    const isCanceled = isCanceledSubscriptionStatus(status);
+  // Paid rows: prefer owner-paid keys when present (wallet may have other plans).
+  const livePaid =
+    listed.find(
+      (sub) =>
+        Boolean(sub.id) &&
+        isLiveSubscriptionStatus(sub.status) &&
+        isOwnerPaidPlanKey(sub.planKey),
+    ) ??
+    classified.livePaid ??
+    null;
+  const canceledPaid =
+    listed.find(
+      (sub) =>
+        Boolean(sub.id) &&
+        isCanceledSubscriptionStatus(sub.status) &&
+        isOwnerPaidPlanKey(sub.planKey),
+    ) ??
+    (classified.canceledPaid &&
+    isOwnerPaidPlanKey(classified.canceledPaid.planKey)
+      ? classified.canceledPaid
+      : null);
 
-    if (isLive && isOwnerPaidPlanKey(sub.planKey) && !activePaid) {
-      activePaid = sub;
-    }
-    if (isCanceled && isOwnerPaidPlanKey(sub.planKey) && !canceledPaid) {
-      canceledPaid = sub;
-    }
-    if (isLive && isOwnerStarterPlanKey(sub.planKey) && !activeStarter) {
-      activeStarter = sub;
-    }
-    if (isScheduled && isOwnerStarterPlanKey(sub.planKey) && !scheduledStarter) {
-      scheduledStarter = sub;
-    }
-  }
-
-  return { activePaid, canceledPaid, activeStarter, scheduledStarter };
+  return {
+    activePaid: livePaid,
+    canceledPaid,
+    activeStarter: classified.liveStarter ?? null,
+    scheduledStarter: classified.scheduledStarter ?? null,
+  };
 }
 
 /**

@@ -19,6 +19,15 @@ import {
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
+import {
+  classifySubscriptions,
+  clearScheduledBeforeMutation,
+  isCanceledSubscriptionStatus,
+  isKonnectScheduledChangeForbidden,
+  isLiveSubscriptionStatus,
+  resolveResumeTarget,
+  type StarterMatcher,
+} from "./subscription-state";
 
 export type AppUserSubscriptionCancelErrorCode =
   | "confirm_required"
@@ -98,21 +107,13 @@ function assertConfirm(
   }
 }
 
+/** @deprecated Use isLiveSubscriptionStatus — scheduled is NOT live. */
 export function isAppUserLiveSubscriptionStatus(status: string): boolean {
-  const s = status.toLowerCase();
-  return (
-    s === "active" ||
-    s === "trialing" ||
-    s === "scheduled" ||
-    s === "pending" ||
-    !s
-  );
+  return isLiveSubscriptionStatus(status);
 }
 
 export function isAppUserCanceledSubscriptionStatus(status: string): boolean {
-  return (
-    status.toLowerCase() === "canceled" || status.toLowerCase() === "cancelled"
-  );
+  return isCanceledSubscriptionStatus(status);
 }
 
 export function isAppUserStarterSubscription(
@@ -128,10 +129,20 @@ export function isAppUserStarterSubscription(
   return false;
 }
 
+function appUserStarterMatcher(
+  starterPlanKey: string,
+  starterOpenMeterPlanId: string | null,
+): StarterMatcher {
+  return (sub) =>
+    isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId);
+}
+
 export type AppUserCancelTargets = {
   livePaid: OpenMeterSubscriptionView | undefined;
   canceledPaid: OpenMeterSubscriptionView | undefined;
   liveStarter: OpenMeterSubscriptionView | undefined;
+  scheduledStarter: OpenMeterSubscriptionView | undefined;
+  scheduledIds: string[];
 };
 
 /** Classify listed OM subscriptions for cancel / pending-cancel decisions. */
@@ -140,23 +151,10 @@ export function pickAppUserCancelTargets(
   starterPlanKey: string,
   starterOpenMeterPlanId: string | null,
 ): AppUserCancelTargets {
-  return {
-    livePaid: listed.find(
-      (sub) =>
-        isAppUserLiveSubscriptionStatus(sub.status) &&
-        !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
-    ),
-    canceledPaid: listed.find(
-      (sub) =>
-        isAppUserCanceledSubscriptionStatus(sub.status) &&
-        !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
-    ),
-    liveStarter: listed.find(
-      (sub) =>
-        isAppUserLiveSubscriptionStatus(sub.status) &&
-        isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
-    ),
-  };
+  return classifySubscriptions(
+    listed,
+    appUserStarterMatcher(starterPlanKey, starterOpenMeterPlanId),
+  );
 }
 
 /** Resolve which subscription to unschedule/restore for a pending cancel. */
@@ -169,27 +167,10 @@ export function resolveAppUserResumeTarget(
   scheduledStarter: OpenMeterSubscriptionView | undefined;
   livePaid: OpenMeterSubscriptionView | undefined;
 } | null {
-  const canceledPaid = listed.find(
-    (sub) =>
-      isAppUserCanceledSubscriptionStatus(sub.status) &&
-      !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+  return resolveResumeTarget(
+    listed,
+    appUserStarterMatcher(starterPlanKey, starterOpenMeterPlanId),
   );
-  const livePaid = listed.find(
-    (sub) =>
-      isAppUserLiveSubscriptionStatus(sub.status) &&
-      !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
-  );
-  const scheduledStarter = listed.find(
-    (sub) =>
-      (sub.status.toLowerCase() === "scheduled" ||
-        sub.status.toLowerCase() === "pending") &&
-      isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
-  );
-
-  const target =
-    canceledPaid ?? (livePaid && scheduledStarter ? livePaid : null);
-  if (!target) return null;
-  return { target, scheduledStarter, livePaid };
 }
 
 /** Sync pending-cancel view from an already-listed subscription set. */
@@ -271,11 +252,27 @@ export async function cancelAppUserSubscription(input: {
     await loadStarterKeys(clientId);
 
   const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
-  const { livePaid, canceledPaid, liveStarter } = pickAppUserCancelTargets(
-    listed,
-    starterPlanKey,
-    starterOpenMeterPlanId,
-  );
+  let { livePaid, canceledPaid, liveStarter, scheduledIds } =
+    pickAppUserCancelTargets(listed, starterPlanKey, starterOpenMeterPlanId);
+
+  // Scheduled successors block cancel/change. Clear them first (owner parity).
+  if (scheduledIds.length > 0) {
+    await clearScheduledBeforeMutation({
+      scheduledIds,
+      // Only restore canceled Paid when there is no live row (owner upgrade parity).
+      canceledPaidId: livePaid ? null : (canceledPaid?.id ?? null),
+    });
+    const refreshed = await listOpenMeterSubscriptionsForCustomer(
+      client,
+      customer.id,
+    );
+    ({ livePaid, canceledPaid, liveStarter, scheduledIds } =
+      pickAppUserCancelTargets(
+        refreshed,
+        starterPlanKey,
+        starterOpenMeterPlanId,
+      ));
+  }
 
   if (!livePaid && liveStarter) {
     return {
@@ -342,6 +339,12 @@ export async function cancelAppUserSubscription(input: {
       timing: "next_billing_cycle",
     });
   } catch (err) {
+    if (isKonnectScheduledChangeForbidden(err)) {
+      throw new AppUserSubscriptionCancelError(
+        "cancel_failed",
+        "A scheduled plan change is blocking cancellation. Try again or contact support.",
+      );
+    }
     console.error("App-user subscription cancel failed", err);
     throw new AppUserSubscriptionCancelError(
       "cancel_failed",
