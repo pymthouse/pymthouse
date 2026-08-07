@@ -40,7 +40,6 @@ import {
   clearScheduledBeforeMutation,
   isKonnectScheduledChangeForbidden,
   isLiveSubscriptionStatus,
-  isScheduledSubscriptionStatus,
   listScheduledSubscriptionIds,
   pickMutationTargetSubscription,
 } from "./subscription-state";
@@ -601,6 +600,7 @@ export async function changeAppUserSubscriptionPlan(input: {
   let current = pickMutationTargetSubscription(listed, isStarter);
 
   // Clear scheduled successors so `/change` targets a live row only.
+  // Never call `/change` on a scheduled id (Konnect 403).
   if (scheduledIds.length > 0) {
     const canceledPaid = listed.find(
       (s) =>
@@ -624,28 +624,21 @@ export async function changeAppUserSubscriptionPlan(input: {
   }
 
   if (!current) {
-    // Fall back to primary (may be scheduled-only after clear failed soft) or checkout.
-    const primary = await getPrimaryOpenMeterSubscriptionForAppUser({
+    // No live subscription (including after deleting a scheduled-only plan) → Checkout.
+    const created = await createEndUserCheckout({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
+      planId: input.planId,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
     });
-    if (!primary || isScheduledSubscriptionStatus(primary.status)) {
-      const created = await createEndUserCheckout({
-        clientId: input.clientId,
-        externalUserId: input.externalUserId,
-        planId: input.planId,
-        successUrl: input.successUrl,
-        cancelUrl: input.cancelUrl,
-      });
-      return {
-        subscriptionId: created.subscriptionId ?? "",
-        planId: targetPlan.id,
-        effectiveAt: new Date().toISOString(),
-        timing: "immediate",
-        checkoutUrl: created.checkoutUrl,
-      };
-    }
-    current = primary;
+    return {
+      subscriptionId: created.subscriptionId ?? "",
+      planId: targetPlan.id,
+      effectiveAt: new Date().toISOString(),
+      timing: "immediate",
+      checkoutUrl: created.checkoutUrl,
+    };
   }
 
   if (!isLiveSubscriptionStatus(current.status)) {

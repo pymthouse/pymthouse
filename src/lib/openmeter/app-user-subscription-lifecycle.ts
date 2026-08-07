@@ -7,6 +7,7 @@ import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-clie
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
   cancelKonnectSubscription,
+  deleteKonnectSubscription,
   estimateNextBillingCycleIso,
   konnectSubscriptionBillingAnchorIso,
   restoreKonnectSubscription,
@@ -139,6 +140,7 @@ function appUserStarterMatcher(
 
 export type AppUserCancelTargets = {
   livePaid: OpenMeterSubscriptionView | undefined;
+  scheduledPaid: OpenMeterSubscriptionView | undefined;
   canceledPaid: OpenMeterSubscriptionView | undefined;
   liveStarter: OpenMeterSubscriptionView | undefined;
   scheduledStarter: OpenMeterSubscriptionView | undefined;
@@ -252,15 +254,38 @@ export async function cancelAppUserSubscription(input: {
     await loadStarterKeys(clientId);
 
   const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
-  let { livePaid, canceledPaid, liveStarter, scheduledIds } =
+  let { livePaid, scheduledPaid, canceledPaid, liveStarter, scheduledIds } =
     pickAppUserCancelTargets(listed, starterPlanKey, starterOpenMeterPlanId);
 
-  // Scheduled successors block cancel/change. Clear them first (owner parity).
-  if (scheduledIds.length > 0) {
+  // Not-yet-started paid plan: Konnect forbids /cancel on `scheduled` — DELETE.
+  if (!livePaid && scheduledPaid) {
+    try {
+      await deleteKonnectSubscription({ subscriptionId: scheduledPaid.id });
+    } catch (err) {
+      console.error("App-user scheduled subscription delete failed", err);
+      throw new AppUserSubscriptionCancelError(
+        "cancel_failed",
+        "Could not cancel the scheduled subscription",
+      );
+    }
+    const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
+      clientId,
+      scheduledPaid,
+    );
+    return {
+      subscriptionId: scheduledPaid.id,
+      planId,
+      planKey: scheduledPaid.planKey,
+      scheduledPlanKey: null,
+      effectiveAt: scheduledPaid.activeFrom ?? new Date().toISOString(),
+    };
+  }
+
+  // Scheduled successors block cancel on a live paid plan. Clear them first.
+  if (livePaid && scheduledIds.length > 0) {
     await clearScheduledBeforeMutation({
       scheduledIds,
-      // Only restore canceled Paid when there is no live row (owner upgrade parity).
-      canceledPaidId: livePaid ? null : (canceledPaid?.id ?? null),
+      canceledPaidId: null,
     });
     const refreshed = await listOpenMeterSubscriptionsForCustomer(
       client,

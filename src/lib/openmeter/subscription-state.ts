@@ -18,8 +18,10 @@ import type { OpenMeterSubscriptionView } from "./subscription-read";
 export function isLiveSubscriptionStatus(
   status: string | null | undefined,
 ): boolean {
-  const s = (status || "").toLowerCase();
-  return s === "active" || s === "trialing" || !s;
+  const s = (status || "").trim().toLowerCase();
+  // Empty/unknown must NOT count as live — Konnect rejects /cancel|/change on
+  // `scheduled`, and mis-classifying blanks as live caused staging 403s.
+  return s === "active" || s === "trialing";
 }
 
 /**
@@ -56,6 +58,8 @@ export type StarterMatcher = (sub: OpenMeterSubscriptionView) => boolean;
 
 export type ClassifiedSubscriptions = {
   livePaid: OpenMeterSubscriptionView | undefined;
+  /** Paid plan that has not started yet — only DELETE is legal (not /cancel). */
+  scheduledPaid: OpenMeterSubscriptionView | undefined;
   canceledPaid: OpenMeterSubscriptionView | undefined;
   liveStarter: OpenMeterSubscriptionView | undefined;
   scheduledStarter: OpenMeterSubscriptionView | undefined;
@@ -84,6 +88,10 @@ export function classifySubscriptions(
     livePaid: firstMatch(
       withId,
       (sub) => isLiveSubscriptionStatus(sub.status) && !isStarter(sub),
+    ),
+    scheduledPaid: firstMatch(
+      withId,
+      (sub) => isScheduledSubscriptionStatus(sub.status) && !isStarter(sub),
     ),
     canceledPaid: firstMatch(
       withId,
@@ -132,34 +140,35 @@ export function isKonnectScheduledChangeForbidden(error: unknown): boolean {
 }
 
 /**
- * Clear scheduled successors so a subsequent `/change` can succeed.
- * Tries immediate cancel first, then DELETE (Konnect only allows delete on
- * `scheduled`). Best-effort — callers re-list and assert afterward.
+ * Clear scheduled successors so a subsequent `/change` or `/cancel` can succeed.
+ * Konnect forbids `/cancel` on `scheduled` ("transition cancel in state
+ * scheduled not allowed") — DELETE first. Fall back to immediate cancel only
+ * if DELETE is rejected (row may have already become live).
  */
 export async function clearScheduledSubscriptions(
   subscriptionIds: string[],
 ): Promise<void> {
   for (const subscriptionId of subscriptionIds) {
     try {
+      await deleteKonnectSubscription({ subscriptionId });
+      continue;
+    } catch (deleteErr) {
+      console.warn(
+        "subscription-state: delete scheduled failed, trying cancel",
+        subscriptionId,
+        deleteErr instanceof Error ? deleteErr.message : deleteErr,
+      );
+    }
+    try {
       await cancelKonnectSubscription({
         subscriptionId,
         timing: "immediate",
       });
-      continue;
     } catch (cancelErr) {
       console.warn(
-        "subscription-state: cancel scheduled failed, trying delete",
+        "subscription-state: cancel scheduled failed",
         subscriptionId,
         cancelErr instanceof Error ? cancelErr.message : cancelErr,
-      );
-    }
-    try {
-      await deleteKonnectSubscription({ subscriptionId });
-    } catch (deleteErr) {
-      console.warn(
-        "subscription-state: delete scheduled failed",
-        subscriptionId,
-        deleteErr instanceof Error ? deleteErr.message : deleteErr,
       );
     }
   }

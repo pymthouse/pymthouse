@@ -35,7 +35,8 @@ const isStarter = (s: OpenMeterSubscriptionView) =>
 test("status predicates: live excludes scheduled", () => {
   assert.equal(isLiveSubscriptionStatus("active"), true);
   assert.equal(isLiveSubscriptionStatus("trialing"), true);
-  assert.equal(isLiveSubscriptionStatus(""), true);
+  assert.equal(isLiveSubscriptionStatus(""), false);
+  assert.equal(isLiveSubscriptionStatus(undefined), false);
   assert.equal(isLiveSubscriptionStatus("scheduled"), false);
   assert.equal(isLiveSubscriptionStatus("pending"), false);
   assert.equal(isLiveSubscriptionStatus("canceled"), false);
@@ -69,6 +70,16 @@ test("classifySubscriptions never treats scheduled as livePaid", () => {
   assert.equal(c.scheduledStarter?.id, "sched");
   assert.equal(c.canceledPaid?.id, "canceled");
   assert.deepEqual(c.scheduledIds, ["sched"]);
+});
+
+test("classifySubscriptions surfaces scheduledPaid when no live paid", () => {
+  const c = classifySubscriptions(
+    [sub({ id: "sched_paid", planKey: "paid", status: "scheduled" })],
+    isStarter,
+  );
+  assert.equal(c.livePaid, undefined);
+  assert.equal(c.scheduledPaid?.id, "sched_paid");
+  assert.deepEqual(c.scheduledIds, ["sched_paid"]);
 });
 
 test("pickMutationTargetSubscription prefers live paid over scheduled successor", () => {
