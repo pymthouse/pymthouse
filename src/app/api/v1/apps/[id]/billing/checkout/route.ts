@@ -3,6 +3,7 @@ import { authenticateAppClient } from "@/lib/auth";
 import { runActivationGate } from "@/lib/activation/app-activation";
 import { activationErrorResponse } from "@/lib/activation/problem";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
+import { describeOpenMeterError } from "@/lib/openmeter/plan-errors";
 import { createEndUserCheckout } from "@/lib/openmeter/subscriptions-billing";
 
 async function resolveCheckoutApp(clientId: string, request: NextRequest) {
@@ -51,6 +52,7 @@ async function runSellGate(appId: string): Promise<NextResponse | null> {
 
 function checkoutErrorResponse(err: unknown): NextResponse {
   const message = err instanceof Error ? err.message : String(err);
+  const detail = describeOpenMeterError(err);
   if (message.includes("OPENMETER_ROUTE_MODE") || message.includes("OPENMETER_URL")) {
     return NextResponse.json(
       { error: "Checkout is not available for this deployment" },
@@ -76,7 +78,7 @@ function checkoutErrorResponse(err: unknown): NextResponse {
     /default payment method/i.test(message) ||
     /invalid billing setup/i.test(message)
   ) {
-    console.error("checkout failed:", message);
+    console.error("checkout failed:", detail);
     return NextResponse.json(
       {
         error:
@@ -86,7 +88,7 @@ function checkoutErrorResponse(err: unknown): NextResponse {
     );
   }
   if (/\b409\b/.test(message) || /conflict error/i.test(message)) {
-    console.error("checkout failed:", message);
+    console.error("checkout failed:", detail);
     return NextResponse.json(
       {
         error:
@@ -95,7 +97,7 @@ function checkoutErrorResponse(err: unknown): NextResponse {
       { status: 409 },
     );
   }
-  console.error("checkout failed:", message);
+  console.error("checkout failed:", detail);
   return NextResponse.json({ error: "Checkout failed" }, { status: 502 });
 }
 

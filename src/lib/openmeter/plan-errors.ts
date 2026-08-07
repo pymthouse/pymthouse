@@ -2,6 +2,34 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "";
 }
 
+/**
+ * Konnect problem bodies often omit `detail`, so the OpenMeter SDK renders
+ * "[409]: undefined" and the real reason is lost. Fold the problem `title`,
+ * `type` and raw body into the log line so conflicts stay diagnosable.
+ */
+export function describeOpenMeterError(err: unknown): string {
+  const parts = [errorMessage(err) || String(err)];
+  const problem = err as {
+    title?: string;
+    type?: string;
+    __raw?: unknown;
+  };
+  if (problem.title) {
+    parts.push(`title=${problem.title}`);
+  }
+  if (problem.type) {
+    parts.push(`type=${problem.type}`);
+  }
+  if (problem.__raw !== undefined) {
+    try {
+      parts.push(`raw=${JSON.stringify(problem.__raw)}`);
+    } catch {
+      /* non-serializable problem body */
+    }
+  }
+  return parts.join(" | ");
+}
+
 /** True when OpenMeter has no plan for a stale stored id (update/publish 404). */
 export function isOpenMeterPlanNotFoundError(err: unknown): boolean {
   const message = errorMessage(err);

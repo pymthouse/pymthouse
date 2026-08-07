@@ -152,6 +152,24 @@ async function readFetchJson(res: Response): Promise<{
   return { ok: res.ok, status: res.status, body };
 }
 
+/**
+ * Plan mutations can fail with an activation problem+json body, which carries
+ * `detail`/`title` instead of `error`. Without this the UI shows a bare status
+ * code and the plan silently appears to never have been created.
+ */
+function readMutationError(
+  body: Record<string, unknown>,
+  fallback: string,
+): string {
+  for (const key of ["error", "detail", "title"] as const) {
+    const value = body[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return fallback;
+}
+
 function usdMicrosToDisplay(micros: string | null | undefined): string {
   if (!micros) return "";
   return usdMicrosToCentsDisplay(micros);
@@ -1556,11 +1574,7 @@ function CustomPlanCard({
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
-        setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to save (${res.status})`,
-        );
+        setError(readMutationError(data.body, `Failed to save (${res.status})`));
         return;
       }
       if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
@@ -1793,9 +1807,7 @@ function AddPlanPanel({
       const data = await readFetchJson(res);
       if (!data.ok) {
         setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to create (${res.status})`,
+          readMutationError(data.body, `Failed to create (${res.status})`),
         );
         return;
       }

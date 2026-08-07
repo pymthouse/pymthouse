@@ -1379,6 +1379,27 @@ test("isOpenMeterConflictError detects duplicate entitlement failures", async ()
   assert.equal(isOpenMeterConflictError(new Error("validation failed")), false);
 });
 
+test("describeOpenMeterError recovers reasons the SDK drops as undefined", async () => {
+  const { describeOpenMeterError } = await import("./plan-errors");
+
+  // Konnect problem body without `detail` — the SDK renders "[409]: undefined".
+  const conflict = new Error(
+    "Request failed (https://us.api.konghq.com/v3/openmeter/subscriptions) [409]: undefined",
+  );
+  Object.assign(conflict, {
+    title: "Conflict",
+    type: "about:blank",
+    __raw: { title: "Conflict", status: 409, extra: "customer already has a subscription" },
+  });
+  const described = describeOpenMeterError(conflict);
+  assert.ok(described.includes("[409]: undefined"));
+  assert.ok(described.includes("title=Conflict"));
+  assert.ok(described.includes("customer already has a subscription"));
+
+  // A plain Error still describes as its message, with nothing appended.
+  assert.equal(describeOpenMeterError(new Error("boom")), "boom");
+});
+
 test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {
   const { isOpenMeterStripeBillingError, isOpenMeterConflictError } = await import("./plan-errors");
   const stripeErr = new Error(
