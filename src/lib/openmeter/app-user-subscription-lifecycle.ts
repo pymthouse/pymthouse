@@ -98,24 +98,121 @@ function assertConfirm(
   }
 }
 
-function isLiveStatus(status: string): boolean {
+export function isAppUserLiveSubscriptionStatus(status: string): boolean {
   const s = status.toLowerCase();
-  return s === "active" || s === "trialing" || s === "scheduled" || s === "pending" || !s;
+  return (
+    s === "active" ||
+    s === "trialing" ||
+    s === "scheduled" ||
+    s === "pending" ||
+    !s
+  );
 }
 
-function isCanceledStatus(status: string): boolean {
-  return status.toLowerCase() === "canceled" || status.toLowerCase() === "cancelled";
+export function isAppUserCanceledSubscriptionStatus(status: string): boolean {
+  return (
+    status.toLowerCase() === "canceled" || status.toLowerCase() === "cancelled"
+  );
 }
 
-function isStarterSub(
+export function isAppUserStarterSubscription(
   sub: OpenMeterSubscriptionView,
   starterPlanKey: string,
   starterOpenMeterPlanId: string | null,
 ): boolean {
   if (isOwnerStarterPlanKey(sub.planKey)) return true;
   if (sub.planKey && sub.planKey === starterPlanKey) return true;
-  if (starterOpenMeterPlanId && sub.planId === starterOpenMeterPlanId) return true;
+  if (starterOpenMeterPlanId && sub.planId === starterOpenMeterPlanId) {
+    return true;
+  }
   return false;
+}
+
+export type AppUserCancelTargets = {
+  livePaid: OpenMeterSubscriptionView | undefined;
+  canceledPaid: OpenMeterSubscriptionView | undefined;
+  liveStarter: OpenMeterSubscriptionView | undefined;
+};
+
+/** Classify listed OM subscriptions for cancel / pending-cancel decisions. */
+export function pickAppUserCancelTargets(
+  listed: OpenMeterSubscriptionView[],
+  starterPlanKey: string,
+  starterOpenMeterPlanId: string | null,
+): AppUserCancelTargets {
+  return {
+    livePaid: listed.find(
+      (sub) =>
+        isAppUserLiveSubscriptionStatus(sub.status) &&
+        !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+    ),
+    canceledPaid: listed.find(
+      (sub) =>
+        isAppUserCanceledSubscriptionStatus(sub.status) &&
+        !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+    ),
+    liveStarter: listed.find(
+      (sub) =>
+        isAppUserLiveSubscriptionStatus(sub.status) &&
+        isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+    ),
+  };
+}
+
+/** Resolve which subscription to unschedule/restore for a pending cancel. */
+export function resolveAppUserResumeTarget(
+  listed: OpenMeterSubscriptionView[],
+  starterPlanKey: string,
+  starterOpenMeterPlanId: string | null,
+): {
+  target: OpenMeterSubscriptionView;
+  scheduledStarter: OpenMeterSubscriptionView | undefined;
+  livePaid: OpenMeterSubscriptionView | undefined;
+} | null {
+  const canceledPaid = listed.find(
+    (sub) =>
+      isAppUserCanceledSubscriptionStatus(sub.status) &&
+      !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+  );
+  const livePaid = listed.find(
+    (sub) =>
+      isAppUserLiveSubscriptionStatus(sub.status) &&
+      !isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+  );
+  const scheduledStarter = listed.find(
+    (sub) =>
+      (sub.status.toLowerCase() === "scheduled" ||
+        sub.status.toLowerCase() === "pending") &&
+      isAppUserStarterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+  );
+
+  const target =
+    canceledPaid ?? (livePaid && scheduledStarter ? livePaid : null);
+  if (!target) return null;
+  return { target, scheduledStarter, livePaid };
+}
+
+/** Sync pending-cancel view from an already-listed subscription set. */
+export function deriveAppUserPendingCancel(input: {
+  listed: OpenMeterSubscriptionView[];
+  starterPlanKey: string;
+  starterOpenMeterPlanId: string | null;
+  planId: string | null;
+  planName: string | null;
+}): AppUserPendingCancel | null {
+  const { canceledPaid } = pickAppUserCancelTargets(
+    input.listed,
+    input.starterPlanKey,
+    input.starterOpenMeterPlanId,
+  );
+  if (!canceledPaid) return null;
+  return {
+    subscriptionId: canceledPaid.id,
+    planId: input.planId,
+    planKey: canceledPaid.planKey,
+    planName: input.planName,
+    effectiveAt: canceledPaid.activeTo,
+  };
 }
 
 async function loadStarterKeys(clientId: string): Promise<{
@@ -174,20 +271,10 @@ export async function cancelAppUserSubscription(input: {
     await loadStarterKeys(clientId);
 
   const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
-  const livePaid = listed.find(
-    (sub) =>
-      isLiveStatus(sub.status) &&
-      !isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
-  );
-  const canceledPaid = listed.find(
-    (sub) =>
-      isCanceledStatus(sub.status) &&
-      !isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
-  );
-  const liveStarter = listed.find(
-    (sub) =>
-      isLiveStatus(sub.status) &&
-      isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
+  const { livePaid, canceledPaid, liveStarter } = pickAppUserCancelTargets(
+    listed,
+    starterPlanKey,
+    starterOpenMeterPlanId,
   );
 
   if (!livePaid && liveStarter) {
@@ -223,7 +310,7 @@ export async function cancelAppUserSubscription(input: {
     );
   }
 
-  if (isStarterSub(livePaid, starterPlanKey, starterOpenMeterPlanId)) {
+  if (isAppUserStarterSubscription(livePaid, starterPlanKey, starterOpenMeterPlanId)) {
     throw new AppUserSubscriptionCancelError(
       "already_starter",
       "Starter plans cannot be canceled",
@@ -332,33 +419,18 @@ export async function resumeAppUserSubscription(input: {
   const { starterPlanKey, starterOpenMeterPlanId } = await loadStarterKeys(clientId);
   const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
 
-  const canceledPaid = listed.find(
-    (sub) =>
-      isCanceledStatus(sub.status) &&
-      !isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
+  const resume = resolveAppUserResumeTarget(
+    listed,
+    starterPlanKey,
+    starterOpenMeterPlanId,
   );
-  const livePaid = listed.find(
-    (sub) =>
-      isLiveStatus(sub.status) &&
-      !isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
-  );
-  const scheduledStarter = listed.find(
-    (sub) =>
-      (sub.status.toLowerCase() === "scheduled" ||
-        sub.status.toLowerCase() === "pending") &&
-      isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
-  );
-
-  const target =
-    canceledPaid ??
-    (livePaid && scheduledStarter ? livePaid : null);
-
-  if (!target) {
+  if (!resume) {
     throw new AppUserSubscriptionResumeError(
       "nothing_to_resume",
       "No scheduled cancellation to undo",
     );
   }
+  const { target, scheduledStarter, livePaid } = resume;
 
   try {
     if (scheduledStarter?.id && livePaid?.id === target.id) {
@@ -423,10 +495,10 @@ export async function resolveAppUserPendingCancel(input: {
   const { starterPlanKey, starterOpenMeterPlanId } = await loadStarterKeys(
     input.clientId,
   );
-  const canceledPaid = input.listed.find(
-    (sub) =>
-      isCanceledStatus(sub.status) &&
-      !isStarterSub(sub, starterPlanKey, starterOpenMeterPlanId),
+  const { canceledPaid } = pickAppUserCancelTargets(
+    input.listed,
+    starterPlanKey,
+    starterOpenMeterPlanId,
   );
   if (!canceledPaid) return null;
 
@@ -444,11 +516,11 @@ export async function resolveAppUserPendingCancel(input: {
     planName = rows[0]?.name ?? null;
   }
 
-  return {
-    subscriptionId: canceledPaid.id,
+  return deriveAppUserPendingCancel({
+    listed: input.listed,
+    starterPlanKey,
+    starterOpenMeterPlanId,
     planId,
-    planKey: canceledPaid.planKey,
     planName,
-    effectiveAt: canceledPaid.activeTo,
-  };
+  });
 }

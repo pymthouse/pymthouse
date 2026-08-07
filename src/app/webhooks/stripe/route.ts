@@ -15,6 +15,8 @@ import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 export const runtime = "nodejs";
 
+const TAG = "[stripe-webhook]";
+
 /**
  * Stripe Connect platform webhook for account lifecycle (KYC / readiness).
  * Configure in Dashboard → Developers → Webhooks (Connect endpoint):
@@ -31,27 +33,77 @@ export const runtime = "nodejs";
  * Prefer STRIPE_CONNECT_WEBHOOK_SECRET when the Connect endpoint has its own
  * signing secret; falls back to STRIPE_WEBHOOK_SECRET.
  */
+function eventTypeFromBody(parsed: unknown): string {
+  const rawType =
+    parsed && typeof parsed === "object" && "type" in parsed
+      ? (parsed as { type?: unknown }).type
+      : undefined;
+  return typeof rawType === "string" ? rawType : "";
+}
+
+async function handlePaymentMethodRestore(
+  rawBody: string,
+): Promise<Response | null> {
+  const restoreTarget = parseStripePaymentMethodAttached(rawBody);
+  if (restoreTarget) {
+    await restoreAppUserBillingProfileAfterPaymentMethodAttached(restoreTarget);
+    return NextResponse.json({
+      received: true,
+      restored: true,
+      clientId: restoreTarget.clientId,
+    });
+  }
+
+  const checkoutSessionId = parseStripeCompletedCheckoutSessionId(rawBody);
+  if (!checkoutSessionId) {
+    return null;
+  }
+  const restored =
+    await restoreAppUserBillingProfileForCheckoutSession(checkoutSessionId);
+  return NextResponse.json({ received: true, restored });
+}
+
+async function handleAccountUpdated(rawBody: string): Promise<Response> {
+  const account = parseStripeAccountUpdated(rawBody);
+  if (!account) {
+    return NextResponse.json({ received: true, ignored: "malformed_account" });
+  }
+  const result = await applyConnectedAccountWebhookUpdate(account);
+  return NextResponse.json({
+    received: true,
+    updated: result.updated,
+    clientId: result.clientId ?? null,
+  });
+}
+
+function handlerFailed(err: unknown, label: string): Response {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(TAG, `${label} failed:`, sanitizeForLog(message));
+  return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+}
+
 export async function POST(request: Request): Promise<Response> {
-  const tag = "[stripe-webhook]";
   let secrets: string[];
   try {
     secrets = resolveStripeWebhookSecrets();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(tag, "misconfigured:", sanitizeForLog(message));
+    console.error(TAG, "misconfigured:", sanitizeForLog(message));
     return NextResponse.json({ error: "webhook_misconfigured" }, { status: 503 });
   }
 
   const rawBody = await request.text();
   const signatureHeader = request.headers.get("stripe-signature");
-  if (!secrets.some((secret) =>
-    verifyStripeWebhookSignature({
-      rawBody,
-      signatureHeader,
-      secret,
-    }),
-  )) {
-    console.warn(tag, "signature rejected");
+  if (
+    !secrets.some((secret) =>
+      verifyStripeWebhookSignature({
+        rawBody,
+        signatureHeader,
+        secret,
+      }),
+    )
+  ) {
+    console.warn(TAG, "signature rejected");
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
 
@@ -61,57 +113,22 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const rawType =
-    parsed && typeof parsed === "object" && "type" in parsed
-      ? (parsed as { type?: unknown }).type
-      : undefined;
-  const type = typeof rawType === "string" ? rawType : "";
+  const type = eventTypeFromBody(parsed);
 
-  const restoreTarget = parseStripePaymentMethodAttached(rawBody);
-  if (restoreTarget) {
-    try {
-      await restoreAppUserBillingProfileAfterPaymentMethodAttached(restoreTarget);
-      return NextResponse.json({
-        received: true,
-        restored: true,
-        clientId: restoreTarget.clientId,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(tag, "payment method restore failed:", sanitizeForLog(message));
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  try {
+    const restored = await handlePaymentMethodRestore(rawBody);
+    if (restored) {
+      return restored;
     }
-  }
-
-  const checkoutSessionId = parseStripeCompletedCheckoutSessionId(rawBody);
-  if (checkoutSessionId) {
-    try {
-      const restored =
-        await restoreAppUserBillingProfileForCheckoutSession(checkoutSessionId);
-      return NextResponse.json({ received: true, restored });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(tag, "payment method restore failed:", sanitizeForLog(message));
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
-    }
+  } catch (err) {
+    return handlerFailed(err, "payment method restore");
   }
 
   if (type === "account.updated") {
-    const account = parseStripeAccountUpdated(rawBody);
-    if (!account) {
-      return NextResponse.json({ received: true, ignored: "malformed_account" });
-    }
     try {
-      const result = await applyConnectedAccountWebhookUpdate(account);
-      return NextResponse.json({
-        received: true,
-        updated: result.updated,
-        clientId: result.clientId ?? null,
-      });
+      return await handleAccountUpdated(rawBody);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(tag, "account.updated failed:", sanitizeForLog(message));
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+      return handlerFailed(err, "account.updated");
     }
   }
 

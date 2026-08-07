@@ -6,6 +6,7 @@ import {
   createAppUserPaymentMethodCheckout,
   listAppUserPaymentMethods,
   resolveAppUserCheckoutReturnUrl,
+  restoreAppUserBillingProfileForCheckoutSession,
 } from "./app-user-payment-method";
 
 test("listAppUserPaymentMethods returns [] for blank ids", async () => {
@@ -23,6 +24,11 @@ test("listAppUserPaymentMethods returns [] for blank ids", async () => {
     }),
     [],
   );
+});
+
+test("restoreAppUserBillingProfileForCheckoutSession ignores blank session ids", async () => {
+  assert.equal(await restoreAppUserBillingProfileForCheckoutSession(""), false);
+  assert.equal(await restoreAppUserBillingProfileForCheckoutSession("   "), false);
 });
 
 test("createAppUserPaymentMethodCheckout requires ids", async () => {
