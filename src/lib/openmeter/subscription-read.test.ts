@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { enrichSubscriptionActiveWindow } from "./subscription-read";
+import {
+  enrichSubscriptionActiveWindow,
+  pickAppUserSubscriptionToReport,
+} from "./subscription-read";
 import type { OpenMeterSubscriptionView } from "./subscription-read";
 
 function withKonnectEnv(t: test.TestContext): void {
@@ -96,4 +99,40 @@ test("enrichSubscriptionActiveWindow keeps the row when the lookup fails", async
 
   const row = sub({ id: "01KZCN0AH450JWA381D2AN7NJK", status: "canceled" });
   assert.deepEqual(await enrichSubscriptionActiveWindow(row), row);
+});
+
+const isStarterByKey = (s: OpenMeterSubscriptionView) =>
+  s.planKey === "app_plan_starter";
+
+test("pickAppUserSubscriptionToReport reports a cancel-at-period-end row", () => {
+  // Konnect leaves exactly this after a cancel: the occupying `canceled` row
+  // plus the ended row it superseded, and no live or scheduled row anywhere.
+  const canceled = sub({ id: "sub_canceled", status: "canceled" });
+  const ended = sub({
+    id: "sub_ended",
+    status: "inactive",
+    planKey: "app_plan_starter",
+  });
+
+  assert.equal(
+    pickAppUserSubscriptionToReport([ended, canceled], isStarterByKey),
+    canceled,
+  );
+});
+
+test("pickAppUserSubscriptionToReport prefers a live row over a canceled one", () => {
+  const canceled = sub({ id: "sub_canceled", status: "canceled" });
+  const live = sub({ id: "sub_live", status: "active" });
+
+  assert.equal(
+    pickAppUserSubscriptionToReport([canceled, live], isStarterByKey),
+    live,
+  );
+});
+
+test("pickAppUserSubscriptionToReport reports nothing for ended rows only", () => {
+  const ended = sub({ id: "sub_ended", status: "inactive" });
+
+  assert.equal(pickAppUserSubscriptionToReport([ended], isStarterByKey), null);
+  assert.equal(pickAppUserSubscriptionToReport([], isStarterByKey), null);
 });

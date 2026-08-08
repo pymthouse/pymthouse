@@ -14,6 +14,7 @@ import {
   isPresentSubscriptionStatus,
   pickMutationTargetSubscription,
   pickOccupyingCanceledSubscription,
+  type StarterMatcher,
 } from "./subscription-state";
 
 const OPENMETER_SUBSCRIPTION_ACTIVE_STATUSES = new Set([
@@ -372,22 +373,33 @@ async function selectPrimaryOpenMeterSubscriptionForAppUser(input: {
     client,
     customer.id,
   );
-  const isStarter = (sub: OpenMeterSubscriptionView) =>
-    isStarterOpenMeterSubscription(sub, starterPlanKey, starterOpenMeterPlanId);
+  return pickAppUserSubscriptionToReport(listed, (sub) =>
+    isStarterOpenMeterSubscription(sub, starterPlanKey, starterOpenMeterPlanId),
+  );
+}
 
+/**
+ * Choose the one subscription a customer's GET/checkout should report.
+ * @internal Exported for unit tests.
+ */
+export function pickAppUserSubscriptionToReport(
+  listed: OpenMeterSubscriptionView[],
+  isStarter: StarterMatcher,
+): OpenMeterSubscriptionView | null {
   // Mutation-safe: never return a scheduled row when a live one exists.
   const mutationTarget = pickMutationTargetSubscription(listed, isStarter);
   if (mutationTarget) {
     return mutationTarget;
   }
 
-  // Display fallback: scheduled-only wallets (no live row yet).
+  // Display fallback: scheduled-only wallets (no live row yet). This must fall
+  // through when empty rather than bail out — a cancel-at-period-end customer
+  // has no live or scheduled row at all, only the occupying `canceled` row
+  // resolved at the end, and returning null here reported "no subscription"
+  // for every user who had scheduled a cancel.
   const present = listed.filter((item) =>
     isPresentSubscriptionStatus(item.status),
   );
-  if (present.length === 0) {
-    return null;
-  }
 
   const paid = present.filter((item) => !isStarter(item));
   const primaryPaid = pickPrimarySubscription(paid);
