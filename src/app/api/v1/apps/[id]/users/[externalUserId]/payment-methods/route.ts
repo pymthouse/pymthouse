@@ -33,12 +33,20 @@ export async function GET(
     return access;
   }
 
-  return NextResponse.json({
-    paymentMethods: await listAppUserPaymentMethods({
+  // Fail open on provider outages — list UI should show "none on file", not
+  // a hard 500. Wallet M2M (`…/billing/wallet/payment-methods`) maps the same
+  // throws to 502/503 via walletUpstreamErrorResponse.
+  let paymentMethods: Awaited<ReturnType<typeof listAppUserPaymentMethods>> =
+    [];
+  try {
+    paymentMethods = await listAppUserPaymentMethods({
       clientId: access.app.id,
       externalUserId: access.externalUserId,
-    }),
-  });
+    });
+  } catch {
+    paymentMethods = [];
+  }
+  return NextResponse.json({ paymentMethods });
 }
 
 /**

@@ -302,25 +302,28 @@ export type ResumeTarget = {
  * Resolve which subscription to unschedule/restore for a pending cancel.
  * Prefer canceled paid; else live paid + scheduled starter (legacy change path).
  *
- * The canceled row must still occupy the customer slot: an ended row left behind
- * by a `/change` is history, not a pending cancel, and resuming it would act on
- * a plan the user already left. Filtering it here keeps this in step with the
- * `pendingCancel` the GET reports, so callers get `nothing_to_resume` rather
- * than a restore that can only fail.
+ * Pick the first *occupying* canceled paid row — not `classifySubscriptions`'
+ * first canceled/inactive paid. After paid→paid `/change`, Konnect often lists
+ * an ended predecessor ahead of the cancel-at-period-end successor; first-match
+ * then filters that predecessor out and wrongly reports nothing to resume while
+ * GET still shows `pendingCancel` on the occupying row.
  */
 export function resolveResumeTarget(
   listed: OpenMeterSubscriptionView[],
   isStarter: StarterMatcher,
 ): ResumeTarget | null {
-  const { livePaid, canceledPaid, scheduledStarter } = classifySubscriptions(
+  const { livePaid, scheduledStarter } = classifySubscriptions(
     listed,
     isStarter,
   );
 
-  const resumableCanceledPaid =
-    canceledPaid && isOccupyingCanceledSubscription(canceledPaid)
-      ? canceledPaid
-      : undefined;
+  const resumableCanceledPaid = listed.find(
+    (sub) =>
+      Boolean(sub.id) &&
+      isCanceledSubscriptionStatus(sub.status) &&
+      !isStarter(sub) &&
+      isOccupyingCanceledSubscription(sub),
+  );
   const target =
     resumableCanceledPaid ??
     (livePaid && scheduledStarter ? livePaid : undefined);
