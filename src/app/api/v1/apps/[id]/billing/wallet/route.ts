@@ -72,7 +72,7 @@ export async function GET(
       listAppUserPaymentMethods({
         clientId: access.app.id,
         externalUserId: billingTarget.target.externalUserId,
-      }),
+      }).catch(() => null),
       usagePlanRowsPromise,
     ]);
     const balance = trialBalance
@@ -87,7 +87,10 @@ export async function GET(
       clientId,
       balance,
       paymentMethod: {
-        hasDefault: paymentMethods.some((pm) => pm.isDefault),
+        // null = unknown (provider outage), matching ownerHasChargeablePaymentMethod.
+        hasDefault: paymentMethods
+          ? paymentMethods.some((pm) => pm.isDefault)
+          : null,
       },
       payPerUsePlans: usagePlanRows.map((usagePlan) => ({
         planId: usagePlan.id,

@@ -365,6 +365,27 @@ test("resolveResumeTarget ignores canceled rows that no longer occupy", () => {
   );
 });
 
+test("resolveResumeTarget skips ended predecessor ahead of occupying CAPE paid", () => {
+  // Paid A → paid B, then cancel B at period end. Konnect lists ended A first;
+  // resume must still target B (what GET reports as pendingCancel).
+  const occupying = sub({
+    id: "paid_b_cape",
+    planKey: "paid_b",
+    status: "canceled",
+    activeTo: "2026-09-08T00:00:00.000Z",
+  });
+  assert.equal(
+    resolveResumeTarget(
+      [
+        sub({ id: "paid_a_ended", planKey: "paid_a", status: "inactive" }),
+        occupying,
+      ],
+      isStarter,
+    )?.target.id,
+    "paid_b_cape",
+  );
+});
+
 test("isKonnectScheduledChangeForbidden matches Konnect 403 detail", () => {
   assert.equal(
     isKonnectScheduledChangeForbidden(

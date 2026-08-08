@@ -13,6 +13,7 @@ import { resolveAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
 import { scheduleThresholdInvoiceRaise } from "@/lib/billing/threshold-invoice-worker";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 const DEFAULT_EXPIRY_TTL_SECONDS = 60;
 const DEFAULT_BALANCE_CACHE_TTL_SECONDS = 20;
@@ -179,14 +180,19 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
   const cache = getSharedSpendableCache();
   const expiryTtlSeconds = resolveExpiryTtlSeconds();
 
+  // Custom gate (not createBalanceGate): zero spendable may still authorize
+  // when overage-eligible, then opportunistically raise gathering invoices.
   return async function checkBalance(ctx) {
     let rawBalance: string | null;
     try {
       rawBalance = await cache.get(ctx.identity);
     } catch (err) {
+      // Name the identity: the client only ever sees a bare 503, so this line
+      // is the sole record of which customer's lookup failed. Sanitize so
+      // token/user identity material cannot forge log lines (CWE-117).
       console.warn(
-        `[remote-signer] live balance check failed client_id=${ctx.identity.client_id} subject=${ctx.identity.usage_subject}:`,
-        err instanceof Error ? err.message : String(err),
+        `[remote-signer] live balance check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+        sanitizeForLog(err),
       );
       throw new WebhookError("billing balance lookup failed", {
         status: REMOTE_SIGNER_HTTP_STATUS.BILLING_UNAVAILABLE,
@@ -197,8 +203,8 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
     const balance = parseUsdMicros(rawBalance);
     if (balance === null) {
       console.warn(
-        `[remote-signer] live balance check failed client_id=${ctx.identity.client_id} subject=${ctx.identity.usage_subject}:`,
-        `balance is not an integer micros value: ${String(rawBalance)}`,
+        `[remote-signer] live balance check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+        sanitizeForLog(`balance is not an integer micros value: ${String(rawBalance)}`),
       );
       throw new WebhookError("billing balance unavailable", {
         status: REMOTE_SIGNER_HTTP_STATUS.BILLING_UNAVAILABLE,
@@ -212,8 +218,8 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
         allowsOverage = await identityAllowsOverage(ctx.identity);
       } catch (err) {
         console.warn(
-          `[remote-signer] overage check failed client_id=${ctx.identity.client_id} subject=${ctx.identity.usage_subject}:`,
-          err instanceof Error ? err.message : String(err),
+          `[remote-signer] overage check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+          sanitizeForLog(err),
         );
         allowsOverage = false;
       }

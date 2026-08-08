@@ -258,8 +258,10 @@ export function resolveAppUserCheckoutReturnUrl(
 
 /**
  * List payment methods on the app end-user's Stripe customer (not owner wallet).
- * Lookup-only — returns [] when the customer does not exist yet.
- * Best-effort empty list on transport failures (parity with owner list).
+ * Lookup-only — returns [] when the customer does not exist yet / Connect is
+ * not ready / Stripe is unconfigured. Provider failures propagate so wallet
+ * M2M (`…/billing/wallet/payment-methods`) can map them to 502/503; UI list
+ * routes should catch and fail open to `[]`.
  */
 export async function listAppUserPaymentMethods(input: {
   clientId: string;
@@ -274,72 +276,67 @@ export async function listAppUserPaymentMethods(input: {
     return [];
   }
 
-  try {
-    const billingConfig = await getAppBillingConfig(clientId);
-    if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
-      if (!isMerchantConnectPaymentsReady(billingConfig)) {
-        return [];
-      }
-      const connectedAccountId =
-        billingConfig?.stripeConnectedAccountId?.trim() || "";
-      const merchantCustomer = await getAppUserStripeCustomer({
-        clientId,
-        externalUserId,
-      });
-      if (
-        !connectedAccountId ||
-        merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
-        !merchantCustomer.stripeCustomerId?.trim()
-      ) {
-        return [];
-      }
-
-      const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-      const { items } = await buildOwnerPaymentMethodList({
-        stripeCustomerId: merchantCustomer.stripeCustomerId,
-        konnectDefaultPaymentMethodId: null,
-        defaultFirstPaymentMethod: true,
-        deps: {
-          fetchImpl: fetch,
-          signal,
-          stripeAccount: connectedAccountId,
-        },
-      });
-      return items;
-    }
-
-    if (!isHostedAdminClientAvailable()) {
+  const billingConfig = await getAppBillingConfig(clientId);
+  if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
+    if (!isMerchantConnectPaymentsReady(billingConfig)) {
       return [];
     }
-    const client = getHostedAdminClient();
-    const publicClientId = await resolveOpenMeterMeterClientId(clientId);
-    const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-    const customer = await findOpenMeterCustomerByKey(client, customerKey);
-    const customerId = customer?.id?.trim();
-    if (!customerId) {
+    const connectedAccountId =
+      billingConfig?.stripeConnectedAccountId?.trim() || "";
+    const merchantCustomer = await getAppUserStripeCustomer({
+      clientId,
+      externalUserId,
+    });
+    if (
+      !connectedAccountId ||
+      merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
+      !merchantCustomer.stripeCustomerId?.trim()
+    ) {
       return [];
     }
+
     const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-    const konnect = await getKonnectStripeBillingRefs(customerId, signal);
-    const stripeCustomerId =
-      konnect.stripeCustomerId ??
-      (await getStripeCustomerAppDataId({
-        client,
-        customerId,
-      }));
-    if (!stripeCustomerId) {
-      return [];
-    }
     const { items } = await buildOwnerPaymentMethodList({
-      stripeCustomerId,
-      konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
-      deps: { fetchImpl: fetch, signal },
+      stripeCustomerId: merchantCustomer.stripeCustomerId,
+      konnectDefaultPaymentMethodId: null,
+      defaultFirstPaymentMethod: true,
+      deps: {
+        fetchImpl: fetch,
+        signal,
+        stripeAccount: connectedAccountId,
+      },
     });
     return items;
-  } catch (err) {
-    console.warn("app-user-payment-method: list failed", sanitizeForLog(err));
+  }
+
+  if (!isHostedAdminClientAvailable()) {
     return [];
   }
+  const client = getHostedAdminClient();
+  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
+  const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
+  const customer = await findOpenMeterCustomerByKey(client, customerKey);
+  const customerId = customer?.id?.trim();
+  if (!customerId) {
+    return [];
+  }
+  const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+  const konnect = await getKonnectStripeBillingRefs(customerId, signal);
+  const stripeCustomerId =
+    konnect.stripeCustomerId ??
+    (await getStripeCustomerAppDataId({
+      client,
+      customerId,
+    }));
+  if (!stripeCustomerId) {
+    return [];
+  }
+  const { items } = await buildOwnerPaymentMethodList({
+    stripeCustomerId,
+    konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
+    deps: { fetchImpl: fetch, signal },
+  });
+  return items;
 }
 
 /**

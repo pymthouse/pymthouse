@@ -415,6 +415,35 @@ test("resolveAppUserResumeTarget keeps a cancel-at-period-end primary resumable"
   assert.equal(appUserSubscriptionResumeHttpStatus("resume_failed"), 502);
 });
 
+test("resolveAppUserResumeTarget resumes occupying CAPE after paid→paid change", () => {
+  // Predecessor ends (`inactive`); successor is cancel-at-period-end. GET reports
+  // pendingCancel on B; resume must not 404 nothing_to_resume because A is first.
+  const occupying = sub({
+    id: "paid_b_cape",
+    planKey: "paid_b",
+    status: "canceled",
+    activeFrom: "2026-08-08T03:00:31.842771Z",
+    activeTo: "2026-09-08T03:00:31.842771Z",
+  });
+  const listed = [
+    sub({ id: "paid_a_ended", planKey: "paid_a", status: "inactive" }),
+    occupying,
+  ];
+
+  assert.equal(
+    deriveAppUserPendingCancel({
+      subscription: occupying,
+      planId: "b",
+      planName: "Plan B",
+    })?.subscriptionId,
+    "paid_b_cape",
+  );
+  assert.equal(
+    resolveAppUserResumeTarget(listed, "app_starter", null)?.target.id,
+    "paid_b_cape",
+  );
+});
+
 test("deriveAppUserPendingCancel ignores a superseded row's cancellation", () => {
   // Konnect leaves the pre-/change row behind as `inactive` with a
   // `superseding.id` label. Reporting it as pendingCancel next to the live
