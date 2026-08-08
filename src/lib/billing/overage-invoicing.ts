@@ -8,10 +8,10 @@
  * Chargeability `null` (lookup failure) never unlocks — fail closed, matching
  * owner mint semantics.
  */
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { plans, subscriptions } from "@/db/schema";
+import { plans } from "@/db/schema";
 import { planRequiresPaymentMethod } from "@/lib/openmeter/subscriptions-billing";
 import {
   appUserHasChargeablePaymentMethod,
@@ -19,6 +19,10 @@ import {
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  getPrimaryOpenMeterSubscriptionForAppUser,
+  resolveLocalPlanIdFromOpenMeterSubscription,
+} from "@/lib/openmeter/subscription-read";
 import { isMerchantConnectPaymentsReady } from "@/lib/stripe/merchant-connect";
 import { getProviderApp } from "@/lib/provider-apps";
 
@@ -46,6 +50,11 @@ export function decideAllowsOverageInvoicing(input: {
   return input.ownerAllowsOverage;
 }
 
+/**
+ * Whether the end-user's **live OpenMeter** subscription is overage-capable
+ * (usage / paid). Neon `subscriptions.status` is not consulted — OM is the
+ * source of truth for liveness; Neon/plans only supply local plan type flags.
+ */
 export async function appUserHasOverageCapablePlan(input: {
   /** developer_apps.id */
   appId: string;
@@ -57,6 +66,22 @@ export async function appUserHasOverageCapablePlan(input: {
     return false;
   }
 
+  const live = await getPrimaryOpenMeterSubscriptionForAppUser({
+    clientId: appId,
+    externalUserId,
+  });
+  if (!live) {
+    return false;
+  }
+
+  const localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    appId,
+    live,
+  );
+  if (!localPlanId) {
+    return false;
+  }
+
   const rows = await db
     .select({
       type: plans.type,
@@ -64,26 +89,20 @@ export async function appUserHasOverageCapablePlan(input: {
       isStarterDefault: plans.isStarterDefault,
       isNetworkDefault: plans.isNetworkDefault,
     })
-    .from(subscriptions)
-    .innerJoin(plans, eq(subscriptions.planId, plans.id))
-    .where(
-      and(
-        eq(subscriptions.clientId, appId),
-        eq(subscriptions.externalUserId, externalUserId),
-        inArray(subscriptions.status, ["active", "trialing"]),
-      ),
-    )
-    .orderBy(desc(subscriptions.createdAt))
-    .limit(5);
+    .from(plans)
+    .where(eq(plans.id, localPlanId))
+    .limit(1);
+  const plan = rows[0];
+  if (!plan) {
+    return false;
+  }
 
-  return rows.some((row) =>
-    planRequiresPaymentMethod({
-      type: row.type,
-      priceAmount: row.priceAmount ?? "0",
-      isStarterDefault: row.isStarterDefault,
-      isNetworkDefault: row.isNetworkDefault,
-    }),
-  );
+  return planRequiresPaymentMethod({
+    type: plan.type,
+    priceAmount: plan.priceAmount ?? "0",
+    isStarterDefault: plan.isStarterDefault,
+    isNetworkDefault: plan.isNetworkDefault,
+  });
 }
 
 /**

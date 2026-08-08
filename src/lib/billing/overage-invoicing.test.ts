@@ -294,7 +294,7 @@ test("appUserHasChargeablePaymentMethod early returns", async () => {
   }
 });
 
-dbTest("appUserHasOverageCapablePlan detects usage plan subscription", async (t) => {
+dbTest("appUserHasOverageCapablePlan does not trust Neon status alone", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   const planId = `plan_ov_${randomUUID()}`;
   const subId = `sub_ov_${randomUUID()}`;
@@ -313,6 +313,7 @@ dbTest("appUserHasOverageCapablePlan detects usage plan subscription", async (t)
     status: "active",
     priceAmount: "0",
   });
+  // Neon "active" without a live OpenMeter primary sub must not unlock.
   await db.insert(subscriptions).values({
     id: subId,
     clientId: app.clientId,
@@ -326,12 +327,12 @@ dbTest("appUserHasOverageCapablePlan detects usage plan subscription", async (t)
       appId: app.clientId,
       externalUserId,
     }),
-    true,
+    false,
   );
   assert.equal(
     await appUserHasOverageCapablePlan({
-      appId: app.clientId,
-      externalUserId: "missing_user",
+      appId: "",
+      externalUserId: "eu",
     }),
     false,
   );
