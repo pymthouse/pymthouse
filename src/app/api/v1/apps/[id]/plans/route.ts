@@ -476,16 +476,18 @@ export async function POST(
     throw e;
   }
 
+  // Persist the app invoice threshold even when OpenMeter publish fails — the
+  // plan row (including chargeThresholdUsdMicros) was already committed.
+  if (isPayPerUsePlanType(planType)) {
+    await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
+  }
+
   const planStatusAfterInsert = planStatus;
   if (planStatusAfterInsert === "active") {
     const sync = await syncPlanToOpenMeter(planId);
     if (!sync.ok) {
       return NextResponse.json({ id: planId, syncError: sync.error }, { status: 201 });
     }
-  }
-
-  if (isPayPerUsePlanType(planType)) {
-    await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
   }
 
   return NextResponse.json({ id: planId }, { status: 201 });
@@ -915,6 +917,10 @@ export async function PUT(
     );
   }
 
+  // Keep app invoice threshold in sync even when OpenMeter publish fails — the
+  // plan row (including chargeThresholdUsdMicros) was already committed.
+  await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
+
   const updatedStatus =
     body.status === undefined ? undefined : coerceJsonScalarString(body.status);
   // Keep OpenMeter plan published while phase_out so existing subscribers continue.
@@ -928,8 +934,6 @@ export async function PUT(
       return NextResponse.json({ success: true, id: planId, syncError: sync.error });
     }
   }
-
-  await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
 
   return NextResponse.json({ success: true, id: planId });
 }
@@ -1047,6 +1051,8 @@ export async function DELETE(
   } catch {
     /* best effort */
   }
+
+  await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
 
   return NextResponse.json({ success: true });
 }

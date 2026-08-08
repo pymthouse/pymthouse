@@ -104,3 +104,44 @@ test("buildSignerBalanceCheck allows zero spendable when overage eligible", asyn
     (result as { expiry: number }).expiry > Math.floor(Date.now() / 1000),
   );
 });
+
+test("buildSignerBalanceCheck allows positive spendable without overage", async (t) => {
+  withOpenMeterConfigured(t);
+
+  seedSignerSpendableBalance("app_test_overage", "eu_funded", "5000000");
+  seedSignerOverageEligibility("app_test_overage", "eu_funded", false);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  const result = await check({
+    identity: identity("eu_funded"),
+    expiry: Math.floor(Date.now() / 1000) + 60,
+    payload: {},
+    request: new Request("http://localhost/authorize"),
+  });
+  assert.ok(result && typeof result === "object" && "expiry" in result);
+});
+
+test("buildSignerBalanceCheck rejects non-integer balance", async (t) => {
+  withOpenMeterConfigured(t);
+
+  seedSignerSpendableBalance("app_test_overage", "eu_bad", "not-micros");
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  await assert.rejects(
+    async () => {
+      await check({
+        identity: identity("eu_bad"),
+        expiry: Math.floor(Date.now() / 1000) + 60,
+        payload: {},
+        request: new Request("http://localhost/authorize"),
+      });
+    },
+    (err: unknown) => err instanceof WebhookError && err.status === 503,
+  );
+});
+
+test("__resetSignerBalanceCachesForTests is test-only", () => {
+  assert.doesNotThrow(() => __resetSignerBalanceCachesForTests());
+});

@@ -11,7 +11,7 @@
   "crons": [
     {
       "path": "/api/cron/threshold-invoices",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

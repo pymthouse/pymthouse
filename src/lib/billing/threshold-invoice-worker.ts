@@ -82,6 +82,38 @@ async function raiseInvoiceForCustomer(customerId: string): Promise<boolean> {
   return true;
 }
 
+export type GatheringInvoiceLike = {
+  status?: string | null;
+  totals?: { total?: unknown } | null;
+};
+
+/**
+ * Decide whether gathering lines meet the threshold and optionally raise.
+ * Extracted for unit tests and so the sweep can share one raise path.
+ */
+export async function evaluateAndRaiseGatheringInvoice(input: {
+  customerId: string;
+  thresholdUsdMicros: bigint;
+  invoices: GatheringInvoiceLike[];
+  raise: (customerId: string) => Promise<void>;
+}): Promise<"raised" | "skipped_no_gathering" | "skipped_below_threshold"> {
+  const gathering = input.invoices.filter(
+    (inv) => String(inv.status ?? "").toLowerCase() === "gathering",
+  );
+  if (gathering.length === 0) {
+    return "skipped_no_gathering";
+  }
+  const due = gatheringInvoiceMeetsThreshold(
+    gathering.map((inv) => inv.totals?.total),
+    input.thresholdUsdMicros,
+  );
+  if (!due) {
+    return "skipped_below_threshold";
+  }
+  await input.raise(input.customerId);
+  return "raised";
+}
+
 async function customerIdsForApp(input: {
   appId: string;
   billingMode: string | null | undefined;
@@ -220,6 +252,10 @@ export async function runThresholdInvoiceSweep(): Promise<ThresholdInvoiceSweepR
     }
   }
 
+  // owner_rollup apps share one OpenMeter customer — raise at most once per
+  // customer per sweep (still re-check until raised so a lower app threshold can win).
+  const raisedCustomerIds = new Set<string>();
+
   for (const appId of appIds) {
     result.appsConsidered += 1;
     const meta = appMeta.get(appId) ?? { billingMode: null, ownerId: null };
@@ -242,6 +278,10 @@ export async function runThresholdInvoiceSweep(): Promise<ThresholdInvoiceSweepR
 
     for (const entry of customers) {
       result.customersChecked += 1;
+      if (raisedCustomerIds.has(entry.customerId)) {
+        result.skipped += 1;
+        continue;
+      }
       try {
         const threshold = await resolveEffectiveInvoiceThresholdUsdMicros({
           appId,
@@ -259,25 +299,20 @@ export async function runThresholdInvoiceSweep(): Promise<ThresholdInvoiceSweepR
           order: "DESC",
           orderBy: "createdAt",
         });
-        const gathering = (listed?.items ?? []).filter(
-          (inv) => String(inv.status ?? "").toLowerCase() === "gathering",
-        );
-        if (gathering.length === 0) {
+        const outcome = await evaluateAndRaiseGatheringInvoice({
+          customerId: entry.customerId,
+          thresholdUsdMicros: threshold,
+          invoices: listed?.items ?? [],
+          raise: async (customerId) => {
+            await raiseInvoiceForCustomer(customerId);
+          },
+        });
+        if (outcome === "raised") {
+          raisedCustomerIds.add(entry.customerId);
+          result.invoicesRaised += 1;
+        } else {
           result.skipped += 1;
-          continue;
         }
-
-        const due = gatheringInvoiceMeetsThreshold(
-          gathering.map((inv) => inv.totals?.total),
-          threshold,
-        );
-        if (!due) {
-          result.skipped += 1;
-          continue;
-        }
-
-        await raiseInvoiceForCustomer(entry.customerId);
-        result.invoicesRaised += 1;
       } catch (err) {
         result.errors += 1;
         console.warn(

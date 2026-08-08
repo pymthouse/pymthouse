@@ -1,13 +1,26 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { eq } from "drizzle-orm";
 
+import { db } from "@/db/index";
+import { plans, subscriptions } from "@/db/schema";
 import { pickEffectiveThresholdUsdMicros } from "@/lib/billing/effective-invoice-threshold";
-import { decideAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
+import {
+  appUserAllowsOverageInvoicing,
+  appUserHasOverageCapablePlan,
+  decideAllowsOverageInvoicing,
+  resolveAllowsOverageInvoicing,
+} from "@/lib/billing/overage-invoicing";
 import {
   gatheringInvoiceMeetsThreshold,
   gatheringTotalUsdMicros,
 } from "@/lib/billing/threshold-invoice-worker";
 import { mintAllowanceGateDecision } from "@/lib/oidc/mint-user-signer-token";
+import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import { appUserHasChargeablePaymentMethod } from "@/lib/openmeter/app-user-payment-method";
+import { test as dbTest } from "@/test-utils/db-guard";
+import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 
 test("pickEffectiveThresholdUsdMicros prefers plan charge threshold", () => {
   assert.equal(
@@ -205,4 +218,213 @@ test("gatheringInvoiceMeetsThreshold raises when accrued >= threshold", () => {
     true,
   );
   assert.equal(gatheringInvoiceMeetsThreshold([], threshold), false);
+});
+
+test("appUserHasOverageCapablePlan and appUserAllowsOverageInvoicing deny blank ids", async () => {
+  assert.equal(
+    await appUserHasOverageCapablePlan({ appId: "", externalUserId: "eu" }),
+    false,
+  );
+  assert.equal(
+    await appUserHasOverageCapablePlan({ appId: "app", externalUserId: " " }),
+    false,
+  );
+  assert.equal(
+    await appUserAllowsOverageInvoicing({ appId: "", externalUserId: "eu" }),
+    false,
+  );
+  assert.equal(
+    await appUserAllowsOverageInvoicing({ appId: "app", externalUserId: "" }),
+    false,
+  );
+});
+
+test("resolveAllowsOverageInvoicing denies blank external user", async () => {
+  assert.equal(
+    await resolveAllowsOverageInvoicing({
+      clientId: "app_x",
+      externalUserId: "  ",
+    }),
+    false,
+  );
+});
+
+test("resolveAllowsOverageInvoicing owner path fails closed without hosted OM", async () => {
+  assert.equal(
+    await resolveAllowsOverageInvoicing({
+      clientId: "app_owner_gate",
+      externalUserId: "owner_user_1",
+      identity: {
+        customerKey: "owner_user_1",
+        isOwner: true,
+        ownerUserId: "owner_user_1",
+        publicClientId: "app_owner_gate",
+        developerAppId: "app_owner_gate",
+      },
+    }),
+    false,
+  );
+});
+
+test("appUserHasChargeablePaymentMethod early returns", async () => {
+  assert.equal(
+    await appUserHasChargeablePaymentMethod({
+      clientId: "",
+      externalUserId: "eu",
+    }),
+    false,
+  );
+  const prevSecret = process.env.STRIPE_SECRET_KEY;
+  const prevApi = process.env.STRIPE_API_KEY;
+  delete process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_API_KEY;
+  try {
+    assert.equal(
+      await appUserHasChargeablePaymentMethod({
+        clientId: "app_pm",
+        externalUserId: "eu_1",
+      }),
+      null,
+    );
+  } finally {
+    if (prevSecret === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = prevSecret;
+    if (prevApi === undefined) delete process.env.STRIPE_API_KEY;
+    else process.env.STRIPE_API_KEY = prevApi;
+  }
+});
+
+dbTest("appUserHasOverageCapablePlan detects usage plan subscription", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  const planId = `plan_ov_${randomUUID()}`;
+  const subId = `sub_ov_${randomUUID()}`;
+  const externalUserId = `eu_ov_${randomUUID().slice(0, 8)}`;
+  t.after(async () => {
+    await db.delete(subscriptions).where(eq(subscriptions.id, subId));
+    await db.delete(plans).where(eq(plans.id, planId));
+    await cleanupTestApp(app);
+  });
+
+  await db.insert(plans).values({
+    id: planId,
+    clientId: app.clientId,
+    name: "Usage",
+    type: "usage",
+    status: "active",
+    priceAmount: "0",
+  });
+  await db.insert(subscriptions).values({
+    id: subId,
+    clientId: app.clientId,
+    planId,
+    status: "active",
+    externalUserId,
+  });
+
+  assert.equal(
+    await appUserHasOverageCapablePlan({
+      appId: app.clientId,
+      externalUserId,
+    }),
+    true,
+  );
+  assert.equal(
+    await appUserHasOverageCapablePlan({
+      appId: app.clientId,
+      externalUserId: "missing_user",
+    }),
+    false,
+  );
+});
+
+dbTest("appUserAllowsOverageInvoicing requires merchant billing mode", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "owner_rollup",
+  });
+  assert.equal(
+    await appUserAllowsOverageInvoicing({
+      appId: app.clientId,
+      externalUserId: "eu_any",
+    }),
+    false,
+  );
+});
+
+dbTest("resolveAllowsOverageInvoicing merchant path fails closed without Connect PM", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  const planId = `plan_m_${randomUUID()}`;
+  const subId = `sub_m_${randomUUID()}`;
+  const externalUserId = `eu_m_${randomUUID().slice(0, 8)}`;
+  t.after(async () => {
+    await db.delete(subscriptions).where(eq(subscriptions.id, subId));
+    await db.delete(plans).where(eq(plans.id, planId));
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "merchant",
+    stripeConnectStatus: "connected",
+    stripeConnectedAccountId: "acct_test_merchant",
+    stripeChargesEnabled: true,
+    stripeDetailsSubmitted: true,
+  });
+  await db.insert(plans).values({
+    id: planId,
+    clientId: app.clientId,
+    name: "Usage",
+    type: "usage",
+    status: "active",
+    priceAmount: "0",
+  });
+  await db.insert(subscriptions).values({
+    id: subId,
+    clientId: app.clientId,
+    planId,
+    status: "active",
+    externalUserId,
+  });
+
+  assert.equal(
+    await resolveAllowsOverageInvoicing({
+      clientId: app.clientId,
+      externalUserId,
+      identity: {
+        customerKey: `${app.clientId}:${externalUserId}`,
+        isOwner: false,
+        publicClientId: app.clientId,
+        developerAppId: app.clientId,
+      },
+    }),
+    false,
+  );
+});
+
+dbTest("resolveAllowsOverageInvoicing rollup path fails closed without owner Paid", async (t) => {
+  const app = await seedDeveloperAppWithClient({ status: "approved" });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "owner_rollup",
+  });
+
+  assert.equal(
+    await resolveAllowsOverageInvoicing({
+      clientId: app.clientId,
+      externalUserId: "eu_rollup",
+      identity: {
+        customerKey: `${app.clientId}:eu_rollup`,
+        isOwner: false,
+        publicClientId: app.clientId,
+        developerAppId: app.clientId,
+      },
+    }),
+    false,
+  );
 });
