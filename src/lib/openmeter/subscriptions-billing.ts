@@ -66,6 +66,11 @@ export function planRequiresPaymentMethod(plan: {
   if (plan.isStarterDefault || plan.isNetworkDefault || plan.type === "free") {
     return false;
   }
+  // Pay-per-use has no flat fee, but still needs a card for threshold auto-debit
+  // after prepaid credits (issue #398). Collect via setup Checkout on switch.
+  if (plan.type.trim().toLowerCase() === "usage") {
+    return true;
+  }
   return plan.type === "subscription" && parsePlanPriceAmount(plan.priceAmount) > 0;
 }
 

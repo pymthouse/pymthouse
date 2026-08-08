@@ -316,6 +316,13 @@
       "when": 1786600000000,
       "tag": "0043_app_user_payment_method_checkouts",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0044_plans_charge_threshold",
+      "breakpoints": true
     }
   ]
 }

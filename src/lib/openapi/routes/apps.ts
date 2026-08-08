@@ -1,7 +1,8 @@
 import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
-  PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
+  OAuthErrorSchema,
+  PublicClientIdPathParamSchema,
 } from "@/lib/openapi/schemas/common";
 import {
   builderErrorResponses,
@@ -14,6 +15,18 @@ import { z } from "@/lib/openapi/zod";
 
 const clientId = PublicClientIdPathParamSchema;
 const externalUserId = ExternalUserIdParamSchema;
+
+/** 502/503 shape from `walletUpstreamErrorResponse` (`{ error: string }`). */
+const walletUpstreamErrorResponses = {
+  502: {
+    description: "Billing provider request failed",
+    content: { "application/json": { schema: OAuthErrorSchema } },
+  },
+  503: {
+    description: "Billing is not available right now",
+    content: { "application/json": { schema: OAuthErrorSchema } },
+  },
+} as const;
 
 function appPath(suffix: string) {
   return `/api/v1/apps/{clientId}${suffix}`;
@@ -309,6 +322,124 @@ registerMetadataRoutes([
   ["get", appPath("/plans"), OPENAPI_TAGS.billing, "List plans"],
   ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],
 ]);
+
+// Owner prepaid wallet (threshold-only Pay-Per-Use, issue #398).
+defineRouteMetadata("get", appPath("/billing/wallet"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Owner prepaid wallet summary",
+  description:
+    "M2M Basic only. Prepaid credit balance, default payment-method status, and " +
+    "all active Pay-Per-Use plans with resolved settlement behavior " +
+    "(credits first, then auto-debit at the threshold).",
+  security: m2mSecurity,
+  request: { params: z.object({ clientId }) },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("post", appPath("/billing/wallet/top-up"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Create balance top-up checkout",
+  description:
+    "M2M Basic only. Creates a Stripe Checkout (payment mode) session that credits the " +
+    "owner's prepaid balance on completion. Body: `amountUsd` ($1–$10,000), optional " +
+    "`successUrl` / `cancelUrl` (https, or http for localhost).",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            amountUsd: z.union([z.string(), z.number()]).openapi({
+              description: "Top-up amount in USD, e.g. `25` or `\"25.00\"`.",
+            }),
+            successUrl: z.string().optional().openapi({
+              description: "Redirect after a paid Checkout (https or localhost).",
+            }),
+            cancelUrl: z.string().optional().openapi({
+              description: "Redirect after a cancelled Checkout (https or localhost).",
+            }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("get", appPath("/billing/wallet/invoices"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "List owner wallet invoices",
+  description:
+    "M2M Basic only. Past platform invoices for the app owner, newest first. " +
+    "Query: `page` (default 1), `pageSize` (default 20, max 100).",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    query: z.object({
+      page: z.string().optional().openapi({ param: { name: "page", in: "query" } }),
+      pageSize: z
+        .string()
+        .optional()
+        .openapi({ param: { name: "pageSize", in: "query" } }),
+    }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("get", appPath("/billing/wallet/payment-methods"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "List owner payment methods",
+  description:
+    "M2M Basic only. Payment methods on file for the app owner, with the default flagged.",
+  security: m2mSecurity,
+  request: { params: z.object({ clientId }) },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("post", appPath("/billing/wallet/payment-methods"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Add owner payment method",
+  description:
+    "M2M Basic only. Creates a Stripe Checkout (setup mode) session to save a new default " +
+    "payment method for auto-debit. Body: optional `successUrl` / `cancelUrl`.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            successUrl: z.string().optional().openapi({
+              description: "Redirect after Checkout completes.",
+            }),
+            cancelUrl: z.string().optional().openapi({
+              description: "Redirect after Checkout is cancelled.",
+            }),
+          }),
+        },
+      },
+      required: false,
+    },
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
 
 defineRouteMetadata("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {
   tags: [OPENAPI_TAGS.discovery],

@@ -409,6 +409,13 @@ export const plans = pgTable(
     includedUsdMicros: text("included_usd_micros"),
     /** Billing period length: daily | weekly | monthly (maps to OpenMeter P1D/P1W/P1M). */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
+    /**
+     * Pay-Per-Use (`type = "usage"`) only: invoice/charge when accrued usage
+     * reaches this many USD micros — credits first, then auto-debit (#398).
+     * The stored billingCycle stays a nominal internal cycle for OpenMeter's
+     * required billingCadence; it is never the primary charge trigger.
+     */
+    chargeThresholdUsdMicros: text("charge_threshold_usd_micros"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
       onDelete: "set null",
     }),

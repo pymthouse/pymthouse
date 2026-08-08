@@ -5,6 +5,12 @@
  * 3. Non-default merchant billing profile referencing that app
  * 4. Invoice created + updated notification rules
  *
+ * E2E mode (`--e2e` or SETTLEMENT_E2E_BOOTSTRAP=1): only provisions an isolated
+ * notification channel + invoice rules named with an `-e2e` suffix. Skips
+ * Custom Invoicing app install and merchant billing profile so production
+ * Konnect config is untouched. Uses SETTLEMENT_E2E_* webhook URL/secrets —
+ * never SETTLEMENT_OPENMETER_WEBHOOK_URL.
+ *
  * Collection is owned by pymthouse/settlement (Kafka producer + Go worker).
  * This script only provisions OM/Konnect side config for pymthouse.
  *
@@ -34,6 +40,7 @@ import {
   selectKonnectCustomInvoicingApp,
 } from "../src/lib/openmeter/konnect-billing-profiles";
 import { konnectMeteringV1Fetch } from "../src/lib/openmeter/konnect-admin-client";
+import { merchantSettlementMetadata } from "../src/lib/openmeter/settlement-metadata";
 import { sanitizeForLog } from "../src/lib/sanitize-for-log";
 import {
   getHostedOpenMeterUrl,
@@ -42,7 +49,17 @@ import {
 } from "../src/lib/openmeter/constants";
 
 const CHANNEL_NAME = "pymthouse-merchant-invoices";
+const CHANNEL_NAME_E2E = "pymthouse-merchant-invoices-e2e";
 const PROFILE_NAME = "pymthouse-merchant-custom-invoicing";
+/** Matches `e2e.connect_account_id` in testdata/pymthouse-settlement-metadata.json. */
+const E2E_CONNECT_ACCOUNT_ID = "acct_e2e_settlement";
+
+function isE2eBootstrap(): boolean {
+  if (process.env.SETTLEMENT_E2E_BOOTSTRAP?.trim() === "1") {
+    return true;
+  }
+  return process.argv.includes("--e2e");
+}
 
 /** metering/v1 list envelope (items + flat page fields). */
 type MeteringV1Page<T> = {
@@ -84,8 +101,20 @@ function requireKonnect(): { baseUrl: string; apiKey: string } {
 /**
  * Public HTTPS URL of the settlement producer OpenMeter ingress
  * (e.g. https://settlement.example.com/webhooks/openmeter).
+ * E2E mode uses SETTLEMENT_E2E_OPENMETER_WEBHOOK_URL only.
  */
-function requireSettlementOpenMeterWebhookUrl(): string {
+function requireSettlementOpenMeterWebhookUrl(e2e: boolean): string {
+  if (e2e) {
+    const url = process.env.SETTLEMENT_E2E_OPENMETER_WEBHOOK_URL?.trim() || "";
+    if (!url.startsWith("https://")) {
+      throw new Error(
+        "SETTLEMENT_E2E_OPENMETER_WEBHOOK_URL must be the https URL of the " +
+          "e2e settlement OpenMeter webhook ingress " +
+          "(do not use production SETTLEMENT_OPENMETER_WEBHOOK_URL).",
+      );
+    }
+    return url.replace(/\/$/, "");
+  }
   const url =
     process.env.SETTLEMENT_OPENMETER_WEBHOOK_URL?.trim() ||
     process.env.OPENMETER_NOTIFICATION_WEBHOOK_URL?.trim() ||
@@ -98,6 +127,20 @@ function requireSettlementOpenMeterWebhookUrl(): string {
     );
   }
   return url.replace(/\/$/, "");
+}
+
+function resolveWebhookSigningSecret(e2e: boolean): string {
+  if (e2e) {
+    return (
+      process.env.SETTLEMENT_E2E_OPENMETER_WEBHOOK_SECRETS?.split(",")[0]?.trim() ||
+      newWebhookSigningSecret()
+    );
+  }
+  return (
+    process.env.SETTLEMENT_OPENMETER_WEBHOOK_SECRETS?.split(",")[0]?.trim() ||
+    process.env.OPENMETER_WEBHOOK_SECRET?.trim() ||
+    newWebhookSigningSecret()
+  );
 }
 
 /**
@@ -129,21 +172,31 @@ async function getNotificationChannel(
 }
 
 async function ensureNotificationChannel(input: {
+  channelName: string;
   url: string;
   webhookSecret: string;
+  secretsEnvVar: string;
 }): Promise<{
   channelId: string;
   created: boolean;
   signingSecret: string;
 }> {
-  const existing = (await listNotificationChannels()).find(
-    (ch) => ch.name === CHANNEL_NAME || ch.url === input.url,
-  );
+  // E2E: match by name only so a shared URL cannot select the production channel.
+  // Prod: also allow URL match for channels created before the fixed name existed.
+  const existing = (await listNotificationChannels()).find((ch) => {
+    if (ch.name === input.channelName) {
+      return true;
+    }
+    if (input.channelName === CHANNEL_NAME_E2E) {
+      return false;
+    }
+    return ch.url === input.url;
+  });
   if (existing?.id) {
     const existingUrl = existing.url?.trim();
     if (existingUrl && existingUrl !== input.url) {
       throw new Error(
-        `Notification channel ${existing.id} (${CHANNEL_NAME}) points at ` +
+        `Notification channel ${existing.id} (${input.channelName}) points at ` +
           `${existingUrl}, not ${input.url}. Update or delete it in Konnect, then re-run.`,
       );
     }
@@ -157,7 +210,7 @@ async function ensureNotificationChannel(input: {
       throw new Error(
         `Notification channel ${existing.id} exists but has no signingSecret. ` +
           "Delete it in Konnect and re-run bootstrap, or set " +
-          "SETTLEMENT_OPENMETER_WEBHOOK_SECRETS to the channel secret from the UI.",
+          `${input.secretsEnvVar} to the channel secret from the UI.`,
       );
     }
     return {
@@ -173,7 +226,7 @@ async function ensureNotificationChannel(input: {
       method: "POST",
       body: JSON.stringify({
         type: "WEBHOOK",
-        name: CHANNEL_NAME,
+        name: input.channelName,
         url: input.url,
         // Standard Webhooks / Svix signing — settlement verifies webhook-signature.
         signingSecret: input.webhookSecret,
@@ -194,9 +247,12 @@ async function ensureNotificationChannel(input: {
   };
 }
 
-async function ensureInvoiceRules(channelId: string): Promise<void> {
+async function ensureInvoiceRules(
+  channelId: string,
+  e2e: boolean,
+): Promise<void> {
   for (const type of ["invoice.created", "invoice.updated"] as const) {
-    const name = `pymthouse-${type}`;
+    const name = e2e ? `pymthouse-e2e-${type}` : `pymthouse-${type}`;
     await konnectMeteringV1Fetch(
       "/notification/rules",
       {
@@ -268,16 +324,22 @@ async function ensureMerchantProfile(appId: string): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  const e2e = isE2eBootstrap();
   requireKonnect();
 
-  const webhookSecret =
-    process.env.SETTLEMENT_OPENMETER_WEBHOOK_SECRETS?.split(",")[0]?.trim() ||
-    process.env.OPENMETER_WEBHOOK_SECRET?.trim() ||
-    newWebhookSigningSecret();
-  const webhookUrl = requireSettlementOpenMeterWebhookUrl();
+  const channelName = e2e ? CHANNEL_NAME_E2E : CHANNEL_NAME;
+  const secretsEnvVar = e2e
+    ? "SETTLEMENT_E2E_OPENMETER_WEBHOOK_SECRETS"
+    : "SETTLEMENT_OPENMETER_WEBHOOK_SECRETS";
+  const webhookSecret = resolveWebhookSigningSecret(e2e);
+  const webhookUrl = requireSettlementOpenMeterWebhookUrl(e2e);
+
+  if (e2e) {
+    console.log("[bootstrap] E2E mode — channel + rules only (skip app/profile)");
+  }
 
   console.log(
-    "[bootstrap] Ensuring notification channel →",
+    `[bootstrap] Ensuring notification channel (${channelName}) →`,
     sanitizeForLog(webhookUrl),
   );
   const {
@@ -285,12 +347,52 @@ async function main(): Promise<void> {
     created: channelCreated,
     signingSecret,
   } = await ensureNotificationChannel({
+    channelName,
     url: webhookUrl,
     webhookSecret,
+    secretsEnvVar,
   });
   console.log(
     `[bootstrap] Channel ${sanitizeForLog(channelId)} (${channelCreated ? "created" : "existing"})`,
   );
+
+  console.log(
+    `[bootstrap] Ensuring ${e2e ? "pymthouse-e2e-" : "pymthouse-"}invoice.created / invoice.updated rules…`,
+  );
+  await ensureInvoiceRules(channelId, e2e);
+
+  if (e2e) {
+    const connectAccountId =
+      process.env.SETTLEMENT_E2E_CONNECT_ACCOUNT_ID?.trim() ||
+      E2E_CONNECT_ACCOUNT_ID;
+    const stamp = merchantSettlementMetadata({
+      chargeModel: "direct",
+      connectedAccountId: connectAccountId,
+    });
+    console.log("\nE2E channel configured. Set on settlement e2e producer:\n");
+    if (channelCreated) {
+      console.log(
+        `SETTLEMENT_E2E_OPENMETER_WEBHOOK_SECRETS=${sanitizeForLog(signingSecret)}`,
+      );
+    } else {
+      console.log(
+        "SETTLEMENT_E2E_OPENMETER_WEBHOOK_SECRETS=<use existing e2e channel secret; not re-printed>",
+      );
+    }
+    console.log(
+      `SETTLEMENT_E2E_OPENMETER_WEBHOOK_URL=${sanitizeForLog(webhookUrl)}`,
+    );
+    console.log(
+      "\nStamp merchant invoices / customers with settlement metadata:\n",
+    );
+    console.log(JSON.stringify(stamp, null, 2));
+    console.log(
+      "\n(chargeModel=direct, connectedAccountId=" +
+        sanitizeForLog(connectAccountId) +
+        " via merchantSettlementMetadata)",
+    );
+    return;
+  }
 
   console.log("[bootstrap] Installing / resolving Custom Invoicing app…");
   let appId: string;
@@ -310,9 +412,6 @@ async function main(): Promise<void> {
     "[bootstrap] Merchant billing profile:",
     sanitizeForLog(profileId),
   );
-
-  console.log("[bootstrap] Ensuring invoice.created / invoice.updated rules…");
-  await ensureInvoiceRules(channelId);
 
   console.log("\nSet these env vars on pymthouse (Vercel):\n");
   console.log(

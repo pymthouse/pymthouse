@@ -13,6 +13,7 @@ import {
 import { seedSignerSpendableBalance } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
+import { isOpenMeterConflictError } from "@/lib/openmeter/plan-errors";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowance";
@@ -218,11 +219,18 @@ async function provisionForMintOrThrow(input: {
       throw new MintUserSignerTokenError(err.code, err.message, err.status);
     }
     if (isHostedAdminClientAvailable()) {
-      throw new MintUserSignerTokenError(
-        "billing_unavailable",
-        err instanceof Error ? err.message : "Billing provisioning failed",
-        402,
-      );
+      const detail = err instanceof Error ? err.message : "Billing provisioning failed";
+      // A subscription conflict is a provisioning bug, not an exhausted wallet.
+      // It must reject at 503: the identity-hook mapper turns 402 into 483
+      // `insufficient_balance`, which would report this as "out of credit".
+      if (isOpenMeterConflictError(err)) {
+        throw new MintUserSignerTokenError(
+          "provisioning_conflict",
+          `Billing provisioning conflicted for client ${input.developerAppId} subject ${input.externalUserId}: ${detail}`,
+          503,
+        );
+      }
+      throw new MintUserSignerTokenError("billing_unavailable", detail, 402);
     }
     throw err;
   }

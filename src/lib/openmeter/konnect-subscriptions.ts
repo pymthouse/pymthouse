@@ -128,6 +128,63 @@ export async function unscheduleKonnectSubscriptionCancelation(input: {
   );
 }
 
+export type KonnectSubscriptionActiveWindow = {
+  activeFrom: string | null;
+  activeTo: string | null;
+};
+
+const EMPTY_ACTIVE_WINDOW: KonnectSubscriptionActiveWindow = {
+  activeFrom: null,
+  activeTo: null,
+};
+
+function readWindowIso(raw: string | Date | null | undefined): string | null {
+  if (!raw) return null;
+  if (raw instanceof Date) return raw.toISOString();
+  return String(raw).trim() || null;
+}
+
+/**
+ * Authoritative billing window for a subscription.
+ *
+ * `/v3/openmeter` subscription payloads carry no activeFrom/activeTo at all, and
+ * `billing_anchor` is frozen at the original subscription start — it does not
+ * advance with the cycle, so anchoring a date on it is a full period stale for
+ * every month the subscription has been running. `/metering/v1` (already used
+ * here for restore + scheduled delete) returns the real window.
+ *
+ * Never throws: callers fall back to their own estimate or to null dates.
+ */
+export async function readKonnectSubscriptionActiveWindow(input: {
+  subscriptionId: string;
+}): Promise<KonnectSubscriptionActiveWindow> {
+  const subscriptionId = input.subscriptionId.trim();
+  if (!subscriptionId) {
+    return EMPTY_ACTIVE_WINDOW;
+  }
+  try {
+    const sub = await konnectMeteringV1Fetch<{
+      activeFrom?: string | Date | null;
+      activeTo?: string | Date | null;
+    }>(
+      `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      { method: "GET" },
+      "subscription-active-window",
+    );
+    return {
+      activeFrom: readWindowIso(sub?.activeFrom),
+      activeTo: readWindowIso(sub?.activeTo),
+    };
+  } catch (err) {
+    console.warn(
+      "konnect-subscriptions: active window lookup failed",
+      subscriptionId,
+      err instanceof Error ? err.message : err,
+    );
+    return EMPTY_ACTIVE_WINDOW;
+  }
+}
+
 /** Billing-anchor ISO from a Konnect subscription row, when present. */
 export function konnectSubscriptionBillingAnchorIso(
   sub: KonnectSubscription | null | undefined,

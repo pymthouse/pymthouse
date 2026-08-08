@@ -193,7 +193,7 @@ test("paymentsTabErrorMessage ignores free-form phishing text", () => {
   assert.equal(paymentsTabErrorMessage(null), null);
 });
 
-test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (t) => {
+test("resolveConnectWebhookSecret requires Connect secret and rejects invalid", (t) => {
   const prevConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   const prevPlatform = process.env.STRIPE_WEBHOOK_SECRET;
   t.after(() => {
@@ -205,7 +205,10 @@ test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (
 
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
   delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
-  assert.equal(resolveConnectWebhookSecret(), "whsec_platform");
+  assert.throws(
+    () => resolveConnectWebhookSecret(),
+    /STRIPE_CONNECT_WEBHOOK_SECRET is required/,
+  );
 
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
   assert.equal(resolveConnectWebhookSecret(), "whsec_connect");
@@ -214,20 +217,44 @@ test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (
   assert.throws(() => resolveConnectWebhookSecret(), /must start with whsec_/);
 });
 
-test("resolveStripeWebhookSecrets accepts platform and Connect endpoint secrets", (t) => {
-  const previousConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
-  const previousPlatform = process.env.STRIPE_WEBHOOK_SECRET;
+test("resolveStripeWebhookSecrets returns every configured secret deduplicated", (t) => {
+  const prevConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  const prevPlatform = process.env.STRIPE_WEBHOOK_SECRET;
   t.after(() => {
-    if (previousConnect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
-    else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = previousConnect;
-    if (previousPlatform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
-    else process.env.STRIPE_WEBHOOK_SECRET = previousPlatform;
+    if (prevConnect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+    else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = prevConnect;
+    if (prevPlatform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
+    else process.env.STRIPE_WEBHOOK_SECRET = prevPlatform;
   });
 
-  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
-  assert.deepEqual(resolveStripeWebhookSecrets(), [
-    "whsec_platform",
-    "whsec_connect",
-  ]);
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
+  // Platform first: it wins the identical-secret tie-break so a single endpoint
+  // configured for both roles still settles top-ups as `platform`.
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_platform", "whsec_connect"]);
+
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_same";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_same";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_same"]);
+
+  delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_same"]);
+
+  // Bad platform alone still fails closed.
+  process.env.STRIPE_WEBHOOK_SECRET = "not-a-whsec";
+  assert.throws(() => resolveStripeWebhookSecrets(), /must start with whsec_/);
+
+  // Valid Connect + malformed platform: keep Connect usable (don't 503 everything).
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
+  process.env.STRIPE_WEBHOOK_SECRET = "not-a-whsec";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_connect"]);
+
+  // Valid platform + malformed Connect: keep platform usable.
+  process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "not-a-whsec";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
+  assert.deepEqual(resolveStripeWebhookSecrets(), ["whsec_platform"]);
+
+  delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  assert.throws(() => resolveStripeWebhookSecrets(), /STRIPE_WEBHOOK_SECRET is required/);
 });

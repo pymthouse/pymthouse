@@ -50,9 +50,17 @@ export async function GET() {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return NextResponse.json({
-    paymentMethods: await listOwnerPaymentMethods(userId),
-  });
+  try {
+    return NextResponse.json({
+      paymentMethods: await listOwnerPaymentMethods(userId),
+    });
+  } catch (err) {
+    console.warn(
+      "me/billing/payment-method: list failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return NextResponse.json({ paymentMethods: [] });
+  }
 }
 
 /**
