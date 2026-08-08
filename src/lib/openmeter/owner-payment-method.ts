@@ -715,9 +715,11 @@ export async function setOwnerDefaultPaymentMethod(
 }
 
 /**
- * After setup Checkout return (`?pm=attached`), promote the first attached
- * payment method to Stripe+Konnect default when none is set yet. Plane A OM
- * webhooks usually do this; this covers lag / missed deliveries.
+ * After setup Checkout return, call PATCH `{ ensureDefault: true }` from the
+ * client (authenticated) to promote the first attached payment method to
+ * Stripe+Konnect default when none is set yet. Do not mutate from GET
+ * `?pm=attached` page renders. Plane A OM webhooks usually do this; this
+ * covers lag / missed deliveries.
  */
 export async function ensureOwnerDefaultPaymentMethodIfMissing(
   ownerUserId: string,

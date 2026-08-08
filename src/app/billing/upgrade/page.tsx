@@ -8,13 +8,13 @@ import {
   ownerCurrentPaidPlanKey,
   ownerEligibleForPaidUpgrade,
 } from "@/lib/billing/owner-paid-upgrade-eligibility";
-import { ensureOwnerDefaultPaymentMethodIfMissing } from "@/lib/openmeter/owner-payment-method";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 /**
  * Dedicated Owner Paid plan checkout (Upgrade from Starter, or Change plan).
  * Stripe setup Checkout returns here with ?plan=&pm=attached so plan selection
- * survives the redirect.
+ * survives the redirect. Default-PM promotion runs client-side via authenticated
+ * PATCH inside OwnerPaidUpgradeCheckout — not during this GET render.
  */
 export default async function BillingUpgradePage({
   searchParams,
@@ -22,22 +22,12 @@ export default async function BillingUpgradePage({
   searchParams: Promise<{ plan?: string; pm?: string }>;
 }>) {
   const params = await searchParams;
-  let result = await getOwnerBillingData();
+  const result = await getOwnerBillingData();
   if (!result.ok) {
     if (result.reason === "no_session") {
       redirect("/login");
     }
     redirect("/billing");
-  }
-
-  if (params.pm === "attached" && result.data.userId) {
-    await ensureOwnerDefaultPaymentMethodIfMissing(result.data.userId).catch(
-      () => undefined,
-    );
-    result = await getOwnerBillingData();
-    if (!result.ok) {
-      redirect("/billing");
-    }
   }
 
   const { data } = result;
@@ -80,8 +70,6 @@ export default async function BillingUpgradePage({
       }
       initialPlanKey={initialPlanKey}
       pmAttached={params.pm === "attached"}
-      starterPlanName={data.ownerStarterPlanName}
-      pendingDowngrade={data.pendingDowngrade}
     />
   );
 }

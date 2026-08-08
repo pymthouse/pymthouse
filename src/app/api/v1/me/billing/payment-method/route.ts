@@ -9,6 +9,7 @@ import {
 import { authOptions } from "@/lib/next-auth-options";
 import {
   createOwnerPaymentMethodCheckout,
+  ensureOwnerDefaultPaymentMethodIfMissing,
   listOwnerPaymentMethods,
   setOwnerDefaultPaymentMethod,
   unlinkOwnerPaymentMethod,
@@ -94,7 +95,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** Make one attached payment method the default for plan fee & overage. */
+/**
+ * Make one attached payment method the default for plan fee & overage.
+ * Body `{ ensureDefault: true }` promotes the first attached PM when none is
+ * default yet (post-Checkout return) — requires an authenticated session POST
+ * so billing state is not mutated from a GET redirect.
+ */
 export async function PATCH(request: NextRequest) {
   const session = await getServerSession(authOptions);
   const userId = sessionUserId(session);
@@ -102,7 +108,28 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const paymentMethodId = await paymentMethodIdFromRequest(request);
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    body = {};
+  }
+
+  if (body.ensureDefault === true) {
+    try {
+      const result = await ensureOwnerDefaultPaymentMethodIfMissing(userId);
+      return NextResponse.json(result);
+    } catch (err) {
+      return paymentMethodDefaultErrorResponse(err);
+    }
+  }
+
+  const fromQuery = request.nextUrl.searchParams.get("id")?.trim();
+  const fromBody =
+    typeof body.paymentMethodId === "string"
+      ? body.paymentMethodId.trim() || null
+      : null;
+  const paymentMethodId = fromQuery || fromBody;
   if (!paymentMethodId) {
     return NextResponse.json(
       { error: "paymentMethodId is required" },
