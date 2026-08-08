@@ -193,7 +193,7 @@ test("paymentsTabErrorMessage ignores free-form phishing text", () => {
   assert.equal(paymentsTabErrorMessage(null), null);
 });
 
-test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (t) => {
+test("resolveConnectWebhookSecret requires Connect secret and rejects invalid", (t) => {
   const prevConnect = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   const prevPlatform = process.env.STRIPE_WEBHOOK_SECRET;
   t.after(() => {
@@ -205,7 +205,10 @@ test("resolveConnectWebhookSecret prefers Connect secret and rejects invalid", (
 
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_platform";
   delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
-  assert.equal(resolveConnectWebhookSecret(), "whsec_platform");
+  assert.throws(
+    () => resolveConnectWebhookSecret(),
+    /STRIPE_CONNECT_WEBHOOK_SECRET is required/,
+  );
 
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_connect";
   assert.equal(resolveConnectWebhookSecret(), "whsec_connect");

@@ -12,13 +12,26 @@ import { randomUUID } from "node:crypto";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { prepareOwnerCustomerStripeBilling } from "@/lib/openmeter/billing-profiles";
-import { ensureOwnerCustomer, listOwnedPublicClientIds } from "@/lib/openmeter/customers";
+import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  getAppBillingConfig,
+  prepareOwnerCustomerStripeBilling,
+} from "@/lib/openmeter/billing-profiles";
+import {
+  ensureOpenMeterCustomer,
+  ensureOwnerCustomer,
+  listOwnedPublicClientIds,
+} from "@/lib/openmeter/customers";
 import { toStripeApiUrl } from "@/lib/openmeter/owner-payment-method";
 import {
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
 } from "@/lib/openmeter/stripe-customer-data";
+import { createConnectedCheckoutSession } from "@/lib/stripe/connect-accounts";
+import {
+  ensureMerchantOwnedStripeCustomer,
+  isMerchantConnectPaymentsReady,
+} from "@/lib/stripe/merchant-connect";
 
 export const TOP_UP_MIN_USD_MICROS = 1_000_000n; // $1.00
 export const TOP_UP_MAX_USD_MICROS = 10_000_000_000n; // $10,000.00
@@ -246,10 +259,112 @@ export async function createOwnerTopUpCheckoutSession(input: {
 
 export type TopUpCompletedPayload = {
   sessionId: string;
-  ownerUserId: string;
+  /** Platform owner wallet top-up (owner_rollup). Mutually exclusive with externalUserId. */
+  ownerUserId?: string;
+  /** Merchant Connect end-user top-up. Mutually exclusive with ownerUserId. */
+  externalUserId?: string;
   clientId: string;
   amountUsdMicros: bigint;
 };
+
+/**
+ * Create a payment-mode Checkout Session on the merchant's Connected Account
+ * that credits the end-user's prepaid OM customer once paid (Connect webhook).
+ */
+export async function createMerchantEndUserTopUpCheckoutSession(input: {
+  /** Public `app_…` client id stamped into Checkout metadata (grant routing). */
+  publicClientId: string;
+  /** `developer_apps.id` for `app_billing_config` / Connect account lookup. */
+  appId: string;
+  externalUserId: string;
+  amountUsdMicros: bigint;
+  successUrl?: string;
+  cancelUrl?: string;
+}): Promise<TopUpCheckoutResult> {
+  const publicClientId = input.publicClientId.trim();
+  const appId = input.appId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!publicClientId || !appId || !externalUserId) {
+    throw new Error("publicClientId, appId, and externalUserId are required");
+  }
+  if (
+    input.amountUsdMicros < TOP_UP_MIN_USD_MICROS ||
+    input.amountUsdMicros > TOP_UP_MAX_USD_MICROS
+  ) {
+    throw new Error("amountUsdMicros out of range");
+  }
+  if (input.amountUsdMicros % 10_000n !== 0n) {
+    throw new Error("amountUsdMicros must be a whole-cent amount");
+  }
+
+  const config = await getAppBillingConfig(appId);
+  if (!isMerchantConnectPaymentsReady(config)) {
+    throw new Error("Merchant Stripe Connect is not ready to accept payments");
+  }
+  const accountId = config!.stripeConnectedAccountId!.trim();
+
+  let openmeterCustomerId: string | undefined;
+  let openmeterCustomerKey: string | undefined;
+  if (isHostedAdminClientAvailable()) {
+    try {
+      const identity = await resolveOpenMeterBillingIdentity({
+        clientId: publicClientId,
+        externalUserId,
+      });
+      const omCustomer = await ensureOpenMeterCustomer(
+        getHostedAdminClient(),
+        identity.customerKey,
+      );
+      openmeterCustomerId = omCustomer.id;
+      openmeterCustomerKey = omCustomer.key;
+    } catch (err) {
+      console.warn(
+        "topup-checkout: OpenMeter customer ensure failed (merchant)",
+        sanitizeForLog(err),
+      );
+    }
+  }
+
+  const stripeCustomerId = await ensureMerchantOwnedStripeCustomer({
+    clientId: appId,
+    externalUserId,
+    accountId,
+    openmeterCustomerId,
+    openmeterCustomerKey,
+  });
+
+  const origin = getPublicOrigin();
+  const success = resolveTopUpReturnUrl(
+    input.successUrl,
+    `${origin}/billing?topup=succeeded`,
+  );
+  const cancel = resolveTopUpReturnUrl(input.cancelUrl, `${origin}/billing`);
+  const amountCents = Number(input.amountUsdMicros / 10_000n);
+
+  const session = await createConnectedCheckoutSession({
+    accountId,
+    customerId: stripeCustomerId,
+    successUrl: success,
+    cancelUrl: cancel,
+    mode: "payment",
+    amountCents,
+    currency: "usd",
+    productName: "PymtHouse prepaid credits",
+    applicationFeeBps: config!.applicationFeeBps ?? 0,
+    metadata: {
+      [TOP_UP_METADATA_FLAG]: "1",
+      client_id: publicClientId,
+      external_user_id: externalUserId,
+      amount_usd_micros: input.amountUsdMicros.toString(),
+    },
+  });
+
+  return {
+    checkoutUrl: session.url,
+    sessionId: session.sessionId,
+    amountUsdMicros: input.amountUsdMicros.toString(),
+  };
+}
 
 /** Event types that may carry a paid Checkout session for top-up settlement. */
 const TOP_UP_SETTLEMENT_EVENT_TYPES = new Set([
@@ -283,16 +398,33 @@ export function parseTopUpCheckoutSessionCompleted(
   }
   const ownerUserId =
     typeof metadata.owner_user_id === "string" ? metadata.owner_user_id.trim() : "";
+  const externalUserId =
+    typeof metadata.external_user_id === "string"
+      ? metadata.external_user_id.trim()
+      : "";
   const clientId =
     typeof metadata.client_id === "string" ? metadata.client_id.trim() : "";
-  if (!ownerUserId || !clientId) {
+  if (!clientId) {
+    return null;
+  }
+  // Owner sessions stamp owner_user_id; merchant Connect sessions stamp
+  // external_user_id — never both (ambiguous grant target).
+  if (ownerUserId && externalUserId) {
+    return null;
+  }
+  if (!ownerUserId && !externalUserId) {
     return null;
   }
   const amountUsdMicros = settledAmountUsdMicros(session, metadata, sessionId);
   if (amountUsdMicros === null) {
     return null;
   }
-  return { sessionId, ownerUserId, clientId, amountUsdMicros };
+  return {
+    sessionId,
+    clientId,
+    amountUsdMicros,
+    ...(ownerUserId ? { ownerUserId } : { externalUserId }),
+  };
 }
 
 /**

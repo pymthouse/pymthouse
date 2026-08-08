@@ -4,7 +4,10 @@ import { createHmac } from "node:crypto";
 
 import { __setGrantAllowanceUsdMicrosForTests } from "@/lib/openmeter/grant-allowance";
 import { topUpGrantIdempotencyKey } from "@/lib/stripe/topup-checkout";
-import { __setTopUpClientOwnedByOwnerForTests } from "@/lib/stripe/topup-ownership";
+import {
+  __setMerchantTopUpAccountMatchesForTests,
+  __setTopUpClientOwnedByOwnerForTests,
+} from "@/lib/stripe/topup-ownership";
 
 const CONNECT_SECRET = "whsec_connect_test_secret";
 const PLATFORM_SECRET = "whsec_platform_test_secret";
@@ -40,6 +43,31 @@ function topUpEventBody(
   });
 }
 
+function merchantTopUpEventBody(
+  type: string,
+  extras?: { account?: string },
+): string {
+  return JSON.stringify({
+    type,
+    ...(extras?.account ? { account: extras.account } : {}),
+    data: {
+      object: {
+        id: "cs_test_merchant_1",
+        mode: "payment",
+        payment_status: "paid",
+        amount_total: 2500,
+        currency: "usd",
+        metadata: {
+          pymthouse_topup: "1",
+          external_user_id: "eu_route_1",
+          client_id: "app_pub_route_1",
+          amount_usd_micros: "25000000",
+        },
+      },
+    },
+  });
+}
+
 function withWebhookEnv(
   t: { after: (fn: () => void) => void },
   env: {
@@ -56,6 +84,7 @@ function withWebhookEnv(
     else process.env.STRIPE_WEBHOOK_SECRET = prevPlatform;
     __setGrantAllowanceUsdMicrosForTests(null);
     __setTopUpClientOwnedByOwnerForTests(null);
+    __setMerchantTopUpAccountMatchesForTests(null);
   });
   if (env.connect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = env.connect;
@@ -140,7 +169,7 @@ test("POST checkout.session.async_payment_succeeded credits via grantAllowanceUs
   assert.equal(granted, true);
 });
 
-test("POST ignores top-up when only Connect secret verifies", async (t) => {
+test("POST ignores owner top-up when only Connect secret verifies", async (t) => {
   withWebhookEnv(t, {
     connect: CONNECT_SECRET,
     platform: "not-a-whsec",
@@ -167,7 +196,7 @@ test("POST ignores top-up when only Connect secret verifies", async (t) => {
   assert.equal(granted, false);
 });
 
-test("POST ignores top-up with Connect account field even when platform-signed", async (t) => {
+test("POST ignores owner top-up with Connect account field even when platform-signed", async (t) => {
   withWebhookEnv(t, { platform: PLATFORM_SECRET });
   let granted = false;
   __setTopUpClientOwnedByOwnerForTests(async () => true);
@@ -212,6 +241,123 @@ test("POST ignores top-up when clientId is not owned by ownerUserId", async (t) 
   assert.equal(res.status, 200);
   const json = (await res.json()) as { ignored?: string };
   assert.equal(json.ignored, "client_not_owned_by_owner");
+  assert.equal(granted, false);
+});
+
+test("POST merchant Connect top-up credits bare externalUserId", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  const calls: Array<Record<string, unknown>> = [];
+  __setGrantAllowanceUsdMicrosForTests(async (input) => {
+    calls.push({ ...input, amountUsdMicros: input.amountUsdMicros.toString() });
+    return {
+      externalUserId: input.externalUserId,
+      source: input.source,
+      grantedUsdMicros: input.amountUsdMicros.toString(),
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = merchantTopUpEventBody("checkout.session.completed", {
+    account: "acct_merchant_1",
+  });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as {
+    credited?: boolean;
+    sessionId?: string;
+  };
+  assert.equal(json.credited, true);
+  assert.equal(json.sessionId, "cs_test_merchant_1");
+  assert.deepEqual(calls[0], {
+    clientId: "app_pub_route_1",
+    externalUserId: "eu_route_1",
+    amountUsdMicros: "25000000",
+    source: "topup",
+    idempotencyKey: topUpGrantIdempotencyKey("cs_test_merchant_1"),
+  });
+});
+
+test("POST merchant top-up accepts platform-signed event with account", async (t) => {
+  withWebhookEnv(t, { platform: PLATFORM_SECRET });
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "25000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = merchantTopUpEventBody("checkout.session.completed", {
+    account: "acct_merchant_1",
+  });
+  const res = await postSigned(rawBody, PLATFORM_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean };
+  assert.equal(json.credited, true);
+  assert.equal(granted, true);
+});
+
+test("POST merchant top-up ignores missing account field", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  let granted = false;
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "25000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = merchantTopUpEventBody("checkout.session.completed");
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "merchant_topup_missing_account");
+  assert.equal(granted, false);
+});
+
+test("POST merchant top-up ignores account mismatch", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => false);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "25000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = merchantTopUpEventBody("checkout.session.completed", {
+    account: "acct_wrong",
+  });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "connect_account_mismatch");
   assert.equal(granted, false);
 });
 

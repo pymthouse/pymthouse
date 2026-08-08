@@ -159,7 +159,7 @@ test("parseTopUpCheckoutSessionCompleted refuses amount mismatches", () => {
   );
 });
 
-test("parseTopUpCheckoutSessionCompleted requires owner and client identity", () => {
+test("parseTopUpCheckoutSessionCompleted requires owner or external identity with client", () => {
   assert.equal(
     parseTopUpCheckoutSessionCompleted(topUpEventBody({ metadata: { owner_user_id: "" } })),
     null,
@@ -167,6 +167,37 @@ test("parseTopUpCheckoutSessionCompleted requires owner and client identity", ()
   assert.equal(
     parseTopUpCheckoutSessionCompleted(topUpEventBody({ metadata: { client_id: "" } })),
     null,
+  );
+  // Both owner and external is ambiguous — refuse.
+  assert.equal(
+    parseTopUpCheckoutSessionCompleted(
+      topUpEventBody({
+        metadata: {
+          owner_user_id: "user_1",
+          external_user_id: "eu_1",
+        },
+      }),
+    ),
+    null,
+  );
+});
+
+test("parseTopUpCheckoutSessionCompleted extracts a merchant end-user top-up", () => {
+  assert.deepEqual(
+    parseTopUpCheckoutSessionCompleted(
+      topUpEventBody({
+        metadata: {
+          owner_user_id: undefined,
+          external_user_id: "eu_merchant_1",
+        },
+      }),
+    ),
+    {
+      sessionId: "cs_test_abc",
+      externalUserId: "eu_merchant_1",
+      clientId: "app_pub_1",
+      amountUsdMicros: 25_000_000n,
+    },
   );
 });
 

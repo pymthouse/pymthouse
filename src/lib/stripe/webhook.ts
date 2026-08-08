@@ -119,17 +119,20 @@ export function requireStripeWebhookSecret(): string {
 }
 
 /**
- * Prefer a dedicated Connect endpoint secret; fall back to the platform
- * webhook secret only when `STRIPE_CONNECT_WEBHOOK_SECRET` is unset/empty.
+ * Prefer a dedicated Connect endpoint secret. Does not fall back to the
+ * platform webhook secret — Connect deliveries must be verified with
+ * `STRIPE_CONNECT_WEBHOOK_SECRET`.
  */
 export function resolveConnectWebhookSecret(): string {
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
   if (!connectSecret) {
-    return requireStripeWebhookSecret();
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Connect Webhooks)",
+    );
   }
   if (!connectSecret.startsWith("whsec_")) {
     throw new Error(
-      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_",
     );
   }
   return connectSecret;

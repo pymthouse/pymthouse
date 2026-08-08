@@ -4,7 +4,15 @@ import {
   authorizeOwnerWalletM2m,
   readJsonObjectBody,
 } from "@/lib/billing/owner-wallet-m2m-auth";
+import {
+  readOptionalExternalUserId,
+  resolveWalletBillingTarget,
+} from "@/lib/billing/wallet-billing-target";
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
+import {
+  createAppUserPaymentMethodCheckout,
+  listAppUserPaymentMethods,
+} from "@/lib/openmeter/app-user-payment-method";
 import {
   createOwnerPaymentMethodCheckout,
   listOwnerPaymentMethods,
@@ -12,8 +20,8 @@ import {
 
 /**
  * GET /api/v1/apps/{clientId}/billing/wallet/payment-methods — payment
- * methods attached to the owner wallet's platform Stripe customer
- * (brand + last4 only).
+ * methods for the resolved wallet target (owner platform customer, or
+ * merchant Connect end-user customer when `billingMode=merchant`).
  */
 export async function GET(
   request: NextRequest,
@@ -25,8 +33,31 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const billingTarget = await resolveWalletBillingTarget({
+    appId: access.app.id,
+    ownerUserId: access.ownerUserId,
+    externalUserId: readOptionalExternalUserId(
+      request.nextUrl.searchParams.get("externalUserId"),
+    ),
+  });
+  if (!billingTarget.ok) {
+    return NextResponse.json(
+      { error: billingTarget.error },
+      { status: billingTarget.status },
+    );
+  }
+
   try {
-    const paymentMethods = await listOwnerPaymentMethods(access.ownerUserId);
+    if (billingTarget.target.mode === "merchant") {
+      const paymentMethods = await listAppUserPaymentMethods({
+        clientId: access.app.id,
+        externalUserId: billingTarget.target.externalUserId,
+      });
+      return NextResponse.json({ paymentMethods });
+    }
+    const paymentMethods = await listOwnerPaymentMethods(
+      billingTarget.target.ownerUserId,
+    );
     return NextResponse.json({ paymentMethods });
   } catch (err) {
     return walletUpstreamErrorResponse(err, "payment-method list");
@@ -35,10 +66,8 @@ export async function GET(
 
 /**
  * POST /api/v1/apps/{clientId}/billing/wallet/payment-methods — start a
- * setup-mode Stripe Checkout session that attaches a payment method for
- * threshold auto-debit. Body: `{ "successUrl"?, "cancelUrl"? }` (must be
- * same-origin `/billing` URLs; anything else falls back to the platform
- * billing page).
+ * setup-mode Stripe Checkout session. Body: `{ "externalUserId"?, "successUrl"?,
+ * "cancelUrl"? }`.
  */
 export async function POST(
   request: NextRequest,
@@ -51,11 +80,41 @@ export async function POST(
   }
 
   const body = await readJsonObjectBody(request);
+  const billingTarget = await resolveWalletBillingTarget({
+    appId: access.app.id,
+    ownerUserId: access.ownerUserId,
+    externalUserId: readOptionalExternalUserId(body.externalUserId),
+  });
+  if (!billingTarget.ok) {
+    return NextResponse.json(
+      { error: billingTarget.error },
+      { status: billingTarget.status },
+    );
+  }
+
+  const successUrl =
+    typeof body.successUrl === "string" ? body.successUrl : undefined;
+  const cancelUrl =
+    typeof body.cancelUrl === "string" ? body.cancelUrl : undefined;
+
   try {
+    if (billingTarget.target.mode === "merchant") {
+      const checkout = await createAppUserPaymentMethodCheckout({
+        clientId: access.app.id,
+        externalUserId: billingTarget.target.externalUserId,
+        successUrl,
+        cancelUrl,
+      });
+      return NextResponse.json({
+        checkoutUrl: checkout.checkoutUrl,
+        sessionId: checkout.sessionId,
+        hasDefaultPaymentMethod: checkout.hasDefaultPaymentMethod,
+      });
+    }
     const checkout = await createOwnerPaymentMethodCheckout({
-      ownerUserId: access.ownerUserId,
-      successUrl: typeof body.successUrl === "string" ? body.successUrl : undefined,
-      cancelUrl: typeof body.cancelUrl === "string" ? body.cancelUrl : undefined,
+      ownerUserId: billingTarget.target.ownerUserId,
+      successUrl,
+      cancelUrl,
     });
     return NextResponse.json({
       checkoutUrl: checkout.checkoutUrl,

@@ -7,7 +7,10 @@ import {
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { applyConnectedAccountWebhookUpdate } from "@/lib/stripe/merchant-connect";
-import { topUpClientOwnedByOwner } from "@/lib/stripe/topup-ownership";
+import {
+  merchantTopUpAccountMatches,
+  topUpClientOwnedByOwner,
+} from "@/lib/stripe/topup-ownership";
 import {
   parseTopUpCheckoutSessionCompleted,
   topUpGrantIdempotencyKey,
@@ -105,64 +108,149 @@ async function handleAccountUpdated(rawBody: string): Promise<Response> {
   }
 }
 
+async function settleOwnerTopUp(input: {
+  rawBody: string;
+  secretKind: StripeWebhookSecretKind;
+  sessionId: string;
+  clientId: string;
+  ownerUserId: string;
+  amountUsdMicros: bigint;
+}): Promise<Response> {
+  if (input.secretKind !== "platform") {
+    return NextResponse.json({
+      received: true,
+      ignored: "topup_requires_platform_secret",
+    });
+  }
+  if (stripeEventAccount(input.rawBody)) {
+    return NextResponse.json({
+      received: true,
+      ignored: "connect_account_event",
+    });
+  }
+
+  let owned: boolean;
+  try {
+    owned = await topUpClientOwnedByOwner(input.clientId, input.ownerUserId);
+  } catch (err) {
+    logHandlerError("top-up ownership", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!owned) {
+    console.warn(
+      TAG,
+      "top-up ignored: clientId not owned by ownerUserId",
+      sanitizeForLog(input.clientId),
+      sanitizeForLog(input.ownerUserId),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "client_not_owned_by_owner",
+    });
+  }
+
+  try {
+    // The Checkout session id is the grant idempotency key — a Stripe retry
+    // or duplicate delivery 409s inside Konnect and credits exactly once.
+    await grantAllowanceUsdMicros({
+      clientId: input.clientId,
+      externalUserId: `owner:${input.ownerUserId}`,
+      amountUsdMicros: input.amountUsdMicros,
+      source: "topup",
+      idempotencyKey: topUpGrantIdempotencyKey(input.sessionId),
+    });
+    return NextResponse.json({
+      received: true,
+      credited: true,
+      sessionId: input.sessionId,
+    });
+  } catch (err) {
+    logHandlerError("top-up settle", err);
+    // 500 → Stripe retries; the idempotency key makes the retry safe.
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+}
+
+async function settleMerchantTopUp(input: {
+  rawBody: string;
+  sessionId: string;
+  clientId: string;
+  externalUserId: string;
+  amountUsdMicros: bigint;
+}): Promise<Response> {
+  const account = stripeEventAccount(input.rawBody);
+  if (!account) {
+    return NextResponse.json({
+      received: true,
+      ignored: "merchant_topup_missing_account",
+    });
+  }
+
+  let matches: boolean;
+  try {
+    matches = await merchantTopUpAccountMatches(input.clientId, account);
+  } catch (err) {
+    logHandlerError("merchant top-up account match", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!matches) {
+    console.warn(
+      TAG,
+      "merchant top-up ignored: account mismatch",
+      sanitizeForLog(input.clientId),
+      sanitizeForLog(account),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "connect_account_mismatch",
+    });
+  }
+
+  try {
+    await grantAllowanceUsdMicros({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      amountUsdMicros: input.amountUsdMicros,
+      source: "topup",
+      idempotencyKey: topUpGrantIdempotencyKey(input.sessionId),
+    });
+    return NextResponse.json({
+      received: true,
+      credited: true,
+      sessionId: input.sessionId,
+    });
+  } catch (err) {
+    logHandlerError("merchant top-up settle", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+}
+
 async function handleCheckoutSessionCompleted(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
 ): Promise<Response> {
   const topUp = parseTopUpCheckoutSessionCompleted(rawBody);
   if (topUp) {
-    if (secretKind !== "platform") {
-      return NextResponse.json({
-        received: true,
-        ignored: "topup_requires_platform_secret",
-      });
-    }
-    if (stripeEventAccount(rawBody)) {
-      return NextResponse.json({
-        received: true,
-        ignored: "connect_account_event",
-      });
-    }
-
-    let owned: boolean;
-    try {
-      owned = await topUpClientOwnedByOwner(topUp.clientId, topUp.ownerUserId);
-    } catch (err) {
-      logHandlerError("top-up ownership", err);
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
-    }
-    if (!owned) {
-      console.warn(
-        TAG,
-        "top-up ignored: clientId not owned by ownerUserId",
-        sanitizeForLog(topUp.clientId),
-        sanitizeForLog(topUp.ownerUserId),
-      );
-      return NextResponse.json({
-        received: true,
-        ignored: "client_not_owned_by_owner",
-      });
-    }
-
-    try {
-      // The Checkout session id is the grant idempotency key — a Stripe retry
-      // or duplicate delivery 409s inside Konnect and credits exactly once.
-      await grantAllowanceUsdMicros({
-        clientId: topUp.clientId,
-        externalUserId: `owner:${topUp.ownerUserId}`,
-        amountUsdMicros: topUp.amountUsdMicros,
-        source: "topup",
-        idempotencyKey: topUpGrantIdempotencyKey(topUp.sessionId),
-      });
-      return NextResponse.json({
-        received: true,
-        credited: true,
+    if (topUp.externalUserId) {
+      // Merchant Connect end-user top-up — accept Connect-signed or
+      // platform-signed events that carry the Connected Account id.
+      return settleMerchantTopUp({
+        rawBody,
         sessionId: topUp.sessionId,
+        clientId: topUp.clientId,
+        externalUserId: topUp.externalUserId,
+        amountUsdMicros: topUp.amountUsdMicros,
       });
-    } catch (err) {
-      logHandlerError("top-up settle", err);
-      // 500 → Stripe retries; the idempotency key makes the retry safe.
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+    }
+    if (topUp.ownerUserId) {
+      return settleOwnerTopUp({
+        rawBody,
+        secretKind,
+        sessionId: topUp.sessionId,
+        clientId: topUp.clientId,
+        ownerUserId: topUp.ownerUserId,
+        amountUsdMicros: topUp.amountUsdMicros,
+      });
     }
   }
 
@@ -197,22 +285,23 @@ function eventTypeFromRawBody(rawBody: string): string | null {
 
 /**
  * Stripe webhook for Connect account lifecycle (KYC / readiness), app-user
- * payment-method restore, and platform prepaid top-up settlement. Configure in
- * Dashboard → Developers → Webhooks:
+ * payment-method restore, platform prepaid top-up settlement, and merchant
+ * Connect end-user top-up settlement. Configure in Dashboard → Developers →
+ * Webhooks:
  *   POST {PUBLIC_ORIGIN}/webhooks/stripe
  *
  * Subscribe at least to:
  *   account.updated                          (Connect endpoint)
- *   checkout.session.completed               (platform — top-ups / PM setup)
- *   checkout.session.async_payment_succeeded (platform — delayed top-ups)
+ *   checkout.session.completed               (platform + Connect — top-ups / PM)
+ *   checkout.session.async_payment_succeeded (platform + Connect — delayed)
  *   setup_intent.succeeded                   (Connect — app-user payment methods)
  *
  * PaymentIntent / charge / dispute events for Custom Invoicing settlement are
  * handled by pymthouse/settlement (Kafka producer), not this route.
  *
- * Top-up grants require verification with the platform webhook secret and a
- * platform (non-Connect) event — Connect-signed deliveries are ignored for
- * credit settlement even when the payload looks like a top-up.
+ * Owner top-up grants require the platform webhook secret and a platform
+ * (non-Connect) event. Merchant end-user top-ups require a Connect `account`
+ * field matching the app's Connected Account (Connect- or platform-signed).
  */
 export async function POST(request: Request): Promise<Response> {
   let secrets: StripeWebhookSecret[];

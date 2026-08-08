@@ -16,6 +16,12 @@ export function walletUpstreamErrorResponse(err: unknown, context: string): Next
       { status: 503 },
     );
   }
+  if (/Merchant Stripe Connect is not ready/i.test(message)) {
+    return NextResponse.json(
+      { error: "Merchant Stripe Connect is not ready to accept payments" },
+      { status: 409 },
+    );
+  }
   return NextResponse.json(
     { error: "Billing provider request failed" },
     { status: 502 },
