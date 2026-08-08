@@ -333,7 +333,11 @@ defineRouteMetadata("get", appPath("/billing/wallet"), {
     "(credits first, then auto-debit at the threshold).",
   security: m2mSecurity,
   request: { params: z.object({ clientId }) },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
 });
 defineRouteMetadata("post", appPath("/billing/wallet/top-up"), {
   tags: [OPENAPI_TAGS.billing],
@@ -363,7 +367,11 @@ defineRouteMetadata("post", appPath("/billing/wallet/top-up"), {
       },
     },
   },
-  responses: { 200: jsonSuccess, ...builderErrorResponses },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
 });
 defineRouteMetadata("get", appPath("/billing/wallet/invoices"), {
   tags: [OPENAPI_TAGS.billing],
