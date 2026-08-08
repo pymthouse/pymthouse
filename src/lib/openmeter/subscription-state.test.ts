@@ -12,9 +12,11 @@ import {
   isPresentSubscriptionStatus,
   isScheduledSubscriptionStatus,
   listScheduledSubscriptionIds,
+  occupiesCustomerSubscriptionSlot,
   pickLiveSubscription,
   pickMutationTargetSubscription,
   pickOccupyingCanceledSubscription,
+  pickSlotOccupyingSubscription,
   reactivateOccupyingCanceledSubscription,
   resolveResumeTarget,
 } from "@/lib/openmeter/subscription-state";
@@ -123,6 +125,75 @@ test("isOccupyingCanceledSubscription requires future activeTo", async () => {
     }),
   ]);
   assert.equal(picked?.id, "starter_canceled");
+});
+
+test("a user upgraded off Starter still holds the customer's create slot", () => {
+  // Staging shape for external user 95c33c7d-…: the Starter row was superseded
+  // by Pay as you go, so a Starter-plan-key lookup finds nothing while the live
+  // PAYG row still blocks subscriptions.create.
+  const listed = [
+    sub({
+      id: "01KZF91J0HE97V0M44NTFC2ADZ",
+      planKey: "app_starter",
+      status: "inactive",
+      activeTo: "2026-08-07T20:00:00.000Z",
+    }),
+    sub({
+      id: "01KZFG1WS3AEZX6E59H7VBWNQN",
+      planKey: "app_pay_as_you_go",
+      status: "active",
+    }),
+  ];
+  assert.equal(
+    pickSlotOccupyingSubscription(listed)?.id,
+    "01KZFG1WS3AEZX6E59H7VBWNQN",
+  );
+});
+
+test("occupiesCustomerSubscriptionSlot covers live, scheduled and cancel-at-period-end", () => {
+  const now = Date.parse("2026-08-07T21:00:00.000Z");
+  assert.equal(occupiesCustomerSubscriptionSlot({ status: "active", activeTo: null }, now), true);
+  assert.equal(
+    occupiesCustomerSubscriptionSlot({ status: "scheduled", activeTo: null }, now),
+    true,
+  );
+  // Cancel-at-period-end: still running, still counted by Konnect.
+  assert.equal(
+    occupiesCustomerSubscriptionSlot(
+      { status: "canceled", activeTo: "2026-09-07T17:35:18.109Z" },
+      now,
+    ),
+    true,
+  );
+  // Konnect v3 sends no activeTo; `canceled` alone carries the signal.
+  assert.equal(
+    occupiesCustomerSubscriptionSlot({ status: "canceled", activeTo: null }, now),
+    true,
+  );
+  // Already ended — the slot is free, so a create is still correct.
+  assert.equal(
+    occupiesCustomerSubscriptionSlot(
+      { status: "inactive", activeTo: "2026-08-01T00:00:00.000Z" },
+      now,
+    ),
+    false,
+  );
+});
+
+test("an unprovisioned customer has no slot holder, so create must still run", () => {
+  assert.equal(pickSlotOccupyingSubscription([]), undefined);
+  // Only an ended row: nothing occupies the slot.
+  assert.equal(
+    pickSlotOccupyingSubscription([
+      sub({
+        id: "ended_starter",
+        planKey: "app_starter",
+        status: "inactive",
+        activeTo: "2026-01-01T00:00:00.000Z",
+      }),
+    ]),
+    undefined,
+  );
 });
 
 test("isOccupyingCanceledSubscription reads Konnect rows that omit activeTo", async () => {

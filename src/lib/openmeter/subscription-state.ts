@@ -121,6 +121,31 @@ export function isPresentSubscriptionStatus(
   );
 }
 
+/**
+ * True when a row holds the customer's only subscription slot, so Konnect
+ * rejects `subscriptions.create` with
+ * `only_single_subscription_allowed_per_customer_at_a_time`. Live and scheduled
+ * rows hold it outright; `canceled` rows hold it until `activeTo`.
+ */
+export function occupiesCustomerSubscriptionSlot(
+  subscription: Pick<OpenMeterSubscriptionView, "status" | "activeTo">,
+  nowMs: number = Date.now(),
+): boolean {
+  return (
+    isPresentSubscriptionStatus(subscription.status) ||
+    isOccupyingCanceledSubscription(subscription, nowMs)
+  );
+}
+
+/** First subscription holding the customer's slot, on any plan. */
+export function pickSlotOccupyingSubscription(
+  listed: OpenMeterSubscriptionView[],
+): OpenMeterSubscriptionView | undefined {
+  return listed.find(
+    (sub) => Boolean(sub.id) && occupiesCustomerSubscriptionSlot(sub),
+  );
+}
+
 export type StarterMatcher = (sub: OpenMeterSubscriptionView) => boolean;
 
 export type ClassifiedSubscriptions = {

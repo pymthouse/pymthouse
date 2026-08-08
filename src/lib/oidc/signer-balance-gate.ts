@@ -124,9 +124,11 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
     getBalanceUsdMicros: (identity) => cache.get(identity),
     expiryTtl: { seconds: resolveExpiryTtlSeconds() },
     failClosed: true,
-    onError: (err) => {
+    onError: (err, identity) => {
+      // Name the identity: the client only ever sees a bare 503, so this line
+      // is the sole record of which customer's lookup failed.
       console.warn(
-        "[remote-signer] live balance check failed:",
+        `[remote-signer] live balance check failed client_id=${identity?.client_id} subject=${identity?.usage_subject}:`,
         err instanceof Error ? err.message : String(err),
       );
     },
