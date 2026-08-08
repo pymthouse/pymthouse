@@ -19,6 +19,7 @@ import { buildOpenMeterPlanKey } from "./plan-naming";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import {
   listOpenMeterSubscriptionsForCustomer,
+  pickAppUserSubscriptionToReport,
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
@@ -162,7 +163,15 @@ export function pickAppUserCancelTargets(
   );
 }
 
-/** Resolve which subscription to unschedule/restore for a pending cancel. */
+/**
+ * Resolve which subscription to unschedule/restore for a pending cancel.
+ *
+ * Scoped to the subscription the GET reports, using that same selection so the
+ * two cannot drift apart. A cancel left on a row the user has already switched
+ * away from is history the caller can neither see nor act on, so resume answers
+ * `nothing_to_resume` instead of attempting a restore Konnect rejects and
+ * reporting that business state as a 502.
+ */
 export function resolveAppUserResumeTarget(
   listed: OpenMeterSubscriptionView[],
   starterPlanKey: string,
@@ -172,10 +181,16 @@ export function resolveAppUserResumeTarget(
   scheduledStarter: OpenMeterSubscriptionView | undefined;
   livePaid: OpenMeterSubscriptionView | undefined;
 } | null {
-  return resolveResumeTarget(
-    listed,
-    appUserStarterMatcher(starterPlanKey, starterOpenMeterPlanId),
+  const isStarter = appUserStarterMatcher(
+    starterPlanKey,
+    starterOpenMeterPlanId,
   );
+  const resume = resolveResumeTarget(listed, isStarter);
+  if (!resume) {
+    return null;
+  }
+  const reported = pickAppUserSubscriptionToReport(listed, isStarter);
+  return reported?.id === resume.target.id ? resume : null;
 }
 
 /**

@@ -368,6 +368,53 @@ test("resolveAppUserResumeTarget agrees with the reported pendingCancel", () => 
   assert.equal(appUserSubscriptionResumeHttpStatus("resume_failed"), 502);
 });
 
+test("resolveAppUserResumeTarget ignores a cancel the user switched away from", () => {
+  // After a /change the old row keeps its real cancel-at-period-end while the
+  // successor becomes what GET reports. Konnect refuses to restore the old row
+  // while that successor exists, so resuming it answered 502 for what is really
+  // "nothing to resume" — and GET already reports pendingCancel: null here.
+  const listed = [
+    sub({
+      id: "paid_canceled",
+      planKey: "paid",
+      status: "canceled",
+      activeFrom: "2026-08-08T03:00:31.842771Z",
+      activeTo: "2026-09-08T03:00:31.842771Z",
+    }),
+    sub({
+      id: "starter_scheduled",
+      planKey: "app_starter",
+      status: "scheduled",
+      activeFrom: "2026-09-08T03:00:31.842771Z",
+    }),
+    sub({ id: "superseded", planKey: "app_starter", status: "inactive" }),
+  ];
+
+  assert.equal(resolveAppUserResumeTarget(listed, "app_starter", null), null);
+});
+
+test("resolveAppUserResumeTarget keeps a cancel-at-period-end primary resumable", () => {
+  // No live or scheduled row exists, so the canceled row IS what GET reports.
+  // Scoping must not turn this into a 404 — it is the whole point of resume.
+  const canceled = sub({
+    id: "paid_canceled",
+    planKey: "paid",
+    status: "canceled",
+    activeFrom: "2026-08-08T03:00:31.842771Z",
+    activeTo: "2026-09-08T03:00:31.842771Z",
+  });
+  const listed = [
+    canceled,
+    sub({ id: "superseded", planKey: "app_starter", status: "inactive" }),
+  ];
+
+  const resume = resolveAppUserResumeTarget(listed, "app_starter", null);
+  assert.equal(resume?.target.id, "paid_canceled");
+  // A target resolves, so the restore call and its catch still run — that catch
+  // is what maps a Konnect failure to resume_failed / 502.
+  assert.equal(appUserSubscriptionResumeHttpStatus("resume_failed"), 502);
+});
+
 test("deriveAppUserPendingCancel ignores a superseded row's cancellation", () => {
   // Konnect leaves the pre-/change row behind as `inactive` with a
   // `superseding.id` label. Reporting it as pendingCancel next to the live
