@@ -6,6 +6,7 @@ import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cac
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
+import { readKonnectSubscriptionActiveWindow } from "./konnect-subscriptions";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import { buildOpenMeterPlanKey } from "./plan-naming";
 import {
@@ -177,6 +178,30 @@ async function enrichSubscriptionPlanKey(
   return { ...item, planKey };
 }
 
+/**
+ * Fill the billing window on rows that arrive without one.
+ *
+ * Konnect Metering & Billing v3 sends neither activeFrom nor activeTo, which is
+ * why `currentPeriodStart`/`currentPeriodEnd` and `pendingCancel.effectiveAt`
+ * came back null. Self-hosted OpenMeter always sends activeFrom, so it never
+ * takes the extra round trip and keeps the dates it already reports.
+ * @internal Exported for unit tests.
+ */
+export async function enrichSubscriptionActiveWindow(
+  item: OpenMeterSubscriptionView,
+): Promise<OpenMeterSubscriptionView> {
+  if (item.activeFrom || item.activeTo || !item.id.trim()) {
+    return item;
+  }
+  const window = await readKonnectSubscriptionActiveWindow({
+    subscriptionId: item.id,
+  });
+  if (!window.activeFrom && !window.activeTo) {
+    return item;
+  }
+  return { ...item, activeFrom: window.activeFrom, activeTo: window.activeTo };
+}
+
 export async function listOpenMeterSubscriptionsForCustomer(
   client: OpenMeter,
   customerId: string,
@@ -325,10 +350,7 @@ export async function resolveLocalPlanIdFromOpenMeterSubscription(
   return null;
 }
 
-/** Prefer an active paid plan subscription over the app starter plan when both exist.
- * Live rows win over scheduled (mutation-safe for change/cancel).
- */
-export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
+async function selectPrimaryOpenMeterSubscriptionForAppUser(input: {
   clientId: string;
   externalUserId: string;
 }): Promise<OpenMeterSubscriptionView | null> {
@@ -383,6 +405,17 @@ export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
   // Cancel-at-period-end still occupies the customer slot until activeTo.
   // Surface it so GET/checkout can restore+change instead of create→409.
   return pickOccupyingCanceledSubscription(listed) ?? null;
+}
+
+/** Prefer an active paid plan subscription over the app starter plan when both exist.
+ * Live rows win over scheduled (mutation-safe for change/cancel).
+ */
+export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<OpenMeterSubscriptionView | null> {
+  const primary = await selectPrimaryOpenMeterSubscriptionForAppUser(input);
+  return primary ? enrichSubscriptionActiveWindow(primary) : null;
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {

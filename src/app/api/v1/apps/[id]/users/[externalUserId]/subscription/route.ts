@@ -8,14 +8,12 @@ import {
   readJsonObject,
 } from "@/lib/billing/owner-billing-m2m-auth";
 import { tryDecodeURIComponent } from "@/lib/billing-utils";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import {
   AppUserSubscriptionCancelError,
   appUserSubscriptionCancelHttpStatus,
   cancelAppUserSubscription,
   resolveAppUserPendingCancel,
 } from "@/lib/openmeter/app-user-subscription-lifecycle";
-import { ensureOpenMeterCustomerForAppUser } from "@/lib/openmeter/customers";
 import {
   buildAppUserSubscriptionPlanPayload,
   resolveAppUserSubscriptionActionRequired,
@@ -24,37 +22,8 @@ import {
 import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
-  listOpenMeterSubscriptionsForCustomer,
   resolveLocalPlanIdFromOpenMeterSubscription,
-  type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
-
-async function resolveDisplaySubscription(input: {
-  clientId: string;
-  externalUserId: string;
-  pendingCancel: Awaited<ReturnType<typeof resolveAppUserPendingCancel>>;
-}): Promise<OpenMeterSubscriptionView | null> {
-  const primary = await getPrimaryOpenMeterSubscriptionForAppUser({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  if (primary) {
-    return primary;
-  }
-  if (!input.pendingCancel || !isHostedAdminClientAvailable()) {
-    return null;
-  }
-  const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomerForAppUser({
-    client,
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
-  return (
-    listed.find((sub) => sub.id === input.pendingCancel?.subscriptionId) ?? null
-  );
-}
 
 /**
  * GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription
@@ -79,33 +48,9 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let pendingCancel: Awaited<ReturnType<typeof resolveAppUserPendingCancel>> =
-    null;
-  if (isHostedAdminClientAvailable()) {
-    try {
-      const client = getHostedAdminClient();
-      const customer = await ensureOpenMeterCustomerForAppUser({
-        client,
-        clientId: access.app.id,
-        externalUserId,
-      });
-      const listed = await listOpenMeterSubscriptionsForCustomer(
-        client,
-        customer.id,
-      );
-      pendingCancel = await resolveAppUserPendingCancel({
-        clientId: access.app.id,
-        listed,
-      });
-    } catch (err) {
-      console.error("Failed to resolve pendingCancel for app user", err);
-    }
-  }
-
-  const omSubscription = await resolveDisplaySubscription({
+  const omSubscription = await getPrimaryOpenMeterSubscriptionForAppUser({
     clientId: access.app.id,
     externalUserId,
-    pendingCancel,
   });
 
   if (!omSubscription) {
@@ -115,6 +60,17 @@ export async function GET(
       pendingCancel: null,
       source: "openmeter",
     });
+  }
+
+  let pendingCancel: Awaited<ReturnType<typeof resolveAppUserPendingCancel>> =
+    null;
+  try {
+    pendingCancel = await resolveAppUserPendingCancel({
+      clientId: access.app.id,
+      subscription: omSubscription,
+    });
+  } catch (err) {
+    console.error("Failed to resolve pendingCancel for app user", err);
   }
 
   const resolvedPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(

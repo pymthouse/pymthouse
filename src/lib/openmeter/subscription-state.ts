@@ -40,9 +40,15 @@ export function isCanceledSubscriptionStatus(
   status: string | null | undefined,
 ): boolean {
   const s = (status || "").toLowerCase();
-  // Konnect also uses `inactive` for cancel-at-period-end rows that still
-  // occupy the customer slot until `activeTo`.
+  // `canceled` is cancel-at-period-end (still running until `activeTo`);
+  // `inactive` is a row whose period has already ended.
   return s === "canceled" || s === "cancelled" || s === "inactive";
+}
+
+/** Cancel-at-period-end — the row is still running until `activeTo`. */
+function isCancelAtPeriodEndStatus(status: string | null | undefined): boolean {
+  const s = (status || "").trim().toLowerCase();
+  return s === "canceled" || s === "cancelled";
 }
 
 /**
@@ -59,7 +65,12 @@ export function isOccupyingCanceledSubscription(
   }
   const activeTo = subscription.activeTo?.trim();
   if (!activeTo) {
-    return false;
+    // Konnect Metering & Billing v3 subscription payloads carry no activeTo at
+    // all (only billing_anchor/created_at/updated_at), so the timestamp test is
+    // unusable there. Its status carries the same signal: `canceled` still owns
+    // the customer slot, `inactive` has ended. Self-hosted OpenMeter always
+    // sends activeTo and keeps using the check below.
+    return isCancelAtPeriodEndStatus(subscription.status);
   }
   const endMs = Date.parse(activeTo);
   return !Number.isNaN(endMs) && endMs > nowMs;
@@ -265,6 +276,12 @@ export type ResumeTarget = {
 /**
  * Resolve which subscription to unschedule/restore for a pending cancel.
  * Prefer canceled paid; else live paid + scheduled starter (legacy change path).
+ *
+ * The canceled row must still occupy the customer slot: an ended row left behind
+ * by a `/change` is history, not a pending cancel, and resuming it would act on
+ * a plan the user already left. Filtering it here keeps this in step with the
+ * `pendingCancel` the GET reports, so callers get `nothing_to_resume` rather
+ * than a restore that can only fail.
  */
 export function resolveResumeTarget(
   listed: OpenMeterSubscriptionView[],
@@ -275,8 +292,13 @@ export function resolveResumeTarget(
     isStarter,
   );
 
+  const resumableCanceledPaid =
+    canceledPaid && isOccupyingCanceledSubscription(canceledPaid)
+      ? canceledPaid
+      : undefined;
   const target =
-    canceledPaid ?? (livePaid && scheduledStarter ? livePaid : undefined);
+    resumableCanceledPaid ??
+    (livePaid && scheduledStarter ? livePaid : undefined);
   if (!target) return null;
   return { target, scheduledStarter, livePaid };
 }

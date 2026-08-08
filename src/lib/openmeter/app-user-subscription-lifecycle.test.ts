@@ -268,9 +268,7 @@ test("resolveAppUserResumeTarget prefers canceled paid, else live paid + schedul
 test("deriveAppUserPendingCancel returns canceled paid row", () => {
   assert.equal(
     deriveAppUserPendingCancel({
-      listed: [sub({ id: "paid", planKey: "paid", status: "active" })],
-      starterPlanKey: "app_starter",
-      starterOpenMeterPlanId: null,
+      subscription: sub({ id: "paid", planKey: "paid", status: "active" }),
       planId: null,
       planName: null,
     }),
@@ -279,16 +277,12 @@ test("deriveAppUserPendingCancel returns canceled paid row", () => {
 
   assert.deepEqual(
     deriveAppUserPendingCancel({
-      listed: [
-        sub({
-          id: "paid_canceled",
-          planKey: "paid",
-          status: "canceled",
-          activeTo: "2026-09-01T00:00:00.000Z",
-        }),
-      ],
-      starterPlanKey: "app_starter",
-      starterOpenMeterPlanId: null,
+      subscription: sub({
+        id: "paid_canceled",
+        planKey: "paid",
+        status: "canceled",
+        activeTo: "2026-09-01T00:00:00.000Z",
+      }),
       planId: "local_plan",
       planName: "Pro",
     }),
@@ -305,16 +299,12 @@ test("deriveAppUserPendingCancel returns canceled paid row", () => {
 test("deriveAppUserPendingCancel surfaces cancel-at-period-end Starter", () => {
   assert.deepEqual(
     deriveAppUserPendingCancel({
-      listed: [
-        sub({
-          id: "starter_canceled",
-          planKey: "app_starter",
-          status: "canceled",
-          activeTo: "2026-09-07T17:35:18.109Z",
-        }),
-      ],
-      starterPlanKey: "app_starter",
-      starterOpenMeterPlanId: null,
+      subscription: sub({
+        id: "starter_canceled",
+        planKey: "app_starter",
+        status: "canceled",
+        activeTo: "2026-09-07T17:35:18.109Z",
+      }),
       planId: "starter_local",
       planName: "Starter",
     }),
@@ -325,5 +315,85 @@ test("deriveAppUserPendingCancel surfaces cancel-at-period-end Starter", () => {
       planName: "Starter",
       effectiveAt: "2026-09-07T17:35:18.109Z",
     },
+  );
+});
+
+test("deriveAppUserPendingCancel dates the banner from the enriched window", () => {
+  // Konnect v3 sends no activeTo, so the row is enriched from /metering/v1
+  // before it reaches here. Without that the callout rendered "stays active
+  // until" with no date.
+  assert.deepEqual(
+    deriveAppUserPendingCancel({
+      subscription: sub({
+        id: "01KZCN0AH450JWA381D2AN7NJK",
+        planKey: "a6c95d934_plan_397fcf2f",
+        status: "canceled",
+        activeFrom: "2026-08-06T23:02:17.378589Z",
+        activeTo: "2026-09-06T23:02:17.378589Z",
+      }),
+      planId: "397fcf2f",
+      planName: "Pay as you go",
+    }),
+    {
+      subscriptionId: "01KZCN0AH450JWA381D2AN7NJK",
+      planId: "397fcf2f",
+      planKey: "a6c95d934_plan_397fcf2f",
+      planName: "Pay as you go",
+      effectiveAt: "2026-09-06T23:02:17.378589Z",
+    },
+  );
+});
+
+test("resolveAppUserResumeTarget agrees with the reported pendingCancel", () => {
+  const superseded = sub({
+    id: "01KZF91J0HE97V0M44NTFC2ADZ",
+    planKey: "paid",
+    status: "inactive",
+  });
+  // GET reports no pendingCancel for this row, so resume must find no target
+  // and answer nothing_to_resume (404) rather than resume_failed (502).
+  assert.equal(
+    deriveAppUserPendingCancel({
+      subscription: superseded,
+      planId: null,
+      planName: null,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveAppUserResumeTarget([superseded], "app_starter", null),
+    null,
+  );
+  assert.equal(appUserSubscriptionResumeHttpStatus("nothing_to_resume"), 404);
+  assert.equal(appUserSubscriptionResumeHttpStatus("resume_failed"), 502);
+});
+
+test("deriveAppUserPendingCancel ignores a superseded row's cancellation", () => {
+  // Konnect leaves the pre-/change row behind as `inactive` with a
+  // `superseding.id` label. Reporting it as pendingCancel next to the live
+  // successor offers a "keep plan" action that resume answers nothing_to_resume.
+  assert.equal(
+    deriveAppUserPendingCancel({
+      subscription: sub({
+        id: "01KZFG1WS3AEZX6E59H7VBWNQN",
+        planKey: "a6c95d934_plan_397fcf2f",
+        status: "active",
+      }),
+      planId: "397fcf2f",
+      planName: "Pay as you go",
+    }),
+    null,
+  );
+  assert.equal(
+    deriveAppUserPendingCancel({
+      subscription: sub({
+        id: "01KZF91J0HE97V0M44NTFC2ADZ",
+        planKey: "a6c95d934_plan_bc43f59d",
+        status: "inactive",
+      }),
+      planId: "bc43f59d",
+      planName: "m2m user plan",
+    }),
+    null,
   );
 });
