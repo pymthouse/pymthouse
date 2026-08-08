@@ -281,6 +281,53 @@ export async function listAppUserPaymentMethods(input: {
   }
 }
 
+/**
+ * Whether Stripe can charge this app user's default payment method.
+ * `null` = unknown (Stripe/OM outage) — mint/signer must fail closed on overage.
+ * Merchant mode requires Connect-ready + customer on the connected account.
+ */
+export async function appUserHasChargeablePaymentMethod(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<boolean | null> {
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return false;
+  }
+  if (!stripeSecretKeyOrNull()) {
+    return null;
+  }
+
+  try {
+    const refs = await resolveAppUserStripeRefs({ clientId, externalUserId });
+    if (!refs) {
+      return false;
+    }
+    if (refs.konnectDefaultPaymentMethodId) {
+      return true;
+    }
+    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: refs.stripeCustomerId,
+      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+      defaultFirstPaymentMethod: Boolean(refs.stripeAccount),
+      deps: {
+        fetchImpl: fetch,
+        signal,
+        stripeAccount: refs.stripeAccount,
+      },
+    });
+    return items.some((pm) => pm.isDefault) || items.length > 0;
+  } catch (err) {
+    console.warn(
+      "app-user-payment-method: chargeability lookup failed",
+      sanitizeForLog(err),
+    );
+    return null;
+  }
+}
+
 async function resolveAppUserStripeRefs(input: {
   clientId: string;
   externalUserId: string;

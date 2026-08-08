@@ -10,7 +10,7 @@ import { AppActivationError } from "@/lib/activation/app-activation";
 import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
-import { seedSignerSpendableBalance } from "@/lib/oidc/signer-balance-gate";
+import { seedSignerSpendableBalance, seedSignerOverageEligibility } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { isOpenMeterConflictError } from "@/lib/openmeter/plan-errors";
@@ -306,16 +306,24 @@ export async function mintSignerJwtForExternalUser(input: {
     provisionExternalUserId,
     identity,
   });
-  let allowsOverageInvoicing = false;
-  if (identity.isOwner && identity.ownerUserId) {
-    const { ownerWalletAllowsOverageInvoicing } = await import(
-      "@/lib/openmeter/owner-paid-plan"
-    );
-    allowsOverageInvoicing = await ownerWalletAllowsOverageInvoicing(
-      identity.ownerUserId,
-    );
-  }
+  const { resolveAllowsOverageInvoicing } = await import(
+    "@/lib/billing/overage-invoicing"
+  );
+  const allowsOverageInvoicing = await resolveAllowsOverageInvoicing({
+    clientId: input.publicClientId,
+    externalUserId: provisionExternalUserId,
+    identity,
+  });
   enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
+  // Warm the live webhook overage cache so mid-stream reauth matches mint.
+  const gateSubject = identity.isOwner
+    ? buildOwnerWireSubject(provisionExternalUserId)
+    : provisionExternalUserId;
+  seedSignerOverageEligibility(
+    input.publicClientId,
+    gateSubject,
+    allowsOverageInvoicing,
+  );
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

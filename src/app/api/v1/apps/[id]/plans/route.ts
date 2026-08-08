@@ -48,6 +48,7 @@ import {
   parseChargeThresholdUsdInput,
   PAY_PER_USE_NOMINAL_BILLING_CYCLE,
 } from "@/lib/billing/pay-per-use-threshold";
+import { syncAppInvoiceThresholdFromUsagePlans } from "@/lib/billing/effective-invoice-threshold";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -481,6 +482,10 @@ export async function POST(
     if (!sync.ok) {
       return NextResponse.json({ id: planId, syncError: sync.error }, { status: 201 });
     }
+  }
+
+  if (isPayPerUsePlanType(planType)) {
+    await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
   }
 
   return NextResponse.json({ id: planId }, { status: 201 });
@@ -923,6 +928,8 @@ export async function PUT(
       return NextResponse.json({ success: true, id: planId, syncError: sync.error });
     }
   }
+
+  await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
 
   return NextResponse.json({ success: true, id: planId });
 }
