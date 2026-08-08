@@ -5,7 +5,7 @@
  *
  * - solvent: still has plan allowance or prepaid credits; soft CTA to add a card
  * - blocked: spendable is zero and no card — usage is paused until Paid upgrade
- * - chargeable: a payment method is on file; overage can invoice on Owner Paid
+ * - chargeable: a *default* payment method is on file; overage can invoice on Owner Paid
  */
 
 function parseMicros(raw: string | null | undefined): bigint {

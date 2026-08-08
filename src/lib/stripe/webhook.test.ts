@@ -5,6 +5,7 @@ import { paymentsTabErrorMessage } from "./payments-tab-errors";
 import {
   merchantConnectOAuthErrorCode,
   parseStripeAccountUpdated,
+  parseStripeAttachedPaymentMethodId,
   parseStripeCompletedCheckoutSessionId,
   parseStripePaymentMethodAttached,
   resolveConnectWebhookSecret,
@@ -116,6 +117,7 @@ test("payment-method restore parsing accepts Checkout and SetupIntent metadata",
     clientId: "app_merchant",
     externalUserId: "user_1",
     checkoutSessionId: "cs_restore",
+    paymentMethodId: null,
   });
   assert.equal(parseStripeCompletedCheckoutSessionId(checkout), "cs_restore");
 
@@ -124,6 +126,7 @@ test("payment-method restore parsing accepts Checkout and SetupIntent metadata",
     data: {
       object: {
         id: "seti_restore",
+        payment_method: "pm_attached_1",
         metadata: {
           pymthouse_client_id: "app_owner_rollup",
           external_user_id: "owner_1",
@@ -135,8 +138,13 @@ test("payment-method restore parsing accepts Checkout and SetupIntent metadata",
     clientId: "app_owner_rollup",
     externalUserId: "owner_1",
     checkoutSessionId: null,
+    paymentMethodId: "pm_attached_1",
   });
   assert.equal(parseStripeCompletedCheckoutSessionId(setupIntent), null);
+  assert.equal(
+    parseStripeAttachedPaymentMethodId(setupIntent),
+    "pm_attached_1",
+  );
 });
 
 test("payment-method restore parsing rejects incomplete metadata", () => {

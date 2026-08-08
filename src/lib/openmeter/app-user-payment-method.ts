@@ -55,6 +55,7 @@ export type AppUserPaymentMethodCheckoutResult = {
 export type AppUserPaymentMethodRestoreTarget = {
   clientId: string;
   externalUserId: string;
+  paymentMethodId?: string | null;
 };
 
 async function recordAppUserPaymentMethodCheckout(input: {
@@ -80,6 +81,9 @@ async function recordAppUserPaymentMethodCheckout(input: {
  * Uses the compound `{publicClientId}:{externalUserId}` customer — never the
  * owner-wallet path — matching {@link createAppUserPaymentMethodCheckout}.
  * Reassigning the mode-correct profile is safe for webhook retries.
+ *
+ * When a `paymentMethodId` is known (or the first attached method), promote it
+ * to the Stripe/Konnect default so charge_automatically and overage gates work.
  */
 export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
   input: AppUserPaymentMethodRestoreTarget,
@@ -97,10 +101,64 @@ export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
     customerId: customer.id,
     customerKey: customer.key,
   });
+  await ensureAppUserDefaultPaymentMethodAfterAttach({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    paymentMethodId: input.paymentMethodId,
+  });
+}
+
+/**
+ * Promote a just-attached PM to the Stripe invoice default (and Konnect
+ * pointer when available) when the customer has no default yet.
+ */
+export async function ensureAppUserDefaultPaymentMethodAfterAttach(input: {
+  clientId: string;
+  externalUserId: string;
+  paymentMethodId?: string | null;
+}): Promise<void> {
+  const chargeable = await appUserHasChargeablePaymentMethod(input);
+  if (chargeable === true) {
+    return;
+  }
+  let paymentMethodId = input.paymentMethodId?.trim() || null;
+  if (!paymentMethodId) {
+    const refs = await resolveAppUserStripeRefs(input);
+    if (!refs) {
+      return;
+    }
+    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: refs.stripeCustomerId,
+      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+      deps: {
+        fetchImpl: fetch,
+        signal,
+        stripeAccount: refs.stripeAccount,
+      },
+    });
+    paymentMethodId = items[0]?.id?.trim() || null;
+  }
+  if (!paymentMethodId) {
+    return;
+  }
+  try {
+    await setAppUserDefaultPaymentMethod({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      paymentMethodId,
+    });
+  } catch (err) {
+    console.warn(
+      "app-user-payment-method: promote default after attach failed",
+      sanitizeForLog(err),
+    );
+  }
 }
 
 export async function restoreAppUserBillingProfileForCheckoutSession(
   sessionId: string,
+  paymentMethodId?: string | null,
 ): Promise<boolean> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
@@ -133,7 +191,10 @@ export async function restoreAppUserBillingProfileForCheckoutSession(
   if (!target?.clientId || !target.externalUserId) {
     return false;
   }
-  await restoreAppUserBillingProfileAfterPaymentMethodAttached(target);
+  await restoreAppUserBillingProfileAfterPaymentMethodAttached({
+    ...target,
+    paymentMethodId,
+  });
   return true;
 }
 
@@ -307,18 +368,18 @@ export async function appUserHasChargeablePaymentMethod(input: {
     if (refs.konnectDefaultPaymentMethodId) {
       return true;
     }
+    // Default PM only — attached-but-not-default cannot charge_automatically.
     const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
     const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: refs.stripeCustomerId,
       konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-      defaultFirstPaymentMethod: Boolean(refs.stripeAccount),
       deps: {
         fetchImpl: fetch,
         signal,
         stripeAccount: refs.stripeAccount,
       },
     });
-    return items.some((pm) => pm.isDefault) || items.length > 0;
+    return items.some((pm) => pm.isDefault);
   } catch (err) {
     console.warn(
       "app-user-payment-method: chargeability lookup failed",

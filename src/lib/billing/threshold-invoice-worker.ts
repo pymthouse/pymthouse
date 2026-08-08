@@ -1,39 +1,29 @@
 /**
- * Clearinghouse threshold sweep: raise gathering invoices when unpaid totals
- * reach the effective Pay-Per-Use / app invoice threshold, then let Plane A
- * (OM Stripe) or Plane C (settlement Custom Invoicing) collect.
+ * SignerSession-driven threshold raise: when a signing identity is overage-
+ * eligible and gathering totals meet the effective Pay-Per-Use / app threshold,
+ * call OpenMeter `invoicePendingLines` so billing-profile
+ * `charge_automatically` can collect asynchronously.
+ *
+ * Replaces the former full-app cron sweep — only active signers are checked.
  */
-import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
-
-import { db } from "@/db/index";
-import {
-  appBillingConfig,
-  developerApps,
-  plans,
-  subscriptions,
-} from "@/db/schema";
+import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { resolveEffectiveInvoiceThresholdUsdMicros } from "@/lib/billing/effective-invoice-threshold";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
+import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import {
   ensureOwnerCustomer,
   findOpenMeterCustomerByKey,
   listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
+import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import { decimalDollarsToUsdMicros } from "@/lib/openmeter/konnect-credits";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
-import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
+import { getProviderApp } from "@/lib/provider-apps";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
-
-export type ThresholdInvoiceSweepResult = {
-  appsConsidered: number;
-  customersChecked: number;
-  invoicesRaised: number;
-  skipped: number;
-  errors: number;
-};
+import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 
 /** Parse OpenMeter gathering invoice `totals.total` into USD micros. */
 export function gatheringTotalUsdMicros(total: unknown): bigint | null {
@@ -72,16 +62,6 @@ export function gatheringInvoiceMeetsThreshold(
   return false;
 }
 
-async function raiseInvoiceForCustomer(customerId: string): Promise<boolean> {
-  const client = getHostedAdminClient();
-  // SDK `invoicePendingLines` posts to /billing/invoices/invoice with the
-  // customer id — raises gathering lines into a collectible invoice.
-  await client.billing.invoices.invoicePendingLines({
-    customerId,
-  });
-  return true;
-}
-
 export type GatheringInvoiceLike = {
   status?: string | null;
   totals?: { total?: unknown } | null;
@@ -89,7 +69,6 @@ export type GatheringInvoiceLike = {
 
 /**
  * Decide whether gathering lines meet the threshold and optionally raise.
- * Extracted for unit tests and so the sweep can share one raise path.
  */
 export async function evaluateAndRaiseGatheringInvoice(input: {
   customerId: string;
@@ -114,216 +93,178 @@ export async function evaluateAndRaiseGatheringInvoice(input: {
   return "raised";
 }
 
-async function customerIdsForApp(input: {
+const DEFAULT_RAISE_RATE_LIMIT_SECONDS = 60;
+
+let raiseAttemptCache: ReturnType<typeof createAsyncTtlCache<true>> | null =
+  null;
+
+function getRaiseAttemptCache() {
+  raiseAttemptCache ??= createAsyncTtlCache<true>({
+    ttlSeconds: resolveCacheTtlSeconds(
+      "THRESHOLD_INVOICE_RAISE_TTL_SECONDS",
+      DEFAULT_RAISE_RATE_LIMIT_SECONDS,
+    ),
+  });
+  return raiseAttemptCache;
+}
+
+/** Test-only: clear the opportunistic-raise rate-limit cache. */
+export function __resetThresholdRaiseCacheForTests(): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__resetThresholdRaiseCacheForTests is only available in test");
+  }
+  raiseAttemptCache = null;
+}
+
+async function resolveOpenMeterCustomerIdForRaise(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<{
+  customerId: string;
   appId: string;
-  billingMode: string | null | undefined;
-  ownerId: string | null | undefined;
-}): Promise<Array<{ customerId: string; externalUserId: string | null }>> {
+  thresholdExternalUserId: string | null;
+} | null> {
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
   const client = getHostedAdminClient();
-  const out: Array<{ customerId: string; externalUserId: string | null }> = [];
 
-  if (input.billingMode === "merchant") {
-    const subs = await db
-      .select({
-        externalUserId: subscriptions.externalUserId,
-      })
-      .from(subscriptions)
-      .innerJoin(plans, eq(subscriptions.planId, plans.id))
-      .where(
-        and(
-          eq(subscriptions.clientId, input.appId),
-          inArray(subscriptions.status, ["active", "trialing"]),
-          or(eq(plans.type, "usage"), eq(plans.type, "subscription")),
-        ),
-      );
-
-    const seen = new Set<string>();
-    const publicClientId = await resolveOpenMeterMeterClientId(input.appId);
-    for (const row of subs) {
-      const externalUserId = row.externalUserId?.trim();
-      if (!externalUserId || seen.has(externalUserId)) continue;
-      seen.add(externalUserId);
-      const key = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-      const customer = await findOpenMeterCustomerByKey(client, key);
-      const customerId = customer?.id?.trim();
-      if (customerId) {
-        out.push({ customerId, externalUserId });
-      }
-    }
-    return out;
+  if (identity.isOwner && identity.ownerUserId) {
+    const publicClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+    const ownerCustomer = await ensureOwnerCustomer(
+      client,
+      identity.ownerUserId,
+      publicClientIds,
+    );
+    const customerId = ownerCustomer.id?.trim();
+    if (!customerId) return null;
+    return {
+      customerId,
+      appId: identity.developerAppId,
+      thresholdExternalUserId: null,
+    };
   }
 
-  // owner_rollup — owner shared wallet is the cost rail.
-  const ownerId = input.ownerId?.trim();
-  if (!ownerId) return out;
+  const app =
+    (await getProviderApp(identity.developerAppId)) ??
+    (await getProviderApp(identity.publicClientId)) ??
+    (await getProviderApp(input.clientId.trim()));
+  const appId = app?.id?.trim() || identity.developerAppId;
+  const billingConfig = await getAppBillingConfig(appId);
+  const billingMode = billingConfig?.billingMode ?? "owner_rollup";
+
+  if (billingMode === "merchant") {
+    const publicClientId = await resolveOpenMeterMeterClientId(appId);
+    const key = buildOpenMeterCustomerKey(publicClientId, input.externalUserId.trim());
+    const customer = await findOpenMeterCustomerByKey(client, key);
+    const customerId = customer?.id?.trim();
+    if (!customerId) return null;
+    return {
+      customerId,
+      appId,
+      thresholdExternalUserId: input.externalUserId.trim(),
+    };
+  }
+
+  // owner_rollup end-user: cost rail is the owner shared wallet.
+  const ownerId = app?.ownerId?.trim();
+  if (!ownerId) return null;
   const publicClientIds = await listOwnedPublicClientIds(ownerId);
-  const ownerCustomer = await ensureOwnerCustomer(
-    client,
-    ownerId,
-    publicClientIds,
-  );
-  if (ownerCustomer.id?.trim()) {
-    out.push({ customerId: ownerCustomer.id.trim(), externalUserId: null });
-  }
-  return out;
+  const ownerCustomer = await ensureOwnerCustomer(client, ownerId, publicClientIds);
+  const customerId = ownerCustomer.id?.trim();
+  if (!customerId) return null;
+  return {
+    customerId,
+    appId,
+    thresholdExternalUserId: null,
+  };
 }
 
 /**
- * Scan apps with an invoice / PPU charge threshold and raise gathering invoices
- * that have reached the effective threshold.
+ * Best-effort threshold raise for one SignerSession identity. Never throws —
+ * callers must not block mint/authorize on collection.
  */
-export async function runThresholdInvoiceSweep(): Promise<ThresholdInvoiceSweepResult> {
-  const result: ThresholdInvoiceSweepResult = {
-    appsConsidered: 0,
-    customersChecked: 0,
-    invoicesRaised: 0,
-    skipped: 0,
-    errors: 0,
-  };
-
+export async function maybeRaiseThresholdInvoiceForIdentity(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<"raised" | "skipped" | "rate_limited" | "unavailable" | "error"> {
   if (!isHostedAdminClientAvailable()) {
-    return result;
+    return "unavailable";
+  }
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return "skipped";
   }
 
-  const client = getHostedAdminClient();
+  const rateKey = `${clientId}\u0000${externalUserId}`;
+  const cache = getRaiseAttemptCache();
+  const marker = { attempted: false };
+  await cache.get(rateKey, async () => {
+    marker.attempted = true;
+    return true;
+  });
+  if (!marker.attempted) {
+    return "rate_limited";
+  }
 
-  const appsWithAppThreshold = await db
-    .select({
-      appId: appBillingConfig.clientId,
-      billingMode: appBillingConfig.billingMode,
-      ownerId: developerApps.ownerId,
-    })
-    .from(appBillingConfig)
-    .innerJoin(
-      developerApps,
-      eq(appBillingConfig.clientId, developerApps.id),
-    )
-    .where(isNotNull(appBillingConfig.invoiceThresholdUsdMicros));
-
-  const appsWithPlanThreshold = await db
-    .selectDistinct({
-      appId: plans.clientId,
-    })
-    .from(plans)
-    .where(
-      and(
-        eq(plans.type, "usage"),
-        eq(plans.status, "active"),
-        isNotNull(plans.chargeThresholdUsdMicros),
-      ),
-    );
-
-  const appIds = new Set<string>();
-  const appMeta = new Map<
-    string,
-    { billingMode: string | null; ownerId: string | null }
-  >();
-
-  for (const row of appsWithAppThreshold) {
-    const id = row.appId?.trim();
-    if (!id) continue;
-    appIds.add(id);
-    appMeta.set(id, {
-      billingMode: row.billingMode ?? null,
-      ownerId: row.ownerId ?? null,
+  try {
+    const resolved = await resolveOpenMeterCustomerIdForRaise({
+      clientId,
+      externalUserId,
     });
-  }
-  for (const row of appsWithPlanThreshold) {
-    const id = row.appId?.trim();
-    if (!id) continue;
-    appIds.add(id);
-    if (!appMeta.has(id)) {
-      const appRows = await db
-        .select({
-          billingMode: appBillingConfig.billingMode,
-          ownerId: developerApps.ownerId,
-        })
-        .from(developerApps)
-        .leftJoin(
-          appBillingConfig,
-          eq(appBillingConfig.clientId, developerApps.id),
-        )
-        .where(eq(developerApps.id, id))
-        .limit(1);
-      appMeta.set(id, {
-        billingMode: appRows[0]?.billingMode ?? null,
-        ownerId: appRows[0]?.ownerId ?? null,
-      });
-    }
-  }
-
-  // owner_rollup apps share one OpenMeter customer — raise at most once per
-  // customer per sweep (still re-check until raised so a lower app threshold can win).
-  const raisedCustomerIds = new Set<string>();
-
-  for (const appId of appIds) {
-    result.appsConsidered += 1;
-    const meta = appMeta.get(appId) ?? { billingMode: null, ownerId: null };
-    let customers: Array<{ customerId: string; externalUserId: string | null }>;
-    try {
-      customers = await customerIdsForApp({
-        appId,
-        billingMode: meta.billingMode,
-        ownerId: meta.ownerId,
-      });
-    } catch (err) {
-      result.errors += 1;
-      console.warn(
-        "threshold-invoice-worker: list customers failed",
-        sanitizeForLog(appId),
-        sanitizeForLog(err),
-      );
-      continue;
+    if (!resolved) {
+      return "skipped";
     }
 
-    for (const entry of customers) {
-      result.customersChecked += 1;
-      if (raisedCustomerIds.has(entry.customerId)) {
-        result.skipped += 1;
-        continue;
-      }
-      try {
-        const threshold = await resolveEffectiveInvoiceThresholdUsdMicros({
-          appId,
-          externalUserId: entry.externalUserId,
-        });
-        if (threshold == null) {
-          result.skipped += 1;
-          continue;
-        }
-
-        const listed = await client.billing.invoices.list({
-          customers: [entry.customerId],
-          page: 1,
-          pageSize: 20,
-          order: "DESC",
-          orderBy: "createdAt",
-        });
-        const outcome = await evaluateAndRaiseGatheringInvoice({
-          customerId: entry.customerId,
-          thresholdUsdMicros: threshold,
-          invoices: listed?.items ?? [],
-          raise: async (customerId) => {
-            await raiseInvoiceForCustomer(customerId);
-          },
-        });
-        if (outcome === "raised") {
-          raisedCustomerIds.add(entry.customerId);
-          result.invoicesRaised += 1;
-        } else {
-          result.skipped += 1;
-        }
-      } catch (err) {
-        result.errors += 1;
-        console.warn(
-          "threshold-invoice-worker: customer sweep failed",
-          sanitizeForLog(appId),
-          sanitizeForLog(entry.customerId),
-          sanitizeForLog(err),
-        );
-      }
+    const threshold = await resolveEffectiveInvoiceThresholdUsdMicros({
+      appId: resolved.appId,
+      externalUserId: resolved.thresholdExternalUserId,
+    });
+    if (threshold == null) {
+      return "skipped";
     }
-  }
 
-  return result;
+    const client = getHostedAdminClient();
+    const listed = await client.billing.invoices.list({
+      customers: [resolved.customerId],
+      page: 1,
+      pageSize: 20,
+      order: "DESC",
+      orderBy: "createdAt",
+    });
+    const outcome = await evaluateAndRaiseGatheringInvoice({
+      customerId: resolved.customerId,
+      thresholdUsdMicros: threshold,
+      invoices: listed?.items ?? [],
+      raise: async (customerId) => {
+        await client.billing.invoices.invoicePendingLines({ customerId });
+      },
+    });
+    return outcome === "raised" ? "raised" : "skipped";
+  } catch (err) {
+    console.warn(
+      "threshold-invoice: opportunistic raise failed",
+      sanitizeForLog(clientId),
+      sanitizeForLog(externalUserId),
+      sanitizeForLog(err),
+    );
+    return "error";
+  }
+}
+
+/**
+ * Fire-and-forget wrapper for mint / balance webhook. Never awaits settlement.
+ */
+export function scheduleThresholdInvoiceRaise(input: {
+  clientId: string;
+  externalUserId: string;
+}): void {
+  void maybeRaiseThresholdInvoiceForIdentity(input).catch((err) => {
+    console.warn(
+      "threshold-invoice: schedule failed",
+      sanitizeForLog(err),
+    );
+  });
 }

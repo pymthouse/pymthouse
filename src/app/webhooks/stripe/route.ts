@@ -16,6 +16,7 @@ import {
   topUpGrantIdempotencyKey,
 } from "@/lib/stripe/topup-checkout";
 import {
+  parseStripeAttachedPaymentMethodId,
   parseStripeCompletedCheckoutSessionId,
   parseStripeAccountUpdated,
   parseStripePaymentMethodAttached,
@@ -85,8 +86,10 @@ async function handlePaymentMethodRestore(
   if (!checkoutSessionId) {
     return null;
   }
-  const restored =
-    await restoreAppUserBillingProfileForCheckoutSession(checkoutSessionId);
+  const restored = await restoreAppUserBillingProfileForCheckoutSession(
+    checkoutSessionId,
+    parseStripeAttachedPaymentMethodId(rawBody),
+  );
   return NextResponse.json({ received: true, restored });
 }
 

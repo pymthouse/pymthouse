@@ -10,6 +10,7 @@ import {
 import { parseUsdMicros } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
 import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
 import { resolveAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
+import { scheduleThresholdInvoiceRaise } from "@/lib/billing/threshold-invoice-worker";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 
@@ -223,6 +224,11 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
         });
       }
     }
+
+    scheduleThresholdInvoiceRaise({
+      clientId: ctx.identity.client_id,
+      externalUserId: ctx.identity.usage_subject,
+    });
 
     return { expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds };
   };

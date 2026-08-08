@@ -9,6 +9,7 @@ import OwnerPaymentMethodButton from "@/components/OwnerPaymentMethodButton";
 import { authOptions } from "@/lib/next-auth-options";
 import { ownerEligibleForPaidUpgrade } from "@/lib/billing/owner-paid-upgrade-eligibility";
 import { OWNER_STARTER_PLAN_NAME } from "@/lib/openmeter/owner-starter-key";
+import { ensureOwnerDefaultPaymentMethodIfMissing } from "@/lib/openmeter/owner-payment-method";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 function isTurnkeyFundingConfigured(): boolean {
@@ -18,8 +19,13 @@ function isTurnkeyFundingConfigured(): boolean {
   );
 }
 
-export default async function BillingPage() {
-  const result = await getOwnerBillingData();
+export default async function BillingPage({
+  searchParams,
+}: Readonly<{
+  searchParams: Promise<{ pm?: string }>;
+}>) {
+  const params = await searchParams;
+  let result = await getOwnerBillingData();
   if (!result.ok) {
     if (result.reason === "no_session") {
       redirect("/login");
@@ -47,6 +53,16 @@ export default async function BillingPage() {
     );
   }
 
+  if (params.pm === "attached" && result.data.userId) {
+    await ensureOwnerDefaultPaymentMethodIfMissing(result.data.userId).catch(
+      () => undefined,
+    );
+    result = await getOwnerBillingData();
+    if (!result.ok) {
+      redirect("/login");
+    }
+  }
+
   const { data } = result;
   const session = await getServerSession(authOptions);
   const sessionUser = session?.user as Record<string, unknown> | undefined;
@@ -63,7 +79,7 @@ export default async function BillingPage() {
       />
     ) : null;
 
-  const hasPaymentMethod = data.paymentMethods.length > 0;
+  const hasPaymentMethod = data.paymentMethods.some((pm) => pm.isDefault);
   const hasBillingMethod =
     hasPaymentMethod || data.hasChargeableBillingMethod;
   const eligibleForUpgrade = ownerEligibleForPaidUpgrade(data.subscriptions);

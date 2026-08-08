@@ -8,6 +8,7 @@ import {
   ownerCurrentPaidPlanKey,
   ownerEligibleForPaidUpgrade,
 } from "@/lib/billing/owner-paid-upgrade-eligibility";
+import { ensureOwnerDefaultPaymentMethodIfMissing } from "@/lib/openmeter/owner-payment-method";
 import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 /**
@@ -21,12 +22,22 @@ export default async function BillingUpgradePage({
   searchParams: Promise<{ plan?: string; pm?: string }>;
 }>) {
   const params = await searchParams;
-  const result = await getOwnerBillingData();
+  let result = await getOwnerBillingData();
   if (!result.ok) {
     if (result.reason === "no_session") {
       redirect("/login");
     }
     redirect("/billing");
+  }
+
+  if (params.pm === "attached" && result.data.userId) {
+    await ensureOwnerDefaultPaymentMethodIfMissing(result.data.userId).catch(
+      () => undefined,
+    );
+    result = await getOwnerBillingData();
+    if (!result.ok) {
+      redirect("/billing");
+    }
   }
 
   const { data } = result;
@@ -50,7 +61,8 @@ export default async function BillingUpgradePage({
     ? "upgrade"
     : "change";
   const hasBillingMethod =
-    data.paymentMethods.length > 0 || data.hasChargeableBillingMethod;
+    data.paymentMethods.some((pm) => pm.isDefault) ||
+    data.hasChargeableBillingMethod;
 
   return (
     <OwnerPaidUpgradeCheckout

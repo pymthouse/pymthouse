@@ -579,8 +579,9 @@ export const appBillingConfig = pgTable(
      */
     progressiveBilling: boolean("progressive_billing").notNull().default(true),
     /**
-     * Optional unpaid gathering-invoice threshold (USD micros). Enforced by the
-     * clearinghouse threshold worker via invoicePendingLines — not by OpenMeter alone.
+     * Optional unpaid gathering-invoice threshold (USD micros). Enforced on
+     * SignerSession mint/reauth via opportunistic invoicePendingLines — not by
+     * OpenMeter alone. Collection remains billing-profile charge_automatically.
      */
     invoiceThresholdUsdMicros: text("invoice_threshold_usd_micros"),
     /** Merchant Stripe Connected Account id (`acct_…`). */

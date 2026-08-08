@@ -715,6 +715,34 @@ export async function setOwnerDefaultPaymentMethod(
 }
 
 /**
+ * After setup Checkout return (`?pm=attached`), promote the first attached
+ * payment method to Stripe+Konnect default when none is set yet. Plane A OM
+ * webhooks usually do this; this covers lag / missed deliveries.
+ */
+export async function ensureOwnerDefaultPaymentMethodIfMissing(
+  ownerUserId: string,
+): Promise<{ promoted: boolean; paymentMethodId: string | null }> {
+  const trimmed = ownerUserId.trim();
+  if (!trimmed) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  const chargeable = await ownerHasChargeablePaymentMethod(trimmed);
+  if (chargeable === true) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  const methods = await listOwnerPaymentMethods(trimmed);
+  const first = methods[0]?.id?.trim();
+  if (!first) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  const result = await setOwnerDefaultPaymentMethod(trimmed, first);
+  return {
+    promoted: result.updated,
+    paymentMethodId: result.paymentMethodId,
+  };
+}
+
+/**
  * Same-origin Stripe return URL under `/billing` (or `/billing/…`).
  * Rejects open redirects; falls back when the candidate is missing/unsafe.
  * @internal Exported for unit tests.

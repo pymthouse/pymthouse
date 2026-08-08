@@ -19,7 +19,49 @@ export type StripePaymentMethodAttachedPayload = {
   clientId: string;
   externalUserId: string;
   checkoutSessionId: string | null;
+  /** Stripe `pm_…` when present on setup_intent / checkout session. */
+  paymentMethodId: string | null;
 };
+
+function paymentMethodIdFromStripeObject(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const obj = value as {
+    payment_method?: unknown;
+    setup_intent?: unknown;
+  };
+  if (typeof obj.payment_method === "string" && obj.payment_method.startsWith("pm_")) {
+    return obj.payment_method.trim();
+  }
+  if (obj.payment_method && typeof obj.payment_method === "object") {
+    const nested = (obj.payment_method as { id?: unknown }).id;
+    if (typeof nested === "string" && nested.startsWith("pm_")) {
+      return nested.trim();
+    }
+  }
+  if (obj.setup_intent && typeof obj.setup_intent === "object") {
+    return paymentMethodIdFromStripeObject(obj.setup_intent);
+  }
+  return null;
+}
+
+/** Extract `pm_…` from a checkout.session / setup_intent Stripe event body. */
+export function parseStripeAttachedPaymentMethodId(
+  rawBody: string,
+): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as { data?: { object?: unknown } };
+  return paymentMethodIdFromStripeObject(event.data?.object);
+}
 
 function checkoutRestoreMetadata(
   value: unknown,
@@ -49,6 +91,7 @@ function checkoutRestoreMetadata(
       typeof sessionId === "string" && sessionId.startsWith("cs_")
         ? sessionId
         : null,
+    paymentMethodId: paymentMethodIdFromStripeObject(value),
   };
 }
 

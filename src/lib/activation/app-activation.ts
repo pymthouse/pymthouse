@@ -151,7 +151,7 @@ function actionUrlForReason(
 function messageForReason(reason: ActivationReason): string {
   switch (reason) {
     case "owner_payment_method_required":
-      return "Owner wallet is empty and no payment method is on file";
+      return "Owner wallet is empty and cannot invoice overage — Upgrade to a paid plan with a default payment method, or add prepaid credits";
     case "end_user_cap_reached":
       return "App end-user cap reached";
     case "stripe_connect_required":

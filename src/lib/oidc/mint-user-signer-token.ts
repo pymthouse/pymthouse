@@ -324,6 +324,15 @@ export async function mintSignerJwtForExternalUser(input: {
     gateSubject,
     allowsOverageInvoicing,
   );
+  {
+    const { scheduleThresholdInvoiceRaise } = await import(
+      "@/lib/billing/threshold-invoice-worker"
+    );
+    scheduleThresholdInvoiceRaise({
+      clientId: input.publicClientId,
+      externalUserId: gateSubject,
+    });
+  }
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

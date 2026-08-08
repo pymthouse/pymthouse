@@ -50,7 +50,7 @@ export async function GET() {
     ]);
 
   const billingPressure = resolveOwnerBillingPressure({
-    hasPaymentMethod: paymentMethods.length > 0 || chargeable === true,
+    hasPaymentMethod: chargeable === true,
     creditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
     subscriptions,
   });

@@ -6,10 +6,11 @@
  * billing profiles carry no cycle of their own, so a truly cycle-less plan is
  * not representable. Per the issue's documented fallback, Pay-Per-Use plans
  * keep a NOMINAL internal cycle for Konnect's sake (a no-op reconciliation
- * boundary, never the primary charge trigger) and all charging is driven by
- * the charge threshold: progressive billing + the clearinghouse threshold
- * worker invoice when accrued usage reaches the threshold, settling prepaid
- * credits first, then auto-debiting the default payment method.
+ * boundary, never the primary charge trigger). Charging is driven by the
+ * charge threshold: progressive billing + SignerSession opportunistic
+ * `invoicePendingLines` when accrued usage reaches the threshold (mint /
+ * balance reauth), settling prepaid credits first, then auto-debiting the
+ * default payment method via billing-profile `charge_automatically`.
  *
  * Client-safe (no DB/Node imports) so the plan dialog can render the resolved
  * behaviour live.

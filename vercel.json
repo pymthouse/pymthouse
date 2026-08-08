@@ -7,11 +7,5 @@
   "regions": ["iad1"],
   "git": {
     "deploymentEnabled": false
-  },
-  "crons": [
-    {
-      "path": "/api/cron/threshold-invoices",
-      "schedule": "0 0 * * *"
-    }
-  ]
+  }
 }

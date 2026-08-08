@@ -3,10 +3,11 @@ import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
 
 import {
+  __resetThresholdRaiseCacheForTests,
   evaluateAndRaiseGatheringInvoice,
   gatheringInvoiceMeetsThreshold,
   gatheringTotalUsdMicros,
-  runThresholdInvoiceSweep,
+  maybeRaiseThresholdInvoiceForIdentity,
 } from "@/lib/billing/threshold-invoice-worker";
 import {
   __testSetHostedOpenMeterClient,
@@ -23,7 +24,6 @@ test("gatheringTotalUsdMicros covers edge branches", () => {
   assert.equal(gatheringTotalUsdMicros(Number.POSITIVE_INFINITY), null);
   assert.equal(gatheringTotalUsdMicros("   "), null);
   assert.equal(gatheringTotalUsdMicros("12.34"), 12_340_000n);
-  // Short integer strings are treated as dollars.
   assert.equal(gatheringTotalUsdMicros("10"), 10_000_000n);
   assert.equal(gatheringTotalUsdMicros({} as unknown as string), null);
   assert.equal(gatheringTotalUsdMicros(true as unknown as string), null);
@@ -85,20 +85,18 @@ test("evaluateAndRaiseGatheringInvoice skips below threshold", async () => {
   assert.equal(raiseCalls, 0);
 });
 
-test("runThresholdInvoiceSweep no-ops when admin client is unavailable", async () => {
+test("maybeRaiseThresholdInvoiceForIdentity returns unavailable without OM", async () => {
+  __resetThresholdRaiseCacheForTests();
   resetHostedOpenMeterClientForTests();
   __testSetHostedOpenMeterClient(null);
   const prevLive = process.env.OPENMETER_TEST_LIVE;
   delete process.env.OPENMETER_TEST_LIVE;
   try {
-    const result = await runThresholdInvoiceSweep();
-    assert.deepEqual(result, {
-      appsConsidered: 0,
-      customersChecked: 0,
-      invoicesRaised: 0,
-      skipped: 0,
-      errors: 0,
+    const result = await maybeRaiseThresholdInvoiceForIdentity({
+      clientId: "app_x",
+      externalUserId: "eu_x",
     });
+    assert.equal(result, "unavailable");
   } finally {
     if (prevLive === undefined) delete process.env.OPENMETER_TEST_LIVE;
     else process.env.OPENMETER_TEST_LIVE = prevLive;
@@ -106,7 +104,8 @@ test("runThresholdInvoiceSweep no-ops when admin client is unavailable", async (
   }
 });
 
-dbTest("runThresholdInvoiceSweep raises gathering invoice for owner_rollup app", async (t) => {
+dbTest("maybeRaiseThresholdInvoiceForIdentity raises once then rate-limits", async (t) => {
+  __resetThresholdRaiseCacheForTests();
   const app = await seedDeveloperAppWithClient({ status: "approved" });
   t.after(async () => {
     await cleanupTestApp(app);
@@ -121,12 +120,15 @@ dbTest("runThresholdInvoiceSweep raises gathering invoice for owner_rollup app",
   const prevUrl = process.env.OPENMETER_URL;
   const prevKey = process.env.OPENMETER_API_KEY;
   const prevMode = process.env.OPENMETER_ROUTE_MODE;
+  const prevTtl = process.env.THRESHOLD_INVOICE_RAISE_TTL_SECONDS;
   process.env.OPENMETER_TEST_LIVE = "1";
   process.env.OPENMETER_URL = "http://127.0.0.1:48999";
   process.env.OPENMETER_ROUTE_MODE = "self_hosted";
+  process.env.THRESHOLD_INVOICE_RAISE_TTL_SECONDS = "60";
   delete process.env.OPENMETER_API_KEY;
   resetHostedOpenMeterClientForTests();
   resetEnsuredCustomerCacheForTests();
+  __resetThresholdRaiseCacheForTests();
 
   let invoicePendingCalls = 0;
   const ownerCustomer = {
@@ -166,13 +168,24 @@ dbTest("runThresholdInvoiceSweep raises gathering invoice for owner_rollup app",
     else process.env.OPENMETER_API_KEY = prevKey;
     if (prevMode === undefined) delete process.env.OPENMETER_ROUTE_MODE;
     else process.env.OPENMETER_ROUTE_MODE = prevMode;
+    if (prevTtl === undefined) delete process.env.THRESHOLD_INVOICE_RAISE_TTL_SECONDS;
+    else process.env.THRESHOLD_INVOICE_RAISE_TTL_SECONDS = prevTtl;
     resetHostedOpenMeterClientForTests();
     resetEnsuredCustomerCacheForTests();
+    __resetThresholdRaiseCacheForTests();
   });
 
-  const result = await runThresholdInvoiceSweep();
-  assert.ok(result.appsConsidered >= 1);
-  assert.ok(result.customersChecked >= 1);
-  assert.ok(result.invoicesRaised >= 1);
-  assert.ok(invoicePendingCalls >= 1);
+  const first = await maybeRaiseThresholdInvoiceForIdentity({
+    clientId: app.clientId,
+    externalUserId: `owner:${app.userId}`,
+  });
+  assert.equal(first, "raised");
+  assert.equal(invoicePendingCalls, 1);
+
+  const second = await maybeRaiseThresholdInvoiceForIdentity({
+    clientId: app.clientId,
+    externalUserId: `owner:${app.userId}`,
+  });
+  assert.equal(second, "rate_limited");
+  assert.equal(invoicePendingCalls, 1);
 });
