@@ -5,7 +5,6 @@ import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { plans, subscriptions } from "@/db/schema";
-import { pickEffectiveThresholdUsdMicros } from "@/lib/billing/effective-invoice-threshold";
 import {
   appUserAllowsOverageInvoicing,
   appUserHasOverageCapablePlan,
@@ -21,40 +20,6 @@ import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { appUserHasChargeablePaymentMethod } from "@/lib/openmeter/app-user-payment-method";
 import { test as dbTest } from "@/test-utils/db-guard";
 import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
-
-test("pickEffectiveThresholdUsdMicros prefers plan charge threshold", () => {
-  assert.equal(
-    pickEffectiveThresholdUsdMicros({
-      planChargeThresholdUsdMicros: "5000000",
-      appInvoiceThresholdUsdMicros: "10000000",
-    }),
-    5_000_000n,
-  );
-});
-
-test("pickEffectiveThresholdUsdMicros falls back to app invoice threshold", () => {
-  assert.equal(
-    pickEffectiveThresholdUsdMicros({
-      planChargeThresholdUsdMicros: null,
-      appInvoiceThresholdUsdMicros: "2500000",
-    }),
-    2_500_000n,
-  );
-  assert.equal(
-    pickEffectiveThresholdUsdMicros({
-      planChargeThresholdUsdMicros: "0",
-      appInvoiceThresholdUsdMicros: "1000000",
-    }),
-    1_000_000n,
-  );
-  assert.equal(
-    pickEffectiveThresholdUsdMicros({
-      planChargeThresholdUsdMicros: null,
-      appInvoiceThresholdUsdMicros: null,
-    }),
-    null,
-  );
-});
 
 test("decideAllowsOverageInvoicing: merchant + chargeable + usage plan → allow", () => {
   assert.equal(

@@ -6,11 +6,11 @@
  * billing profiles carry no cycle of their own, so a truly cycle-less plan is
  * not representable. Per the issue's documented fallback, Pay-Per-Use plans
  * keep a NOMINAL internal cycle for Konnect's sake (a no-op reconciliation
- * boundary, never the primary charge trigger). Charging is driven by the
- * charge threshold: progressive billing + SignerSession opportunistic
- * `invoicePendingLines` when accrued usage reaches the threshold (mint /
- * balance reauth), settling prepaid credits first, then auto-debiting the
- * default payment method via billing-profile `charge_automatically`.
+ * boundary, never the primary charge trigger). Plan `chargeThresholdUsdMicros`
+ * remains the builder-facing PPU threshold for display / plan DTO semantics.
+ * Live spend past prepaid $0 is gated by overage eligibility + optional
+ * soft-negative debt ceiling (with per-user auto top-up), not by syncing the
+ * plan threshold into `app_billing_config.invoice_threshold_usd_micros`.
  *
  * Client-safe (no DB/Node imports) so the plan dialog can render the resolved
  * behaviour live.
