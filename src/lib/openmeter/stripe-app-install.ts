@@ -454,6 +454,7 @@ export async function getStripeConnectStatus(clientId: string) {
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,
     invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
+    softNegativeUsdMicros: config?.softNegativeUsdMicros ?? null,
     stripeConnectedAccountId: accountId,
     stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
     stripeChargesEnabled: config?.stripeChargesEnabled ?? false,

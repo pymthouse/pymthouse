@@ -10,7 +10,8 @@ import {
 import { parseUsdMicros } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
 import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
 import { resolveAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
-import { scheduleThresholdInvoiceRaise } from "@/lib/billing/threshold-invoice-worker";
+import { scheduleAutoTopUp } from "@/lib/billing/auto-topup-worker";
+import { resolveSoftNegativeGate } from "@/lib/billing/soft-negative-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
@@ -181,7 +182,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
   const expiryTtlSeconds = resolveExpiryTtlSeconds();
 
   // Custom gate (not createBalanceGate): zero spendable may still authorize
-  // when overage-eligible, then opportunistically raise gathering invoices.
+  // under soft-negative headroom when overage-eligible; lead auto-top-up may run.
   return async function checkBalance(ctx) {
     let rawBalance: string | null;
     try {
@@ -223,18 +224,37 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
         );
         allowsOverage = false;
       }
-      if (!allowsOverage) {
+
+      let softAllow = false;
+      try {
+        const softGate = await resolveSoftNegativeGate({
+          clientId: ctx.identity.client_id,
+          externalUserId: ctx.identity.usage_subject,
+          spendableUsdMicros: balance,
+          allowsOverageInvoicing: allowsOverage,
+        });
+        softAllow = softGate.allow;
+      } catch (err) {
+        console.warn(
+          `[remote-signer] soft-negative check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+          sanitizeForLog(err),
+        );
+        softAllow = false;
+      }
+
+      if (!softAllow) {
         throw new WebhookError("Payment method required", {
           status: REMOTE_SIGNER_HTTP_STATUS.INSUFFICIENT_BALANCE,
           code: REMOTE_SIGNER_ERROR_CODE.INSUFFICIENT_BALANCE,
         });
       }
-    }
 
-    scheduleThresholdInvoiceRaise({
-      clientId: ctx.identity.client_id,
-      externalUserId: ctx.identity.usage_subject,
-    });
+      scheduleAutoTopUp({
+        clientId: ctx.identity.client_id,
+        externalUserId: ctx.identity.usage_subject,
+        reason: "lead_soft_negative",
+      });
+    }
 
     return { expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds };
   };

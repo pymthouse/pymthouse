@@ -304,6 +304,20 @@ export const appUsers = pgTable(
     depositWalletAddress: text("deposit_wallet_address"),
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
+    /**
+     * Opt-in off-session auto top-up when mint is balance-rejected or debt
+     * enters the soft-negative lead window. Default off.
+     */
+    autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
+    /** Charge amount (USD micros). Null when enabling ⇒ runtime default $5. */
+    autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
+    /**
+     * When auto-top-up is enabled, fire a lead reload before unbilled debt
+     * hits the app soft-negative ceiling. Default true.
+     */
+    autoTopUpBeforeSoftNegative: boolean("auto_top_up_before_soft_negative")
+      .notNull()
+      .default(true),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -579,11 +593,15 @@ export const appBillingConfig = pgTable(
      */
     progressiveBilling: boolean("progressive_billing").notNull().default(true),
     /**
-     * Optional unpaid gathering-invoice threshold (USD micros). Enforced on
-     * SignerSession mint/reauth via opportunistic invoicePendingLines — not by
-     * OpenMeter alone. Collection remains billing-profile charge_automatically.
+     * Legacy gathering-invoice threshold (USD micros). No longer used for
+     * SignerSession raises — prefer softNegativeUsdMicros + per-user auto top-up.
      */
     invoiceThresholdUsdMicros: text("invoice_threshold_usd_micros"),
+    /**
+     * Max unbilled debt (USD micros) allowed while spendable ≤ 0 before
+     * mint/signer deny. App-wide; same for all end users.
+     */
+    softNegativeUsdMicros: text("soft_negative_usd_micros"),
     /** Merchant Stripe Connected Account id (`acct_…`). */
     stripeConnectedAccountId: text("stripe_connected_account_id"),
     /** How the merchant linked: account_link | oauth */

@@ -323,6 +323,13 @@
       "when": 1786700000000,
       "tag": "0044_plans_charge_threshold",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0045_auto_topup_soft_negative",
+      "breakpoints": true
     }
   ]
 }

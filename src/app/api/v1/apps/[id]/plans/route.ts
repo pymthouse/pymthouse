@@ -48,7 +48,6 @@ import {
   parseChargeThresholdUsdInput,
   PAY_PER_USE_NOMINAL_BILLING_CYCLE,
 } from "@/lib/billing/pay-per-use-threshold";
-import { syncAppInvoiceThresholdFromUsagePlans } from "@/lib/billing/effective-invoice-threshold";
 
 async function requireOwnedDiscoveryProfile(
   appId: string,
@@ -474,12 +473,6 @@ export async function POST(
       return NextResponse.json({ error: e.message }, { status: 400 });
     }
     throw e;
-  }
-
-  // Persist the app invoice threshold even when OpenMeter publish fails — the
-  // plan row (including chargeThresholdUsdMicros) was already committed.
-  if (isPayPerUsePlanType(planType)) {
-    await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
   }
 
   const planStatusAfterInsert = planStatus;
@@ -917,10 +910,6 @@ export async function PUT(
     );
   }
 
-  // Keep app invoice threshold in sync even when OpenMeter publish fails — the
-  // plan row (including chargeThresholdUsdMicros) was already committed.
-  await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
-
   const updatedStatus =
     body.status === undefined ? undefined : coerceJsonScalarString(body.status);
   // Keep OpenMeter plan published while phase_out so existing subscribers continue.
@@ -1051,8 +1040,6 @@ export async function DELETE(
   } catch {
     /* best effort */
   }
-
-  await syncAppInvoiceThresholdFromUsagePlans(appId).catch(() => undefined);
 
   return NextResponse.json({ success: true });
 }

@@ -33,6 +33,11 @@ export function parseInvoiceThresholdUsdMicrosInput(
   return { ok: true, value: trimmed };
 }
 
+export {
+  parseSoftNegativeUsdMicrosInput,
+  parseAutoTopUpUsdMicrosInput,
+} from "@/lib/billing/auto-topup-settings";
+
 export function parseProgressiveBillingInput(
   value: unknown,
 ): { ok: true; value: boolean } | { ok: false; error: string } {

@@ -28,6 +28,7 @@ type StripeStatus = {
   connectedAt: string | null;
   progressiveBilling?: boolean;
   invoiceThresholdUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   stripeConnectedAccountId?: string | null;
   stripeOnboardingMethod?: string | null;
   stripeChargesEnabled?: boolean;
@@ -176,9 +177,11 @@ function applyStatusToForm(
   set.progressiveBilling(nextStatus.progressiveBilling ?? true);
   set.billingMode(nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup");
   set.thresholdDisplay(
-    nextStatus.invoiceThresholdUsdMicros
-      ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
-      : "",
+    nextStatus.softNegativeUsdMicros
+      ? usdMicrosToCentsDisplay(nextStatus.softNegativeUsdMicros)
+      : nextStatus.invoiceThresholdUsdMicros
+        ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
+        : "",
   );
   set.supplierTaxId(nextStatus.supplierTaxId?.trim() || "");
 }
@@ -302,10 +305,10 @@ async function requestSaveBillingSettings(input: {
   setters.setError(null);
   setters.setSettingsSaved(null);
   try {
-    const invoiceThresholdUsdMicros = parseThresholdMicros(input.thresholdDisplay);
+    const softNegativeUsdMicros = parseThresholdMicros(input.thresholdDisplay);
     const payload: Record<string, unknown> = {
       progressiveBilling: input.progressiveBilling,
-      invoiceThresholdUsdMicros,
+      softNegativeUsdMicros,
       billingMode: input.billingMode,
     };
     // Always send when Connect is linked so merchant switch can satisfy tax_id
@@ -619,11 +622,12 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
   return (
     <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
       <div>
-        <h3 className="text-base font-semibold text-zinc-100">Mid-cycle invoicing</h3>
+        <h3 className="text-base font-semibold text-zinc-100">Soft negative & progressive billing</h3>
         <p className="mt-1 text-xs text-zinc-500">
-          Progressive billing allows OpenMeter to invoice unpaid usage before the
-          billing cycle ends. Set an optional dollar threshold; the clearinghouse
-          worker charges when gathering invoices reach that amount.
+          Soft negative is the max unbilled debt allowed after prepaid credits hit
+          $0 before mint/signer cut off. Progressive billing still lets OpenMeter
+          create mid-cycle invoices; per-user auto top-up (wallet) reloads credits
+          on mint reject or before this ceiling.
         </p>
       </div>
       <label className="flex items-start gap-2 text-sm text-zinc-200">
@@ -645,17 +649,17 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
         </span>
       </label>
       <div>
-        <label htmlFor="invoice-threshold" className="block text-xs text-zinc-500 mb-1">
-          Invoice when unpaid usage reaches (USD)
+        <label htmlFor="soft-negative" className="block text-xs text-zinc-500 mb-1">
+          Soft negative limit (USD)
         </label>
         <div className="flex items-center gap-2">
           <span className="text-sm text-zinc-500">$</span>
           <input
-            id="invoice-threshold"
+            id="soft-negative"
             type="text"
             inputMode="decimal"
-            placeholder="e.g. 10.00 (leave blank to disable)"
-            disabled={!canManageBilling || busy || !progressiveBilling}
+            placeholder="e.g. 1.00 (blank = hard cut at $0)"
+            disabled={!canManageBilling || busy}
             value={thresholdDisplay}
             onChange={(e) => {
               setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));

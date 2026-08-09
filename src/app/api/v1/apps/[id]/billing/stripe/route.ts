@@ -17,6 +17,7 @@ import {
 import {
   parseInvoiceThresholdUsdMicrosInput,
   parseProgressiveBillingInput,
+  parseSoftNegativeUsdMicrosInput,
 } from "@/lib/openmeter/billing-profile-settings";
 import {
   disconnectStripeConnect,
@@ -29,6 +30,7 @@ import { sanitizeForLog } from "@/lib/sanitize-for-log";
 type BillingPatchFields = {
   progressiveBilling?: boolean;
   invoiceThresholdUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   applicationFeeBps?: number;
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
@@ -215,6 +217,7 @@ function hasBillingPatchFields(body: Record<string, unknown>): boolean {
   return (
     body.progressiveBilling !== undefined ||
     body.invoiceThresholdUsdMicros !== undefined ||
+    body.softNegativeUsdMicros !== undefined ||
     body.applicationFeeBps !== undefined ||
     body.billingMode !== undefined ||
     body.endUserCap !== undefined ||
@@ -279,6 +282,24 @@ function applyInvoiceThresholdField(
   return null;
 }
 
+function applySoftNegativeField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = parseSoftNegativeUsdMicrosInput(value);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: parsed.error }, { status: 400 }),
+    };
+  }
+  fields.softNegativeUsdMicros = parsed.value;
+  return null;
+}
+
 async function parseBillingPatchBody(
   body: Record<string, unknown>,
   appId: string,
@@ -289,7 +310,7 @@ async function parseBillingPatchBody(
       response: NextResponse.json(
         {
           error:
-            "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
+            "Provide progressiveBilling, invoiceThresholdUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
         },
         { status: 400 },
       ),
@@ -312,6 +333,9 @@ async function parseBillingPatchBody(
     fields,
   );
   if (thresholdErr) return thresholdErr;
+
+  const softNegErr = applySoftNegativeField(body.softNegativeUsdMicros, fields);
+  if (softNegErr) return softNegErr;
 
   const feeErr = applyIntegerPatchField(
     body.applicationFeeBps,
@@ -368,6 +392,7 @@ async function persistBillingPatch(
   const {
     progressiveBilling,
     invoiceThresholdUsdMicros,
+    softNegativeUsdMicros,
     applicationFeeBps,
     billingMode,
     endUserCap,
@@ -378,11 +403,13 @@ async function persistBillingPatch(
   const updated =
     progressiveBilling !== undefined ||
     invoiceThresholdUsdMicros !== undefined ||
+    softNegativeUsdMicros !== undefined ||
     applicationFeeBps !== undefined
       ? await updateAppBillingProfileSettings({
           clientId: appId,
           progressiveBilling,
           invoiceThresholdUsdMicros,
+          softNegativeUsdMicros,
           applicationFeeBps,
         })
       : {};

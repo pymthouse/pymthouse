@@ -314,25 +314,51 @@ export async function mintSignerJwtForExternalUser(input: {
     externalUserId: provisionExternalUserId,
     identity,
   });
-  enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
-  // Warm the live webhook overage cache so mid-stream reauth matches mint.
+  const spendableMicros = BigInt(allowance?.balanceUsdMicros ?? "0");
   const gateSubject = identity.isOwner
     ? buildOwnerWireSubject(provisionExternalUserId)
     : provisionExternalUserId;
+
+  if (isHostedAdminClientAvailable() && spendableMicros <= 0n) {
+    const { resolveSoftNegativeGate } = await import(
+      "@/lib/billing/soft-negative-gate"
+    );
+    const softGate = await resolveSoftNegativeGate({
+      clientId: input.publicClientId,
+      externalUserId: gateSubject,
+      spendableUsdMicros: spendableMicros,
+      allowsOverageInvoicing,
+    });
+    if (!softGate.allow) {
+      const { scheduleAutoTopUp } = await import(
+        "@/lib/billing/auto-topup-worker"
+      );
+      scheduleAutoTopUp({
+        clientId: input.publicClientId,
+        externalUserId: gateSubject,
+        reason: "mint_reject",
+      });
+      enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: false });
+    } else {
+      enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: true });
+      const { scheduleAutoTopUp } = await import(
+        "@/lib/billing/auto-topup-worker"
+      );
+      scheduleAutoTopUp({
+        clientId: input.publicClientId,
+        externalUserId: gateSubject,
+        reason: "lead_soft_negative",
+      });
+    }
+  } else {
+    enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
+  }
+  // Warm the live webhook overage cache so mid-stream reauth matches mint.
   seedSignerOverageEligibility(
     input.publicClientId,
     gateSubject,
     allowsOverageInvoicing,
   );
-  {
-    const { scheduleThresholdInvoiceRaise } = await import(
-      "@/lib/billing/threshold-invoice-worker"
-    );
-    scheduleThresholdInvoiceRaise({
-      clientId: input.publicClientId,
-      externalUserId: gateSubject,
-    });
-  }
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

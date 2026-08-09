@@ -12,6 +12,10 @@ import {
   topUpClientOwnedByOwner,
 } from "@/lib/stripe/topup-ownership";
 import {
+  autoTopUpGrantIdempotencyKey,
+  isAutoTopUpPaymentIntentMetadata,
+} from "@/lib/stripe/auto-topup-charge";
+import {
   parseTopUpCheckoutSessionCompleted,
   topUpGrantIdempotencyKey,
 } from "@/lib/stripe/topup-checkout";
@@ -228,6 +232,74 @@ async function settleMerchantTopUp(input: {
   }
 }
 
+async function handleAutoTopUpPaymentIntentSucceeded(
+  rawBody: string,
+): Promise<Response> {
+  let parsed: {
+    data?: {
+      object?: {
+        id?: string;
+        amount?: number;
+        status?: string;
+        metadata?: Record<string, unknown>;
+      };
+    };
+  };
+  try {
+    parsed = JSON.parse(rawBody) as typeof parsed;
+  } catch {
+    return NextResponse.json({ received: true, ignored: "malformed" });
+  }
+  const pi = parsed.data?.object;
+  const paymentIntentId = pi?.id?.trim();
+  const metadata = pi?.metadata;
+  if (
+    !paymentIntentId ||
+    !isAutoTopUpPaymentIntentMetadata(metadata) ||
+    String(pi?.status ?? "") !== "succeeded"
+  ) {
+    return NextResponse.json({
+      received: true,
+      ignored: "not_auto_topup",
+    });
+  }
+  const clientId =
+    typeof metadata?.client_id === "string" ? metadata.client_id.trim() : "";
+  const externalUserId =
+    typeof metadata?.external_user_id === "string"
+      ? metadata.external_user_id.trim()
+      : "";
+  const amountCents =
+    typeof pi?.amount === "number" && Number.isFinite(pi.amount)
+      ? Math.trunc(pi.amount)
+      : 0;
+  if (!clientId || !externalUserId || amountCents <= 0) {
+    return NextResponse.json({
+      received: true,
+      ignored: "auto_topup_incomplete_metadata",
+    });
+  }
+  const amountUsdMicros = BigInt(amountCents) * 10_000n;
+  try {
+    // Idempotent with the sync grant path (same key).
+    await grantAllowanceUsdMicros({
+      clientId,
+      externalUserId,
+      amountUsdMicros,
+      source: "topup",
+      idempotencyKey: autoTopUpGrantIdempotencyKey(paymentIntentId),
+    });
+    return NextResponse.json({
+      received: true,
+      credited: true,
+      paymentIntentId,
+    });
+  } catch (err) {
+    logHandlerError("auto-topup settle", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+}
+
 async function handleCheckoutSessionCompleted(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
@@ -339,6 +411,9 @@ export async function POST(request: Request): Promise<Response> {
     type === "checkout.session.async_payment_succeeded"
   ) {
     return handleCheckoutSessionCompleted(rawBody, secretKind);
+  }
+  if (type === "payment_intent.succeeded") {
+    return handleAutoTopUpPaymentIntentSucceeded(rawBody);
   }
   if (type === "setup_intent.succeeded") {
     try {

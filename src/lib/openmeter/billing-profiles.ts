@@ -565,10 +565,12 @@ export async function updateAppBillingProfileSettings(input: {
   clientId: string;
   progressiveBilling?: boolean;
   invoiceThresholdUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   applicationFeeBps?: number;
 }): Promise<{
   progressiveBilling: boolean;
   invoiceThresholdUsdMicros: string | null;
+  softNegativeUsdMicros: string | null;
   applicationFeeBps: number;
 }> {
   let existing = await getAppBillingConfig(input.clientId);
@@ -586,6 +588,10 @@ export async function updateAppBillingProfileSettings(input: {
     input.invoiceThresholdUsdMicros !== undefined
       ? input.invoiceThresholdUsdMicros
       : existing.invoiceThresholdUsdMicros;
+  const softNegativeUsdMicros =
+    input.softNegativeUsdMicros !== undefined
+      ? input.softNegativeUsdMicros
+      : existing.softNegativeUsdMicros;
   const applicationFeeBps =
     input.applicationFeeBps ?? existing.applicationFeeBps ?? 0;
 
@@ -606,12 +612,14 @@ export async function updateAppBillingProfileSettings(input: {
   await upsertAppBillingConfig(input.clientId, {
     progressiveBilling,
     invoiceThresholdUsdMicros,
+    softNegativeUsdMicros,
     applicationFeeBps,
   });
 
   return {
     progressiveBilling,
     invoiceThresholdUsdMicros: invoiceThresholdUsdMicros ?? null,
+    softNegativeUsdMicros: softNegativeUsdMicros ?? null,
     applicationFeeBps,
   };
 }
