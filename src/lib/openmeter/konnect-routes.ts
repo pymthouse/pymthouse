@@ -189,10 +189,36 @@ function rewriteKonnectEventsListParams(params: URLSearchParams): void {
   moveParamToKonnectFilter(params, "ingestedAtTo", "filter[ingested_at][lte]");
 }
 
+/**
+ * Invoice mutation actions 405 on Konnect `/v3/openmeter` (route exists but
+ * method is rejected). Cloud UI / settlement use `/metering/v1` for the same
+ * OpenMeter paths — same class of gap as subscription DELETE/restore.
+ *
+ * Matches:
+ * - POST …/billing/invoices/invoice  (invoicePendingLines)
+ * - POST …/billing/invoices/{id}/advance|approve|retry|snapshot-quantities
+ */
+const KONNECT_V3_INVOICE_ACTION_PATH_RE =
+  /^\/v3\/openmeter(\/billing\/invoices(?:\/invoice|\/[^/]+\/(?:advance|approve|retry|snapshot-quantities)))$/;
+
+export function rewriteKonnectInvoiceActionToMeteringV1(
+  pathname: string,
+  method: string,
+): string {
+  if (method.toUpperCase() !== "POST") {
+    return pathname;
+  }
+  const match = KONNECT_V3_INVOICE_ACTION_PATH_RE.exec(pathname);
+  if (!match) {
+    return pathname;
+  }
+  return `/metering/v1${match[1]}`;
+}
+
 export function rewriteKonnectRequestUrl(url: URL, method: string): URL {
   const next = new URL(url.toString());
   const rewrittenPath = rewriteKonnectPathname(next.pathname, method);
-  next.pathname = rewrittenPath;
+  next.pathname = rewriteKonnectInvoiceActionToMeteringV1(rewrittenPath, method);
   next.search = rewriteKonnectSearchParams(url.pathname, method, next.searchParams).toString();
   return next;
 }
