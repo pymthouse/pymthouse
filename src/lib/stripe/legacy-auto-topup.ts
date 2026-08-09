@@ -19,7 +19,8 @@ export function isLegacyAutoTopUpPaymentIntentMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): boolean {
   if (!metadata || typeof metadata !== "object") return false;
-  return String(metadata[LEGACY_AUTO_TOP_UP_METADATA_FLAG] ?? "") === "1";
+  const flag = metadata[LEGACY_AUTO_TOP_UP_METADATA_FLAG];
+  return typeof flag === "string" && flag === "1";
 }
 
 export { LEGACY_AUTO_TOP_UP_METADATA_FLAG };

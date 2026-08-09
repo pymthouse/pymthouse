@@ -331,30 +331,29 @@ export function previewOverageCeiling(
   const ceiling = effectiveSoftNegativeUsdMicros(parsed.value);
   const summary = explainOverageCeiling(parsed.value);
   const minimum = formatUsdMicrosForDisplay(MIN_INVOICE_USD_MICROS.toString());
-  const bullets: string[] = [];
 
+  let firstBullet: string;
   if (ceiling > 0n) {
     const lead = effectiveInvoiceLeadUsdMicros({
       storedUsdMicros: null,
       softNegativeUsdMicros: ceiling,
     });
     const buffer = ceiling > lead ? ceiling - lead : 0n;
-    bullets.push(
-      `An invoice goes out once a user has $${formatUsdMicrosForDisplay(lead.toString())} of unbilled usage, leaving $${formatUsdMicrosForDisplay(buffer.toString())} of buffer while it is collected.`,
-    );
+    firstBullet = `An invoice goes out once a user has $${formatUsdMicrosForDisplay(lead.toString())} of unbilled usage, leaving $${formatUsdMicrosForDisplay(buffer.toString())} of buffer while it is collected.`;
   } else {
-    bullets.push(
-      "No invoice is triggered by amount, so unbilled usage is only collected on the recurring sweep.",
-    );
+    firstBullet =
+      "No invoice is triggered by amount, so unbilled usage is only collected on the recurring sweep.";
   }
-  bullets.push(
-    `Usage under $${minimum} is never invoiced — cards cannot be charged for less.`,
-  );
-  bullets.push(
-    "Anything still unbilled is swept daily, so a user is not held at the limit waiting for a cycle to end.",
-  );
 
-  return { error: null, summary, bullets };
+  return {
+    error: null,
+    summary,
+    bullets: [
+      firstBullet,
+      `Usage under $${minimum} is never invoiced — cards cannot be charged for less.`,
+      "Anything still unbilled is swept daily, so a user is not held at the limit waiting for a cycle to end.",
+    ],
+  };
 }
 
 /** Plain-language reading of an overage ceiling, for admin settings copy. */

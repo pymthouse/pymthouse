@@ -84,88 +84,113 @@ function stripeEventAccount(rawBody: string): string | null {
  * session mapping; otherwise require the emitting Connect `account` to match
  * the target app's Connected Account (same binding as merchant top-up).
  */
+async function restoreFromMetadataTarget(
+  restoreTarget: {
+    clientId: string;
+    externalUserId: string;
+    paymentMethodId: string;
+    checkoutSessionId?: string;
+  },
+  account: string | null,
+): Promise<Response> {
+  if (restoreTarget.checkoutSessionId) {
+    const restored = await restoreAppUserBillingProfileForCheckoutSession(
+      restoreTarget.checkoutSessionId,
+      restoreTarget.paymentMethodId,
+    );
+    return NextResponse.json({ received: true, restored });
+  }
+
+  if (!account) {
+    // Platform event without a Checkout session id: do not trust metadata alone.
+    return NextResponse.json({
+      received: true,
+      ignored: "metadata_requires_checkout_or_connect",
+    });
+  }
+
+  let matches: boolean;
+  try {
+    matches = await merchantTopUpAccountMatches(restoreTarget.clientId, account);
+  } catch (err) {
+    logHandlerError("payment method restore account match", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!matches) {
+    console.warn(
+      TAG,
+      "payment method restore ignored: account mismatch",
+      sanitizeForLog(restoreTarget.clientId),
+      sanitizeForLog(account),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "connect_account_mismatch",
+    });
+  }
+  await restoreAppUserBillingProfileAfterPaymentMethodAttached(restoreTarget);
+  return NextResponse.json({
+    received: true,
+    restored: true,
+    clientId: restoreTarget.clientId,
+  });
+}
+
+async function restoreFromStripeCustomer(
+  byCustomer: { stripeCustomerId: string; paymentMethodId: string },
+  account: string | null,
+): Promise<Response | null> {
+  const row = await findAppUserStripeCustomerByStripeId(
+    byCustomer.stripeCustomerId,
+  );
+  if (!row?.clientId || !row.externalUserId) {
+    return null;
+  }
+  if (account) {
+    const rowAccount = row.stripeConnectedAccountId?.trim() || "";
+    if (!rowAccount || rowAccount !== account) {
+      console.warn(
+        TAG,
+        "payment method restore ignored: customer account mismatch",
+        sanitizeForLog(row.clientId),
+        sanitizeForLog(account),
+      );
+      return NextResponse.json({
+        received: true,
+        ignored: "connect_account_mismatch",
+      });
+    }
+  }
+  await restoreAppUserBillingProfileAfterPaymentMethodAttached({
+    clientId: row.clientId,
+    externalUserId: row.externalUserId,
+    paymentMethodId: byCustomer.paymentMethodId,
+  });
+  return NextResponse.json({
+    received: true,
+    restored: true,
+    clientId: row.clientId,
+  });
+}
+
 async function handlePaymentMethodRestore(
   rawBody: string,
 ): Promise<Response | null> {
   const account = stripeEventAccount(rawBody);
   const restoreTarget = parseStripePaymentMethodAttached(rawBody);
   if (restoreTarget) {
-    if (restoreTarget.checkoutSessionId) {
-      const restored = await restoreAppUserBillingProfileForCheckoutSession(
-        restoreTarget.checkoutSessionId,
-        restoreTarget.paymentMethodId,
-      );
-      return NextResponse.json({ received: true, restored });
+    // When metadata has a Checkout session, or Connect account, handle here.
+    // Without either, fall through to customer / completed-session reverse lookup.
+    if (restoreTarget.checkoutSessionId || account) {
+      return restoreFromMetadataTarget(restoreTarget, account);
     }
-
-    if (account) {
-      let matches: boolean;
-      try {
-        matches = await merchantTopUpAccountMatches(
-          restoreTarget.clientId,
-          account,
-        );
-      } catch (err) {
-        logHandlerError("payment method restore account match", err);
-        return NextResponse.json({ error: "handler_failed" }, { status: 500 });
-      }
-      if (!matches) {
-        console.warn(
-          TAG,
-          "payment method restore ignored: account mismatch",
-          sanitizeForLog(restoreTarget.clientId),
-          sanitizeForLog(account),
-        );
-        return NextResponse.json({
-          received: true,
-          ignored: "connect_account_mismatch",
-        });
-      }
-      await restoreAppUserBillingProfileAfterPaymentMethodAttached(
-        restoreTarget,
-      );
-      return NextResponse.json({
-        received: true,
-        restored: true,
-        clientId: restoreTarget.clientId,
-      });
-    }
-
-    // Platform event without a Checkout session id: do not trust metadata alone.
-    // Fall through to Stripe-customer reverse lookup / persisted session id.
   }
 
   const byCustomer = parseStripePaymentMethodAttachedCustomer(rawBody);
   if (byCustomer) {
-    const row = await findAppUserStripeCustomerByStripeId(
-      byCustomer.stripeCustomerId,
-    );
-    if (row?.clientId && row.externalUserId) {
-      if (account) {
-        const rowAccount = row.stripeConnectedAccountId?.trim() || "";
-        if (!rowAccount || rowAccount !== account) {
-          console.warn(
-            TAG,
-            "payment method restore ignored: customer account mismatch",
-            sanitizeForLog(row.clientId),
-            sanitizeForLog(account),
-          );
-          return NextResponse.json({
-            received: true,
-            ignored: "connect_account_mismatch",
-          });
-        }
-      }
-      await restoreAppUserBillingProfileAfterPaymentMethodAttached({
-        clientId: row.clientId,
-        externalUserId: row.externalUserId,
-        paymentMethodId: byCustomer.paymentMethodId,
-      });
-      return NextResponse.json({
-        received: true,
-        restored: true,
-        clientId: row.clientId,
-      });
+    const restored = await restoreFromStripeCustomer(byCustomer, account);
+    if (restored) {
+      return restored;
     }
   }
 
@@ -315,6 +340,81 @@ async function settleMerchantTopUp(input: {
   }
 }
 
+async function authorizeLegacyAutoTopUpTenancy(input: {
+  rawBody: string;
+  secretKind: StripeWebhookSecretKind;
+  clientId: string;
+  externalUserId: string;
+}): Promise<Response | null> {
+  // Same tenancy binding as sibling top-up handlers:
+  // - Connect events: account must match the target app's Connected Account
+  // - Platform events (no account): platform secret + owner subject must own client_id
+  const account = stripeEventAccount(input.rawBody);
+  if (account) {
+    let matches: boolean;
+    try {
+      matches = await merchantTopUpAccountMatches(input.clientId, account);
+    } catch (err) {
+      logHandlerError("auto-topup account match", err);
+      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+    }
+    if (!matches) {
+      console.warn(
+        TAG,
+        "auto-topup ignored: account mismatch",
+        sanitizeForLog(input.clientId),
+        sanitizeForLog(account),
+      );
+      return NextResponse.json({
+        received: true,
+        ignored: "connect_account_mismatch",
+      });
+    }
+    return null;
+  }
+
+  if (input.secretKind !== "platform") {
+    return NextResponse.json({
+      received: true,
+      ignored: "auto_topup_requires_platform_secret",
+    });
+  }
+  const ownerPrefix = "owner:";
+  if (!input.externalUserId.startsWith(ownerPrefix)) {
+    return NextResponse.json({
+      received: true,
+      ignored: "auto_topup_platform_requires_owner_subject",
+    });
+  }
+  const ownerUserId = input.externalUserId.slice(ownerPrefix.length).trim();
+  if (!ownerUserId) {
+    return NextResponse.json({
+      received: true,
+      ignored: "auto_topup_incomplete_metadata",
+    });
+  }
+  let owned: boolean;
+  try {
+    owned = await topUpClientOwnedByOwner(input.clientId, ownerUserId);
+  } catch (err) {
+    logHandlerError("auto-topup ownership", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!owned) {
+    console.warn(
+      TAG,
+      "auto-topup ignored: clientId not owned by ownerUserId",
+      sanitizeForLog(input.clientId),
+      sanitizeForLog(ownerUserId),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "client_not_owned_by_owner",
+    });
+  }
+  return null;
+}
+
 async function handleLegacyAutoTopUpPaymentIntentSucceeded(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
@@ -393,73 +493,14 @@ async function handleLegacyAutoTopUpPaymentIntentSucceeded(
     });
   }
 
-  // Same tenancy binding as sibling top-up handlers:
-  // - Connect events: account must match the target app's Connected Account
-  //   (settleMerchantTopUp).
-  // - Platform events (no account): platform secret + owner subject must own
-  //   client_id (settleOwnerTopUp). Platform auto-topup only charges the owner
-  //   wallet — bare external_user_id without Connect account is rejected.
-  const account = stripeEventAccount(rawBody);
-  if (account) {
-    let matches: boolean;
-    try {
-      matches = await merchantTopUpAccountMatches(clientId, account);
-    } catch (err) {
-      logHandlerError("auto-topup account match", err);
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
-    }
-    if (!matches) {
-      console.warn(
-        TAG,
-        "auto-topup ignored: account mismatch",
-        sanitizeForLog(clientId),
-        sanitizeForLog(account),
-      );
-      return NextResponse.json({
-        received: true,
-        ignored: "connect_account_mismatch",
-      });
-    }
-  } else {
-    if (secretKind !== "platform") {
-      return NextResponse.json({
-        received: true,
-        ignored: "auto_topup_requires_platform_secret",
-      });
-    }
-    const ownerPrefix = "owner:";
-    if (!externalUserId.startsWith(ownerPrefix)) {
-      return NextResponse.json({
-        received: true,
-        ignored: "auto_topup_platform_requires_owner_subject",
-      });
-    }
-    const ownerUserId = externalUserId.slice(ownerPrefix.length).trim();
-    if (!ownerUserId) {
-      return NextResponse.json({
-        received: true,
-        ignored: "auto_topup_incomplete_metadata",
-      });
-    }
-    let owned: boolean;
-    try {
-      owned = await topUpClientOwnedByOwner(clientId, ownerUserId);
-    } catch (err) {
-      logHandlerError("auto-topup ownership", err);
-      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
-    }
-    if (!owned) {
-      console.warn(
-        TAG,
-        "auto-topup ignored: clientId not owned by ownerUserId",
-        sanitizeForLog(clientId),
-        sanitizeForLog(ownerUserId),
-      );
-      return NextResponse.json({
-        received: true,
-        ignored: "client_not_owned_by_owner",
-      });
-    }
+  const denied = await authorizeLegacyAutoTopUpTenancy({
+    rawBody,
+    secretKind,
+    clientId,
+    externalUserId,
+  });
+  if (denied) {
+    return denied;
   }
 
   const amountUsdMicros = BigInt(amountCents) * 10_000n;

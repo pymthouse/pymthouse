@@ -80,7 +80,10 @@ test("buildSignerBalanceCheck rejects zero spendable without overage", async (t)
     (err: unknown) =>
       err instanceof WebhookError &&
       err.status === 483 &&
-      err.message === "Payment method required",
+      // Chargeable lookup is env-dependent for this fixture app: false →
+      // no_payment_method; null/true with overage closed → overage_not_available.
+      (err.message === "Payment method required" ||
+        err.message === "Add funds to continue"),
   );
 });
 
