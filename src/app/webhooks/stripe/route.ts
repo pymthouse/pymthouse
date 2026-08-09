@@ -362,9 +362,12 @@ async function handleAutoTopUpPaymentIntentSucceeded(
     });
   }
 
-  // Same tenancy binding as merchant Checkout top-up: Connect events must
-  // carry an `account` that matches the target app; platform events require
-  // the platform webhook secret (no Connect `account` field).
+  // Same tenancy binding as sibling top-up handlers:
+  // - Connect events: account must match the target app's Connected Account
+  //   (settleMerchantTopUp).
+  // - Platform events (no account): platform secret + owner subject must own
+  //   client_id (settleOwnerTopUp). Platform auto-topup only charges the owner
+  //   wallet — bare external_user_id without Connect account is rejected.
   const account = stripeEventAccount(rawBody);
   if (account) {
     let matches: boolean;
@@ -386,11 +389,46 @@ async function handleAutoTopUpPaymentIntentSucceeded(
         ignored: "connect_account_mismatch",
       });
     }
-  } else if (secretKind !== "platform") {
-    return NextResponse.json({
-      received: true,
-      ignored: "auto_topup_requires_platform_secret",
-    });
+  } else {
+    if (secretKind !== "platform") {
+      return NextResponse.json({
+        received: true,
+        ignored: "auto_topup_requires_platform_secret",
+      });
+    }
+    const ownerPrefix = "owner:";
+    if (!externalUserId.startsWith(ownerPrefix)) {
+      return NextResponse.json({
+        received: true,
+        ignored: "auto_topup_platform_requires_owner_subject",
+      });
+    }
+    const ownerUserId = externalUserId.slice(ownerPrefix.length).trim();
+    if (!ownerUserId) {
+      return NextResponse.json({
+        received: true,
+        ignored: "auto_topup_incomplete_metadata",
+      });
+    }
+    let owned: boolean;
+    try {
+      owned = await topUpClientOwnedByOwner(clientId, ownerUserId);
+    } catch (err) {
+      logHandlerError("auto-topup ownership", err);
+      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+    }
+    if (!owned) {
+      console.warn(
+        TAG,
+        "auto-topup ignored: clientId not owned by ownerUserId",
+        sanitizeForLog(clientId),
+        sanitizeForLog(ownerUserId),
+      );
+      return NextResponse.json({
+        received: true,
+        ignored: "client_not_owned_by_owner",
+      });
+    }
   }
 
   const amountUsdMicros = BigInt(amountCents) * 10_000n;
@@ -493,8 +531,9 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  * Owner top-up grants require the platform webhook secret and a platform
  * (non-Connect) event. Merchant end-user top-ups and Connect auto top-ups
  * require a Connect `account` field matching the app's Connected Account.
- * Payment-method restore from Connect metadata also requires that account
- * match (or a server-issued Checkout session mapping).
+ * Platform auto top-ups require the platform secret plus `owner:{userId}`
+ * ownership of `client_id`. Payment-method restore from Connect metadata also
+ * requires that account match (or a server-issued Checkout session mapping).
  */
 export async function POST(request: Request): Promise<Response> {
   let secrets: StripeWebhookSecret[];

@@ -514,7 +514,7 @@ test("POST auto-topup platform event requires platform secret", async (t) => {
   __setGrantAllowanceUsdMicrosForTests(async () => {
     granted = true;
     return {
-      externalUserId: "eu_route_1",
+      externalUserId: "owner:user_route_1",
       source: "topup",
       grantedUsdMicros: "10000000",
       featureKey: "usd_credits",
@@ -522,7 +522,9 @@ test("POST auto-topup platform event requires platform secret", async (t) => {
     };
   });
 
-  const rawBody = autoTopUpPaymentIntentBody();
+  const rawBody = autoTopUpPaymentIntentBody({
+    externalUserId: "owner:user_route_1",
+  });
   const res = await postSigned(rawBody, CONNECT_SECRET);
   assert.equal(res.status, 200);
   const json = (await res.json()) as { ignored?: string };
@@ -530,7 +532,32 @@ test("POST auto-topup platform event requires platform secret", async (t) => {
   assert.equal(granted, false);
 });
 
-test("POST auto-topup platform-signed event without account credits", async (t) => {
+test("POST auto-topup platform-signed owner event credits when client owned", async (t) => {
+  withWebhookEnv(t, { platform: PLATFORM_SECRET });
+  __setTopUpClientOwnedByOwnerForTests(async () => true);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "owner:user_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({
+    externalUserId: "owner:user_route_1",
+  });
+  const res = await postSigned(rawBody, PLATFORM_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean };
+  assert.equal(json.credited, true);
+  assert.equal(granted, true);
+});
+
+test("POST auto-topup platform event ignores bare external_user_id", async (t) => {
   withWebhookEnv(t, { platform: PLATFORM_SECRET });
   let granted = false;
   __setGrantAllowanceUsdMicrosForTests(async () => {
@@ -547,9 +574,34 @@ test("POST auto-topup platform-signed event without account credits", async (t) 
   const rawBody = autoTopUpPaymentIntentBody();
   const res = await postSigned(rawBody, PLATFORM_SECRET);
   assert.equal(res.status, 200);
-  const json = (await res.json()) as { credited?: boolean };
-  assert.equal(json.credited, true);
-  assert.equal(granted, true);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "auto_topup_platform_requires_owner_subject");
+  assert.equal(granted, false);
+});
+
+test("POST auto-topup platform event ignores client not owned by owner", async (t) => {
+  withWebhookEnv(t, { platform: PLATFORM_SECRET });
+  __setTopUpClientOwnedByOwnerForTests(async () => false);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "owner:user_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({
+    externalUserId: "owner:user_route_1",
+  });
+  const res = await postSigned(rawBody, PLATFORM_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "client_not_owned_by_owner");
+  assert.equal(granted, false);
 });
 
 test("POST setup_intent restore requires matching Connect account", async (t) => {
