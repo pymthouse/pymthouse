@@ -26,11 +26,8 @@ import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identit
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import {
   ensureOwnerCustomer,
-  findOpenMeterCustomerByKey,
   listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
-import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
-import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import {
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
@@ -197,35 +194,11 @@ async function resolveStripeChargeTarget(input: {
     };
   }
 
-  // owner_rollup end-users bill the owner wallet — auto top-up is not
-  // charged against the end-user card (no Connect customer). Soft-negative
-  // still gates via the owner cost rail.
-  if (billingConfig?.billingMode !== "merchant" && !identity.isOwner) {
-    return null;
-  }
-
-  if (!isHostedAdminClientAvailable()) return null;
-  const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(appId);
-  const key = buildOpenMeterCustomerKey(publicClientId, input.externalUserId);
-  const customer = await findOpenMeterCustomerByKey(client, key);
-  const customerId = customer?.id?.trim();
-  if (!customerId) return null;
-  const konnect = await getKonnectStripeBillingRefs(customerId, signal);
-  const stripeCustomerId =
-    konnect.stripeCustomerId ??
-    (await getStripeCustomerAppDataId({ client, customerId }));
-  const paymentMethodId = konnect.defaultPaymentMethodId?.trim();
-  if (!stripeCustomerId || !paymentMethodId) {
-    return null;
-  }
-  return {
-    stripeCustomerId,
-    paymentMethodId,
-    stripeAccount: null,
-    grantExternalUserId: input.externalUserId.trim(),
-    grantClientId: publicClientId,
-  };
+  // owner_rollup end-users bill the owner wallet — no end-user Connect
+  // customer to charge. Soft-negative still gates via the owner cost rail.
+  // (Owners always carry ownerUserId from resolveOpenMeterBillingIdentity, so
+  // the owner branch above is exhaustive; no platform end-user charge path.)
+  return null;
 }
 
 export async function maybeAutoTopUpForIdentity(input: {
