@@ -1,5 +1,5 @@
 /**
- * Resolve unbilled debt (USD micros) for soft-negative / lead auto-top-up.
+ * Resolve unbilled debt (USD micros) for soft-negative gating / invoice trigger.
  * Prefer gathering invoice totals; fall back to calendar-month meter usage.
  */
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
@@ -105,6 +105,75 @@ async function periodMeterDebtUsdMicros(subjects: string[]): Promise<bigint> {
   }
 }
 
+async function resolveBillingCustomerAndSubjects(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<{ customerId: string | null; meterSubjects: string[] }> {
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const client = getHostedAdminClient();
+  const app = await getProviderApp(input.clientId);
+  const appId = app?.id?.trim() || identity.developerAppId;
+  const billingConfig = await getAppBillingConfig(appId);
+  const merchant = billingConfig?.billingMode === "merchant";
+
+  if (identity.isOwner && identity.ownerUserId) {
+    const publicClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+    const ownerCustomer = await ensureOwnerCustomer(
+      client,
+      identity.ownerUserId,
+      publicClientIds,
+    );
+    return {
+      customerId: ownerCustomer.id?.trim() || null,
+      meterSubjects: buildOwnerMeterSubjects(identity.ownerUserId, [
+        identity.publicClientId,
+        ...publicClientIds,
+      ]),
+    };
+  }
+  if (merchant) {
+    const publicClientId = await resolveOpenMeterMeterClientId(appId);
+    const key = `${publicClientId}:${input.externalUserId}`;
+    const customer = await findOpenMeterCustomerByKey(client, key);
+    return {
+      customerId: customer?.id?.trim() || null,
+      meterSubjects: [key],
+    };
+  }
+  await ensureOpenMeterCustomer(client, identity.customerKey);
+  const customer = await findOpenMeterCustomerByKey(
+    client,
+    identity.customerKey,
+  );
+  return {
+    customerId: customer?.id?.trim() || null,
+    meterSubjects: [identity.customerKey],
+  };
+}
+
+/** OpenMeter customer id for the billing identity (owner / merchant / rollup). */
+export async function resolveBillingCustomerId(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<string | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return null;
+  }
+  const resolved = await resolveBillingCustomerAndSubjects({
+    clientId,
+    externalUserId,
+  });
+  return resolved.customerId;
+}
+
 /**
  * Unbilled debt for soft-negative gating. Gathering total when present,
  * else period network-fee meter sum for the billing subjects.
@@ -122,46 +191,10 @@ export async function getUnbilledDebtUsdMicros(input: {
     return 0n;
   }
 
-  const identity = await resolveOpenMeterBillingIdentity({
+  const { customerId, meterSubjects } = await resolveBillingCustomerAndSubjects({
     clientId,
     externalUserId,
   });
-  const client = getHostedAdminClient();
-  const app = await getProviderApp(clientId);
-  const appId = app?.id?.trim() || identity.developerAppId;
-  const billingConfig = await getAppBillingConfig(appId);
-  const merchant = billingConfig?.billingMode === "merchant";
-
-  let customerId: string | null = null;
-  let meterSubjects: string[] = [];
-
-  if (identity.isOwner && identity.ownerUserId) {
-    const publicClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
-    const ownerCustomer = await ensureOwnerCustomer(
-      client,
-      identity.ownerUserId,
-      publicClientIds,
-    );
-    customerId = ownerCustomer.id?.trim() || null;
-    meterSubjects = buildOwnerMeterSubjects(identity.ownerUserId, [
-      identity.publicClientId,
-      ...publicClientIds,
-    ]);
-  } else if (merchant) {
-    const publicClientId = await resolveOpenMeterMeterClientId(appId);
-    const key = `${publicClientId}:${externalUserId}`;
-    const customer = await findOpenMeterCustomerByKey(client, key);
-    customerId = customer?.id?.trim() || null;
-    meterSubjects = [key];
-  } else {
-    await ensureOpenMeterCustomer(client, identity.customerKey);
-    const customer = await findOpenMeterCustomerByKey(
-      client,
-      identity.customerKey,
-    );
-    customerId = customer?.id?.trim() || null;
-    meterSubjects = [identity.customerKey];
-  }
 
   if (customerId) {
     const gathering = await maxGatheringDebtUsdMicros(customerId);

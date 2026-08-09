@@ -10,7 +10,7 @@ import {
 import { parseUsdMicros } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
 import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
 import { resolveAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
-import { scheduleAutoTopUp } from "@/lib/billing/auto-topup-worker";
+import { scheduleInvoiceTrigger } from "@/lib/billing/invoice-trigger";
 import { resolveSoftNegativeGate } from "@/lib/billing/soft-negative-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
@@ -182,7 +182,8 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
   const expiryTtlSeconds = resolveExpiryTtlSeconds();
 
   // Custom gate (not createBalanceGate): zero spendable may still authorize
-  // under soft-negative headroom when overage-eligible; lead auto-top-up may run.
+  // Soft-negative may still allow past prepaid $0 when overage-eligible;
+  // scheduleInvoiceTrigger raises OM gathering mid-cycle asynchronously.
   return async function checkBalance(ctx) {
     let rawBalance: string | null;
     try {
@@ -249,10 +250,11 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
         });
       }
 
-      scheduleAutoTopUp({
+      // Soft-negative still allows: raise OM invoice asynchronously so
+      // settlement / Stripe app can collect before the debt ceiling.
+      scheduleInvoiceTrigger({
         clientId: ctx.identity.client_id,
         externalUserId: ctx.identity.usage_subject,
-        reason: "lead_soft_negative",
       });
     }
 

@@ -1,15 +1,17 @@
 /**
- * Per-user auto top-up + app soft-negative debt ceiling.
+ * Soft-negative debt ceiling + mid-cycle invoice trigger lead window.
  *
- * Charge triggers (when autoTopUpEnabled + default PM):
- * - mint_reject: SignerSession mint balance-rejected
- * - lead_soft_negative: debt enters last autoTopUpAmount of soft-negative headroom
+ * Soft-negative gates mint/signer allow/deny. The invoice trigger (OM
+ * invoicePendingLines → settlement / Stripe app) fires in the lead window
+ * before the hard ceiling so collection stays async with headroom.
  */
 
-/** Runtime default charge amount when enabled and column is null ($5). */
-export const DEFAULT_AUTO_TOP_UP_USD_MICROS = 5_000_000n;
+/** Default lead amount when approaching the soft-negative ceiling ($5). */
+export const DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS = 5_000_000n;
 
-export type AutoTopUpReason = "mint_reject" | "lead_soft_negative";
+/** @deprecated Alias — prefer DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS. */
+export const DEFAULT_AUTO_TOP_UP_USD_MICROS =
+  DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS;
 
 export function parsePositiveUsdMicrosInput(
   value: unknown,
@@ -96,27 +98,6 @@ export function parseSoftNegativeUsdMicrosInput(
   return { ok: true, value: trimmed };
 }
 
-export function parseAutoTopUpUsdMicrosInput(
-  value: unknown,
-): { ok: true; value: string | null } | { ok: false; error: string } {
-  return parsePositiveUsdMicrosInput(value, "autoTopUpUsdMicros");
-}
-
-/** Effective charge amount when auto-top-up is enabled. */
-export function effectiveAutoTopUpUsdMicros(
-  storedUsdMicros: string | null | undefined,
-): bigint {
-  if (!storedUsdMicros?.trim()) {
-    return DEFAULT_AUTO_TOP_UP_USD_MICROS;
-  }
-  try {
-    const value = BigInt(storedUsdMicros.trim());
-    return value > 0n ? value : DEFAULT_AUTO_TOP_UP_USD_MICROS;
-  } catch {
-    return DEFAULT_AUTO_TOP_UP_USD_MICROS;
-  }
-}
-
 /**
  * App soft-negative unbilled-debt ceiling.
  * Unset/null/invalid ⇒ 0 (no ceiling — overage eligibility alone unlocks past
@@ -138,22 +119,35 @@ export function effectiveSoftNegativeUsdMicros(
 }
 
 /**
- * Lead window: debt has entered the last `autoTopUpAmount` of soft-negative
+ * Lead window: debt has entered the last `leadUsdMicros` of soft-negative
  * headroom (still strictly below the hard ceiling for allow).
  */
-export function isInAutoTopUpLeadWindow(input: {
+export function isInInvoiceTriggerLeadWindow(input: {
   unbilledDebtUsdMicros: bigint;
   softNegativeUsdMicros: bigint;
-  autoTopUpUsdMicros: bigint;
+  leadUsdMicros: bigint;
 }): boolean {
   const soft = input.softNegativeUsdMicros;
-  const amount = input.autoTopUpUsdMicros;
+  const amount = input.leadUsdMicros;
   if (amount <= 0n) return false;
   const leadStart = soft > amount ? soft - amount : 0n;
   return (
     input.unbilledDebtUsdMicros >= leadStart &&
     input.unbilledDebtUsdMicros < soft
   );
+}
+
+/** @deprecated Prefer isInInvoiceTriggerLeadWindow. */
+export function isInAutoTopUpLeadWindow(input: {
+  unbilledDebtUsdMicros: bigint;
+  softNegativeUsdMicros: bigint;
+  autoTopUpUsdMicros: bigint;
+}): boolean {
+  return isInInvoiceTriggerLeadWindow({
+    unbilledDebtUsdMicros: input.unbilledDebtUsdMicros,
+    softNegativeUsdMicros: input.softNegativeUsdMicros,
+    leadUsdMicros: input.autoTopUpUsdMicros,
+  });
 }
 
 /**

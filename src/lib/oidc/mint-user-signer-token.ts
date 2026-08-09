@@ -330,24 +330,17 @@ export async function mintSignerJwtForExternalUser(input: {
       allowsOverageInvoicing,
     });
     if (!softGate.allow) {
-      const { scheduleAutoTopUp } = await import(
-        "@/lib/billing/auto-topup-worker"
-      );
-      scheduleAutoTopUp({
-        clientId: input.publicClientId,
-        externalUserId: gateSubject,
-        reason: "mint_reject",
-      });
       enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: false });
     } else {
       enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: true });
-      const { scheduleAutoTopUp } = await import(
-        "@/lib/billing/auto-topup-worker"
+      // Lead-window only: raise OM gathering → draft so settlement/Stripe app
+      // collects. Never invent Stripe PaymentIntents on the mint path.
+      const { scheduleInvoiceTrigger } = await import(
+        "@/lib/billing/invoice-trigger"
       );
-      scheduleAutoTopUp({
+      scheduleInvoiceTrigger({
         clientId: input.publicClientId,
         externalUserId: gateSubject,
-        reason: "lead_soft_negative",
       });
     }
   } else {

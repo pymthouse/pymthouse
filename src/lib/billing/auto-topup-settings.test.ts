@@ -3,10 +3,10 @@ import { describe, it } from "node:test";
 
 import {
   DEFAULT_AUTO_TOP_UP_USD_MICROS,
-  effectiveAutoTopUpUsdMicros,
+  DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
   effectiveSoftNegativeUsdMicros,
   isInAutoTopUpLeadWindow,
-  parseAutoTopUpUsdMicrosInput,
+  isInInvoiceTriggerLeadWindow,
   parsePositiveUsdMicrosInput,
   parseSoftNegativeUsdMicrosInput,
   softNegativeAllowsContinue,
@@ -74,29 +74,6 @@ describe("parseSoftNegativeUsdMicrosInput", () => {
   });
 });
 
-describe("parseAutoTopUpUsdMicrosInput", () => {
-  it("delegates to positive micros parser", () => {
-    assert.deepEqual(parseAutoTopUpUsdMicrosInput("1000000"), {
-      ok: true,
-      value: "1000000",
-    });
-    assert.equal(parseAutoTopUpUsdMicrosInput(0).ok, false);
-  });
-});
-
-describe("effectiveAutoTopUpUsdMicros", () => {
-  it("defaults to $5 when unset", () => {
-    assert.equal(effectiveAutoTopUpUsdMicros(null), DEFAULT_AUTO_TOP_UP_USD_MICROS);
-    assert.equal(effectiveAutoTopUpUsdMicros(""), DEFAULT_AUTO_TOP_UP_USD_MICROS);
-  });
-
-  it("uses stored positive micros and falls back on junk", () => {
-    assert.equal(effectiveAutoTopUpUsdMicros("10000000"), 10_000_000n);
-    assert.equal(effectiveAutoTopUpUsdMicros("0"), DEFAULT_AUTO_TOP_UP_USD_MICROS);
-    assert.equal(effectiveAutoTopUpUsdMicros("nope"), DEFAULT_AUTO_TOP_UP_USD_MICROS);
-  });
-});
-
 describe("effectiveSoftNegativeUsdMicros", () => {
   it("treats unset as 0 (no debt ceiling)", () => {
     assert.equal(effectiveSoftNegativeUsdMicros(null), 0n);
@@ -109,8 +86,47 @@ describe("effectiveSoftNegativeUsdMicros", () => {
   });
 });
 
-describe("isInAutoTopUpLeadWindow", () => {
-  it("fires in the last autoTopUpAmount of soft-negative headroom", () => {
+describe("isInInvoiceTriggerLeadWindow", () => {
+  it("fires in the last leadUsdMicros of soft-negative headroom", () => {
+    assert.equal(
+      isInInvoiceTriggerLeadWindow({
+        unbilledDebtUsdMicros: 6_000_000n,
+        softNegativeUsdMicros: 10_000_000n,
+        leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+      }),
+      true,
+    );
+    assert.equal(
+      isInInvoiceTriggerLeadWindow({
+        unbilledDebtUsdMicros: 4_000_000n,
+        softNegativeUsdMicros: 10_000_000n,
+        leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+      }),
+      false,
+    );
+  });
+
+  it("does not fire at or above the hard ceiling or with zero lead", () => {
+    assert.equal(
+      isInInvoiceTriggerLeadWindow({
+        unbilledDebtUsdMicros: 10_000_000n,
+        softNegativeUsdMicros: 10_000_000n,
+        leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+      }),
+      false,
+    );
+    assert.equal(
+      isInInvoiceTriggerLeadWindow({
+        unbilledDebtUsdMicros: 0n,
+        softNegativeUsdMicros: 10_000_000n,
+        leadUsdMicros: 0n,
+      }),
+      false,
+    );
+  });
+
+  it("keeps deprecated auto-top-up alias working", () => {
+    assert.equal(DEFAULT_AUTO_TOP_UP_USD_MICROS, DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS);
     assert.equal(
       isInAutoTopUpLeadWindow({
         unbilledDebtUsdMicros: 6_000_000n,
@@ -118,33 +134,6 @@ describe("isInAutoTopUpLeadWindow", () => {
         autoTopUpUsdMicros: 5_000_000n,
       }),
       true,
-    );
-    assert.equal(
-      isInAutoTopUpLeadWindow({
-        unbilledDebtUsdMicros: 4_000_000n,
-        softNegativeUsdMicros: 10_000_000n,
-        autoTopUpUsdMicros: 5_000_000n,
-      }),
-      false,
-    );
-  });
-
-  it("does not fire at or above the hard ceiling or with zero amount", () => {
-    assert.equal(
-      isInAutoTopUpLeadWindow({
-        unbilledDebtUsdMicros: 10_000_000n,
-        softNegativeUsdMicros: 10_000_000n,
-        autoTopUpUsdMicros: 5_000_000n,
-      }),
-      false,
-    );
-    assert.equal(
-      isInAutoTopUpLeadWindow({
-        unbilledDebtUsdMicros: 0n,
-        softNegativeUsdMicros: 10_000_000n,
-        autoTopUpUsdMicros: 0n,
-      }),
-      false,
     );
   });
 });

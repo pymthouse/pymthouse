@@ -305,16 +305,14 @@ export const appUsers = pgTable(
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
     /**
-     * Opt-in off-session auto top-up when mint is balance-rejected or debt
-     * enters the soft-negative lead window. Default off.
+     * @deprecated Retired — per-user off-session auto top-up removed.
+     * Columns retained for historical rows; mint path uses soft-negative +
+     * OpenMeter progressive invoicing instead.
      */
     autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
-    /** Charge amount (USD micros). Null when enabling ⇒ runtime default $5. */
+    /** @deprecated See autoTopUpEnabled. */
     autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
-    /**
-     * When auto-top-up is enabled, fire a lead reload before unbilled debt
-     * hits the app soft-negative ceiling. Default true.
-     */
+    /** @deprecated See autoTopUpEnabled. */
     autoTopUpBeforeSoftNegative: boolean("auto_top_up_before_soft_negative")
       .notNull()
       .default(true),

@@ -319,6 +319,10 @@ async function handleAutoTopUpPaymentIntentSucceeded(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
 ): Promise<Response> {
+  // DRAIN PATH (retire after ~7 days from deploy): direct off-session auto-topup
+  // PaymentIntents are no longer created. Keep settling in-flight
+  // `pymthouse_auto_topup=1` intents so grants still land. New mid-cycle money
+  // movement goes through OM progressive invoicing + settlement / Stripe app.
   let parsed: {
     data?: {
       object?: {

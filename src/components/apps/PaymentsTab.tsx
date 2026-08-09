@@ -625,9 +625,9 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
         <h3 className="text-base font-semibold text-zinc-100">Soft negative & progressive billing</h3>
         <p className="mt-1 text-xs text-zinc-500">
           Soft negative is the max unbilled debt allowed after prepaid credits hit
-          $0 before mint/signer cut off. Progressive billing still lets OpenMeter
-          create mid-cycle invoices; per-user auto top-up (wallet) reloads credits
-          on mint reject or before this ceiling.
+          $0 before mint/signer cut off. Progressive billing lets OpenMeter raise
+          mid-cycle invoices; settlement (merchant Connect) or the OpenMeter Stripe
+          app (owner) collects asynchronously while this ceiling provides headroom.
         </p>
       </div>
       <label className="flex items-start gap-2 text-sm text-zinc-200">

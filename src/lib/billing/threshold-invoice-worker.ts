@@ -1,6 +1,6 @@
 /**
  * Gathering invoice helpers (legacy threshold-raise path retired).
- * Soft-negative + auto top-up replace opportunistic invoicePendingLines.
+ * Soft-negative gates allow/deny; invoice-trigger raises OM gathering mid-cycle.
  */
 import { gatheringTotalUsdMicros } from "@/lib/billing/unbilled-debt";
 
