@@ -117,6 +117,16 @@ export function rewriteKonnectSearchParams(
     rewriteKonnectEventsListParams(params);
   }
 
+  // Invoice list: SDK `customers` / `statuses` are ignored by Konnect unless
+  // rewritten to deepObject filters — otherwise gathering lookups miss and
+  // soft-neg falls back to a gross meter estimate.
+  if (
+    method.toUpperCase() === "GET" &&
+    /\/billing\/invoices\/?$/.test(normalizedPath)
+  ) {
+    rewriteKonnectInvoiceListParams(params);
+  }
+
   return params;
 }
 
@@ -187,6 +197,19 @@ function rewriteKonnectEventsListParams(params: URLSearchParams): void {
   moveParamToKonnectFilter(params, "to", "filter[time][lte]");
   moveParamToKonnectFilter(params, "ingestedAtFrom", "filter[ingested_at][gte]");
   moveParamToKonnectFilter(params, "ingestedAtTo", "filter[ingested_at][lte]");
+}
+
+function rewriteKonnectInvoiceListParams(params: URLSearchParams): void {
+  setKonnectEqOrOeqFilter(
+    params,
+    "customer.id",
+    takeTrimmedParamValues(params, "customers"),
+  );
+  setKonnectEqOrOeqFilter(
+    params,
+    "status",
+    takeTrimmedParamValues(params, "statuses"),
+  );
 }
 
 /**

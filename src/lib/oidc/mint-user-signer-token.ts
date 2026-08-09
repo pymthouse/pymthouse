@@ -7,7 +7,10 @@ import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { AppActivationError } from "@/lib/activation/app-activation";
-import type { BillingReason } from "@/lib/billing/billing-state";
+import {
+  BILLING_REASON_MESSAGE,
+  type BillingReason,
+} from "@/lib/billing/billing-state";
 import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
@@ -187,7 +190,7 @@ export function mintAllowanceGateDecision(
   if (!allowance) {
     return {
       code: "billing_unavailable",
-      message: "Billing allowance could not be confirmed",
+      message: BILLING_REASON_MESSAGE.billing_unavailable,
       reason: "billing_unavailable",
     };
   }
@@ -200,10 +203,11 @@ export function mintAllowanceGateDecision(
     if (options?.allowsOverageInvoicing) {
       return null;
     }
+    const reason = options?.reason ?? "no_payment_method";
     return {
       code: "trial_credits_exhausted",
-      message: "Payment method required",
-      reason: options?.reason ?? "no_payment_method",
+      message: BILLING_REASON_MESSAGE[reason],
+      reason,
     };
   }
   return null;
@@ -356,13 +360,32 @@ export async function mintSignerJwtForExternalUser(input: {
       const { softNegativeDenyReason } = await import(
         "@/lib/billing/soft-negative-gate"
       );
+      let hasDefaultPaymentMethod: boolean | null = null;
+      if (!allowsOverageInvoicing) {
+        try {
+          const { appUserHasChargeablePaymentMethod } = await import(
+            "@/lib/openmeter/app-user-payment-method"
+          );
+          hasDefaultPaymentMethod = await appUserHasChargeablePaymentMethod({
+            clientId: input.publicClientId,
+            externalUserId: gateSubject,
+          });
+        } catch {
+          hasDefaultPaymentMethod = null;
+        }
+      }
+      const reason = softNegativeDenyReason({
+        allowsOverageInvoicing,
+        hasDefaultPaymentMethod,
+        unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
+        softNegativeUsdMicros: softGate.softNegativeUsdMicros,
+      });
+      console.warn(
+        `[mint] soft-negative deny subject=${gateSubject} reason=${reason} overageEligible=${allowsOverageInvoicing} debt=${softGate.unbilledDebtUsdMicros.toString()} ceiling=${softGate.softNegativeUsdMicros.toString()}`,
+      );
       enforceMintAllowanceGate(allowance, {
         allowsOverageInvoicing: false,
-        reason: softNegativeDenyReason({
-          allowsOverageInvoicing,
-          unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
-          softNegativeUsdMicros: softGate.softNegativeUsdMicros,
-        }),
+        reason,
       });
     } else {
       enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: true });

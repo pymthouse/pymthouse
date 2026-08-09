@@ -160,7 +160,7 @@ test("mintAllowanceGateDecision carries an explicit deny reason", () => {
     ),
     {
       code: "trial_credits_exhausted",
-      message: "Payment method required",
+      message: "Overage limit reached while payment is collected",
       reason: "debt_ceiling_reached",
     },
   );

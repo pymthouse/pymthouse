@@ -234,7 +234,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       }
 
       let softAllow = false;
-      let denyReason: BillingReason = "no_payment_method";
+      let denyReason: BillingReason = "overage_not_available";
       try {
         const softGate = await resolveSoftNegativeGate({
           clientId: ctx.identity.client_id,
@@ -243,8 +243,23 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
           allowsOverageInvoicing: allowsOverage,
         });
         softAllow = softGate.allow;
+        let hasDefaultPaymentMethod: boolean | null = null;
+        if (!softAllow && !allowsOverage) {
+          try {
+            const { appUserHasChargeablePaymentMethod } = await import(
+              "@/lib/openmeter/app-user-payment-method"
+            );
+            hasDefaultPaymentMethod = await appUserHasChargeablePaymentMethod({
+              clientId: ctx.identity.client_id,
+              externalUserId: ctx.identity.usage_subject,
+            });
+          } catch {
+            hasDefaultPaymentMethod = null;
+          }
+        }
         denyReason = softNegativeDenyReason({
           allowsOverageInvoicing: allowsOverage,
+          hasDefaultPaymentMethod,
           unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
           softNegativeUsdMicros: softGate.softNegativeUsdMicros,
         });
@@ -257,6 +272,9 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       }
 
       if (!softAllow) {
+        console.warn(
+          `[remote-signer] soft-negative deny client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)} reason=${denyReason} overageEligible=${allowsOverage}`,
+        );
         // The webhook wire has no separate machine field beyond `code`, which
         // go-livepeer matches on, so the reason has to ride in the message.
         throw new WebhookError(BILLING_REASON_MESSAGE[denyReason], {

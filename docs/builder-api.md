@@ -786,6 +786,13 @@ Every amount is a `Money` object — `{ usdMicros, usd, currency }` — because 
   "funding": {
     "prepaid": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
     "included": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+    "includedUsage": {
+      "total": { "usdMicros": "5000000", "usd": "5.00", "currency": "USD" },
+      "remaining": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+      "consumed": { "usdMicros": "5000000", "usd": "5.00", "currency": "USD" },
+      "resetsAt": "2026-09-01T00:00:00.000Z",
+      "sourcePlan": { "id": "plan_starter", "name": "Starter", "type": "free" }
+    },
     "spendable": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
     "overage": {
       "eligible": true,
@@ -818,6 +825,8 @@ Every amount is a `Money` object — `{ usdMicros, usd, currency }` — because 
 
 `explain` is customer-facing copy the API owns, so the dashboard, the admin app and your own UI say the same thing without each inventing wording. It never uses internal ledger terms — the ceiling reads as a spending buffer, not "soft negative".
 
+**Funding waterfall:** spendable capacity is **included usage → prepaid credits → spending buffer / invoice**. `funding.includedUsage` is the live plan's rate-card `discounts.usage` for the current period (`total` / `remaining` / `consumed` / `resetsAt` / `sourcePlan`). `funding.included` is an alias of `includedUsage.remaining` for one release. Prepaid credits are never labeled as included usage.
+
 #### Status
 
 | `status` | `canSpend` | Meaning |
@@ -827,7 +836,7 @@ Every amount is a `Money` object — `{ usdMicros, usd, currency }` — because 
 | `at_risk` | `true` | Debt has entered the lead window, so an invoice has been raised and is being collected. Requests keep working while the buffer lasts. This is exactly the invoice trigger's condition, so the warning a customer sees is the event that raised the invoice. |
 | `blocked` | `false` | Mint and signer refuse requests. `reason` says why. |
 
-Debt is read from the OpenMeter gathering invoice (`debtSource: "gathering_invoice"`) and falls back to a meter sum (`"meter_estimate"`). When neither is available `debtSource` is `"unavailable"`, `unbilledDebt` is `null`, and the state reports the permissive posture rather than inventing a block — the gate does its own authoritative lookup at mint time.
+Debt is read from the OpenMeter gathering invoice (`debtSource: "gathering_invoice"`) and falls back to a meter sum net of remaining included usage (`"meter_estimate"`). When neither is available `debtSource` is `"unavailable"`, `unbilledDebt` is `null`, and the state reports the permissive posture rather than inventing a block — the gate does its own authoritative lookup at mint time.
 
 #### Reason codes
 

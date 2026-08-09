@@ -85,14 +85,32 @@ test("getUnbilledDebtUsdMicros returns 0 when OpenMeter is unavailable", async (
   );
 });
 
-test("softNegativeDenyReason separates a ceiling hit from an unpayable account", () => {
+test("softNegativeDenyReason separates ceiling, missing card, and non-overage plan", () => {
+  assert.equal(
+    softNegativeDenyReason({
+      allowsOverageInvoicing: false,
+      hasDefaultPaymentMethod: false,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros: 2_000_000n,
+    }),
+    "no_payment_method",
+  );
+  assert.equal(
+    softNegativeDenyReason({
+      allowsOverageInvoicing: false,
+      hasDefaultPaymentMethod: true,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros: 2_000_000n,
+    }),
+    "overage_not_available",
+  );
   assert.equal(
     softNegativeDenyReason({
       allowsOverageInvoicing: false,
       unbilledDebtUsdMicros: 0n,
       softNegativeUsdMicros: 2_000_000n,
     }),
-    "no_payment_method",
+    "overage_not_available",
   );
   assert.equal(
     softNegativeDenyReason({

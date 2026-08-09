@@ -1,6 +1,7 @@
 /**
  * Resolve unbilled debt (USD micros) for soft-negative gating / invoice trigger.
- * Prefer gathering invoice totals; fall back to calendar-month meter usage.
+ * Prefer gathering invoice totals; fall back to calendar-month meter usage net of
+ * remaining included usage (OM-billable amount).
  */
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
@@ -9,7 +10,7 @@ import {
 } from "@/lib/openmeter/admin-client";
 import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
-import { NETWORK_FEE_USD_MICROS_METER } from "@/lib/openmeter/constants";
+import { NETWORK_FEE_USD_MICROS_METER, getHostedOpenMeterUrl, isKonnectMeteringUrl } from "@/lib/openmeter/constants";
 import { buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
 import {
   ensureOpenMeterCustomer,
@@ -18,8 +19,10 @@ import {
   listOwnedPublicClientIds,
 } from "@/lib/openmeter/customers";
 import { decimalDollarsToUsdMicros } from "@/lib/openmeter/konnect-credits";
+import { konnectMeteringV1Fetch } from "@/lib/openmeter/konnect-admin-client";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import { getProviderApp } from "@/lib/provider-apps";
+import { getRemainingPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import {
   ceilExactUsdMicrosSum,
   meterRowValueToNumber,
@@ -46,12 +49,112 @@ export function gatheringTotalUsdMicros(total: unknown): bigint | null {
   return null;
 }
 
+/** Net meter estimate against remaining included usage (never negative). */
+export function netBillableMeterDebtUsdMicros(input: {
+  meterUsdMicros: bigint;
+  remainingIncludedUsdMicros: bigint;
+}): bigint {
+  const remaining =
+    input.remainingIncludedUsdMicros > 0n
+      ? input.remainingIncludedUsdMicros
+      : 0n;
+  return input.meterUsdMicros > remaining
+    ? input.meterUsdMicros - remaining
+    : 0n;
+}
+
+type GatheringInvoiceRow = {
+  status?: string | null;
+  customer?: { id?: string | null } | null;
+  customerId?: string | null;
+  customer_id?: string | null;
+  totals?: { total?: unknown } | null;
+};
+
+function invoiceCustomerId(inv: GatheringInvoiceRow): string | null {
+  return (
+    inv.customer?.id?.trim() ||
+    (typeof inv.customerId === "string" ? inv.customerId.trim() : null) ||
+    (typeof inv.customer_id === "string" ? inv.customer_id.trim() : null) ||
+    null
+  );
+}
+
+function maxGatheringFromItems(
+  items: GatheringInvoiceRow[],
+  customerId: string,
+): bigint | null {
+  let max = 0n;
+  let found = false;
+  for (const inv of items) {
+    if (String(inv.status ?? "").toLowerCase() !== "gathering") {
+      continue;
+    }
+    const invCustomer = invoiceCustomerId(inv);
+    if (invCustomer && invCustomer !== customerId) {
+      continue;
+    }
+    const micros = gatheringTotalUsdMicros(inv.totals?.total);
+    if (micros == null) continue;
+    found = true;
+    if (micros > max) max = micros;
+  }
+  return found ? max : null;
+}
+
+/**
+ * Konnect `customers` list filter is often ignored on `/v3/openmeter`. Prefer
+ * `/metering/v1` with an explicit customer filter, then client-side match.
+ */
+async function maxGatheringDebtViaMeteringV1(
+  customerId: string,
+): Promise<bigint | null> {
+  try {
+    const params = new URLSearchParams();
+    params.set("filter[customer.id][eq]", customerId);
+    params.set("filter[status][eq]", "gathering");
+    params.set("page[size]", "20");
+    params.set("page[number]", "1");
+    const listed = await konnectMeteringV1Fetch<{
+      items?: GatheringInvoiceRow[];
+    }>(`/billing/invoices?${params.toString()}`, { method: "GET" }, "gathering-invoices");
+    return maxGatheringFromItems(listed?.items ?? [], customerId);
+  } catch {
+    // Fall through to alternate filter shapes / SDK list.
+    try {
+      const params = new URLSearchParams();
+      params.set("filter[customer_id][eq]", customerId);
+      params.set("statuses", "gathering");
+      params.set("page[size]", "20");
+      const listed = await konnectMeteringV1Fetch<{
+        items?: GatheringInvoiceRow[];
+      }>(
+        `/billing/invoices?${params.toString()}`,
+        { method: "GET" },
+        "gathering-invoices",
+      );
+      return maxGatheringFromItems(listed?.items ?? [], customerId);
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function maxGatheringDebtUsdMicros(
   customerId: string,
 ): Promise<bigint | null> {
   if (!isHostedAdminClientAvailable()) {
     return null;
   }
+
+  const openmeterUrl = getHostedOpenMeterUrl();
+  if (isKonnectMeteringUrl(openmeterUrl)) {
+    const viaMetering = await maxGatheringDebtViaMeteringV1(customerId);
+    if (viaMetering != null) {
+      return viaMetering;
+    }
+  }
+
   try {
     const client = getHostedAdminClient();
     const listed = await client.billing.invoices.list({
@@ -61,18 +164,7 @@ async function maxGatheringDebtUsdMicros(
       order: "DESC",
       orderBy: "createdAt",
     });
-    let max = 0n;
-    let found = false;
-    for (const inv of listed?.items ?? []) {
-      if (String(inv.status ?? "").toLowerCase() !== "gathering") {
-        continue;
-      }
-      const micros = gatheringTotalUsdMicros(inv.totals?.total);
-      if (micros == null) continue;
-      found = true;
-      if (micros > max) max = micros;
-    }
-    return found ? max : null;
+    return maxGatheringFromItems(listed?.items ?? [], customerId);
   } catch {
     return null;
   }
@@ -182,7 +274,7 @@ export type UnbilledDebtSource =
 
 /**
  * Unbilled debt for soft-negative gating. Gathering total when present,
- * else period network-fee meter sum for the billing subjects.
+ * else period network-fee meter sum net of remaining included usage.
  */
 export async function getUnbilledDebtDetails(input: {
   clientId: string;
@@ -208,8 +300,20 @@ export async function getUnbilledDebtDetails(input: {
       return { usdMicros: gathering, source: "gathering_invoice" };
     }
   }
+
+  const [meter, remainingIncluded] = await Promise.all([
+    periodMeterDebtUsdMicros(meterSubjects),
+    getRemainingPlanDiscountUsdMicros({
+      clientId,
+      externalUserId,
+    }).catch(() => 0n),
+  ]);
+
   return {
-    usdMicros: await periodMeterDebtUsdMicros(meterSubjects),
+    usdMicros: netBillableMeterDebtUsdMicros({
+      meterUsdMicros: meter,
+      remainingIncludedUsdMicros: remainingIncluded,
+    }),
     source: "meter_estimate",
   };
 }

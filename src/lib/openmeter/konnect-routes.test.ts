@@ -18,6 +18,7 @@ import {
   rewriteKonnectPathname,
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
+  rewriteKonnectSearchParams,
 } from "./konnect-routes";
 import { createKonnectFetch } from "./konnect-fetch";
 
@@ -157,6 +158,28 @@ test("createKonnectFetch posts invoicePendingLines to /metering/v1", async (t) =
   assert.equal(calls.length, 1);
   assert.equal(calls[0].origin, "https://metering.konghq.com");
   assert.equal(calls[0].pathname, "/metering/v1/billing/invoices/invoice");
+});
+
+test("rewriteKonnectSearchParams maps invoice list customers/statuses to filters", () => {
+  const params = rewriteKonnectSearchParams(
+    "/api/v1/billing/invoices",
+    "GET",
+    new URLSearchParams({
+      customers: "01KZJ7S4KGN08E7NN9YQMY4VX0",
+      statuses: "gathering",
+      pageSize: "20",
+      page: "1",
+    }),
+  );
+  assert.equal(
+    params.get("filter[customer.id][eq]"),
+    "01KZJ7S4KGN08E7NN9YQMY4VX0",
+  );
+  assert.equal(params.get("filter[status][eq]"), "gathering");
+  assert.equal(params.get("page[size]"), "20");
+  assert.equal(params.get("page[number]"), "1");
+  assert.equal(params.get("customers"), null);
+  assert.equal(params.get("statuses"), null);
 });
 
 test("rewriteKonnectRequestUrl maps events.list subject/limit/from/to to Konnect filters", () => {

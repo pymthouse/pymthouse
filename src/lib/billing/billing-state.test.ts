@@ -186,6 +186,27 @@ describe("resolveBillingState shape", () => {
     const state = resolveBillingState(input());
     assert.equal(state.asOf, "2026-08-08T03:14:00.000Z");
   });
+
+  it("exposes includedUsage with remaining alias", () => {
+    const state = resolveBillingState(
+      input({
+        includedRemainingUsdMicros: 3_000_000n,
+        includedTotalUsdMicros: 5_000_000n,
+        includedSourcePlan: {
+          id: "plan_1",
+          name: "Starter",
+          type: "free",
+        },
+        includedResetsAt: "2026-09-01T00:00:00.000Z",
+      }),
+    );
+    assert.equal(state.funding.included.usd, "3.00");
+    assert.equal(state.funding.includedUsage.remaining.usd, "3.00");
+    assert.equal(state.funding.includedUsage.total.usd, "5.00");
+    assert.equal(state.funding.includedUsage.consumed.usd, "2.00");
+    assert.equal(state.funding.includedUsage.resetsAt, "2026-09-01T00:00:00.000Z");
+    assert.equal(state.funding.includedUsage.sourcePlan?.name, "Starter");
+  });
 });
 
 describe("explainOverageCeiling", () => {

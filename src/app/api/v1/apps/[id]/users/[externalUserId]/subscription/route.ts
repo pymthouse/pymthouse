@@ -21,15 +21,73 @@ import {
 } from "@/lib/billing/app-user-subscription-display";
 import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import {
+  getPendingOpenMeterSubscriptionForAppUser,
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
 } from "@/lib/openmeter/subscription-read";
+import { includedDiscountUsdMicrosForPlan } from "@/lib/openmeter/spendable-allowance";
+import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
+
+type PlanSurface = {
+  id: string | null;
+  name: string | null;
+  type: string | null;
+  includedUsage: {
+    usdMicros: string;
+    usd: string;
+  } | null;
+  effectiveAt: string | null;
+};
+
+async function buildPlanSurface(input: {
+  appId: string;
+  subscription: NonNullable<
+    Awaited<ReturnType<typeof getPrimaryOpenMeterSubscriptionForAppUser>>
+  >;
+}): Promise<PlanSurface> {
+  const resolvedPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.appId,
+    input.subscription,
+  );
+  const planRows = resolvedPlanId
+    ? await db.select().from(plans).where(eq(plans.id, resolvedPlanId)).limit(1)
+    : [];
+  const plan = planRows[0] ?? null;
+  const isOwnerStarter = isOwnerStarterPlanKey(input.subscription.planKey);
+  const planName = resolveAppUserSubscriptionPlanName({
+    plan,
+    planKey: input.subscription.planKey,
+  });
+  const includedMicros = plan
+    ? includedDiscountUsdMicrosForPlan(plan)
+    : isOwnerStarter
+      ? includedDiscountUsdMicrosForPlan({
+          includedUsdMicros: null,
+          isStarterDefault: true,
+        })
+      : null;
+  return {
+    id: plan?.id ?? null,
+    name: planName,
+    type: plan?.type ?? (isOwnerStarter ? "free" : null),
+    includedUsage:
+      includedMicros != null
+        ? {
+            usdMicros: includedMicros.toString(),
+            usd: formatUsdMicrosForDisplay(includedMicros.toString()),
+          }
+        : null,
+    effectiveAt: input.subscription.activeFrom,
+  };
+}
 
 /**
  * GET /api/v1/apps/{clientId}/users/{externalUserId}/subscription
  *
  * Current OpenMeter subscription for an app end-user, including
  * `pendingCancel` when cancel-at-period-end is scheduled (owner-paid parity).
+ * Also exposes `livePlan` / `pendingPlan` so scheduled successors are visible
+ * when Neon cache and the dashboard would otherwise disagree.
  */
 export async function GET(
   request: NextRequest,
@@ -48,16 +106,24 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const omSubscription = await getPrimaryOpenMeterSubscriptionForAppUser({
-    clientId: access.app.id,
-    externalUserId,
-  });
+  const [omSubscription, pendingOm] = await Promise.all([
+    getPrimaryOpenMeterSubscriptionForAppUser({
+      clientId: access.app.id,
+      externalUserId,
+    }),
+    getPendingOpenMeterSubscriptionForAppUser({
+      clientId: access.app.id,
+      externalUserId,
+    }),
+  ]);
 
   if (!omSubscription) {
     return NextResponse.json({
       externalUserId,
       subscription: null,
       pendingCancel: null,
+      livePlan: null,
+      pendingPlan: null,
       source: "openmeter",
     });
   }
@@ -95,12 +161,21 @@ export async function GET(
     isOwnerStarter,
   });
 
+  const [livePlan, pendingPlan] = await Promise.all([
+    buildPlanSurface({ appId: access.app.id, subscription: omSubscription }),
+    pendingOm
+      ? buildPlanSurface({ appId: access.app.id, subscription: pendingOm })
+      : Promise.resolve(null),
+  ]);
+
   return NextResponse.json({
     externalUserId,
     source: "openmeter",
     actionRequired,
     plan: planPayload,
     pendingCancel,
+    livePlan,
+    pendingPlan,
     subscription: {
       id: omSubscription.id,
       status: omSubscription.status,

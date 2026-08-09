@@ -63,6 +63,19 @@ export type DebtSource = "gathering_invoice" | "meter_estimate" | "unavailable";
 
 export type BillingCollector = "settlement_connect" | "openmeter_stripe";
 
+export type IncludedUsageFunding = {
+  total: Money;
+  remaining: Money;
+  consumed: Money;
+  /** ISO timestamp when the included usage period resets (cycle end). */
+  resetsAt: string;
+  sourcePlan: {
+    id: string | null;
+    name: string | null;
+    type: string | null;
+  } | null;
+};
+
 export type BillingState = {
   asOf: string;
   subject: {
@@ -75,7 +88,12 @@ export type BillingState = {
   reason: BillingReason | null;
   funding: {
     prepaid: Money;
+    /**
+     * Remaining included usage for the live plan period.
+     * Alias of `includedUsage.remaining` — prefer `includedUsage` for new callers.
+     */
     included: Money;
+    includedUsage: IncludedUsageFunding;
     spendable: Money;
     overage: {
       eligible: boolean;
@@ -126,6 +144,11 @@ export type BillingStateInput = {
   subject: BillingState["subject"];
   prepaidUsdMicros: bigint;
   includedRemainingUsdMicros: bigint;
+  /** Plan period included usage grant (discounts.usage). Defaults to remaining. */
+  includedTotalUsdMicros?: bigint;
+  /** ISO cycle-end; defaults to calendar month end from `asOf`. */
+  includedResetsAt?: string;
+  includedSourcePlan?: IncludedUsageFunding["sourcePlan"];
   overageEligible: boolean;
   /** 0 means no ceiling: overage eligibility alone unlocks spend past $0. */
   softNegativeUsdMicros: bigint;
@@ -237,21 +260,25 @@ export function explainBillingState(input: {
   spendable: Money;
   ceiling: Money;
   remaining: Money | null;
+  includedRemaining?: Money;
 }): BillingState["explain"] {
   const ceilingIsSet = input.ceiling.usdMicros !== "0";
+  const includedLeft = input.includedRemaining?.usd;
   switch (input.status) {
     case "active":
       return {
         headline: "Credits available",
-        detail: `You have $${input.spendable.usd} of credit remaining. Usage draws down credits first.`,
+        detail: includedLeft && includedLeft !== "0.00"
+          ? `You have $${input.spendable.usd} left to spend this period (included usage and prepaid credits). Usage draws included usage first, then prepaid, then the spending buffer.`
+          : `You have $${input.spendable.usd} of credit remaining. Usage draws down credits first.`,
         docsUrl: DOCS_URL,
       };
     case "overage":
       return {
         headline: "Usage is billed as it accrues",
         detail: ceilingIsSet
-          ? `Credits are used up, so usage is now invoiced automatically as it accrues. You can accrue up to $${input.ceiling.usd} of unbilled usage while those invoices are collected.`
-          : "Credits are used up, so usage is now invoiced automatically as it accrues.",
+          ? `Included usage and prepaid credits are used up, so usage is now invoiced automatically as it accrues. You can accrue up to $${input.ceiling.usd} of unbilled usage while those invoices are collected.`
+          : "Included usage and prepaid credits are used up, so usage is now invoiced automatically as it accrues.",
         docsUrl: DOCS_URL,
       };
     case "at_risk":
@@ -351,6 +378,7 @@ export function explainOverageCeiling(
 
 export function resolveBillingState(input: BillingStateInput): BillingState {
   const currency = input.currency;
+  const asOf = input.asOf ?? new Date();
   const spendableUsdMicros =
     input.prepaidUsdMicros + input.includedRemainingUsdMicros;
 
@@ -382,16 +410,39 @@ export function resolveBillingState(input: BillingStateInput): BillingState {
   }
 
   const spendable = money(spendableUsdMicros, currency);
+  const includedRemaining = money(input.includedRemainingUsdMicros, currency);
+  const includedTotalMicros =
+    input.includedTotalUsdMicros != null
+      ? input.includedTotalUsdMicros
+      : input.includedRemainingUsdMicros;
+  const includedTotal = money(
+    includedTotalMicros > 0n ? includedTotalMicros : 0n,
+    currency,
+  );
+  const consumedMicros =
+    includedTotalMicros > input.includedRemainingUsdMicros
+      ? includedTotalMicros - input.includedRemainingUsdMicros
+      : 0n;
+  const resetsAt =
+    input.includedResetsAt?.trim() ||
+    calendarMonthEndIso(asOf);
 
   return {
-    asOf: (input.asOf ?? new Date()).toISOString(),
+    asOf: asOf.toISOString(),
     subject: input.subject,
     status: posture.status,
     canSpend: posture.canSpend,
     reason: posture.reason,
     funding: {
       prepaid: money(input.prepaidUsdMicros, currency),
-      included: money(input.includedRemainingUsdMicros, currency),
+      included: includedRemaining,
+      includedUsage: {
+        total: includedTotal,
+        remaining: includedRemaining,
+        consumed: money(consumedMicros, currency),
+        resetsAt,
+        sourcePlan: input.includedSourcePlan ?? null,
+      },
       spendable,
       overage: {
         eligible: input.overageEligible,
@@ -424,6 +475,14 @@ export function resolveBillingState(input: BillingStateInput): BillingState {
       spendable,
       ceiling,
       remaining,
+      includedRemaining,
     }),
   };
+}
+
+/** UTC calendar-month end (exclusive bound as ISO), matching spendable discount window. */
+function calendarMonthEndIso(asOf: Date): string {
+  const year = asOf.getUTCFullYear();
+  const month = asOf.getUTCMonth();
+  return new Date(Date.UTC(year, month + 1, 1)).toISOString();
 }

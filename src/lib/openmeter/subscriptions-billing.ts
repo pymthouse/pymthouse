@@ -97,13 +97,46 @@ export function planRequiresPaymentMethod(plan: {
   return plan.type === "subscription" && parsePlanPriceAmount(plan.priceAmount) > 0;
 }
 
+function planIsFreeOrStarter(input: {
+  priceAmount: string | null | undefined;
+  type?: string | null;
+  isStarterDefault?: boolean | null;
+}): boolean {
+  if (input.isStarterDefault) return true;
+  const type = (input.type ?? "").trim().toLowerCase();
+  if (type === "free") return true;
+  return parsePlanPriceAmount(input.priceAmount) <= 0 && type !== "usage";
+}
+
+/**
+ * When to apply a plan change on Konnect.
+ *
+ * - Paid upgrades (target price > current) → immediate
+ * - Free / Starter → usage (PPU) → immediate so included usage ends now
+ * - Paid downgrades / same-price moves → next_billing_cycle
+ */
 export function defaultSubscriptionChangeTiming(input: {
   currentPriceAmount: string | null | undefined;
   targetPriceAmount: string;
+  currentPlanType?: string | null;
+  targetPlanType?: string | null;
+  currentIsStarterDefault?: boolean | null;
 }): SubscriptionChangeTiming {
   const current = parsePlanPriceAmount(input.currentPriceAmount);
   const target = parsePlanPriceAmount(input.targetPriceAmount);
-  return target > current ? "immediate" : "next_billing_cycle";
+  if (target > current) {
+    return "immediate";
+  }
+  const targetType = (input.targetPlanType ?? "").trim().toLowerCase();
+  const leavingFreeOrStarter = planIsFreeOrStarter({
+    priceAmount: input.currentPriceAmount,
+    type: input.currentPlanType,
+    isStarterDefault: input.currentIsStarterDefault,
+  });
+  if (leavingFreeOrStarter && targetType === "usage") {
+    return "immediate";
+  }
+  return "next_billing_cycle";
 }
 
 /**
@@ -767,6 +800,12 @@ export type ChangeAppUserSubscriptionPlanResult = {
   effectiveAt: string | null;
   timing: SubscriptionChangeTiming;
   checkoutUrl?: string;
+  /** Present when the target plan is scheduled for a future cycle. */
+  pendingPlan?: {
+    planId: string;
+    openmeterSubscriptionId: string;
+    effectiveAt: string | null;
+  };
 };
 
 /**
@@ -856,6 +895,18 @@ export async function changeAppUserSubscriptionPlan(input: {
     }
   }
 
+  // Cancel-at-period-end still occupies the slot but is not "live". Resume it
+  // before /change so Starter→PPU (and similar) can run with immediate timing
+  // instead of bouncing to Checkout or leaving a scheduled successor.
+  if (!current) {
+    const occupying = pickOccupyingCanceledSubscription(listed);
+    if (occupying?.id) {
+      await reactivateOccupyingCanceledSubscription(occupying.id);
+      listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
+      current = pickMutationTargetSubscription(listed, isStarter);
+    }
+  }
+
   if (!current) {
     // No live subscription (including after deleting a scheduled-only plan) → Checkout.
     const created = await createEndUserCheckout({
@@ -898,6 +949,9 @@ export async function changeAppUserSubscriptionPlan(input: {
     defaultSubscriptionChangeTiming({
       currentPriceAmount: currentLocalPlan?.priceAmount,
       targetPriceAmount: targetPlan.priceAmount,
+      currentPlanType: currentLocalPlan?.type,
+      targetPlanType: targetPlan.type,
+      currentIsStarterDefault: currentLocalPlan?.isStarterDefault,
     });
 
   let change;
@@ -937,10 +991,18 @@ export async function changeAppUserSubscriptionPlan(input: {
     };
   }
 
+  // Neon must track the *live* OM subscription / plan. On next_billing_cycle the
+  // successor is scheduled only — keep caching the current live row.
+  const liveSubscriptionId =
+    change.current?.id?.trim() || current.id;
   const nextSubscriptionId =
-    change.next?.id?.trim() ||
-    change.current?.id?.trim() ||
-    current.id;
+    timing === "immediate"
+      ? change.next?.id?.trim() || liveSubscriptionId
+      : liveSubscriptionId;
+  const neonPlanId =
+    timing === "immediate"
+      ? targetPlan.id
+      : (currentLocalPlan?.id ?? targetPlan.id);
   const effectiveAt = new Date().toISOString();
 
   let checkoutUrl: string | undefined;
@@ -1008,7 +1070,7 @@ export async function changeAppUserSubscriptionPlan(input: {
   await upsertNeonSubscriptionCache({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
-    planId: targetPlan.id,
+    planId: neonPlanId,
     openmeterSubscriptionId: nextSubscriptionId,
     status: neonSubscriptionStatusAfterPlanChange({ checkoutUrl }),
     stripeCheckoutSessionId,
@@ -1016,9 +1078,20 @@ export async function changeAppUserSubscriptionPlan(input: {
 
   return {
     subscriptionId: nextSubscriptionId,
-    planId: targetPlan.id,
+    planId: timing === "immediate" ? targetPlan.id : neonPlanId,
     effectiveAt,
     timing,
     ...(checkoutUrl ? { checkoutUrl } : {}),
+    ...(timing === "next_billing_cycle" && change.next?.id
+      ? {
+          pendingPlan: {
+            planId: targetPlan.id,
+            openmeterSubscriptionId: change.next.id.trim(),
+            effectiveAt: change.next.activeFrom
+              ? String(change.next.activeFrom)
+              : null,
+          },
+        }
+      : {}),
   };
 }

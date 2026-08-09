@@ -6,6 +6,10 @@
  * resolver so the wallet route, the state route and the collect route all
  * report identical posture.
  */
+import { eq } from "drizzle-orm";
+
+import { db } from "@/db/index";
+import { plans } from "@/db/schema";
 import {
   effectiveInvoiceLeadUsdMicros,
   effectiveSoftNegativeUsdMicros,
@@ -18,14 +22,26 @@ import {
 import { resolveAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
 import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
 import type { WalletBillingTarget } from "@/lib/billing/wallet-billing-target";
+import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import { COLLECTION_INTERVAL } from "@/lib/openmeter/billing-collection";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
-import { listAppUserPaymentMethods } from "@/lib/openmeter/app-user-payment-method";
-import { getRemainingPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
+import {
+  appUserHasChargeablePaymentMethod,
+  listAppUserPaymentMethods,
+} from "@/lib/openmeter/app-user-payment-method";
+import {
+  getPlanDiscountUsdMicros,
+} from "@/lib/openmeter/spendable-allowance";
+import {
+  getPrimaryOpenMeterSubscriptionForAppUser,
+  resolveLocalPlanIdFromOpenMeterSubscription,
+} from "@/lib/openmeter/subscription-read";
+import { resolveAppUserSubscriptionPlanName } from "@/lib/billing/app-user-subscription-display";
+import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 
 /** OM plans carry a nominal monthly cadence; see pay-per-use-threshold.ts. */
 const DEFAULT_BILLING_CYCLE = "P1M";
@@ -40,21 +56,79 @@ function toBigInt(value: string | null | undefined): bigint {
   }
 }
 
+async function resolveIncludedSourcePlan(input: {
+  appId: string;
+  publicClientId: string;
+  externalUserId: string;
+}): Promise<{
+  id: string | null;
+  name: string | null;
+  type: string | null;
+} | null> {
+  const live = await getPrimaryOpenMeterSubscriptionForAppUser({
+    clientId: input.publicClientId,
+    externalUserId: input.externalUserId,
+  }).catch(() => null);
+  if (!live) return null;
+
+  const localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.appId,
+    live,
+  ).catch(() => null);
+  const plan = localPlanId
+    ? (
+        await db
+          .select({
+            id: plans.id,
+            name: plans.name,
+            type: plans.type,
+            isStarterDefault: plans.isStarterDefault,
+          })
+          .from(plans)
+          .where(eq(plans.id, localPlanId))
+          .limit(1)
+      )[0]
+    : null;
+  const isOwnerStarter = isOwnerStarterPlanKey(live.planKey);
+  return {
+    id: plan?.id ?? null,
+    name: resolveAppUserSubscriptionPlanName({
+      plan: plan
+        ? {
+            id: plan.id,
+            name: plan.name,
+            type: plan.type,
+            status: "active",
+            phaseOutAt: null,
+            replacementPlanId: null,
+            isStarterDefault: plan.isStarterDefault,
+          }
+        : null,
+      planKey: live.planKey,
+    }),
+    type: plan?.type ?? (isOwnerStarter ? "free" : null),
+  };
+}
+
 async function merchantFunding(input: {
   publicClientId: string;
   appId: string;
   externalUserId: string;
 }) {
-  const [credits, includedRemaining, paymentMethods, overageEligible, debt] =
+  const [credits, discount, chargeable, paymentMethods, overageEligible, debt, sourcePlan] =
     await Promise.all([
       getTrialCreditBalance({
         clientId: input.publicClientId,
         externalUserId: input.externalUserId,
       }).catch(() => null),
-      getRemainingPlanDiscountUsdMicros({
+      getPlanDiscountUsdMicros({
         clientId: input.publicClientId,
         externalUserId: input.externalUserId,
-      }).catch(() => 0n),
+      }).catch(() => ({ totalUsdMicros: 0n, remainingUsdMicros: 0n })),
+      appUserHasChargeablePaymentMethod({
+        clientId: input.appId,
+        externalUserId: input.externalUserId,
+      }).catch(() => null),
       listAppUserPaymentMethods({
         clientId: input.appId,
         externalUserId: input.externalUserId,
@@ -67,15 +141,33 @@ async function merchantFunding(input: {
         clientId: input.publicClientId,
         externalUserId: input.externalUserId,
       }).catch(() => null),
+      resolveIncludedSourcePlan({
+        appId: input.appId,
+        publicClientId: input.publicClientId,
+        externalUserId: input.externalUserId,
+      }),
     ]);
 
   const defaultMethod = paymentMethods?.find((pm) => pm.isDefault) ?? null;
+  // Same chargeability predicate the mint/signer overage gate uses — display
+  // must not disagree with `overage.eligible` / 483 reason.
+  const hasDefault =
+    chargeable === true
+      ? true
+      : chargeable === false
+        ? false
+        : paymentMethods
+          ? Boolean(defaultMethod)
+          : null;
+
   return {
     prepaidUsdMicros: toBigInt(credits?.balanceUsdMicros),
-    includedRemainingUsdMicros: includedRemaining,
+    includedTotalUsdMicros: discount.totalUsdMicros,
+    includedRemainingUsdMicros: discount.remainingUsdMicros,
+    includedSourcePlan: sourcePlan,
     overageEligible,
     paymentMethod: {
-      hasDefault: paymentMethods ? Boolean(defaultMethod) : null,
+      hasDefault,
       brand: defaultMethod?.brand ?? null,
       last4: defaultMethod?.last4 ?? null,
     },
@@ -87,6 +179,7 @@ async function ownerFunding(input: {
   publicClientId: string;
   ownerUserId: string;
   externalUserId: string | null;
+  appId: string;
 }) {
   const [ownerBalance, hasDefault, debt] = await Promise.all([
     getOwnerPrepaidCreditBalance(input.ownerUserId).catch(() => null),
@@ -99,16 +192,27 @@ async function ownerFunding(input: {
       : Promise.resolve(null),
   ]);
 
-  const includedRemaining = input.externalUserId
-    ? await getRemainingPlanDiscountUsdMicros({
+  const discount = input.externalUserId
+    ? await getPlanDiscountUsdMicros({
         clientId: input.publicClientId,
         externalUserId: input.externalUserId,
-      }).catch(() => 0n)
-    : 0n;
+      }).catch(() => ({ totalUsdMicros: 0n, remainingUsdMicros: 0n }))
+    : { totalUsdMicros: 0n, remainingUsdMicros: 0n };
+
+  const sourcePlan =
+    input.externalUserId
+      ? await resolveIncludedSourcePlan({
+          appId: input.appId,
+          publicClientId: input.publicClientId,
+          externalUserId: input.externalUserId,
+        })
+      : null;
 
   return {
     prepaidUsdMicros: toBigInt(ownerBalance?.balanceUsdMicros),
-    includedRemainingUsdMicros: includedRemaining,
+    includedTotalUsdMicros: discount.totalUsdMicros,
+    includedRemainingUsdMicros: discount.remainingUsdMicros,
+    includedSourcePlan: sourcePlan,
     // Owner overage rides on a chargeable payment method plus a paid plan;
     // without a subject we can only observe the payment method half.
     overageEligible: input.externalUserId
@@ -149,11 +253,14 @@ export async function loadBillingState(input: {
           publicClientId: input.publicClientId,
           ownerUserId: target.ownerUserId,
           externalUserId: input.externalUserId,
+          appId: input.appId,
         });
 
   const softNegativeUsdMicros = effectiveSoftNegativeUsdMicros(
     billingConfig?.softNegativeUsdMicros,
   );
+
+  const cycle = calendarMonthBoundsUtc(new Date());
 
   return resolveBillingState({
     currency: billingConfig?.defaultCurrency?.trim() || "USD",
@@ -164,6 +271,9 @@ export async function loadBillingState(input: {
     },
     prepaidUsdMicros: funding.prepaidUsdMicros,
     includedRemainingUsdMicros: funding.includedRemainingUsdMicros,
+    includedTotalUsdMicros: funding.includedTotalUsdMicros,
+    includedResetsAt: cycle.end,
+    includedSourcePlan: funding.includedSourcePlan,
     overageEligible: funding.overageEligible,
     softNegativeUsdMicros,
     unbilledDebtUsdMicros: funding.debt?.usdMicros ?? null,

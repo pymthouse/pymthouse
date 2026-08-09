@@ -70,19 +70,24 @@ export async function resolveSoftNegativeGate(input: {
 
 /**
  * Why a denied gate said no, in the same vocabulary as `billingState.reason`.
- * Hitting the ceiling and having no way to pay are different problems with
- * different fixes, and the caller cannot tell them apart from the status code.
+ * Hitting the ceiling, lacking a card, and a plan that cannot overage are
+ * different problems — the 483 wire only carries the message, so the reason
+ * must pick the right BILLING_REASON_MESSAGE.
  */
 export function softNegativeDenyReason(input: {
   allowsOverageInvoicing: boolean;
   unbilledDebtUsdMicros: bigint;
   softNegativeUsdMicros: bigint;
+  /** When overage is closed: false → no card; otherwise plan/mode cannot overage. */
+  hasDefaultPaymentMethod?: boolean | null;
 }): BillingReason {
   if (!input.allowsOverageInvoicing) {
-    return "no_payment_method";
+    return input.hasDefaultPaymentMethod === false
+      ? "no_payment_method"
+      : "overage_not_available";
   }
   return input.softNegativeUsdMicros > 0n &&
     input.unbilledDebtUsdMicros >= input.softNegativeUsdMicros
     ? "debt_ceiling_reached"
-    : "no_payment_method";
+    : "overage_not_available";
 }
