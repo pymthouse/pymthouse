@@ -77,17 +77,60 @@ function stripeEventAccount(rawBody: string): string | null {
   return typeof account === "string" && account.trim() ? account.trim() : null;
 }
 
+/**
+ * Metadata alone is not a restore authority. Prefer a server-issued Checkout
+ * session mapping; otherwise require the emitting Connect `account` to match
+ * the target app's Connected Account (same binding as merchant top-up).
+ */
 async function handlePaymentMethodRestore(
   rawBody: string,
 ): Promise<Response | null> {
+  const account = stripeEventAccount(rawBody);
   const restoreTarget = parseStripePaymentMethodAttached(rawBody);
   if (restoreTarget) {
-    await restoreAppUserBillingProfileAfterPaymentMethodAttached(restoreTarget);
-    return NextResponse.json({
-      received: true,
-      restored: true,
-      clientId: restoreTarget.clientId,
-    });
+    if (restoreTarget.checkoutSessionId) {
+      const restored = await restoreAppUserBillingProfileForCheckoutSession(
+        restoreTarget.checkoutSessionId,
+        restoreTarget.paymentMethodId,
+      );
+      return NextResponse.json({ received: true, restored });
+    }
+
+    if (account) {
+      let matches: boolean;
+      try {
+        matches = await merchantTopUpAccountMatches(
+          restoreTarget.clientId,
+          account,
+        );
+      } catch (err) {
+        logHandlerError("payment method restore account match", err);
+        return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+      }
+      if (!matches) {
+        console.warn(
+          TAG,
+          "payment method restore ignored: account mismatch",
+          sanitizeForLog(restoreTarget.clientId),
+          sanitizeForLog(account),
+        );
+        return NextResponse.json({
+          received: true,
+          ignored: "connect_account_mismatch",
+        });
+      }
+      await restoreAppUserBillingProfileAfterPaymentMethodAttached(
+        restoreTarget,
+      );
+      return NextResponse.json({
+        received: true,
+        restored: true,
+        clientId: restoreTarget.clientId,
+      });
+    }
+
+    // Platform event without a Checkout session id: do not trust metadata alone.
+    // Fall through to Stripe-customer reverse lookup / persisted session id.
   }
 
   const byCustomer = parseStripePaymentMethodAttachedCustomer(rawBody);
@@ -96,6 +139,21 @@ async function handlePaymentMethodRestore(
       byCustomer.stripeCustomerId,
     );
     if (row?.clientId && row.externalUserId) {
+      if (account) {
+        const rowAccount = row.stripeConnectedAccountId?.trim() || "";
+        if (!rowAccount || rowAccount !== account) {
+          console.warn(
+            TAG,
+            "payment method restore ignored: customer account mismatch",
+            sanitizeForLog(row.clientId),
+            sanitizeForLog(account),
+          );
+          return NextResponse.json({
+            received: true,
+            ignored: "connect_account_mismatch",
+          });
+        }
+      }
       await restoreAppUserBillingProfileAfterPaymentMethodAttached({
         clientId: row.clientId,
         externalUserId: row.externalUserId,
@@ -257,6 +315,7 @@ async function settleMerchantTopUp(input: {
 
 async function handleAutoTopUpPaymentIntentSucceeded(
   rawBody: string,
+  secretKind: StripeWebhookSecretKind,
 ): Promise<Response> {
   let parsed: {
     data?: {
@@ -302,6 +361,38 @@ async function handleAutoTopUpPaymentIntentSucceeded(
       ignored: "auto_topup_incomplete_metadata",
     });
   }
+
+  // Same tenancy binding as merchant Checkout top-up: Connect events must
+  // carry an `account` that matches the target app; platform events require
+  // the platform webhook secret (no Connect `account` field).
+  const account = stripeEventAccount(rawBody);
+  if (account) {
+    let matches: boolean;
+    try {
+      matches = await merchantTopUpAccountMatches(clientId, account);
+    } catch (err) {
+      logHandlerError("auto-topup account match", err);
+      return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+    }
+    if (!matches) {
+      console.warn(
+        TAG,
+        "auto-topup ignored: account mismatch",
+        sanitizeForLog(clientId),
+        sanitizeForLog(account),
+      );
+      return NextResponse.json({
+        received: true,
+        ignored: "connect_account_mismatch",
+      });
+    }
+  } else if (secretKind !== "platform") {
+    return NextResponse.json({
+      received: true,
+      ignored: "auto_topup_requires_platform_secret",
+    });
+  }
+
   const amountUsdMicros = BigInt(amountCents) * 10_000n;
   try {
     // Idempotent with the sync grant path (same key).
@@ -394,13 +485,16 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  *   checkout.session.async_payment_succeeded (platform + Connect — delayed)
  *   setup_intent.succeeded                   (Connect — app-user payment methods)
  *   payment_method.attached                  (Connect — belt-and-suspenders PM default)
+ *   payment_intent.succeeded                 (platform + Connect — auto top-up settle)
  *
  * PaymentIntent / charge / dispute events for Custom Invoicing settlement are
  * handled by pymthouse/settlement (Kafka producer), not this route.
  *
  * Owner top-up grants require the platform webhook secret and a platform
- * (non-Connect) event. Merchant end-user top-ups require a Connect `account`
- * field matching the app's Connected Account (Connect- or platform-signed).
+ * (non-Connect) event. Merchant end-user top-ups and Connect auto top-ups
+ * require a Connect `account` field matching the app's Connected Account.
+ * Payment-method restore from Connect metadata also requires that account
+ * match (or a server-issued Checkout session mapping).
  */
 export async function POST(request: Request): Promise<Response> {
   let secrets: StripeWebhookSecret[];
@@ -437,7 +531,7 @@ export async function POST(request: Request): Promise<Response> {
     return handleCheckoutSessionCompleted(rawBody, secretKind);
   }
   if (type === "payment_intent.succeeded") {
-    return handleAutoTopUpPaymentIntentSucceeded(rawBody);
+    return handleAutoTopUpPaymentIntentSucceeded(rawBody, secretKind);
   }
   if (type === "setup_intent.succeeded" || type === "payment_method.attached") {
     try {

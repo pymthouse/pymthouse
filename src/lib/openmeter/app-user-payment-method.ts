@@ -57,6 +57,48 @@ export type AppUserPaymentMethodRestoreTarget = {
   paymentMethodId?: string | null;
 };
 
+type RestoreAfterAttachFn = (
+  input: AppUserPaymentMethodRestoreTarget,
+) => Promise<void>;
+type RestoreForCheckoutSessionFn = (
+  sessionId: string,
+  paymentMethodId?: string | null,
+) => Promise<boolean>;
+
+let restoreAfterAttachForTests: RestoreAfterAttachFn | null = null;
+let restoreForCheckoutSessionForTests: RestoreForCheckoutSessionFn | null =
+  null;
+
+/**
+ * Test-only override for webhook restore after payment_method attach.
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+  fn: RestoreAfterAttachFn | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests is only available in test",
+    );
+  }
+  restoreAfterAttachForTests = fn;
+}
+
+/**
+ * Test-only override for Checkout-session restore mapping.
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setRestoreAppUserBillingProfileForCheckoutSessionForTests(
+  fn: RestoreForCheckoutSessionFn | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setRestoreAppUserBillingProfileForCheckoutSessionForTests is only available in test",
+    );
+  }
+  restoreForCheckoutSessionForTests = fn;
+}
+
 /** Persist Checkout session → app-user mapping for webhook restore without metadata. */
 export async function recordAppUserPaymentMethodCheckout(input: {
   sessionId: string | null;
@@ -88,6 +130,10 @@ export async function recordAppUserPaymentMethodCheckout(input: {
 export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
   input: AppUserPaymentMethodRestoreTarget,
 ): Promise<void> {
+  if (restoreAfterAttachForTests) {
+    await restoreAfterAttachForTests(input);
+    return;
+  }
   const client = getHostedAdminClient();
   const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const customerKey = buildOpenMeterCustomerKey(
@@ -232,6 +278,9 @@ export async function restoreAppUserBillingProfileForCheckoutSession(
   sessionId: string,
   paymentMethodId?: string | null,
 ): Promise<boolean> {
+  if (restoreForCheckoutSessionForTests) {
+    return restoreForCheckoutSessionForTests(sessionId, paymentMethodId);
+  }
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     return false;

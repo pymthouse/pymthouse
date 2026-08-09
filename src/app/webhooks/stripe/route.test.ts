@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 
+import {
+  __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests,
+  __setRestoreAppUserBillingProfileForCheckoutSessionForTests,
+} from "@/lib/openmeter/app-user-payment-method";
 import { __setGrantAllowanceUsdMicrosForTests } from "@/lib/openmeter/grant-allowance";
+import { autoTopUpGrantIdempotencyKey } from "@/lib/stripe/auto-topup-charge";
 import { topUpGrantIdempotencyKey } from "@/lib/stripe/topup-checkout";
 import {
   __setMerchantTopUpAccountMatchesForTests,
@@ -68,6 +73,65 @@ function merchantTopUpEventBody(
   });
 }
 
+function autoTopUpPaymentIntentBody(extras?: {
+  account?: string;
+  clientId?: string;
+  externalUserId?: string;
+}): string {
+  return JSON.stringify({
+    type: "payment_intent.succeeded",
+    ...(extras?.account ? { account: extras.account } : {}),
+    data: {
+      object: {
+        id: "pi_auto_topup_1",
+        amount: 1000,
+        status: "succeeded",
+        metadata: {
+          pymthouse_auto_topup: "1",
+          client_id: extras?.clientId ?? "app_pub_route_1",
+          external_user_id: extras?.externalUserId ?? "eu_route_1",
+        },
+      },
+    },
+  });
+}
+
+function setupIntentRestoreBody(extras?: { account?: string }): string {
+  return JSON.stringify({
+    type: "setup_intent.succeeded",
+    ...(extras?.account ? { account: extras.account } : {}),
+    data: {
+      object: {
+        id: "seti_restore_1",
+        payment_method: "pm_restore_1",
+        metadata: {
+          pymthouse_client_id: "app_pub_route_1",
+          external_user_id: "eu_route_1",
+        },
+      },
+    },
+  });
+}
+
+function checkoutPmRestoreBody(extras?: { account?: string }): string {
+  return JSON.stringify({
+    type: "checkout.session.completed",
+    ...(extras?.account ? { account: extras.account } : {}),
+    data: {
+      object: {
+        id: "cs_pm_restore_1",
+        mode: "setup",
+        payment_status: "paid",
+        setup_intent: "seti_restore_1",
+        metadata: {
+          pymthouse_client_id: "app_spoofed",
+          external_user_id: "eu_spoofed",
+        },
+      },
+    },
+  });
+}
+
 function withWebhookEnv(
   t: { after: (fn: () => void) => void },
   env: {
@@ -85,6 +149,8 @@ function withWebhookEnv(
     __setGrantAllowanceUsdMicrosForTests(null);
     __setTopUpClientOwnedByOwnerForTests(null);
     __setMerchantTopUpAccountMatchesForTests(null);
+    __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(null);
+    __setRestoreAppUserBillingProfileForCheckoutSessionForTests(null);
   });
   if (env.connect === undefined) delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = env.connect;
@@ -375,4 +441,189 @@ test("POST rejects when signature matches neither configured secret", async (t) 
   assert.equal(res.status, 401);
   const json = (await res.json()) as { error?: string };
   assert.equal(json.error, "invalid_signature");
+});
+
+test("POST auto-topup credits when Connect account matches", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  const calls: Array<Record<string, unknown>> = [];
+  __setGrantAllowanceUsdMicrosForTests(async (input) => {
+    calls.push({ ...input, amountUsdMicros: input.amountUsdMicros.toString() });
+    return {
+      externalUserId: input.externalUserId,
+      source: input.source,
+      grantedUsdMicros: input.amountUsdMicros.toString(),
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({ account: "acct_merchant_1" });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as {
+    credited?: boolean;
+    paymentIntentId?: string;
+  };
+  assert.equal(json.credited, true);
+  assert.equal(json.paymentIntentId, "pi_auto_topup_1");
+  assert.deepEqual(calls[0], {
+    clientId: "app_pub_route_1",
+    externalUserId: "eu_route_1",
+    amountUsdMicros: "10000000",
+    source: "topup",
+    idempotencyKey: autoTopUpGrantIdempotencyKey("pi_auto_topup_1"),
+  });
+});
+
+test("POST auto-topup ignores Connect account mismatch", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => false);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({ account: "acct_wrong" });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "connect_account_mismatch");
+  assert.equal(granted, false);
+});
+
+test("POST auto-topup platform event requires platform secret", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: "not-a-whsec",
+  });
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody();
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "auto_topup_requires_platform_secret");
+  assert.equal(granted, false);
+});
+
+test("POST auto-topup platform-signed event without account credits", async (t) => {
+  withWebhookEnv(t, { platform: PLATFORM_SECRET });
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody();
+  const res = await postSigned(rawBody, PLATFORM_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean };
+  assert.equal(json.credited, true);
+  assert.equal(granted, true);
+});
+
+test("POST setup_intent restore requires matching Connect account", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  const restores: Array<Record<string, unknown>> = [];
+  __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+    async (input) => {
+      restores.push({ ...input });
+    },
+  );
+
+  const rawBody = setupIntentRestoreBody({ account: "acct_merchant_1" });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { restored?: boolean; clientId?: string };
+  assert.equal(json.restored, true);
+  assert.equal(json.clientId, "app_pub_route_1");
+  assert.deepEqual(restores[0], {
+    clientId: "app_pub_route_1",
+    externalUserId: "eu_route_1",
+    checkoutSessionId: null,
+    paymentMethodId: "pm_restore_1",
+  });
+});
+
+test("POST setup_intent restore ignores Connect account mismatch", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => false);
+  let restored = false;
+  __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+    async () => {
+      restored = true;
+    },
+  );
+
+  const rawBody = setupIntentRestoreBody({ account: "acct_wrong" });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "connect_account_mismatch");
+  assert.equal(restored, false);
+});
+
+test("POST checkout PM restore prefers server-issued session mapping over metadata", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  let afterAttachCalled = false;
+  __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+    async () => {
+      afterAttachCalled = true;
+    },
+  );
+  const sessions: string[] = [];
+  __setRestoreAppUserBillingProfileForCheckoutSessionForTests(
+    async (sessionId) => {
+      sessions.push(sessionId);
+      return true;
+    },
+  );
+
+  const rawBody = checkoutPmRestoreBody({ account: "acct_merchant_1" });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { restored?: boolean };
+  assert.equal(json.restored, true);
+  assert.deepEqual(sessions, ["cs_pm_restore_1"]);
+  assert.equal(afterAttachCalled, false);
 });
