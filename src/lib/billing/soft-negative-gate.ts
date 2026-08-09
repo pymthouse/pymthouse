@@ -5,6 +5,7 @@ import {
   effectiveSoftNegativeUsdMicros,
   softNegativeAllowsContinue,
 } from "@/lib/billing/auto-topup-settings";
+import type { BillingReason } from "@/lib/billing/billing-state";
 import { getUnbilledDebtUsdMicros } from "@/lib/billing/unbilled-debt";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
@@ -65,4 +66,23 @@ export async function resolveSoftNegativeGate(input: {
     softNegativeUsdMicros,
   });
   return { allow, unbilledDebtUsdMicros, softNegativeUsdMicros };
+}
+
+/**
+ * Why a denied gate said no, in the same vocabulary as `billingState.reason`.
+ * Hitting the ceiling and having no way to pay are different problems with
+ * different fixes, and the caller cannot tell them apart from the status code.
+ */
+export function softNegativeDenyReason(input: {
+  allowsOverageInvoicing: boolean;
+  unbilledDebtUsdMicros: bigint;
+  softNegativeUsdMicros: bigint;
+}): BillingReason {
+  if (!input.allowsOverageInvoicing) {
+    return "no_payment_method";
+  }
+  return input.softNegativeUsdMicros > 0n &&
+    input.unbilledDebtUsdMicros >= input.softNegativeUsdMicros
+    ? "debt_ceiling_reached"
+    : "no_payment_method";
 }

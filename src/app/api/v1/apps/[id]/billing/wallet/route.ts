@@ -3,50 +3,20 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
-import { effectiveSoftNegativeUsdMicros } from "@/lib/billing/auto-topup-settings";
+import { loadBillingState } from "@/lib/billing/billing-state-read";
 import { authorizeOwnerWalletM2m } from "@/lib/billing/owner-wallet-m2m-auth";
 import {
   formatUsdMicrosForDisplay,
   resolvedPayPerUseBehavior,
 } from "@/lib/billing/pay-per-use-threshold";
-import { getUnbilledDebtUsdMicros } from "@/lib/billing/unbilled-debt";
 import {
   readOptionalExternalUserId,
   resolveWalletBillingTarget,
 } from "@/lib/billing/wallet-billing-target";
 import { listAppUserPaymentMethods } from "@/lib/openmeter/app-user-payment-method";
-import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
-
-async function buildSoftNegativePayload(input: {
-  appId: string;
-  externalUserId: string | null;
-  softNegativeUsdMicros: string | null;
-}) {
-  const softNegative = effectiveSoftNegativeUsdMicros(
-    input.softNegativeUsdMicros,
-  );
-  let debt: bigint | null = null;
-  if (input.externalUserId) {
-    try {
-      debt = await getUnbilledDebtUsdMicros({
-        clientId: input.appId,
-        externalUserId: input.externalUserId,
-      });
-    } catch {
-      debt = null;
-    }
-  }
-  return {
-    softNegativeUsdMicros: softNegative.toString(),
-    softNegativeUsd: formatUsdMicrosForDisplay(softNegative.toString()),
-    unbilledDebtUsdMicros: debt?.toString() ?? null,
-    unbilledDebtUsd:
-      debt != null ? formatUsdMicrosForDisplay(debt.toString()) : null,
-  };
-}
 
 /**
  * GET /api/v1/apps/{clientId}/billing/wallet — prepaid wallet summary for
@@ -78,7 +48,6 @@ export async function GET(
     );
   }
 
-  const billingConfig = await getAppBillingConfig(access.app.id);
   const usagePlanRowsPromise = db
     .select({
       id: plans.id,
@@ -97,7 +66,7 @@ export async function GET(
 
   if (billingTarget.target.mode === "merchant") {
     const endUserId = billingTarget.target.externalUserId;
-    const [trialBalance, paymentMethods, usagePlanRows, softNegative] =
+    const [trialBalance, paymentMethods, usagePlanRows, billingState] =
       await Promise.all([
         getTrialCreditBalance({
           clientId,
@@ -108,10 +77,11 @@ export async function GET(
           externalUserId: endUserId,
         }).catch(() => null),
         usagePlanRowsPromise,
-        buildSoftNegativePayload({
+        loadBillingState({
+          publicClientId: clientId,
           appId: access.app.id,
+          target: billingTarget.target,
           externalUserId: endUserId,
-          softNegativeUsdMicros: billingConfig?.softNegativeUsdMicros ?? null,
         }),
       ]);
     const balance = trialBalance
@@ -130,32 +100,26 @@ export async function GET(
           ? paymentMethods.some((pm) => pm.isDefault)
           : null,
       },
-      softNegative,
+      billingState,
       payPerUsePlans: usagePlanRows.map((usagePlan) => ({
         planId: usagePlan.id,
         planName: usagePlan.name,
         chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
-        resolvedBehavior: resolvedPayPerUseBehavior(
-          usagePlan.chargeThresholdUsdMicros,
-        ),
+        resolvedBehavior: resolvedPayPerUseBehavior(),
       })),
-      settlement: {
-        order: "credits_then_progressive_invoice",
-        description:
-          "Prepaid credits first. Past $0, soft-negative allows overage until the unbilled-debt ceiling; OpenMeter progressive invoicing + settlement (Connect) collect asynchronously.",
-      },
     });
   }
 
-  const [ownerBalance, hasDefaultPaymentMethod, usagePlanRows, softNegative] =
+  const [ownerBalance, hasDefaultPaymentMethod, usagePlanRows, billingState] =
     await Promise.all([
       getOwnerPrepaidCreditBalance(billingTarget.target.ownerUserId),
       ownerHasChargeablePaymentMethod(billingTarget.target.ownerUserId),
       usagePlanRowsPromise,
-      buildSoftNegativePayload({
+      loadBillingState({
+        publicClientId: clientId,
         appId: access.app.id,
-        externalUserId: null,
-        softNegativeUsdMicros: billingConfig?.softNegativeUsdMicros ?? null,
+        target: billingTarget.target,
+        externalUserId,
       }),
     ]);
 
@@ -172,20 +136,13 @@ export async function GET(
     paymentMethod: {
       hasDefault: hasDefaultPaymentMethod,
     },
-    softNegative,
+    billingState,
     payPerUsePlans: usagePlanRows.map((usagePlan) => ({
       planId: usagePlan.id,
       planName: usagePlan.name,
       chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
-      resolvedBehavior: resolvedPayPerUseBehavior(
-        usagePlan.chargeThresholdUsdMicros,
-      ),
+      resolvedBehavior: resolvedPayPerUseBehavior(),
     })),
-    settlement: {
-      order: "credits_then_progressive_invoice",
-      description:
-        "Prepaid credits first. Soft-negative is app-wide; mid-cycle collection uses OpenMeter progressive invoicing (owner Stripe app or merchant settlement).",
-    },
   });
 }
 

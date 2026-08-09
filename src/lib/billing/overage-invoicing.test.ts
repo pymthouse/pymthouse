@@ -145,6 +145,27 @@ test("mintAllowanceGateDecision still denies zero spendable without overage", ()
     {
       code: "trial_credits_exhausted",
       message: "Payment method required",
+      reason: "no_payment_method",
+    },
+  );
+});
+
+test("mintAllowanceGateDecision carries an explicit deny reason", () => {
+  assert.deepEqual(
+    mintAllowanceGateDecision(
+      {
+        hasAccess: false,
+        balanceUsdMicros: "0",
+        consumedUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      },
+      true,
+      { allowsOverageInvoicing: false, reason: "debt_ceiling_reached" },
+    ),
+    {
+      code: "trial_credits_exhausted",
+      message: "Payment method required",
+      reason: "debt_ceiling_reached",
     },
   );
 });

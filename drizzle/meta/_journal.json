@@ -330,6 +330,13 @@
       "when": 1786800000000,
       "tag": "0045_auto_topup_soft_negative",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0046_invoice_lead_window",
+      "breakpoints": true
     }
   ]
 }

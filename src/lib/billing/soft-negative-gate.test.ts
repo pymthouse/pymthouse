@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveSoftNegativeGate } from "@/lib/billing/soft-negative-gate";
-import { getUnbilledDebtUsdMicros } from "@/lib/billing/unbilled-debt";
+import {
+  resolveSoftNegativeGate,
+  softNegativeDenyReason,
+} from "@/lib/billing/soft-negative-gate";
+import {
+  getUnbilledDebtDetails,
+  getUnbilledDebtUsdMicros,
+} from "@/lib/billing/unbilled-debt";
 
 test("resolveSoftNegativeGate allows when spendable is positive", async () => {
   const result = await resolveSoftNegativeGate({
@@ -69,5 +75,31 @@ test("getUnbilledDebtUsdMicros returns 0 when OpenMeter is unavailable", async (
       externalUserId: "eu_1",
     }),
     0n,
+  );
+  assert.deepEqual(
+    await getUnbilledDebtDetails({
+      clientId: "app_debt",
+      externalUserId: "eu_1",
+    }),
+    { usdMicros: 0n, source: "unavailable" },
+  );
+});
+
+test("softNegativeDenyReason separates a ceiling hit from an unpayable account", () => {
+  assert.equal(
+    softNegativeDenyReason({
+      allowsOverageInvoicing: false,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros: 2_000_000n,
+    }),
+    "no_payment_method",
+  );
+  assert.equal(
+    softNegativeDenyReason({
+      allowsOverageInvoicing: true,
+      unbilledDebtUsdMicros: 2_000_000n,
+      softNegativeUsdMicros: 2_000_000n,
+    }),
+    "debt_ceiling_reached",
   );
 });

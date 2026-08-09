@@ -591,15 +591,16 @@ export const appBillingConfig = pgTable(
      */
     progressiveBilling: boolean("progressive_billing").notNull().default(true),
     /**
-     * Legacy gathering-invoice threshold (USD micros). No longer used for
-     * SignerSession raises — prefer softNegativeUsdMicros + per-user auto top-up.
-     */
-    invoiceThresholdUsdMicros: text("invoice_threshold_usd_micros"),
-    /**
      * Max unbilled debt (USD micros) allowed while spendable ≤ 0 before
-     * mint/signer deny. App-wide; same for all end users.
+     * mint/signer deny. App-wide; same for all end users. Null clears it, 0
+     * means no ceiling, otherwise at least MIN_SOFT_NEGATIVE_USD_MICROS.
      */
     softNegativeUsdMicros: text("soft_negative_usd_micros"),
+    /**
+     * Debt level (USD micros) at which the amount-based invoice raise fires.
+     * Null derives it from the ceiling: half, capped at $5.
+     */
+    invoiceLeadUsdMicros: text("invoice_lead_usd_micros"),
     /** Merchant Stripe Connected Account id (`acct_…`). */
     stripeConnectedAccountId: text("stripe_connected_account_id"),
     /** How the merchant linked: account_link | oauth */

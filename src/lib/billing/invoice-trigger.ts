@@ -8,9 +8,10 @@
  */
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import {
-  DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+  effectiveInvoiceLeadUsdMicros,
   effectiveSoftNegativeUsdMicros,
   isInInvoiceTriggerLeadWindow,
+  MIN_INVOICE_USD_MICROS,
 } from "@/lib/billing/auto-topup-settings";
 import {
   getUnbilledDebtUsdMicros,
@@ -47,36 +48,56 @@ export function __resetInvoiceTriggerCacheForTests(): void {
 function shouldTriggerInvoice(input: {
   unbilledDebtUsdMicros: bigint;
   softNegativeUsdMicros: bigint;
+  leadUsdMicros: bigint;
 }): boolean {
-  if (input.unbilledDebtUsdMicros <= 0n) {
+  // Below Stripe's minimum charge the invoice cannot be collected, so raising
+  // it would only park a draft that no collector can clear. Anything left under
+  // the floor is swept up by OM's anchored collection alignment or cycle close.
+  if (input.unbilledDebtUsdMicros < MIN_INVOICE_USD_MICROS) {
     return false;
   }
-  // No debt ceiling configured → mid-cycle invoice any positive gathering debt.
+  // No debt ceiling configured → mid-cycle invoice any collectable debt.
   if (input.softNegativeUsdMicros <= 0n) {
     return true;
   }
   return isInInvoiceTriggerLeadWindow({
     unbilledDebtUsdMicros: input.unbilledDebtUsdMicros,
     softNegativeUsdMicros: input.softNegativeUsdMicros,
-    leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+    leadUsdMicros: input.leadUsdMicros,
   });
 }
 
+export type InvoiceTriggerOutcome =
+  | "invoiced"
+  | "skipped"
+  | "rate_limited"
+  | "unavailable"
+  | "error";
+
+export type InvoiceTriggerResult = {
+  outcome: InvoiceTriggerOutcome;
+  invoiceIds: string[];
+};
+
 /**
  * Create invoices from gathering lines and advance each toward collection.
- * Returns how many invoices were created (0 if skipped / empty).
+ *
+ * `force` skips the lead-window check for an explicit "collect now" request.
+ * The Stripe minimum-charge floor always applies: raising an invoice below it
+ * only parks a draft no collector can clear.
  */
-export async function maybeInvoiceGatheringForIdentity(input: {
+export async function invoiceGatheringForIdentity(input: {
   clientId: string;
   externalUserId: string;
-}): Promise<"invoiced" | "skipped" | "rate_limited" | "unavailable" | "error"> {
+  force?: boolean;
+}): Promise<InvoiceTriggerResult> {
   const clientId = input.clientId.trim();
   const externalUserId = input.externalUserId.trim();
   if (!clientId || !externalUserId) {
-    return "skipped";
+    return { outcome: "skipped", invoiceIds: [] };
   }
   if (!isHostedAdminClientAvailable()) {
-    return "unavailable";
+    return { outcome: "unavailable", invoiceIds: [] };
   }
 
   const rateKey = `${clientId}\u0000${externalUserId}`;
@@ -87,7 +108,7 @@ export async function maybeInvoiceGatheringForIdentity(input: {
     return true;
   });
   if (!marker.attempted) {
-    return "rate_limited";
+    return { outcome: "rate_limited", invoiceIds: [] };
   }
 
   try {
@@ -105,13 +126,19 @@ export async function maybeInvoiceGatheringForIdentity(input: {
       clientId,
       externalUserId,
     });
-    if (
-      !shouldTriggerInvoice({
-        unbilledDebtUsdMicros,
-        softNegativeUsdMicros,
-      })
-    ) {
-      return "skipped";
+    const collectable = unbilledDebtUsdMicros >= MIN_INVOICE_USD_MICROS;
+    const shouldRaise = input.force
+      ? collectable
+      : shouldTriggerInvoice({
+          unbilledDebtUsdMicros,
+          softNegativeUsdMicros,
+          leadUsdMicros: effectiveInvoiceLeadUsdMicros({
+            storedUsdMicros: billingConfig?.invoiceLeadUsdMicros,
+            softNegativeUsdMicros,
+          }),
+        });
+    if (!shouldRaise) {
+      return { outcome: "skipped", invoiceIds: [] };
     }
 
     const customerId = await resolveBillingCustomerId({
@@ -119,7 +146,7 @@ export async function maybeInvoiceGatheringForIdentity(input: {
       externalUserId,
     });
     if (!customerId) {
-      return "skipped";
+      return { outcome: "skipped", invoiceIds: [] };
     }
 
     const client = getHostedAdminClient();
@@ -128,31 +155,53 @@ export async function maybeInvoiceGatheringForIdentity(input: {
       progressiveBillingOverride: true,
     });
     if (!invoices?.length) {
-      return "skipped";
+      return { outcome: "skipped", invoiceIds: [] };
     }
 
+    const invoiceIds: string[] = [];
     for (const invoice of invoices) {
       const invoiceId = invoice.id?.trim();
       if (!invoiceId) continue;
-      try {
-        // With auto_advance + P0D this is often a no-op; Custom Invoicing may
-        // pause at draft.sync and settlement drives the rest.
-        await client.billing.invoices.advance(invoiceId);
-      } catch (err) {
-        console.warn(
-          "[invoice-trigger] advance skipped",
-          sanitizeForLog(invoiceId),
-          sanitizeForLog(err instanceof Error ? err.message : String(err)),
-        );
-      }
+      invoiceIds.push(invoiceId);
+      await advanceInvoice(client, invoiceId, input.force === true);
     }
-    return "invoiced";
+    return { outcome: "invoiced", invoiceIds };
   } catch (err) {
     console.warn(
       "[invoice-trigger] unexpected failure",
       sanitizeForLog(err instanceof Error ? err.message : String(err)),
     );
-    return "error";
+    return { outcome: "error", invoiceIds: [] };
+  }
+}
+
+/**
+ * Push a freshly raised invoice toward collection. With auto_advance + P0D
+ * `advance` is often a no-op; Custom Invoicing may pause at draft.sync and
+ * settlement drives the rest.
+ */
+async function advanceInvoice(
+  client: ReturnType<typeof getHostedAdminClient>,
+  invoiceId: string,
+  force: boolean,
+): Promise<void> {
+  if (force) {
+    try {
+      // Native way to skip the collection period for an invoice parked in
+      // draft.waiting_for_collection.
+      await client.billing.invoices.snapshotQuantities(invoiceId);
+    } catch {
+      // Not in a snapshot-able state; advance below still applies.
+    }
+  }
+  try {
+    await client.billing.invoices.advance(invoiceId);
+  } catch (err) {
+    console.warn(
+      "[invoice-trigger] advance skipped",
+      sanitizeForLog(invoiceId),
+      sanitizeForLog(err instanceof Error ? err.message : String(err)),
+    );
   }
 }
 
@@ -161,7 +210,7 @@ export function scheduleInvoiceTrigger(input: {
   clientId: string;
   externalUserId: string;
 }): void {
-  void maybeInvoiceGatheringForIdentity(input).catch((err) => {
+  void invoiceGatheringForIdentity(input).catch((err) => {
     console.warn(
       "[invoice-trigger] schedule failed",
       sanitizeForLog(err instanceof Error ? err.message : String(err)),

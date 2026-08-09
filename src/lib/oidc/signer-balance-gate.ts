@@ -9,9 +9,16 @@ import {
 } from "@pymthouse/clearinghouse-identity-webhook/protocol";
 import { parseUsdMicros } from "@pymthouse/clearinghouse-identity-webhook/balance-gate";
 import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
+import {
+  BILLING_REASON_MESSAGE,
+  type BillingReason,
+} from "@/lib/billing/billing-state";
 import { resolveAllowsOverageInvoicing } from "@/lib/billing/overage-invoicing";
 import { scheduleInvoiceTrigger } from "@/lib/billing/invoice-trigger";
-import { resolveSoftNegativeGate } from "@/lib/billing/soft-negative-gate";
+import {
+  resolveSoftNegativeGate,
+  softNegativeDenyReason,
+} from "@/lib/billing/soft-negative-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
@@ -227,6 +234,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       }
 
       let softAllow = false;
+      let denyReason: BillingReason = "no_payment_method";
       try {
         const softGate = await resolveSoftNegativeGate({
           clientId: ctx.identity.client_id,
@@ -235,6 +243,11 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
           allowsOverageInvoicing: allowsOverage,
         });
         softAllow = softGate.allow;
+        denyReason = softNegativeDenyReason({
+          allowsOverageInvoicing: allowsOverage,
+          unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
+          softNegativeUsdMicros: softGate.softNegativeUsdMicros,
+        });
       } catch (err) {
         console.warn(
           `[remote-signer] soft-negative check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
@@ -244,7 +257,9 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       }
 
       if (!softAllow) {
-        throw new WebhookError("Payment method required", {
+        // The webhook wire has no separate machine field beyond `code`, which
+        // go-livepeer matches on, so the reason has to ride in the message.
+        throw new WebhookError(BILLING_REASON_MESSAGE[denyReason], {
           status: REMOTE_SIGNER_HTTP_STATUS.INSUFFICIENT_BALANCE,
           code: REMOTE_SIGNER_ERROR_CODE.INSUFFICIENT_BALANCE,
         });

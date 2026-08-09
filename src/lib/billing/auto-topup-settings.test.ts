@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  DEFAULT_AUTO_TOP_UP_USD_MICROS,
-  DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+  effectiveInvoiceLeadUsdMicros,
   effectiveSoftNegativeUsdMicros,
-  isInAutoTopUpLeadWindow,
   isInInvoiceTriggerLeadWindow,
+  MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
+  MIN_SOFT_NEGATIVE_USD_MICROS,
   parsePositiveUsdMicrosInput,
   parseSoftNegativeUsdMicrosInput,
   softNegativeAllowsContinue,
@@ -72,6 +72,63 @@ describe("parseSoftNegativeUsdMicrosInput", () => {
     assert.equal(parseSoftNegativeUsdMicrosInput("nope").ok, false);
     assert.equal(parseSoftNegativeUsdMicrosInput({}).ok, false);
   });
+
+  it("rejects positive ceilings below the collectable floor", () => {
+    // $0.50 equals Stripe's minimum charge, leaving no headroom to collect
+    // before the gate denies.
+    assert.equal(parseSoftNegativeUsdMicrosInput("500000").ok, false);
+    assert.equal(parseSoftNegativeUsdMicrosInput(1_999_999).ok, false);
+    assert.deepEqual(
+      parseSoftNegativeUsdMicrosInput(String(MIN_SOFT_NEGATIVE_USD_MICROS)),
+      { ok: true, value: "2000000" },
+    );
+  });
+});
+
+describe("effectiveInvoiceLeadUsdMicros", () => {
+  it("derives half the ceiling, capped at the max", () => {
+    assert.equal(
+      effectiveInvoiceLeadUsdMicros({
+        storedUsdMicros: null,
+        softNegativeUsdMicros: 2_000_000n,
+      }),
+      1_000_000n,
+    );
+    assert.equal(
+      effectiveInvoiceLeadUsdMicros({
+        storedUsdMicros: null,
+        softNegativeUsdMicros: 100_000_000n,
+      }),
+      MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
+    );
+  });
+
+  it("falls back to the max when no ceiling is configured", () => {
+    assert.equal(
+      effectiveInvoiceLeadUsdMicros({
+        storedUsdMicros: null,
+        softNegativeUsdMicros: 0n,
+      }),
+      MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
+    );
+  });
+
+  it("prefers a stored positive override", () => {
+    assert.equal(
+      effectiveInvoiceLeadUsdMicros({
+        storedUsdMicros: "750000",
+        softNegativeUsdMicros: 10_000_000n,
+      }),
+      750_000n,
+    );
+    assert.equal(
+      effectiveInvoiceLeadUsdMicros({
+        storedUsdMicros: "garbage",
+        softNegativeUsdMicros: 10_000_000n,
+      }),
+      MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
+    );
+  });
 });
 
 describe("effectiveSoftNegativeUsdMicros", () => {
@@ -92,7 +149,7 @@ describe("isInInvoiceTriggerLeadWindow", () => {
       isInInvoiceTriggerLeadWindow({
         unbilledDebtUsdMicros: 6_000_000n,
         softNegativeUsdMicros: 10_000_000n,
-        leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+        leadUsdMicros: MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
       }),
       true,
     );
@@ -100,7 +157,7 @@ describe("isInInvoiceTriggerLeadWindow", () => {
       isInInvoiceTriggerLeadWindow({
         unbilledDebtUsdMicros: 4_000_000n,
         softNegativeUsdMicros: 10_000_000n,
-        leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+        leadUsdMicros: MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
       }),
       false,
     );
@@ -111,7 +168,7 @@ describe("isInInvoiceTriggerLeadWindow", () => {
       isInInvoiceTriggerLeadWindow({
         unbilledDebtUsdMicros: 10_000_000n,
         softNegativeUsdMicros: 10_000_000n,
-        leadUsdMicros: DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS,
+        leadUsdMicros: MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
       }),
       false,
     );
@@ -122,18 +179,6 @@ describe("isInInvoiceTriggerLeadWindow", () => {
         leadUsdMicros: 0n,
       }),
       false,
-    );
-  });
-
-  it("keeps deprecated auto-top-up alias working", () => {
-    assert.equal(DEFAULT_AUTO_TOP_UP_USD_MICROS, DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS);
-    assert.equal(
-      isInAutoTopUpLeadWindow({
-        unbilledDebtUsdMicros: 6_000_000n,
-        softNegativeUsdMicros: 10_000_000n,
-        autoTopUpUsdMicros: 5_000_000n,
-      }),
-      true,
     );
   });
 });

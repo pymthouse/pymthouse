@@ -11,7 +11,7 @@
  * Live spend past prepaid $0 is gated by overage eligibility + optional
  * soft-negative debt ceiling (mid-cycle collection via OM progressive invoicing
  * + settlement / Stripe app), not by syncing the plan threshold into
- * `app_billing_config.invoice_threshold_usd_micros`.
+ * app billing config.
  *
  * Client-safe (no DB/Node imports) so the plan dialog can render the resolved
  * behaviour live.
@@ -98,13 +98,11 @@ export function formatUsdMicrosForDisplay(usdMicros: string): string {
  * Plain-language reading of a Pay-Per-Use plan's settlement behaviour
  * (#348 resolved-behavior pattern). Rendering this avoids the reader inferring
  * cycle-based invoicing from a plan that has no user-facing cycle.
+ *
+ * Collection timing is app-scoped, not plan-scoped — the overage limit and its
+ * lead window decide when an invoice is raised — so this reads the same for
+ * every Pay-Per-Use plan.
  */
-export function resolvedPayPerUseBehavior(
-  chargeThresholdUsdMicros: string | null | undefined,
-): string {
-  const threshold = chargeThresholdUsdMicros?.trim();
-  if (!threshold) {
-    return "Pay-per-use — usage settles against prepaid credits; no auto-debit threshold set.";
-  }
-  return `Pay-per-use — charged at every $${formatUsdMicrosForDisplay(threshold)} of usage (credits first).`;
+export function resolvedPayPerUseBehavior(): string {
+  return "Pay-per-use — usage draws down prepaid credits first, then is invoiced automatically as it accrues.";
 }

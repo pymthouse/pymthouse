@@ -33,6 +33,7 @@
     "openmeter:fix-owner-attribution": "npx tsx scripts/openmeter-fix-owner-attribution.ts",
     "openmeter:migrate-sandbox-to-stripe": "npx tsx scripts/openmeter-migrate-sandbox-to-stripe.ts",
     "openmeter:migrate-plan-subscribers": "npx tsx scripts/openmeter-migrate-plan-subscribers.ts",
+    "openmeter:backfill-collection": "npx tsx scripts/openmeter-backfill-collection-alignment.ts",
     "stripe:connect-cutover": "npx tsx scripts/stripe-connect-cutover.ts",
     "stripe:connect-cutover-audit": "npx tsx scripts/stripe-connect-cutover-audit.ts",
     "turnkey:create-webhook": "npx tsx scripts/turnkey-create-webhook.ts",

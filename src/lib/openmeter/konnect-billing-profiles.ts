@@ -1,8 +1,13 @@
 import { konnectAdminConfig, konnectAdminFetch } from "./konnect-admin-client";
+import { buildKonnectCollectionSettings } from "./billing-collection";
 import {
   type BillingProfileSupplierInput,
   buildKonnectSupplierAddress,
 } from "./billing-supplier";
+
+type KonnectCollectionSettings = ReturnType<
+  typeof buildKonnectCollectionSettings
+>;
 
 type KonnectPage<T> = {
   data?: T[];
@@ -48,6 +53,7 @@ export type KonnectCreateBillingProfileBody = {
     tax_id?: { code: string };
   };
   workflow: {
+    collection?: KonnectCollectionSettings;
     invoicing: {
       auto_advance: boolean;
       draft_period: string;
@@ -231,6 +237,7 @@ export function buildKonnectCreateBillingProfileBody(input: {
   name?: string;
   progressiveBilling?: boolean;
   supplier?: BillingProfileSupplierInput;
+  collectionAnchor?: Date;
 }): KonnectCreateBillingProfileBody {
   const supplierName = input.name || `Tenant ${input.clientId}`;
   return {
@@ -238,6 +245,7 @@ export function buildKonnectCreateBillingProfileBody(input: {
     default: false,
     supplier: buildKonnectSupplier(supplierName, input.supplier),
     workflow: {
+      collection: buildKonnectCollectionSettings(input.collectionAnchor),
       invoicing: {
         auto_advance: true,
         draft_period: "P0D",
@@ -263,6 +271,7 @@ export function buildKonnectMerchantCustomInvoicingProfileBody(input: {
   progressiveBilling?: boolean;
   collectionMethod?: "charge_automatically" | "send_invoice";
   supplier?: BillingProfileSupplierInput;
+  collectionAnchor?: Date;
 }): KonnectCreateBillingProfileBody {
   const appId = input.customInvoicingAppId;
   const supplierName = input.name || "PymtHouse Merchant";
@@ -271,6 +280,7 @@ export function buildKonnectMerchantCustomInvoicingProfileBody(input: {
     default: false,
     supplier: buildKonnectSupplier(supplierName, input.supplier),
     workflow: {
+      collection: buildKonnectCollectionSettings(input.collectionAnchor),
       invoicing: {
         auto_advance: true,
         draft_period: "P0D",
@@ -412,13 +422,13 @@ export async function createKonnectBillingProfile(input: {
   return profile.id;
 }
 
-/** Patch invoicing.progressive_billing on an existing Konnect billing profile. */
-export async function updateKonnectBillingProfileProgressiveBilling(input: {
-  profileId: string;
-  progressiveBilling: boolean;
-}): Promise<void> {
+/** Read-modify-write of an existing Konnect billing profile's workflow block. */
+async function patchKonnectBillingProfileWorkflow(
+  profileId: string,
+  mutate: (workflow: Record<string, unknown>) => void,
+): Promise<void> {
   const existing = await billingFetch<Record<string, unknown>>(
-    `/profiles/${encodeURIComponent(input.profileId)}`,
+    `/profiles/${encodeURIComponent(profileId)}`,
   );
   if (!existing || typeof existing !== "object") {
     throw new Error("Konnect billing profile not found");
@@ -428,12 +438,7 @@ export async function updateKonnectBillingProfileProgressiveBilling(input: {
     existing.workflow && typeof existing.workflow === "object"
       ? { ...(existing.workflow as Record<string, unknown>) }
       : {};
-  const invoicing =
-    workflow.invoicing && typeof workflow.invoicing === "object"
-      ? { ...(workflow.invoicing as Record<string, unknown>) }
-      : {};
-  invoicing.progressive_billing = input.progressiveBilling;
-  workflow.invoicing = invoicing;
+  mutate(workflow);
 
   const {
     id: _id,
@@ -444,12 +449,37 @@ export async function updateKonnectBillingProfileProgressiveBilling(input: {
     ...replaceable
   } = existing;
 
-  await billingFetch(`/profiles/${encodeURIComponent(input.profileId)}`, {
+  await billingFetch(`/profiles/${encodeURIComponent(profileId)}`, {
     method: "PUT",
     body: JSON.stringify({
       ...replaceable,
       workflow,
     }),
+  });
+}
+
+/** Patch invoicing.progressive_billing on an existing Konnect billing profile. */
+export async function updateKonnectBillingProfileProgressiveBilling(input: {
+  profileId: string;
+  progressiveBilling: boolean;
+}): Promise<void> {
+  await patchKonnectBillingProfileWorkflow(input.profileId, (workflow) => {
+    const invoicing =
+      workflow.invoicing && typeof workflow.invoicing === "object"
+        ? { ...(workflow.invoicing as Record<string, unknown>) }
+        : {};
+    invoicing.progressive_billing = input.progressiveBilling;
+    workflow.invoicing = invoicing;
+  });
+}
+
+/** Move an existing Konnect profile onto anchored daily collection. */
+export async function updateKonnectBillingProfileCollection(input: {
+  profileId: string;
+  anchor?: Date;
+}): Promise<void> {
+  await patchKonnectBillingProfileWorkflow(input.profileId, (workflow) => {
+    workflow.collection = buildKonnectCollectionSettings(input.anchor);
   });
 }
 

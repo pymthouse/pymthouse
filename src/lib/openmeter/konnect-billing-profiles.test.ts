@@ -34,14 +34,19 @@ test("buildKonnectCreateBillingProfileBody uses Konnect snake_case supplier addr
       billing_address: { country: "US" },
     },
   });
-  assert.deepEqual(body.workflow, {
-    invoicing: {
-      auto_advance: true,
-      draft_period: "P0D",
-      progressive_billing: true,
-    },
-    payment: { collection_method: "charge_automatically" },
+  assert.deepEqual(body.workflow.invoicing, {
+    auto_advance: true,
+    draft_period: "P0D",
+    progressive_billing: true,
   });
+  assert.deepEqual(body.workflow.payment, {
+    collection_method: "charge_automatically",
+  });
+  assert.equal(body.workflow.collection?.alignment.type, "anchored");
+  assert.equal(
+    body.workflow.collection?.alignment.recurring_period.interval,
+    "DAY",
+  );
   assert.deepEqual(body.apps, {
     tax: { id: "01G65Z755AFWAKHE12NY0CQ9FH" },
     invoicing: { id: "01G65Z755AFWAKHE12NY0CQ9FH" },

@@ -66,7 +66,13 @@ function requestedScopesFromParams(params: URLSearchParams): string[] {
 function mintSignerTokenErrorResponse(err: unknown): NextResponse | null {
   if (err instanceof MintUserSignerTokenError) {
     return NextResponse.json(
-      { error: err.code, error_description: err.message },
+      {
+        error: err.code,
+        error_description: err.message,
+        // Additive: `error` keeps its OAuth meaning, `reason` narrows a billing
+        // rejection to the same code GET billing/state reports.
+        ...(err.reason ? { reason: err.reason } : {}),
+      },
       { status: err.status },
     );
   }

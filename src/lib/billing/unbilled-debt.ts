@@ -174,21 +174,27 @@ export async function resolveBillingCustomerId(input: {
   return resolved.customerId;
 }
 
+/** Which read produced a debt figure — surfaced so integrators can tell. */
+export type UnbilledDebtSource =
+  | "gathering_invoice"
+  | "meter_estimate"
+  | "unavailable";
+
 /**
  * Unbilled debt for soft-negative gating. Gathering total when present,
  * else period network-fee meter sum for the billing subjects.
  */
-export async function getUnbilledDebtUsdMicros(input: {
+export async function getUnbilledDebtDetails(input: {
   clientId: string;
   externalUserId: string;
-}): Promise<bigint> {
+}): Promise<{ usdMicros: bigint; source: UnbilledDebtSource }> {
   if (!isHostedAdminClientAvailable()) {
-    return 0n;
+    return { usdMicros: 0n, source: "unavailable" };
   }
   const clientId = input.clientId.trim();
   const externalUserId = input.externalUserId.trim();
   if (!clientId || !externalUserId) {
-    return 0n;
+    return { usdMicros: 0n, source: "unavailable" };
   }
 
   const { customerId, meterSubjects } = await resolveBillingCustomerAndSubjects({
@@ -199,8 +205,18 @@ export async function getUnbilledDebtUsdMicros(input: {
   if (customerId) {
     const gathering = await maxGatheringDebtUsdMicros(customerId);
     if (gathering != null) {
-      return gathering;
+      return { usdMicros: gathering, source: "gathering_invoice" };
     }
   }
-  return periodMeterDebtUsdMicros(meterSubjects);
+  return {
+    usdMicros: await periodMeterDebtUsdMicros(meterSubjects),
+    source: "meter_estimate",
+  };
+}
+
+export async function getUnbilledDebtUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<bigint> {
+  return (await getUnbilledDebtDetails(input)).usdMicros;
 }

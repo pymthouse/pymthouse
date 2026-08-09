@@ -1,34 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { MIN_INVOICE_USD_MICROS } from "@/lib/billing/auto-topup-settings";
 import {
   __resetInvoiceTriggerCacheForTests,
   __testInvoiceTrigger,
-  maybeInvoiceGatheringForIdentity,
+  invoiceGatheringForIdentity,
 } from "@/lib/billing/invoice-trigger";
 
-test("shouldTriggerInvoice requires positive debt", () => {
+test("shouldTriggerInvoice will not raise below Stripe's minimum charge", () => {
+  // An invoice under $0.50 cannot be collected, so raising it only parks a
+  // draft. OM's daily collection alignment picks these up instead.
   assert.equal(
     __testInvoiceTrigger.shouldTriggerInvoice({
-      unbilledDebtUsdMicros: 0n,
-      softNegativeUsdMicros: 10_000_000n,
+      unbilledDebtUsdMicros: 10_000n,
+      softNegativeUsdMicros: 0n,
+      leadUsdMicros: 5_000_000n,
     }),
     false,
   );
   assert.equal(
     __testInvoiceTrigger.shouldTriggerInvoice({
-      unbilledDebtUsdMicros: -1n,
+      unbilledDebtUsdMicros: 499_999n,
       softNegativeUsdMicros: 0n,
+      leadUsdMicros: 5_000_000n,
     }),
     false,
+  );
+  assert.equal(
+    __testInvoiceTrigger.shouldTriggerInvoice({
+      unbilledDebtUsdMicros: MIN_INVOICE_USD_MICROS,
+      softNegativeUsdMicros: 0n,
+      leadUsdMicros: 5_000_000n,
+    }),
+    true,
   );
 });
 
-test("shouldTriggerInvoice fires any positive debt when soft-negative unset", () => {
+test("shouldTriggerInvoice fires any collectable debt when soft-negative unset", () => {
   assert.equal(
     __testInvoiceTrigger.shouldTriggerInvoice({
-      unbilledDebtUsdMicros: 1n,
+      unbilledDebtUsdMicros: 900_000n,
       softNegativeUsdMicros: 0n,
+      leadUsdMicros: 5_000_000n,
     }),
     true,
   );
@@ -40,6 +54,7 @@ test("shouldTriggerInvoice uses lead window when soft-negative is set", () => {
     __testInvoiceTrigger.shouldTriggerInvoice({
       unbilledDebtUsdMicros: 4_999_999n,
       softNegativeUsdMicros: 10_000_000n,
+      leadUsdMicros: 5_000_000n,
     }),
     false,
   );
@@ -47,6 +62,7 @@ test("shouldTriggerInvoice uses lead window when soft-negative is set", () => {
     __testInvoiceTrigger.shouldTriggerInvoice({
       unbilledDebtUsdMicros: 5_000_000n,
       softNegativeUsdMicros: 10_000_000n,
+      leadUsdMicros: 5_000_000n,
     }),
     true,
   );
@@ -54,6 +70,7 @@ test("shouldTriggerInvoice uses lead window when soft-negative is set", () => {
     __testInvoiceTrigger.shouldTriggerInvoice({
       unbilledDebtUsdMicros: 9_999_999n,
       softNegativeUsdMicros: 10_000_000n,
+      leadUsdMicros: 5_000_000n,
     }),
     true,
   );
@@ -62,12 +79,34 @@ test("shouldTriggerInvoice uses lead window when soft-negative is set", () => {
     __testInvoiceTrigger.shouldTriggerInvoice({
       unbilledDebtUsdMicros: 10_000_000n,
       softNegativeUsdMicros: 10_000_000n,
+      leadUsdMicros: 5_000_000n,
     }),
     false,
   );
 });
 
-test("maybeInvoiceGatheringForIdentity returns unavailable without OpenMeter", async (t) => {
+test("shouldTriggerInvoice at the $2 minimum ceiling raises at $1", () => {
+  // The tightest ceiling we allow still leaves a collectable window: $1 of
+  // debt is above Stripe's floor and $1 below the deny line.
+  assert.equal(
+    __testInvoiceTrigger.shouldTriggerInvoice({
+      unbilledDebtUsdMicros: 999_999n,
+      softNegativeUsdMicros: 2_000_000n,
+      leadUsdMicros: 1_000_000n,
+    }),
+    false,
+  );
+  assert.equal(
+    __testInvoiceTrigger.shouldTriggerInvoice({
+      unbilledDebtUsdMicros: 1_000_000n,
+      softNegativeUsdMicros: 2_000_000n,
+      leadUsdMicros: 1_000_000n,
+    }),
+    true,
+  );
+});
+
+test("invoiceGatheringForIdentity returns unavailable without OpenMeter", async (t) => {
   __resetInvoiceTriggerCacheForTests();
   const prevUrl = process.env.OPENMETER_URL;
   const prevKey = process.env.OPENMETER_API_KEY;
@@ -81,29 +120,29 @@ test("maybeInvoiceGatheringForIdentity returns unavailable without OpenMeter", a
   delete process.env.OPENMETER_URL;
   delete process.env.OPENMETER_API_KEY;
 
-  assert.equal(
-    await maybeInvoiceGatheringForIdentity({
+  assert.deepEqual(
+    await invoiceGatheringForIdentity({
       clientId: "app_invoice_trigger",
       externalUserId: "eu_1",
     }),
-    "unavailable",
+    { outcome: "unavailable", invoiceIds: [] },
   );
 });
 
-test("maybeInvoiceGatheringForIdentity skips blank ids", async () => {
+test("invoiceGatheringForIdentity skips blank ids", async () => {
   __resetInvoiceTriggerCacheForTests();
-  assert.equal(
-    await maybeInvoiceGatheringForIdentity({
+  assert.deepEqual(
+    await invoiceGatheringForIdentity({
       clientId: "  ",
       externalUserId: "eu_1",
     }),
-    "skipped",
+    { outcome: "skipped", invoiceIds: [] },
   );
-  assert.equal(
-    await maybeInvoiceGatheringForIdentity({
+  assert.deepEqual(
+    await invoiceGatheringForIdentity({
       clientId: "app_invoice_trigger",
       externalUserId: "",
     }),
-    "skipped",
+    { outcome: "skipped", invoiceIds: [] },
   );
 });

@@ -7,6 +7,7 @@ import { validateClientSecret } from "@/lib/oidc/clients";
 import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { AppActivationError } from "@/lib/activation/app-activation";
+import type { BillingReason } from "@/lib/billing/billing-state";
 import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
@@ -29,11 +30,22 @@ const SIGNER_JWT_TTL_SECONDS = 300;
 export class MintUserSignerTokenError extends Error {
   code: string;
   status: number;
+  /**
+   * Shared billing vocabulary, set only on billing rejections. `code` stays the
+   * OAuth error identifier clients already match on; this narrows *why*.
+   */
+  reason?: BillingReason;
 
-  constructor(code: string, message: string, status = 400) {
+  constructor(
+    code: string,
+    message: string,
+    status = 400,
+    reason?: BillingReason,
+  ) {
     super(message);
     this.code = code;
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -163,8 +175,12 @@ export function signerJwtAudience(): string {
 export function mintAllowanceGateDecision(
   allowance: TrialCreditBalance | null,
   hostedBillingEnabled: boolean,
-  options?: { allowsOverageInvoicing?: boolean },
-): { code: "billing_unavailable" | "trial_credits_exhausted"; message: string } | null {
+  options?: { allowsOverageInvoicing?: boolean; reason?: BillingReason },
+): {
+  code: "billing_unavailable" | "trial_credits_exhausted";
+  message: string;
+  reason: BillingReason;
+} | null {
   if (!hostedBillingEnabled) {
     return null;
   }
@@ -172,6 +188,7 @@ export function mintAllowanceGateDecision(
     return {
       code: "billing_unavailable",
       message: "Billing allowance could not be confirmed",
+      reason: "billing_unavailable",
     };
   }
   // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
@@ -186,6 +203,7 @@ export function mintAllowanceGateDecision(
     return {
       code: "trial_credits_exhausted",
       message: "Payment method required",
+      reason: options?.reason ?? "no_payment_method",
     };
   }
   return null;
@@ -193,7 +211,7 @@ export function mintAllowanceGateDecision(
 
 export function enforceMintAllowanceGate(
   allowance: TrialCreditBalance | null,
-  options?: { allowsOverageInvoicing?: boolean },
+  options?: { allowsOverageInvoicing?: boolean; reason?: BillingReason },
 ): void {
   const decision = mintAllowanceGateDecision(
     allowance,
@@ -201,7 +219,12 @@ export function enforceMintAllowanceGate(
     options,
   );
   if (decision) {
-    throw new MintUserSignerTokenError(decision.code, decision.message, 402);
+    throw new MintUserSignerTokenError(
+      decision.code,
+      decision.message,
+      402,
+      decision.reason,
+    );
   }
 }
 
@@ -330,7 +353,17 @@ export async function mintSignerJwtForExternalUser(input: {
       allowsOverageInvoicing,
     });
     if (!softGate.allow) {
-      enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: false });
+      const { softNegativeDenyReason } = await import(
+        "@/lib/billing/soft-negative-gate"
+      );
+      enforceMintAllowanceGate(allowance, {
+        allowsOverageInvoicing: false,
+        reason: softNegativeDenyReason({
+          allowsOverageInvoicing,
+          unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
+          softNegativeUsdMicros: softGate.softNegativeUsdMicros,
+        }),
+      });
     } else {
       enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: true });
       // Lead-window only: raise OM gathering → draft so settlement/Stripe app

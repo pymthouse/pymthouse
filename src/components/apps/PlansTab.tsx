@@ -22,6 +22,7 @@ import {
   parseMarkupPercentInput,
 } from "@/lib/plan-pricing";
 import { validateCapabilityFeatureKeys } from "@/lib/openmeter/capability-features";
+import { resolvedPayPerUseBehavior } from "@/lib/billing/pay-per-use-threshold";
 import { OPENMETER_DOCS } from "@/lib/openmeter/constants";
 import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
@@ -774,13 +775,13 @@ function PlanDraftForm({
             htmlFor={`${idPrefix}-charge-threshold`}
             className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
           >
-            Invoice/charge threshold (USD)
+            Expected spend guide (USD)
             <InfoTooltip
               wide
               label={
-                "Pay-per-use has no billing cycle. Usage is invoiced and charged each time\n" +
-                "accrued usage reaches this amount — prepaid credits are spent first, then the\n" +
-                "default payment method is auto-debited for the remainder."
+                "Display only — shown to users as a sense of what this plan costs per\n" +
+                "invoice. It does not trigger collection: when an invoice is raised is\n" +
+                "set app-wide by the overage limit on the Payments tab."
               }
             />
           </label>
@@ -792,12 +793,10 @@ function PlanDraftForm({
             }
             placeholder="10.00"
             disabled={!canEdit}
-            aria-label="Invoice and charge threshold in dollars"
+            aria-label="Expected spend guide in dollars"
           />
           <p className="text-xs text-zinc-500 mt-1">
-            {draft.chargeThresholdUsdDisplay.trim()
-              ? `Pay-per-use — charged at every $${draft.chargeThresholdUsdDisplay.trim()} of usage (credits first).`
-              : "Pay-per-use — usage settles from prepaid credits; set a threshold to auto-charge the remainder."}
+            {resolvedPayPerUseBehavior()}
           </p>
         </div>
       )}

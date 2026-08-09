@@ -4,14 +4,28 @@
  * Soft-negative gates mint/signer allow/deny. The invoice trigger (OM
  * invoicePendingLines → settlement / Stripe app) fires in the lead window
  * before the hard ceiling so collection stays async with headroom.
+ *
+ * This is the amount-based half of collection. Time-based collection is
+ * OpenMeter's, via the billing profile's anchored collection alignment; OM has
+ * no amount threshold, which is why the lead window lives here.
  */
 
-/** Default lead amount when approaching the soft-negative ceiling ($5). */
-export const DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS = 5_000_000n;
+/**
+ * Stripe's minimum USD card charge. An invoice below this cannot be collected,
+ * so raising one only produces a stuck draft.
+ */
+export const MIN_INVOICE_USD_MICROS = 500_000n;
 
-/** @deprecated Alias — prefer DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS. */
-export const DEFAULT_AUTO_TOP_UP_USD_MICROS =
-  DEFAULT_INVOICE_TRIGGER_LEAD_USD_MICROS;
+/**
+ * Smallest positive debt ceiling we accept. The raise floor plus enough
+ * headroom for an invoice to be raised, settled and cleared before the gate
+ * locks the subject out. Below this the account can deadlock: debt reaches the
+ * ceiling while every invoice raised along the way is too small to charge.
+ */
+export const MIN_SOFT_NEGATIVE_USD_MICROS = 2_000_000n;
+
+/** Upper bound on the derived lead window ($5). */
+export const MAX_INVOICE_TRIGGER_LEAD_USD_MICROS = 5_000_000n;
 
 export function parsePositiveUsdMicrosInput(
   value: unknown,
@@ -61,7 +75,24 @@ export function parsePositiveUsdMicrosInput(
   return { ok: true, value: trimmed };
 }
 
-/** Soft-negative may be cleared (null) or any non-negative micros including 0. */
+/**
+ * A positive ceiling must clear MIN_SOFT_NEGATIVE_USD_MICROS. Zero stays legal
+ * and means "no ceiling", so it is not held to the floor.
+ */
+function enforceCeilingFloor(
+  micros: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  const parsed = BigInt(micros);
+  if (parsed > 0n && parsed < MIN_SOFT_NEGATIVE_USD_MICROS) {
+    return {
+      ok: false,
+      error: `softNegativeUsdMicros must be 0 (no ceiling) or at least ${MIN_SOFT_NEGATIVE_USD_MICROS} micros ($${(Number(MIN_SOFT_NEGATIVE_USD_MICROS) / 1_000_000).toFixed(2)}); smaller ceilings cannot be collected before the gate denies`,
+    };
+  }
+  return { ok: true, value: micros };
+}
+
+/** Soft-negative may be cleared (null), 0 (no ceiling), or at least the floor. */
 export function parseSoftNegativeUsdMicrosInput(
   value: unknown,
 ): { ok: true; value: string | null } | { ok: false; error: string } {
@@ -75,7 +106,7 @@ export function parseSoftNegativeUsdMicrosInput(
         error: "softNegativeUsdMicros must be a non-negative integer or null",
       };
     }
-    return { ok: true, value: String(value) };
+    return enforceCeilingFloor(String(value));
   }
   if (typeof value !== "string") {
     return {
@@ -95,7 +126,14 @@ export function parseSoftNegativeUsdMicrosInput(
         "softNegativeUsdMicros must be a non-negative integer micros string or null",
     };
   }
-  return { ok: true, value: trimmed };
+  return enforceCeilingFloor(trimmed);
+}
+
+/** Lead window override: cleared (null) or a positive micros amount. */
+export function parseInvoiceLeadUsdMicrosInput(
+  value: unknown,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  return parsePositiveUsdMicrosInput(value, "invoiceLeadUsdMicros");
 }
 
 /**
@@ -119,6 +157,38 @@ export function effectiveSoftNegativeUsdMicros(
 }
 
 /**
+ * Lead window for the amount-based raise.
+ *
+ * Defaults to half the ceiling capped at MAX_INVOICE_TRIGGER_LEAD_USD_MICROS,
+ * so a $2 ceiling raises at $1 of debt and a $10 ceiling still raises at $5.
+ * A stored per-app override wins when set.
+ */
+export function effectiveInvoiceLeadUsdMicros(input: {
+  storedUsdMicros: string | null | undefined;
+  softNegativeUsdMicros: bigint;
+}): bigint {
+  const stored = input.storedUsdMicros?.trim();
+  if (stored) {
+    try {
+      const value = BigInt(stored);
+      if (value > 0n) {
+        return value;
+      }
+    } catch {
+      // Fall through to the derived default.
+    }
+  }
+  const ceiling = input.softNegativeUsdMicros;
+  if (ceiling <= 0n) {
+    return MAX_INVOICE_TRIGGER_LEAD_USD_MICROS;
+  }
+  const half = ceiling / 2n;
+  return half < MAX_INVOICE_TRIGGER_LEAD_USD_MICROS
+    ? half
+    : MAX_INVOICE_TRIGGER_LEAD_USD_MICROS;
+}
+
+/**
  * Lead window: debt has entered the last `leadUsdMicros` of soft-negative
  * headroom (still strictly below the hard ceiling for allow).
  */
@@ -135,19 +205,6 @@ export function isInInvoiceTriggerLeadWindow(input: {
     input.unbilledDebtUsdMicros >= leadStart &&
     input.unbilledDebtUsdMicros < soft
   );
-}
-
-/** @deprecated Prefer isInInvoiceTriggerLeadWindow. */
-export function isInAutoTopUpLeadWindow(input: {
-  unbilledDebtUsdMicros: bigint;
-  softNegativeUsdMicros: bigint;
-  autoTopUpUsdMicros: bigint;
-}): boolean {
-  return isInInvoiceTriggerLeadWindow({
-    unbilledDebtUsdMicros: input.unbilledDebtUsdMicros,
-    softNegativeUsdMicros: input.softNegativeUsdMicros,
-    leadUsdMicros: input.autoTopUpUsdMicros,
-  });
 }
 
 /**
