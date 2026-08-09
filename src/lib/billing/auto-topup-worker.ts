@@ -171,21 +171,20 @@ async function resolveStripeChargeTarget(input: {
     ) {
       return null;
     }
-    // Merchant Connect: default PM is first attached when Konnect default is null.
+    // Merchant Connect: only charge a real Stripe invoice default.
     const { buildOwnerPaymentMethodList } = await import(
       "@/lib/openmeter/owner-payment-method"
     );
     const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: merchantCustomer.stripeCustomerId,
       konnectDefaultPaymentMethodId: null,
-      defaultFirstPaymentMethod: true,
       deps: {
         fetchImpl: fetch,
         signal,
         stripeAccount: accountId,
       },
     });
-    const defaultPm = items.find((pm) => pm.isDefault) ?? items[0];
+    const defaultPm = items.find((pm) => pm.isDefault);
     if (!defaultPm?.id) {
       return null;
     }

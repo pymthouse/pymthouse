@@ -228,7 +228,6 @@ test("buildOwnerPaymentMethodList lists merchant customer methods on its Connect
     const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: "cus_connected",
       konnectDefaultPaymentMethodId: null,
-      defaultFirstPaymentMethod: true,
       deps: {
         fetchImpl,
         signal: AbortSignal.timeout(5_000),
@@ -238,7 +237,8 @@ test("buildOwnerPaymentMethodList lists merchant customer methods on its Connect
 
     assert.deepEqual(
       items.map((item) => ({ id: item.id, isDefault: item.isDefault })),
-      [{ id: "pm_card", isDefault: true }],
+      [{ id: "pm_card", isDefault: false }],
+      "attached-only Connect cards must not fake a Stripe invoice default",
     );
     assert.deepEqual(stripeAccounts, ["acct_merchant", "acct_merchant"]);
   });

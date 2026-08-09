@@ -104,3 +104,23 @@ test("resolveAppUserCheckoutReturnUrl accepts https and localhost http", () => {
   assert.equal(resolveAppUserCheckoutReturnUrl("not-a-url", fallback), fallback);
   assert.equal(resolveAppUserCheckoutReturnUrl(undefined, fallback), fallback);
 });
+
+test("appUserHasChargeablePaymentMethod denies blank ids", async () => {
+  const { appUserHasChargeablePaymentMethod } = await import(
+    "./app-user-payment-method"
+  );
+  assert.equal(
+    await appUserHasChargeablePaymentMethod({
+      clientId: "",
+      externalUserId: "u1",
+    }),
+    false,
+  );
+  assert.equal(
+    await appUserHasChargeablePaymentMethod({
+      clientId: "app_1",
+      externalUserId: " ",
+    }),
+    false,
+  );
+});

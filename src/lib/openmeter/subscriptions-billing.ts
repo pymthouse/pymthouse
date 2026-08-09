@@ -48,8 +48,31 @@ import {
   pickOccupyingCanceledSubscription,
   reactivateOccupyingCanceledSubscription,
 } from "./subscription-state";
+import {
+  recordAppUserPaymentMethodCheckout,
+  resolveAppUserDefaultPaymentMethodId,
+} from "@/lib/openmeter/app-user-payment-method";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import { getKonnectDefaultPaymentMethodId } from "./stripe-customer-data";
+
+/**
+ * Merchant Connect: Stripe invoice default on the connected customer.
+ * Platform / Konnect: Konnect default_payment_method pointer.
+ */
+async function resolveCheckoutDefaultPaymentMethodId(input: {
+  clientId: string;
+  externalUserId: string;
+  openMeterCustomerId: string;
+  merchantReady: boolean;
+}): Promise<string | null> {
+  if (input.merchantReady) {
+    return resolveAppUserDefaultPaymentMethodId({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+  }
+  return getKonnectDefaultPaymentMethodId(input.openMeterCustomerId);
+}
 
 function parsePlanPriceAmount(raw: string | null | undefined): number {
   const n = Number.parseFloat(String(raw ?? "0").trim() || "0");
@@ -674,7 +697,12 @@ export async function createEndUserCheckout(
 
   const needsPaymentMethod = planRequiresPaymentMethod(plan);
   const defaultPaymentMethodId = needsPaymentMethod
-    ? await getKonnectDefaultPaymentMethodId(customer.id)
+    ? await resolveCheckoutDefaultPaymentMethodId({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+        openMeterCustomerId: customer.id,
+        merchantReady: checkoutSettings.merchantReady,
+      })
     : null;
   await applyCheckoutBillingProfile({
     client,
@@ -710,6 +738,12 @@ export async function createEndUserCheckout(
     customerKey: customer.key,
     successUrl: checkoutSettings.successUrl,
     cancelUrl: checkoutSettings.cancelUrl,
+  });
+
+  await recordAppUserPaymentMethodCheckout({
+    sessionId: checkout.sessionId,
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
   });
 
   await upsertNeonSubscriptionCache({
@@ -925,16 +959,27 @@ export async function changeAppUserSubscriptionPlan(input: {
       appSettingsAbsoluteUrl(origin, input.clientId, "payments");
 
     if (isMerchantConnectPaymentsReady(billingConfig)) {
-      const connectCheckout = await createMerchantConnectCheckoutForUser({
+      const existingDefault = await resolveAppUserDefaultPaymentMethodId({
         clientId: input.clientId,
         externalUserId: input.externalUserId,
-        successUrl: success,
-        cancelUrl: cancel,
-        openmeterCustomerId: customer.id,
-        openmeterCustomerKey: customer.key,
       });
-      checkoutUrl = connectCheckout.checkoutUrl;
-      stripeCheckoutSessionId = connectCheckout.sessionId;
+      if (!existingDefault) {
+        const connectCheckout = await createMerchantConnectCheckoutForUser({
+          clientId: input.clientId,
+          externalUserId: input.externalUserId,
+          successUrl: success,
+          cancelUrl: cancel,
+          openmeterCustomerId: customer.id,
+          openmeterCustomerKey: customer.key,
+        });
+        checkoutUrl = connectCheckout.checkoutUrl;
+        stripeCheckoutSessionId = connectCheckout.sessionId;
+        await recordAppUserPaymentMethodCheckout({
+          sessionId: connectCheckout.sessionId,
+          clientId: input.clientId,
+          externalUserId: input.externalUserId,
+        });
+      }
     } else {
       const paymentMethodId = await getKonnectDefaultPaymentMethodId(customer.id);
       if (!paymentMethodId) {
@@ -951,6 +996,11 @@ export async function changeAppUserSubscriptionPlan(input: {
         });
         checkoutUrl = checkout.checkoutUrl;
         stripeCheckoutSessionId = checkout.sessionId;
+        await recordAppUserPaymentMethodCheckout({
+          sessionId: checkout.sessionId,
+          clientId: input.clientId,
+          externalUserId: input.externalUserId,
+        });
       }
     }
   }

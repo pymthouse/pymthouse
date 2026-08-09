@@ -11,11 +11,15 @@ import {
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
 import {
   createAppUserPaymentMethodCheckout,
+  ensureAppUserDefaultPaymentMethodIfMissing,
   listAppUserPaymentMethods,
+  setAppUserDefaultPaymentMethod,
 } from "@/lib/openmeter/app-user-payment-method";
 import {
   createOwnerPaymentMethodCheckout,
+  ensureOwnerDefaultPaymentMethodIfMissing,
   listOwnerPaymentMethods,
+  setOwnerDefaultPaymentMethod,
 } from "@/lib/openmeter/owner-payment-method";
 
 /**
@@ -123,5 +127,88 @@ export async function POST(
     });
   } catch (err) {
     return walletUpstreamErrorResponse(err, "payment-method checkout");
+  }
+}
+
+/**
+ * PATCH /api/v1/apps/{clientId}/billing/wallet/payment-methods — set default
+ * or `{ ensureDefault: true }` after Checkout return.
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id: clientId } = await params;
+  const access = await authorizeOwnerWalletM2m(request, clientId);
+  if (!access) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const body = await readJsonObjectBody(request);
+  const billingTarget = await resolveWalletBillingTarget({
+    appId: access.app.id,
+    ownerUserId: access.ownerUserId,
+    externalUserId: readOptionalExternalUserId(body.externalUserId),
+  });
+  if (!billingTarget.ok) {
+    return NextResponse.json(
+      { error: billingTarget.error },
+      { status: billingTarget.status },
+    );
+  }
+
+  try {
+    if (body.ensureDefault === true) {
+      if (billingTarget.target.mode === "merchant") {
+        const result = await ensureAppUserDefaultPaymentMethodIfMissing({
+          clientId: access.app.id,
+          externalUserId: billingTarget.target.externalUserId,
+        });
+        return NextResponse.json(result);
+      }
+      const result = await ensureOwnerDefaultPaymentMethodIfMissing(
+        billingTarget.target.ownerUserId,
+      );
+      return NextResponse.json(result);
+    }
+
+    const paymentMethodId =
+      typeof body.paymentMethodId === "string"
+        ? body.paymentMethodId.trim()
+        : "";
+    if (!paymentMethodId) {
+      return NextResponse.json(
+        { error: "paymentMethodId is required" },
+        { status: 400 },
+      );
+    }
+
+    if (billingTarget.target.mode === "merchant") {
+      const result = await setAppUserDefaultPaymentMethod({
+        clientId: access.app.id,
+        externalUserId: billingTarget.target.externalUserId,
+        paymentMethodId,
+      });
+      if (!result.updated) {
+        return NextResponse.json(
+          { error: "Payment method not found", ...result },
+          { status: 404 },
+        );
+      }
+      return NextResponse.json(result);
+    }
+    const result = await setOwnerDefaultPaymentMethod(
+      billingTarget.target.ownerUserId,
+      paymentMethodId,
+    );
+    if (!result.updated) {
+      return NextResponse.json(
+        { error: "Payment method not found", ...result },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json(result);
+  } catch (err) {
+    return walletUpstreamErrorResponse(err, "payment-method default");
   }
 }

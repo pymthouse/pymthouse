@@ -16,6 +16,7 @@ import {
   ensureAppStripeBillingReady,
 } from "@/lib/openmeter/billing-profiles";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
+import { isAutoTopUpPaymentIntentMetadata } from "@/lib/stripe/auto-topup-charge";
 import {
   connectAccountLinkUrls,
   createAccountOnboardingLink,
@@ -41,6 +42,38 @@ type StripeConnectInvoice = {
   period_end?: number | null;
   hosted_invoice_url?: string | null;
   invoice_pdf?: string | null;
+};
+
+type StripeConnectPaymentIntent = {
+  id?: string;
+  amount?: number | null;
+  currency?: string | null;
+  status?: string | null;
+  customer?: string | null;
+  created?: number | null;
+  metadata?: Record<string, unknown> | null;
+  latest_charge?:
+    | string
+    | {
+        id?: string;
+        receipt_url?: string | null;
+      }
+    | null;
+};
+
+/** Unified merchant billing history row (Stripe invoice or auto top-up PI). */
+export type MerchantBillingHistoryItem = {
+  id: string;
+  number?: string;
+  status: string;
+  currency: string;
+  totalAmount: string;
+  customerId?: string;
+  issuedAt?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  externalInvoicingId?: string;
+  invoiceType: "stripe_connect" | "auto_topup";
 };
 
 function stripeSecretKey(): string {
@@ -84,7 +117,9 @@ async function stripeConnectInvoiceRequest<T>(
   return body;
 }
 
-function mapMerchantInvoice(invoice: StripeConnectInvoice) {
+function mapMerchantInvoice(
+  invoice: StripeConnectInvoice,
+): MerchantBillingHistoryItem | null {
   const id = invoice.id?.trim();
   if (!id) return null;
   return {
@@ -102,10 +137,33 @@ function mapMerchantInvoice(invoice: StripeConnectInvoice) {
   };
 }
 
+function mapMerchantAutoTopUpPaymentIntent(
+  pi: StripeConnectPaymentIntent,
+): MerchantBillingHistoryItem | null {
+  const id = pi.id?.trim();
+  if (!id?.startsWith("pi_")) return null;
+  if (!isAutoTopUpPaymentIntentMetadata(pi.metadata)) return null;
+  const status = pi.status?.trim() || "unknown";
+  // History shows completed top-ups; failed/requires_action stay out of the list.
+  if (status !== "succeeded") return null;
+  return {
+    id,
+    number: "Auto top-up",
+    status,
+    currency: pi.currency?.toUpperCase() || "USD",
+    totalAmount: ((pi.amount ?? 0) / 100).toFixed(2),
+    customerId: pi.customer?.trim() || undefined,
+    issuedAt: invoiceDate(pi.created),
+    externalInvoicingId: id,
+    invoiceType: "auto_topup",
+  };
+}
+
 /** @internal Exported for unit tests. */
 export const __testMerchantConnectInvoices = {
   invoiceDate,
   mapMerchantInvoice,
+  mapMerchantAutoTopUpPaymentIntent,
   stripeConnectInvoiceRequest,
 };
 /** @internal Exported for unit tests. */
@@ -404,6 +462,22 @@ export async function getAppUserStripeCustomer(input: {
   return rows[0] ?? null;
 }
 
+/** Reverse map: Connect `cus_…` → app user (for payment_method.attached restore). */
+export async function findAppUserStripeCustomerByStripeId(
+  stripeCustomerId: string,
+): Promise<typeof appUserStripeCustomers.$inferSelect | null> {
+  const trimmed = stripeCustomerId.trim();
+  if (!trimmed.startsWith("cus_")) {
+    return null;
+  }
+  const rows = await db
+    .select()
+    .from(appUserStripeCustomers)
+    .where(eq(appUserStripeCustomers.stripeCustomerId, trimmed))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 const STRIPE_INVOICE_PAGE_LIMIT = 100;
 /** Cap Stripe pagination so a pathological customer cannot loop forever. */
 const MAX_MERCHANT_INVOICE_PAGES = 50;
@@ -440,8 +514,48 @@ async function listAllMerchantConnectInvoices(
   return invoices;
 }
 
+async function listAllMerchantConnectPaymentIntents(
+  accountId: string,
+  stripeCustomerId: string,
+): Promise<StripeConnectPaymentIntent[]> {
+  const intents: StripeConnectPaymentIntent[] = [];
+  let startingAfter: string | undefined;
+  for (let page = 0; page < MAX_MERCHANT_INVOICE_PAGES; page++) {
+    const params = new URLSearchParams({
+      customer: stripeCustomerId,
+      limit: String(STRIPE_INVOICE_PAGE_LIMIT),
+    });
+    if (startingAfter) {
+      params.set("starting_after", startingAfter);
+    }
+    const result = await stripeConnectInvoiceRequest<{
+      data?: StripeConnectPaymentIntent[];
+      has_more?: boolean;
+    }>(accountId, `/v1/payment_intents?${params.toString()}`);
+    const batch = result.data ?? [];
+    intents.push(...batch);
+    if (!result.has_more || batch.length === 0) {
+      break;
+    }
+    const lastId = batch.at(-1)?.id?.trim();
+    if (!lastId) {
+      break;
+    }
+    startingAfter = lastId;
+  }
+  return intents;
+}
+
+function billingHistorySortKey(item: MerchantBillingHistoryItem): number {
+  const iso = item.issuedAt?.trim();
+  if (!iso) return 0;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 /**
- * List invoices from the merchant's Connected Account for one app user.
+ * List invoices + succeeded auto top-up PaymentIntents from the merchant's
+ * Connected Account for one app user (newest first).
  * Merchant billing never reads OpenMeter owner-rollup invoices.
  */
 export async function listMerchantConnectInvoicesForAppUser(input: {
@@ -450,7 +564,7 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
   page: number;
   pageSize: number;
 }): Promise<{
-  items: ReturnType<typeof mapMerchantInvoice>[];
+  items: MerchantBillingHistoryItem[];
   page: number;
   pageSize: number;
   totalCount: number;
@@ -469,21 +583,28 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
   }
   const offset = (input.page - 1) * input.pageSize;
-  const invoices = (await listAllMerchantConnectInvoices(
-    accountId,
-    customer.stripeCustomerId,
-  ))
+  const [invoiceRows, paymentIntentRows] = await Promise.all([
+    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
+    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
+  ]);
+  const invoices = invoiceRows
     .map((invoice) => mapMerchantInvoice(invoice))
-    .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== null);
+    .filter((invoice): invoice is MerchantBillingHistoryItem => invoice !== null);
+  const topUps = paymentIntentRows
+    .map((pi) => mapMerchantAutoTopUpPaymentIntent(pi))
+    .filter((row): row is MerchantBillingHistoryItem => row !== null);
+  const merged = [...invoices, ...topUps].sort(
+    (a, b) => billingHistorySortKey(b) - billingHistorySortKey(a),
+  );
   return {
-    items: invoices.slice(offset, offset + input.pageSize),
+    items: merged.slice(offset, offset + input.pageSize),
     page: input.page,
     pageSize: input.pageSize,
-    totalCount: invoices.length,
+    totalCount: merged.length,
   };
 }
 
-/** Resolve hosted invoice links only after proving the invoice belongs to the user. */
+/** Resolve hosted invoice / receipt links only after proving ownership. */
 export async function getMerchantConnectInvoiceLinksForAppUser(input: {
   clientId: string;
   externalUserId: string;
@@ -504,6 +625,26 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
   ) {
     return null;
   }
+
+  if (invoiceId.startsWith("pi_")) {
+    const pi = await stripeConnectInvoiceRequest<StripeConnectPaymentIntent>(
+      accountId,
+      `/v1/payment_intents/${encodeURIComponent(invoiceId)}?expand[]=latest_charge`,
+    );
+    if (pi.customer !== customer.stripeCustomerId) {
+      return null;
+    }
+    if (!isAutoTopUpPaymentIntentMetadata(pi.metadata)) {
+      return null;
+    }
+    const charge =
+      pi.latest_charge && typeof pi.latest_charge === "object"
+        ? pi.latest_charge
+        : null;
+    const receiptUrl = charge?.receipt_url?.trim() || null;
+    return { hostedInvoiceUrl: receiptUrl, invoicePdf: null };
+  }
+
   const invoice = await stripeConnectInvoiceRequest<StripeConnectInvoice>(
     accountId,
     `/v1/invoices/${encodeURIComponent(invoiceId)}`,

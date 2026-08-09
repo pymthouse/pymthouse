@@ -28,9 +28,19 @@ function paymentMethodIdFromStripeObject(value: unknown): string | null {
     return null;
   }
   const obj = value as {
+    id?: unknown;
+    object?: unknown;
     payment_method?: unknown;
     setup_intent?: unknown;
   };
+  // payment_method.attached: the event object *is* the PaymentMethod.
+  if (
+    obj.object === "payment_method" &&
+    typeof obj.id === "string" &&
+    obj.id.startsWith("pm_")
+  ) {
+    return obj.id.trim();
+  }
   if (typeof obj.payment_method === "string" && obj.payment_method.startsWith("pm_")) {
     return obj.payment_method.trim();
   }
@@ -42,6 +52,10 @@ function paymentMethodIdFromStripeObject(value: unknown): string | null {
   }
   if (obj.setup_intent && typeof obj.setup_intent === "object") {
     return paymentMethodIdFromStripeObject(obj.setup_intent);
+  }
+  // Fallback: bare pm_ id on the object (attached events without object type).
+  if (typeof obj.id === "string" && obj.id.startsWith("pm_")) {
+    return obj.id.trim();
   }
   return null;
 }
@@ -99,6 +113,7 @@ function checkoutRestoreMetadata(
  * Extract an app-user restore target from Stripe's durable completion signals.
  * Connect Checkout stamps both session and SetupIntent metadata; platform
  * Checkout is resolved by its persisted Checkout-session id instead.
+ * `payment_method.attached` is accepted when Connect metadata is present.
  */
 export function parseStripePaymentMethodAttached(
   rawBody: string,
@@ -118,11 +133,53 @@ export function parseStripePaymentMethodAttached(
   };
   if (
     event.type !== "checkout.session.completed" &&
-    event.type !== "setup_intent.succeeded"
+    event.type !== "setup_intent.succeeded" &&
+    event.type !== "payment_method.attached"
   ) {
     return null;
   }
   return checkoutRestoreMetadata(event.data?.object);
+}
+
+/**
+ * `payment_method.attached` without pymthouse metadata — use Stripe customer id
+ * for Neon reverse lookup. Returns null for other event types.
+ */
+export function parseStripePaymentMethodAttachedCustomer(
+  rawBody: string,
+): { stripeCustomerId: string; paymentMethodId: string | null } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as {
+    type?: unknown;
+    data?: { object?: unknown };
+  };
+  if (event.type !== "payment_method.attached") {
+    return null;
+  }
+  const obj = event.data?.object;
+  if (!obj || typeof obj !== "object") {
+    return null;
+  }
+  const customer = (obj as { customer?: unknown }).customer;
+  const stripeCustomerId =
+    typeof customer === "string" && customer.startsWith("cus_")
+      ? customer.trim()
+      : null;
+  if (!stripeCustomerId) {
+    return null;
+  }
+  const id = (obj as { id?: unknown }).id;
+  const paymentMethodId =
+    typeof id === "string" && id.startsWith("pm_") ? id.trim() : null;
+  return { stripeCustomerId, paymentMethodId };
 }
 
 /** Extract the completed Checkout session id for persisted-session lookup. */

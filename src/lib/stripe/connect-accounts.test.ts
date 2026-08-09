@@ -90,6 +90,49 @@ test("merchant invoice helpers omit invalid data and normalize timestamps", () =
   );
 });
 
+test("mapMerchantAutoTopUpPaymentIntent maps succeeded auto top-ups only", () => {
+  assert.deepEqual(
+    __testMerchantConnectInvoices.mapMerchantAutoTopUpPaymentIntent({
+      id: "pi_topup_1",
+      amount: 500,
+      currency: "usd",
+      status: "succeeded",
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      metadata: { pymthouse_auto_topup: "1" },
+    }),
+    {
+      id: "pi_topup_1",
+      number: "Auto top-up",
+      status: "succeeded",
+      currency: "USD",
+      totalAmount: "5.00",
+      customerId: "cus_connected",
+      issuedAt: "2025-01-01T00:00:00.000Z",
+      externalInvoicingId: "pi_topup_1",
+      invoiceType: "auto_topup",
+    },
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantAutoTopUpPaymentIntent({
+      id: "pi_other",
+      amount: 500,
+      status: "succeeded",
+      metadata: {},
+    }),
+    null,
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantAutoTopUpPaymentIntent({
+      id: "pi_pending",
+      amount: 500,
+      status: "requires_action",
+      metadata: { pymthouse_auto_topup: "1" },
+    }),
+    null,
+  );
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,

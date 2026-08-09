@@ -6,7 +6,10 @@ import {
 } from "@/lib/openmeter/app-user-payment-method";
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
-import { applyConnectedAccountWebhookUpdate } from "@/lib/stripe/merchant-connect";
+import {
+  applyConnectedAccountWebhookUpdate,
+  findAppUserStripeCustomerByStripeId,
+} from "@/lib/stripe/merchant-connect";
 import {
   merchantTopUpAccountMatches,
   topUpClientOwnedByOwner,
@@ -24,6 +27,7 @@ import {
   parseStripeCompletedCheckoutSessionId,
   parseStripeAccountUpdated,
   parseStripePaymentMethodAttached,
+  parseStripePaymentMethodAttachedCustomer,
   resolveStripeWebhookSecretsByKind,
   verifyStripeWebhookSignature,
   type StripeWebhookSecret,
@@ -84,6 +88,25 @@ async function handlePaymentMethodRestore(
       restored: true,
       clientId: restoreTarget.clientId,
     });
+  }
+
+  const byCustomer = parseStripePaymentMethodAttachedCustomer(rawBody);
+  if (byCustomer) {
+    const row = await findAppUserStripeCustomerByStripeId(
+      byCustomer.stripeCustomerId,
+    );
+    if (row?.clientId && row.externalUserId) {
+      await restoreAppUserBillingProfileAfterPaymentMethodAttached({
+        clientId: row.clientId,
+        externalUserId: row.externalUserId,
+        paymentMethodId: byCustomer.paymentMethodId,
+      });
+      return NextResponse.json({
+        received: true,
+        restored: true,
+        clientId: row.clientId,
+      });
+    }
   }
 
   const checkoutSessionId = parseStripeCompletedCheckoutSessionId(rawBody);
@@ -370,6 +393,7 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  *   checkout.session.completed               (platform + Connect — top-ups / PM)
  *   checkout.session.async_payment_succeeded (platform + Connect — delayed)
  *   setup_intent.succeeded                   (Connect — app-user payment methods)
+ *   payment_method.attached                  (Connect — belt-and-suspenders PM default)
  *
  * PaymentIntent / charge / dispute events for Custom Invoicing settlement are
  * handled by pymthouse/settlement (Kafka producer), not this route.
@@ -415,7 +439,7 @@ export async function POST(request: Request): Promise<Response> {
   if (type === "payment_intent.succeeded") {
     return handleAutoTopUpPaymentIntentSucceeded(rawBody);
   }
-  if (type === "setup_intent.succeeded") {
+  if (type === "setup_intent.succeeded" || type === "payment_method.attached") {
     try {
       const restored = await handlePaymentMethodRestore(rawBody);
       if (restored) {
