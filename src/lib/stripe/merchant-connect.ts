@@ -16,7 +16,7 @@ import {
   ensureAppStripeBillingReady,
 } from "@/lib/openmeter/billing-profiles";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
-import { isAutoTopUpPaymentIntentMetadata } from "@/lib/stripe/auto-topup-charge";
+import { isLegacyAutoTopUpPaymentIntentMetadata } from "@/lib/stripe/legacy-auto-topup";
 import {
   connectAccountLinkUrls,
   createAccountOnboardingLink,
@@ -137,12 +137,12 @@ function mapMerchantInvoice(
   };
 }
 
-function mapMerchantAutoTopUpPaymentIntent(
+function mapLegacyAutoTopUpPaymentIntent(
   pi: StripeConnectPaymentIntent,
 ): MerchantBillingHistoryItem | null {
   const id = pi.id?.trim();
   if (!id?.startsWith("pi_")) return null;
-  if (!isAutoTopUpPaymentIntentMetadata(pi.metadata)) return null;
+  if (!isLegacyAutoTopUpPaymentIntentMetadata(pi.metadata)) return null;
   const status = pi.status?.trim() || "unknown";
   // History shows completed top-ups; failed/requires_action stay out of the list.
   if (status !== "succeeded") return null;
@@ -163,7 +163,7 @@ function mapMerchantAutoTopUpPaymentIntent(
 export const __testMerchantConnectInvoices = {
   invoiceDate,
   mapMerchantInvoice,
-  mapMerchantAutoTopUpPaymentIntent,
+  mapLegacyAutoTopUpPaymentIntent,
   stripeConnectInvoiceRequest,
 };
 /** @internal Exported for unit tests. */
@@ -591,7 +591,7 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     .map((invoice) => mapMerchantInvoice(invoice))
     .filter((invoice): invoice is MerchantBillingHistoryItem => invoice !== null);
   const topUps = paymentIntentRows
-    .map((pi) => mapMerchantAutoTopUpPaymentIntent(pi))
+    .map((pi) => mapLegacyAutoTopUpPaymentIntent(pi))
     .filter((row): row is MerchantBillingHistoryItem => row !== null);
   const merged = [...invoices, ...topUps].sort(
     (a, b) => billingHistorySortKey(b) - billingHistorySortKey(a),
@@ -634,7 +634,7 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
     if (pi.customer !== customer.stripeCustomerId) {
       return null;
     }
-    if (!isAutoTopUpPaymentIntentMetadata(pi.metadata)) {
+    if (!isLegacyAutoTopUpPaymentIntentMetadata(pi.metadata)) {
       return null;
     }
     const charge =

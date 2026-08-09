@@ -12,7 +12,7 @@ import {
   effectiveSoftNegativeUsdMicros,
   isInInvoiceTriggerLeadWindow,
   MIN_INVOICE_USD_MICROS,
-} from "@/lib/billing/auto-topup-settings";
+} from "@/lib/billing/overage-limits";
 import {
   getUnbilledDebtUsdMicros,
   resolveBillingCustomerId,

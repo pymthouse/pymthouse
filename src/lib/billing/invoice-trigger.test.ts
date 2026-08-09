@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MIN_INVOICE_USD_MICROS } from "@/lib/billing/auto-topup-settings";
+import { MIN_INVOICE_USD_MICROS } from "@/lib/billing/overage-limits";
 import {
   __resetInvoiceTriggerCacheForTests,
   __testInvoiceTrigger,

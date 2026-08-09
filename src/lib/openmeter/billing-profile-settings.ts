@@ -1,7 +1,7 @@
 export {
   parseInvoiceLeadUsdMicrosInput,
   parseSoftNegativeUsdMicrosInput,
-} from "@/lib/billing/auto-topup-settings";
+} from "@/lib/billing/overage-limits";
 
 export function parseProgressiveBillingInput(
   value: unknown,

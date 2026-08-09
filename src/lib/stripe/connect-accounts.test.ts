@@ -90,9 +90,9 @@ test("merchant invoice helpers omit invalid data and normalize timestamps", () =
   );
 });
 
-test("mapMerchantAutoTopUpPaymentIntent maps succeeded auto top-ups only", () => {
+test("mapLegacyAutoTopUpPaymentIntent maps succeeded auto top-ups only", () => {
   assert.deepEqual(
-    __testMerchantConnectInvoices.mapMerchantAutoTopUpPaymentIntent({
+    __testMerchantConnectInvoices.mapLegacyAutoTopUpPaymentIntent({
       id: "pi_topup_1",
       amount: 500,
       currency: "usd",
@@ -114,7 +114,7 @@ test("mapMerchantAutoTopUpPaymentIntent maps succeeded auto top-ups only", () =>
     },
   );
   assert.equal(
-    __testMerchantConnectInvoices.mapMerchantAutoTopUpPaymentIntent({
+    __testMerchantConnectInvoices.mapLegacyAutoTopUpPaymentIntent({
       id: "pi_other",
       amount: 500,
       status: "succeeded",
@@ -123,7 +123,7 @@ test("mapMerchantAutoTopUpPaymentIntent maps succeeded auto top-ups only", () =>
     null,
   );
   assert.equal(
-    __testMerchantConnectInvoices.mapMerchantAutoTopUpPaymentIntent({
+    __testMerchantConnectInvoices.mapLegacyAutoTopUpPaymentIntent({
       id: "pi_pending",
       amount: 500,
       status: "requires_action",

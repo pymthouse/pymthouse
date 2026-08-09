@@ -7,7 +7,7 @@ import {
   __setRestoreAppUserBillingProfileForCheckoutSessionForTests,
 } from "@/lib/openmeter/app-user-payment-method";
 import { __setGrantAllowanceUsdMicrosForTests } from "@/lib/openmeter/grant-allowance";
-import { autoTopUpGrantIdempotencyKey } from "@/lib/stripe/auto-topup-charge";
+import { legacyAutoTopUpGrantIdempotencyKey } from "@/lib/stripe/legacy-auto-topup";
 import { topUpGrantIdempotencyKey } from "@/lib/stripe/topup-checkout";
 import {
   __setMerchantTopUpAccountMatchesForTests,
@@ -483,7 +483,7 @@ test("POST auto-topup credits when Connect account matches", async (t) => {
     externalUserId: "eu_route_1",
     amountUsdMicros: "10000000",
     source: "topup",
-    idempotencyKey: autoTopUpGrantIdempotencyKey("pi_auto_topup_1"),
+    idempotencyKey: legacyAutoTopUpGrantIdempotencyKey("pi_auto_topup_1"),
   });
 });
 

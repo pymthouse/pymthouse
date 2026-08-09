@@ -304,18 +304,6 @@ export const appUsers = pgTable(
     depositWalletAddress: text("deposit_wallet_address"),
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
-    /**
-     * @deprecated Retired — per-user off-session auto top-up removed.
-     * Columns retained for historical rows; mint path uses soft-negative +
-     * OpenMeter progressive invoicing instead.
-     */
-    autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
-    /** @deprecated See autoTopUpEnabled. */
-    autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
-    /** @deprecated See autoTopUpEnabled. */
-    autoTopUpBeforeSoftNegative: boolean("auto_top_up_before_soft_negative")
-      .notNull()
-      .default(true),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

@@ -17,7 +17,7 @@ import {
   effectiveInvoiceLeadUsdMicros,
   effectiveSoftNegativeUsdMicros,
   parseSoftNegativeUsdMicrosInput,
-} from "@/lib/billing/auto-topup-settings";
+} from "@/lib/billing/overage-limits";
 import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
 
 /**

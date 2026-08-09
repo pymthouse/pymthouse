@@ -4,7 +4,7 @@
 import {
   effectiveSoftNegativeUsdMicros,
   softNegativeAllowsContinue,
-} from "@/lib/billing/auto-topup-settings";
+} from "@/lib/billing/overage-limits";
 import type { BillingReason } from "@/lib/billing/billing-state";
 import { getUnbilledDebtUsdMicros } from "@/lib/billing/unbilled-debt";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";

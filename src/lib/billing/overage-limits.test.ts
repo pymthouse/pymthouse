@@ -10,7 +10,7 @@ import {
   parsePositiveUsdMicrosInput,
   parseSoftNegativeUsdMicrosInput,
   softNegativeAllowsContinue,
-} from "@/lib/billing/auto-topup-settings";
+} from "@/lib/billing/overage-limits";
 
 describe("parsePositiveUsdMicrosInput", () => {
   it("accepts null, empty, number, and digit strings", () => {

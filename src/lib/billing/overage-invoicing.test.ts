@@ -11,10 +11,6 @@ import {
   decideAllowsOverageInvoicing,
   resolveAllowsOverageInvoicing,
 } from "@/lib/billing/overage-invoicing";
-import {
-  gatheringInvoiceMeetsThreshold,
-  gatheringTotalUsdMicros,
-} from "@/lib/billing/threshold-invoice-worker";
 import { mintAllowanceGateDecision } from "@/lib/oidc/mint-user-signer-token";
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { appUserHasChargeablePaymentMethod } from "@/lib/openmeter/app-user-payment-method";
@@ -184,26 +180,6 @@ test("mintAllowanceGateDecision allows zero spendable with overage flag", () => 
     ),
     null,
   );
-});
-
-test("gatheringTotalUsdMicros parses dollars and micros", () => {
-  assert.equal(gatheringTotalUsdMicros("5.00"), 5_000_000n);
-  assert.equal(gatheringTotalUsdMicros(1.5), 1_500_000n);
-  // Integer strings longer than 8 digits are treated as micros already.
-  assert.equal(gatheringTotalUsdMicros("100000000"), 100_000_000n);
-  assert.equal(gatheringTotalUsdMicros(null), null);
-  assert.equal(gatheringTotalUsdMicros(""), null);
-});
-
-test("gatheringInvoiceMeetsThreshold raises when accrued >= threshold", () => {
-  const threshold = 5_000_000n;
-  assert.equal(gatheringInvoiceMeetsThreshold(["4.99"], threshold), false);
-  assert.equal(gatheringInvoiceMeetsThreshold(["5.00"], threshold), true);
-  assert.equal(
-    gatheringInvoiceMeetsThreshold(["1.00", "5000000"], threshold),
-    true,
-  );
-  assert.equal(gatheringInvoiceMeetsThreshold([], threshold), false);
 });
 
 test("appUserHasOverageCapablePlan and appUserAllowsOverageInvoicing deny blank ids", async () => {

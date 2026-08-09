@@ -17,9 +17,9 @@ import {
   topUpClientOwnedByOwner,
 } from "@/lib/stripe/topup-ownership";
 import {
-  autoTopUpGrantIdempotencyKey,
-  isAutoTopUpPaymentIntentMetadata,
-} from "@/lib/stripe/auto-topup-charge";
+  legacyAutoTopUpGrantIdempotencyKey,
+  isLegacyAutoTopUpPaymentIntentMetadata,
+} from "@/lib/stripe/legacy-auto-topup";
 import {
   parseTopUpCheckoutSessionCompleted,
   topUpGrantIdempotencyKey,
@@ -315,7 +315,7 @@ async function settleMerchantTopUp(input: {
   }
 }
 
-async function handleAutoTopUpPaymentIntentSucceeded(
+async function handleLegacyAutoTopUpPaymentIntentSucceeded(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
 ): Promise<Response> {
@@ -344,7 +344,7 @@ async function handleAutoTopUpPaymentIntentSucceeded(
   const metadata = pi?.metadata;
   if (
     !paymentIntentId ||
-    !isAutoTopUpPaymentIntentMetadata(metadata) ||
+    !isLegacyAutoTopUpPaymentIntentMetadata(metadata) ||
     String(pi?.status ?? "") !== "succeeded"
   ) {
     return NextResponse.json({
@@ -470,7 +470,7 @@ async function handleAutoTopUpPaymentIntentSucceeded(
       externalUserId,
       amountUsdMicros,
       source: "topup",
-      idempotencyKey: autoTopUpGrantIdempotencyKey(paymentIntentId),
+      idempotencyKey: legacyAutoTopUpGrantIdempotencyKey(paymentIntentId),
     });
     return NextResponse.json({
       received: true,
@@ -603,7 +603,7 @@ export async function POST(request: Request): Promise<Response> {
     return handleCheckoutSessionCompleted(rawBody, secretKind);
   }
   if (type === "payment_intent.succeeded") {
-    return handleAutoTopUpPaymentIntentSucceeded(rawBody, secretKind);
+    return handleLegacyAutoTopUpPaymentIntentSucceeded(rawBody, secretKind);
   }
   if (type === "setup_intent.succeeded" || type === "payment_method.attached") {
     try {

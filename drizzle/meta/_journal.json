@@ -337,6 +337,13 @@
       "when": 1786900000000,
       "tag": "0046_invoice_lead_window",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787000000000,
+      "tag": "0047_drop_app_user_auto_topup",
+      "breakpoints": true
     }
   ]
 }
