@@ -70,6 +70,8 @@ export default async function BillingUpgradePage({
       }
       initialPlanKey={initialPlanKey}
       pmAttached={params.pm === "attached"}
+      starterPlanName={data.ownerStarterPlanName}
+      pendingDowngrade={data.pendingDowngrade}
     />
   );
 }

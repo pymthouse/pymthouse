@@ -27,6 +27,13 @@ export async function resolveSoftNegativeGate(input: {
       softNegativeUsdMicros: 0n,
     };
   }
+  if (!input.allowsOverageInvoicing) {
+    return {
+      allow: false,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros: 0n,
+    };
+  }
 
   const app = await getProviderApp(input.clientId);
   const appId =
@@ -38,6 +45,15 @@ export async function resolveSoftNegativeGate(input: {
   const softNegativeUsdMicros = effectiveSoftNegativeUsdMicros(
     config?.softNegativeUsdMicros,
   );
+  // No positive ceiling → skip debt lookup; overage alone unlocks past $0.
+  if (softNegativeUsdMicros <= 0n) {
+    return {
+      allow: true,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros,
+    };
+  }
+
   const unbilledDebtUsdMicros = await getUnbilledDebtUsdMicros({
     clientId: input.clientId,
     externalUserId: input.externalUserId,

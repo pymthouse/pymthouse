@@ -117,7 +117,12 @@ export function effectiveAutoTopUpUsdMicros(
   }
 }
 
-/** App soft-negative ceiling; unset/null ⇒ 0 (hard cut at spendable 0). */
+/**
+ * App soft-negative unbilled-debt ceiling.
+ * Unset/null/invalid ⇒ 0 (no ceiling — overage eligibility alone unlocks past
+ * prepaid $0). Set a positive value to deny mint/signer once unbilled debt
+ * reaches that micros amount.
+ */
 export function effectiveSoftNegativeUsdMicros(
   storedUsdMicros: string | null | undefined,
 ): bigint {
@@ -151,7 +156,10 @@ export function isInAutoTopUpLeadWindow(input: {
   );
 }
 
-/** Pure gate: may continue at spendable ≤ 0 given overage + debt vs soft-neg. */
+/**
+ * Pure gate: may continue at spendable ≤ 0 given overage + optional debt ceiling.
+ * Soft-negative `0` means no ceiling (overage alone allows past prepaid zero).
+ */
 export function softNegativeAllowsContinue(input: {
   spendableUsdMicros: bigint;
   allowsOverageInvoicing: boolean;
@@ -163,6 +171,10 @@ export function softNegativeAllowsContinue(input: {
   }
   if (!input.allowsOverageInvoicing) {
     return false;
+  }
+  // No positive ceiling configured → overage unlocks past prepaid $0.
+  if (input.softNegativeUsdMicros <= 0n) {
+    return true;
   }
   return input.unbilledDebtUsdMicros < input.softNegativeUsdMicros;
 }

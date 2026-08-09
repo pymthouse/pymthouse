@@ -21,7 +21,7 @@ describe("effectiveAutoTopUpUsdMicros", () => {
 });
 
 describe("effectiveSoftNegativeUsdMicros", () => {
-  it("treats unset as 0", () => {
+  it("treats unset as 0 (no debt ceiling)", () => {
     assert.equal(effectiveSoftNegativeUsdMicros(null), 0n);
   });
 
@@ -70,6 +70,27 @@ describe("softNegativeAllowsContinue", () => {
         spendableUsdMicros: 1n,
         allowsOverageInvoicing: false,
         unbilledDebtUsdMicros: 99n,
+        softNegativeUsdMicros: 0n,
+      }),
+      true,
+    );
+  });
+
+  it("allows overage past prepaid zero when soft-negative ceiling is unset", () => {
+    assert.equal(
+      softNegativeAllowsContinue({
+        spendableUsdMicros: 0n,
+        allowsOverageInvoicing: true,
+        unbilledDebtUsdMicros: 0n,
+        softNegativeUsdMicros: 0n,
+      }),
+      true,
+    );
+    assert.equal(
+      softNegativeAllowsContinue({
+        spendableUsdMicros: 0n,
+        allowsOverageInvoicing: true,
+        unbilledDebtUsdMicros: 9_999_999n,
         softNegativeUsdMicros: 0n,
       }),
       true,
