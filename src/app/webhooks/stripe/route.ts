@@ -12,6 +12,8 @@ import {
 } from "@/lib/stripe/merchant-connect";
 import {
   merchantTopUpAccountMatches,
+  normalizeStripeCurrency,
+  resolveAppBillingCurrency,
   topUpClientOwnedByOwner,
 } from "@/lib/stripe/topup-ownership";
 import {
@@ -322,6 +324,7 @@ async function handleAutoTopUpPaymentIntentSucceeded(
       object?: {
         id?: string;
         amount?: number;
+        currency?: string;
         status?: string;
         metadata?: Record<string, unknown>;
       };
@@ -359,6 +362,30 @@ async function handleAutoTopUpPaymentIntentSucceeded(
     return NextResponse.json({
       received: true,
       ignored: "auto_topup_incomplete_metadata",
+    });
+  }
+
+  // Amount → USD micros assumes the app settlement currency (2-decimal). Match
+  // `app_billing_config.default_currency` — same source used when creating the PI.
+  const piCurrency = normalizeStripeCurrency(pi?.currency);
+  let expectedCurrency: string;
+  try {
+    expectedCurrency = await resolveAppBillingCurrency(clientId);
+  } catch (err) {
+    logHandlerError("auto-topup currency resolve", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!piCurrency || piCurrency !== expectedCurrency) {
+    console.warn(
+      TAG,
+      "auto-topup ignored: currency mismatch",
+      sanitizeForLog(clientId),
+      sanitizeForLog(piCurrency),
+      sanitizeForLog(expectedCurrency),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "auto_topup_currency_mismatch",
     });
   }
 
@@ -532,8 +559,10 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  * (non-Connect) event. Merchant end-user top-ups and Connect auto top-ups
  * require a Connect `account` field matching the app's Connected Account.
  * Platform auto top-ups require the platform secret plus `owner:{userId}`
- * ownership of `client_id`. Payment-method restore from Connect metadata also
- * requires that account match (or a server-issued Checkout session mapping).
+ * ownership of `client_id`. Auto-topup settlement also requires PI currency
+ * to match `app_billing_config.default_currency`. Payment-method restore from
+ * Connect metadata also requires that account match (or a server-issued
+ * Checkout session mapping).
  */
 export async function POST(request: Request): Promise<Response> {
   let secrets: StripeWebhookSecret[];

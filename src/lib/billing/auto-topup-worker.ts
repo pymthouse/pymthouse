@@ -302,6 +302,7 @@ export async function maybeAutoTopUpForIdentity(input: {
       amountUsdMicros: prefs.amountUsdMicros,
       clientId: target.grantClientId,
       externalUserId: target.grantExternalUserId,
+      currency: billingConfig?.defaultCurrency ?? "USD",
       stripeAccount: target.stripeAccount,
     });
 

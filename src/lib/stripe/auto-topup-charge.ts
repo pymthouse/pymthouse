@@ -54,6 +54,11 @@ export async function createOffSessionAutoTopUpPaymentIntent(input: {
   amountUsdMicros: bigint;
   clientId: string;
   externalUserId: string;
+  /**
+   * ISO currency from `app_billing_config.default_currency` (Stripe lowercase).
+   * Defaults to `usd` — must match webhook settlement checks.
+   */
+  currency?: string | null;
   /** Connect account id when charging a merchant end-user. */
   stripeAccount?: string | null;
   fetchImpl?: typeof fetch;
@@ -74,9 +79,14 @@ export async function createOffSessionAutoTopUpPaymentIntent(input: {
     };
   }
 
+  const currency =
+    (typeof input.currency === "string" && input.currency.trim()
+      ? input.currency.trim().toLowerCase()
+      : null) || "usd";
+
   const body = new URLSearchParams();
   body.set("amount", String(amountCents));
-  body.set("currency", "usd");
+  body.set("currency", currency);
   body.set("customer", input.stripeCustomerId.trim());
   body.set("payment_method", input.paymentMethodId.trim());
   body.set("off_session", "true");

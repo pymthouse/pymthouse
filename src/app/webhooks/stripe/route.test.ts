@@ -11,6 +11,7 @@ import { autoTopUpGrantIdempotencyKey } from "@/lib/stripe/auto-topup-charge";
 import { topUpGrantIdempotencyKey } from "@/lib/stripe/topup-checkout";
 import {
   __setMerchantTopUpAccountMatchesForTests,
+  __setResolveAppBillingCurrencyForTests,
   __setTopUpClientOwnedByOwnerForTests,
 } from "@/lib/stripe/topup-ownership";
 
@@ -77,7 +78,10 @@ function autoTopUpPaymentIntentBody(extras?: {
   account?: string;
   clientId?: string;
   externalUserId?: string;
+  currency?: string | null;
 }): string {
+  const currency =
+    extras && "currency" in extras ? extras.currency : "usd";
   return JSON.stringify({
     type: "payment_intent.succeeded",
     ...(extras?.account ? { account: extras.account } : {}),
@@ -85,6 +89,7 @@ function autoTopUpPaymentIntentBody(extras?: {
       object: {
         id: "pi_auto_topup_1",
         amount: 1000,
+        ...(currency != null ? { currency } : {}),
         status: "succeeded",
         metadata: {
           pymthouse_auto_topup: "1",
@@ -149,6 +154,7 @@ function withWebhookEnv(
     __setGrantAllowanceUsdMicrosForTests(null);
     __setTopUpClientOwnedByOwnerForTests(null);
     __setMerchantTopUpAccountMatchesForTests(null);
+    __setResolveAppBillingCurrencyForTests(null);
     __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(null);
     __setRestoreAppUserBillingProfileForCheckoutSessionForTests(null);
   });
@@ -156,6 +162,8 @@ function withWebhookEnv(
   else process.env.STRIPE_CONNECT_WEBHOOK_SECRET = env.connect;
   if (env.platform === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
   else process.env.STRIPE_WEBHOOK_SECRET = env.platform;
+  // Auto-topup settlement matches app defaultCurrency (USD unless overridden).
+  __setResolveAppBillingCurrencyForTests(async () => "usd");
 }
 
 async function postSigned(
@@ -502,6 +510,65 @@ test("POST auto-topup ignores Connect account mismatch", async (t) => {
   assert.equal(res.status, 200);
   const json = (await res.json()) as { ignored?: string };
   assert.equal(json.ignored, "connect_account_mismatch");
+  assert.equal(granted, false);
+});
+
+test("POST auto-topup ignores currency mismatch vs app defaultCurrency", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  __setResolveAppBillingCurrencyForTests(async () => "usd");
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({
+    account: "acct_merchant_1",
+    currency: "eur",
+  });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "auto_topup_currency_mismatch");
+  assert.equal(granted, false);
+});
+
+test("POST auto-topup ignores missing currency", async (t) => {
+  withWebhookEnv(t, {
+    connect: CONNECT_SECRET,
+    platform: PLATFORM_SECRET,
+  });
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({
+    account: "acct_merchant_1",
+    currency: null,
+  });
+  const res = await postSigned(rawBody, CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string };
+  assert.equal(json.ignored, "auto_topup_currency_mismatch");
   assert.equal(granted, false);
 });
 
