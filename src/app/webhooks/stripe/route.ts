@@ -32,6 +32,7 @@ import {
   parseStripePaymentMethodAttachedCustomer,
   resolveStripeWebhookSecretsByKind,
   verifyStripeWebhookSignature,
+  type StripePaymentMethodAttachedPayload,
   type StripeWebhookSecret,
   type StripeWebhookSecretKind,
 } from "@/lib/stripe/webhook";
@@ -85,12 +86,7 @@ function stripeEventAccount(rawBody: string): string | null {
  * the target app's Connected Account (same binding as merchant top-up).
  */
 async function restoreFromMetadataTarget(
-  restoreTarget: {
-    clientId: string;
-    externalUserId: string;
-    paymentMethodId: string;
-    checkoutSessionId?: string;
-  },
+  restoreTarget: StripePaymentMethodAttachedPayload,
   account: string | null,
 ): Promise<Response> {
   if (restoreTarget.checkoutSessionId) {
@@ -128,7 +124,11 @@ async function restoreFromMetadataTarget(
       ignored: "connect_account_mismatch",
     });
   }
-  await restoreAppUserBillingProfileAfterPaymentMethodAttached(restoreTarget);
+  await restoreAppUserBillingProfileAfterPaymentMethodAttached({
+    clientId: restoreTarget.clientId,
+    externalUserId: restoreTarget.externalUserId,
+    paymentMethodId: restoreTarget.paymentMethodId,
+  });
   return NextResponse.json({
     received: true,
     restored: true,
@@ -137,7 +137,7 @@ async function restoreFromMetadataTarget(
 }
 
 async function restoreFromStripeCustomer(
-  byCustomer: { stripeCustomerId: string; paymentMethodId: string },
+  byCustomer: { stripeCustomerId: string; paymentMethodId: string | null },
   account: string | null,
 ): Promise<Response | null> {
   const row = await findAppUserStripeCustomerByStripeId(

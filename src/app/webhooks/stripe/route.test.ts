@@ -693,7 +693,6 @@ test("POST setup_intent restore requires matching Connect account", async (t) =>
   assert.deepEqual(restores[0], {
     clientId: "app_pub_route_1",
     externalUserId: "eu_route_1",
-    checkoutSessionId: null,
     paymentMethodId: "pm_restore_1",
   });
 });
