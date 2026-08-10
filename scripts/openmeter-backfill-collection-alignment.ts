@@ -26,18 +26,37 @@ async function main() {
     })
     .from(appBillingConfig);
 
-  const targets = rows.flatMap((row) =>
+  const rowTargets = rows.flatMap((row) =>
     [row.profileId, row.merchantProfileId]
       .map((id) => id?.trim())
       .filter((id): id is string => Boolean(id))
       .map((profileId) => ({ clientId: row.clientId, profileId })),
   );
 
+  // The shared merchant Custom Invoicing profile lives in an env var, not in
+  // app_billing_config, so the row scan alone never reaches it.
+  const envMerchantProfileId =
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim();
+  if (envMerchantProfileId) {
+    rowTargets.push({
+      clientId: "(shared merchant profile)",
+      profileId: envMerchantProfileId,
+    });
+  }
+
+  const seen = new Set<string>();
+  const targets = rowTargets.filter((target) => {
+    if (seen.has(target.profileId)) return false;
+    seen.add(target.profileId);
+    return true;
+  });
+
   console.log(
     `${dryRun ? "DRY-RUN" : "APPLY"}: ${targets.length} profile(s) across ${rows.length} app(s)`,
   );
 
   let failures = 0;
+  let skipped = 0;
   for (const target of targets) {
     if (dryRun) {
       console.log(`would anchor ${target.profileId} (${target.clientId})`);
@@ -49,12 +68,20 @@ async function main() {
       });
       console.log(`${target.clientId}: anchored ${target.profileId}`);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Rows can reference profiles that were since deleted in Konnect;
+      // nothing to anchor there.
+      if (/is deleted/.test(message)) {
+        skipped += 1;
+        console.log(`${target.clientId}: skipped ${target.profileId} (deleted)`);
+        continue;
+      }
       failures += 1;
-      console.error(
-        `${target.clientId}: FAILED ${target.profileId}`,
-        err instanceof Error ? err.message : String(err),
-      );
+      console.error(`${target.clientId}: FAILED ${target.profileId}`, message);
     }
+  }
+  if (skipped > 0) {
+    console.log(`${skipped} deleted profile(s) skipped`);
   }
   if (failures > 0) {
     throw new Error(`collection backfill failed for ${failures} profile(s)`);
