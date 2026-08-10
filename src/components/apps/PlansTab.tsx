@@ -775,13 +775,14 @@ function PlanDraftForm({
             htmlFor={`${idPrefix}-charge-threshold`}
             className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
           >
-            Expected spend guide (USD)
+            Pay-as-you-go spend guide (USD)
             <InfoTooltip
               wide
               label={
-                "Display only — shown to users as a sense of what this plan costs per\n" +
-                "invoice. It does not trigger collection: when an invoice is raised is\n" +
-                "set app-wide by the overage limit on the Payments tab."
+                "Display only — shown to users as the typical amount of a\n" +
+                "pay-as-you-go invoice once their credits run out. It does not\n" +
+                "trigger collection: overage invoice timing is app-wide, set by\n" +
+                "the overage limit on the Payments tab."
               }
             />
           </label>
@@ -793,7 +794,7 @@ function PlanDraftForm({
             }
             placeholder="10.00"
             disabled={!canEdit}
-            aria-label="Expected spend guide in dollars"
+            aria-label="Pay-as-you-go spend guide in dollars"
           />
           <p className="text-xs text-zinc-500 mt-1">
             {resolvedPayPerUseBehavior()}

@@ -104,5 +104,5 @@ export function formatUsdMicrosForDisplay(usdMicros: string): string {
  * every Pay-Per-Use plan.
  */
 export function resolvedPayPerUseBehavior(): string {
-  return "Pay-per-use — usage draws down prepaid credits first, then is invoiced automatically as it accrues.";
+  return "Pay-as-you-go — usage draws down prepaid credits first, then continues as overage and is invoiced automatically as it accrues.";
 }
