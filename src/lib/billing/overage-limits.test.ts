@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  DEFAULT_SOFT_NEGATIVE_USD_MICROS,
   effectiveInvoiceLeadUsdMicros,
   effectiveSoftNegativeUsdMicros,
   isInInvoiceTriggerLeadWindow,
@@ -132,13 +133,30 @@ describe("effectiveInvoiceLeadUsdMicros", () => {
 });
 
 describe("effectiveSoftNegativeUsdMicros", () => {
-  it("treats unset as 0 (no debt ceiling)", () => {
-    assert.equal(effectiveSoftNegativeUsdMicros(null), 0n);
-    assert.equal(effectiveSoftNegativeUsdMicros("bad"), 0n);
+  it("defaults unset and invalid to the $2 ceiling", () => {
+    assert.equal(
+      effectiveSoftNegativeUsdMicros(null),
+      DEFAULT_SOFT_NEGATIVE_USD_MICROS,
+    );
+    assert.equal(
+      effectiveSoftNegativeUsdMicros(""),
+      DEFAULT_SOFT_NEGATIVE_USD_MICROS,
+    );
+    assert.equal(
+      effectiveSoftNegativeUsdMicros("bad"),
+      DEFAULT_SOFT_NEGATIVE_USD_MICROS,
+    );
+    assert.equal(
+      effectiveSoftNegativeUsdMicros("-1"),
+      DEFAULT_SOFT_NEGATIVE_USD_MICROS,
+    );
   });
 
-  it("accepts zero and positive", () => {
+  it("treats an explicit 0 as opting out of the ceiling", () => {
     assert.equal(effectiveSoftNegativeUsdMicros("0"), 0n);
+  });
+
+  it("passes through a stored positive ceiling", () => {
     assert.equal(effectiveSoftNegativeUsdMicros("500000"), 500_000n);
   });
 });

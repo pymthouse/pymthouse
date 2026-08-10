@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { DEFAULT_SOFT_NEGATIVE_USD_MICROS } from "@/lib/billing/overage-limits";
 import {
   resolveSoftNegativeGate,
   softNegativeDenyReason,
@@ -38,15 +39,17 @@ test("resolveSoftNegativeGate denies when overage is not allowed", async () => {
   });
 });
 
-test("resolveSoftNegativeGate allows overage when soft-negative ceiling is unset", async () => {
+test("resolveSoftNegativeGate applies the $2 default ceiling when soft-negative is unset", async () => {
   const result = await resolveSoftNegativeGate({
     clientId: "app_missing_soft_neg",
     externalUserId: "eu_1",
     spendableUsdMicros: 0n,
     allowsOverageInvoicing: true,
   });
+  // Unset no longer means "no ceiling": the default bounds debt at $2, and the
+  // debt lookup fails open to 0 here, so overage is still allowed.
   assert.equal(result.allow, true);
-  assert.equal(result.softNegativeUsdMicros, 0n);
+  assert.equal(result.softNegativeUsdMicros, DEFAULT_SOFT_NEGATIVE_USD_MICROS);
   assert.equal(result.unbilledDebtUsdMicros, 0n);
 });
 

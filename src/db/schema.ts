@@ -580,8 +580,9 @@ export const appBillingConfig = pgTable(
     progressiveBilling: boolean("progressive_billing").notNull().default(true),
     /**
      * Max unbilled debt (USD micros) allowed while spendable ≤ 0 before
-     * mint/signer deny. App-wide; same for all end users. Null clears it, 0
-     * means no ceiling, otherwise at least MIN_SOFT_NEGATIVE_USD_MICROS.
+     * mint/signer deny. App-wide; same for all end users. Null reads as
+     * DEFAULT_SOFT_NEGATIVE_USD_MICROS ($2), 0 means no ceiling, otherwise
+     * at least MIN_SOFT_NEGATIVE_USD_MICROS.
      */
     softNegativeUsdMicros: text("soft_negative_usd_micros"),
     /**
