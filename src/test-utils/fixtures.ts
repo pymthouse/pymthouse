@@ -116,6 +116,7 @@ export async function createJobTokenForApp(opts: {
 export async function createAppUser(opts: {
   clientId: string;
   externalUserId: string;
+  status?: "active" | "inactive";
 }): Promise<{ id: string; externalUserId: string }> {
   const id = `app-user-${randomUUID()}`;
   await createTestUser({ id });
@@ -123,7 +124,7 @@ export async function createAppUser(opts: {
     id,
     clientId: opts.clientId,
     externalUserId: opts.externalUserId,
-    status: "active",
+    status: opts.status ?? "active",
   });
   return { id, externalUserId: opts.externalUserId };
 }

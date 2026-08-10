@@ -215,7 +215,10 @@ UPDATE "app_billing_config"
 ```
 
 `end_user_cap` is per-app and admin-adjustable so a growing Builder on `owner_rollup`
-can be raised without forcing a mode change.
+can be raised without forcing a mode change. The activation counter includes only
+**active** `app_users` rows — `DELETE …/users` (soft-deactivate to `inactive`) frees
+a slot so developers can reclaim capacity without an admin cap raise. Reactivating
+an inactive identity consumes a free slot under the same gate as creating a new one.
 
 ## Error contract
 

@@ -145,6 +145,11 @@ function actionUrlForReason(
   if (reason === "owner_payment_method_required") {
     return `${base}/billing`;
   }
+  // Cap exhaustion is resolved by reclaiming slots (deactivate identities), not
+  // by editing Payments settings — owners cannot self-raise endUserCap.
+  if (reason === "end_user_cap_reached") {
+    return `${base}/apps/${encodeURIComponent(publicClientId)}/identities`;
+  }
   return appSettingsAbsoluteUrl(base, publicClientId, "payments");
 }
 
@@ -192,10 +197,12 @@ export async function resolveAppActivation(clientId: string): Promise<AppActivat
   const endUserCap = config?.endUserCap ?? DEFAULT_END_USER_CAP;
   const connectReady = isConnectReady(config);
 
+  // Only *active* identities consume a cap slot. Soft-deactivated (`inactive`)
+  // rows stay for audit/billing history but free capacity for new provisioning.
   const [{ value: appUserCount }] = await db
     .select({ value: count() })
     .from(appUsers)
-    .where(eq(appUsers.clientId, app.id));
+    .where(and(eq(appUsers.clientId, app.id), eq(appUsers.status, "active")));
 
   const isPlatformDefault = app.isPlatformDefault === 1;
   let canProvisionEndUsers = isPlatformDefault;
@@ -272,18 +279,18 @@ async function markActivationNotified(appId: string): Promise<void> {
   });
 }
 
-async function existingAppUser(
+async function existingAppUserStatus(
   appId: string,
   externalUserId: string,
-): Promise<boolean> {
+): Promise<string | null> {
   const rows = await db
-    .select({ id: appUsers.id })
+    .select({ status: appUsers.status })
     .from(appUsers)
     .where(
       and(eq(appUsers.clientId, appId), eq(appUsers.externalUserId, externalUserId)),
     )
     .limit(1);
-  return Boolean(rows[0]);
+  return rows[0]?.status ?? null;
 }
 
 /** True when activating a priced (non-starter) plan requires canSellPaidPlans. */
@@ -299,11 +306,17 @@ export function planRequiresSellGate(input: {
 }
 
 /**
- * Creation-only cost-rail assert. Existing app_users always pass.
+ * Cost-rail assert for consuming an active end-user slot.
+ *
+ * - Already-`active` rows always pass (idempotent mint / key / allowance paths).
+ * - Missing rows (create) and `activating: true` for inactive→active must have
+ *   free cap capacity.
+ * - Inactive rows without `activating` pass so billing ensure / upserts that do
+ *   not reclaim a slot stay ungated.
  */
 export async function assertAppCanProvisionUsers(
   clientId: string,
-  options: { externalUserId: string },
+  options: { externalUserId: string; activating?: boolean },
 ): Promise<AppActivation> {
   const app = await getProviderApp(clientId);
   if (!app) {
@@ -311,7 +324,14 @@ export async function assertAppCanProvisionUsers(
   }
 
   const externalUserId = options.externalUserId.trim();
-  if (externalUserId && (await existingAppUser(app.id, externalUserId))) {
+  const existingStatus = externalUserId
+    ? await existingAppUserStatus(app.id, externalUserId)
+    : null;
+
+  if (existingStatus === "active") {
+    return resolveAppActivation(clientId);
+  }
+  if (existingStatus != null && !options.activating) {
     return resolveAppActivation(clientId);
   }
 
@@ -372,14 +392,17 @@ function shouldEnforce(kind: ActivationGateKind, mode: ActivationGateMode): bool
 async function evaluateActivationGate(
   kind: ActivationGateKind,
   clientId: string,
-  options?: { externalUserId?: string },
+  options?: { externalUserId?: string; activating?: boolean },
 ): Promise<AppActivation> {
   if (kind === "provision") {
     const externalUserId = options?.externalUserId?.trim();
     if (!externalUserId) {
       throw new Error("externalUserId is required for provision gate");
     }
-    return assertAppCanProvisionUsers(clientId, { externalUserId });
+    return assertAppCanProvisionUsers(clientId, {
+      externalUserId,
+      activating: options?.activating,
+    });
   }
   return assertAppCanSellPaidPlans(clientId);
 }
@@ -423,7 +446,11 @@ async function handleActivationDenial(input: {
   throw err;
 }
 
-async function evaluateSoft(kind: ActivationGateKind, clientId: string, options?: { externalUserId?: string }): Promise<AppActivation> {
+async function evaluateSoft(
+  kind: ActivationGateKind,
+  clientId: string,
+  options?: { externalUserId?: string; activating?: boolean },
+): Promise<AppActivation> {
   try {
     return await evaluateActivationGate(kind, clientId, options);
   } catch (err) {
@@ -437,11 +464,14 @@ async function evaluateSoft(kind: ActivationGateKind, clientId: string, options?
 /**
  * Central gate runner: off / log / enforce_revenue / enforce.
  * Returns activation when allowed (or when soft modes skip denial).
+ *
+ * Pass `activating: true` when an existing inactive identity is being restored
+ * to `active` so the end-user cap is enforced for the reclaimed slot.
  */
 export async function runActivationGate(
   kind: ActivationGateKind,
   clientId: string,
-  options?: { externalUserId?: string },
+  options?: { externalUserId?: string; activating?: boolean },
 ): Promise<AppActivation> {
   const mode = getActivationGateMode();
   if (mode === "off") {

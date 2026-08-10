@@ -606,7 +606,7 @@ export const appBillingConfig = pgTable(
      * merchant — Builder charges end users via Stripe Connect.
      */
     billingMode: text("billing_mode").notNull().default("owner_rollup"),
-    /** Max app_users on owner_rollup before provisioning is blocked. */
+    /** Max *active* app_users before provisioning / reactivation is blocked. */
     endUserCap: integer("end_user_cap").notNull().default(25),
     /** ISO timestamp of first cost-rail denial notification. */
     activationNotifiedAt: text("activation_notified_at"),

@@ -39,6 +39,7 @@ function sortIdentities(rows: AppIdentityRow[], key: SortKey): AppIdentityRow[] 
 
 function statusBadgeClass(status: string): string {
   if (status === "active") return "bg-emerald-500/15 text-emerald-400";
+  if (status === "inactive") return "bg-amber-500/15 text-amber-300";
   if (status === "suspended" || status === "revoked") return "bg-red-500/15 text-red-400";
   if (status === "unprovisioned") return "bg-zinc-700/40 text-zinc-400";
   return "bg-zinc-700/40 text-zinc-400";

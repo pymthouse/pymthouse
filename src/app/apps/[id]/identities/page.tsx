@@ -58,7 +58,8 @@ export default async function AppIdentitiesPage({
           <h1 className="text-xl font-bold text-zinc-100 sm:text-2xl">Identities</h1>
           <p className="mt-1 text-xs text-zinc-500 sm:text-sm">
             Every M2M identity billed under this app, sorted by network fee for the
-            current cycle.
+            current cycle. Open an identity to deactivate or reactivate it — only
+            active identities count toward the end-user cap.
           </p>
         </div>
         <Link
