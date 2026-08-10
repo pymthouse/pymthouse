@@ -323,14 +323,75 @@ registerMetadataRoutes([
   ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],
 ]);
 
+defineRouteMetadata("get", appPath("/billing/state"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Get billing state",
+  description:
+    "M2M Basic only. Canonical spend posture for a subject: `status` " +
+    "(active | overage | at_risk | blocked), `canSpend`, a `reason` when " +
+    "blocked, the funding ladder (prepaid credits, included plan usage, " +
+    "overage ceiling and unbilled debt), and how collection happens. " +
+    "Merchant apps require `externalUserId`; owner rollup apps may pass one " +
+    "to scope unbilled debt to a single subject.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    query: z.object({
+      externalUserId: z
+        .string()
+        .optional()
+        .openapi({ param: { name: "externalUserId", in: "query" } }),
+    }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("post", appPath("/billing/collect"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Collect unbilled usage now",
+  description:
+    "M2M Basic only. Raises an invoice for the subject's unbilled usage " +
+    "instead of waiting for the automatic trigger or the daily collection " +
+    "sweep. Idempotent within a short cooldown: repeat calls return " +
+    "`rate_limited` with the current state rather than duplicate invoices. " +
+    "Debt below the minimum charge returns `skipped`. Responds with " +
+    "`outcome`, `invoiceIds` and the refreshed `billingState`.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            externalUserId: z.string().optional().openapi({
+              description:
+                "Subject to collect for. Required for merchant apps.",
+            }),
+          }),
+        },
+      },
+      required: false,
+    },
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+
 // Owner prepaid wallet (threshold-only Pay-Per-Use, issue #398).
 defineRouteMetadata("get", appPath("/billing/wallet"), {
   tags: [OPENAPI_TAGS.billing],
   summary: "Owner prepaid wallet summary",
   description:
-    "M2M Basic only. Prepaid credit balance, default payment-method status, and " +
-    "all active Pay-Per-Use plans with resolved settlement behavior " +
-    "(credits first, then auto-debit at the threshold).",
+    "M2M Basic only. Prepaid credit balance, default payment-method status, " +
+    "the embedded `billingState`, and all active Pay-Per-Use plans with " +
+    "resolved settlement behavior (credits first, then auto-debit at the " +
+    "threshold).",
   security: m2mSecurity,
   request: { params: z.object({ clientId }) },
   responses: {

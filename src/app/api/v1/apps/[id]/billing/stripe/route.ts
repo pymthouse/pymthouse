@@ -15,8 +15,9 @@ import {
   upsertAppBillingConfig,
 } from "@/lib/openmeter/billing-profiles";
 import {
-  parseInvoiceThresholdUsdMicrosInput,
+  parseInvoiceLeadUsdMicrosInput,
   parseProgressiveBillingInput,
+  parseSoftNegativeUsdMicrosInput,
 } from "@/lib/openmeter/billing-profile-settings";
 import {
   disconnectStripeConnect,
@@ -28,7 +29,8 @@ import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 type BillingPatchFields = {
   progressiveBilling?: boolean;
-  invoiceThresholdUsdMicros?: string | null;
+  invoiceLeadUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   applicationFeeBps?: number;
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
@@ -214,7 +216,8 @@ function applyIntegerPatchField(
 function hasBillingPatchFields(body: Record<string, unknown>): boolean {
   return (
     body.progressiveBilling !== undefined ||
-    body.invoiceThresholdUsdMicros !== undefined ||
+    body.invoiceLeadUsdMicros !== undefined ||
+    body.softNegativeUsdMicros !== undefined ||
     body.applicationFeeBps !== undefined ||
     body.billingMode !== undefined ||
     body.endUserCap !== undefined ||
@@ -261,21 +264,39 @@ function applyProgressiveBillingField(
   return null;
 }
 
-function applyInvoiceThresholdField(
+function applyInvoiceLeadField(
   value: unknown,
   fields: BillingPatchFields,
 ): ParseResult | null {
   if (value === undefined) {
     return null;
   }
-  const parsed = parseInvoiceThresholdUsdMicrosInput(value);
+  const parsed = parseInvoiceLeadUsdMicrosInput(value);
   if (!parsed.ok) {
     return {
       ok: false,
       response: NextResponse.json({ error: parsed.error }, { status: 400 }),
     };
   }
-  fields.invoiceThresholdUsdMicros = parsed.value;
+  fields.invoiceLeadUsdMicros = parsed.value;
+  return null;
+}
+
+function applySoftNegativeField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = parseSoftNegativeUsdMicrosInput(value);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: parsed.error }, { status: 400 }),
+    };
+  }
+  fields.softNegativeUsdMicros = parsed.value;
   return null;
 }
 
@@ -289,7 +310,7 @@ async function parseBillingPatchBody(
       response: NextResponse.json(
         {
           error:
-            "Provide progressiveBilling, invoiceThresholdUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
+            "Provide progressiveBilling, invoiceLeadUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
         },
         { status: 400 },
       ),
@@ -307,11 +328,11 @@ async function parseBillingPatchBody(
   );
   if (progressiveErr) return progressiveErr;
 
-  const thresholdErr = applyInvoiceThresholdField(
-    body.invoiceThresholdUsdMicros,
-    fields,
-  );
-  if (thresholdErr) return thresholdErr;
+  const leadErr = applyInvoiceLeadField(body.invoiceLeadUsdMicros, fields);
+  if (leadErr) return leadErr;
+
+  const softNegErr = applySoftNegativeField(body.softNegativeUsdMicros, fields);
+  if (softNegErr) return softNegErr;
 
   const feeErr = applyIntegerPatchField(
     body.applicationFeeBps,
@@ -367,7 +388,8 @@ async function persistBillingPatch(
 ): Promise<Record<string, unknown>> {
   const {
     progressiveBilling,
-    invoiceThresholdUsdMicros,
+    invoiceLeadUsdMicros,
+    softNegativeUsdMicros,
     applicationFeeBps,
     billingMode,
     endUserCap,
@@ -377,12 +399,14 @@ async function persistBillingPatch(
   // a failed OM write cannot leave the app on a new revenue plane.
   const updated =
     progressiveBilling !== undefined ||
-    invoiceThresholdUsdMicros !== undefined ||
+    invoiceLeadUsdMicros !== undefined ||
+    softNegativeUsdMicros !== undefined ||
     applicationFeeBps !== undefined
       ? await updateAppBillingProfileSettings({
           clientId: appId,
           progressiveBilling,
-          invoiceThresholdUsdMicros,
+          invoiceLeadUsdMicros,
+          softNegativeUsdMicros,
           applicationFeeBps,
         })
       : {};

@@ -64,13 +64,17 @@ test("formatUsdMicrosForDisplay renders at least two decimals", () => {
   assert.equal(formatUsdMicrosForDisplay("garbage"), "0.00");
 });
 
-test("resolvedPayPerUseBehavior states the threshold explicitly (#348 pattern)", () => {
-  assert.equal(
-    resolvedPayPerUseBehavior("10000000"),
-    "Pay-per-use — charged at every $10.00 of usage (credits first).",
-  );
-  assert.match(resolvedPayPerUseBehavior(null), /no auto-debit threshold set/);
-  assert.match(resolvedPayPerUseBehavior(""), /no auto-debit threshold set/);
+test("resolvedPayPerUseBehavior describes credits then automatic invoicing", () => {
+  const behavior = resolvedPayPerUseBehavior();
+  assert.match(behavior, /prepaid credits first/);
+  assert.match(behavior, /invoiced automatically as it accrues/);
+});
+
+test("resolvedPayPerUseBehavior promises no charge cadence the plan cannot keep", () => {
+  const behavior = resolvedPayPerUseBehavior();
+  // Collection timing is app-scoped (overage limit + lead window), so plan copy
+  // must not imply a per-plan trigger.
+  assert.doesNotMatch(behavior, /auto-debit|charged at every|threshold/i);
 });
 
 test("threshold round-trips through parse and format", () => {

@@ -106,6 +106,7 @@ test("mintAllowanceGateDecision rejects unconfirmed allowance when hosted billin
   assert.deepEqual(mintAllowanceGateDecision(null, true), {
     code: "billing_unavailable",
     message: "Billing allowance could not be confirmed",
+    reason: "billing_unavailable",
   });
 });
 
@@ -123,6 +124,7 @@ test("mintAllowanceGateDecision rejects exhausted allowance when hosted billing 
     {
       code: "trial_credits_exhausted",
       message: "Payment method required",
+      reason: "no_payment_method",
     },
   );
 });
@@ -183,6 +185,7 @@ test("mintAllowanceGateDecision rejects zero micros even when hasAccess is stale
     {
       code: "trial_credits_exhausted",
       message: "Payment method required",
+      reason: "no_payment_method",
     },
   );
 });

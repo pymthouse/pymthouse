@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
+import { loadBillingState } from "@/lib/billing/billing-state-read";
 import { authorizeOwnerWalletM2m } from "@/lib/billing/owner-wallet-m2m-auth";
 import {
   formatUsdMicrosForDisplay,
@@ -64,17 +65,25 @@ export async function GET(
     .orderBy(desc(plans.updatedAt));
 
   if (billingTarget.target.mode === "merchant") {
-    const [trialBalance, paymentMethods, usagePlanRows] = await Promise.all([
-      getTrialCreditBalance({
-        clientId,
-        externalUserId: billingTarget.target.externalUserId,
-      }),
-      listAppUserPaymentMethods({
-        clientId: access.app.id,
-        externalUserId: billingTarget.target.externalUserId,
-      }).catch(() => null),
-      usagePlanRowsPromise,
-    ]);
+    const endUserId = billingTarget.target.externalUserId;
+    const [trialBalance, paymentMethods, usagePlanRows, billingState] =
+      await Promise.all([
+        getTrialCreditBalance({
+          clientId,
+          externalUserId: endUserId,
+        }),
+        listAppUserPaymentMethods({
+          clientId: access.app.id,
+          externalUserId: endUserId,
+        }).catch(() => null),
+        usagePlanRowsPromise,
+        loadBillingState({
+          publicClientId: clientId,
+          appId: access.app.id,
+          target: billingTarget.target,
+          externalUserId: endUserId,
+        }),
+      ]);
     const balance = trialBalance
       ? {
           usdMicros: trialBalance.balanceUsdMicros,
@@ -87,32 +96,31 @@ export async function GET(
       clientId,
       balance,
       paymentMethod: {
-        // null = unknown (provider outage), matching ownerHasChargeablePaymentMethod.
         hasDefault: paymentMethods
           ? paymentMethods.some((pm) => pm.isDefault)
           : null,
       },
+      billingState,
       payPerUsePlans: usagePlanRows.map((usagePlan) => ({
         planId: usagePlan.id,
         planName: usagePlan.name,
         chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
-        resolvedBehavior: resolvedPayPerUseBehavior(
-          usagePlan.chargeThresholdUsdMicros,
-        ),
+        resolvedBehavior: resolvedPayPerUseBehavior(),
       })),
-      settlement: {
-        order: "credits_then_auto_debit",
-        description:
-          "Accrued usage settles against prepaid credits first; the remainder auto-debits the default payment method when the charge threshold is reached.",
-      },
     });
   }
 
-  const [ownerBalance, hasDefaultPaymentMethod, usagePlanRows] =
+  const [ownerBalance, hasDefaultPaymentMethod, usagePlanRows, billingState] =
     await Promise.all([
       getOwnerPrepaidCreditBalance(billingTarget.target.ownerUserId),
       ownerHasChargeablePaymentMethod(billingTarget.target.ownerUserId),
       usagePlanRowsPromise,
+      loadBillingState({
+        publicClientId: clientId,
+        appId: access.app.id,
+        target: billingTarget.target,
+        externalUserId,
+      }),
     ]);
 
   return NextResponse.json({
@@ -128,19 +136,27 @@ export async function GET(
     paymentMethod: {
       hasDefault: hasDefaultPaymentMethod,
     },
-    /** Every active usage plan on the app (newest `updatedAt` first). */
+    billingState,
     payPerUsePlans: usagePlanRows.map((usagePlan) => ({
       planId: usagePlan.id,
       planName: usagePlan.name,
       chargeThresholdUsdMicros: usagePlan.chargeThresholdUsdMicros ?? null,
-      resolvedBehavior: resolvedPayPerUseBehavior(
-        usagePlan.chargeThresholdUsdMicros,
-      ),
+      resolvedBehavior: resolvedPayPerUseBehavior(),
     })),
-    settlement: {
-      order: "credits_then_auto_debit",
-      description:
-        "Accrued usage settles against prepaid credits first; the remainder auto-debits the default payment method when the charge threshold is reached.",
-    },
   });
+}
+
+/**
+ * PATCH /api/v1/apps/{clientId}/billing/wallet — per-user auto top-up prefs
+ * are retired. Soft-negative is configured via PATCH …/billing/stripe.
+ */
+export async function PATCH() {
+  return NextResponse.json(
+    {
+      error:
+        "Per-user auto top-up is retired. Configure softNegativeUsdMicros via PATCH /api/v1/apps/{clientId}/billing/stripe; mid-cycle charges use OpenMeter progressive invoicing.",
+      code: "auto_topup_retired",
+    },
+    { status: 410 },
+  );
 }

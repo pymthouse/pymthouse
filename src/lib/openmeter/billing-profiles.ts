@@ -13,8 +13,10 @@ import { assignCustomerBillingProfileOverride } from "./customers";
 import {
   createKonnectBillingProfile,
   resolveKonnectStripeAppId,
+  updateKonnectBillingProfileCollection,
   updateKonnectBillingProfileProgressiveBilling,
 } from "./konnect-billing-profiles";
+import { buildCollectionSettings } from "./billing-collection";
 import { getHostedOpenMeterUrl } from "./constants";
 import { shouldUseKonnectRoutes } from "./route-mode";
 import {
@@ -215,6 +217,7 @@ export async function ensureTenantBillingProfile(input: {
           default: false,
           supplier: buildBillingProfileSupplier(supplierName),
           workflow: {
+            collection: buildCollectionSettings(),
             invoicing: {
               autoAdvance: true,
               draftPeriod: "P0D",
@@ -331,6 +334,7 @@ export async function ensureOwnersBillingProfile(
           default: false,
           supplier: buildBillingProfileSupplier("PymtHouse Owners"),
           workflow: {
+            collection: buildCollectionSettings(),
             invoicing: {
               autoAdvance: true,
               draftPeriod: "P0D",
@@ -497,6 +501,7 @@ export async function ensureFreeBillingProfile(client?: OpenMeter): Promise<stri
     default: false,
     supplier: buildBillingProfileSupplier("PymtHouse Free"),
     workflow: {
+      collection: buildCollectionSettings(),
       invoicing: { autoAdvance: true, draftPeriod: "P0D" },
       payment: { collectionMethod: "charge_automatically" },
     },
@@ -558,17 +563,19 @@ export async function applyTenantBillingProfileToCustomer(input: {
 }
 
 /**
- * Persist progressive-billing / threshold settings and sync progressiveBilling
+ * Persist progressive-billing / overage settings and sync progressiveBilling
  * to the OpenMeter tenant billing profile when connected.
  */
 export async function updateAppBillingProfileSettings(input: {
   clientId: string;
   progressiveBilling?: boolean;
-  invoiceThresholdUsdMicros?: string | null;
+  invoiceLeadUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   applicationFeeBps?: number;
 }): Promise<{
   progressiveBilling: boolean;
-  invoiceThresholdUsdMicros: string | null;
+  invoiceLeadUsdMicros: string | null;
+  softNegativeUsdMicros: string | null;
   applicationFeeBps: number;
 }> {
   let existing = await getAppBillingConfig(input.clientId);
@@ -582,10 +589,14 @@ export async function updateAppBillingProfileSettings(input: {
 
   const progressiveBilling =
     input.progressiveBilling ?? existing.progressiveBilling;
-  const invoiceThresholdUsdMicros =
-    input.invoiceThresholdUsdMicros !== undefined
-      ? input.invoiceThresholdUsdMicros
-      : existing.invoiceThresholdUsdMicros;
+  const invoiceLeadUsdMicros =
+    input.invoiceLeadUsdMicros !== undefined
+      ? input.invoiceLeadUsdMicros
+      : existing.invoiceLeadUsdMicros;
+  const softNegativeUsdMicros =
+    input.softNegativeUsdMicros !== undefined
+      ? input.softNegativeUsdMicros
+      : existing.softNegativeUsdMicros;
   const applicationFeeBps =
     input.applicationFeeBps ?? existing.applicationFeeBps ?? 0;
 
@@ -605,13 +616,15 @@ export async function updateAppBillingProfileSettings(input: {
 
   await upsertAppBillingConfig(input.clientId, {
     progressiveBilling,
-    invoiceThresholdUsdMicros,
+    invoiceLeadUsdMicros,
+    softNegativeUsdMicros,
     applicationFeeBps,
   });
 
   return {
     progressiveBilling,
-    invoiceThresholdUsdMicros: invoiceThresholdUsdMicros ?? null,
+    invoiceLeadUsdMicros: invoiceLeadUsdMicros ?? null,
+    softNegativeUsdMicros: softNegativeUsdMicros ?? null,
     applicationFeeBps,
   };
 }
@@ -644,10 +657,50 @@ async function syncProgressiveBillingToOpenMeterProfile(input: {
     supplier: profile.supplier,
     workflow: {
       ...profile.workflow,
+      collection: profile.workflow?.collection ?? buildCollectionSettings(),
       invoicing: {
         ...profile.workflow?.invoicing,
         progressiveBilling: input.progressiveBilling,
       },
+    },
+  } as Parameters<typeof client.billing.profiles.update>[1]);
+}
+
+/**
+ * Move an existing profile onto anchored daily collection.
+ *
+ * Profiles created before this defaulted to `subscription` alignment, which on
+ * a monthly plan leaves usage in gathering for the whole cycle.
+ */
+export async function syncCollectionAlignmentToOpenMeterProfile(input: {
+  profileId: string;
+  anchor?: Date;
+}): Promise<void> {
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  if (useKonnect) {
+    await updateKonnectBillingProfileCollection({
+      profileId: input.profileId,
+      anchor: input.anchor,
+    });
+    return;
+  }
+
+  const client = getHostedAdminClient();
+  const profile = await client.billing.profiles.get(input.profileId);
+  if (!profile?.id) {
+    throw new Error("OpenMeter billing profile not found");
+  }
+
+  await client.billing.profiles.update(input.profileId, {
+    name: profile.name,
+    default: profile.default ?? false,
+    supplier: profile.supplier,
+    workflow: {
+      ...profile.workflow,
+      collection: buildCollectionSettings(input.anchor),
     },
   } as Parameters<typeof client.billing.profiles.update>[1]);
 }

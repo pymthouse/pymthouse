@@ -6,7 +6,7 @@ import {
   resolveOwnerBillingPressure,
 } from "@/lib/billing/owner-billing-pressure";
 
-test("chargeable whenever a payment method is on file", () => {
+test("chargeable whenever a default payment method is on file", () => {
   assert.equal(
     resolveOwnerBillingPressure({
       hasPaymentMethod: true,
@@ -23,9 +23,9 @@ test("chargeable whenever a payment method is on file", () => {
   );
 });
 
-test("chargeable when chargeability is true even if listed methods are empty", () => {
-  // Callers OR listed methods with hasChargeableBillingMethod before passing
-  // hasPaymentMethod — pressure itself only sees the boolean.
+test("chargeable uses the gate default-PM boolean only", () => {
+  // Callers must pass ownerHasChargeablePaymentMethod === true (default PM),
+  // not merely paymentMethods.length > 0.
   assert.equal(
     resolveOwnerBillingPressure({
       hasPaymentMethod: true,

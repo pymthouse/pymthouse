@@ -8,9 +8,13 @@ import { ACCESS_TOKEN_JWT_TYP, ensureSigningKey } from "@/lib/oidc/jwks";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 import { AppActivationError } from "@/lib/activation/app-activation";
 import {
+  BILLING_REASON_MESSAGE,
+  type BillingReason,
+} from "@/lib/billing/billing-state";
+import {
   provisionAppUserBilling,
 } from "@/lib/billing/provision-app-user";
-import { seedSignerSpendableBalance } from "@/lib/oidc/signer-balance-gate";
+import { seedSignerSpendableBalance, seedSignerOverageEligibility } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
 import { isOpenMeterConflictError } from "@/lib/openmeter/plan-errors";
@@ -29,11 +33,22 @@ const SIGNER_JWT_TTL_SECONDS = 300;
 export class MintUserSignerTokenError extends Error {
   code: string;
   status: number;
+  /**
+   * Shared billing vocabulary, set only on billing rejections. `code` stays the
+   * OAuth error identifier clients already match on; this narrows *why*.
+   */
+  reason?: BillingReason;
 
-  constructor(code: string, message: string, status = 400) {
+  constructor(
+    code: string,
+    message: string,
+    status = 400,
+    reason?: BillingReason,
+  ) {
     super(message);
     this.code = code;
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -163,15 +178,20 @@ export function signerJwtAudience(): string {
 export function mintAllowanceGateDecision(
   allowance: TrialCreditBalance | null,
   hostedBillingEnabled: boolean,
-  options?: { allowsOverageInvoicing?: boolean },
-): { code: "billing_unavailable" | "trial_credits_exhausted"; message: string } | null {
+  options?: { allowsOverageInvoicing?: boolean; reason?: BillingReason },
+): {
+  code: "billing_unavailable" | "trial_credits_exhausted";
+  message: string;
+  reason: BillingReason;
+} | null {
   if (!hostedBillingEnabled) {
     return null;
   }
   if (!allowance) {
     return {
       code: "billing_unavailable",
-      message: "Billing allowance could not be confirmed",
+      message: BILLING_REASON_MESSAGE.billing_unavailable,
+      reason: "billing_unavailable",
     };
   }
   // Derive access from integer micros (not a stale hasAccess flag) so 1–99 micro
@@ -183,9 +203,11 @@ export function mintAllowanceGateDecision(
     if (options?.allowsOverageInvoicing) {
       return null;
     }
+    const reason = options?.reason ?? "no_payment_method";
     return {
       code: "trial_credits_exhausted",
-      message: "Payment method required",
+      message: BILLING_REASON_MESSAGE[reason],
+      reason,
     };
   }
   return null;
@@ -193,7 +215,7 @@ export function mintAllowanceGateDecision(
 
 export function enforceMintAllowanceGate(
   allowance: TrialCreditBalance | null,
-  options?: { allowsOverageInvoicing?: boolean },
+  options?: { allowsOverageInvoicing?: boolean; reason?: BillingReason },
 ): void {
   const decision = mintAllowanceGateDecision(
     allowance,
@@ -201,7 +223,12 @@ export function enforceMintAllowanceGate(
     options,
   );
   if (decision) {
-    throw new MintUserSignerTokenError(decision.code, decision.message, 402);
+    throw new MintUserSignerTokenError(
+      decision.code,
+      decision.message,
+      402,
+      decision.reason,
+    );
   }
 }
 
@@ -270,6 +297,75 @@ async function loadMintAllowance(input: {
   };
 }
 
+async function resolveMintDefaultPaymentMethod(input: {
+  publicClientId: string;
+  gateSubject: string;
+  allowsOverageInvoicing: boolean;
+}): Promise<boolean | null> {
+  if (input.allowsOverageInvoicing) return null;
+  try {
+    const { appUserHasChargeablePaymentMethod } = await import(
+      "@/lib/openmeter/app-user-payment-method"
+    );
+    return await appUserHasChargeablePaymentMethod({
+      clientId: input.publicClientId,
+      externalUserId: input.gateSubject,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function enforceMintSoftNegativeOrOverage(input: {
+  publicClientId: string;
+  gateSubject: string;
+  allowance: TrialCreditBalance | null;
+  allowsOverageInvoicing: boolean;
+  spendableMicros: bigint;
+}): Promise<void> {
+  const { resolveSoftNegativeGate, softNegativeDenyReason } = await import(
+    "@/lib/billing/soft-negative-gate"
+  );
+  const softGate = await resolveSoftNegativeGate({
+    clientId: input.publicClientId,
+    externalUserId: input.gateSubject,
+    spendableUsdMicros: input.spendableMicros,
+    allowsOverageInvoicing: input.allowsOverageInvoicing,
+  });
+  if (!softGate.allow) {
+    const hasDefaultPaymentMethod = await resolveMintDefaultPaymentMethod({
+      publicClientId: input.publicClientId,
+      gateSubject: input.gateSubject,
+      allowsOverageInvoicing: input.allowsOverageInvoicing,
+    });
+    const reason = softNegativeDenyReason({
+      allowsOverageInvoicing: input.allowsOverageInvoicing,
+      hasDefaultPaymentMethod,
+      unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
+      softNegativeUsdMicros: softGate.softNegativeUsdMicros,
+    });
+    console.warn(
+      `[mint] soft-negative deny subject=${input.gateSubject} reason=${reason} overageEligible=${input.allowsOverageInvoicing} debt=${softGate.unbilledDebtUsdMicros.toString()} ceiling=${softGate.softNegativeUsdMicros.toString()}`,
+    );
+    enforceMintAllowanceGate(input.allowance, {
+      allowsOverageInvoicing: false,
+      reason,
+    });
+    return;
+  }
+
+  enforceMintAllowanceGate(input.allowance, { allowsOverageInvoicing: true });
+  // Lead-window only: raise OM gathering → draft so settlement/Stripe app
+  // collects. Never invent Stripe PaymentIntents on the mint path.
+  const { scheduleInvoiceTrigger } = await import(
+    "@/lib/billing/invoice-trigger"
+  );
+  scheduleInvoiceTrigger({
+    clientId: input.publicClientId,
+    externalUserId: input.gateSubject,
+  });
+}
+
 export async function mintSignerJwtForExternalUser(input: {
   publicClientId: string;
   developerAppId: string;
@@ -306,16 +402,36 @@ export async function mintSignerJwtForExternalUser(input: {
     provisionExternalUserId,
     identity,
   });
-  let allowsOverageInvoicing = false;
-  if (identity.isOwner && identity.ownerUserId) {
-    const { ownerWalletAllowsOverageInvoicing } = await import(
-      "@/lib/openmeter/owner-paid-plan"
-    );
-    allowsOverageInvoicing = await ownerWalletAllowsOverageInvoicing(
-      identity.ownerUserId,
-    );
+  const { resolveAllowsOverageInvoicing } = await import(
+    "@/lib/billing/overage-invoicing"
+  );
+  const allowsOverageInvoicing = await resolveAllowsOverageInvoicing({
+    clientId: input.publicClientId,
+    externalUserId: provisionExternalUserId,
+    identity,
+  });
+  const spendableMicros = BigInt(allowance?.balanceUsdMicros ?? "0");
+  const gateSubject = identity.isOwner
+    ? buildOwnerWireSubject(provisionExternalUserId)
+    : provisionExternalUserId;
+
+  if (isHostedAdminClientAvailable() && spendableMicros <= 0n) {
+    await enforceMintSoftNegativeOrOverage({
+      publicClientId: input.publicClientId,
+      gateSubject,
+      allowance,
+      allowsOverageInvoicing,
+      spendableMicros,
+    });
+  } else {
+    enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
   }
-  enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
+  // Warm the live webhook overage cache so mid-stream reauth matches mint.
+  seedSignerOverageEligibility(
+    input.publicClientId,
+    gateSubject,
+    allowsOverageInvoicing,
+  );
 
   const issuer = getIssuer();
   const audience = signerJwtAudience();

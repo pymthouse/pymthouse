@@ -5,8 +5,10 @@ import { paymentsTabErrorMessage } from "./payments-tab-errors";
 import {
   merchantConnectOAuthErrorCode,
   parseStripeAccountUpdated,
+  parseStripeAttachedPaymentMethodId,
   parseStripeCompletedCheckoutSessionId,
   parseStripePaymentMethodAttached,
+  parseStripePaymentMethodAttachedCustomer,
   resolveConnectWebhookSecret,
   resolveStripeWebhookSecrets,
   sanitizeStripeOAuthProviderError,
@@ -116,6 +118,7 @@ test("payment-method restore parsing accepts Checkout and SetupIntent metadata",
     clientId: "app_merchant",
     externalUserId: "user_1",
     checkoutSessionId: "cs_restore",
+    paymentMethodId: null,
   });
   assert.equal(parseStripeCompletedCheckoutSessionId(checkout), "cs_restore");
 
@@ -124,6 +127,7 @@ test("payment-method restore parsing accepts Checkout and SetupIntent metadata",
     data: {
       object: {
         id: "seti_restore",
+        payment_method: "pm_attached_1",
         metadata: {
           pymthouse_client_id: "app_owner_rollup",
           external_user_id: "owner_1",
@@ -135,8 +139,56 @@ test("payment-method restore parsing accepts Checkout and SetupIntent metadata",
     clientId: "app_owner_rollup",
     externalUserId: "owner_1",
     checkoutSessionId: null,
+    paymentMethodId: "pm_attached_1",
   });
   assert.equal(parseStripeCompletedCheckoutSessionId(setupIntent), null);
+  assert.equal(
+    parseStripeAttachedPaymentMethodId(setupIntent),
+    "pm_attached_1",
+  );
+
+  const paymentMethodAttached = JSON.stringify({
+    type: "payment_method.attached",
+    data: {
+      object: {
+        id: "pm_meta_1",
+        customer: "cus_x",
+        metadata: {
+          pymthouse_client_id: "app_merchant",
+          external_user_id: "eu_1",
+        },
+      },
+    },
+  });
+  assert.deepEqual(parseStripePaymentMethodAttached(paymentMethodAttached), {
+    clientId: "app_merchant",
+    externalUserId: "eu_1",
+    checkoutSessionId: null,
+    paymentMethodId: "pm_meta_1",
+  });
+});
+
+test("payment_method.attached customer parse for Neon reverse lookup", () => {
+  const body = JSON.stringify({
+    type: "payment_method.attached",
+    data: {
+      object: {
+        id: "pm_cust_1",
+        customer: "cus_merchant_1",
+        metadata: {},
+      },
+    },
+  });
+  assert.deepEqual(parseStripePaymentMethodAttachedCustomer(body), {
+    stripeCustomerId: "cus_merchant_1",
+    paymentMethodId: "pm_cust_1",
+  });
+  assert.equal(
+    parseStripePaymentMethodAttachedCustomer(
+      JSON.stringify({ type: "setup_intent.succeeded", data: { object: {} } }),
+    ),
+    null,
+  );
 });
 
 test("payment-method restore parsing rejects incomplete metadata", () => {

@@ -1165,6 +1165,16 @@ export default function OwnerPaidUpgradeCheckout({
 
     let cancelled = false;
     async function refreshPaymentMethod() {
+      try {
+        // Authenticated mutation — do not promote defaults during GET SSR.
+        await fetch("/api/v1/me/billing/payment-method", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ensureDefault: true }),
+        });
+      } catch {
+        // Best-effort; list poll below still surfaces attached methods.
+      }
       for (let attempt = 0; attempt < 6; attempt++) {
         try {
           const res = await fetch("/api/v1/me/billing/payment-method");

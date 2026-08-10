@@ -12,6 +12,7 @@ import { buildOpenMeterPlanKey } from "./plan-naming";
 import {
   isLiveSubscriptionStatus,
   isPresentSubscriptionStatus,
+  isScheduledSubscriptionStatus,
   pickMutationTargetSubscription,
   pickOccupyingCanceledSubscription,
   type StarterMatcher,
@@ -392,11 +393,15 @@ export function pickAppUserSubscriptionToReport(
     return mutationTarget;
   }
 
-  // Display fallback: scheduled-only wallets (no live row yet). This must fall
-  // through when empty rather than bail out — a cancel-at-period-end customer
-  // has no live or scheduled row at all, only the occupying `canceled` row
-  // resolved at the end, and returning null here reported "no subscription"
-  // for every user who had scheduled a cancel.
+  // Cancel-at-period-end still runs until activeTo. Prefer it over a scheduled
+  // successor — otherwise GET/overage/debt report the not-yet-live plan (e.g.
+  // scheduled PPU) while included usage still belongs to the occupying Starter.
+  const occupyingCanceled = pickOccupyingCanceledSubscription(listed);
+  if (occupyingCanceled) {
+    return occupyingCanceled;
+  }
+
+  // Display fallback: scheduled-only wallets (no live or occupying row yet).
   const present = listed.filter((item) =>
     isPresentSubscriptionStatus(item.status),
   );
@@ -414,9 +419,7 @@ export function pickAppUserSubscriptionToReport(
     return primaryPresent;
   }
 
-  // Cancel-at-period-end still occupies the customer slot until activeTo.
-  // Surface it so GET/checkout can restore+change instead of create→409.
-  return pickOccupyingCanceledSubscription(listed) ?? null;
+  return null;
 }
 
 /** Prefer an active paid plan subscription over the app starter plan when both exist.
@@ -428,6 +431,40 @@ export async function getPrimaryOpenMeterSubscriptionForAppUser(input: {
 }): Promise<OpenMeterSubscriptionView | null> {
   const primary = await selectPrimaryOpenMeterSubscriptionForAppUser(input);
   return primary ? enrichSubscriptionActiveWindow(primary) : null;
+}
+
+/**
+ * Scheduled successor for an app end-user (e.g. next-cycle plan change), if any.
+ * Excludes the live primary row.
+ */
+export async function getPendingOpenMeterSubscriptionForAppUser(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<OpenMeterSubscriptionView | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const customer = await ensureOpenMeterCustomerForAppUser({
+    client: getHostedAdminClient(),
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  }).catch(() => null);
+  if (!customer?.id) {
+    return null;
+  }
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    getHostedAdminClient(),
+    customer.id,
+  );
+  const primary = await selectPrimaryOpenMeterSubscriptionForAppUser(input);
+  const pending =
+    listed.find(
+      (s) =>
+        Boolean(s.id) &&
+        isScheduledSubscriptionStatus(s.status) &&
+        s.id !== primary?.id,
+    ) ?? null;
+  return pending ? enrichSubscriptionActiveWindow(pending) : null;
 }
 
 export function isOpenMeterSubscriptionActive(status: string): boolean {

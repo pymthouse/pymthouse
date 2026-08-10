@@ -82,6 +82,49 @@ test("defaultSubscriptionChangeTiming upgrades immediate, else next cycle", () =
   );
 });
 
+test("defaultSubscriptionChangeTiming ends Starter included immediately on PPU", () => {
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "0",
+      targetPriceAmount: "0",
+      currentPlanType: "free",
+      targetPlanType: "usage",
+      currentIsStarterDefault: true,
+    }),
+    "immediate",
+  );
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "0",
+      targetPriceAmount: "0",
+      currentPlanType: "subscription",
+      targetPlanType: "usage",
+      currentIsStarterDefault: true,
+    }),
+    "immediate",
+  );
+  // Paid downgrade to cheaper plan stays next cycle
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "20",
+      targetPriceAmount: "0",
+      currentPlanType: "subscription",
+      targetPlanType: "usage",
+    }),
+    "next_billing_cycle",
+  );
+  // PPU → PPU same price stays next cycle
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "0",
+      targetPriceAmount: "0",
+      currentPlanType: "usage",
+      targetPlanType: "usage",
+    }),
+    "next_billing_cycle",
+  );
+});
+
 test("neonSubscriptionStatusAfterPlanChange is pending when checkout is required", () => {
   assert.equal(
     neonSubscriptionStatusAfterPlanChange({

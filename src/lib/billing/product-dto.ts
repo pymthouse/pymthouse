@@ -128,7 +128,7 @@ export function toPlanApiRow(input: {
     billingCycle: plan.billingCycle,
     chargeThresholdUsdMicros: plan.chargeThresholdUsdMicros ?? null,
     ...(isPayPerUsePlanType(plan.type)
-      ? { resolvedBehavior: resolvedPayPerUseBehavior(plan.chargeThresholdUsdMicros) }
+      ? { resolvedBehavior: resolvedPayPerUseBehavior() }
       : {}),
     isNetworkDefault: plan.isNetworkDefault,
     isStarterDefault: plan.isStarterDefault,

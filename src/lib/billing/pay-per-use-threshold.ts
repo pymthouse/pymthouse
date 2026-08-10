@@ -6,10 +6,12 @@
  * billing profiles carry no cycle of their own, so a truly cycle-less plan is
  * not representable. Per the issue's documented fallback, Pay-Per-Use plans
  * keep a NOMINAL internal cycle for Konnect's sake (a no-op reconciliation
- * boundary, never the primary charge trigger) and all charging is driven by
- * the charge threshold: progressive billing + the clearinghouse threshold
- * worker invoice when accrued usage reaches the threshold, settling prepaid
- * credits first, then auto-debiting the default payment method.
+ * boundary, never the primary charge trigger). Plan `chargeThresholdUsdMicros`
+ * remains the builder-facing PPU threshold for display / plan DTO semantics.
+ * Live spend past prepaid $0 is gated by overage eligibility + optional
+ * soft-negative debt ceiling (mid-cycle collection via OM progressive invoicing
+ * + settlement / Stripe app), not by syncing the plan threshold into
+ * app billing config.
  *
  * Client-safe (no DB/Node imports) so the plan dialog can render the resolved
  * behaviour live.
@@ -96,13 +98,11 @@ export function formatUsdMicrosForDisplay(usdMicros: string): string {
  * Plain-language reading of a Pay-Per-Use plan's settlement behaviour
  * (#348 resolved-behavior pattern). Rendering this avoids the reader inferring
  * cycle-based invoicing from a plan that has no user-facing cycle.
+ *
+ * Collection timing is app-scoped, not plan-scoped — the overage limit and its
+ * lead window decide when an invoice is raised — so this reads the same for
+ * every Pay-Per-Use plan.
  */
-export function resolvedPayPerUseBehavior(
-  chargeThresholdUsdMicros: string | null | undefined,
-): string {
-  const threshold = chargeThresholdUsdMicros?.trim();
-  if (!threshold) {
-    return "Pay-per-use — usage settles against prepaid credits; no auto-debit threshold set.";
-  }
-  return `Pay-per-use — charged at every $${formatUsdMicrosForDisplay(threshold)} of usage (credits first).`;
+export function resolvedPayPerUseBehavior(): string {
+  return "Pay-per-use — usage draws down prepaid credits first, then is invoiced automatically as it accrues.";
 }

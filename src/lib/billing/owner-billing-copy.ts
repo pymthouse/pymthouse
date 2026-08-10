@@ -15,7 +15,7 @@ export function billingIntroCopy(input: {
 
   if (input.onPaidPlan) {
     if (input.pressure === "blocked") {
-      return `${paidName} included allowance is used up and no payment method is on file. Link a card — it pays plan renewals and overage — or add prepaid credits.`;
+      return `${paidName} included allowance is used up and no default payment method is on file. Link a card (and set it as default) — it pays plan renewals and overage — or add prepaid credits.`;
     }
     if (input.pressure === "chargeable") {
       return `Prepaid credits, active subscriptions, and platform invoices for your account. On ${paidName}, your default payment method pays the monthly plan fee and overage.`;

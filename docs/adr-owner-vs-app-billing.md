@@ -32,7 +32,7 @@ and the same UI tab:
 | `billing_mode` | Revenue | ✅ per app |
 | `stripe_connected_account_id`, `stripe_*_enabled`, `stripe_onboarding_method` | Revenue | ⚠️ per app — but a Builder has one Stripe account, not one per app |
 | `checkout_success_url`, `checkout_cancel_url`, `default_currency` | Revenue | ✅ per app |
-| `progressive_billing`, `invoice_threshold_usd_micros` | Revenue (Builder → end users) | ✅ per app |
+| `progressive_billing`, `soft_negative_usd_micros`, `invoice_lead_usd_micros` | Revenue (Builder → end users) | ✅ per app |
 | `end_user_cap` | **Cost** | ❌ owner-editable; see Symptom 3 |
 | `application_fee_bps` | **Platform revenue** | ❌ owner-editable; see Symptom 3 |
 

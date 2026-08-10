@@ -130,6 +130,29 @@ test("pickAppUserSubscriptionToReport prefers a live row over a canceled one", (
   );
 });
 
+test("pickAppUserSubscriptionToReport prefers occupying canceled over scheduled successor", () => {
+  const canceledStarter = sub({
+    id: "sub_cape_starter",
+    status: "canceled",
+    planKey: "app_plan_starter",
+    activeTo: "2099-01-01T00:00:00.000Z",
+  });
+  const scheduledPaid = sub({
+    id: "sub_scheduled_ppu",
+    status: "scheduled",
+    planKey: "app_plan_usage",
+    activeFrom: "2099-01-01T00:00:00.000Z",
+  });
+
+  assert.equal(
+    pickAppUserSubscriptionToReport(
+      [scheduledPaid, canceledStarter],
+      isStarterByKey,
+    ),
+    canceledStarter,
+  );
+});
+
 test("pickAppUserSubscriptionToReport reports nothing for ended rows only", () => {
   const ended = sub({ id: "sub_ended", status: "inactive" });
 

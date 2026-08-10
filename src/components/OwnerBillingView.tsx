@@ -433,7 +433,8 @@ export default function OwnerBillingView({
 }>) {
   const pressure = resolveOwnerBillingPressure({
     hasPaymentMethod:
-      data.paymentMethods.length > 0 || data.hasChargeableBillingMethod,
+      data.paymentMethods.some((pm) => pm.isDefault) ||
+      data.hasChargeableBillingMethod,
     creditBalanceUsdMicros: data.creditAllowance?.balanceUsdMicros ?? null,
     subscriptions: data.subscriptions,
   });

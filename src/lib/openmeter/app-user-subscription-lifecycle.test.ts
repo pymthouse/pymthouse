@@ -368,11 +368,10 @@ test("resolveAppUserResumeTarget agrees with the reported pendingCancel", () => 
   assert.equal(appUserSubscriptionResumeHttpStatus("resume_failed"), 502);
 });
 
-test("resolveAppUserResumeTarget ignores a cancel the user switched away from", () => {
-  // After a /change the old row keeps its real cancel-at-period-end while the
-  // successor becomes what GET reports. Konnect refuses to restore the old row
-  // while that successor exists, so resuming it answered 502 for what is really
-  // "nothing to resume" — and GET already reports pendingCancel: null here.
+test("resolveAppUserResumeTarget resumes CAPE primary when a scheduled successor exists", () => {
+  // GET prefers occupying cancel-at-period-end over the scheduled successor, so
+  // pendingCancel belongs to the paid CAPE row and resume must target it (and
+  // clear the scheduled starter). A superseded inactive starter is ignored.
   const listed = [
     sub({
       id: "paid_canceled",
@@ -390,7 +389,9 @@ test("resolveAppUserResumeTarget ignores a cancel the user switched away from", 
     sub({ id: "superseded", planKey: "app_starter", status: "inactive" }),
   ];
 
-  assert.equal(resolveAppUserResumeTarget(listed, "app_starter", null), null);
+  const resume = resolveAppUserResumeTarget(listed, "app_starter", null);
+  assert.equal(resume?.target.id, "paid_canceled");
+  assert.equal(resume?.scheduledStarter?.id, "starter_scheduled");
 });
 
 test("resolveAppUserResumeTarget keeps a cancel-at-period-end primary resumable", () => {

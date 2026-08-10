@@ -21,9 +21,12 @@ export type MerchantTopUpAccountMatches = (
   connectedAccountId: string,
 ) => Promise<boolean>;
 
+export type ResolveAppBillingCurrency = (clientId: string) => Promise<string>;
+
 let topUpClientOwnedByOwnerForTests: TopUpClientOwnedByOwner | null = null;
 let merchantTopUpAccountMatchesForTests: MerchantTopUpAccountMatches | null =
   null;
+let resolveAppBillingCurrencyForTests: ResolveAppBillingCurrency | null = null;
 
 /**
  * Test-only override for top-up ownership checks (Stripe webhook route).
@@ -51,6 +54,46 @@ export function __setMerchantTopUpAccountMatchesForTests(
     );
   }
   merchantTopUpAccountMatchesForTests = fn;
+}
+
+/**
+ * Test-only override for app billing currency resolution (auto top-up).
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setResolveAppBillingCurrencyForTests(
+  fn: ResolveAppBillingCurrency | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setResolveAppBillingCurrencyForTests is only available in test",
+    );
+  }
+  resolveAppBillingCurrencyForTests = fn;
+}
+
+/** Stripe / app currency codes compared case-insensitively. */
+export function normalizeStripeCurrency(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+/**
+ * App settlement currency from `app_billing_config.default_currency`
+ * (defaults to `usd`). Auto top-up create + webhook settle must agree.
+ */
+export async function resolveAppBillingCurrency(
+  clientId: string,
+): Promise<string> {
+  if (resolveAppBillingCurrencyForTests) {
+    return resolveAppBillingCurrencyForTests(clientId);
+  }
+  const app = await getProviderApp(clientId.trim());
+  if (!app) {
+    return "usd";
+  }
+  const config = await getAppBillingConfig(app.id);
+  return normalizeStripeCurrency(config?.defaultCurrency) ?? "usd";
 }
 
 export async function topUpClientOwnedByOwner(
