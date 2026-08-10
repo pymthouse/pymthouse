@@ -87,19 +87,19 @@
   },
   "devDependencies": {
     "@redocly/cli": "^2.43.2",
-    "@turnkey/sdk-server": "^7.0.0",
+    "@turnkey/sdk-server": "^8.1.0",
     "@types/node": "^26.1.2",
     "@types/oidc-provider": "^9.11.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@types/uuid": "^10.0.0",
+    "@types/uuid": "^11.0.0",
     "c8": "^12.0.0",
     "drizzle-kit": "^0.31.10",
-    "eslint": "^9.39.5",
+    "eslint": "^10.8.0",
     "eslint-config-next": "16.2.12",
     "postcss": "^8.5.18",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.23.4",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
