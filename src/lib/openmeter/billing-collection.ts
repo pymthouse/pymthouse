@@ -16,10 +16,12 @@
  */
 
 /**
- * A documented `RecurringPeriodIntervalEnum` member, which avoids OM's
- * heuristic ISO-duration parsing for sub-day values.
+ * ISO-8601 duration, not the `DAY` enum shorthand: Konnect's billing profile
+ * schema validates `recurring_period.interval` with an allOf that rejects the
+ * shorthand (observed live, 400 "workflow [allOf]"), while both Konnect and
+ * the OM SDK accept the canonical duration form.
  */
-export const COLLECTION_INTERVAL = "DAY";
+export const COLLECTION_INTERVAL = "P1D";
 
 /**
  * Anchor on profile creation rather than a shared epoch so tenants collect at
