@@ -5,6 +5,10 @@ import {
   markupPercentForRetailRate,
   resolveEffectiveRetailRateUsd,
 } from "./retail-estimate";
+import {
+  isPayPerUsePlanType,
+  resolvedPayPerUseBehavior,
+} from "./pay-per-use-threshold";
 
 export function deriveSyncState(plan: ResolvedPlanRow["plan"]): BillingSyncState {
   if (plan.type === "free" || plan.isNetworkDefault) {
@@ -122,6 +126,10 @@ export function toPlanApiRow(input: {
     overageRateUsd: plan.overageRateUsd ?? null,
     includedUsdMicros: plan.includedUsdMicros ?? null,
     billingCycle: plan.billingCycle,
+    chargeThresholdUsdMicros: plan.chargeThresholdUsdMicros ?? null,
+    ...(isPayPerUsePlanType(plan.type)
+      ? { resolvedBehavior: resolvedPayPerUseBehavior() }
+      : {}),
     isNetworkDefault: plan.isNetworkDefault,
     isStarterDefault: plan.isStarterDefault,
     discoveryExcludedCapabilities: plan.discoveryExcludedCapabilities ?? null,

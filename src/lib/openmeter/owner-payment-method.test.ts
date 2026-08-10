@@ -188,6 +188,28 @@ test("buildOwnerPaymentMethodList flags Stripe's invoice default", async () => {
   });
 });
 
+test("attached payment methods are not chargeable without a Stripe/Konnect default", async () => {
+  // Regression: Checkout can attach a card while invoice_settings.default_payment_method
+  // stays empty. Gate chargeability must require a default — not items.length > 0.
+  await withStripeKey(async () => {
+    const stripe = fakeStripe({
+      "/payment_methods?limit=100": { data: [CARD, LINK] },
+      "/v1/customers/cus_attached": { invoice_settings: {} },
+    });
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: "cus_attached",
+      konnectDefaultPaymentMethodId: null,
+      deps: { fetchImpl: stripe.fetchImpl, signal: AbortSignal.timeout(5_000) },
+    });
+    assert.equal(items.length > 0, true);
+    assert.equal(
+      items.some((pm) => pm.isDefault),
+      false,
+      "attached-but-not-default must not unlock charge_automatically",
+    );
+  });
+});
+
 test("buildOwnerPaymentMethodList lists merchant customer methods on its Connected Account", async () => {
   await withStripeKey(async () => {
     const stripeAccounts: string[] = [];
@@ -206,7 +228,6 @@ test("buildOwnerPaymentMethodList lists merchant customer methods on its Connect
     const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: "cus_connected",
       konnectDefaultPaymentMethodId: null,
-      defaultFirstPaymentMethod: true,
       deps: {
         fetchImpl,
         signal: AbortSignal.timeout(5_000),
@@ -216,7 +237,8 @@ test("buildOwnerPaymentMethodList lists merchant customer methods on its Connect
 
     assert.deepEqual(
       items.map((item) => ({ id: item.id, isDefault: item.isDefault })),
-      [{ id: "pm_card", isDefault: true }],
+      [{ id: "pm_card", isDefault: false }],
+      "attached-only Connect cards must not fake a Stripe invoice default",
     );
     assert.deepEqual(stripeAccounts, ["acct_merchant", "acct_merchant"]);
   });

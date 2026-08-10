@@ -424,11 +424,12 @@ async function resolveOwnerStripeRefs(
 }
 
 /**
- * Best-effort list of payment methods for the billing page. Duplicate Stripe
- * Link methods are collapsed to one (default preferred); extras are hidden
- * from the list but not detached — mutating Stripe belongs on owner-initiated
- * PATCH/DELETE, not this read path.
+ * List payment methods for the billing page. Duplicate Stripe Link methods are
+ * collapsed to one (default preferred); extras are hidden from the list but
+ * not detached — mutating Stripe belongs on owner-initiated PATCH/DELETE, not
+ * this read path.
  * Returns [] when OpenMeter/Stripe is unavailable or none is on file.
+ * Provider failures propagate so M2M callers can map them to 502/503.
  */
 export async function listOwnerPaymentMethods(
   ownerUserId: string,
@@ -438,23 +439,18 @@ export async function listOwnerPaymentMethods(
     return [];
   }
 
-  try {
-    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-    const refs = await resolveOwnerStripeRefs(trimmed, signal);
-    if (!refs) {
-      return [];
-    }
-    const deps: StripeDeps = { fetchImpl: fetch, signal };
-    const { items } = await buildOwnerPaymentMethodList({
-      stripeCustomerId: refs.stripeCustomerId,
-      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-      deps,
-    });
-    return items;
-  } catch (err) {
-    console.warn("owner-payment-method: lookup failed", sanitizeForLog(err));
+  const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+  const refs = await resolveOwnerStripeRefs(trimmed, signal);
+  if (!refs) {
     return [];
   }
+  const deps: StripeDeps = { fetchImpl: fetch, signal };
+  const { items } = await buildOwnerPaymentMethodList({
+    stripeCustomerId: refs.stripeCustomerId,
+    konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+    deps,
+  });
+  return items;
 }
 
 /**
@@ -716,6 +712,36 @@ export async function setOwnerDefaultPaymentMethod(
 
     return result;
   });
+}
+
+/**
+ * After setup Checkout return, call PATCH `{ ensureDefault: true }` from the
+ * client (authenticated) to promote the first attached payment method to
+ * Stripe+Konnect default when none is set yet. Do not mutate from GET
+ * `?pm=attached` page renders. Plane A OM webhooks usually do this; this
+ * covers lag / missed deliveries.
+ */
+export async function ensureOwnerDefaultPaymentMethodIfMissing(
+  ownerUserId: string,
+): Promise<{ promoted: boolean; paymentMethodId: string | null }> {
+  const trimmed = ownerUserId.trim();
+  if (!trimmed) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  const chargeable = await ownerHasChargeablePaymentMethod(trimmed);
+  if (chargeable === true) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  const methods = await listOwnerPaymentMethods(trimmed);
+  const first = methods[0]?.id?.trim();
+  if (!first) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  const result = await setOwnerDefaultPaymentMethod(trimmed, first);
+  return {
+    promoted: result.updated,
+    paymentMethodId: result.paymentMethodId,
+  };
 }
 
 /**

@@ -45,7 +45,7 @@ MoonPay top-up path. Builder apps reuse it unchanged.
 | Owner plan | Spendable = 0 | Mint / activation cost check |
 | --- | --- | --- |
 | **Owner Sandbox Starter** | Hard stop | Fail mint (`trial_credits_exhausted`) and block new end-user provisioning |
-| **Owner Paid tier** + chargeable PM | Allow past zero | `ownerWalletAllowsOverageInvoicing` (any `pymthouse_owner_paid*`) → overage invoices; mint may continue |
+| **Owner Paid tier** + default PM | Allow past zero | `ownerWalletAllowsOverageInvoicing` (any `pymthouse_owner_paid*`) → overage invoices; mint may continue |
 
 A card alone while still on Sandbox Starter does **not** unlock overage — an explicit
 **Upgrade** to an Owner Paid tier is required (attach PM ≠ subscribe). Verified by
@@ -138,8 +138,10 @@ Notes:
   an owner with neither spendable balance nor Paid+PM overage path is unbillable — that
   is what the cost rail refuses, because the usage would be uncollectable by construction.
 - Chargeability for the overage path uses `ownerWalletAllowsOverageInvoicing`
-  (`owner-paid-plan.ts`), which requires an Owner Paid tier subscription **and** a chargeable
-  Stripe default PM. The cheaper prepaid/balance read runs first; PM/overage lookup runs
+  (`owner-paid-plan.ts`), which requires an Owner Paid tier subscription **and** a Stripe
+  **default** PM (`invoice_settings.default_payment_method` / Konnect
+  `default_payment_method_id`) — attached-but-not-default does not unlock. The cheaper
+  prepaid/balance read runs first; PM/overage lookup runs
   only after spendable is exhausted. Lookup returns `null` when platform billing is
   unconfigured or Stripe/OpenMeter is unreachable, and `null` fails open on the
   **activation** path: an outage must not freeze provisioning.
@@ -223,7 +225,7 @@ selection follows RFC 9110 §15.5.
 
 | Condition | Status | `code` |
 |---|---|---|
-| Owner wallet empty **and** no payment method | `402` | `owner_payment_method_required` |
+| Owner wallet empty **and** no Paid+default-PM overage path | `402` | `owner_payment_method_required` |
 | Per-app user cap reached | `403` | `end_user_cap_reached` |
 | Paid plan / checkout without Connect | `403` | `stripe_connect_required` |
 | Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |

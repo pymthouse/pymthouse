@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { previewOverageCeiling } from "@/lib/billing/billing-state";
 import {
   sanitizeUsdCentsInput,
   usdCentsDisplayToMicros,
@@ -27,7 +28,8 @@ type StripeStatus = {
   defaultCurrency: string;
   connectedAt: string | null;
   progressiveBilling?: boolean;
-  invoiceThresholdUsdMicros?: string | null;
+  invoiceLeadUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   stripeConnectedAccountId?: string | null;
   stripeOnboardingMethod?: string | null;
   stripeChargesEnabled?: boolean;
@@ -176,8 +178,8 @@ function applyStatusToForm(
   set.progressiveBilling(nextStatus.progressiveBilling ?? true);
   set.billingMode(nextStatus.billingMode === "merchant" ? "merchant" : "owner_rollup");
   set.thresholdDisplay(
-    nextStatus.invoiceThresholdUsdMicros
-      ? usdMicrosToCentsDisplay(nextStatus.invoiceThresholdUsdMicros)
+    nextStatus.softNegativeUsdMicros
+      ? usdMicrosToCentsDisplay(nextStatus.softNegativeUsdMicros)
       : "",
   );
   set.supplierTaxId(nextStatus.supplierTaxId?.trim() || "");
@@ -190,9 +192,16 @@ function parseThresholdMicros(display: string): string | null {
   }
   const micros = usdCentsDisplayToMicros(trimmed);
   if (micros == null) {
-    throw new Error("Invoice threshold must be a valid dollar amount");
+    throw new Error("Overage limit must be a valid dollar amount");
   }
   return micros;
+}
+
+/** Preview-safe variant: a half-typed amount previews as "no limit", not a throw. */
+function thresholdMicrosForPreview(display: string): string | null {
+  const trimmed = display.trim();
+  if (trimmed === "") return null;
+  return usdCentsDisplayToMicros(trimmed);
 }
 
 function connectUiFlags(status: StripeStatus | null) {
@@ -302,10 +311,10 @@ async function requestSaveBillingSettings(input: {
   setters.setError(null);
   setters.setSettingsSaved(null);
   try {
-    const invoiceThresholdUsdMicros = parseThresholdMicros(input.thresholdDisplay);
+    const softNegativeUsdMicros = parseThresholdMicros(input.thresholdDisplay);
     const payload: Record<string, unknown> = {
       progressiveBilling: input.progressiveBilling,
-      invoiceThresholdUsdMicros,
+      softNegativeUsdMicros,
       billingMode: input.billingMode,
     };
     // Always send when Connect is linked so merchant switch can satisfy tax_id
@@ -616,14 +625,19 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
     setSettingsSaved,
     onSave,
   } = props;
+  const preview = previewOverageCeiling(
+    thresholdMicrosForPreview(thresholdDisplay),
+  );
   return (
     <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">
       <div>
-        <h3 className="text-base font-semibold text-zinc-100">Mid-cycle invoicing</h3>
+        <h3 className="text-base font-semibold text-zinc-100">Overage limit</h3>
         <p className="mt-1 text-xs text-zinc-500">
-          Progressive billing allows OpenMeter to invoice unpaid usage before the
-          billing cycle ends. Set an optional dollar threshold; the clearinghouse
-          worker charges when gathering invoices reach that amount.
+          How much unbilled usage an end user may run up once their credits are
+          gone. Usage past credits is invoiced automatically; settlement
+          (merchant Connect) or the OpenMeter Stripe app (owner) collects
+          asynchronously, and this limit is the headroom that keeps requests
+          flowing meanwhile.
         </p>
       </div>
       <label className="flex items-start gap-2 text-sm text-zinc-200">
@@ -645,32 +659,48 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
         </span>
       </label>
       <div>
-        <label htmlFor="invoice-threshold" className="block text-xs text-zinc-500 mb-1">
-          Invoice when unpaid usage reaches (USD)
+        <label htmlFor="soft-negative" className="block text-xs text-zinc-500 mb-1">
+          Overage limit (USD)
         </label>
         <div className="flex items-center gap-2">
           <span className="text-sm text-zinc-500">$</span>
           <input
-            id="invoice-threshold"
+            id="soft-negative"
             type="text"
             inputMode="decimal"
-            placeholder="e.g. 10.00 (leave blank to disable)"
-            disabled={!canManageBilling || busy || !progressiveBilling}
+            placeholder="e.g. 5.00 (blank = no limit)"
+            disabled={!canManageBilling || busy}
             value={thresholdDisplay}
             onChange={(e) => {
               setThresholdDisplay(sanitizeUsdCentsInput(e.target.value));
               setSettingsSaved(null);
             }}
+            aria-invalid={preview.error != null}
+            aria-describedby="overage-limit-preview"
             className="w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:opacity-50"
           />
         </div>
+      </div>
+      <div id="overage-limit-preview" aria-live="polite" className="text-xs">
+        {preview.error ? (
+          <p className="text-amber-400">{preview.error}</p>
+        ) : (
+          <>
+            <p className="text-zinc-300">{preview.summary}</p>
+            <ul className="mt-1 space-y-0.5 text-zinc-500">
+              {preview.bullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
       {canManageBilling && (
         <div className="flex items-center gap-3">
           <button
             type="button"
             className={BUTTON_CLASS}
-            disabled={busy}
+            disabled={busy || preview.error != null}
             onClick={onSave}
           >
             Save invoicing settings

@@ -19,7 +19,63 @@ export type StripePaymentMethodAttachedPayload = {
   clientId: string;
   externalUserId: string;
   checkoutSessionId: string | null;
+  /** Stripe `pm_…` when present on setup_intent / checkout session. */
+  paymentMethodId: string | null;
 };
+
+function paymentMethodIdFromStripeObject(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const obj = value as {
+    id?: unknown;
+    object?: unknown;
+    payment_method?: unknown;
+    setup_intent?: unknown;
+  };
+  // payment_method.attached: the event object *is* the PaymentMethod.
+  if (
+    obj.object === "payment_method" &&
+    typeof obj.id === "string" &&
+    obj.id.startsWith("pm_")
+  ) {
+    return obj.id.trim();
+  }
+  if (typeof obj.payment_method === "string" && obj.payment_method.startsWith("pm_")) {
+    return obj.payment_method.trim();
+  }
+  if (obj.payment_method && typeof obj.payment_method === "object") {
+    const nested = (obj.payment_method as { id?: unknown }).id;
+    if (typeof nested === "string" && nested.startsWith("pm_")) {
+      return nested.trim();
+    }
+  }
+  if (obj.setup_intent && typeof obj.setup_intent === "object") {
+    return paymentMethodIdFromStripeObject(obj.setup_intent);
+  }
+  // Fallback: bare pm_ id on the object (attached events without object type).
+  if (typeof obj.id === "string" && obj.id.startsWith("pm_")) {
+    return obj.id.trim();
+  }
+  return null;
+}
+
+/** Extract `pm_…` from a checkout.session / setup_intent Stripe event body. */
+export function parseStripeAttachedPaymentMethodId(
+  rawBody: string,
+): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as { data?: { object?: unknown } };
+  return paymentMethodIdFromStripeObject(event.data?.object);
+}
 
 function checkoutRestoreMetadata(
   value: unknown,
@@ -49,6 +105,7 @@ function checkoutRestoreMetadata(
       typeof sessionId === "string" && sessionId.startsWith("cs_")
         ? sessionId
         : null,
+    paymentMethodId: paymentMethodIdFromStripeObject(value),
   };
 }
 
@@ -56,6 +113,7 @@ function checkoutRestoreMetadata(
  * Extract an app-user restore target from Stripe's durable completion signals.
  * Connect Checkout stamps both session and SetupIntent metadata; platform
  * Checkout is resolved by its persisted Checkout-session id instead.
+ * `payment_method.attached` is accepted when Connect metadata is present.
  */
 export function parseStripePaymentMethodAttached(
   rawBody: string,
@@ -75,11 +133,53 @@ export function parseStripePaymentMethodAttached(
   };
   if (
     event.type !== "checkout.session.completed" &&
-    event.type !== "setup_intent.succeeded"
+    event.type !== "setup_intent.succeeded" &&
+    event.type !== "payment_method.attached"
   ) {
     return null;
   }
   return checkoutRestoreMetadata(event.data?.object);
+}
+
+/**
+ * `payment_method.attached` without pymthouse metadata — use Stripe customer id
+ * for Neon reverse lookup. Returns null for other event types.
+ */
+export function parseStripePaymentMethodAttachedCustomer(
+  rawBody: string,
+): { stripeCustomerId: string; paymentMethodId: string | null } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const event = parsed as {
+    type?: unknown;
+    data?: { object?: unknown };
+  };
+  if (event.type !== "payment_method.attached") {
+    return null;
+  }
+  const obj = event.data?.object;
+  if (!obj || typeof obj !== "object") {
+    return null;
+  }
+  const customer = (obj as { customer?: unknown }).customer;
+  const stripeCustomerId =
+    typeof customer === "string" && customer.startsWith("cus_")
+      ? customer.trim()
+      : null;
+  if (!stripeCustomerId) {
+    return null;
+  }
+  const id = (obj as { id?: unknown }).id;
+  const paymentMethodId =
+    typeof id === "string" && id.startsWith("pm_") ? id.trim() : null;
+  return { stripeCustomerId, paymentMethodId };
 }
 
 /** Extract the completed Checkout session id for persisted-session lookup. */
@@ -119,41 +219,79 @@ export function requireStripeWebhookSecret(): string {
 }
 
 /**
- * Prefer a dedicated Connect endpoint secret; fall back to the platform
- * webhook secret only when `STRIPE_CONNECT_WEBHOOK_SECRET` is unset/empty.
+ * Prefer a dedicated Connect endpoint secret. Does not fall back to the
+ * platform webhook secret — Connect deliveries must be verified with
+ * `STRIPE_CONNECT_WEBHOOK_SECRET`.
  */
 export function resolveConnectWebhookSecret(): string {
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
   if (!connectSecret) {
-    return requireStripeWebhookSecret();
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Connect Webhooks)",
+    );
   }
   if (!connectSecret.startsWith("whsec_")) {
     throw new Error(
-      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_",
     );
   }
   return connectSecret;
 }
 
+/** Which Stripe endpoint a verified signature came from. */
+export type StripeWebhookSecretKind = "platform" | "connect";
+
+export type StripeWebhookSecret = {
+  secret: string;
+  kind: StripeWebhookSecretKind;
+};
+
 /**
- * The shared ingress accepts both platform and Connect events. When Stripe
- * endpoints use distinct secrets, accept either verified signature.
+ * All signing secrets the shared webhook route accepts, deduplicated and
+ * tagged by endpoint. The route receives both Connect account events and
+ * platform account events (e.g. top-up `checkout.session.completed`), and each
+ * Stripe endpoint signs with its own secret — verification must try every
+ * configured one, and prepaid credit settlement must additionally require the
+ * `platform` kind.
+ *
+ * Platform is listed first so it wins the identical-secret edge case (one
+ * endpoint configured for both roles) rather than settling top-ups as Connect.
+ *
+ * A malformed secret is skipped when the other is valid, so a bad platform
+ * value cannot take down Connect webhooks (and vice versa). Throws only when
+ * no usable secret remains.
  */
-export function resolveStripeWebhookSecrets(): string[] {
+export function resolveStripeWebhookSecretsByKind(): StripeWebhookSecret[] {
   const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  const secrets = [platformSecret, connectSecret].filter(
-    (secret): secret is string => Boolean(secret),
+  const resolved: StripeWebhookSecret[] = [];
+  if (platformSecret?.startsWith("whsec_")) {
+    resolved.push({ secret: platformSecret, kind: "platform" });
+  }
+  if (connectSecret?.startsWith("whsec_") && connectSecret !== platformSecret) {
+    resolved.push({ secret: connectSecret, kind: "connect" });
+  }
+  if (resolved.length > 0) {
+    return resolved;
+  }
+  if (connectSecret) {
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  if (platformSecret) {
+    throw new Error(
+      "STRIPE_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  throw new Error(
+    "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
   );
-  if (secrets.length === 0) {
-    return [requireStripeWebhookSecret()];
-  }
-  for (const secret of secrets) {
-    if (!secret.startsWith("whsec_")) {
-      throw new Error("Stripe webhook secrets must start with whsec_");
-    }
-  }
-  return [...new Set(secrets)];
+}
+
+/** Secrets only, for callers that do not care which endpoint signed. */
+export function resolveStripeWebhookSecrets(): string[] {
+  return resolveStripeWebhookSecretsByKind().map((entry) => entry.secret);
 }
 
 /**

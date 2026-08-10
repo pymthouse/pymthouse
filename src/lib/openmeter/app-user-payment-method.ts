@@ -37,7 +37,6 @@ import {
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import {
   clearKonnectStripeDefaultPaymentMethod,
-  getKonnectDefaultPaymentMethodId,
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
   setKonnectStripeDefaultPaymentMethod,
@@ -55,9 +54,53 @@ export type AppUserPaymentMethodCheckoutResult = {
 export type AppUserPaymentMethodRestoreTarget = {
   clientId: string;
   externalUserId: string;
+  paymentMethodId?: string | null;
 };
 
-async function recordAppUserPaymentMethodCheckout(input: {
+type RestoreAfterAttachFn = (
+  input: AppUserPaymentMethodRestoreTarget,
+) => Promise<void>;
+type RestoreForCheckoutSessionFn = (
+  sessionId: string,
+  paymentMethodId?: string | null,
+) => Promise<boolean>;
+
+let restoreAfterAttachForTests: RestoreAfterAttachFn | null = null;
+let restoreForCheckoutSessionForTests: RestoreForCheckoutSessionFn | null =
+  null;
+
+/**
+ * Test-only override for webhook restore after payment_method attach.
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+  fn: RestoreAfterAttachFn | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests is only available in test",
+    );
+  }
+  restoreAfterAttachForTests = fn;
+}
+
+/**
+ * Test-only override for Checkout-session restore mapping.
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setRestoreAppUserBillingProfileForCheckoutSessionForTests(
+  fn: RestoreForCheckoutSessionFn | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setRestoreAppUserBillingProfileForCheckoutSessionForTests is only available in test",
+    );
+  }
+  restoreForCheckoutSessionForTests = fn;
+}
+
+/** Persist Checkout session → app-user mapping for webhook restore without metadata. */
+export async function recordAppUserPaymentMethodCheckout(input: {
   sessionId: string | null;
   clientId: string;
   externalUserId: string;
@@ -80,10 +123,17 @@ async function recordAppUserPaymentMethodCheckout(input: {
  * Uses the compound `{publicClientId}:{externalUserId}` customer — never the
  * owner-wallet path — matching {@link createAppUserPaymentMethodCheckout}.
  * Reassigning the mode-correct profile is safe for webhook retries.
+ *
+ * When a `paymentMethodId` is known (or the first attached method), promote it
+ * to the Stripe/Konnect default so charge_automatically and overage gates work.
  */
 export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
   input: AppUserPaymentMethodRestoreTarget,
 ): Promise<void> {
+  if (restoreAfterAttachForTests) {
+    await restoreAfterAttachForTests(input);
+    return;
+  }
   const client = getHostedAdminClient();
   const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const customerKey = buildOpenMeterCustomerKey(
@@ -97,11 +147,140 @@ export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
     customerId: customer.id,
     customerKey: customer.key,
   });
+  await ensureAppUserDefaultPaymentMethodAfterAttach({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    paymentMethodId: input.paymentMethodId,
+  });
+}
+
+/**
+ * Promote a just-attached PM to the Stripe invoice default (and Konnect
+ * pointer when available) when the customer has no default yet.
+ * Failures throw so Stripe webhooks return 500 and retry.
+ */
+export async function ensureAppUserDefaultPaymentMethodAfterAttach(input: {
+  clientId: string;
+  externalUserId: string;
+  paymentMethodId?: string | null;
+}): Promise<void> {
+  const chargeable = await appUserHasChargeablePaymentMethod(input);
+  if (chargeable === true) {
+    return;
+  }
+  if (chargeable === null) {
+    throw new Error("billing payment method lookup failed");
+  }
+  let paymentMethodId = input.paymentMethodId?.trim() || null;
+  if (!paymentMethodId) {
+    const refs = await resolveAppUserStripeRefs(input);
+    if (!refs) {
+      throw new Error("app user Stripe customer not found for default promotion");
+    }
+    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: refs.stripeCustomerId,
+      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+      deps: {
+        fetchImpl: fetch,
+        signal,
+        stripeAccount: refs.stripeAccount,
+      },
+    });
+    // Stripe lists newest first; use the newest attached method.
+    paymentMethodId = items[0]?.id?.trim() || null;
+  }
+  if (!paymentMethodId) {
+    throw new Error("no payment method available to promote as default");
+  }
+  const result = await setAppUserDefaultPaymentMethod({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    paymentMethodId,
+  });
+  if (!result.updated) {
+    throw new Error("failed to set Stripe invoice default payment method");
+  }
+  const verified = await appUserHasChargeablePaymentMethod(input);
+  if (verified !== true) {
+    throw new Error(
+      "Stripe invoice default payment method not chargeable after promote",
+    );
+  }
+}
+
+/**
+ * After setup Checkout return, call PATCH `{ ensureDefault: true }` from the
+ * client to promote the first attached payment method when none is default yet.
+ * Covers lag / missed Connect webhook deliveries (mirrors owner wallet).
+ */
+export async function ensureAppUserDefaultPaymentMethodIfMissing(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<{ promoted: boolean; paymentMethodId: string | null }> {
+  const chargeable = await appUserHasChargeablePaymentMethod(input);
+  if (chargeable === true) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  if (chargeable === null) {
+    throw new Error("billing payment method lookup failed");
+  }
+  const methods = await listAppUserPaymentMethods(input);
+  const first = methods[0]?.id?.trim();
+  if (!first) {
+    return { promoted: false, paymentMethodId: null };
+  }
+  await ensureAppUserDefaultPaymentMethodAfterAttach({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    paymentMethodId: first,
+  });
+  return { promoted: true, paymentMethodId: first };
+}
+
+/**
+ * Stripe invoice default `pm_…` for this app user, or null when none.
+ * Merchant Connect reads the Connected Account customer; platform uses Konnect.
+ * Throws when chargeability lookup fails (unknown) so callers fail closed.
+ */
+export async function resolveAppUserDefaultPaymentMethodId(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<string | null> {
+  const chargeable = await appUserHasChargeablePaymentMethod(input);
+  if (chargeable === null) {
+    throw new Error("billing payment method lookup failed");
+  }
+  if (!chargeable) {
+    return null;
+  }
+  const refs = await resolveAppUserStripeRefs(input);
+  if (!refs) {
+    return null;
+  }
+  if (refs.konnectDefaultPaymentMethodId) {
+    return refs.konnectDefaultPaymentMethodId;
+  }
+  const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+  const { items } = await buildOwnerPaymentMethodList({
+    stripeCustomerId: refs.stripeCustomerId,
+    konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+    deps: {
+      fetchImpl: fetch,
+      signal,
+      stripeAccount: refs.stripeAccount,
+    },
+  });
+  return items.find((pm) => pm.isDefault)?.id?.trim() || null;
 }
 
 export async function restoreAppUserBillingProfileForCheckoutSession(
   sessionId: string,
+  paymentMethodId?: string | null,
 ): Promise<boolean> {
+  if (restoreForCheckoutSessionForTests) {
+    return restoreForCheckoutSessionForTests(sessionId, paymentMethodId);
+  }
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     return false;
@@ -133,7 +312,10 @@ export async function restoreAppUserBillingProfileForCheckoutSession(
   if (!target?.clientId || !target.externalUserId) {
     return false;
   }
-  await restoreAppUserBillingProfileAfterPaymentMethodAttached(target);
+  await restoreAppUserBillingProfileAfterPaymentMethodAttached({
+    ...target,
+    paymentMethodId,
+  });
   return true;
 }
 
@@ -197,8 +379,10 @@ export function resolveAppUserCheckoutReturnUrl(
 
 /**
  * List payment methods on the app end-user's Stripe customer (not owner wallet).
- * Lookup-only — returns [] when the customer does not exist yet.
- * Best-effort empty list on transport failures (parity with owner list).
+ * Lookup-only — returns [] when the customer does not exist yet / Connect is
+ * not ready / Stripe is unconfigured. Provider failures propagate so wallet
+ * M2M (`…/billing/wallet/payment-methods`) can map them to 502/503; UI list
+ * routes should catch and fail open to `[]`.
  */
 export async function listAppUserPaymentMethods(input: {
   clientId: string;
@@ -213,71 +397,112 @@ export async function listAppUserPaymentMethods(input: {
     return [];
   }
 
-  try {
-    const billingConfig = await getAppBillingConfig(clientId);
-    if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
-      if (!isMerchantConnectPaymentsReady(billingConfig)) {
-        return [];
-      }
-      const connectedAccountId =
-        billingConfig?.stripeConnectedAccountId?.trim() || "";
-      const merchantCustomer = await getAppUserStripeCustomer({
-        clientId,
-        externalUserId,
-      });
-      if (
-        !connectedAccountId ||
-        merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
-        !merchantCustomer.stripeCustomerId?.trim()
-      ) {
-        return [];
-      }
-
-      const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-      const { items } = await buildOwnerPaymentMethodList({
-        stripeCustomerId: merchantCustomer.stripeCustomerId,
-        konnectDefaultPaymentMethodId: null,
-        defaultFirstPaymentMethod: true,
-        deps: {
-          fetchImpl: fetch,
-          signal,
-          stripeAccount: connectedAccountId,
-        },
-      });
-      return items;
-    }
-
-    if (!isHostedAdminClientAvailable()) {
+  const billingConfig = await getAppBillingConfig(clientId);
+  if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
+    if (!isMerchantConnectPaymentsReady(billingConfig)) {
       return [];
     }
-    const client = getHostedAdminClient();
-    const publicClientId = await resolveOpenMeterMeterClientId(clientId);
-    const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-    const customer = await findOpenMeterCustomerByKey(client, customerKey);
-    const customerId = customer?.id?.trim();
-    if (!customerId) {
+    const connectedAccountId =
+      billingConfig?.stripeConnectedAccountId?.trim() || "";
+    const merchantCustomer = await getAppUserStripeCustomer({
+      clientId,
+      externalUserId,
+    });
+    if (
+      !connectedAccountId ||
+      merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
+      !merchantCustomer.stripeCustomerId?.trim()
+    ) {
       return [];
     }
+
     const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-    const konnect = await getKonnectStripeBillingRefs(customerId, signal);
-    const stripeCustomerId =
-      konnect.stripeCustomerId ??
-      (await getStripeCustomerAppDataId({
-        client,
-        customerId,
-      }));
-    if (!stripeCustomerId) {
-      return [];
-    }
     const { items } = await buildOwnerPaymentMethodList({
-      stripeCustomerId,
-      konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
-      deps: { fetchImpl: fetch, signal },
+      stripeCustomerId: merchantCustomer.stripeCustomerId,
+      konnectDefaultPaymentMethodId: null,
+      deps: {
+        fetchImpl: fetch,
+        signal,
+        stripeAccount: connectedAccountId,
+      },
     });
     return items;
-  } catch (err) {
-    console.warn("app-user-payment-method: list failed", sanitizeForLog(err));
+  }
+
+  if (!isHostedAdminClientAvailable()) {
     return [];
+  }
+  const client = getHostedAdminClient();
+  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
+  const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
+  const customer = await findOpenMeterCustomerByKey(client, customerKey);
+  const customerId = customer?.id?.trim();
+  if (!customerId) {
+    return [];
+  }
+  const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+  const konnect = await getKonnectStripeBillingRefs(customerId, signal);
+  const stripeCustomerId =
+    konnect.stripeCustomerId ??
+    (await getStripeCustomerAppDataId({
+      client,
+      customerId,
+    }));
+  if (!stripeCustomerId) {
+    return [];
+  }
+  const { items } = await buildOwnerPaymentMethodList({
+    stripeCustomerId,
+    konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
+    deps: { fetchImpl: fetch, signal },
+  });
+  return items;
+}
+
+/**
+ * Whether Stripe can charge this app user's default payment method.
+ * `null` = unknown (Stripe/OM outage) — mint/signer must fail closed on overage.
+ * Merchant mode requires Connect-ready + customer on the connected account.
+ */
+export async function appUserHasChargeablePaymentMethod(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<boolean | null> {
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return false;
+  }
+  if (!stripeSecretKeyOrNull()) {
+    return null;
+  }
+
+  try {
+    const refs = await resolveAppUserStripeRefs({ clientId, externalUserId });
+    if (!refs) {
+      return false;
+    }
+    if (refs.konnectDefaultPaymentMethodId) {
+      return true;
+    }
+    // Default PM only — attached-but-not-default cannot charge_automatically.
+    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
+    const { items } = await buildOwnerPaymentMethodList({
+      stripeCustomerId: refs.stripeCustomerId,
+      konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
+      deps: {
+        fetchImpl: fetch,
+        signal,
+        stripeAccount: refs.stripeAccount,
+      },
+    });
+    return items.some((pm) => pm.isDefault);
+  } catch (err) {
+    console.warn(
+      "app-user-payment-method: chargeability lookup failed",
+      sanitizeForLog(err),
+    );
+    return null;
   }
 }
 
@@ -432,7 +657,9 @@ export async function createAppUserPaymentMethodCheckout(input: {
     );
   }
 
-  const defaultPm = await getKonnectDefaultPaymentMethodId(customer.id);
+  const hasDefault =
+    (await appUserHasChargeablePaymentMethod({ clientId, externalUserId })) ===
+    true;
   const origin = getPublicOrigin();
   const fallback = appSettingsAbsoluteUrl(origin, clientId, "payments");
   const success = resolveAppUserCheckoutReturnUrl(input.successUrl, fallback);
@@ -456,7 +683,7 @@ export async function createAppUserPaymentMethodCheckout(input: {
       checkoutUrl: connectCheckout.checkoutUrl,
       sessionId: connectCheckout.sessionId,
       customerId: customer.id,
-      hasDefaultPaymentMethod: Boolean(defaultPm),
+      hasDefaultPaymentMethod: hasDefault,
     };
   }
 
@@ -477,6 +704,6 @@ export async function createAppUserPaymentMethodCheckout(input: {
     checkoutUrl: checkout.checkoutUrl,
     sessionId: checkout.sessionId,
     customerId: customer.id,
-    hasDefaultPaymentMethod: Boolean(defaultPm),
+    hasDefaultPaymentMethod: hasDefault,
   };
 }

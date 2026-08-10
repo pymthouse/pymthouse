@@ -31,7 +31,7 @@ test("planRequiresPaymentMethod is false for free/starter/network", () => {
   );
 });
 
-test("planRequiresPaymentMethod is true only for paid subscription flat fee", () => {
+test("planRequiresPaymentMethod is true for paid subscription and pay-per-use", () => {
   assert.equal(
     planRequiresPaymentMethod({ type: "subscription", priceAmount: "9.99" }),
     true,
@@ -40,9 +40,14 @@ test("planRequiresPaymentMethod is true only for paid subscription flat fee", ()
     planRequiresPaymentMethod({ type: "subscription", priceAmount: "0" }),
     false,
   );
+  // Usage plans are $0 flat but still need a card for threshold auto-debit.
+  assert.equal(
+    planRequiresPaymentMethod({ type: "usage", priceAmount: "0" }),
+    true,
+  );
   assert.equal(
     planRequiresPaymentMethod({ type: "usage", priceAmount: "9.99" }),
-    false,
+    true,
   );
 });
 
@@ -74,6 +79,49 @@ test("defaultSubscriptionChangeTiming upgrades immediate, else next cycle", () =
       targetPriceAmount: "1",
     }),
     "immediate",
+  );
+});
+
+test("defaultSubscriptionChangeTiming ends Starter included immediately on PPU", () => {
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "0",
+      targetPriceAmount: "0",
+      currentPlanType: "free",
+      targetPlanType: "usage",
+      currentIsStarterDefault: true,
+    }),
+    "immediate",
+  );
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "0",
+      targetPriceAmount: "0",
+      currentPlanType: "subscription",
+      targetPlanType: "usage",
+      currentIsStarterDefault: true,
+    }),
+    "immediate",
+  );
+  // Paid downgrade to cheaper plan stays next cycle
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "20",
+      targetPriceAmount: "0",
+      currentPlanType: "subscription",
+      targetPlanType: "usage",
+    }),
+    "next_billing_cycle",
+  );
+  // PPU → PPU same price stays next cycle
+  assert.equal(
+    defaultSubscriptionChangeTiming({
+      currentPriceAmount: "0",
+      targetPriceAmount: "0",
+      currentPlanType: "usage",
+      targetPlanType: "usage",
+    }),
+    "next_billing_cycle",
   );
 });
 
@@ -132,5 +180,47 @@ test("cancel-at-period-end starter still occupies the customer for create", asyn
       Date.parse("2026-08-07T21:25:20.000Z"),
     ),
     true,
+  );
+});
+
+test("checkout recovery fires for a Konnect canceled row that omits activeTo", async () => {
+  const { listOpenMeterSubscriptionsForCustomer } = await import(
+    "./subscription-read"
+  );
+  const { pickOccupyingCanceledSubscription } = await import(
+    "./subscription-state"
+  );
+
+  // Verbatim `GET /v3/openmeter/subscriptions?filter[customer_id][eq]=…` rows
+  // (normalized by createKonnectFetch): Konnect v3 sends no activeTo at all, so
+  // the activeTo-only occupancy check classified this cancel-at-period-end row
+  // as gone and let subscriptions.create 409 instead of restoring it.
+  const client = {
+    customers: {
+      listSubscriptions: async () => ({
+        items: [
+          {
+            id: "01KZCN0AH450JWA381D2AN7NJK",
+            status: "canceled",
+            customer_id: "01KZCM0S8FNE1TF9ECKF5RA8VP",
+            plan: { id: "01KZA99BCTE062Y562VGRSJ6EP" },
+            billing_anchor: "2026-08-06T23:02:17.378589Z",
+          },
+        ],
+      }),
+    },
+    plans: {
+      get: async () => ({ key: "a6c95d934_plan_397fcf2f" }),
+    },
+  };
+
+  const listed = await listOpenMeterSubscriptionsForCustomer(
+    client as never,
+    "01KZCM0S8FNE1TF9ECKF5RA8VP",
+  );
+  assert.equal(listed[0]?.activeTo, null);
+  assert.equal(
+    pickOccupyingCanceledSubscription(listed)?.id,
+    "01KZCN0AH450JWA381D2AN7NJK",
   );
 });

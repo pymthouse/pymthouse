@@ -316,6 +316,34 @@
       "when": 1786600000000,
       "tag": "0043_app_user_payment_method_checkouts",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0044_plans_charge_threshold",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0045_auto_topup_soft_negative",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0046_invoice_lead_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787000000000,
+      "tag": "0047_drop_app_user_auto_topup",
+      "breakpoints": true
     }
   ]
 }

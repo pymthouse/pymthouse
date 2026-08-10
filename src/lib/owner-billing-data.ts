@@ -1017,8 +1017,7 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       cycle,
       creditAllowance,
       paymentMethods,
-      hasChargeableBillingMethod:
-        paymentMethods.length > 0 || chargeableLookup === true,
+      hasChargeableBillingMethod: chargeableLookup === true,
       subscriptions: displaySubscriptions,
       ownerStarterPlanName,
       ownedApps: ownedApps.map((app) => ({

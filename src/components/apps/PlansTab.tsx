@@ -22,6 +22,7 @@ import {
   parseMarkupPercentInput,
 } from "@/lib/plan-pricing";
 import { validateCapabilityFeatureKeys } from "@/lib/openmeter/capability-features";
+import { resolvedPayPerUseBehavior } from "@/lib/billing/pay-per-use-threshold";
 import { OPENMETER_DOCS } from "@/lib/openmeter/constants";
 import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
@@ -54,6 +55,8 @@ interface PlanRow {
   overageRateUsd: string | null;
   includedUsdMicros: string | null;
   billingCycle: string;
+  chargeThresholdUsdMicros?: string | null;
+  resolvedBehavior?: string;
   discoveryProfileId?: string | null;
   isNetworkDefault?: boolean;
   isStarterDefault?: boolean;
@@ -102,6 +105,8 @@ interface PlanDraft {
   priceAmount: string;
   priceCurrency: string;
   billingCycle: PlanBillingCycle;
+  /** Pay-Per-Use only: invoice/charge threshold in dollars, e.g. "10.00". */
+  chargeThresholdUsdDisplay: string;
   includedUsdDisplay: string;
   defaultMarkupPct: string;
   capabilityKeys: string[];
@@ -320,6 +325,7 @@ function planToDraft(plan: PlanRow): PlanDraft {
     priceAmount: normalizeUsdCentsDisplay(plan.priceAmount || "0"),
     priceCurrency: plan.priceCurrency,
     billingCycle: normalizePlanBillingCycle(plan.billingCycle),
+    chargeThresholdUsdDisplay: usdMicrosToDisplay(plan.chargeThresholdUsdMicros),
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
     defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
     capabilityKeys,
@@ -336,6 +342,7 @@ function emptyDraft(): PlanDraft {
     priceAmount: "0.00",
     priceCurrency: "USD",
     billingCycle: "monthly",
+    chargeThresholdUsdDisplay: "",
     includedUsdDisplay: "",
     defaultMarkupPct: "0",
     capabilityKeys: [],
@@ -721,7 +728,8 @@ function PlanDraftForm({
         />
       </div>
 
-      {(draft.type === "subscription" || draft.type === "usage") && (
+      {/* Pay-Per-Use is threshold-only (#398): no user-facing billing cycle. */}
+      {draft.type === "subscription" && (
         <div>
           <label
             htmlFor={`${idPrefix}-billing-cycle`}
@@ -757,6 +765,38 @@ function PlanDraftForm({
           </select>
           <p className="text-xs text-zinc-500 mt-1">
             How often usage invoices close and included allowance renews.
+          </p>
+        </div>
+      )}
+
+      {draft.type === "usage" && (
+        <div>
+          <label
+            htmlFor={`${idPrefix}-charge-threshold`}
+            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
+          >
+            Expected spend guide (USD)
+            <InfoTooltip
+              wide
+              label={
+                "Display only — shown to users as a sense of what this plan costs per\n" +
+                "invoice. It does not trigger collection: when an invoice is raised is\n" +
+                "set app-wide by the overage limit on the Payments tab."
+              }
+            />
+          </label>
+          <DollarCentsInput
+            id={`${idPrefix}-charge-threshold`}
+            value={draft.chargeThresholdUsdDisplay}
+            onChange={(chargeThresholdUsdDisplay) =>
+              onChange({ ...draft, chargeThresholdUsdDisplay })
+            }
+            placeholder="10.00"
+            disabled={!canEdit}
+            aria-label="Expected spend guide in dollars"
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            {resolvedPayPerUseBehavior()}
           </p>
         </div>
       )}
@@ -980,6 +1020,12 @@ function buildPlanPayload(
         : "0",
     priceCurrency: draft.priceCurrency,
     billingCycle: draft.billingCycle,
+    // Pay-Per-Use is threshold-only (#398): send the threshold; clear it on
+    // other types so switching a plan away from usage drops it server-side.
+    chargeThresholdUsd:
+      draft.type === "usage" && draft.chargeThresholdUsdDisplay.trim()
+        ? draft.chargeThresholdUsdDisplay.trim()
+        : null,
     ...(planId ? {} : { status: "active" }),
     capabilities,
     includedUsdMicros,
@@ -1603,6 +1649,9 @@ function CustomPlanCard({
               {`${plan.priceAmount} ${plan.priceCurrency}`}
               {plan.billingCycle && ` · ${plan.billingCycle}`}
             </p>
+          )}
+          {plan.type === "usage" && plan.resolvedBehavior && (
+            <p className="text-xs text-zinc-500 mt-1">{plan.resolvedBehavior}</p>
           )}
           {plan.status === "phase_out" && (
             <p className="text-xs text-amber-400/90 mt-1">

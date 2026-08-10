@@ -39,7 +39,7 @@ test("revenue-rail fields are not reserved", () => {
   assert.deepEqual(
     platformControlledFieldsInBody({
       progressiveBilling: true,
-      invoiceThresholdUsdMicros: "1000",
+      invoiceLeadUsdMicros: "1000",
       billingMode: "merchant",
     }),
     [],

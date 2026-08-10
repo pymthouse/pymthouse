@@ -8,14 +8,12 @@ import {
   readJsonObject,
 } from "@/lib/billing/owner-billing-m2m-auth";
 import { tryDecodeURIComponent } from "@/lib/billing-utils";
-import { getHostedAdminClient, isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import {
   AppUserSubscriptionCancelError,
   appUserSubscriptionCancelHttpStatus,
   cancelAppUserSubscription,
   resolveAppUserPendingCancel,
 } from "@/lib/openmeter/app-user-subscription-lifecycle";
-import { ensureOpenMeterCustomerForAppUser } from "@/lib/openmeter/customers";
 import {
   buildAppUserSubscriptionPlanPayload,
   resolveAppUserSubscriptionActionRequired,
@@ -23,37 +21,65 @@ import {
 } from "@/lib/billing/app-user-subscription-display";
 import { isOwnerStarterPlanKey } from "@/lib/openmeter/owner-starter-key";
 import {
+  getPendingOpenMeterSubscriptionForAppUser,
   getPrimaryOpenMeterSubscriptionForAppUser,
-  listOpenMeterSubscriptionsForCustomer,
   resolveLocalPlanIdFromOpenMeterSubscription,
-  type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
+import { includedDiscountUsdMicrosForPlan } from "@/lib/openmeter/spendable-allowance";
+import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
 
-async function resolveDisplaySubscription(input: {
-  clientId: string;
-  externalUserId: string;
-  pendingCancel: Awaited<ReturnType<typeof resolveAppUserPendingCancel>>;
-}): Promise<OpenMeterSubscriptionView | null> {
-  const primary = await getPrimaryOpenMeterSubscriptionForAppUser({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  if (primary) {
-    return primary;
-  }
-  if (!input.pendingCancel || !isHostedAdminClientAvailable()) {
-    return null;
-  }
-  const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomerForAppUser({
-    client,
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-  const listed = await listOpenMeterSubscriptionsForCustomer(client, customer.id);
-  return (
-    listed.find((sub) => sub.id === input.pendingCancel?.subscriptionId) ?? null
+type PlanSurface = {
+  id: string | null;
+  name: string | null;
+  type: string | null;
+  includedUsage: {
+    usdMicros: string;
+    usd: string;
+  } | null;
+  effectiveAt: string | null;
+};
+
+async function buildPlanSurface(input: {
+  appId: string;
+  subscription: NonNullable<
+    Awaited<ReturnType<typeof getPrimaryOpenMeterSubscriptionForAppUser>>
+  >;
+}): Promise<PlanSurface> {
+  const resolvedPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.appId,
+    input.subscription,
   );
+  const planRows = resolvedPlanId
+    ? await db.select().from(plans).where(eq(plans.id, resolvedPlanId)).limit(1)
+    : [];
+  const plan = planRows[0] ?? null;
+  const isOwnerStarter = isOwnerStarterPlanKey(input.subscription.planKey);
+  const planName = resolveAppUserSubscriptionPlanName({
+    plan,
+    planKey: input.subscription.planKey,
+  });
+  let includedMicros: bigint | null = null;
+  if (plan) {
+    includedMicros = includedDiscountUsdMicrosForPlan(plan);
+  } else if (isOwnerStarter) {
+    includedMicros = includedDiscountUsdMicrosForPlan({
+      includedUsdMicros: null,
+      isStarterDefault: true,
+    });
+  }
+  return {
+    id: plan?.id ?? null,
+    name: planName,
+    type: plan?.type ?? (isOwnerStarter ? "free" : null),
+    includedUsage:
+      includedMicros != null
+        ? {
+            usdMicros: includedMicros.toString(),
+            usd: formatUsdMicrosForDisplay(includedMicros.toString()),
+          }
+        : null,
+    effectiveAt: input.subscription.activeFrom,
+  };
 }
 
 /**
@@ -61,6 +87,8 @@ async function resolveDisplaySubscription(input: {
  *
  * Current OpenMeter subscription for an app end-user, including
  * `pendingCancel` when cancel-at-period-end is scheduled (owner-paid parity).
+ * Also exposes `livePlan` / `pendingPlan` so scheduled successors are visible
+ * when Neon cache and the dashboard would otherwise disagree.
  */
 export async function GET(
   request: NextRequest,
@@ -79,42 +107,37 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let pendingCancel: Awaited<ReturnType<typeof resolveAppUserPendingCancel>> =
-    null;
-  if (isHostedAdminClientAvailable()) {
-    try {
-      const client = getHostedAdminClient();
-      const customer = await ensureOpenMeterCustomerForAppUser({
-        client,
-        clientId: access.app.id,
-        externalUserId,
-      });
-      const listed = await listOpenMeterSubscriptionsForCustomer(
-        client,
-        customer.id,
-      );
-      pendingCancel = await resolveAppUserPendingCancel({
-        clientId: access.app.id,
-        listed,
-      });
-    } catch (err) {
-      console.error("Failed to resolve pendingCancel for app user", err);
-    }
-  }
-
-  const omSubscription = await resolveDisplaySubscription({
-    clientId: access.app.id,
-    externalUserId,
-    pendingCancel,
-  });
+  const [omSubscription, pendingOm] = await Promise.all([
+    getPrimaryOpenMeterSubscriptionForAppUser({
+      clientId: access.app.id,
+      externalUserId,
+    }),
+    getPendingOpenMeterSubscriptionForAppUser({
+      clientId: access.app.id,
+      externalUserId,
+    }),
+  ]);
 
   if (!omSubscription) {
     return NextResponse.json({
       externalUserId,
       subscription: null,
       pendingCancel: null,
+      livePlan: null,
+      pendingPlan: null,
       source: "openmeter",
     });
+  }
+
+  let pendingCancel: Awaited<ReturnType<typeof resolveAppUserPendingCancel>> =
+    null;
+  try {
+    pendingCancel = await resolveAppUserPendingCancel({
+      clientId: access.app.id,
+      subscription: omSubscription,
+    });
+  } catch (err) {
+    console.error("Failed to resolve pendingCancel for app user", err);
   }
 
   const resolvedPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
@@ -139,12 +162,21 @@ export async function GET(
     isOwnerStarter,
   });
 
+  const [livePlan, pendingPlan] = await Promise.all([
+    buildPlanSurface({ appId: access.app.id, subscription: omSubscription }),
+    pendingOm
+      ? buildPlanSurface({ appId: access.app.id, subscription: pendingOm })
+      : Promise.resolve(null),
+  ]);
+
   return NextResponse.json({
     externalUserId,
     source: "openmeter",
     actionRequired,
     plan: planPayload,
     pendingCancel,
+    livePlan,
+    pendingPlan,
     subscription: {
       id: omSubscription.id,
       status: omSubscription.status,

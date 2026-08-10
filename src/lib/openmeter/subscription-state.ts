@@ -40,9 +40,15 @@ export function isCanceledSubscriptionStatus(
   status: string | null | undefined,
 ): boolean {
   const s = (status || "").toLowerCase();
-  // Konnect also uses `inactive` for cancel-at-period-end rows that still
-  // occupy the customer slot until `activeTo`.
+  // `canceled` is cancel-at-period-end (still running until `activeTo`);
+  // `inactive` is a row whose period has already ended.
   return s === "canceled" || s === "cancelled" || s === "inactive";
+}
+
+/** Cancel-at-period-end — the row is still running until `activeTo`. */
+function isCancelAtPeriodEndStatus(status: string | null | undefined): boolean {
+  const s = (status || "").trim().toLowerCase();
+  return s === "canceled" || s === "cancelled";
 }
 
 /**
@@ -59,7 +65,12 @@ export function isOccupyingCanceledSubscription(
   }
   const activeTo = subscription.activeTo?.trim();
   if (!activeTo) {
-    return false;
+    // Konnect Metering & Billing v3 subscription payloads carry no activeTo at
+    // all (only billing_anchor/created_at/updated_at), so the timestamp test is
+    // unusable there. Its status carries the same signal: `canceled` still owns
+    // the customer slot, `inactive` has ended. Self-hosted OpenMeter always
+    // sends activeTo and keeps using the check below.
+    return isCancelAtPeriodEndStatus(subscription.status);
   }
   const endMs = Date.parse(activeTo);
   return !Number.isNaN(endMs) && endMs > nowMs;
@@ -107,6 +118,31 @@ export function isPresentSubscriptionStatus(
 ): boolean {
   return (
     isLiveSubscriptionStatus(status) || isScheduledSubscriptionStatus(status)
+  );
+}
+
+/**
+ * True when a row holds the customer's only subscription slot, so Konnect
+ * rejects `subscriptions.create` with
+ * `only_single_subscription_allowed_per_customer_at_a_time`. Live and scheduled
+ * rows hold it outright; `canceled` rows hold it until `activeTo`.
+ */
+export function occupiesCustomerSubscriptionSlot(
+  subscription: Pick<OpenMeterSubscriptionView, "status" | "activeTo">,
+  nowMs: number = Date.now(),
+): boolean {
+  return (
+    isPresentSubscriptionStatus(subscription.status) ||
+    isOccupyingCanceledSubscription(subscription, nowMs)
+  );
+}
+
+/** First subscription holding the customer's slot, on any plan. */
+export function pickSlotOccupyingSubscription(
+  listed: OpenMeterSubscriptionView[],
+): OpenMeterSubscriptionView | undefined {
+  return listed.find(
+    (sub) => Boolean(sub.id) && occupiesCustomerSubscriptionSlot(sub),
   );
 }
 
@@ -265,18 +301,32 @@ export type ResumeTarget = {
 /**
  * Resolve which subscription to unschedule/restore for a pending cancel.
  * Prefer canceled paid; else live paid + scheduled starter (legacy change path).
+ *
+ * Pick the first *occupying* canceled paid row — not `classifySubscriptions`'
+ * first canceled/inactive paid. After paid→paid `/change`, Konnect often lists
+ * an ended predecessor ahead of the cancel-at-period-end successor; first-match
+ * then filters that predecessor out and wrongly reports nothing to resume while
+ * GET still shows `pendingCancel` on the occupying row.
  */
 export function resolveResumeTarget(
   listed: OpenMeterSubscriptionView[],
   isStarter: StarterMatcher,
 ): ResumeTarget | null {
-  const { livePaid, canceledPaid, scheduledStarter } = classifySubscriptions(
+  const { livePaid, scheduledStarter } = classifySubscriptions(
     listed,
     isStarter,
   );
 
+  const resumableCanceledPaid = listed.find(
+    (sub) =>
+      Boolean(sub.id) &&
+      isCanceledSubscriptionStatus(sub.status) &&
+      !isStarter(sub) &&
+      isOccupyingCanceledSubscription(sub),
+  );
   const target =
-    canceledPaid ?? (livePaid && scheduledStarter ? livePaid : undefined);
+    resumableCanceledPaid ??
+    (livePaid && scheduledStarter ? livePaid : undefined);
   if (!target) return null;
   return { target, scheduledStarter, livePaid };
 }

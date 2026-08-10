@@ -11,6 +11,7 @@ import {
   deleteKonnectSubscription,
   estimateNextBillingCycleIso,
   konnectSubscriptionBillingAnchorIso,
+  readKonnectSubscriptionActiveWindow,
   restoreKonnectSubscription,
   unscheduleKonnectSubscriptionCancelation,
 } from "./konnect-subscriptions";
@@ -18,6 +19,7 @@ import { buildOpenMeterPlanKey } from "./plan-naming";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
 import {
   listOpenMeterSubscriptionsForCustomer,
+  pickAppUserSubscriptionToReport,
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "./subscription-read";
@@ -27,7 +29,7 @@ import {
   isCanceledSubscriptionStatus,
   isKonnectScheduledChangeForbidden,
   isLiveSubscriptionStatus,
-  pickOccupyingCanceledSubscription,
+  isOccupyingCanceledSubscription,
   resolveResumeTarget,
   type StarterMatcher,
 } from "./subscription-state";
@@ -161,7 +163,15 @@ export function pickAppUserCancelTargets(
   );
 }
 
-/** Resolve which subscription to unschedule/restore for a pending cancel. */
+/**
+ * Resolve which subscription to unschedule/restore for a pending cancel.
+ *
+ * Scoped to the subscription the GET reports, using that same selection so the
+ * two cannot drift apart. A cancel left on a row the user has already switched
+ * away from is history the caller can neither see nor act on, so resume answers
+ * `nothing_to_resume` instead of attempting a restore Konnect rejects and
+ * reporting that business state as a 502.
+ */
 export function resolveAppUserResumeTarget(
   listed: OpenMeterSubscriptionView[],
   starterPlanKey: string,
@@ -171,37 +181,38 @@ export function resolveAppUserResumeTarget(
   scheduledStarter: OpenMeterSubscriptionView | undefined;
   livePaid: OpenMeterSubscriptionView | undefined;
 } | null {
-  return resolveResumeTarget(
-    listed,
-    appUserStarterMatcher(starterPlanKey, starterOpenMeterPlanId),
+  const isStarter = appUserStarterMatcher(
+    starterPlanKey,
+    starterOpenMeterPlanId,
   );
+  const resume = resolveResumeTarget(listed, isStarter);
+  if (!resume) {
+    return null;
+  }
+  const reported = pickAppUserSubscriptionToReport(listed, isStarter);
+  return reported?.id === resume.target.id ? resume : null;
 }
 
-/** Sync pending-cancel view from an already-listed subscription set. */
+/**
+ * Sync pending-cancel view for the subscription being reported.
+ * A pending cancel belongs to one subscription, so it is only derived from the
+ * row the caller is returning — a superseded row from a plan the user already
+ * left must never advertise a cancellation the resume endpoint would reject.
+ */
 export function deriveAppUserPendingCancel(input: {
-  listed: OpenMeterSubscriptionView[];
-  starterPlanKey: string;
-  starterOpenMeterPlanId: string | null;
+  subscription: OpenMeterSubscriptionView;
   planId: string | null;
   planName: string | null;
 }): AppUserPendingCancel | null {
-  const { canceledPaid } = pickAppUserCancelTargets(
-    input.listed,
-    input.starterPlanKey,
-    input.starterOpenMeterPlanId,
-  );
-  // Prefer canceled paid; else any cancel-at-period-end row (incl. Starter)
-  // that still occupies the customer until activeTo.
-  const pending =
-    canceledPaid ??
-    pickOccupyingCanceledSubscription(input.listed);
-  if (!pending) return null;
+  if (!isOccupyingCanceledSubscription(input.subscription)) {
+    return null;
+  }
   return {
-    subscriptionId: pending.id,
+    subscriptionId: input.subscription.id,
     planId: input.planId,
-    planKey: pending.planKey,
+    planKey: input.subscription.planKey,
     planName: input.planName,
-    effectiveAt: pending.activeTo,
+    effectiveAt: input.subscription.activeTo,
   };
 }
 
@@ -350,12 +361,16 @@ async function scheduleLivePaidCancel(input: {
     );
   }
 
+  const subscriptionId = canceled.id?.trim() || input.livePaid.id;
+  // Same authoritative window the GET reports, so the two can never disagree.
+  // The billing-anchor estimate stays as the last resort only.
   const effectiveAt =
     input.livePaid.activeTo ||
+    (await readKonnectSubscriptionActiveWindow({ subscriptionId })).activeTo ||
     estimateNextBillingCycleIso(konnectSubscriptionBillingAnchorIso(canceled));
 
   return {
-    subscriptionId: canceled.id?.trim() || input.livePaid.id,
+    subscriptionId,
     planId: input.localPlanId,
     planKey: input.livePaid.planKey,
     scheduledPlanKey: input.starterPlanKey,
@@ -578,34 +593,28 @@ export function appUserSubscriptionResumeHttpStatus(
   }
 }
 
-/** Derive pending end-of-cycle cancel for GET subscription responses. */
+/**
+ * Derive pending end-of-cycle cancel for GET subscription responses, scoped to
+ * the subscription the response reports so the two can never disagree.
+ */
 export async function resolveAppUserPendingCancel(input: {
   clientId: string;
-  listed: OpenMeterSubscriptionView[];
+  subscription: OpenMeterSubscriptionView;
 }): Promise<AppUserPendingCancel | null> {
-  const { starterPlanKey, starterOpenMeterPlanId, starterLocalPlanId } =
-    await loadStarterKeys(input.clientId);
-
-  // Prefer canceled paid; else cancel-at-period-end Starter (or any occupying
-  // canceled row). Both still own the customer slot until `activeTo`.
-  const { canceledPaid } = pickAppUserCancelTargets(
-    input.listed,
-    starterPlanKey,
-    starterOpenMeterPlanId,
-  );
-  const pendingRow =
-    canceledPaid ?? pickOccupyingCanceledSubscription(input.listed);
-  if (!pendingRow) {
+  if (!isOccupyingCanceledSubscription(input.subscription)) {
     return null;
   }
+
+  const { starterPlanKey, starterOpenMeterPlanId, starterLocalPlanId } =
+    await loadStarterKeys(input.clientId);
 
   const planId =
     (await resolveLocalPlanIdFromOpenMeterSubscription(
       input.clientId,
-      pendingRow,
+      input.subscription,
     )) ??
     (isAppUserStarterSubscription(
-      pendingRow,
+      input.subscription,
       starterPlanKey,
       starterOpenMeterPlanId,
     )
@@ -629,9 +638,7 @@ export async function resolveAppUserPendingCancel(input: {
   }
 
   return deriveAppUserPendingCancel({
-    listed: input.listed,
-    starterPlanKey,
-    starterOpenMeterPlanId,
+    subscription: input.subscription,
     planId,
     planName,
   });

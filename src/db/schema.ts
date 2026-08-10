@@ -409,6 +409,13 @@ export const plans = pgTable(
     includedUsdMicros: text("included_usd_micros"),
     /** Billing period length: daily | weekly | monthly (maps to OpenMeter P1D/P1W/P1M). */
     billingCycle: text("billing_cycle").notNull().default("monthly"),
+    /**
+     * Pay-Per-Use (`type = "usage"`) only: invoice/charge when accrued usage
+     * reaches this many USD micros — credits first, then auto-debit (#398).
+     * The stored billingCycle stays a nominal internal cycle for OpenMeter's
+     * required billingCadence; it is never the primary charge trigger.
+     */
+    chargeThresholdUsdMicros: text("charge_threshold_usd_micros"),
     discoveryProfileId: text("discovery_profile_id").references(() => discoveryProfiles.id, {
       onDelete: "set null",
     }),
@@ -572,10 +579,16 @@ export const appBillingConfig = pgTable(
      */
     progressiveBilling: boolean("progressive_billing").notNull().default(true),
     /**
-     * Optional unpaid gathering-invoice threshold (USD micros). Enforced by the
-     * clearinghouse threshold worker via invoicePendingLines — not by OpenMeter alone.
+     * Max unbilled debt (USD micros) allowed while spendable ≤ 0 before
+     * mint/signer deny. App-wide; same for all end users. Null clears it, 0
+     * means no ceiling, otherwise at least MIN_SOFT_NEGATIVE_USD_MICROS.
      */
-    invoiceThresholdUsdMicros: text("invoice_threshold_usd_micros"),
+    softNegativeUsdMicros: text("soft_negative_usd_micros"),
+    /**
+     * Debt level (USD micros) at which the amount-based invoice raise fires.
+     * Null derives it from the ceiling: half, capped at $5.
+     */
+    invoiceLeadUsdMicros: text("invoice_lead_usd_micros"),
     /** Merchant Stripe Connected Account id (`acct_…`). */
     stripeConnectedAccountId: text("stripe_connected_account_id"),
     /** How the merchant linked: account_link | oauth */

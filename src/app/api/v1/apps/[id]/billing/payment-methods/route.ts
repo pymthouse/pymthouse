@@ -63,9 +63,16 @@ export async function GET(
   if (!auth) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  return NextResponse.json({
-    paymentMethods: await listOwnerPaymentMethods(auth.ownerUserId),
-  });
+  // Fail open on provider outages — billing UI should show "none on file",
+  // not a hard 500. Wallet M2M (`…/billing/wallet/payment-methods`) maps the
+  // same throws to 502/503 via walletUpstreamErrorResponse.
+  let paymentMethods: Awaited<ReturnType<typeof listOwnerPaymentMethods>> = [];
+  try {
+    paymentMethods = await listOwnerPaymentMethods(auth.ownerUserId);
+  } catch {
+    paymentMethods = [];
+  }
+  return NextResponse.json({ paymentMethods });
 }
 
 /**

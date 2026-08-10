@@ -13,7 +13,8 @@ import { getOwnerBillingData } from "@/lib/owner-billing-data";
 /**
  * Dedicated Owner Paid plan checkout (Upgrade from Starter, or Change plan).
  * Stripe setup Checkout returns here with ?plan=&pm=attached so plan selection
- * survives the redirect.
+ * survives the redirect. Default-PM promotion runs client-side via authenticated
+ * PATCH inside OwnerPaidUpgradeCheckout — not during this GET render.
  */
 export default async function BillingUpgradePage({
   searchParams,
@@ -50,7 +51,8 @@ export default async function BillingUpgradePage({
     ? "upgrade"
     : "change";
   const hasBillingMethod =
-    data.paymentMethods.length > 0 || data.hasChargeableBillingMethod;
+    data.paymentMethods.some((pm) => pm.isDefault) ||
+    data.hasChargeableBillingMethod;
 
   return (
     <OwnerPaidUpgradeCheckout

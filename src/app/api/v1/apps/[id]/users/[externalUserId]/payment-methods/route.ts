@@ -7,6 +7,7 @@ import {
 import { readJsonObject } from "@/lib/billing/owner-billing-m2m-auth";
 import {
   createAppUserPaymentMethodCheckout,
+  ensureAppUserDefaultPaymentMethodIfMissing,
   listAppUserPaymentMethods,
   setAppUserDefaultPaymentMethod,
   unlinkAppUserPaymentMethod,
@@ -33,12 +34,20 @@ export async function GET(
     return access;
   }
 
-  return NextResponse.json({
-    paymentMethods: await listAppUserPaymentMethods({
+  // Fail open on provider outages — list UI should show "none on file", not
+  // a hard 500. Wallet M2M (`…/billing/wallet/payment-methods`) maps the same
+  // throws to 502/503 via walletUpstreamErrorResponse.
+  let paymentMethods: Awaited<ReturnType<typeof listAppUserPaymentMethods>> =
+    [];
+  try {
+    paymentMethods = await listAppUserPaymentMethods({
       clientId: access.app.id,
       externalUserId: access.externalUserId,
-    }),
-  });
+    });
+  } catch {
+    paymentMethods = [];
+  }
+  return NextResponse.json({ paymentMethods });
 }
 
 /**
@@ -74,53 +83,51 @@ export async function POST(
   }
 }
 
-async function authorizePaymentMethodMutation(
-  request: NextRequest,
-  clientId: string,
-  rawExternalUserId: string,
-): Promise<
-  | { appId: string; externalUserId: string; paymentMethodId: string }
-  | NextResponse
-> {
-  const access = await authorizeAppUserBillingRoute(
-    request,
-    clientId,
-    rawExternalUserId,
-  );
-  if (!isAppUserBillingAccess(access)) {
-    return access;
-  }
-  const paymentMethodId =
-    request.nextUrl.searchParams.get("id")?.trim() ||
-    (await readJsonObject(request)).paymentMethodId;
-  if (typeof paymentMethodId !== "string" || !paymentMethodId.trim()) {
-    return NextResponse.json(
-      { error: "paymentMethodId is required" },
-      { status: 400 },
-    );
-  }
-  return {
-    appId: access.app.id,
-    externalUserId: access.externalUserId,
-    paymentMethodId: paymentMethodId.trim(),
-  };
-}
-
-/** PATCH sets the default payment method for this app user's billing customer. */
+/**
+ * PATCH sets the default payment method for this app user's billing customer.
+ * Body `{ ensureDefault: true }` promotes the first attached PM when none is
+ * default yet (post-Checkout return).
+ */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const prepared = await authorizePaymentMethodMutation(request, clientId, raw);
-  if (prepared instanceof NextResponse) {
-    return prepared;
+  const access = await authorizeAppUserBillingRoute(request, clientId, raw);
+  if (!isAppUserBillingAccess(access)) {
+    return access;
   }
+
+  const body = await readJsonObject(request);
+  if (body.ensureDefault === true) {
+    try {
+      const result = await ensureAppUserDefaultPaymentMethodIfMissing({
+        clientId: access.app.id,
+        externalUserId: access.externalUserId,
+      });
+      return NextResponse.json(result);
+    } catch (err) {
+      return paymentMethodDefaultErrorResponse(err);
+    }
+  }
+
+  const paymentMethodId =
+    request.nextUrl.searchParams.get("id")?.trim() ||
+    (typeof body.paymentMethodId === "string"
+      ? body.paymentMethodId.trim()
+      : "");
+  if (!paymentMethodId) {
+    return NextResponse.json(
+      { error: "paymentMethodId is required" },
+      { status: 400 },
+    );
+  }
+
   try {
     const result = await setAppUserDefaultPaymentMethod({
-      clientId: prepared.appId,
-      externalUserId: prepared.externalUserId,
-      paymentMethodId: prepared.paymentMethodId,
+      clientId: access.app.id,
+      externalUserId: access.externalUserId,
+      paymentMethodId,
     });
     if (!result.updated) {
       return NextResponse.json(
@@ -140,15 +147,27 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; externalUserId: string }> },
 ) {
   const { id: clientId, externalUserId: raw } = await params;
-  const prepared = await authorizePaymentMethodMutation(request, clientId, raw);
-  if (prepared instanceof NextResponse) {
-    return prepared;
+  const access = await authorizeAppUserBillingRoute(request, clientId, raw);
+  if (!isAppUserBillingAccess(access)) {
+    return access;
+  }
+  const body = await readJsonObject(request);
+  const paymentMethodId =
+    request.nextUrl.searchParams.get("id")?.trim() ||
+    (typeof body.paymentMethodId === "string"
+      ? body.paymentMethodId.trim()
+      : "");
+  if (!paymentMethodId) {
+    return NextResponse.json(
+      { error: "paymentMethodId is required" },
+      { status: 400 },
+    );
   }
   try {
     const result = await unlinkAppUserPaymentMethod({
-      clientId: prepared.appId,
-      externalUserId: prepared.externalUserId,
-      paymentMethodId: prepared.paymentMethodId,
+      clientId: access.app.id,
+      externalUserId: access.externalUserId,
+      paymentMethodId,
     });
     if (!result.unlinked) {
       return NextResponse.json(
