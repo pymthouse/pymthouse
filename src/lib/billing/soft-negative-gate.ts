@@ -10,6 +10,7 @@ import { getUnbilledDebtUsdMicros } from "@/lib/billing/unbilled-debt";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import { getProviderApp } from "@/lib/provider-apps";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 export async function resolveSoftNegativeGate(input: {
   clientId: string;
@@ -55,10 +56,23 @@ export async function resolveSoftNegativeGate(input: {
     };
   }
 
-  const unbilledDebtUsdMicros = await getUnbilledDebtUsdMicros({
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
+  let unbilledDebtUsdMicros: bigint;
+  try {
+    unbilledDebtUsdMicros = await getUnbilledDebtUsdMicros({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+  } catch (err) {
+    // Unknown debt is not debt. A billing outage must not lock out an
+    // overage-eligible subject — the same fail-open stance as the read
+    // surfaces and the owner PM lookup — so treat it as 0 and let the
+    // invoice trigger / daily sweep catch up once billing is back.
+    console.warn(
+      `[soft-negative-gate] unbilled debt lookup failed client_id=${sanitizeForLog(input.clientId)} subject=${sanitizeForLog(input.externalUserId)}:`,
+      sanitizeForLog(err),
+    );
+    unbilledDebtUsdMicros = 0n;
+  }
   const allow = softNegativeAllowsContinue({
     spendableUsdMicros: input.spendableUsdMicros,
     allowsOverageInvoicing: input.allowsOverageInvoicing,

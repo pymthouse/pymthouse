@@ -361,18 +361,12 @@ export function explainOverageCeiling(
   softNegativeUsdMicros: string | null | undefined,
 ): string {
   const raw = softNegativeUsdMicros?.trim();
-  let micros = 0n;
-  if (raw) {
-    try {
-      micros = BigInt(raw);
-    } catch {
-      micros = 0n;
-    }
-  }
+  const micros = effectiveSoftNegativeUsdMicros(softNegativeUsdMicros);
   if (micros <= 0n) {
     return "No overage limit — end users keep spending past their credits as long as usage can be billed.";
   }
-  return `End users can accrue up to $${formatUsdMicrosForDisplay(micros.toString())} of unbilled usage before requests are refused.`;
+  const suffix = raw ? "" : " (the default)";
+  return `End users can accrue up to $${formatUsdMicrosForDisplay(micros.toString())}${suffix} of unbilled usage before requests are refused.`;
 }
 
 export function resolveBillingState(input: BillingStateInput): BillingState {

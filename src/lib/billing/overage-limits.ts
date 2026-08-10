@@ -27,6 +27,14 @@ export const MIN_SOFT_NEGATIVE_USD_MICROS = 2_000_000n;
 /** Upper bound on the derived lead window ($5). */
 export const MAX_INVOICE_TRIGGER_LEAD_USD_MICROS = 5_000_000n;
 
+/**
+ * Ceiling applied when an app has never set one. Unset used to mean "no
+ * ceiling", which exposed every overage-eligible app to unbounded unbilled
+ * debt by default; bounding it at the floor caps default exposure at one
+ * collectable invoice. Opting out of the ceiling requires an explicit 0.
+ */
+export const DEFAULT_SOFT_NEGATIVE_USD_MICROS = MIN_SOFT_NEGATIVE_USD_MICROS;
+
 export function parsePositiveUsdMicrosInput(
   value: unknown,
   fieldName: string,
@@ -138,21 +146,26 @@ export function parseInvoiceLeadUsdMicrosInput(
 
 /**
  * App soft-negative unbilled-debt ceiling.
- * Unset/null/invalid ⇒ 0 (no ceiling — overage eligibility alone unlocks past
- * prepaid $0). Set a positive value to deny mint/signer once unbilled debt
- * reaches that micros amount.
+ * Unset/null/invalid ⇒ DEFAULT_SOFT_NEGATIVE_USD_MICROS ($2), so a fresh app
+ * never grants unbounded debt. An explicit stored 0 opts out of the ceiling
+ * (overage eligibility alone unlocks past prepaid $0). Positive values deny
+ * mint/signer once unbilled debt reaches that micros amount.
  */
 export function effectiveSoftNegativeUsdMicros(
   storedUsdMicros: string | null | undefined,
 ): bigint {
-  if (!storedUsdMicros?.trim()) {
-    return 0n;
+  const trimmed = storedUsdMicros?.trim();
+  if (!trimmed) {
+    return DEFAULT_SOFT_NEGATIVE_USD_MICROS;
   }
   try {
-    const value = BigInt(storedUsdMicros.trim());
-    return value >= 0n ? value : 0n;
+    const value = BigInt(trimmed);
+    if (value === 0n) {
+      return 0n;
+    }
+    return value > 0n ? value : DEFAULT_SOFT_NEGATIVE_USD_MICROS;
   } catch {
-    return 0n;
+    return DEFAULT_SOFT_NEGATIVE_USD_MICROS;
   }
 }
 

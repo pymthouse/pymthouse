@@ -66,7 +66,9 @@ test("formatUsdMicrosForDisplay renders at least two decimals", () => {
 
 test("resolvedPayPerUseBehavior describes credits then automatic invoicing", () => {
   const behavior = resolvedPayPerUseBehavior();
+  assert.match(behavior, /Pay-as-you-go/);
   assert.match(behavior, /prepaid credits first/);
+  assert.match(behavior, /overage/);
   assert.match(behavior, /invoiced automatically as it accrues/);
 });
 

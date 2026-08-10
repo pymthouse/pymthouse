@@ -197,7 +197,7 @@ function parseThresholdMicros(display: string): string | null {
   return micros;
 }
 
-/** Preview-safe variant: a half-typed amount previews as "no limit", not a throw. */
+/** Preview-safe variant: a half-typed amount previews as the default, not a throw. */
 function thresholdMicrosForPreview(display: string): string | null {
   const trimmed = display.trim();
   if (trimmed === "") return null;
@@ -668,7 +668,7 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
             id="soft-negative"
             type="text"
             inputMode="decimal"
-            placeholder="e.g. 5.00 (blank = no limit)"
+            placeholder="e.g. 5.00 (blank = $2.00 default, 0 = no limit)"
             disabled={!canManageBilling || busy}
             value={thresholdDisplay}
             onChange={(e) => {

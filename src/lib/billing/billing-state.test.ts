@@ -217,12 +217,18 @@ describe("explainOverageCeiling", () => {
     );
   });
 
-  it("reads a missing or zero ceiling as unlimited", () => {
-    const unlimited =
-      "No overage limit — end users keep spending past their credits as long as usage can be billed.";
-    assert.equal(explainOverageCeiling(null), unlimited);
-    assert.equal(explainOverageCeiling("0"), unlimited);
-    assert.equal(explainOverageCeiling("nonsense"), unlimited);
+  it("reads a missing ceiling as the $2 default", () => {
+    assert.equal(
+      explainOverageCeiling(null),
+      "End users can accrue up to $2.00 (the default) of unbilled usage before requests are refused.",
+    );
+  });
+
+  it("reads an explicit zero ceiling as unlimited", () => {
+    assert.equal(
+      explainOverageCeiling("0"),
+      "No overage limit — end users keep spending past their credits as long as usage can be billed.",
+    );
   });
 });
 
@@ -249,14 +255,21 @@ describe("previewOverageCeiling", () => {
     assert.deepEqual(preview.bullets, []);
   });
 
-  it("explains that no limit means no amount trigger", () => {
+  it("previews a blank field as the $2 default ceiling", () => {
     const preview = previewOverageCeiling(null);
+    assert.equal(preview.error, null);
+    assert.match(preview.summary, /up to \$2\.00 \(the default\)/);
+    assert.match(preview.bullets[0], /\$1\.00 of unbilled usage/);
+  });
+
+  it("explains that an explicit 0 means no amount trigger", () => {
+    const preview = previewOverageCeiling("0");
     assert.equal(preview.error, null);
     assert.match(preview.bullets[0], /only collected on the recurring sweep/);
   });
 
   it("always names the minimum charge and the daily sweep", () => {
-    for (const value of [null, "2000000", "10000000"]) {
+    for (const value of [null, "0", "2000000", "10000000"]) {
       const preview = previewOverageCeiling(value);
       assert.ok(preview.bullets.some((b) => b.includes("$0.50")));
       assert.ok(preview.bullets.some((b) => b.includes("swept daily")));
