@@ -58,14 +58,15 @@ async function buildPlanSurface(input: {
     plan,
     planKey: input.subscription.planKey,
   });
-  const includedMicros = plan
-    ? includedDiscountUsdMicrosForPlan(plan)
-    : isOwnerStarter
-      ? includedDiscountUsdMicrosForPlan({
-          includedUsdMicros: null,
-          isStarterDefault: true,
-        })
-      : null;
+  let includedMicros: bigint | null = null;
+  if (plan) {
+    includedMicros = includedDiscountUsdMicrosForPlan(plan);
+  } else if (isOwnerStarter) {
+    includedMicros = includedDiscountUsdMicrosForPlan({
+      includedUsdMicros: null,
+      isStarterDefault: true,
+    });
+  }
   return {
     id: plan?.id ?? null,
     name: planName,

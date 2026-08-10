@@ -297,6 +297,75 @@ async function loadMintAllowance(input: {
   };
 }
 
+async function resolveMintDefaultPaymentMethod(input: {
+  publicClientId: string;
+  gateSubject: string;
+  allowsOverageInvoicing: boolean;
+}): Promise<boolean | null> {
+  if (input.allowsOverageInvoicing) return null;
+  try {
+    const { appUserHasChargeablePaymentMethod } = await import(
+      "@/lib/openmeter/app-user-payment-method"
+    );
+    return await appUserHasChargeablePaymentMethod({
+      clientId: input.publicClientId,
+      externalUserId: input.gateSubject,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function enforceMintSoftNegativeOrOverage(input: {
+  publicClientId: string;
+  gateSubject: string;
+  allowance: TrialCreditBalance | null;
+  allowsOverageInvoicing: boolean;
+  spendableMicros: bigint;
+}): Promise<void> {
+  const { resolveSoftNegativeGate, softNegativeDenyReason } = await import(
+    "@/lib/billing/soft-negative-gate"
+  );
+  const softGate = await resolveSoftNegativeGate({
+    clientId: input.publicClientId,
+    externalUserId: input.gateSubject,
+    spendableUsdMicros: input.spendableMicros,
+    allowsOverageInvoicing: input.allowsOverageInvoicing,
+  });
+  if (!softGate.allow) {
+    const hasDefaultPaymentMethod = await resolveMintDefaultPaymentMethod({
+      publicClientId: input.publicClientId,
+      gateSubject: input.gateSubject,
+      allowsOverageInvoicing: input.allowsOverageInvoicing,
+    });
+    const reason = softNegativeDenyReason({
+      allowsOverageInvoicing: input.allowsOverageInvoicing,
+      hasDefaultPaymentMethod,
+      unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
+      softNegativeUsdMicros: softGate.softNegativeUsdMicros,
+    });
+    console.warn(
+      `[mint] soft-negative deny subject=${input.gateSubject} reason=${reason} overageEligible=${input.allowsOverageInvoicing} debt=${softGate.unbilledDebtUsdMicros.toString()} ceiling=${softGate.softNegativeUsdMicros.toString()}`,
+    );
+    enforceMintAllowanceGate(input.allowance, {
+      allowsOverageInvoicing: false,
+      reason,
+    });
+    return;
+  }
+
+  enforceMintAllowanceGate(input.allowance, { allowsOverageInvoicing: true });
+  // Lead-window only: raise OM gathering → draft so settlement/Stripe app
+  // collects. Never invent Stripe PaymentIntents on the mint path.
+  const { scheduleInvoiceTrigger } = await import(
+    "@/lib/billing/invoice-trigger"
+  );
+  scheduleInvoiceTrigger({
+    clientId: input.publicClientId,
+    externalUserId: input.gateSubject,
+  });
+}
+
 export async function mintSignerJwtForExternalUser(input: {
   publicClientId: string;
   developerAppId: string;
@@ -347,58 +416,13 @@ export async function mintSignerJwtForExternalUser(input: {
     : provisionExternalUserId;
 
   if (isHostedAdminClientAvailable() && spendableMicros <= 0n) {
-    const { resolveSoftNegativeGate } = await import(
-      "@/lib/billing/soft-negative-gate"
-    );
-    const softGate = await resolveSoftNegativeGate({
-      clientId: input.publicClientId,
-      externalUserId: gateSubject,
-      spendableUsdMicros: spendableMicros,
+    await enforceMintSoftNegativeOrOverage({
+      publicClientId: input.publicClientId,
+      gateSubject,
+      allowance,
       allowsOverageInvoicing,
+      spendableMicros,
     });
-    if (!softGate.allow) {
-      const { softNegativeDenyReason } = await import(
-        "@/lib/billing/soft-negative-gate"
-      );
-      let hasDefaultPaymentMethod: boolean | null = null;
-      if (!allowsOverageInvoicing) {
-        try {
-          const { appUserHasChargeablePaymentMethod } = await import(
-            "@/lib/openmeter/app-user-payment-method"
-          );
-          hasDefaultPaymentMethod = await appUserHasChargeablePaymentMethod({
-            clientId: input.publicClientId,
-            externalUserId: gateSubject,
-          });
-        } catch {
-          hasDefaultPaymentMethod = null;
-        }
-      }
-      const reason = softNegativeDenyReason({
-        allowsOverageInvoicing,
-        hasDefaultPaymentMethod,
-        unbilledDebtUsdMicros: softGate.unbilledDebtUsdMicros,
-        softNegativeUsdMicros: softGate.softNegativeUsdMicros,
-      });
-      console.warn(
-        `[mint] soft-negative deny subject=${gateSubject} reason=${reason} overageEligible=${allowsOverageInvoicing} debt=${softGate.unbilledDebtUsdMicros.toString()} ceiling=${softGate.softNegativeUsdMicros.toString()}`,
-      );
-      enforceMintAllowanceGate(allowance, {
-        allowsOverageInvoicing: false,
-        reason,
-      });
-    } else {
-      enforceMintAllowanceGate(allowance, { allowsOverageInvoicing: true });
-      // Lead-window only: raise OM gathering → draft so settlement/Stripe app
-      // collects. Never invent Stripe PaymentIntents on the mint path.
-      const { scheduleInvoiceTrigger } = await import(
-        "@/lib/billing/invoice-trigger"
-      );
-      scheduleInvoiceTrigger({
-        clientId: input.publicClientId,
-        externalUserId: gateSubject,
-      });
-    }
   } else {
     enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
   }

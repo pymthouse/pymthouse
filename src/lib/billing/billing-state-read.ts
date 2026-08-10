@@ -151,14 +151,16 @@ async function merchantFunding(input: {
   const defaultMethod = paymentMethods?.find((pm) => pm.isDefault) ?? null;
   // Same chargeability predicate the mint/signer overage gate uses — display
   // must not disagree with `overage.eligible` / 483 reason.
-  const hasDefault =
-    chargeable === true
-      ? true
-      : chargeable === false
-        ? false
-        : paymentMethods
-          ? Boolean(defaultMethod)
-          : null;
+  let hasDefault: boolean | null;
+  if (chargeable === true) {
+    hasDefault = true;
+  } else if (chargeable === false) {
+    hasDefault = false;
+  } else if (paymentMethods) {
+    hasDefault = Boolean(defaultMethod);
+  } else {
+    hasDefault = null;
+  }
 
   return {
     prepaidUsdMicros: toBigInt(credits?.balanceUsdMicros),

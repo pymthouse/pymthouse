@@ -70,29 +70,7 @@ export function rewriteKonnectPathname(pathname: string, method: string): string
 }
 
 /** Konnect list endpoints use deepObject filters and page[size|number] pagination. */
-export function rewriteKonnectSearchParams(
-  pathname: string,
-  method: string,
-  searchParams: URLSearchParams,
-): URLSearchParams {
-  const params = new URLSearchParams(searchParams);
-
-  const normalizedPath = pathname.replace(/\/api\/v[12](?=\/|$)/, "");
-  const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(normalizedPath);
-  if (customerSubscriptions && method.toUpperCase() === "GET") {
-    params.set("filter[customer_id][eq]", decodeURIComponent(customerSubscriptions[1]));
-  }
-
-  if (params.has("key")) {
-    const key = params.get("key") ?? "";
-    params.delete("key");
-    if (key.endsWith(":")) {
-      params.set("filter[key][contains]", key);
-    } else {
-      params.set("filter[key][eq]", key);
-    }
-  }
-
+function rewriteKonnectPageParams(params: URLSearchParams): void {
   if (params.has("pageSize")) {
     const pageSize = params.get("pageSize");
     params.delete("pageSize");
@@ -108,6 +86,34 @@ export function rewriteKonnectSearchParams(
       params.set("page[number]", page);
     }
   }
+}
+
+function rewriteKonnectKeyFilter(params: URLSearchParams): void {
+  if (!params.has("key")) return;
+  const key = params.get("key") ?? "";
+  params.delete("key");
+  if (key.endsWith(":")) {
+    params.set("filter[key][contains]", key);
+  } else {
+    params.set("filter[key][eq]", key);
+  }
+}
+
+export function rewriteKonnectSearchParams(
+  pathname: string,
+  method: string,
+  searchParams: URLSearchParams,
+): URLSearchParams {
+  const params = new URLSearchParams(searchParams);
+
+  const normalizedPath = pathname.replace(/\/api\/v[12](?=\/|$)/, "");
+  const customerSubscriptions = CUSTOMER_SUBSCRIPTIONS_PATH_RE.exec(normalizedPath);
+  if (customerSubscriptions && method.toUpperCase() === "GET") {
+    params.set("filter[customer_id][eq]", decodeURIComponent(customerSubscriptions[1]));
+  }
+
+  rewriteKonnectKeyFilter(params);
+  rewriteKonnectPageParams(params);
 
   // OpenMeter SDK events.list uses subject/limit/from/to; Konnect expects
   // filter[subject][eq], page[size], and filter[time][gte|lte]. Without this,

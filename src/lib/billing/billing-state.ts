@@ -411,9 +411,7 @@ export function resolveBillingState(input: BillingStateInput): BillingState {
   const spendable = money(spendableUsdMicros, currency);
   const includedRemaining = money(input.includedRemainingUsdMicros, currency);
   const includedTotalMicros =
-    input.includedTotalUsdMicros != null
-      ? input.includedTotalUsdMicros
-      : input.includedRemainingUsdMicros;
+    input.includedTotalUsdMicros ?? input.includedRemainingUsdMicros;
   const includedTotal = money(
     includedTotalMicros > 0n ? includedTotalMicros : 0n,
     currency,
