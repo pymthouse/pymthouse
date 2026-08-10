@@ -16,8 +16,11 @@ import type {
   GrantSource as SdkGrantSource,
 } from "@pymthouse/builder-sdk";
 
-/** Includes MoonPay on-ramp until @pymthouse/builder-sdk publishes `onramp`. */
-export type GrantSource = SdkGrantSource | "onramp";
+/**
+ * Includes MoonPay on-ramp and Stripe Checkout balance top-ups until
+ * @pymthouse/builder-sdk publishes `onramp` / `topup`.
+ */
+export type GrantSource = SdkGrantSource | "onramp" | "topup";
 
 /** PymtHouse plan DTO extends the SDK contract with discovery fields. */
 export type BillingProduct = SdkBillingProduct & {

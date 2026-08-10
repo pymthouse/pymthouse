@@ -119,41 +119,79 @@ export function requireStripeWebhookSecret(): string {
 }
 
 /**
- * Prefer a dedicated Connect endpoint secret; fall back to the platform
- * webhook secret only when `STRIPE_CONNECT_WEBHOOK_SECRET` is unset/empty.
+ * Prefer a dedicated Connect endpoint secret. Does not fall back to the
+ * platform webhook secret — Connect deliveries must be verified with
+ * `STRIPE_CONNECT_WEBHOOK_SECRET`.
  */
 export function resolveConnectWebhookSecret(): string {
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
   if (!connectSecret) {
-    return requireStripeWebhookSecret();
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Connect Webhooks)",
+    );
   }
   if (!connectSecret.startsWith("whsec_")) {
     throw new Error(
-      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_",
     );
   }
   return connectSecret;
 }
 
+/** Which Stripe endpoint a verified signature came from. */
+export type StripeWebhookSecretKind = "platform" | "connect";
+
+export type StripeWebhookSecret = {
+  secret: string;
+  kind: StripeWebhookSecretKind;
+};
+
 /**
- * The shared ingress accepts both platform and Connect events. When Stripe
- * endpoints use distinct secrets, accept either verified signature.
+ * All signing secrets the shared webhook route accepts, deduplicated and
+ * tagged by endpoint. The route receives both Connect account events and
+ * platform account events (e.g. top-up `checkout.session.completed`), and each
+ * Stripe endpoint signs with its own secret — verification must try every
+ * configured one, and prepaid credit settlement must additionally require the
+ * `platform` kind.
+ *
+ * Platform is listed first so it wins the identical-secret edge case (one
+ * endpoint configured for both roles) rather than settling top-ups as Connect.
+ *
+ * A malformed secret is skipped when the other is valid, so a bad platform
+ * value cannot take down Connect webhooks (and vice versa). Throws only when
+ * no usable secret remains.
  */
-export function resolveStripeWebhookSecrets(): string[] {
+export function resolveStripeWebhookSecretsByKind(): StripeWebhookSecret[] {
   const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  const secrets = [platformSecret, connectSecret].filter(
-    (secret): secret is string => Boolean(secret),
+  const resolved: StripeWebhookSecret[] = [];
+  if (platformSecret?.startsWith("whsec_")) {
+    resolved.push({ secret: platformSecret, kind: "platform" });
+  }
+  if (connectSecret?.startsWith("whsec_") && connectSecret !== platformSecret) {
+    resolved.push({ secret: connectSecret, kind: "connect" });
+  }
+  if (resolved.length > 0) {
+    return resolved;
+  }
+  if (connectSecret) {
+    throw new Error(
+      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  if (platformSecret) {
+    throw new Error(
+      "STRIPE_WEBHOOK_SECRET must start with whsec_ when set",
+    );
+  }
+  throw new Error(
+    "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
   );
-  if (secrets.length === 0) {
-    return [requireStripeWebhookSecret()];
-  }
-  for (const secret of secrets) {
-    if (!secret.startsWith("whsec_")) {
-      throw new Error("Stripe webhook secrets must start with whsec_");
-    }
-  }
-  return [...new Set(secrets)];
+}
+
+/** Secrets only, for callers that do not care which endpoint signed. */
+export function resolveStripeWebhookSecrets(): string[] {
+  return resolveStripeWebhookSecretsByKind().map((entry) => entry.secret);
 }
 
 /**

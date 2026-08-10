@@ -6,6 +6,7 @@ import { createBalanceGate } from "@pymthouse/clearinghouse-identity-webhook/bal
 import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 const DEFAULT_EXPIRY_TTL_SECONDS = 60;
 const DEFAULT_BALANCE_CACHE_TTL_SECONDS = 20;
@@ -124,10 +125,13 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
     getBalanceUsdMicros: (identity) => cache.get(identity),
     expiryTtl: { seconds: resolveExpiryTtlSeconds() },
     failClosed: true,
-    onError: (err) => {
+    onError: (err, identity) => {
+      // Name the identity: the client only ever sees a bare 503, so this line
+      // is the sole record of which customer's lookup failed. Sanitize so
+      // token/user identity material cannot forge log lines (CWE-117).
       console.warn(
-        "[remote-signer] live balance check failed:",
-        err instanceof Error ? err.message : String(err),
+        `[remote-signer] live balance check failed client_id=${sanitizeForLog(identity?.client_id)} subject=${sanitizeForLog(identity?.usage_subject)}:`,
+        sanitizeForLog(err),
       );
     },
   });

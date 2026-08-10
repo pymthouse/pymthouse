@@ -7,6 +7,7 @@ import {
   estimateNextBillingCycleIso,
   listActiveKonnectSubscriptions,
   parseSubscriptionTiming,
+  readKonnectSubscriptionActiveWindow,
   restoreKonnectSubscription,
   subscriptionMatchesOpenMeterPlanId,
   unscheduleKonnectSubscriptionCancelation,
@@ -141,6 +142,67 @@ test("countActiveKonnectSubscriptionsForPlan counts matching plans", async (t) =
 
   assert.equal(await countActiveKonnectSubscriptionsForPlan(""), 0);
   assert.equal(await countActiveKonnectSubscriptionsForPlan("plan_a"), 1);
+});
+
+test("readKonnectSubscriptionActiveWindow reads the metering/v1 window", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    // Verbatim shape of `GET /metering/v1/subscriptions/{id}` — the only Konnect
+    // surface that returns the billing window.
+    return new Response(
+      JSON.stringify({
+        id: "01KZCN0AH450JWA381D2AN7NJK",
+        status: "canceled",
+        activeFrom: "2026-08-06T23:02:17.378589Z",
+        activeTo: "2026-09-06T23:02:17.378589Z",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  assert.deepEqual(
+    await readKonnectSubscriptionActiveWindow({
+      subscriptionId: "01KZCN0AH450JWA381D2AN7NJK",
+    }),
+    {
+      activeFrom: "2026-08-06T23:02:17.378589Z",
+      activeTo: "2026-09-06T23:02:17.378589Z",
+    },
+  );
+  assert.match(
+    urls[0]!,
+    /\/metering\/v1\/subscriptions\/01KZCN0AH450JWA381D2AN7NJK$/,
+  );
+});
+
+test("readKonnectSubscriptionActiveWindow degrades to nulls instead of throwing", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async () => new Response("nope", { status: 500 }));
+
+  assert.deepEqual(
+    await readKonnectSubscriptionActiveWindow({ subscriptionId: "sub_x" }),
+    { activeFrom: null, activeTo: null },
+  );
+});
+
+test("readKonnectSubscriptionActiveWindow skips the call for a blank id", async (t) => {
+  withKonnectEnv(t);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    return new Response("{}", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  assert.deepEqual(await readKonnectSubscriptionActiveWindow({ subscriptionId: "  " }), {
+    activeFrom: null,
+    activeTo: null,
+  });
+  assert.equal(calls, 0);
 });
 
 test("konnectAdminFetch errors surface status and body", async (t) => {
