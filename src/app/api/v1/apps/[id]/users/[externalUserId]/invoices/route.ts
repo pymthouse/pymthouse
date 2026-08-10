@@ -4,6 +4,7 @@ import {
   authorizeAppUserBillingRoute,
   isAppUserBillingAccess,
 } from "@/lib/billing/app-user-billing-route";
+import { clampPageParam } from "@/lib/billing/wallet-http";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
@@ -31,12 +32,12 @@ export async function GET(
   }
 
   const url = new URL(request.url);
-  const page = Number(url.searchParams.get("page") || "1");
-  const pageSize = Number(url.searchParams.get("pageSize") || "20");
-
-  const normalizedPage = Number.isFinite(page) && page > 0 ? page : 1;
-  const normalizedPageSize =
-    Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 20;
+  const normalizedPage = clampPageParam(url.searchParams.get("page"), 1, 10_000);
+  const normalizedPageSize = clampPageParam(
+    url.searchParams.get("pageSize"),
+    20,
+    100,
+  );
 
   // Fail open — same posture as payment-methods GET. Starter / sandbox users
   // often have no Stripe customer yet; list UI should show "none yet", not 503.
@@ -77,7 +78,12 @@ async function listOwnerRollupInvoices(input: {
   pageSize: number;
 }) {
   if (!isHostedAdminClientAvailable()) {
-    return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
+    return {
+      items: [],
+      page: input.page,
+      pageSize: input.pageSize,
+      totalCount: 0,
+    };
   }
   return listAppUserInvoices({
     client: getHostedAdminClient(),
