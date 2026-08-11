@@ -52,6 +52,19 @@ describe("resolveBillingState status", () => {
     assert.equal(state.funding.spendable.usd, "2.00");
   });
 
+  it("clears unbilledDebt while spendable remains (no double-count)", () => {
+    const state = resolveBillingState(
+      input({
+        prepaidUsdMicros: 5_010_000n,
+        unbilledDebtUsdMicros: 19_990_000n,
+      }),
+    );
+    assert.equal(state.status, "active");
+    assert.equal(state.funding.spendable.usd, "5.01");
+    assert.equal(state.funding.overage.unbilledDebt?.usd, "0.00");
+    assert.equal(state.funding.overage.remaining?.usd, "10.00");
+  });
+
   it("is overage at zero spendable with room to spare", () => {
     const state = resolveBillingState(
       input({ unbilledDebtUsdMicros: 1_000_000n }),

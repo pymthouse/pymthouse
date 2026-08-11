@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authorizeOwnerWalletM2m } from "@/lib/billing/owner-wallet-m2m-auth";
-import {
-  readOptionalExternalUserId,
-  resolveWalletBillingTarget,
-} from "@/lib/billing/wallet-billing-target";
 import { clampPageParam, walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
+import { resolveWalletRouteContext } from "@/lib/billing/wallet-route-context";
 import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
@@ -25,34 +21,25 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const access = await authorizeOwnerWalletM2m(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const url = new URL(request.url);
-  const billingTarget = await resolveWalletBillingTarget({
-    appId: access.app.id,
-    ownerUserId: access.ownerUserId,
-    externalUserId: readOptionalExternalUserId(
-      url.searchParams.get("externalUserId"),
-    ),
+  const searchParams = request.nextUrl.searchParams;
+  const resolved = await resolveWalletRouteContext({
+    request,
+    clientId,
+    externalUserId: searchParams.get("externalUserId"),
   });
-  if (!billingTarget.ok) {
-    return NextResponse.json(
-      { error: billingTarget.error },
-      { status: billingTarget.status },
-    );
+  if (!resolved.ok) {
+    return resolved.response;
   }
 
-  const page = clampPageParam(url.searchParams.get("page"), 1, 10_000);
-  const pageSize = clampPageParam(url.searchParams.get("pageSize"), 20, 100);
+  const { app, target } = resolved.context;
+  const page = clampPageParam(searchParams.get("page"), 1, 10_000);
+  const pageSize = clampPageParam(searchParams.get("pageSize"), 20, 100);
 
   try {
-    if (billingTarget.target.mode === "merchant") {
+    if (target.mode === "merchant") {
       const result = await listMerchantConnectInvoicesForAppUser({
-        clientId: access.app.id,
-        externalUserId: billingTarget.target.externalUserId,
+        clientId: app.id,
+        externalUserId: target.externalUserId,
         page,
         pageSize,
       });
@@ -68,7 +55,7 @@ export async function GET(
 
     const result = await listOwnerWalletInvoices({
       client: getHostedAdminClient(),
-      ownerUserId: billingTarget.target.ownerUserId,
+      ownerUserId: target.ownerUserId,
       page,
       pageSize,
     });
