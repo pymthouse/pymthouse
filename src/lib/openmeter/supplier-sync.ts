@@ -67,6 +67,7 @@ export async function appSupplierGaps(
     country: config.supplierCountry,
     name: config.supplierName,
     taxId: config.supplierTaxId,
+    taxIdOnFileAtStripe: config.supplierTaxIdOnFileAtStripe,
   });
 }
 
@@ -162,6 +163,7 @@ export async function syncTenantSupplierFromConnect(input: {
         country: config.supplierCountry,
         name: config.supplierName,
         taxId: config.supplierTaxId,
+        taxIdOnFileAtStripe: config.supplierTaxIdOnFileAtStripe,
       }),
     };
   }
@@ -199,6 +201,8 @@ export async function syncTenantSupplierFromConnect(input: {
     country: refreshed?.supplierCountry ?? country,
     name: refreshed?.supplierName ?? supplierName,
     taxId: refreshed?.supplierTaxId,
+    taxIdOnFileAtStripe:
+      refreshed?.supplierTaxIdOnFileAtStripe ?? identity.taxIdProvided,
   });
 
   const profileId = preferredMerchantProfileId(refreshed ?? config);
@@ -236,6 +240,7 @@ export async function setAppSupplierTaxId(input: {
     country: config.supplierCountry,
     name: config.supplierName,
     taxId: config.supplierTaxId,
+    taxIdOnFileAtStripe: config.supplierTaxIdOnFileAtStripe,
   });
 
   const profileId = preferredMerchantProfileId(config);
@@ -258,12 +263,14 @@ export function resolveMerchantChargeModel(config: {
   supplierCountry?: string | null;
   supplierName?: string | null;
   supplierTaxId?: string | null;
+  supplierTaxIdOnFileAtStripe?: boolean | null;
 }): "direct" | "destination" {
   if (
     supplierIsComplete({
       country: config.supplierCountry,
       name: config.supplierName,
       taxId: config.supplierTaxId,
+      taxIdOnFileAtStripe: config.supplierTaxIdOnFileAtStripe,
     })
   ) {
     return "direct";
@@ -283,6 +290,7 @@ export function supplierStatusPayload(config: {
     country: config.supplierCountry,
     name: config.supplierName,
     taxId: config.supplierTaxId,
+    taxIdOnFileAtStripe: config.supplierTaxIdOnFileAtStripe,
   });
   return {
     supplierCountry: config.supplierCountry ?? null,

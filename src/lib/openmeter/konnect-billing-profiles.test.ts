@@ -12,6 +12,7 @@ import {
   listKonnectBillingProfiles,
   resolveKonnectStripeAppId,
   selectReadyKonnectStripeApp,
+  updateKonnectBillingProfileCollection,
   updateKonnectBillingProfileProgressiveBilling,
 } from "./konnect-billing-profiles";
 import {
@@ -45,7 +46,7 @@ test("buildKonnectCreateBillingProfileBody uses Konnect snake_case supplier addr
   assert.equal(body.workflow.collection?.alignment.type, "anchored");
   assert.equal(
     body.workflow.collection?.alignment.recurring_period.interval,
-    "DAY",
+    "P1D",
   );
   assert.deepEqual(body.apps, {
     tax: { id: "01G65Z755AFWAKHE12NY0CQ9FH" },
@@ -302,4 +303,70 @@ test("updateKonnectBillingProfileProgressiveBilling patches workflow", async (t)
     progressiveBilling: true,
   });
   assert.equal(calls.length, 2);
+});
+
+test("updateKonnectBillingProfileCollection strips supplier.id and sends P1D", async (t) => {
+  withKonnectEnv(t);
+  let putBody = "";
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (method === "GET") {
+      return new Response(
+        JSON.stringify({
+          id: "prof_1",
+          created_at: "t0",
+          updated_at: "t1",
+          apps: { tax: { id: "a" } },
+          // Konnect GET bodies carry response-only supplier.id, which the
+          // update schema rejects with an allOf error when echoed back.
+          supplier: { id: "", name: "Tenant", addresses: {} },
+          workflow: { collection: { alignment: { type: "subscription" } } },
+          name: "Tenant",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    putBody = String(init?.body ?? "");
+    return new Response("{}", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  await updateKonnectBillingProfileCollection({
+    profileId: "prof_1",
+    anchor: new Date("2026-03-04T05:06:07.000Z"),
+  });
+  const body = JSON.parse(putBody);
+  assert.equal("id" in body.supplier, false);
+  assert.equal(body.supplier.name, "Tenant");
+  assert.deepEqual(body.workflow.collection, {
+    alignment: {
+      type: "anchored",
+      recurring_period: {
+        interval: "P1D",
+        anchor: "2026-03-04T05:06:07.000Z",
+      },
+    },
+  });
+});
+
+test("updateKonnectBillingProfileCollection refuses deleted profiles", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async () => {
+    return new Response(
+      JSON.stringify({
+        id: "prof_gone",
+        deleted_at: "2026-06-27T00:00:41.255302Z",
+        workflow: {},
+        name: "Tenant",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await assert.rejects(
+    updateKonnectBillingProfileCollection({ profileId: "prof_gone" }),
+    /is deleted/,
+  );
 });

@@ -56,7 +56,7 @@ function resolvePlanIncludedMicros(plan: typeof plans.$inferSelect): number | un
   );
 }
 
-function parsePriceAmount(raw: string): string {
+export function parsePriceAmount(raw: string): string {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
     return "0";

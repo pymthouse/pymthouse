@@ -64,8 +64,9 @@ export function buildKonnectSupplierAddress(s?: BillingProfileSupplierInput) {
 }
 
 /**
- * Jurisdictions requiring the seller's tax number on a B2B invoice.
- * Stripe will not share the verified value, so the developer must supply it.
+ * Jurisdictions that expect a seller tax number on B2B invoices.
+ * Stripe Connect only exposes `tax_id_provided` (boolean) — never the value —
+ * so {@link supplierGaps} treats on-file-at-Stripe as satisfying the gap.
  *
  * First-pass list — have tax counsel review before gating production onboarding.
  */
@@ -120,11 +121,15 @@ export function supplierGaps(input: {
   country?: string | null;
   name?: string | null;
   taxId?: string | null;
+  /** Stripe Connect `company.tax_id_provided` / `vat_id_provided`. */
+  taxIdOnFileAtStripe?: boolean | null;
 }): SupplierGap[] {
   const gaps: SupplierGap[] = [];
   if (!present(input.country)) gaps.push("country");
   if (!present(input.name)) gaps.push("name");
-  if (requiresSupplierTaxId(input.country) && !present(input.taxId)) {
+  const hasTaxId =
+    present(input.taxId) || Boolean(input.taxIdOnFileAtStripe);
+  if (requiresSupplierTaxId(input.country) && !hasTaxId) {
     gaps.push("tax_id");
   }
   return gaps;

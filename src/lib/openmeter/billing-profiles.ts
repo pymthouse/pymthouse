@@ -760,6 +760,21 @@ export async function assignMerchantCustomInvoicingProfile(input: {
       "OPENMETER_MERCHANT_BILLING_PROFILE_ID is required to assign merchant Custom Invoicing overrides",
     );
   }
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  // The SDK override body (`billingProfileId`) is not rewritten to Konnect's
+  // `billing_profile: { id }`, so on Konnect it returns 200 and changes
+  // nothing — leaving merchant customers on the org default (sandbox) profile
+  // and their invoices out of Custom Invoicing. The Konnect write verifies.
+  if (useKonnect) {
+    await setKonnectCustomerBillingProfile({
+      customerId: input.customerId,
+      billingProfileId: profileId,
+    });
+    return profileId;
+  }
   await assignCustomerBillingProfileOverride({
     client: input.client,
     customerId: input.customerId,

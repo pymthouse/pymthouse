@@ -29,7 +29,7 @@ function input(overrides: Partial<BillingStateInput> = {}): BillingStateInput {
     paymentMethod: { hasDefault: true, brand: "visa", last4: "7310" },
     billingAvailable: true,
     cycle: "P1M",
-    collectionInterval: "DAY",
+    collectionInterval: "P1D",
     ...overrides,
   };
 }
@@ -165,7 +165,7 @@ describe("resolveBillingState shape", () => {
   it("publishes the collection timing knobs", () => {
     const state = resolveBillingState(input());
     assert.equal(state.collection.cycle, "P1M");
-    assert.equal(state.collection.collectionInterval, "DAY");
+    assert.equal(state.collection.collectionInterval, "P1D");
     assert.equal(state.collection.leadThreshold.usd, "5.00");
     assert.equal(state.collection.minimumCharge.usd, "0.50");
   });

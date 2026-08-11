@@ -11,6 +11,7 @@ import {
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
 import { getHostedAdminClient } from "./admin-client";
+import { assertAppUserRetailBillingSubject } from "./billing-identity";
 import {
   applyFreeBillingProfileToCustomer,
   applyTenantBillingProfileToCustomer,
@@ -50,6 +51,7 @@ import {
 } from "./subscription-state";
 import {
   recordAppUserPaymentMethodCheckout,
+  resolveAppUserCheckoutReturnUrl,
   resolveAppUserDefaultPaymentMethodId,
 } from "@/lib/openmeter/app-user-payment-method";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
@@ -148,6 +150,17 @@ export function neonSubscriptionStatusAfterPlanChange(input: {
   checkoutUrl?: string;
 }): "pending" | "active" {
   return input.checkoutUrl ? "pending" : "active";
+}
+
+/**
+ * Paid / pay-per-use targets need a card on file before Konnect will accept the
+ * subscription change. Defer `/change` until setup Checkout completes.
+ */
+export function shouldCollectPaymentMethodBeforePlanChange(input: {
+  targetRequiresPaymentMethod: boolean;
+  hasDefaultPaymentMethod: boolean;
+}): boolean {
+  return input.targetRequiresPaymentMethod && !input.hasDefaultPaymentMethod;
 }
 
 export function shouldApplyFreeBillingProfileForCheckout(input: {
@@ -306,14 +319,9 @@ async function checkoutViaReactivatedCanceledSubscription(input: {
   }
 
   if (input.needsPaymentMethod && !input.defaultPaymentMethodId) {
-    await clearOpenMeterSubscriptionForCheckout(live);
-    const created = await input.client.subscriptions.create({
-      customerId: input.customerId,
-      plan: {
-        key: buildOpenMeterPlanKey(input.checkoutInput.clientId, input.planId),
-      },
-    });
-    return { subscriptionId: created?.id?.trim() || "" };
+    throw new Error(
+      "Cannot switch plans without a default payment method; collect a card first",
+    );
   }
 
   return {
@@ -399,10 +407,14 @@ async function resolveCheckoutSettings(input: EndUserCheckoutInput): Promise<{
   return {
     merchantReady,
     isMerchantBilling: billingConfig?.billingMode === "merchant",
-    successUrl:
-      input.successUrl || billingConfig?.checkoutSuccessUrl || fallbackUrl,
-    cancelUrl:
-      input.cancelUrl || billingConfig?.checkoutCancelUrl || fallbackUrl,
+    successUrl: resolveAppUserCheckoutReturnUrl(
+      input.successUrl || billingConfig?.checkoutSuccessUrl || undefined,
+      fallbackUrl,
+    ),
+    cancelUrl: resolveAppUserCheckoutReturnUrl(
+      input.cancelUrl || billingConfig?.checkoutCancelUrl || undefined,
+      fallbackUrl,
+    ),
   };
 }
 
@@ -484,10 +496,12 @@ async function resolveExistingCheckoutSubscription(input: {
     return null;
   }
 
-  // Live sub, no card yet — clear and create target for Checkout to collect PM.
+  // Live sub without a card: never clear-and-create — that left users on the
+  // target plan after Checkout cancel. Collect PM first (caller early-returns).
   if (input.needsPaymentMethod && !input.defaultPaymentMethodId) {
-    await clearOpenMeterSubscriptionForCheckout(existing);
-    return null;
+    throw new Error(
+      "Cannot switch plans without a default payment method; collect a card first",
+    );
   }
 
   // Live sub + card: switch via /change (may still return a Checkout URL).
@@ -605,12 +619,9 @@ async function createCheckoutSubscriptionAfterConflict(input: {
     };
   }
 
-  await clearOpenMeterSubscriptionForCheckout(raced);
-  const created = await input.client.subscriptions.create({
-    customerId: input.customerId,
-    plan: { key: input.planKey },
-  });
-  return { subscriptionId: created?.id?.trim() || "" };
+  throw new Error(
+    "Cannot switch plans without a default payment method; collect a card first",
+  );
 }
 
 async function getOrCreateCheckoutSubscription(input: {
@@ -705,9 +716,97 @@ async function createCheckoutSession(input: {
   };
 }
 
+/**
+ * Setup-mode Checkout when a plan switch needs a card that is not on file yet.
+ * Returns null when Checkout is not required (plan is free, or a default PM
+ * already exists). Must run before Konnect `/change` — Stripe-backed profiles
+ * reject the switch without a default payment method.
+ *
+ * Exported for unit tests that exercise the PM-before-/change gate.
+ */
+export async function createPaymentMethodCheckoutIfNeededForPlanChange(input: {
+  clientId: string;
+  externalUserId: string;
+  customerId: string;
+  customerKey: string;
+  targetPlan: {
+    id: string;
+    type: string;
+    priceAmount: string;
+    isStarterDefault?: boolean | null;
+    isNetworkDefault?: boolean | null;
+  };
+  client: ReturnType<typeof getHostedAdminClient>;
+  successUrl?: string;
+  cancelUrl?: string;
+}): Promise<{ checkoutUrl: string; sessionId: string | null } | null> {
+  if (!planRequiresPaymentMethod(input.targetPlan)) {
+    return null;
+  }
+
+  const billingConfig = await getAppBillingConfig(input.clientId);
+  const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
+  const defaultPaymentMethodId = await resolveCheckoutDefaultPaymentMethodId({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    openMeterCustomerId: input.customerId,
+    merchantReady,
+  });
+  if (
+    !shouldCollectPaymentMethodBeforePlanChange({
+      targetRequiresPaymentMethod: true,
+      hasDefaultPaymentMethod: Boolean(defaultPaymentMethodId),
+    })
+  ) {
+    return null;
+  }
+
+  if (!merchantReady && connectPaymentsOnlyEnabled(billingConfig)) {
+    throw new Error(
+      "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
+    );
+  }
+
+  const origin = getPublicOrigin();
+  const fallbackUrl = appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+  const success = resolveAppUserCheckoutReturnUrl(
+    input.successUrl || billingConfig?.checkoutSuccessUrl || undefined,
+    fallbackUrl,
+  );
+  const cancel = resolveAppUserCheckoutReturnUrl(
+    input.cancelUrl || billingConfig?.checkoutCancelUrl || undefined,
+    fallbackUrl,
+  );
+
+  const checkout = await createCheckoutSession({
+    merchantReady,
+    checkoutInput: {
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      planId: input.targetPlan.id,
+    },
+    client: input.client,
+    customerId: input.customerId,
+    customerKey: input.customerKey,
+    successUrl: success,
+    cancelUrl: cancel,
+  });
+  await recordAppUserPaymentMethodCheckout({
+    sessionId: checkout.sessionId,
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  return checkout;
+}
+
 export async function createEndUserCheckout(
   input: EndUserCheckoutInput,
 ): Promise<CheckoutResult> {
+  await assertAppUserRetailBillingSubject({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+
   const plan = await loadActiveTargetPlan({
     clientId: input.clientId,
     planId: input.planId,
@@ -737,6 +836,33 @@ export async function createEndUserCheckout(
         merchantReady: checkoutSettings.merchantReady,
       })
     : null;
+
+  // Never create/switch the OpenMeter subscription before a required card is
+  // on file. Applying the free billing profile + create left users on the
+  // target plan after Checkout cancel.
+  if (
+    shouldCollectPaymentMethodBeforePlanChange({
+      targetRequiresPaymentMethod: needsPaymentMethod,
+      hasDefaultPaymentMethod: Boolean(defaultPaymentMethodId),
+    })
+  ) {
+    const checkout = await createCheckoutSession({
+      merchantReady: checkoutSettings.merchantReady,
+      checkoutInput: input,
+      client,
+      customerId: customer.id,
+      customerKey: customer.key,
+      successUrl: checkoutSettings.successUrl,
+      cancelUrl: checkoutSettings.cancelUrl,
+    });
+    await recordAppUserPaymentMethodCheckout({
+      sessionId: checkout.sessionId,
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+    return { checkoutUrl: checkout.checkoutUrl };
+  }
+
   await applyCheckoutBillingProfile({
     client,
     clientId: input.clientId,
@@ -763,33 +889,17 @@ export async function createEndUserCheckout(
     throw new Error("Failed to create OpenMeter subscription");
   }
 
-  const checkout = await createCheckoutSession({
-    merchantReady: checkoutSettings.merchantReady,
-    checkoutInput: input,
-    client,
-    customerId: customer.id,
-    customerKey: customer.key,
-    successUrl: checkoutSettings.successUrl,
-    cancelUrl: checkoutSettings.cancelUrl,
-  });
-
-  await recordAppUserPaymentMethodCheckout({
-    sessionId: checkout.sessionId,
-    clientId: input.clientId,
-    externalUserId: input.externalUserId,
-  });
-
+  // Card already on file — subscription is live; no setup Checkout needed.
   await upsertNeonSubscriptionCache({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
     planId: plan.id,
     openmeterSubscriptionId: subscription.subscriptionId,
-    status: "pending",
-    stripeCheckoutSessionId: checkout.sessionId,
+    status: "active",
   });
 
   return {
-    checkoutUrl: checkout.checkoutUrl,
+    checkoutUrl: checkoutSettings.successUrl,
     subscriptionId: subscription.subscriptionId,
   };
 }
@@ -822,6 +932,11 @@ export async function changeAppUserSubscriptionPlan(input: {
   successUrl?: string;
   cancelUrl?: string;
 }): Promise<ChangeAppUserSubscriptionPlanResult> {
+  await assertAppUserRetailBillingSubject({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+
   const targetPlan = await loadActiveTargetPlan({
     clientId: input.clientId,
     planId: input.planId,
@@ -954,6 +1069,32 @@ export async function changeAppUserSubscriptionPlan(input: {
       currentIsStarterDefault: currentLocalPlan?.isStarterDefault,
     });
 
+  // Collect a card first when the target needs one. Konnect rejects Stripe-
+  // profile /change without a default payment method — returning Checkout
+  // after a failed change never reaches the client.
+  const paymentMethodCheckout =
+    await createPaymentMethodCheckoutIfNeededForPlanChange({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      customerId: customer.id,
+      customerKey: customer.key,
+      targetPlan,
+      client,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
+    });
+  if (paymentMethodCheckout) {
+    return {
+      subscriptionId: current.id,
+      // Still on the current plan — /change has not run yet. Never report the
+      // unpaid target when the local plan row failed to load.
+      planId: currentLocalPlanId ?? "",
+      effectiveAt: null,
+      timing,
+      checkoutUrl: paymentMethodCheckout.checkoutUrl,
+    };
+  }
+
   let change;
   try {
     change = await changeKonnectSubscription({
@@ -1005,75 +1146,12 @@ export async function changeAppUserSubscriptionPlan(input: {
       : (currentLocalPlan?.id ?? targetPlan.id);
   const effectiveAt = new Date().toISOString();
 
-  let checkoutUrl: string | undefined;
-  let stripeCheckoutSessionId: string | null | undefined;
-
-  if (planRequiresPaymentMethod(targetPlan)) {
-    const billingConfig = await getAppBillingConfig(input.clientId);
-    const origin = getPublicOrigin();
-    const success =
-      input.successUrl ||
-      billingConfig?.checkoutSuccessUrl ||
-      appSettingsAbsoluteUrl(origin, input.clientId, "payments");
-    const cancel =
-      input.cancelUrl ||
-      billingConfig?.checkoutCancelUrl ||
-      appSettingsAbsoluteUrl(origin, input.clientId, "payments");
-
-    if (isMerchantConnectPaymentsReady(billingConfig)) {
-      const existingDefault = await resolveAppUserDefaultPaymentMethodId({
-        clientId: input.clientId,
-        externalUserId: input.externalUserId,
-      });
-      if (!existingDefault) {
-        const connectCheckout = await createMerchantConnectCheckoutForUser({
-          clientId: input.clientId,
-          externalUserId: input.externalUserId,
-          successUrl: success,
-          cancelUrl: cancel,
-          openmeterCustomerId: customer.id,
-          openmeterCustomerKey: customer.key,
-        });
-        checkoutUrl = connectCheckout.checkoutUrl;
-        stripeCheckoutSessionId = connectCheckout.sessionId;
-        await recordAppUserPaymentMethodCheckout({
-          sessionId: connectCheckout.sessionId,
-          clientId: input.clientId,
-          externalUserId: input.externalUserId,
-        });
-      }
-    } else {
-      const paymentMethodId = await getKonnectDefaultPaymentMethodId(customer.id);
-      if (!paymentMethodId) {
-        if (connectPaymentsOnlyEnabled(billingConfig)) {
-          throw new Error(
-            "Merchant Stripe Connect onboarding is required before checkout (connectPaymentsOnly)",
-          );
-        }
-        const checkout = await createOpenMeterStripeCheckoutSession({
-          client,
-          customerId: customer.id,
-          successUrl: success,
-          cancelUrl: cancel,
-        });
-        checkoutUrl = checkout.checkoutUrl;
-        stripeCheckoutSessionId = checkout.sessionId;
-        await recordAppUserPaymentMethodCheckout({
-          sessionId: checkout.sessionId,
-          clientId: input.clientId,
-          externalUserId: input.externalUserId,
-        });
-      }
-    }
-  }
-
   await upsertNeonSubscriptionCache({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
     planId: neonPlanId,
     openmeterSubscriptionId: nextSubscriptionId,
-    status: neonSubscriptionStatusAfterPlanChange({ checkoutUrl }),
-    stripeCheckoutSessionId,
+    status: "active",
   });
 
   return {
@@ -1081,7 +1159,6 @@ export async function changeAppUserSubscriptionPlan(input: {
     planId: timing === "immediate" ? targetPlan.id : neonPlanId,
     effectiveAt,
     timing,
-    ...(checkoutUrl ? { checkoutUrl } : {}),
     ...(timing === "next_billing_cycle" && change.next?.id
       ? {
           pendingPlan: {

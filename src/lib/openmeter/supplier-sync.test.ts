@@ -36,6 +36,15 @@ test("supplierGaps: DE company needs tax id", () => {
     supplierGaps({ country: "DE", name: "GmbH", taxId: "DE123" }),
     [],
   );
+  assert.deepEqual(
+    supplierGaps({
+      country: "DE",
+      name: "GmbH",
+      taxId: null,
+      taxIdOnFileAtStripe: true,
+    }),
+    [],
+  );
 });
 
 test("supplierGaps: missing country and name", () => {
@@ -137,6 +146,15 @@ test("resolveMerchantChargeModel gates direct on supplier completeness", () => {
       supplierTaxId: null,
     }),
     "destination",
+  );
+  assert.equal(
+    resolveMerchantChargeModel({
+      supplierCountry: "DE",
+      supplierName: "GmbH",
+      supplierTaxId: null,
+      supplierTaxIdOnFileAtStripe: true,
+    }),
+    "direct",
   );
 });
 

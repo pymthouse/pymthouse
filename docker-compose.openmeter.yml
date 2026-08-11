@@ -3,7 +3,7 @@
 # API: http://127.0.0.1:48888
 # Local secrets: set OPENMETER_POSTGRES_SECRET and OPENMETER_CLICKHOUSE_SECRET in .env (see .env.example).
 
-x-openmeter-image: &openmeter-image ghcr.io/openmeterio/openmeter:v1.0.0-beta.231
+x-openmeter-image: &openmeter-image ghcr.io/openmeterio/openmeter:v1.0.0-beta.232
 
 services:
   openmeter-postgres:

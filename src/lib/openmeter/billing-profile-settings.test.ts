@@ -44,7 +44,7 @@ test("buildKonnectCreateBillingProfileBody anchors daily collection", () => {
     alignment: {
       type: "anchored",
       recurring_period: {
-        interval: "DAY",
+        interval: "P1D",
         anchor: "2026-03-04T05:06:07.000Z",
       },
     },

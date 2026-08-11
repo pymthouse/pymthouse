@@ -422,6 +422,25 @@ export async function createKonnectBillingProfile(input: {
   return profile.id;
 }
 
+/**
+ * Konnect's GET body carries response-only fields its own update schema
+ * rejects with allOf errors — `supplier.id` is one — so a read-modify-write
+ * must strip them before echoing the body into a PUT.
+ */
+function sanitizeProfileForReplace(
+  replaceable: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...replaceable };
+  if (out.supplier && typeof out.supplier === "object") {
+    const { id: _supplierId, ...supplier } = out.supplier as Record<
+      string,
+      unknown
+    >;
+    out.supplier = supplier;
+  }
+  return out;
+}
+
 /** Read-modify-write of an existing Konnect billing profile's workflow block. */
 async function patchKonnectBillingProfileWorkflow(
   profileId: string,
@@ -432,6 +451,9 @@ async function patchKonnectBillingProfileWorkflow(
   );
   if (!existing || typeof existing !== "object") {
     throw new Error("Konnect billing profile not found");
+  }
+  if (typeof existing.deleted_at === "string" && existing.deleted_at) {
+    throw new Error(`Konnect billing profile ${profileId} is deleted`);
   }
 
   const workflow =
@@ -452,7 +474,7 @@ async function patchKonnectBillingProfileWorkflow(
   await billingFetch(`/profiles/${encodeURIComponent(profileId)}`, {
     method: "PUT",
     body: JSON.stringify({
-      ...replaceable,
+      ...sanitizeProfileForReplace(replaceable),
       workflow,
     }),
   });
@@ -508,7 +530,7 @@ export async function updateKonnectBillingProfileSupplier(input: {
   await billingFetch(`/profiles/${encodeURIComponent(input.profileId)}`, {
     method: "PUT",
     body: JSON.stringify({
-      ...replaceable,
+      ...sanitizeProfileForReplace(replaceable),
       supplier: buildKonnectSupplier(input.name, input.supplier),
     }),
   });
