@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 
 import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
 import DashboardLayout from "@/components/DashboardLayout";
+import IdentityLifecycleActions from "@/components/identities/IdentityLifecycleActions";
 import IdentityRequestLog from "@/components/identities/IdentityRequestLog";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
 import { formatBillableDuration } from "@/lib/billing-format";
@@ -15,7 +16,10 @@ import {
 } from "@/lib/billing-usage-dashboard-data";
 import { formatUsdMicrosString } from "@/lib/format-usd-micros";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
-import { getAuthorizedProviderApp } from "@/lib/provider-apps";
+import {
+  canEditProviderApp,
+  getAuthorizedProviderApp,
+} from "@/lib/provider-apps";
 import { listAppIdentities } from "@/lib/usage/identity-rollup";
 import { queryOpenMeterUserDailyByPipeline } from "@/lib/usage/query-openmeter";
 
@@ -99,6 +103,7 @@ export default async function AppIdentityDetailPage({
     notFound();
   }
 
+  const canManage = await canEditProviderApp(providerAuth);
   const app = providerAuth.app;
   const cycle = calendarMonthBoundsUtc(new Date());
   const openMeterConfigured = requireOpenMeterForUsageReads();
@@ -179,6 +184,17 @@ export default async function AppIdentityDetailPage({
           value={statusLabel}
         />
       </div>
+
+      {identity?.provisioned ? (
+        <div className="mb-6 sm:mb-8">
+          <IdentityLifecycleActions
+            appId={id}
+            externalUserId={externalUserId}
+            status={identity.status}
+            canManage={canManage}
+          />
+        </div>
+      ) : null}
 
       {identity?.apiKey ? (
         <div className="mb-6 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-sm sm:mb-8">

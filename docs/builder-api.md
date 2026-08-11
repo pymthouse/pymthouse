@@ -145,10 +145,14 @@ Authorization: Basic base64(client_id:client_secret)
 
 | Method | Path | Required scope | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/users` | `users:read` | List provisioned users |
-| `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required) |
-| `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user attributes |
-| `DELETE` | `/api/v1/apps/{clientId}/users?externalUserId=...` | `users:write` | Deactivate user (`status: inactive`) |
+| `GET` | `/api/v1/apps/{clientId}/users` | `users:read` | List provisioned users (all statuses) |
+| `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required; optional `email`, `status`) |
+| `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user `email` and/or `status` |
+| `DELETE` | `/api/v1/apps/{clientId}/users?externalUserId=...` | `users:write` | Soft-deactivate user (`status: inactive`) — frees an end-user cap slot |
+
+**Status contract:** `status` is `active` or `inactive` only. New users default to `active`. `DELETE` sets `inactive`. Reactivate with `PUT`/`POST` `{ "status": "active" }` (consumes a free cap slot when the activation gate is enforced). Inactive identities cannot mint tokens or resolve API keys; they remain listed for audit and billing history.
+
+**Dashboard:** App → Identities shows every M2M identity and supports deactivate / reactivate for owners and app admins. Payments → Activation shows `active / cap` and links to Identities when the cap is reached. Raising the numeric cap is admin-only (see #401); developers reclaim capacity by deactivating unused identities.
 
 ---
 
@@ -889,7 +893,7 @@ Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `en
   "canProvisionEndUsers": true,
   "canSellPaidPlans": false,
   "reason": "stripe_connect_required",
-  "endUserCap": 25,
+  "endUserCap": 10000,
   "appUserCount": 3
 }
 ```

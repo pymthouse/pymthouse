@@ -10,8 +10,13 @@
  * See docs/adr-owner-vs-app-billing.md.
  */
 
-/** Column default in `app_billing_config`; the floor if env is unset/invalid. */
-export const FALLBACK_END_USER_CAP = 25;
+/**
+ * Floor when env is unset/invalid. Cap enforcement still exists for later
+ * tuning via `PYMTHOUSE_DEFAULT_END_USER_CAP` / per-app overrides; the
+ * historical beta default of 25 is raised to 10_000 so apps are not blocked
+ * early in development.
+ */
+export const FALLBACK_END_USER_CAP = 10_000;
 export const FALLBACK_APPLICATION_FEE_BPS = 0;
 
 const MAX_END_USER_CAP = 1_000_000;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { previewOverageCeiling } from "@/lib/billing/billing-state";
 import {
@@ -108,7 +109,8 @@ function CapabilityValue({ allowed }: Readonly<{ allowed: boolean }>) {
  */
 function PaymentsActivationCard({
   activation,
-}: Readonly<{ activation: ActivationInfo }>) {
+  appId,
+}: Readonly<{ activation: ActivationInfo; appId: string }>) {
   const modeLabel =
     activation.billingMode === "merchant" ? "Merchant" : "Owner roll-up";
   const blocked = !activation.canProvisionEndUsers || !activation.canSellPaidPlans;
@@ -117,7 +119,7 @@ function PaymentsActivationCard({
     : "Connect Stripe and complete onboarding to sell paid plans.";
   const provisionHint =
     activation.reason === "end_user_cap_reached"
-      ? "End-user cap reached — raise the cap or switch to merchant mode."
+      ? "Active end-user cap reached — deactivate unused identities to free slots, switch to merchant mode, or contact support for a higher limit."
       : "Owner wallet has no spendable balance — top up credits to provision more users.";
 
   return (
@@ -129,10 +131,16 @@ function PaymentsActivationCard({
           <dd className="text-sm text-zinc-200">{modeLabel}</dd>
         </div>
         <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-xs text-zinc-500">End users</dt>
+          <dt className="text-xs text-zinc-500">Active end users</dt>
           <dd className="font-mono text-sm tabular-nums text-zinc-200">
-            {activation.appUserCount.toLocaleString("en-US")} /{" "}
-            {activation.endUserCap.toLocaleString("en-US")}
+            <Link
+              href={`/apps/${encodeURIComponent(appId)}/identities`}
+              className="text-zinc-200 transition-colors hover:text-emerald-400"
+              title="Manage identities"
+            >
+              {activation.appUserCount.toLocaleString("en-US")} /{" "}
+              {activation.endUserCap.toLocaleString("en-US")}
+            </Link>
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-3">
@@ -152,7 +160,17 @@ function PaymentsActivationCard({
       {blocked ? (
         <div className="mt-3 space-y-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
           {!activation.canProvisionEndUsers ? (
-            <p className="text-xs text-amber-300">{provisionHint}</p>
+            <p className="text-xs text-amber-300">
+              {provisionHint}{" "}
+              {activation.reason === "end_user_cap_reached" ? (
+                <Link
+                  href={`/apps/${encodeURIComponent(appId)}/identities`}
+                  className="font-medium text-amber-200 underline-offset-2 hover:underline"
+                >
+                  Open identities
+                </Link>
+              ) : null}
+            </p>
           ) : null}
           {!activation.canSellPaidPlans ? (
             <p className="text-xs text-amber-300">{sellHint}</p>
@@ -836,7 +854,7 @@ function PaymentsTabLoaded(props: Readonly<{
   return (
     <div className="space-y-6">
       {status?.activation && (
-        <PaymentsActivationCard activation={status.activation} />
+        <PaymentsActivationCard activation={status.activation} appId={appId} />
       )}
 
       <div className="rounded-lg border border-white/[0.06] p-4 space-y-3">

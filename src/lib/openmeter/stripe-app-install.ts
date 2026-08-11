@@ -431,8 +431,11 @@ export async function getStripeConnectStatus(clientId: string) {
     openmeterStripeAppId?.trim() && openmeterBillingProfileId?.trim(),
   );
 
-  const { resolveAppActivation, DEFAULT_END_USER_CAP } = await import(
+  const { resolveAppActivation } = await import(
     "@/lib/activation/app-activation"
+  );
+  const { platformDefaultEndUserCap } = await import(
+    "@/lib/billing/platform-billing-defaults"
   );
   let activation = null;
   try {
@@ -463,7 +466,7 @@ export async function getStripeConnectStatus(clientId: string) {
     applicationFeeBps: config?.applicationFeeBps ?? 0,
     connectPaymentsOnly: config?.connectPaymentsOnly ?? false,
     billingMode: config?.billingMode === "merchant" ? "merchant" : "owner_rollup",
-    endUserCap: config?.endUserCap ?? DEFAULT_END_USER_CAP,
+    endUserCap: config?.endUserCap ?? platformDefaultEndUserCap(),
     activation,
     ...supplierStatusPayload(config ?? {}),
   };

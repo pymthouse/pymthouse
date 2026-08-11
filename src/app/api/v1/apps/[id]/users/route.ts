@@ -13,6 +13,7 @@ import {
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { runActivationGate } from "@/lib/activation/app-activation";
 import { activationErrorResponse } from "@/lib/activation/problem";
+import { parseAppUserStatus, type AppUserStatus } from "@/lib/billing/app-user-status";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
@@ -44,6 +45,23 @@ async function canAccessUsers(request: NextRequest, clientId: string, requiredSc
   return null;
 }
 
+async function getAppUserStatus(
+  appId: string,
+  externalUserId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ status: appUsers.status })
+    .from(appUsers)
+    .where(
+      and(
+        eq(appUsers.clientId, appId),
+        eq(appUsers.externalUserId, externalUserId),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.status ?? null;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -69,7 +87,7 @@ function parseUpsertUserBody(body: Record<string, unknown>): {
   hasEmail: boolean;
   hasStatus: boolean;
   email: string | null;
-  status: string;
+  status: AppUserStatus;
 } | { ok: false; response: NextResponse } {
   const externalUserId =
     typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
@@ -83,14 +101,25 @@ function parseUpsertUserBody(body: Record<string, unknown>): {
     };
   }
   const hasEmail = typeof body.email === "string";
-  const hasStatus = typeof body.status === "string";
+  const hasStatus = "status" in body && body.status !== undefined;
+  let status: AppUserStatus = "active";
+  if (hasStatus) {
+    const parsedStatus = parseAppUserStatus(body.status);
+    if (!parsedStatus.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: parsedStatus.error }, { status: 400 }),
+      };
+    }
+    status = parsedStatus.status;
+  }
   return {
     ok: true,
     externalUserId,
     hasEmail,
     hasStatus,
     email: hasEmail ? (body.email as string).trim() : null,
-    status: hasStatus ? (body.status as string) : "active",
+    status,
   };
 }
 
@@ -98,7 +127,7 @@ async function upsertAppUserRow(input: {
   appId: string;
   externalUserId: string;
   email: string | null;
-  status: string;
+  status: AppUserStatus;
   hasEmail: boolean;
   hasStatus: boolean;
 }) {
@@ -111,7 +140,7 @@ async function upsertAppUserRow(input: {
     role: "user" as const,
     createdAt: new Date().toISOString(),
   };
-  const updateSet: { email?: string | null; status?: string; role: "user" } = {
+  const updateSet: { email?: string | null; status?: AppUserStatus; role: "user" } = {
     role: "user",
   };
   if (input.hasEmail) updateSet.email = input.email;
@@ -150,9 +179,13 @@ async function provisionAfterUpsert(
 async function runProvisionGate(
   appId: string,
   externalUserId: string,
+  activating?: boolean,
 ): Promise<NextResponse | null> {
   try {
-    await runActivationGate("provision", appId, { externalUserId });
+    await runActivationGate("provision", appId, {
+      externalUserId,
+      activating,
+    });
     return null;
   } catch (err) {
     const problem = activationErrorResponse(err);
@@ -187,21 +220,39 @@ export async function POST(
     return parsed.response;
   }
 
-  const gateProblem = await runProvisionGate(
+  const previousStatus = await getAppUserStatus(
     access.app.id,
     parsed.externalUserId,
   );
-  if (gateProblem) {
-    return gateProblem;
+  const nextStatus: AppUserStatus = parsed.hasStatus
+    ? parsed.status
+    : previousStatus === "inactive"
+      ? "inactive"
+      : "active";
+  // New rows and inactive→active transitions consume a cap slot.
+  const activating =
+    nextStatus === "active" && previousStatus !== "active";
+
+  if (activating) {
+    const gateProblem = await runProvisionGate(
+      access.app.id,
+      parsed.externalUserId,
+      previousStatus != null,
+    );
+    if (gateProblem) {
+      return gateProblem;
+    }
   }
 
   const { row, isNew } = await upsertAppUserRow({
     appId: access.app.id,
     externalUserId: parsed.externalUserId,
     email: parsed.email,
-    status: parsed.status,
+    status: nextStatus,
     hasEmail: parsed.hasEmail,
-    hasStatus: parsed.hasStatus,
+    // Persist the resolved next status so create defaults to active and
+    // reactivate paths write explicitly without requiring a status field.
+    hasStatus: parsed.hasStatus || activating || previousStatus == null,
   });
 
   const provisionProblem = await provisionAfterUpsert(
@@ -244,7 +295,12 @@ export async function PUT(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
   const externalUserId =
     typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
   if (!externalUserId) {
@@ -267,11 +323,31 @@ export async function PUT(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
+  let nextStatus = existing.status;
+  if ("status" in body && body.status !== undefined) {
+    const parsedStatus = parseAppUserStatus(body.status);
+    if (!parsedStatus.ok) {
+      return NextResponse.json({ error: parsedStatus.error }, { status: 400 });
+    }
+    nextStatus = parsedStatus.status;
+  }
+
+  if (nextStatus === "active" && existing.status !== "active") {
+    const gateProblem = await runProvisionGate(
+      access.app.id,
+      externalUserId,
+      true,
+    );
+    if (gateProblem) {
+      return gateProblem;
+    }
+  }
+
   await db
     .update(appUsers)
     .set({
       email: typeof body.email === "string" ? body.email.trim() : existing.email,
-      status: typeof body.status === "string" ? body.status : existing.status,
+      status: nextStatus,
       role: "user",
     })
     .where(eq(appUsers.id, existing.id));
@@ -336,5 +412,9 @@ export async function DELETE(
     metadata: { externalUserId },
   });
 
-  return NextResponse.json({ success: true, correlation_id: correlationId });
+  return NextResponse.json({
+    success: true,
+    status: "inactive",
+    correlation_id: correlationId,
+  });
 }
