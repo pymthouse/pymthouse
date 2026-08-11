@@ -420,9 +420,16 @@ async function persistBillingPatch(
   }
 
   if (billingMode !== undefined || endUserCap !== undefined) {
+    const merchantProfileId =
+      billingMode === "merchant"
+        ? process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() || null
+        : null;
     await upsertAppBillingConfig(appId, {
       ...(billingMode !== undefined ? { billingMode } : {}),
       ...(endUserCap !== undefined ? { endUserCap } : {}),
+      ...(merchantProfileId
+        ? { openmeterMerchantBillingProfileId: merchantProfileId }
+        : {}),
     });
   }
   return updated;

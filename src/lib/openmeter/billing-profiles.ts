@@ -374,11 +374,18 @@ export async function prepareAppCustomerStripeBilling(input: {
     null;
 
   // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
+  // Credits-first Starter users stay on this profile too — Sandbox is wrong
+  // because it fake-pays invoices and bypasses settlement / Connect.
   if (config?.billingMode === "merchant") {
     if (!merchantProfileId) {
       throw new Error(
         "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
       );
+    }
+    if (!config.openmeterMerchantBillingProfileId?.trim()) {
+      await upsertAppBillingConfig(input.clientId, {
+        openmeterMerchantBillingProfileId: merchantProfileId,
+      });
     }
     await assignMerchantCustomInvoicingProfile({
       client: input.client,

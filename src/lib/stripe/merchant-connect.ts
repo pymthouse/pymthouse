@@ -234,6 +234,10 @@ async function persistConnectedAccountFlags(input: {
 }): Promise<void> {
   const ready = input.chargesEnabled && input.detailsSubmitted;
   const existing = await getAppBillingConfig(input.clientId);
+  const merchantProfileId =
+    existing?.openmeterMerchantBillingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+    null;
   // Do not write stripeConnectStatus here — that column is Plane A (OM Stripe
   // app install). Merchant readiness is stripeChargesEnabled + detailsSubmitted.
   await upsertAppBillingConfig(input.clientId, {
@@ -244,6 +248,9 @@ async function persistConnectedAccountFlags(input: {
     connectedAt: ready
       ? (existing?.connectedAt ?? new Date().toISOString())
       : (existing?.connectedAt ?? null),
+    ...(existing?.billingMode === "merchant" && merchantProfileId
+      ? { openmeterMerchantBillingProfileId: merchantProfileId }
+      : {}),
   });
 }
 

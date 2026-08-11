@@ -162,3 +162,59 @@ test("a conflict with no occupying row rethrows naming customer and plan", async
     },
   );
 });
+
+test("recoverStarterBillingProfile pins Custom Invoicing for merchant apps", async () => {
+  const { recoverStarterBillingProfile } = await import(
+    "@/lib/openmeter/starter-subscription"
+  );
+  const prepareCalls: string[] = [];
+  const freeCalls: string[] = [];
+  const mode = await recoverStarterBillingProfile(
+    {
+      client: {} as never,
+      customerId: "cust_m",
+      clientId: "app_m",
+    },
+    {
+      getConfig: async () =>
+        ({ billingMode: "merchant" }) as never,
+      prepareMerchant: async (input) => {
+        prepareCalls.push(input.customerId);
+      },
+      applyFree: async (input) => {
+        freeCalls.push(input.customerId);
+      },
+    },
+  );
+  assert.equal(mode, "merchant");
+  assert.deepEqual(prepareCalls, ["cust_m"]);
+  assert.deepEqual(freeCalls, []);
+});
+
+test("recoverStarterBillingProfile uses sandbox free profile otherwise", async () => {
+  const { recoverStarterBillingProfile } = await import(
+    "@/lib/openmeter/starter-subscription"
+  );
+  const prepareCalls: string[] = [];
+  const freeCalls: string[] = [];
+  const mode = await recoverStarterBillingProfile(
+    {
+      client: {} as never,
+      customerId: "cust_f",
+      clientId: "app_f",
+    },
+    {
+      getConfig: async () =>
+        ({ billingMode: "owner_rollup" }) as never,
+      prepareMerchant: async (input) => {
+        prepareCalls.push(input.customerId);
+      },
+      applyFree: async (input) => {
+        freeCalls.push(input.customerId);
+      },
+    },
+  );
+  assert.equal(mode, "free");
+  assert.deepEqual(prepareCalls, []);
+  assert.deepEqual(freeCalls, ["cust_f"]);
+});
