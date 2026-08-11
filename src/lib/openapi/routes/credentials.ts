@@ -23,6 +23,9 @@ defineRouteMetadata("post", "/api/v1/apps/{clientId}/oidc/token", {
     "(`pmth_*` or composite `app_*_*`) for a short-lived signer JWT. The `{clientId}` path segment is the public " +
     "OAuth app client id. Authenticate with the end-user `subject_token`; optional HTTP Basic " +
     "with the M2M client is supported for server-side callers. " +
+    "For API keys use `subject_token_type=urn:pymthouse:oauth:token-type:api_key` " +
+    "(legacy `urn:ietf:params:oauth:token-type:access_token` still accepted for key-shaped subjects). " +
+    "For JWTs use `subject_token_type=urn:ietf:params:oauth:token-type:access_token`. " +
     "For self-serve usage reads, use `GET /api/v1/user/usage*` with bare Bearer `pmth_*` " +
     "(or `GET /api/v1/apps/{clientId}/me/usage*` when the path already supplies the app).",
   request: {
@@ -111,7 +114,8 @@ defineRouteMetadata("post", "/api/v1/oidc/token", {
     "`authorization_code`, `refresh_token`, `client_credentials`, device code, and " +
     "pymthouse-specific exchanges (device approval, gateway session). " +
     "RFC 8693 token exchange also accepts a bare `pmth_*` (or composite) API key as " +
-    "`subject_token` with `subject_token_type=urn:ietf:params:oauth:token-type:access_token` " +
+    "`subject_token` with canonical `subject_token_type=urn:pymthouse:oauth:token-type:api_key` " +
+    "(legacy `urn:ietf:params:oauth:token-type:access_token` still accepted for key-shaped subjects) " +
     "and returns a SignerSession (same as `POST /api/v1/apps/{clientId}/oidc/token`). " +
     "See OpenID Configuration for the full parameter matrix.",
   responses: {
