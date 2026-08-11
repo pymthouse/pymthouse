@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   gatheringTotalUsdMicros,
   netBillableMeterDebtUsdMicros,
+  unbilledInvoiceDebtFromItems,
 } from "@/lib/billing/unbilled-debt";
 
 test("gatheringTotalUsdMicros parses dollars, micros strings, and rejects garbage", () => {
@@ -49,5 +50,88 @@ test("netBillableMeterDebtUsdMicros subtracts remaining included usage", () => {
       remainingIncludedUsdMicros: 0n,
     }),
     1_000_000n,
+  );
+});
+
+test("unbilledInvoiceDebtFromItems returns 0 for empty successful list", () => {
+  assert.equal(unbilledInvoiceDebtFromItems([], "cus_1"), 0n);
+});
+
+test("unbilledInvoiceDebtFromItems ignores paid invoices (no meter fallthrough)", () => {
+  assert.equal(
+    unbilledInvoiceDebtFromItems(
+      [
+        {
+          status: "paid",
+          customer: { id: "cus_1" },
+          totals: { total: "12.00" },
+        },
+        {
+          status: "paid",
+          customerId: "cus_1",
+          totals: { total: "10.00" },
+        },
+      ],
+      "cus_1",
+    ),
+    0n,
+  );
+});
+
+test("unbilledInvoiceDebtFromItems uses max gathering plus unpaid open", () => {
+  assert.equal(
+    unbilledInvoiceDebtFromItems(
+      [
+        {
+          status: "gathering",
+          customer: { id: "cus_1" },
+          totals: { total: "5.00" },
+        },
+        {
+          status: "gathering",
+          customer: { id: "cus_1" },
+          totals: { total: "8.00" },
+        },
+        {
+          status: "draft.syncing",
+          customer: { id: "cus_1" },
+          totals: { total: "12.00" },
+        },
+        {
+          status: "paid",
+          customer: { id: "cus_1" },
+          totals: { total: "99.00" },
+        },
+        {
+          status: "issuing.sync",
+          customer: { id: "cus_other" },
+          totals: { total: "50.00" },
+        },
+      ],
+      "cus_1",
+    ),
+    // max gathering 8 + unpaid draft 12
+    20_000_000n,
+  );
+});
+
+test("unbilledInvoiceDebtFromItems counts unpaid open without gathering", () => {
+  assert.equal(
+    unbilledInvoiceDebtFromItems(
+      [
+        {
+          status: "payment_processing.pending",
+          customer: { id: "cus_1" },
+          totals: { total: "3.50" },
+        },
+        {
+          status: "overdue",
+          customer: { id: "cus_1" },
+          totals: { total: "1.25" },
+        },
+      ],
+      "cus_1",
+    ),
+    4_750_000n,
   );
 });

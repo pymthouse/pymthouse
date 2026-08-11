@@ -427,7 +427,26 @@ function isKonnectCustomerMutation(pathname: string, method: string): boolean {
   return /\/customers(?:\/[^/]+)?$/.test(normalizedPath);
 }
 
-function normalizeKonnectCustomerRecord(record: unknown): unknown {
+/** String map from Konnect `labels` / SDK `metadata` bags (drop non-strings). */
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === "string") {
+      out[key] = nested;
+    }
+  }
+  return out;
+}
+
+/**
+ * Konnect stores customer KV under `labels` and silently discards `metadata`.
+ * The OpenMeter SDK reads/writes `metadata`, so merge labels into metadata on
+ * the way in and map metadata → labels on the way out.
+ */
+export function normalizeKonnectCustomerRecord(record: unknown): unknown {
   if (!record || typeof record !== "object") {
     return record;
   }
@@ -444,7 +463,36 @@ function normalizeKonnectCustomerRecord(record: unknown): unknown {
     };
     delete item.usage_attribution;
   }
+
+  const fromLabels = stringRecord(item.labels);
+  const fromMetadata = stringRecord(item.metadata);
+  const merged = { ...fromLabels, ...fromMetadata };
+  if (Object.keys(merged).length > 0) {
+    item.metadata = merged;
+  } else if ("metadata" in item && item.metadata == null) {
+    item.metadata = {};
+  }
+
   return item;
+}
+
+/** Map SDK customer `metadata` onto Konnect `labels` (full-replace PUT). */
+function rewriteKonnectCustomerRequestBody(body: unknown): unknown {
+  const snake = deepCamelToSnake(body);
+  if (!snake || typeof snake !== "object" || Array.isArray(snake)) {
+    return snake;
+  }
+  const record = { ...(snake as Record<string, unknown>) };
+  const fromLabels = stringRecord(record.labels);
+  const fromMetadata = stringRecord(record.metadata);
+  const merged = { ...fromLabels, ...fromMetadata };
+  delete record.metadata;
+  if (Object.keys(merged).length > 0) {
+    record.labels = merged;
+  } else {
+    delete record.labels;
+  }
+  return record;
 }
 
 /** Normalize SDK JSON bodies to Konnect v3 request shapes. */
@@ -461,7 +509,7 @@ export function rewriteKonnectRequestBody(
   }
 
   if (isKonnectCustomerMutation(pathname, method)) {
-    return deepCamelToSnake(body);
+    return rewriteKonnectCustomerRequestBody(body);
   }
 
   if (verb === "POST" && normalizedPath.endsWith("/subscriptions")) {
@@ -521,7 +569,11 @@ export function normalizeKonnectResponseBody(body: unknown): unknown {
     listed &&
     typeof listed === "object" &&
     "id" in listed &&
-    ("key" in listed || "usage_attribution" in listed || "usageAttribution" in listed)
+    ("key" in listed ||
+      "usage_attribution" in listed ||
+      "usageAttribution" in listed ||
+      "labels" in listed ||
+      "metadata" in listed)
   ) {
     return normalizeKonnectCustomerRecord(listed);
   }

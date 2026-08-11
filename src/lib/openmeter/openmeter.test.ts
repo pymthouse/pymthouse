@@ -784,6 +784,45 @@ test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", asy
   assert.deepEqual(updatedSubjectKeys, ["app_1:user-1"]);
 });
 
+test("ensureOpenMeterCustomer preserves settlement metadata on subject-key repair", async () => {
+  let updatedMetadata: Record<string, string> | undefined;
+  const settlement = {
+    stripe_charge_model: "direct",
+    stripe_connect_account_id: "acct_1U1ELc06T9MFDxzI",
+  };
+  const customerRecord = {
+    id: "om-cust-1",
+    key: "app_1:user-1",
+    name: "app_1:user-1",
+    usageAttribution: { subjectKeys: [] as string[] },
+    // After Konnect normalize, labels land here as metadata.
+    metadata: { ...settlement },
+  };
+  const client = {
+    customers: {
+      get: async () => customerRecord,
+      list: async () => ({ items: [customerRecord] }),
+      listSubscriptions: async () => ({ items: [] }),
+      update: async (
+        _id: string,
+        input: {
+          usageAttribution?: { subjectKeys: string[] };
+          metadata?: Record<string, string>;
+        },
+      ) => {
+        updatedMetadata = input.metadata;
+        return customerRecord;
+      },
+      create: async () => {
+        throw new Error("should not create");
+      },
+    },
+  };
+
+  await ensureOpenMeterCustomer(openMeterTestClient(client), "app_1:user-1");
+  assert.deepEqual(updatedMetadata, settlement);
+});
+
 test("ensureOpenMeterCustomer creates customer when missing", async () => {
   const client = {
     customers: {
