@@ -212,23 +212,62 @@ export async function recoverStarterBillingProfile(
 }
 
 /**
+ * Eager Custom Invoicing pin for merchant Starter users (before create).
+ * @internal Exported for unit tests.
+ */
+export async function pinMerchantCustomInvoicingIfNeeded(
+  input: {
+    client: OpenMeter;
+    clientId: string;
+    customerId: string;
+    customerKey?: string;
+  },
+  deps?: {
+    getConfig?: typeof getAppBillingConfig;
+    prepareMerchant?: typeof prepareAppCustomerStripeBilling;
+  },
+): Promise<boolean> {
+  const getConfig = deps?.getConfig ?? getAppBillingConfig;
+  const prepareMerchant =
+    deps?.prepareMerchant ?? prepareAppCustomerStripeBilling;
+  const billingConfig = await getConfig(input.clientId);
+  if (billingConfig?.billingMode !== "merchant") {
+    return false;
+  }
+  await prepareMerchant({
+    client: input.client,
+    clientId: input.clientId,
+    customerId: input.customerId,
+    customerKey: input.customerKey,
+  });
+  return true;
+}
+
+/**
  * Create a Starter subscription. On the Konnect Stripe-setup 409
  * ({@link isOpenMeterStripeBillingError}), recover the billing profile once
  * and retry. Merchant apps pin Custom Invoicing; others use the sandbox free
  * profile. On a plain conflict with an existing sub, return that sub.
  * @internal Exported for unit tests.
  */
-export async function createStarterSubscriptionWithBillingRecovery(input: {
-  client: OpenMeter;
-  customerId: string;
-  starter: typeof plans.$inferSelect;
-  planKey: string;
-  /** When set, merchant-mode apps recover onto Custom Invoicing instead of Sandbox. */
-  clientId?: string;
-}): Promise<{
+export async function createStarterSubscriptionWithBillingRecovery(
+  input: {
+    client: OpenMeter;
+    customerId: string;
+    starter: typeof plans.$inferSelect;
+    planKey: string;
+    /** When set, merchant-mode apps recover onto Custom Invoicing instead of Sandbox. */
+    clientId?: string;
+  },
+  deps?: {
+    recoverProfile?: typeof recoverStarterBillingProfile;
+  },
+): Promise<{
   subscription: OpenMeterSubscriptionView;
   created: boolean;
 }> {
+  const recoverProfile =
+    deps?.recoverProfile ?? recoverStarterBillingProfile;
   try {
     const createdSub = await createStarterOpenMeterSubscription(input);
     if (!createdSub?.id) {
@@ -274,7 +313,7 @@ export async function createStarterSubscriptionWithBillingRecovery(input: {
       throw err;
     }
 
-    await recoverStarterBillingProfile({
+    await recoverProfile({
       client: input.client,
       customerId: input.customerId,
       clientId: input.clientId,
@@ -433,15 +472,12 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   // card is on file. Do not use Sandbox — it fake-pays and skips Connect.
   // Owner-rollup Starters stay unpinned until paid checkout (Konnect rejects
   // Stripe-profile customers without a default payment method).
-  const billingConfig = await getAppBillingConfig(identity.developerAppId);
-  if (billingConfig?.billingMode === "merchant") {
-    await prepareAppCustomerStripeBilling({
-      client,
-      clientId: identity.developerAppId,
-      customerId: customer.id,
-      customerKey: identity.customerKey,
-    });
-  }
+  await pinMerchantCustomInvoicingIfNeeded({
+    client,
+    clientId: identity.developerAppId,
+    customerId: customer.id,
+    customerKey: identity.customerKey,
+  });
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);
 

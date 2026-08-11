@@ -174,3 +174,41 @@ test("assignMerchantCustomInvoicingProfile pins via the Konnect billing route", 
     billing_profile: { id: "prof_merchant" },
   });
 });
+
+test("persistMerchantBillingProfileIdIfMissing writes only when unset", async () => {
+  const { persistMerchantBillingProfileIdIfMissing } = await import(
+    "./billing-profiles"
+  );
+  const writes: Array<{ clientId: string; profileId: string }> = [];
+  const upsert = async (
+    clientId: string,
+    values: { openmeterMerchantBillingProfileId?: string | null },
+  ) => {
+    writes.push({
+      clientId,
+      profileId: values.openmeterMerchantBillingProfileId ?? "",
+    });
+  };
+
+  assert.equal(
+    await persistMerchantBillingProfileIdIfMissing(
+      "app_1",
+      "already_set",
+      "prof_env",
+      upsert as never,
+    ),
+    false,
+  );
+  assert.deepEqual(writes, []);
+
+  assert.equal(
+    await persistMerchantBillingProfileIdIfMissing(
+      "app_1",
+      "  ",
+      "prof_env",
+      upsert as never,
+    ),
+    true,
+  );
+  assert.deepEqual(writes, [{ clientId: "app_1", profileId: "prof_env" }]);
+});

@@ -382,11 +382,11 @@ export async function prepareAppCustomerStripeBilling(input: {
         "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
       );
     }
-    if (!config.openmeterMerchantBillingProfileId?.trim()) {
-      await upsertAppBillingConfig(input.clientId, {
-        openmeterMerchantBillingProfileId: merchantProfileId,
-      });
-    }
+    await persistMerchantBillingProfileIdIfMissing(
+      input.clientId,
+      config.openmeterMerchantBillingProfileId,
+      merchantProfileId,
+    );
     await assignMerchantCustomInvoicingProfile({
       client: input.client,
       customerId: input.customerId,
@@ -718,6 +718,26 @@ export function resetOwnersBillingProfileCacheForTests(): void {
 
 export function resetFreeBillingProfileCacheForTests(): void {
   cachedFreeBillingProfileId = null;
+}
+
+/**
+ * Persist the merchant Custom Invoicing profile id on the app row when it was
+ * only available via env (so later pins do not depend on process env alone).
+ * @internal Exported for unit tests.
+ */
+export async function persistMerchantBillingProfileIdIfMissing(
+  clientId: string,
+  existingProfileId: string | null | undefined,
+  merchantProfileId: string,
+  upsert: typeof upsertAppBillingConfig = upsertAppBillingConfig,
+): Promise<boolean> {
+  if (existingProfileId?.trim()) {
+    return false;
+  }
+  await upsert(clientId, {
+    openmeterMerchantBillingProfileId: merchantProfileId,
+  });
+  return true;
 }
 
 export async function upsertAppBillingConfig(
