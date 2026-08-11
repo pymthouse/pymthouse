@@ -71,11 +71,8 @@ test("readConfiguredCorsOrigins splits CSV", () => {
 
 test("buildApiCorsHeaders sets ACAO and Vary", () => {
   const headers = buildApiCorsHeaders("https://portal.kongportals.com");
-  assert.equal(
-    (headers as Record<string, string>)["Access-Control-Allow-Origin"],
-    "https://portal.kongportals.com",
-  );
-  assert.equal((headers as Record<string, string>).Vary, "Origin");
+  assert.equal(headers["Access-Control-Allow-Origin"], "https://portal.kongportals.com");
+  assert.equal(headers.Vary, "Origin");
 });
 
 test("originMatchesAppDomains is case-insensitive on stored origins", () => {
@@ -86,5 +83,16 @@ test("originMatchesAppDomains is case-insensitive on stored origins", () => {
   assert.equal(
     originMatchesAppDomains("https://other.example", ["https://app.example"]),
     false,
+  );
+});
+
+test("originMatchesAppDomains matches bare host allowlist entries to Origin", () => {
+  assert.equal(
+    originMatchesAppDomains("https://app.example", ["app.example"]),
+    true,
+  );
+  assert.equal(
+    originMatchesAppDomains("https://app.example", ["https://app.example"]),
+    true,
   );
 });

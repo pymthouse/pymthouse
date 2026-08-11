@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { buildAppManifestForApp } from "@/lib/app-manifest";
+import { DISCOVERY_TOP_N_MAX } from "@/lib/discovery-plans";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import type { McpPrincipal } from "@/lib/mcp/auth";
 import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
@@ -122,7 +123,7 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
       inputSchema: {
         capabilities: z.array(z.string()).min(1),
         service_types: z.array(z.string()).optional(),
-        top_n: z.number().int().positive().optional(),
+        top_n: z.number().int().positive().max(DISCOVERY_TOP_N_MAX).optional(),
       },
     },
     async ({ capabilities, service_types, top_n }) => {

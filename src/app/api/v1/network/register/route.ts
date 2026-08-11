@@ -84,8 +84,9 @@ export async function POST(request: NextRequest) {
       );
     }
     console.error("Network agent register failed:", err);
-    const message =
-      err instanceof Error ? err.message : "Failed to register network agent";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to register network agent" },
+      { status: 500 },
+    );
   }
 }

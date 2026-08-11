@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const challenge = createRegisterChallenge({
+    const challenge = await createRegisterChallenge({
       publicKey,
       clientIp: clientIpFromRequest(request),
     });

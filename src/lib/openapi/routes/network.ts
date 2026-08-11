@@ -4,9 +4,9 @@ import { z } from "@/lib/openapi/zod";
 
 const NetworkAgentChallengeResponseSchema = z
   .object({
-    challengeId: z.string().uuid(),
+    challengeId: z.uuid(),
     nonce: z.string(),
-    expiresAt: z.string().datetime(),
+    expiresAt: z.iso.datetime(),
     alg: z.literal("Ed25519"),
   })
   .openapi("NetworkAgentChallengeResponse");
@@ -17,7 +17,7 @@ const NetworkAgentRegisterRequestSchema = z
       description:
         "Ed25519 public key (32-byte raw hex/base64, or SPKI). Same key used for the challenge.",
     }),
-    challengeId: z.string().uuid(),
+    challengeId: z.uuid(),
     signature: z.string().openapi({
       description:
         "Ed25519 signature over the challenge nonce (UTF-8), hex or base64, 64 bytes.",

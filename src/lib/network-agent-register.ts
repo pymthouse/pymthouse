@@ -4,11 +4,16 @@ import {
   randomBytes,
   verify,
 } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq, lte, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
 import { db } from "@/db/index";
-import { appUsers, developerApps } from "@/db/schema";
+import {
+  appUsers,
+  developerApps,
+  networkAgentChallenges,
+  networkAgentRateBuckets,
+} from "@/db/schema";
 import { createAppUserApiKey } from "@/lib/app-api-keys";
 import { createCorrelationId, writeAuditLog } from "@/lib/audit";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
@@ -46,79 +51,85 @@ export class NetworkAgentRegisterError extends Error {
   }
 }
 
-type ChallengeRecord = {
-  challengeId: string;
-  nonce: string;
-  expiresAtMs: number;
-  fingerprint: string;
-};
-
-type RateBucket = {
-  count: number;
-  resetAtMs: number;
-};
-
-const challengesById = new Map<string, ChallengeRecord>();
-const activeChallengeByFingerprint = new Map<string, string>();
-const rateBuckets = new Map<string, RateBucket>();
-
 const RATE_WINDOW_MS = 60_000;
 const CHALLENGE_LIMIT_PER_IP = 20;
 const CHALLENGE_LIMIT_PER_FINGERPRINT = 5;
 const REGISTER_LIMIT_PER_IP = 10;
 const REGISTER_LIMIT_PER_FINGERPRINT = 5;
+const RATE_BUCKET_PURGE_BATCH = 64;
 
-/** Test-only: clear in-memory challenge + rate-limit state. */
-export function resetNetworkAgentRegisterStateForTests(): void {
-  challengesById.clear();
-  activeChallengeByFingerprint.clear();
-  rateBuckets.clear();
+/** Test-only: clear shared challenge + rate-limit state. */
+export async function resetNetworkAgentRegisterStateForTests(): Promise<void> {
+  await db.delete(networkAgentChallenges);
+  await db.delete(networkAgentRateBuckets);
 }
 
 /** Test-only: force a challenge past its expiry. */
-export function expireRegisterChallengeForTests(challengeId: string): void {
-  const record = challengesById.get(challengeId);
-  if (record) {
-    record.expiresAtMs = Date.now() - 1;
-  }
+export async function expireRegisterChallengeForTests(
+  challengeId: string,
+): Promise<void> {
+  await db
+    .update(networkAgentChallenges)
+    .set({ expiresAtMs: Date.now() - 1 })
+    .where(eq(networkAgentChallenges.challengeId, challengeId));
 }
 
-function purgeExpiredChallenges(nowMs = Date.now()): void {
-  for (const [id, record] of challengesById) {
-    if (record.expiresAtMs <= nowMs) {
-      challengesById.delete(id);
-      if (activeChallengeByFingerprint.get(record.fingerprint) === id) {
-        activeChallengeByFingerprint.delete(record.fingerprint);
-      }
-    }
-  }
+async function purgeExpiredChallenges(nowMs = Date.now()): Promise<void> {
+  await db
+    .delete(networkAgentChallenges)
+    .where(lte(networkAgentChallenges.expiresAtMs, nowMs));
 }
 
-function assertRateLimit(key: string, limit: number): void {
+async function purgeExpiredRateBuckets(nowMs = Date.now()): Promise<void> {
+  await db.execute(sql`
+    DELETE FROM network_agent_rate_buckets
+    WHERE bucket_key IN (
+      SELECT bucket_key FROM network_agent_rate_buckets
+      WHERE reset_at_ms <= ${nowMs}
+      LIMIT ${RATE_BUCKET_PURGE_BATCH}
+    )
+  `);
+}
+
+async function assertRateLimit(key: string, limit: number): Promise<void> {
   const nowMs = Date.now();
-  const existing = rateBuckets.get(key);
-  if (!existing || existing.resetAtMs <= nowMs) {
-    rateBuckets.set(key, { count: 1, resetAtMs: nowMs + RATE_WINDOW_MS });
-    return;
-  }
-  if (existing.count >= limit) {
+  await purgeExpiredRateBuckets(nowMs);
+  const resetAtMs = nowMs + RATE_WINDOW_MS;
+
+  const rows = await db
+    .insert(networkAgentRateBuckets)
+    .values({
+      bucketKey: key,
+      count: 1,
+      resetAtMs,
+    })
+    .onConflictDoUpdate({
+      target: networkAgentRateBuckets.bucketKey,
+      set: {
+        count: sql`CASE WHEN ${networkAgentRateBuckets.resetAtMs} <= ${nowMs} THEN 1 ELSE ${networkAgentRateBuckets.count} + 1 END`,
+        resetAtMs: sql`CASE WHEN ${networkAgentRateBuckets.resetAtMs} <= ${nowMs} THEN ${resetAtMs} ELSE ${networkAgentRateBuckets.resetAtMs} END`,
+      },
+    })
+    .returning({ count: networkAgentRateBuckets.count });
+
+  const count = rows[0]?.count ?? 0;
+  if (count > limit) {
     throw new NetworkAgentRegisterError(
       "rate_limited",
       "Too many requests. Try again shortly.",
       429,
     );
   }
-  existing.count += 1;
 }
 
-function decodeBytes(raw: string, label: string): Buffer {
+function decodeBytes(
+  raw: string,
+  label: string,
+  code: NetworkAgentRegisterErrorCode = "invalid_public_key",
+): Buffer {
   const trimmed = raw.trim();
   if (!trimmed) {
-    throw new NetworkAgentRegisterError(
-      "invalid_public_key",
-      `${label} is required`,
-      400,
-    );
+    throw new NetworkAgentRegisterError(code, `${label} is required`, 400);
   }
 
   if (/^(0x)?[0-9a-fA-F]+$/.test(trimmed)) {
@@ -127,7 +138,7 @@ function decodeBytes(raw: string, label: string): Buffer {
       : trimmed;
     if (hex.length % 2 !== 0) {
       throw new NetworkAgentRegisterError(
-        "invalid_public_key",
+        code,
         `${label} hex length must be even`,
         400,
       );
@@ -154,7 +165,7 @@ function decodeBytes(raw: string, label: string): Buffer {
   }
 
   throw new NetworkAgentRegisterError(
-    "invalid_public_key",
+    code,
     `${label} must be hex or base64`,
     400,
   );
@@ -162,7 +173,7 @@ function decodeBytes(raw: string, label: string): Buffer {
 
 /** Normalize an Ed25519 public key to raw 32-byte form. */
 export function normalizeEd25519PublicKey(publicKey: string): Buffer {
-  const bytes = decodeBytes(publicKey, "publicKey");
+  const bytes = decodeBytes(publicKey, "publicKey", "invalid_public_key");
   if (bytes.length === 32) {
     return bytes;
   }
@@ -198,35 +209,41 @@ function ed25519PublicKeyObject(raw: Buffer) {
   });
 }
 
-export function verifyEd25519Challenge(input: {
+export async function verifyEd25519Challenge(input: {
   publicKey: string;
   challengeId: string;
   signature: string;
-}): { fingerprint: string; nonce: string; externalUserId: string } {
+}): Promise<{ fingerprint: string; nonce: string; externalUserId: string }> {
   const rawPk = normalizeEd25519PublicKey(input.publicKey);
   const fingerprint = publicKeyFingerprint(rawPk);
-  const record = challengesById.get(input.challengeId.trim());
+  const challengeId = input.challengeId.trim();
+  const nowMs = Date.now();
+
+  const rows = await db
+    .select()
+    .from(networkAgentChallenges)
+    .where(eq(networkAgentChallenges.challengeId, challengeId))
+    .limit(1);
+  const record = rows[0];
   if (!record) {
-    purgeExpiredChallenges();
+    await purgeExpiredChallenges(nowMs);
     throw new NetworkAgentRegisterError(
       "invalid_challenge",
       "Unknown or already-used challenge",
       400,
     );
   }
-  if (record.expiresAtMs <= Date.now()) {
-    challengesById.delete(record.challengeId);
-    if (activeChallengeByFingerprint.get(record.fingerprint) === record.challengeId) {
-      activeChallengeByFingerprint.delete(record.fingerprint);
-    }
-    purgeExpiredChallenges();
+  if (record.expiresAtMs <= nowMs) {
+    await db
+      .delete(networkAgentChallenges)
+      .where(eq(networkAgentChallenges.challengeId, challengeId));
+    await purgeExpiredChallenges(nowMs);
     throw new NetworkAgentRegisterError(
       "invalid_challenge",
       "Challenge expired",
       400,
     );
   }
-  purgeExpiredChallenges();
   if (record.fingerprint !== fingerprint) {
     throw new NetworkAgentRegisterError(
       "invalid_challenge",
@@ -235,7 +252,7 @@ export function verifyEd25519Challenge(input: {
     );
   }
 
-  const sigBytes = decodeBytes(input.signature, "signature");
+  const sigBytes = decodeBytes(input.signature, "signature", "invalid_signature");
   if (sigBytes.length !== 64) {
     throw new NetworkAgentRegisterError(
       "invalid_signature",
@@ -259,9 +276,16 @@ export function verifyEd25519Challenge(input: {
   }
 
   // Consume challenge (one-time).
-  challengesById.delete(record.challengeId);
-  if (activeChallengeByFingerprint.get(record.fingerprint) === record.challengeId) {
-    activeChallengeByFingerprint.delete(record.fingerprint);
+  const consumed = await db
+    .delete(networkAgentChallenges)
+    .where(eq(networkAgentChallenges.challengeId, challengeId))
+    .returning({ challengeId: networkAgentChallenges.challengeId });
+  if (consumed.length === 0) {
+    throw new NetworkAgentRegisterError(
+      "invalid_challenge",
+      "Unknown or already-used challenge",
+      400,
+    );
   }
 
   return {
@@ -271,42 +295,41 @@ export function verifyEd25519Challenge(input: {
   };
 }
 
-export function createRegisterChallenge(input: {
+export async function createRegisterChallenge(input: {
   publicKey: string;
   clientIp?: string;
-}): {
+}): Promise<{
   challengeId: string;
   nonce: string;
   expiresAt: string;
   alg: "Ed25519";
   fingerprint: string;
-} {
-  purgeExpiredChallenges();
+}> {
+  await purgeExpiredChallenges();
 
   const rawPk = normalizeEd25519PublicKey(input.publicKey);
   const fingerprint = publicKeyFingerprint(rawPk);
   const ip = input.clientIp?.trim() || "unknown";
 
-  assertRateLimit(`challenge:ip:${ip}`, CHALLENGE_LIMIT_PER_IP);
-  assertRateLimit(`challenge:fp:${fingerprint}`, CHALLENGE_LIMIT_PER_FINGERPRINT);
+  await assertRateLimit(`challenge:ip:${ip}`, CHALLENGE_LIMIT_PER_IP);
+  await assertRateLimit(
+    `challenge:fp:${fingerprint}`,
+    CHALLENGE_LIMIT_PER_FINGERPRINT,
+  );
 
-  const priorId = activeChallengeByFingerprint.get(fingerprint);
-  if (priorId) {
-    challengesById.delete(priorId);
-    activeChallengeByFingerprint.delete(fingerprint);
-  }
+  await db
+    .delete(networkAgentChallenges)
+    .where(eq(networkAgentChallenges.fingerprint, fingerprint));
 
   const challengeId = uuidv4();
   const nonce = randomBytes(32).toString("base64url");
   const expiresAtMs = Date.now() + CHALLENGE_TTL_MS;
-  const record: ChallengeRecord = {
+  await db.insert(networkAgentChallenges).values({
     challengeId,
+    fingerprint,
     nonce,
     expiresAtMs,
-    fingerprint,
-  };
-  challengesById.set(challengeId, record);
-  activeChallengeByFingerprint.set(fingerprint, challengeId);
+  });
 
   return {
     challengeId,
@@ -329,6 +352,30 @@ export type NetworkAgentRegisterResult = {
   correlationId: string;
 };
 
+async function writeRegisterConflictAudit(input: {
+  clientId: string;
+  correlationId: string;
+  externalUserId: string;
+  fingerprint: string;
+}): Promise<never> {
+  await writeAuditLog({
+    clientId: input.clientId,
+    action: "network_agent_register_conflict",
+    status: "conflict",
+    correlationId: input.correlationId,
+    metadata: {
+      externalUserId: input.externalUserId,
+      fingerprint: input.fingerprint,
+    },
+  });
+  throw new NetworkAgentRegisterError(
+    "conflict",
+    "Agent already registered for this public key. Reuse the previously issued API key.",
+    409,
+    { clientId: input.clientId, externalUserId: input.externalUserId },
+  );
+}
+
 /**
  * Prove possession of an Ed25519 key and mint a default-app network API key.
  * Does not create a platform `users` / Turnkey account.
@@ -344,10 +391,13 @@ export async function registerNetworkAgent(input: {
   const rawPk = normalizeEd25519PublicKey(input.publicKey);
   const fingerprint = publicKeyFingerprint(rawPk);
 
-  assertRateLimit(`register:ip:${ip}`, REGISTER_LIMIT_PER_IP);
-  assertRateLimit(`register:fp:${fingerprint}`, REGISTER_LIMIT_PER_FINGERPRINT);
+  await assertRateLimit(`register:ip:${ip}`, REGISTER_LIMIT_PER_IP);
+  await assertRateLimit(
+    `register:fp:${fingerprint}`,
+    REGISTER_LIMIT_PER_FINGERPRINT,
+  );
 
-  const verified = verifyEd25519Challenge({
+  const verified = await verifyEd25519Challenge({
     publicKey: input.publicKey,
     challengeId: input.challengeId,
     signature: input.signature,
@@ -371,33 +421,6 @@ export async function registerNetworkAgent(input: {
     );
   }
 
-  const existing = await db
-    .select({ id: appUsers.id })
-    .from(appUsers)
-    .where(
-      and(
-        eq(appUsers.clientId, developerAppId),
-        eq(appUsers.externalUserId, externalUserId),
-      ),
-    )
-    .limit(1);
-
-  if (existing.length > 0) {
-    await writeAuditLog({
-      clientId,
-      action: "network_agent_register_conflict",
-      status: "conflict",
-      correlationId,
-      metadata: { externalUserId, fingerprint },
-    });
-    throw new NetworkAgentRegisterError(
-      "conflict",
-      "Agent already registered for this public key. Reuse the previously issued API key.",
-      409,
-      { clientId, externalUserId },
-    );
-  }
-
   const now = new Date().toISOString();
   const newUser = {
     id: uuidv4(),
@@ -416,22 +439,15 @@ export async function registerNetworkAgent(input: {
     .returning();
 
   if (inserted.length === 0) {
-    await writeAuditLog({
+    await writeRegisterConflictAudit({
       clientId,
-      action: "network_agent_register_conflict",
-      status: "conflict",
       correlationId,
-      metadata: { externalUserId, fingerprint },
+      externalUserId,
+      fingerprint,
     });
-    throw new NetworkAgentRegisterError(
-      "conflict",
-      "Agent already registered for this public key. Reuse the previously issued API key.",
-      409,
-      { clientId, externalUserId },
-    );
   }
 
-  const appUser = inserted[0] ?? newUser;
+  const appUser = inserted[0]!;
 
   try {
     await provisionAppUserBilling({
@@ -442,12 +458,23 @@ export async function registerNetworkAgent(input: {
     console.error("Network agent billing provision failed:", err);
   }
 
-  const created = await createAppUserApiKey({
-    developerAppId,
-    appUserId: appUser.id,
-    publicClientId: clientId,
-    label: input.label?.trim() || "agent-network-key",
-  });
+  let created: Awaited<ReturnType<typeof createAppUserApiKey>>;
+  try {
+    created = await createAppUserApiKey({
+      developerAppId,
+      appUserId: appUser.id,
+      publicClientId: clientId,
+      label: input.label?.trim() || "agent-network-key",
+    });
+  } catch (err) {
+    await db.delete(appUsers).where(eq(appUsers.id, appUser.id));
+    console.error("Network agent API key mint failed; rolled back app_user:", err);
+    throw new NetworkAgentRegisterError(
+      "internal",
+      "Failed to mint API key for network agent",
+      500,
+    );
+  }
 
   await writeAuditLog({
     clientId,
@@ -484,11 +511,23 @@ export async function registerNetworkAgent(input: {
   };
 }
 
+/**
+ * Client IP for abuse controls. Prefer Cloudflare's connecting IP when present;
+ * otherwise use the rightmost X-Forwarded-For hop (closest to our edge).
+ */
 export function clientIpFromRequest(request: Request): string {
+  const cf = request.headers.get("cf-connecting-ip")?.trim();
+  if (cf) return cf;
+
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+    const hops = forwarded
+      .split(",")
+      .map((h) => h.trim())
+      .filter(Boolean);
+    const last = hops[hops.length - 1];
+    if (last) return last;
   }
+
   return request.headers.get("x-real-ip")?.trim() || "unknown";
 }

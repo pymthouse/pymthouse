@@ -99,8 +99,18 @@ export async function discoveryFetch(
   init?: RequestInit,
 ): Promise<unknown> {
   const base = readDiscoveryServiceUrl();
+  const timeoutMs = Math.max(
+    3000,
+    Number.parseInt(process.env.DISCOVERY_CATALOG_REQUEST_TIMEOUT_MS ?? "15000", 10) ||
+      15_000,
+  );
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = init?.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
   const response = await fetch(`${base}${path}`, {
     ...init,
+    signal,
     headers: {
       Accept: "application/json",
       ...init?.headers,

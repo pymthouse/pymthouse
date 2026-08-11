@@ -33,6 +33,11 @@ export async function resolveMcpPrincipal(
 ): Promise<McpPrincipal | null> {
   const m2m = await authenticateAppClient(request);
   if (m2m) {
+    // Confidential-web (`web_`) clients must not mint owner signer sessions via MCP.
+    // Mirror OIDC M2M policy: Basic auth is restricted to `m2m_*` clients.
+    if (!m2m.clientId.startsWith("m2m_")) {
+      return null;
+    }
     const app = await getProviderAppByClientId(m2m.appId);
     if (!app) {
       return null;

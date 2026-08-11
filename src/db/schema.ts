@@ -977,6 +977,32 @@ export const appAllowedDomains = pgTable("app_allowed_domains", {
   uniqueIndex("app_allowed_domains_app_id_domain_unique").on(table.appId, table.domain),
 ]);
 
+/** Short-lived Ed25519 registration challenges (shared across app instances). */
+export const networkAgentChallenges = pgTable(
+  "network_agent_challenges",
+  {
+    challengeId: text("challenge_id").primaryKey(),
+    fingerprint: text("fingerprint").notNull(),
+    nonce: text("nonce").notNull(),
+    expiresAtMs: bigint("expires_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    index("network_agent_challenges_fingerprint_idx").on(table.fingerprint),
+    index("network_agent_challenges_expires_idx").on(table.expiresAtMs),
+  ],
+);
+
+/** Sliding-window rate buckets for agent challenge/register (shared across instances). */
+export const networkAgentRateBuckets = pgTable(
+  "network_agent_rate_buckets",
+  {
+    bucketKey: text("bucket_key").primaryKey(),
+    count: integer("count").notNull(),
+    resetAtMs: bigint("reset_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [index("network_agent_rate_buckets_reset_idx").on(table.resetAtMs)],
+);
+
 /** Per-app billing display currency and fiat->ETH oracle provider selection. */
 export const appBillingOracleConfig = pgTable("app_billing_oracle_config", {
   id: text("id").primaryKey(),

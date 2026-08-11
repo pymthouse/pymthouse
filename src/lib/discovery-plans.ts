@@ -44,10 +44,15 @@ function parseRatio(raw: unknown, path: string): { ok: true; value: number } | {
   return { ok: true, value: n };
 }
 
+export const DISCOVERY_TOP_N_MAX = 1000;
+
 function parseTopN(raw: unknown): { ok: true; value: number } | { ok: false; error: string } {
   const n = typeof raw === "number" ? raw : Number(String(raw).trim());
-  if (!Number.isInteger(n) || n < 1 || n > 1000) {
-    return { ok: false, error: "topN must be an integer between 1 and 1000" };
+  if (!Number.isInteger(n) || n < 1 || n > DISCOVERY_TOP_N_MAX) {
+    return {
+      ok: false,
+      error: `topN must be an integer between 1 and ${DISCOVERY_TOP_N_MAX}`,
+    };
   }
   return { ok: true, value: n };
 }

@@ -32,8 +32,25 @@ export async function handleHostedMcpHttpRequest(request: Request): Promise<Resp
   });
   await server.connect(transport);
   try {
-    return await transport.handleRequest(request);
-  } finally {
+    const response = await transport.handleRequest(request);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("text/event-stream") && response.body) {
+      // Defer server.close until the SSE body finishes or the client cancels.
+      const { readable, writable } = new TransformStream();
+      const closeServer = () => {
+        void server.close().catch(() => undefined);
+      };
+      void response.body.pipeTo(writable).finally(closeServer);
+      return new Response(readable, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
     await server.close().catch(() => undefined);
+    return response;
+  } catch (err) {
+    await server.close().catch(() => undefined);
+    throw err;
   }
 }

@@ -86,16 +86,16 @@ test("normalizeEd25519PublicKey rejects bad lengths", () => {
   );
 });
 
-test("verifyEd25519Challenge accepts good sig and rejects bad/expired", () => {
-  resetNetworkAgentRegisterStateForTests();
+test("verifyEd25519Challenge accepts good sig and rejects bad/expired", async () => {
+  await resetNetworkAgentRegisterStateForTests();
   const { publicKeyHex, privateKey } = generateAgentKeyPair();
-  const challenge = createRegisterChallenge({
+  const challenge = await createRegisterChallenge({
     publicKey: publicKeyHex,
     clientIp: "127.0.0.1",
   });
 
   const goodSig = signNonce(privateKey, challenge.nonce);
-  const verified = verifyEd25519Challenge({
+  const verified = await verifyEd25519Challenge({
     publicKey: publicKeyHex,
     challengeId: challenge.challengeId,
     signature: goodSig,
@@ -103,7 +103,7 @@ test("verifyEd25519Challenge accepts good sig and rejects bad/expired", () => {
   assert.equal(verified.externalUserId, agentExternalUserId(publicKeyHex));
 
   // Challenge is one-time — reuse fails.
-  assert.throws(
+  await assert.rejects(
     () =>
       verifyEd25519Challenge({
         publicKey: publicKeyHex,
@@ -114,11 +114,11 @@ test("verifyEd25519Challenge accepts good sig and rejects bad/expired", () => {
       err instanceof NetworkAgentRegisterError && err.code === "invalid_challenge",
   );
 
-  const challenge2 = createRegisterChallenge({
+  const challenge2 = await createRegisterChallenge({
     publicKey: publicKeyHex,
     clientIp: "127.0.0.1",
   });
-  assert.throws(
+  await assert.rejects(
     () =>
       verifyEd25519Challenge({
         publicKey: publicKeyHex,
@@ -130,16 +130,16 @@ test("verifyEd25519Challenge accepts good sig and rejects bad/expired", () => {
   );
 });
 
-test("expired challenge is rejected", () => {
-  resetNetworkAgentRegisterStateForTests();
+test("expired challenge is rejected", async () => {
+  await resetNetworkAgentRegisterStateForTests();
   const { publicKeyHex, privateKey } = generateAgentKeyPair();
-  const challenge = createRegisterChallenge({
+  const challenge = await createRegisterChallenge({
     publicKey: publicKeyHex,
     clientIp: "10.0.0.2",
   });
   const sig = signNonce(privateKey, challenge.nonce);
-  expireRegisterChallengeForTests(challenge.challengeId);
-  assert.throws(
+  await expireRegisterChallengeForTests(challenge.challengeId);
+  await assert.rejects(
     () =>
       verifyEd25519Challenge({
         publicKey: publicKeyHex,
@@ -154,7 +154,7 @@ test("expired challenge is rejected", () => {
 });
 
 test("registerNetworkAgent creates app_users + key, no users row; duplicate 409", async (t) => {
-  resetNetworkAgentRegisterStateForTests();
+  await resetNetworkAgentRegisterStateForTests();
   const app = await seedTemporaryDefault(t);
 
   await withTemporaryPlatformDefault(app.clientId, async () => {
@@ -164,7 +164,7 @@ test("registerNetworkAgent creates app_users + key, no users row; duplicate 409"
       await cleanupAgent(externalUserId);
     });
 
-    const challenge = createRegisterChallenge({
+    const challenge = await createRegisterChallenge({
       publicKey: publicKeyHex,
       clientIp: "10.0.0.3",
     });
@@ -199,7 +199,7 @@ test("registerNetworkAgent creates app_users + key, no users row; duplicate 409"
       .where(eq(users.id, externalUserId));
     assert.equal(platformUsers.length, 0);
 
-    const challenge2 = createRegisterChallenge({
+    const challenge2 = await createRegisterChallenge({
       publicKey: publicKeyHex,
       clientIp: "10.0.0.3",
     });
