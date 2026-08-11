@@ -537,14 +537,15 @@ function PaymentsBillingModeForm(props: Readonly<{
               {
                 value: "owner_rollup" as const,
                 title: "Owner roll-up",
-                detail: "Platform bills end-users; default for most apps",
+                detail:
+                  "M2M usage rolls to your wallet; end-user payments require Merchant + Connect",
                 disabled: false,
               },
               {
                 value: "merchant" as const,
                 title: "Merchant",
                 detail: connectReadyForMerchant
-                  ? "Charges on your Connected Account"
+                  ? "End-user cards and paid plans charge on your Connected Account"
                   : "Requires Stripe Connect to be ready",
                 disabled: !connectReadyForMerchant,
               },
@@ -643,10 +644,10 @@ function PaymentsProgressiveBillingForm(props: Readonly<{
         <h3 className="text-base font-semibold text-zinc-100">Overage limit</h3>
         <p className="mt-1 text-xs text-zinc-500">
           How much unbilled usage an end user may run up once their credits are
-          gone. Usage past credits is invoiced automatically; settlement
-          (merchant Connect) or the OpenMeter Stripe app (owner) collects
-          asynchronously, and this limit is the headroom that keeps requests
-          flowing meanwhile.
+          gone. Usage past credits is invoiced automatically; settlement on
+          merchant Connect charges the end-user card, while owner roll-up bills
+          your wallet. This limit is the headroom that keeps requests flowing
+          meanwhile.
         </p>
       </div>
       <label className="flex items-start gap-2 text-sm text-zinc-200">

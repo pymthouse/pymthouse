@@ -9,7 +9,6 @@ import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import {
   getHostedAdminClient,
-  isHostedAdminClientAvailable,
 } from "./admin-client";
 import {
   getAppBillingConfig,
@@ -18,7 +17,6 @@ import {
 import { buildOpenMeterCustomerKey } from "./customer-key";
 import {
   ensureOpenMeterCustomer,
-  findOpenMeterCustomerByKey,
 } from "./customers";
 import { resolveOpenMeterMeterClientId } from "./meter-client-id";
 import {
@@ -29,16 +27,12 @@ import {
   unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
 import {
-  connectPaymentsOnlyEnabled,
   createMerchantConnectCheckoutForUser,
   getAppUserStripeCustomer,
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
-import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import {
   clearKonnectStripeDefaultPaymentMethod,
-  getKonnectStripeBillingRefs,
-  getStripeCustomerAppDataId,
   setKonnectStripeDefaultPaymentMethod,
 } from "./stripe-customer-data";
 
@@ -336,19 +330,51 @@ function stripeSecretKeyOrNull(): string | null {
 }
 
 /**
- * True when add-card checkout must use Merchant Connect (or block) instead of
- * Konnect Stripe-app Checkout (Custom Invoicing profiles reject the latter).
+ * End-user payment surfaces (cards, invoices, checkout) always use Merchant
+ * Connect — never platform / Konnect Stripe Checkout.
+ *
+ * Owner roll-up may still provision M2M users and free/Starter metering, but
+ * collecting or charging end-user payment methods on the platform account is
+ * not allowed (compliance).
  */
 export function appUserPaymentMethodRequiresMerchantConnect(
+  _billingConfig?:
+    | Awaited<ReturnType<typeof getAppBillingConfig>>
+    | null
+    | undefined,
+): boolean {
+  return true;
+}
+
+/** True when this app may collect / charge end-user payment methods. */
+export function endUserPaymentsAllowed(
   billingConfig:
     | Awaited<ReturnType<typeof getAppBillingConfig>>
     | null
     | undefined,
 ): boolean {
   return (
-    connectPaymentsOnlyEnabled(billingConfig) ||
-    billingConfig?.billingMode === "merchant"
+    billingConfig?.billingMode === "merchant" &&
+    isMerchantConnectPaymentsReady(billingConfig)
   );
+}
+
+export const END_USER_PAYMENT_CONNECT_REQUIRED =
+  "Merchant Stripe Connect onboarding is required before adding a payment method";
+
+export const END_USER_CHECKOUT_CONNECT_REQUIRED =
+  "Merchant Stripe Connect onboarding is required before checkout";
+
+export function assertEndUserPaymentsAllowed(
+  billingConfig:
+    | Awaited<ReturnType<typeof getAppBillingConfig>>
+    | null
+    | undefined,
+  message: string = END_USER_PAYMENT_CONNECT_REQUIRED,
+): void {
+  if (!endUserPaymentsAllowed(billingConfig)) {
+    throw new Error(message);
+  }
 }
 
 /**
@@ -398,63 +424,33 @@ export async function listAppUserPaymentMethods(input: {
   }
 
   const billingConfig = await getAppBillingConfig(clientId);
-  if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
-    if (!isMerchantConnectPaymentsReady(billingConfig)) {
-      return [];
-    }
-    const connectedAccountId =
-      billingConfig?.stripeConnectedAccountId?.trim() || "";
-    const merchantCustomer = await getAppUserStripeCustomer({
-      clientId,
-      externalUserId,
-    });
-    if (
-      !connectedAccountId ||
-      merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
-      !merchantCustomer.stripeCustomerId?.trim()
-    ) {
-      return [];
-    }
-
-    const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-    const { items } = await buildOwnerPaymentMethodList({
-      stripeCustomerId: merchantCustomer.stripeCustomerId,
-      konnectDefaultPaymentMethodId: null,
-      deps: {
-        fetchImpl: fetch,
-        signal,
-        stripeAccount: connectedAccountId,
-      },
-    });
-    return items;
-  }
-
-  if (!isHostedAdminClientAvailable()) {
+  // Compliance: never list platform/Konnect end-user cards for roll-up apps.
+  if (!endUserPaymentsAllowed(billingConfig)) {
     return [];
   }
-  const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
-  const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-  const customer = await findOpenMeterCustomerByKey(client, customerKey);
-  const customerId = customer?.id?.trim();
-  if (!customerId) {
+  const connectedAccountId =
+    billingConfig?.stripeConnectedAccountId?.trim() || "";
+  const merchantCustomer = await getAppUserStripeCustomer({
+    clientId,
+    externalUserId,
+  });
+  if (
+    !connectedAccountId ||
+    merchantCustomer?.stripeConnectedAccountId !== connectedAccountId ||
+    !merchantCustomer.stripeCustomerId?.trim()
+  ) {
     return [];
   }
+
   const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-  const konnect = await getKonnectStripeBillingRefs(customerId, signal);
-  const stripeCustomerId =
-    konnect.stripeCustomerId ??
-    (await getStripeCustomerAppDataId({
-      client,
-      customerId,
-    }));
-  if (!stripeCustomerId) {
-    return [];
-  }
   const { items } = await buildOwnerPaymentMethodList({
-    stripeCustomerId,
-    konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
-    deps: { fetchImpl: fetch, signal },
+    stripeCustomerId: merchantCustomer.stripeCustomerId,
+    konnectDefaultPaymentMethodId: null,
+    deps: {
+      fetchImpl: fetch,
+      signal,
+      stripeAccount: connectedAccountId,
+    },
   });
   return items;
 }
@@ -511,54 +507,24 @@ async function resolveAppUserStripeRefs(input: {
   externalUserId: string;
 }): Promise<AppUserStripeRefs | null> {
   const billingConfig = await getAppBillingConfig(input.clientId);
-  if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
-    if (!isMerchantConnectPaymentsReady(billingConfig)) {
-      return null;
-    }
-    const stripeAccount = billingConfig?.stripeConnectedAccountId?.trim();
-    const merchantCustomer = await getAppUserStripeCustomer(input);
-    if (
-      !stripeAccount ||
-      merchantCustomer?.stripeConnectedAccountId !== stripeAccount ||
-      !merchantCustomer.stripeCustomerId?.trim()
-    ) {
-      return null;
-    }
-    return {
-      customerId: null,
-      stripeCustomerId: merchantCustomer.stripeCustomerId,
-      konnectDefaultPaymentMethodId: null,
-      stripeAccount,
-    };
-  }
-
-  if (!isHostedAdminClientAvailable()) {
+  // Compliance: never resolve platform Stripe customers for end-user charges.
+  if (!endUserPaymentsAllowed(billingConfig)) {
     return null;
   }
-  const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
-  const customerKey = buildOpenMeterCustomerKey(
-    publicClientId,
-    input.externalUserId,
-  );
-  const customer = await findOpenMeterCustomerByKey(client, customerKey);
-  const customerId = customer?.id?.trim();
-  if (!customerId) {
-    return null;
-  }
-  const signal = AbortSignal.timeout(OWNER_PAYMENT_METHOD_BUDGET_MS);
-  const konnect = await getKonnectStripeBillingRefs(customerId, signal);
-  const stripeCustomerId =
-    konnect.stripeCustomerId ??
-    (await getStripeCustomerAppDataId({ client, customerId }));
-  if (!stripeCustomerId) {
+  const stripeAccount = billingConfig?.stripeConnectedAccountId?.trim();
+  const merchantCustomer = await getAppUserStripeCustomer(input);
+  if (
+    !stripeAccount ||
+    merchantCustomer?.stripeConnectedAccountId !== stripeAccount ||
+    !merchantCustomer.stripeCustomerId?.trim()
+  ) {
     return null;
   }
   return {
-    customerId,
-    stripeCustomerId,
-    konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
-    stripeAccount: undefined,
+    customerId: null,
+    stripeCustomerId: merchantCustomer.stripeCustomerId,
+    konnectDefaultPaymentMethodId: null,
+    stripeAccount,
   };
 }
 
@@ -635,6 +601,12 @@ export async function createAppUserPaymentMethodCheckout(input: {
     throw new Error("clientId and externalUserId are required");
   }
 
+  const billingConfig = await getAppBillingConfig(clientId);
+  assertEndUserPaymentsAllowed(
+    billingConfig,
+    END_USER_PAYMENT_CONNECT_REQUIRED,
+  );
+
   const client = getHostedAdminClient();
   const publicClientId = await resolveOpenMeterMeterClientId(clientId);
   const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
@@ -646,17 +618,6 @@ export async function createAppUserPaymentMethodCheckout(input: {
     customerKey: customer.key,
   });
 
-  const billingConfig = await getAppBillingConfig(clientId);
-  const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
-  if (
-    !merchantReady &&
-    appUserPaymentMethodRequiresMerchantConnect(billingConfig)
-  ) {
-    throw new Error(
-      "Merchant Stripe Connect onboarding is required before adding a payment method",
-    );
-  }
-
   const hasDefault =
     (await appUserHasChargeablePaymentMethod({ clientId, externalUserId })) ===
     true;
@@ -665,44 +626,22 @@ export async function createAppUserPaymentMethodCheckout(input: {
   const success = resolveAppUserCheckoutReturnUrl(input.successUrl, fallback);
   const cancel = resolveAppUserCheckoutReturnUrl(input.cancelUrl, fallback);
 
-  if (merchantReady) {
-    const connectCheckout = await createMerchantConnectCheckoutForUser({
-      clientId,
-      externalUserId,
-      successUrl: success,
-      cancelUrl: cancel,
-      openmeterCustomerId: customer.id,
-      openmeterCustomerKey: customer.key,
-    });
-    await recordAppUserPaymentMethodCheckout({
-      sessionId: connectCheckout.sessionId,
-      clientId,
-      externalUserId,
-    });
-    return {
-      checkoutUrl: connectCheckout.checkoutUrl,
-      sessionId: connectCheckout.sessionId,
-      customerId: customer.id,
-      hasDefaultPaymentMethod: hasDefault,
-    };
-  }
-
-  const checkout = await createOpenMeterStripeCheckoutSession({
-    client,
-    customerId: customer.id,
+  const connectCheckout = await createMerchantConnectCheckoutForUser({
+    clientId,
+    externalUserId,
     successUrl: success,
     cancelUrl: cancel,
-    currency: "USD",
+    openmeterCustomerId: customer.id,
+    openmeterCustomerKey: customer.key,
   });
   await recordAppUserPaymentMethodCheckout({
-    sessionId: checkout.sessionId,
+    sessionId: connectCheckout.sessionId,
     clientId,
     externalUserId,
   });
-
   return {
-    checkoutUrl: checkout.checkoutUrl,
-    sessionId: checkout.sessionId,
+    checkoutUrl: connectCheckout.checkoutUrl,
+    sessionId: connectCheckout.sessionId,
     customerId: customer.id,
     hasDefaultPaymentMethod: hasDefault,
   };

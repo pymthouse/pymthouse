@@ -903,7 +903,7 @@ Denial responses use RFC 9457 problem details (`Content-Type: application/proble
 | Paid plan / checkout / plan change without Connect | `403` | `stripe_connect_required` |
 | Connect started, capabilities not yet granted | `403` | `stripe_connect_pending` |
 
-**Hybrid billing:** OpenMeter meters usage and owns subscriptions. End-user Checkout/invoices use the merchant Connected Account (direct charges + optional `applicationFeeBps`) when `stripeChargesEnabled`. Until then, OM Stripe Checkout remains a fallback unless `connectPaymentsOnly` (or `STRIPE_CONNECT_PAYMENTS_ONLY=1`). With `ACTIVATION_GATE_MODE=enforce_revenue|enforce`, checkout requires `billingMode=merchant` and Connect readiness (`charges_enabled` + `details_submitted`).
+**End-user payments:** Collecting cards, charging end-users, and selling paid plans require `billingMode=merchant` with Stripe Connect ready (`charges_enabled` + `details_submitted`). Owner roll-up may still integrate M2M users and free/Starter metering, but platform/Konnect Stripe Checkout is **not** used as a fallback for end-user payment methods. With `ACTIVATION_GATE_MODE=enforce_revenue|enforce`, activation also gates `sell_paid_plans` the same way.
 
 **Connect webhooks:** Point a Stripe (Connect) webhook at `POST /webhooks/stripe` with `STRIPE_WEBHOOK_SECRET` and subscribe to `account.updated` so `charges_enabled` / `payouts_enabled` / `details_submitted` stay in sync without waiting for a Payments page refresh.
 

@@ -411,30 +411,11 @@ export async function prepareAppCustomerStripeBilling(input: {
     return;
   }
 
-  const ready = await ensureAppStripeBillingReady({ clientId: input.clientId });
-  const useKonnect = shouldUseKonnectRoutes(
-    getHostedOpenMeterUrl(),
-    process.env.OPENMETER_API_KEY,
-  );
-  if (useKonnect) {
-    await ensureKonnectCustomerStripeBilling({
-      customerId: input.customerId,
-      customerKey: input.customerKey,
-      name: input.name,
-      billingProfileId: ready.openmeterBillingProfileId,
-    });
-    return;
-  }
-  await ensureStripeCustomerAppData({
+  // Owner roll-up: M2M users may meter on free/Starter profiles, but must not
+  // receive a platform Stripe customer for end-user charges (compliance).
+  await applyFreeBillingProfileToCustomer({
     client: input.client,
     customerId: input.customerId,
-    customerKey: input.customerKey,
-    name: input.name,
-  });
-  await assignCustomerBillingProfileOverride({
-    client: input.client,
-    customerId: input.customerId,
-    billingProfileId: ready.openmeterBillingProfileId,
   });
 }
 

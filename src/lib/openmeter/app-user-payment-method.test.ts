@@ -42,7 +42,7 @@ test("createAppUserPaymentMethodCheckout requires ids", async () => {
   );
 });
 
-test("appUserPaymentMethodRequiresMerchantConnect for merchant and connect-only", (t) => {
+test("appUserPaymentMethodRequiresMerchantConnect always true for end-user payments", (t) => {
   const previous = process.env.STRIPE_CONNECT_PAYMENTS_ONLY;
   t.after(() => {
     if (previous === undefined) {
@@ -53,12 +53,12 @@ test("appUserPaymentMethodRequiresMerchantConnect for merchant and connect-only"
   });
   delete process.env.STRIPE_CONNECT_PAYMENTS_ONLY;
 
-  assert.equal(appUserPaymentMethodRequiresMerchantConnect(null), false);
+  assert.equal(appUserPaymentMethodRequiresMerchantConnect(null), true);
   assert.equal(
     appUserPaymentMethodRequiresMerchantConnect({
       billingMode: "owner_rollup",
     } as never),
-    false,
+    true,
   );
   assert.equal(
     appUserPaymentMethodRequiresMerchantConnect({
@@ -66,21 +66,32 @@ test("appUserPaymentMethodRequiresMerchantConnect for merchant and connect-only"
     } as never),
     true,
   );
+});
+
+test("endUserPaymentsAllowed requires merchant mode and Connect ready", async () => {
+  const { endUserPaymentsAllowed } = await import("./app-user-payment-method");
+  assert.equal(endUserPaymentsAllowed(null), false);
   assert.equal(
-    appUserPaymentMethodRequiresMerchantConnect({
-      billingMode: "owner_rollup",
-      connectPaymentsOnly: true,
+    endUserPaymentsAllowed({ billingMode: "owner_rollup" } as never),
+    false,
+  );
+  assert.equal(
+    endUserPaymentsAllowed({
+      billingMode: "merchant",
+      stripeConnectedAccountId: "acct_1",
+      stripeChargesEnabled: true,
+      stripeDetailsSubmitted: true,
     } as never),
     true,
   );
-
-  process.env.STRIPE_CONNECT_PAYMENTS_ONLY = "1";
   assert.equal(
-    appUserPaymentMethodRequiresMerchantConnect({
-      billingMode: "owner_rollup",
-      connectPaymentsOnly: false,
+    endUserPaymentsAllowed({
+      billingMode: "merchant",
+      stripeConnectedAccountId: "acct_1",
+      stripeChargesEnabled: false,
+      stripeDetailsSubmitted: true,
     } as never),
-    true,
+    false,
   );
 });
 
