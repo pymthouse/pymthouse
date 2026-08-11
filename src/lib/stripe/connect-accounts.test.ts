@@ -133,6 +133,84 @@ test("mapLegacyAutoTopUpPaymentIntent maps succeeded auto top-ups only", () => {
   );
 });
 
+test("mapMerchantPaymentIntent includes ad-hoc succeeded Connect charges", () => {
+  assert.deepEqual(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_charge_1",
+      amount: 200,
+      currency: "usd",
+      status: "succeeded",
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      metadata: {},
+    }),
+    {
+      id: "pi_charge_1",
+      number: "Payment",
+      status: "succeeded",
+      currency: "USD",
+      totalAmount: "2.00",
+      customerId: "cus_connected",
+      issuedAt: "2025-01-01T00:00:00.000Z",
+      externalInvoicingId: "pi_charge_1",
+      invoiceType: "payment",
+    },
+  );
+  assert.deepEqual(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_topup_2",
+      amount: 500,
+      currency: "usd",
+      status: "succeeded",
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      metadata: { pymthouse_auto_topup: "1" },
+    })?.number,
+    "Auto top-up",
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_zero",
+      amount: 0,
+      status: "succeeded",
+      metadata: {},
+    }),
+    null,
+  );
+});
+
+test("mapMerchantPaymentIntent skips invoice-backed PaymentIntents", () => {
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_invoice_paid",
+      amount: 250,
+      currency: "usd",
+      status: "succeeded",
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      invoice: "in_1ABC",
+      metadata: {},
+    }),
+    null,
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_invoice_expanded",
+      amount: 250,
+      status: "succeeded",
+      invoice: { id: "in_1DEF" },
+      metadata: { pymthouse_auto_topup: "1" },
+    }),
+    null,
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.paymentIntentInvoiceId({
+      invoice: "in_1ABC",
+    }),
+    "in_1ABC",
+  );
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -426,6 +504,10 @@ test("createConnectedCheckoutSession setup and payment modes", async (t) => {
   assert.equal(payment.url, "https://checkout.stripe.com/c/pay/cs_test_1");
   assert.match(bodies[1]!, /mode=payment/);
   assert.match(bodies[1]!, /payment_intent_data.*application_fee_amount.*250/);
+  assert.match(
+    bodies[1]!,
+    /payment_intent_data%5Bsetup_future_usage%5D=off_session/,
+  );
 });
 
 test("createConnectedCheckoutSession fails without session url", async (t) => {
