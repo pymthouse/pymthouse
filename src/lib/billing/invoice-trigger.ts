@@ -196,7 +196,8 @@ export async function invoiceGatheringForIdentity(input: {
 /**
  * Push a freshly raised invoice toward collection. With auto_advance + P0D
  * `advance` is often a no-op; Custom Invoicing may pause at draft.sync and
- * settlement drives the rest.
+ * settlement drives the rest. Force collect also snapshots + approves so
+ * waiting_for_collection / waiting_auto_approval do not park the raise.
  */
 async function advanceInvoice(
   client: ReturnType<typeof getHostedAdminClient>,
@@ -220,6 +221,18 @@ async function advanceInvoice(
       sanitizeForLog(invoiceId),
       sanitizeForLog(err instanceof Error ? err.message : String(err)),
     );
+  }
+  if (force) {
+    try {
+      // Skip draft.waiting_auto_approval so settlement can issue immediately.
+      await client.billing.invoices.approve(invoiceId);
+    } catch (err) {
+      console.warn(
+        "[invoice-trigger] approve skipped",
+        sanitizeForLog(invoiceId),
+        sanitizeForLog(err instanceof Error ? err.message : String(err)),
+      );
+    }
   }
 }
 
