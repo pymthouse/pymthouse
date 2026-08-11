@@ -44,6 +44,13 @@ type StripeConnectInvoice = {
   invoice_pdf?: string | null;
 };
 
+type StripeConnectPaymentMethod = {
+  id?: string;
+  type?: string | null;
+  card?: { brand?: string | null } | null;
+  link?: { email?: string | null } | null;
+};
+
 type StripeConnectPaymentIntent = {
   id?: string;
   amount?: number | null;
@@ -54,6 +61,7 @@ type StripeConnectPaymentIntent = {
   /** Set when this PI paid a Stripe Invoice — history should keep the invoice only. */
   invoice?: string | { id?: string | null } | null;
   metadata?: Record<string, unknown> | null;
+  payment_method?: string | StripeConnectPaymentMethod | null;
   latest_charge?:
     | string
     | {
@@ -76,7 +84,30 @@ export type MerchantBillingHistoryItem = {
   periodEnd?: string;
   externalInvoicingId?: string;
   invoiceType: "stripe_connect" | "auto_topup" | "payment";
+  /** Card brand / LINK when this invoice was paid off-session. */
+  paymentMethodBrand?: string | null;
 };
+
+/** Human label for a Connect payment method (LINK, VISA, …). */
+export function stripePaymentMethodBrandLabel(
+  paymentMethod: StripeConnectPaymentMethod | string | null | undefined,
+): string | null {
+  if (!paymentMethod || typeof paymentMethod === "string") {
+    return null;
+  }
+  const type = paymentMethod.type?.trim().toLowerCase() || "";
+  if (type === "link" || paymentMethod.link) {
+    return "LINK";
+  }
+  const cardBrand = paymentMethod.card?.brand?.trim();
+  if (cardBrand) {
+    return cardBrand.toUpperCase();
+  }
+  if (type) {
+    return type.replaceAll("_", " ").toUpperCase();
+  }
+  return null;
+}
 
 function stripeSecretKey(): string {
   const key =
@@ -121,6 +152,7 @@ async function stripeConnectInvoiceRequest<T>(
 
 function mapMerchantInvoice(
   invoice: StripeConnectInvoice,
+  paymentMethodBrand?: string | null,
 ): MerchantBillingHistoryItem | null {
   const id = invoice.id?.trim();
   if (!id) return null;
@@ -136,6 +168,7 @@ function mapMerchantInvoice(
     periodEnd: invoiceDate(invoice.period_end),
     externalInvoicingId: id,
     invoiceType: "stripe_connect",
+    paymentMethodBrand: paymentMethodBrand?.trim() || null,
   };
 }
 
@@ -220,6 +253,8 @@ export const __testMerchantConnectInvoices = {
   mapLegacyAutoTopUpPaymentIntent,
   mapMerchantPaymentIntent,
   paymentIntentInvoiceId,
+  paymentBrandByInvoiceId,
+  stripePaymentMethodBrandLabel,
   stripeConnectInvoiceRequest,
 };
 /** @internal Exported for unit tests. */
@@ -587,6 +622,7 @@ async function listAllMerchantConnectPaymentIntents(
     const params = new URLSearchParams({
       customer: stripeCustomerId,
       limit: String(STRIPE_INVOICE_PAGE_LIMIT),
+      "expand[]": "data.payment_method",
     });
     if (startingAfter) {
       params.set("starting_after", startingAfter);
@@ -607,6 +643,23 @@ async function listAllMerchantConnectPaymentIntents(
     startingAfter = lastId;
   }
   return intents;
+}
+
+/** invoice id → brand from the PI that settled it (LINK, VISA, …). */
+function paymentBrandByInvoiceId(
+  paymentIntents: StripeConnectPaymentIntent[],
+): Map<string, string> {
+  const brands = new Map<string, string>();
+  for (const pi of paymentIntents) {
+    if ((pi.status?.trim() || "") !== "succeeded") continue;
+    const invoiceId = paymentIntentInvoiceId(pi);
+    if (!invoiceId || brands.has(invoiceId)) continue;
+    const brand = stripePaymentMethodBrandLabel(pi.payment_method);
+    if (brand) {
+      brands.set(invoiceId, brand);
+    }
+  }
+  return brands;
 }
 
 function billingHistorySortKey(item: MerchantBillingHistoryItem): number {
@@ -651,8 +704,15 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
     listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
   ]);
+  const paidBrands = paymentBrandByInvoiceId(paymentIntentRows);
   const invoices = invoiceRows
-    .map((invoice) => mapMerchantInvoice(invoice))
+    .map((invoice) => {
+      const id = invoice.id?.trim();
+      return mapMerchantInvoice(
+        invoice,
+        id ? paidBrands.get(id) ?? null : null,
+      );
+    })
     .filter((invoice): invoice is MerchantBillingHistoryItem => invoice !== null);
   const topUps = paymentIntentRows
     .map((pi) => mapMerchantPaymentIntent(pi))

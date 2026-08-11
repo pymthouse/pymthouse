@@ -127,6 +127,7 @@ function merchantHistoryToLedgerInvoices(
     periodStart?: string;
     periodEnd?: string;
     invoiceType: string;
+    paymentMethodBrand?: string | null;
   }>,
 ): { grants: LedgerGrantInput[]; invoices: LedgerInvoiceInput[] } {
   const grants: LedgerGrantInput[] = [];
@@ -161,6 +162,7 @@ function merchantHistoryToLedgerInvoices(
       periodStart: item.periodStart,
       periodEnd: item.periodEnd,
       invoiceType: "standard",
+      paymentMethodBrand: item.paymentMethodBrand ?? null,
     });
   }
 

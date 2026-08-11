@@ -83,6 +83,7 @@ test("ledger records credit burn only for usage past the allowance", () => {
   assert.equal(byId.get("usage:2026-07-01")?.creditDeltaUsdMicros, "0");
   assert.equal(byId.get("usage:2026-07-01")?.description, "Usage — covered by plan");
   assert.equal(byId.get("usage:2026-07-20")?.creditDeltaUsdMicros, "-2000000");
+  assert.equal(byId.get("usage:2026-07-20")?.description, "Usage (metered)");
   // Gross amount stays the full day's spend even when partly plan-covered.
   assert.equal(byId.get("usage:2026-07-20")?.amountUsdMicros, "6000000");
 });
@@ -192,7 +193,38 @@ test("ledger falls back to invoice header when lines are missing", () => {
 
   assert.equal(entries.length, 1);
   assert.equal(entries[0].id, "invoice:inv_header");
-  assert.equal(entries[0].description, "Invoice · Jul 2026");
+  assert.equal(entries[0].description, "Invoice · Jul 2026 · Paid");
+});
+
+test("ledger labels paid invoices with payment method brand", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [],
+    invoices: [
+      {
+        id: "inv_link",
+        status: "paid",
+        totalAmountUsdMicros: "12000000",
+        issuedAt: "2026-08-11T00:00:00Z",
+        periodStart: "2026-08-01T00:00:00Z",
+        paymentMethodBrand: "LINK",
+      },
+    ],
+    endingCreditBalanceUsdMicros: "0",
+  });
+  assert.equal(entries[0].description, "Invoice · Aug 2026 · Paid via LINK");
+});
+
+test("ledger usage beyond allowance is labeled as metered activity", () => {
+  const entries = buildLedgerEntries({
+    grants: [],
+    dailyUsage: [{ date: "2026-08-11", usedUsdMicros: "51990000" }],
+    invoices: [],
+    planIncludedUsdMicros: "0",
+    endingCreditBalanceUsdMicros: "0",
+  });
+  assert.equal(entries[0].type, "usage");
+  assert.equal(entries[0].description, "Usage (metered)");
 });
 
 test("ledger maps credit_note invoice type to refund", () => {

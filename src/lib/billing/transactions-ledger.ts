@@ -84,6 +84,8 @@ export type LedgerInvoiceInput = {
   hostedInvoiceUrl?: string | null;
   /** OpenMeter `standard` | `credit_note`. */
   invoiceType?: string | null;
+  /** Card brand / LINK when the invoice was paid (Connect settlement). */
+  paymentMethodBrand?: string | null;
   lines?: LedgerInvoiceLineInput[] | null;
 };
 
@@ -129,9 +131,22 @@ export function splitDailyUsageAgainstAllowance(
     });
 }
 
-function invoiceDescription(invoice: LedgerInvoiceInput): string {
+/** Ledger label for a settlement invoice, including paid-via brand when known. */
+export function invoiceDescription(invoice: LedgerInvoiceInput): string {
   const period = formatInvoicePeriodLabel(invoice.periodStart, invoice.periodEnd);
-  return period ? `Invoice · ${period}` : "Invoice";
+  const base = period ? `Invoice · ${period}` : "Invoice";
+  const status = (invoice.status ?? "").trim().toLowerCase();
+  if (status !== "paid") {
+    if (status === "open" || status === "draft") {
+      return `${base} · ${status}`;
+    }
+    return base;
+  }
+  const brand = invoice.paymentMethodBrand?.trim();
+  if (brand) {
+    return `${base} · Paid via ${brand}`;
+  }
+  return `${base} · Paid`;
 }
 
 function toLineSummary(line: LedgerInvoiceLineInput): InvoiceLineSummary {
@@ -266,8 +281,10 @@ export function buildLedgerEntries(input: {
       // Sort usage after same-day grants so credits are available to burn.
       date: `${day.date}T23:59:59.999Z`,
       type: "usage",
+      // Metered spend is activity, not an open receivable — Connect invoices
+      // (and prepaid drawdowns via creditDelta) are what settled the bill.
       description:
-        burn > 0n ? "Usage — beyond plan allowance" : "Usage — covered by plan",
+        burn > 0n ? "Usage (metered)" : "Usage — covered by plan",
       amountUsdMicros: day.usedUsdMicros.toString(),
       creditDeltaUsdMicros: (-burn).toString(),
       creditDelta: -burn,

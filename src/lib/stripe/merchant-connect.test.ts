@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   connectPaymentsOnlyEnabled,
   isMerchantConnectPaymentsReady,
+  stripePaymentMethodBrandLabel,
 } from "./merchant-connect";
 
 test("isMerchantConnectPaymentsReady requires account, charges, and details", () => {
@@ -62,5 +63,22 @@ test("connectPaymentsOnlyEnabled honors env override and config flag", (t) => {
   assert.equal(
     connectPaymentsOnlyEnabled({ connectPaymentsOnly: false } as never),
     true,
+  );
+});
+
+test("stripePaymentMethodBrandLabel maps LINK and card brands", () => {
+  assert.equal(stripePaymentMethodBrandLabel(null), null);
+  assert.equal(stripePaymentMethodBrandLabel("pm_123"), null);
+  assert.equal(
+    stripePaymentMethodBrandLabel({ id: "pm_1", type: "link" }),
+    "LINK",
+  );
+  assert.equal(
+    stripePaymentMethodBrandLabel({
+      id: "pm_2",
+      type: "card",
+      card: { brand: "visa", last4: "4242" },
+    }),
+    "VISA",
   );
 });
