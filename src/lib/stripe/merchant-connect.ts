@@ -51,6 +51,8 @@ type StripeConnectPaymentIntent = {
   status?: string | null;
   customer?: string | null;
   created?: number | null;
+  /** Set when this PI paid a Stripe Invoice — history should keep the invoice only. */
+  invoice?: string | { id?: string | null } | null;
   metadata?: Record<string, unknown> | null;
   latest_charge?:
     | string
@@ -164,10 +166,16 @@ function mapLegacyAutoTopUpPaymentIntent(
  * PaymentIntent on the Connect customer (legacy auto top-ups and ad-hoc
  * charges). One-time Dashboard/Checkout charges without invoice rows would
  * otherwise never appear.
+ *
+ * Invoice-backed PaymentIntents are omitted — the invoice row is the
+ * canonical history entry (avoids duplicate billed amounts).
  */
 function mapMerchantPaymentIntent(
   pi: StripeConnectPaymentIntent,
 ): MerchantBillingHistoryItem | null {
+  if (paymentIntentInvoiceId(pi)) {
+    return null;
+  }
   const legacy = mapLegacyAutoTopUpPaymentIntent(pi);
   if (legacy) return legacy;
   const id = pi.id?.trim();
@@ -190,11 +198,28 @@ function mapMerchantPaymentIntent(
 }
 
 /** @internal Exported for unit tests. */
+function paymentIntentInvoiceId(
+  pi: StripeConnectPaymentIntent,
+): string | null {
+  const raw = pi.invoice;
+  if (typeof raw === "string") {
+    const id = raw.trim();
+    return id.startsWith("in_") ? id : null;
+  }
+  if (raw && typeof raw === "object") {
+    const id = raw.id?.trim();
+    return id?.startsWith("in_") ? id : null;
+  }
+  return null;
+}
+
+/** @internal Exported for unit tests. */
 export const __testMerchantConnectInvoices = {
   invoiceDate,
   mapMerchantInvoice,
   mapLegacyAutoTopUpPaymentIntent,
   mapMerchantPaymentIntent,
+  paymentIntentInvoiceId,
   stripeConnectInvoiceRequest,
 };
 /** @internal Exported for unit tests. */
@@ -585,8 +610,9 @@ function billingHistorySortKey(item: MerchantBillingHistoryItem): number {
 }
 
 /**
- * List invoices + succeeded auto top-up PaymentIntents from the merchant's
- * Connected Account for one app user (newest first).
+ * List invoices + standalone succeeded PaymentIntents from the merchant's
+ * Connected Account for one app user (newest first). Invoice-backed intents
+ * are omitted so the same charge is not listed twice.
  * Merchant billing never reads OpenMeter owner-rollup invoices.
  */
 export async function listMerchantConnectInvoicesForAppUser(input: {

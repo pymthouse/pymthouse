@@ -179,6 +179,38 @@ test("mapMerchantPaymentIntent includes ad-hoc succeeded Connect charges", () =>
   );
 });
 
+test("mapMerchantPaymentIntent skips invoice-backed PaymentIntents", () => {
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_invoice_paid",
+      amount: 250,
+      currency: "usd",
+      status: "succeeded",
+      customer: "cus_connected",
+      created: 1_735_689_600,
+      invoice: "in_1ABC",
+      metadata: {},
+    }),
+    null,
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.mapMerchantPaymentIntent({
+      id: "pi_invoice_expanded",
+      amount: 250,
+      status: "succeeded",
+      invoice: { id: "in_1DEF" },
+      metadata: { pymthouse_auto_topup: "1" },
+    }),
+    null,
+  );
+  assert.equal(
+    __testMerchantConnectInvoices.paymentIntentInvoiceId({
+      invoice: "in_1ABC",
+    }),
+    "in_1ABC",
+  );
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
