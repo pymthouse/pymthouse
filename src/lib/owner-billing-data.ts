@@ -15,6 +15,7 @@ import {
   requireOpenMeterForUsageReads,
   SIGNED_TICKET_COUNT_METER,
 } from "@/lib/openmeter/constants";
+import { querySubjectDailyFeeUsage } from "@/lib/openmeter/daily-fee-usage";
 import {
   getOwnerPrepaidCreditBalance,
   listOwnerCreditGrants,
@@ -52,12 +53,10 @@ import {
   resolveLocalPlanIdFromOpenMeterSubscription,
   type OpenMeterSubscriptionView,
 } from "@/lib/openmeter/subscription-read";
-import {
-  dateKeyFromMeterWindow,
-  meterRowValueToBigInt,
-} from "@/lib/openmeter/usage-read";
+import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
 import {
   buildLedgerEntries,
+  type LedgerDailyUsageInput,
   type LedgerEntry,
 } from "@/lib/billing/transactions-ledger";
 import {
@@ -340,49 +339,6 @@ function decimalDollarsToUsdMicros(raw: string | null | undefined): string {
 
 function invoiceTotalToUsdMicros(invoice: TenantInvoiceDto): string {
   return decimalDollarsToUsdMicros(invoice.totalAmount);
-}
-
-/**
- * Daily metered spend for the owner wallet, used to synthesize credit
- * consumption in the transactions ledger (OpenMeter has no consumption feed).
- */
-async function querySubjectDailyUsage(input: {
-  client: OpenMeter;
-  subjects: string[];
-  start: string;
-  end: string;
-}): Promise<Array<{ date: string; usedUsdMicros: string }>> {
-  const subjects = [...new Set(input.subjects.map((s) => s.trim()).filter(Boolean))];
-  if (subjects.length === 0) {
-    return [];
-  }
-
-  try {
-    const feeResult = await input.client.meters.query(NETWORK_FEE_USD_MICROS_METER, {
-      windowSize: "DAY" as const,
-      from: new Date(input.start),
-      to: new Date(input.end),
-      subject: subjects,
-    });
-
-    const byDay = new Map<string, bigint>();
-    for (const row of feeResult.data || []) {
-      const dateKey = dateKeyFromMeterWindow(row);
-      if (!dateKey) continue;
-      byDay.set(dateKey, (byDay.get(dateKey) ?? 0n) + meterRowValueToBigInt(row.value));
-    }
-
-    return [...byDay.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, used]) => ({ date, usedUsdMicros: used.toString() }));
-  } catch (err) {
-    console.warn(
-      "owner-billing: daily meter query failed",
-      subjects.join(","),
-      err instanceof Error ? err.message : String(err),
-    );
-    return [];
-  }
 }
 
 /** Wire + transitional subjects for shared-owner subscription usage. */
@@ -933,14 +889,15 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     ]);
 
   const dailyUsage = await withSoftTimeout(
-    querySubjectDailyUsage({
+    querySubjectDailyFeeUsage({
       client: adminClient,
       subjects: ownerWalletSubjects,
       start: cycle.start,
       end: cycle.end,
+      logLabel: "owner-billing",
     }),
     3_000,
-    [] as Array<{ date: string; usedUsdMicros: string }>,
+    [] as LedgerDailyUsageInput[],
     "daily usage lookup",
     () => {
       ledgerInputsDegraded = true;

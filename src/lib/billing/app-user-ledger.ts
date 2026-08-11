@@ -5,11 +5,10 @@
  * feed, so daily meter spend is synthesized into usage rows and walked
  * against the plan included allowance.
  */
-import type { OpenMeter } from "@openmeter/sdk";
-
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   buildLedgerEntries,
+  type LedgerDailyUsageInput,
   type LedgerEntry,
   type LedgerGrantInput,
   type LedgerInvoiceInput,
@@ -18,62 +17,21 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
-import { NETWORK_FEE_USD_MICROS_METER, getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
+import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
 import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import { querySubjectDailyFeeUsage } from "@/lib/openmeter/daily-fee-usage";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import {
   decimalDollarsToUsdMicros,
   konnectGrantTimestamp,
   listKonnectCreditGrants,
 } from "@/lib/openmeter/konnect-credits";
+import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import { shouldUseKonnectRoutes } from "@/lib/openmeter/route-mode";
 import { getPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
-import {
-  dateKeyFromMeterWindow,
-  meterRowValueToBigInt,
-} from "@/lib/openmeter/usage-read";
-import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { listMerchantConnectInvoicesForAppUser } from "@/lib/stripe/merchant-connect";
-
-async function querySubjectDailyUsage(input: {
-  client: OpenMeter;
-  subjects: string[];
-  start: string;
-  end: string;
-}): Promise<Array<{ date: string; usedUsdMicros: string }>> {
-  const subjects = [...new Set(input.subjects.map((s) => s.trim()).filter(Boolean))];
-  if (subjects.length === 0) {
-    return [];
-  }
-
-  try {
-    const feeResult = await input.client.meters.query(NETWORK_FEE_USD_MICROS_METER, {
-      windowSize: "DAY" as const,
-      from: new Date(input.start),
-      to: new Date(input.end),
-      subject: subjects,
-    });
-
-    const byDay = new Map<string, bigint>();
-    for (const row of feeResult.data || []) {
-      const dateKey = dateKeyFromMeterWindow(row);
-      if (!dateKey) continue;
-      byDay.set(dateKey, (byDay.get(dateKey) ?? 0n) + meterRowValueToBigInt(row.value));
-    }
-
-    return [...byDay.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, used]) => ({ date, usedUsdMicros: used.toString() }));
-  } catch (err) {
-    console.warn(
-      "app-user-ledger: daily meter query failed",
-      subjects.join(","),
-      err instanceof Error ? err.message : String(err),
-    );
-    return [];
-  }
-}
 
 async function listAppUserCreditGrants(input: {
   publicClientId: string;
@@ -117,8 +75,8 @@ async function listAppUserCreditGrants(input: {
   } catch (err) {
     console.warn(
       "app-user-ledger: credit grant list failed",
-      customerKey,
-      err instanceof Error ? err.message : String(err),
+      sanitizeForLog(customerKey),
+      sanitizeForLog(err instanceof Error ? err.message : String(err)),
     );
     return [];
   }
@@ -140,13 +98,17 @@ function merchantHistoryToLedgerInvoices(
   const invoices: LedgerInvoiceInput[] = [];
 
   for (const item of items) {
-    const amountUsdMicros = decimalDollarsToUsdMicros(item.totalAmount).toString();
+    // One unparseable Stripe total drops its row rather than failing the whole
+    // wallet request — the ledger already reports itself degraded on holes.
+    let amountUsdMicros: string;
+    try {
+      amountUsdMicros = decimalDollarsToUsdMicros(item.totalAmount).toString();
+    } catch {
+      continue;
+    }
     // Top-ups / ad-hoc payments fund prepaid credits — show as credit adds.
     // Stripe Connect invoices are settlement rows (no prepaid delta).
-    if (
-      item.invoiceType === "auto_topup" ||
-      item.invoiceType === "payment"
-    ) {
+    if (item.invoiceType === "auto_topup" || item.invoiceType === "payment") {
       grants.push({
         id: item.id,
         amountUsdMicros,
@@ -233,18 +195,21 @@ export async function loadAppUserBillingLedger(input: {
   ]);
 
   const fromHistory = merchantHistoryToLedgerInvoices(history.items);
-  // Prefer Konnect grants when present; fall back to Stripe payment rows so
-  // top-ups still appear when grant timestamps are missing.
-  const grants =
-    konnectGrants.length > 0 ? konnectGrants : fromHistory.grants;
+  // The two grant sources describe the same money and are never merged: a
+  // settled Stripe top-up is credited through `grantAllowanceUsdMicros`, so it
+  // already appears as a Konnect grant. Stripe payment rows are the fallback
+  // for deployments not on Konnect routes, where `listAppUserCreditGrants`
+  // returns nothing and top-ups would otherwise be invisible.
+  const grants = konnectGrants.length > 0 ? konnectGrants : fromHistory.grants;
 
-  let dailyUsage: Array<{ date: string; usedUsdMicros: string }> = [];
+  let dailyUsage: LedgerDailyUsageInput[] = [];
   if (isHostedAdminClientAvailable()) {
-    dailyUsage = await querySubjectDailyUsage({
+    dailyUsage = await querySubjectDailyFeeUsage({
       client: getHostedAdminClient(),
       subjects: [customerKey],
       start: cycle.start,
       end: cycle.end,
+      logLabel: "app-user-ledger",
     }).catch(() => {
       degraded = true;
       return [];

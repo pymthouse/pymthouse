@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  authorizeOwnerWalletM2m,
-  readJsonObjectBody,
-} from "@/lib/billing/owner-wallet-m2m-auth";
-import {
-  readOptionalExternalUserId,
-  resolveWalletBillingTarget,
-} from "@/lib/billing/wallet-billing-target";
+import { readJsonObjectBody } from "@/lib/billing/owner-wallet-m2m-auth";
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
+import { resolveWalletRouteContext } from "@/lib/billing/wallet-route-context";
 import {
   createAppUserPaymentMethodCheckout,
   ensureAppUserDefaultPaymentMethodIfMissing,
@@ -32,35 +26,26 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const access = await authorizeOwnerWalletM2m(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const billingTarget = await resolveWalletBillingTarget({
-    appId: access.app.id,
-    ownerUserId: access.ownerUserId,
-    externalUserId: readOptionalExternalUserId(
-      request.nextUrl.searchParams.get("externalUserId"),
-    ),
+  const resolved = await resolveWalletRouteContext({
+    request,
+    clientId,
+    externalUserId: request.nextUrl.searchParams.get("externalUserId"),
   });
-  if (!billingTarget.ok) {
-    return NextResponse.json(
-      { error: billingTarget.error },
-      { status: billingTarget.status },
-    );
+  if (!resolved.ok) {
+    return resolved.response;
   }
+  const { app, target } = resolved.context;
 
   try {
-    if (billingTarget.target.mode === "merchant") {
+    if (target.mode === "merchant") {
       const paymentMethods = await listAppUserPaymentMethods({
-        clientId: access.app.id,
-        externalUserId: billingTarget.target.externalUserId,
+        clientId: app.id,
+        externalUserId: target.externalUserId,
       });
       return NextResponse.json({ paymentMethods });
     }
     const paymentMethods = await listOwnerPaymentMethods(
-      billingTarget.target.ownerUserId,
+      target.ownerUserId,
     );
     return NextResponse.json({ paymentMethods });
   } catch (err) {
@@ -78,23 +63,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const access = await authorizeOwnerWalletM2m(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   const body = await readJsonObjectBody(request);
-  const billingTarget = await resolveWalletBillingTarget({
-    appId: access.app.id,
-    ownerUserId: access.ownerUserId,
-    externalUserId: readOptionalExternalUserId(body.externalUserId),
+  const resolved = await resolveWalletRouteContext({
+    request,
+    clientId,
+    externalUserId: body.externalUserId,
   });
-  if (!billingTarget.ok) {
-    return NextResponse.json(
-      { error: billingTarget.error },
-      { status: billingTarget.status },
-    );
+  if (!resolved.ok) {
+    return resolved.response;
   }
+  const { app, target } = resolved.context;
 
   const successUrl =
     typeof body.successUrl === "string" ? body.successUrl : undefined;
@@ -102,10 +80,10 @@ export async function POST(
     typeof body.cancelUrl === "string" ? body.cancelUrl : undefined;
 
   try {
-    if (billingTarget.target.mode === "merchant") {
+    if (target.mode === "merchant") {
       const checkout = await createAppUserPaymentMethodCheckout({
-        clientId: access.app.id,
-        externalUserId: billingTarget.target.externalUserId,
+        clientId: app.id,
+        externalUserId: target.externalUserId,
         successUrl,
         cancelUrl,
       });
@@ -116,7 +94,7 @@ export async function POST(
       });
     }
     const checkout = await createOwnerPaymentMethodCheckout({
-      ownerUserId: billingTarget.target.ownerUserId,
+      ownerUserId: target.ownerUserId,
       successUrl,
       cancelUrl,
     });
@@ -139,35 +117,28 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const access = await authorizeOwnerWalletM2m(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   const body = await readJsonObjectBody(request);
-  const billingTarget = await resolveWalletBillingTarget({
-    appId: access.app.id,
-    ownerUserId: access.ownerUserId,
-    externalUserId: readOptionalExternalUserId(body.externalUserId),
+  const resolved = await resolveWalletRouteContext({
+    request,
+    clientId,
+    externalUserId: body.externalUserId,
   });
-  if (!billingTarget.ok) {
-    return NextResponse.json(
-      { error: billingTarget.error },
-      { status: billingTarget.status },
-    );
+  if (!resolved.ok) {
+    return resolved.response;
   }
+  const { app, target } = resolved.context;
 
   try {
     if (body.ensureDefault === true) {
-      if (billingTarget.target.mode === "merchant") {
+      if (target.mode === "merchant") {
         const result = await ensureAppUserDefaultPaymentMethodIfMissing({
-          clientId: access.app.id,
-          externalUserId: billingTarget.target.externalUserId,
+          clientId: app.id,
+          externalUserId: target.externalUserId,
         });
         return NextResponse.json(result);
       }
       const result = await ensureOwnerDefaultPaymentMethodIfMissing(
-        billingTarget.target.ownerUserId,
+        target.ownerUserId,
       );
       return NextResponse.json(result);
     }
@@ -183,10 +154,10 @@ export async function PATCH(
       );
     }
 
-    if (billingTarget.target.mode === "merchant") {
+    if (target.mode === "merchant") {
       const result = await setAppUserDefaultPaymentMethod({
-        clientId: access.app.id,
-        externalUserId: billingTarget.target.externalUserId,
+        clientId: app.id,
+        externalUserId: target.externalUserId,
         paymentMethodId,
       });
       if (!result.updated) {
@@ -198,7 +169,7 @@ export async function PATCH(
       return NextResponse.json(result);
     }
     const result = await setOwnerDefaultPaymentMethod(
-      billingTarget.target.ownerUserId,
+      target.ownerUserId,
       paymentMethodId,
     );
     if (!result.updated) {

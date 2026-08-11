@@ -45,6 +45,7 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("get", "/api/v1/apps/{clientId}/billing/wallet", "apps/[id]/billing/wallet/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/billing/wallet/invoices", "apps/[id]/billing/wallet/invoices/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/billing/wallet/payment-methods", "apps/[id]/billing/wallet/payment-methods/route.ts"),
+  inventoryOp("get", "/api/v1/apps/{clientId}/billing/wallet/transactions", "apps/[id]/billing/wallet/transactions/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("get", "/api/v1/apps/{clientId}/discovery-profiles", "apps/[id]/discovery-profiles/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", "apps/[id]/discovery-profiles/[profileId]/route.ts"),
   inventoryOp("get", "/api/v1/apps/{clientId}/domains", "apps/[id]/domains/route.ts", true, "not in Builder/End-user/Internal contract"),

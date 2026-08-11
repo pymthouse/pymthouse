@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { loadAppUserBillingLedger } from "@/lib/billing/app-user-ledger";
-import { authorizeOwnerWalletM2m } from "@/lib/billing/owner-wallet-m2m-auth";
-import {
-  readOptionalExternalUserId,
-  resolveWalletBillingTarget,
-} from "@/lib/billing/wallet-billing-target";
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
+import { resolveWalletRouteContext } from "@/lib/billing/wallet-route-context";
 
 /**
  * GET /api/v1/apps/{clientId}/billing/wallet/transactions
@@ -20,27 +16,17 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const access = await authorizeOwnerWalletM2m(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const url = new URL(request.url);
-  const billingTarget = await resolveWalletBillingTarget({
-    appId: access.app.id,
-    ownerUserId: access.ownerUserId,
-    externalUserId: readOptionalExternalUserId(
-      url.searchParams.get("externalUserId"),
-    ),
+  const resolved = await resolveWalletRouteContext({
+    request,
+    clientId,
+    externalUserId: request.nextUrl.searchParams.get("externalUserId"),
   });
-  if (!billingTarget.ok) {
-    return NextResponse.json(
-      { error: billingTarget.error },
-      { status: billingTarget.status },
-    );
+  if (!resolved.ok) {
+    return resolved.response;
   }
 
-  if (billingTarget.target.mode !== "merchant") {
+  const { app, target } = resolved.context;
+  if (target.mode !== "merchant") {
     return NextResponse.json(
       {
         error:
@@ -52,9 +38,9 @@ export async function GET(
 
   try {
     const result = await loadAppUserBillingLedger({
-      appId: access.app.id,
+      appId: app.id,
       publicClientId: clientId,
-      externalUserId: billingTarget.target.externalUserId,
+      externalUserId: target.externalUserId,
     });
     return NextResponse.json({
       items: result.items,
