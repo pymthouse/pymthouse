@@ -40,7 +40,10 @@ import { resolveOpenMeterBillingIdentity } from "../src/lib/openmeter/billing-id
 import { getAppBillingConfig } from "../src/lib/openmeter/billing-profiles";
 import { konnectMeteringV1Fetch } from "../src/lib/openmeter/konnect-admin-client";
 import { parsePriceAmount } from "../src/lib/openmeter/plans-sync";
-import { listOpenMeterSubscriptionsForCustomer } from "../src/lib/openmeter/subscription-read";
+import {
+  listOpenMeterSubscriptionsForCustomer,
+  type OpenMeterSubscriptionView,
+} from "../src/lib/openmeter/subscription-read";
 
 type Args = {
   clientId: string;
@@ -247,12 +250,15 @@ function mapInvoice(raw: unknown): InvoiceView | null {
   return {
     id,
     status: readString(inv.status) ?? "unknown",
-    total: String(total ?? "0"),
+    total: readString(total) ?? "0",
     totalUsdMicros: gatheringTotalUsdMicros(total)?.toString() ?? null,
-    lines: rawLines.map((line) => ({
-      name: readString(readRecord(line)?.name) ?? "Charge",
-      total: String(readRecord(readRecord(line)?.totals)?.total ?? "0"),
-    })),
+    lines: rawLines.map((line) => {
+      const lineTotal = readRecord(readRecord(line)?.totals)?.total;
+      return {
+        name: readString(readRecord(line)?.name) ?? "Charge",
+        total: readString(lineTotal) ?? "0",
+      };
+    }),
   };
 }
 
@@ -349,6 +355,107 @@ function printPlans(localPlans: LocalPlanView[]): void {
   }
 }
 
+function localPlanLabel(local: LocalPlanView | undefined): string {
+  if (!local) return "UNMAPPED — likely a stale plan version";
+  return `${local.name} (${local.id})`;
+}
+
+function printSubscriptions(
+  customerId: string | null,
+  subscriptions: OpenMeterSubscriptionView[],
+  localPlans: LocalPlanView[],
+): void {
+  console.log("\n[3/4] Subscriptions on the billing customer");
+  if (!customerId) {
+    console.log("  no OpenMeter customer resolved — nothing can be billed");
+    return;
+  }
+  if (subscriptions.length === 0) {
+    console.log(`  customerId=${customerId}: no subscriptions`);
+    return;
+  }
+  for (const sub of subscriptions) {
+    const local = localPlans.find((p) => p.openmeterPlanId === sub.planId);
+    console.log(
+      `  ${sub.id} status=${sub.status} planId=${sub.planId ?? "none"} ` +
+        `planKey=${sub.planKey ?? "none"}` +
+        `\n    activeFrom=${sub.activeFrom ?? "none"} activeTo=${sub.activeTo ?? "none"}` +
+        `\n    localPlan=${localPlanLabel(local)}`,
+    );
+  }
+}
+
+function printInvoices(invoices: InvoiceView[]): void {
+  console.log("\n[4/4] Most recent invoices on the billing customer");
+  if (invoices.length === 0) {
+    console.log("  (none)");
+    return;
+  }
+  for (const inv of invoices) {
+    console.log(
+      `  ${inv.id} status=${inv.status} total=${inv.total} ` +
+        `(${inv.totalUsdMicros ?? "?"} usd micros)`,
+    );
+    for (const line of inv.lines) {
+      console.log(`    - ${line.name}: ${line.total}`);
+    }
+  }
+}
+
+function printSubscriptionVerdict(
+  subscriptions: OpenMeterSubscriptionView[],
+  localPlans: LocalPlanView[],
+): void {
+  const liveSubs = subscriptions.filter((sub) =>
+    ["active", "trialing", "scheduled"].includes(sub.status.toLowerCase()),
+  );
+  const feeBearingSubs = liveSubs.filter((sub) =>
+    localPlans.some(
+      (plan) =>
+        plan.openmeterPlanId === sub.planId &&
+        (plan.remote?.rateCards ?? []).some(isFlatFeeCard),
+    ),
+  );
+  if (liveSubs.length === 0) {
+    console.log("  no live subscription — nothing is accruing a subscription fee");
+    return;
+  }
+  if (feeBearingSubs.length === 0) {
+    console.log(
+      `  ${liveSubs.length} live subscription(s), none on a plan version that carries a ` +
+        "flat fee card — no subscription fee can accrue",
+    );
+    return;
+  }
+  console.log(
+    `  live fee-bearing subscription(s): ${feeBearingSubs.map((s) => s.id).join(", ")}`,
+  );
+}
+
+function printGatheringVerdict(
+  gathering: InvoiceView[],
+  collectable: boolean,
+): void {
+  if (gathering.length === 0) {
+    console.log(
+      "  no gathering invoice — OpenMeter has accrued nothing for this customer, " +
+        "so there is no charge any collection trigger could raise",
+    );
+    return;
+  }
+  if (collectable) {
+    console.log(
+      `  a gathering invoice is at or above the ${MIN_INVOICE_USD_MICROS} usd micros ` +
+        "Stripe floor — forcing collection would raise a real invoice",
+    );
+    return;
+  }
+  console.log(
+    `  a gathering invoice exists but sits below the ${MIN_INVOICE_USD_MICROS} usd micros ` +
+      "Stripe floor — forcing collection would be skipped as uncollectable",
+  );
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -381,41 +488,13 @@ async function main(): Promise<void> {
     clientId: args.clientId,
     externalUserId: args.externalUserId,
   });
-
-  console.log("\n[3/4] Subscriptions on the billing customer");
-  if (!customerId) {
-    console.log("  no OpenMeter customer resolved — nothing can be billed");
-  }
   const subscriptions = customerId
     ? await listOpenMeterSubscriptionsForCustomer(client, customerId)
     : [];
-  if (customerId && subscriptions.length === 0) {
-    console.log(`  customerId=${customerId}: no subscriptions`);
-  }
-  for (const sub of subscriptions) {
-    const local = localPlans.find((p) => p.openmeterPlanId === sub.planId);
-    console.log(
-      `  ${sub.id} status=${sub.status} planId=${sub.planId ?? "none"} ` +
-        `planKey=${sub.planKey ?? "none"}` +
-        `\n    activeFrom=${sub.activeFrom ?? "none"} activeTo=${sub.activeTo ?? "none"}` +
-        `\n    localPlan=${local ? `${local.name} (${local.id})` : "UNMAPPED — likely a stale plan version"}`,
-    );
-  }
+  printSubscriptions(customerId, subscriptions, localPlans);
 
-  console.log("\n[4/4] Most recent invoices on the billing customer");
   const invoices = customerId ? await loadInvoices(client, customerId) : [];
-  if (invoices.length === 0) {
-    console.log("  (none)");
-  }
-  for (const inv of invoices) {
-    console.log(
-      `  ${inv.id} status=${inv.status} total=${inv.total} ` +
-        `(${inv.totalUsdMicros ?? "?"} usd micros)`,
-    );
-    for (const line of inv.lines) {
-      console.log(`    - ${line.name}: ${line.total}`);
-    }
-  }
+  printInvoices(invoices);
 
   const gathering = invoices.filter((inv) => inv.status.toLowerCase() === "gathering");
   const collectable = gathering.some(
@@ -424,45 +503,8 @@ async function main(): Promise<void> {
   );
 
   console.log("\nverdict");
-  const liveSubs = subscriptions.filter((sub) =>
-    ["active", "trialing", "scheduled"].includes(sub.status.toLowerCase()),
-  );
-  const feeBearingSubs = liveSubs.filter((sub) =>
-    localPlans.some(
-      (plan) =>
-        plan.openmeterPlanId === sub.planId &&
-        (plan.remote?.rateCards ?? []).some(isFlatFeeCard),
-    ),
-  );
-  if (liveSubs.length === 0) {
-    console.log("  no live subscription — nothing is accruing a subscription fee");
-  } else if (feeBearingSubs.length === 0) {
-    console.log(
-      `  ${liveSubs.length} live subscription(s), none on a plan version that carries a ` +
-        "flat fee card — no subscription fee can accrue",
-    );
-  } else {
-    console.log(
-      `  live fee-bearing subscription(s): ${feeBearingSubs.map((s) => s.id).join(", ")}`,
-    );
-  }
-
-  if (gathering.length === 0) {
-    console.log(
-      "  no gathering invoice — OpenMeter has accrued nothing for this customer, " +
-        "so there is no charge any collection trigger could raise",
-    );
-  } else if (collectable) {
-    console.log(
-      `  a gathering invoice is at or above the ${MIN_INVOICE_USD_MICROS} usd micros ` +
-        "Stripe floor — forcing collection would raise a real invoice",
-    );
-  } else {
-    console.log(
-      `  a gathering invoice exists but sits below the ${MIN_INVOICE_USD_MICROS} usd micros ` +
-        "Stripe floor — forcing collection would be skipped as uncollectable",
-    );
-  }
+  printSubscriptionVerdict(subscriptions, localPlans);
+  printGatheringVerdict(gathering, collectable);
 
   if (args.json) {
     console.log(
