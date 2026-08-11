@@ -202,7 +202,7 @@ ALTER TABLE "app_billing_config"
   ADD COLUMN IF NOT EXISTS "billing_mode" text NOT NULL DEFAULT 'owner_rollup';
 --> statement-breakpoint
 ALTER TABLE "app_billing_config"
-  ADD COLUMN IF NOT EXISTS "end_user_cap" integer NOT NULL DEFAULT 25;
+  ADD COLUMN IF NOT EXISTS "end_user_cap" integer NOT NULL DEFAULT 10000;
 --> statement-breakpoint
 ALTER TABLE "app_billing_config"
   ADD COLUMN IF NOT EXISTS "activation_notified_at" text;

@@ -1,6 +1,7 @@
 import { and, count, eq } from "drizzle-orm";
 
 import { writeAuditLog } from "@/lib/audit";
+import { FALLBACK_END_USER_CAP, platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaults";
 import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients } from "@/db/schema";
 import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
@@ -58,8 +59,12 @@ export class AppActivationError extends Error {
   }
 }
 
-/** Default per-app end-user cap for owner_rollup before Connect is ready. */
-export const DEFAULT_END_USER_CAP = 25;
+/**
+ * Default per-app end-user cap when a billing row is missing.
+ * Prefer {@link platformDefaultEndUserCap} at call sites so env policy applies;
+ * this constant mirrors the unset-env fallback for tests/exports.
+ */
+export const DEFAULT_END_USER_CAP = FALLBACK_END_USER_CAP;
 
 type SpendableLookup = typeof getSpendableUsdMicros;
 let spendableLookup: SpendableLookup = getSpendableUsdMicros;
@@ -194,7 +199,7 @@ export async function resolveAppActivation(clientId: string): Promise<AppActivat
   const publicClientId = await resolvePublicClientId(app);
   const config = await getAppBillingConfig(app.id);
   const billingMode = normalizeBillingMode(config?.billingMode);
-  const endUserCap = config?.endUserCap ?? DEFAULT_END_USER_CAP;
+  const endUserCap = config?.endUserCap ?? platformDefaultEndUserCap();
   const connectReady = isConnectReady(config);
 
   // Only *active* identities consume a cap slot. Soft-deactivated (`inactive`)

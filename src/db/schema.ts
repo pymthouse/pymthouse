@@ -607,7 +607,7 @@ export const appBillingConfig = pgTable(
      */
     billingMode: text("billing_mode").notNull().default("owner_rollup"),
     /** Max *active* app_users before provisioning / reactivation is blocked. */
-    endUserCap: integer("end_user_cap").notNull().default(25),
+    endUserCap: integer("end_user_cap").notNull().default(10_000),
     /** ISO timestamp of first cost-rail denial notification. */
     activationNotifiedAt: text("activation_notified_at"),
     /**

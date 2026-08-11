@@ -893,7 +893,7 @@ Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `en
   "canProvisionEndUsers": true,
   "canSellPaidPlans": false,
   "reason": "stripe_connect_required",
-  "endUserCap": 25,
+  "endUserCap": 10000,
   "appUserCount": 3
 }
 ```
