@@ -30,6 +30,8 @@ export async function querySubjectDailyFeeUsage(input: {
   end: string;
   /** Log prefix identifying the calling surface. */
   logLabel: string;
+  /** Optional callback when the meter query degrades to fallback. */
+  onDegraded?: () => void;
 }): Promise<LedgerDailyUsageInput[]> {
   const subjects = [...new Set(input.subjects.map((s) => s.trim()).filter(Boolean))];
   if (subjects.length === 0) {
@@ -55,6 +57,7 @@ export async function querySubjectDailyFeeUsage(input: {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, used]) => ({ date, usedUsdMicros: used.toString() }));
   } catch (err) {
+    input.onDegraded?.();
     console.warn(
       `${input.logLabel}: daily meter query failed`,
       sanitizeForLog(subjects.join(",")),

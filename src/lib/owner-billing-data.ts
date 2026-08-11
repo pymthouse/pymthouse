@@ -895,6 +895,9 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
       start: cycle.start,
       end: cycle.end,
       logLabel: "owner-billing",
+      onDegraded: () => {
+        ledgerInputsDegraded = true;
+      },
     }),
     3_000,
     [] as LedgerDailyUsageInput[],

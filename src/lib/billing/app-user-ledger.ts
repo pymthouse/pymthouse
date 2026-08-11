@@ -33,9 +33,43 @@ import { getPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { listMerchantConnectInvoicesForAppUser } from "@/lib/stripe/merchant-connect";
 
+const APP_USER_DAILY_USAGE_LOOKUP_BUDGET_MS = 3_000;
+
+function withSoftTimeout<T>(input: {
+  promise: Promise<T>;
+  ms: number;
+  fallback: T;
+  label: string;
+  onDegraded: () => void;
+}): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`app-user-ledger: ${input.label} timed out after ${input.ms}ms`);
+      input.onDegraded();
+      resolve(input.fallback);
+    }, input.ms);
+    input.promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        console.warn(
+          `app-user-ledger: ${input.label} failed`,
+          sanitizeForLog(err instanceof Error ? err.message : String(err)),
+        );
+        input.onDegraded();
+        resolve(input.fallback);
+      },
+    );
+  });
+}
+
 async function listAppUserCreditGrants(input: {
   publicClientId: string;
   externalUserId: string;
+  onDegraded?: () => void;
 }): Promise<LedgerGrantInput[]> {
   if (!isHostedAdminClientAvailable()) {
     return [];
@@ -73,6 +107,7 @@ async function listAppUserCreditGrants(input: {
       ];
     });
   } catch (err) {
+    input.onDegraded?.();
     console.warn(
       "app-user-ledger: credit grant list failed",
       sanitizeForLog(customerKey),
@@ -165,6 +200,9 @@ export async function loadAppUserBillingLedger(input: {
     listAppUserCreditGrants({
       publicClientId: meterClientId,
       externalUserId,
+      onDegraded: () => {
+        degraded = true;
+      },
     }).catch(() => {
       degraded = true;
       return [] as LedgerGrantInput[];
@@ -193,6 +231,9 @@ export async function loadAppUserBillingLedger(input: {
       return { items: [], page: 1, pageSize: 50, totalCount: 0 };
     }),
   ]);
+  if (history.totalCount > history.items.length) {
+    degraded = true;
+  }
 
   const fromHistory = merchantHistoryToLedgerInvoices(history.items);
   // The two grant sources describe the same money and are never merged: a
@@ -204,15 +245,23 @@ export async function loadAppUserBillingLedger(input: {
 
   let dailyUsage: LedgerDailyUsageInput[] = [];
   if (isHostedAdminClientAvailable()) {
-    dailyUsage = await querySubjectDailyFeeUsage({
-      client: getHostedAdminClient(),
-      subjects: [customerKey],
-      start: cycle.start,
-      end: cycle.end,
-      logLabel: "app-user-ledger",
-    }).catch(() => {
-      degraded = true;
-      return [];
+    dailyUsage = await withSoftTimeout({
+      promise: querySubjectDailyFeeUsage({
+        client: getHostedAdminClient(),
+        subjects: [customerKey],
+        start: cycle.start,
+        end: cycle.end,
+        logLabel: "app-user-ledger",
+        onDegraded: () => {
+          degraded = true;
+        },
+      }),
+      ms: APP_USER_DAILY_USAGE_LOOKUP_BUDGET_MS,
+      fallback: [] as LedgerDailyUsageInput[],
+      label: "daily usage lookup",
+      onDegraded: () => {
+        degraded = true;
+      },
     });
   } else {
     degraded = true;
