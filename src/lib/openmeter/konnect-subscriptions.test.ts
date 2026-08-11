@@ -4,9 +4,13 @@ import {
   cancelKonnectSubscription,
   changeKonnectSubscription,
   countActiveKonnectSubscriptionsForPlan,
+  estimateNextBillingCycleIso,
   listActiveKonnectSubscriptions,
   parseSubscriptionTiming,
+  readKonnectSubscriptionActiveWindow,
+  restoreKonnectSubscription,
   subscriptionMatchesOpenMeterPlanId,
+  unscheduleKonnectSubscriptionCancelation,
 } from "./konnect-subscriptions";
 
 function withKonnectEnv(t: test.TestContext): void {
@@ -32,6 +36,23 @@ test("parseSubscriptionTiming accepts only known values", () => {
   assert.throws(() => parseSubscriptionTiming("later"), /timing must be/);
 });
 
+test("estimateNextBillingCycleIso clamps end-of-month anchors", () => {
+  assert.equal(estimateNextBillingCycleIso(null), null);
+  assert.equal(estimateNextBillingCycleIso("not-a-date"), null);
+  assert.equal(
+    estimateNextBillingCycleIso("2025-01-31T00:00:00.000Z"),
+    "2025-02-28T00:00:00.000Z",
+  );
+  assert.equal(
+    estimateNextBillingCycleIso("2024-01-31T12:30:00.000Z"),
+    "2024-02-29T12:30:00.000Z",
+  );
+  assert.equal(
+    estimateNextBillingCycleIso("2025-03-31T00:00:00.000Z"),
+    "2025-04-30T00:00:00.000Z",
+  );
+});
+
 test("subscriptionMatchesOpenMeterPlanId reads plan_id or planId", () => {
   assert.equal(
     subscriptionMatchesOpenMeterPlanId({ id: "s1", status: "active", customer_id: "c1", plan_id: "plan_a" }, "plan_a"),
@@ -47,7 +68,7 @@ test("subscriptionMatchesOpenMeterPlanId reads plan_id or planId", () => {
   );
 });
 
-test("changeKonnectSubscription and cancelKonnectSubscription call admin API", async (t) => {
+test("changeKonnectSubscription cancel and restore call admin API", async (t) => {
   withKonnectEnv(t);
   const calls: Array<{ url: string; body: string }> = [];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -65,11 +86,15 @@ test("changeKonnectSubscription and cancelKonnectSubscription call admin API", a
     timing: "immediate",
   });
   await cancelKonnectSubscription({ subscriptionId: "sub_1" });
+  await restoreKonnectSubscription({ subscriptionId: "sub_1" });
+  await unscheduleKonnectSubscriptionCancelation({ subscriptionId: "sub_1" });
 
   assert.match(calls[0]!.url, /\/subscriptions\/sub_1\/change$/);
   assert.match(calls[0]!.body, /"timing":"immediate"/);
   assert.match(calls[1]!.url, /\/subscriptions\/sub_1\/cancel$/);
   assert.match(calls[1]!.body, /next_billing_cycle/);
+  assert.match(calls[2]!.url, /\/metering\/v1\/subscriptions\/sub_1\/restore$/);
+  assert.match(calls[3]!.url, /\/subscriptions\/sub_1\/unschedule-cancelation$/);
 });
 
 test("listActiveKonnectSubscriptions pages and filters statuses", async (t) => {
@@ -117,6 +142,67 @@ test("countActiveKonnectSubscriptionsForPlan counts matching plans", async (t) =
 
   assert.equal(await countActiveKonnectSubscriptionsForPlan(""), 0);
   assert.equal(await countActiveKonnectSubscriptionsForPlan("plan_a"), 1);
+});
+
+test("readKonnectSubscriptionActiveWindow reads the metering/v1 window", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    // Verbatim shape of `GET /metering/v1/subscriptions/{id}` — the only Konnect
+    // surface that returns the billing window.
+    return new Response(
+      JSON.stringify({
+        id: "01KZCN0AH450JWA381D2AN7NJK",
+        status: "canceled",
+        activeFrom: "2026-08-06T23:02:17.378589Z",
+        activeTo: "2026-09-06T23:02:17.378589Z",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  assert.deepEqual(
+    await readKonnectSubscriptionActiveWindow({
+      subscriptionId: "01KZCN0AH450JWA381D2AN7NJK",
+    }),
+    {
+      activeFrom: "2026-08-06T23:02:17.378589Z",
+      activeTo: "2026-09-06T23:02:17.378589Z",
+    },
+  );
+  assert.match(
+    urls[0]!,
+    /\/metering\/v1\/subscriptions\/01KZCN0AH450JWA381D2AN7NJK$/,
+  );
+});
+
+test("readKonnectSubscriptionActiveWindow degrades to nulls instead of throwing", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async () => new Response("nope", { status: 500 }));
+
+  assert.deepEqual(
+    await readKonnectSubscriptionActiveWindow({ subscriptionId: "sub_x" }),
+    { activeFrom: null, activeTo: null },
+  );
+});
+
+test("readKonnectSubscriptionActiveWindow skips the call for a blank id", async (t) => {
+  withKonnectEnv(t);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    return new Response("{}", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  assert.deepEqual(await readKonnectSubscriptionActiveWindow({ subscriptionId: "  " }), {
+    activeFrom: null,
+    activeTo: null,
+  });
+  assert.equal(calls, 0);
 });
 
 test("konnectAdminFetch errors surface status and body", async (t) => {

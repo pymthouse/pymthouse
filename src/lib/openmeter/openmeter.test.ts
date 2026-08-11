@@ -1192,6 +1192,7 @@ test("mapPymthousePlanToOpenMeterCreate maps subscription flat fee and included 
       overageRateUsd: "0.0000015",
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: false,
@@ -1255,6 +1256,7 @@ test("mapPymthousePlanToOpenMeterCreate uses weekly billing cadence", async () =
       overageRateUsd: "0.000001",
       includedUnits: null,
       billingCycle: "weekly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: false,
@@ -1311,6 +1313,7 @@ test("mapPymthousePlanToOpenMeterCreate adds per-capability usage rate cards", a
       overageRateUsd: "0.000001",
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: false,
@@ -1379,6 +1382,42 @@ test("isOpenMeterConflictError detects duplicate entitlement failures", async ()
   assert.equal(isOpenMeterConflictError(new Error("validation failed")), false);
 });
 
+test("describeOpenMeterError recovers reasons the SDK drops as undefined", async () => {
+  const { describeOpenMeterError } = await import("./plan-errors");
+
+  // Konnect problem body without `detail` — the SDK renders "[409]: undefined".
+  const conflict = new Error(
+    "Request failed (https://us.api.konghq.com/v3/openmeter/subscriptions) [409]: undefined",
+  );
+  Object.assign(conflict, {
+    title: "Conflict",
+    type: "about:blank",
+    __raw: { title: "Conflict", status: 409, extra: "customer already has a subscription" },
+  });
+  const described = describeOpenMeterError(conflict);
+  assert.ok(described.includes("[409]: undefined"));
+  assert.ok(described.includes("title=Conflict"));
+  assert.ok(described.includes("type=about:blank"));
+  assert.ok(described.includes("customer already has a subscription"));
+
+  // A plain Error still describes as its message, with nothing appended.
+  assert.equal(describeOpenMeterError(new Error("boom")), "boom");
+
+  // Non-serializable __raw is skipped without throwing.
+  const circularErr = new Error("wrapped");
+  const circularRaw: { self?: unknown } = {};
+  circularRaw.self = circularRaw;
+  Object.assign(circularErr, { title: "T", type: "U", __raw: circularRaw });
+  const circularDescribed = describeOpenMeterError(circularErr);
+  assert.ok(circularDescribed.includes("wrapped"));
+  assert.ok(circularDescribed.includes("title=T"));
+  assert.ok(circularDescribed.includes("type=U"));
+  assert.ok(!circularDescribed.includes("raw="));
+
+  // Non-Error values stringify as the primary message.
+  assert.equal(describeOpenMeterError("plain-string"), "plain-string");
+});
+
 test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409", async () => {
   const { isOpenMeterStripeBillingError, isOpenMeterConflictError } = await import("./plan-errors");
   const stripeErr = new Error(
@@ -1389,9 +1428,14 @@ test("isOpenMeterStripeBillingError detects Stripe precondition failures on 409"
   assert.equal(isOpenMeterStripeBillingError(stripeErr), true);
   assert.equal(isOpenMeterConflictError(stripeErr), true);
 
-  const stripeMessageOnly = new Error(stripeErr.message);
-  (stripeMessageOnly as unknown as { status: number }).status = 500;
-  assert.equal(isOpenMeterStripeBillingError(stripeMessageOnly), false);
+  // Konnect often omits .status on the thrown Error; message alone must still match.
+  const messageOnly = new Error(stripeErr.message);
+  assert.equal(isOpenMeterConflictError(messageOnly), true);
+  assert.equal(isOpenMeterStripeBillingError(messageOnly), true);
+
+  const unrelated500 = new Error("validation failed");
+  (unrelated500 as unknown as { status: number }).status = 500;
+  assert.equal(isOpenMeterStripeBillingError(unrelated500), false);
 });
 
 test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () => {
@@ -1411,6 +1455,7 @@ test("mapPymthousePlanToOpenMeterCreate skips network default plans", async () =
       overageRateUsd: null,
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: true,
       isStarterDefault: false,
@@ -1444,6 +1489,7 @@ test("mapPymthousePlanToOpenMeterCreate maps Starter plan with network_spend ent
       overageRateUsd: null,
       includedUnits: null,
       billingCycle: "monthly",
+      chargeThresholdUsdMicros: null,
       discoveryProfileId: null,
       isNetworkDefault: false,
       isStarterDefault: true,
@@ -1497,6 +1543,7 @@ test("verifyOpenMeterSubscriptionId returns mapped subscription", async () => {
   assert.deepEqual(view, {
     id: "sub-1",
     status: "active",
+    customerId: null,
     planKey: "app_1:plan_starter",
     planId: null,
     activeFrom: "2026-01-01T00:00:00.000Z",

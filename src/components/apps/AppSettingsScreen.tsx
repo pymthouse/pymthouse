@@ -1,7 +1,8 @@
 "use client";
 
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep, {
@@ -15,6 +16,11 @@ import {
   type AppFormData,
   type AppState,
 } from "./AppWizard";
+import {
+  appSettingsPath,
+  normalizeAppSettingsTab,
+  type AppSettingsTab,
+} from "@/lib/apps/settings-paths";
 
 interface Props {
   appId: string;
@@ -33,7 +39,7 @@ interface Props {
   canManageBilling?: boolean;
   /** App owner identity used when minting owner-scoped API keys from Credentials tab. */
   ownerExternalUserId?: string | null;
-  /** Initial tab to display (e.g. "plans" from URL query param). */
+  /** Initial tab to display (from path `/apps/{id}/payments`). */
   initialTab?: string;
 }
 
@@ -67,22 +73,12 @@ const INTEGRATION_TABS = [
   { id: "credentials", label: "Credentials & URLs" },
   { id: "plans", label: "Billing Plans" },
   { id: "payments", label: "Payments" },
-] as const;
+] as const satisfies ReadonlyArray<{ id: AppSettingsTab; label: string }>;
 
-type IntegrationSection = (typeof INTEGRATION_TABS)[number]["id"];
+type IntegrationSection = AppSettingsTab;
 
 function resolveInitialTab(tab: string | undefined): IntegrationSection {
-  if (tab === "network-discovery") {
-    return "plans";
-  }
-  if (tab === "auth") {
-    return "profile";
-  }
-  const validTabs = INTEGRATION_TABS.map((t) => t.id);
-  if (tab && validTabs.includes(tab as IntegrationSection)) {
-    return tab as IntegrationSection;
-  }
-  return "profile";
+  return normalizeAppSettingsTab(tab);
 }
 
 export default function AppSettingsScreen({
@@ -100,7 +96,6 @@ export default function AppSettingsScreen({
   initialTab,
 }: Readonly<Props>) {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [formData, setFormData] = useState<AppFormData>(() =>
     mergeFormData(initialData, initialInitiateLoginUri ?? null, initialDeviceThirdPartyInitiateLogin),
@@ -112,8 +107,6 @@ export default function AppSettingsScreen({
   const [postLogoutRedirectUris, setPostLogoutRedirectUris] = useState<string[]>(
     initialPostLogoutRedirectUris,
   );
-  const [credentialsClient, setCredentialsClient] =
-    useState<CredentialsClientTab>("public");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -121,93 +114,21 @@ export default function AppSettingsScreen({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [integrationSection, setIntegrationSection] =
-    useState<IntegrationSection>(() => resolveInitialTab(initialTab));
-  const tabRefs = useRef<Partial<Record<IntegrationSection, HTMLButtonElement | null>>>({});
+  const integrationSection = resolveInitialTab(initialTab);
 
-  const selectIntegrationSection = useCallback(
-    (section: IntegrationSection, updateUrl = true) => {
-      setIntegrationSection(section);
+  const clientParam = searchParams.get("client");
+  const credentialsClient: CredentialsClientTab =
+    clientParam === "m2m" || clientParam === "web" || clientParam === "public"
+      ? clientParam
+      : "public";
 
-      if (updateUrl) {
-        const nextParams = new URLSearchParams(searchParams.toString());
-        if (section === "profile") {
-          nextParams.delete("tab");
-        } else {
-          nextParams.set("tab", section);
-        }
-        if (section !== "credentials") {
-          nextParams.delete("client");
-        }
-        const query = nextParams.toString();
-        const nextUrl = query ? `${pathname}?${query}` : pathname;
-        router.replace(nextUrl, { scroll: false });
-      }
-
-      requestAnimationFrame(() => tabRefs.current[section]?.focus());
+  const credentialsClientHref = useCallback(
+    (client: CredentialsClientTab) => {
+      const path = appSettingsPath(appId, "credentials");
+      if (client === "public") return path;
+      return `${path}?client=${encodeURIComponent(client)}`;
     },
-    [pathname, router, searchParams],
-  );
-
-  const credentialsTabRefs = useRef<
-    Partial<Record<CredentialsClientTab, HTMLButtonElement | null>>
-  >({});
-
-  const selectCredentialsClient = useCallback(
-    (client: CredentialsClientTab, updateUrl = true) => {
-      setCredentialsClient(client);
-      if (updateUrl) {
-        const nextParams = new URLSearchParams(searchParams.toString());
-        nextParams.set("tab", "credentials");
-        if (client === "public") {
-          nextParams.delete("client");
-        } else {
-          nextParams.set("client", client);
-        }
-        const query = nextParams.toString();
-        router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-      }
-      requestAnimationFrame(() => credentialsTabRefs.current[client]?.focus());
-    },
-    [pathname, router, searchParams],
-  );
-
-  useEffect(() => {
-    const clientParam = searchParams.get("client");
-    if (clientParam === "m2m" || clientParam === "web" || clientParam === "public") {
-      setCredentialsClient(clientParam);
-    }
-  }, [searchParams]);
-
-  useEffect(() => {
-    const resolvedTab = resolveInitialTab(initialTab);
-    setIntegrationSection((currentTab) =>
-      currentTab === resolvedTab ? currentTab : resolvedTab,
-    );
-  }, [initialTab]);
-
-  const handleIntegrationTabKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLButtonElement>, id: IntegrationSection) => {
-      const currentIndex = INTEGRATION_TABS.findIndex((tab) => tab.id === id);
-      if (currentIndex === -1) return;
-
-      let nextIndex: number | null = null;
-      if (event.key === "ArrowLeft") {
-        nextIndex =
-          (currentIndex - 1 + INTEGRATION_TABS.length) % INTEGRATION_TABS.length;
-      } else if (event.key === "ArrowRight") {
-        nextIndex = (currentIndex + 1) % INTEGRATION_TABS.length;
-      } else if (event.key === "Home") {
-        nextIndex = 0;
-      } else if (event.key === "End") {
-        nextIndex = INTEGRATION_TABS.length - 1;
-      }
-
-      if (nextIndex === null) return;
-      event.preventDefault();
-      selectIntegrationSection(INTEGRATION_TABS[nextIndex].id);
-    },
-    [selectIntegrationSection],
+    [appId],
   );
 
   const showMessage = useCallback((msg: string) => {
@@ -438,41 +359,17 @@ export default function AppSettingsScreen({
     [showM2mCredentialsTab, showWebCredentialsTab],
   );
 
-  const handleCredentialsClientTabKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLButtonElement>, id: CredentialsClientTab) => {
-      const currentIndex = credentialsClientTabs.findIndex((tab) => tab.id === id);
-      if (currentIndex === -1) return;
-
-      let nextIndex: number | null = null;
-      if (event.key === "ArrowLeft") {
-        nextIndex =
-          (currentIndex - 1 + credentialsClientTabs.length) %
-          credentialsClientTabs.length;
-      } else if (event.key === "ArrowRight") {
-        nextIndex = (currentIndex + 1) % credentialsClientTabs.length;
-      } else if (event.key === "Home") {
-        nextIndex = 0;
-      } else if (event.key === "End") {
-        nextIndex = credentialsClientTabs.length - 1;
-      }
-
-      if (nextIndex === null) return;
-      event.preventDefault();
-      selectCredentialsClient(credentialsClientTabs[nextIndex].id);
-    },
-    [credentialsClientTabs, selectCredentialsClient],
-  );
-
   useEffect(() => {
     if (
       (credentialsClient === "m2m" && !showM2mCredentialsTab) ||
       (credentialsClient === "web" && !showWebCredentialsTab)
     ) {
-      selectCredentialsClient("public");
+      router.replace(appSettingsPath(appId, "credentials"), { scroll: false });
     }
   }, [
+    appId,
     credentialsClient,
-    selectCredentialsClient,
+    router,
     showM2mCredentialsTab,
     showWebCredentialsTab,
   ]);
@@ -501,25 +398,17 @@ export default function AppSettingsScreen({
 
       <nav
         className="flex flex-wrap gap-1 border-b border-zinc-800 pb-3 mb-6"
-        role="tablist"
         aria-label="Integration settings sections"
       >
         {INTEGRATION_TABS.map(({ id, label }) => {
           const selected = integrationSection === id;
           return (
-            <button
+            <Link
               key={id}
               id={`tab-${id}`}
-              ref={(node) => {
-                tabRefs.current[id] = node;
-              }}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-controls={`panel-${id}`}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => selectIntegrationSection(id)}
-              onKeyDown={(event) => handleIntegrationTabKeyDown(event, id)}
+              href={appSettingsPath(appId, id)}
+              scroll={false}
+              aria-current={selected ? "page" : undefined}
               className={`px-3 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors ${
                 selected
                   ? "border-emerald-500 text-emerald-400 bg-zinc-900/50"
@@ -527,7 +416,7 @@ export default function AppSettingsScreen({
               }`}
             >
               {label}
-            </button>
+            </Link>
           );
         })}
       </nav>
@@ -621,29 +510,19 @@ export default function AppSettingsScreen({
           </div>
 
           <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 overflow-hidden">
-            <div
+            <nav
               className="flex flex-wrap gap-0 border-b border-zinc-800 bg-zinc-900/50"
-              role="tablist"
               aria-label="OIDC client credentials"
             >
               {credentialsClientTabs.map((tab) => {
                   const selected = credentialsClient === tab.id;
                   return (
-                    <button
+                    <Link
                       key={tab.id}
-                      type="button"
-                      role="tab"
                       id={`credentials-client-tab-${tab.id}`}
-                      ref={(node) => {
-                        credentialsTabRefs.current[tab.id] = node;
-                      }}
-                      aria-selected={selected}
-                      aria-controls={`credentials-client-panel-${tab.id}`}
-                      tabIndex={selected ? 0 : -1}
-                      onClick={() => selectCredentialsClient(tab.id)}
-                      onKeyDown={(event) =>
-                        handleCredentialsClientTabKeyDown(event, tab.id)
-                      }
+                      href={credentialsClientHref(tab.id)}
+                      scroll={false}
+                      aria-current={selected ? "page" : undefined}
                       className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
                         selected
                           ? "border-emerald-500 text-zinc-100 bg-zinc-900/80"
@@ -658,10 +537,10 @@ export default function AppSettingsScreen({
                       >
                         {tab.hint}
                       </code>
-                    </button>
+                    </Link>
                   );
                 })}
-            </div>
+            </nav>
 
             <div
               id={`credentials-client-panel-${credentialsClient}`}

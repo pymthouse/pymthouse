@@ -1,7 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
-
-import { db } from "@/db/index";
-import { developerApps, plans } from "@/db/schema";
+import { plans } from "@/db/schema";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   getHostedAdminClient,
@@ -20,16 +17,11 @@ import {
 } from "@/lib/openmeter/customers";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import {
-  isOwnerStarterPlanKey,
-  ownerStarterIncludedUsdMicros,
-} from "@/lib/openmeter/owner-starter-key";
-import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
+  findOpenMeterPlanByKey,
+  readUsageDiscountUsdMicrosFromPlanBody,
+} from "@/lib/openmeter/owner-allowance-plan";
 import { defaultStarterIncludedUsdMicros } from "@/lib/starter-default-plan-display";
-import {
-  getPrimaryOpenMeterSubscriptionForAppUser,
-  resolveLocalPlanIdFromOpenMeterSubscription,
-  resolveOpenMeterPlanKey,
-} from "@/lib/openmeter/subscription-read";
+import { getPrimaryOpenMeterSubscriptionForAppUser } from "@/lib/openmeter/subscription-read";
 import {
   ceilExactUsdMicrosSum,
   meterRowValueToNumber,
@@ -90,76 +82,34 @@ async function querySubjectsUsedUsdMicros(
 }
 
 /**
- * Owner wallets may subscribe to any owned app's Starter plan. Resolve the
- * local plan by openmeterPlanId or plan key across that owner's apps.
+ * Included cycle allowance for the customer's current OpenMeter plan.
+ * One active subscription → read that plan's rate-card `discounts.usage`.
  */
-async function resolveOwnerLocalPlanId(input: {
-  ownerUserId: string;
+export async function includedDiscountFromOpenMeterSubscription(subscription: {
   planId: string | null;
   planKey: string | null;
-}): Promise<string | null> {
-  const ownedAppIds = await db
-    .select({ id: developerApps.id })
-    .from(developerApps)
-    .where(eq(developerApps.ownerId, input.ownerUserId));
-  if (ownedAppIds.length === 0) return null;
-
-  const clientIds = ownedAppIds.map((r) => r.id);
-  if (input.planId) {
-    const byOmId = await db
-      .select({ id: plans.id })
-      .from(plans)
-      .where(
-        and(
-          inArray(plans.clientId, clientIds),
-          eq(plans.openmeterPlanId, input.planId),
-        ),
-      )
-      .limit(1);
-    if (byOmId[0]?.id) return byOmId[0].id;
+}): Promise<bigint | null> {
+  if (!isHostedAdminClientAvailable()) {
+    return null;
   }
-
-  if (!input.planKey) return null;
-  const ownedPlans = await db
-    .select({ id: plans.id, clientId: plans.clientId })
-    .from(plans)
-    .where(inArray(plans.clientId, clientIds));
-  for (const plan of ownedPlans) {
-    if (buildOpenMeterPlanKey(plan.clientId, plan.id) === input.planKey) {
-      return plan.id;
-    }
-  }
-  return null;
-}
-
-async function resolveSubscriptionWithPlanKey(subscription: {
-  planKey: string | null;
-  planId: string | null;
-  id: string;
-  status: string;
-  activeFrom: string | null;
-  activeTo: string | null;
-}) {
-  let planKey = subscription.planKey;
-  if (!planKey && subscription.planId && isHostedAdminClientAvailable()) {
-    planKey = await resolveOpenMeterPlanKey(
-      getHostedAdminClient(),
-      subscription.planId,
+  const client = getHostedAdminClient();
+  let planId = subscription.planId?.trim() || null;
+  if (!planId && subscription.planKey?.trim()) {
+    const found = await findOpenMeterPlanByKey(
+      client,
+      subscription.planKey.trim(),
     );
+    planId = found?.id ?? null;
   }
-  return planKey ? { ...subscription, planKey } : subscription;
-}
-
-async function discountForLocalPlanId(localPlanId: string): Promise<bigint | null> {
-  const rows = await db
-    .select({
-      includedUsdMicros: plans.includedUsdMicros,
-      isStarterDefault: plans.isStarterDefault,
-    })
-    .from(plans)
-    .where(eq(plans.id, localPlanId))
-    .limit(1);
-  return rows[0] ? includedDiscountUsdMicrosForPlan(rows[0]) : null;
+  if (!planId) {
+    return null;
+  }
+  try {
+    const omPlan = await client.plans.get(planId);
+    return parsePositiveMicros(readUsageDiscountUsdMicrosFromPlanBody(omPlan));
+  } catch {
+    return null;
+  }
 }
 
 export type PlanDiscountUsdMicros = {
@@ -170,9 +120,9 @@ export type PlanDiscountUsdMicros = {
 };
 
 /**
- * Plan usage discount for the current calendar month, for the customer's
- * primary active subscription: both the included total (granted) and the
- * remaining amount after usage. Zero when no discount applies.
+ * Plan usage discount for the current calendar month from the customer's
+ * primary OpenMeter subscription (session state): included total and remaining
+ * after usage. Zero when the active plan has no usage discount.
  */
 export async function getPlanDiscountUsdMicros(input: {
   clientId: string;
@@ -203,49 +153,8 @@ export async function getPlanDiscountUsdMicros(input: {
     return zero;
   }
 
-  const subscriptionForLookup = await resolveSubscriptionWithPlanKey(subscription);
-
-  // Platform Owner Starter — discount is env/config, not a Neon plans row.
-  if (
-    identity.isOwner &&
-    isOwnerStarterPlanKey(subscriptionForLookup.planKey)
-  ) {
-    const discount = parsePositiveMicros(ownerStarterIncludedUsdMicros());
-    if (discount == null || discount <= 0n) {
-      return zero;
-    }
-    return {
-      totalUsdMicros: discount,
-      remainingUsdMicros: await remainingDiscountAfterUsage({
-        identity,
-        input,
-        discount,
-      }),
-    };
-  }
-
-  let localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
-    identity.developerAppId,
-    subscriptionForLookup,
-  );
-
-  // Owner wallets on a paid / legacy per-app plan — look up across owned apps.
-  if (!localPlanId && identity.isOwner && identity.ownerUserId) {
-    localPlanId = await resolveOwnerLocalPlanId({
-      ownerUserId: identity.ownerUserId,
-      planId: subscriptionForLookup.planId,
-      planKey: subscriptionForLookup.planKey,
-    });
-  }
-
-  let discount: bigint | null = null;
-  if (localPlanId) {
-    discount = await discountForLocalPlanId(localPlanId);
-  } else if (subscriptionForLookup.planKey?.toLowerCase().includes("starter")) {
-    // Fail closed for unmapped non-Starter keys (including other pymthouse_* plans).
-    discount = parsePositiveMicros(defaultStarterIncludedUsdMicros());
-  }
-
+  const discount =
+    await includedDiscountFromOpenMeterSubscription(subscription);
   if (discount == null || discount <= 0n) {
     return zero;
   }
@@ -293,13 +202,10 @@ async function remainingDiscountAfterUsage(input: {
   const cycle = calendarMonthBoundsUtc(new Date());
   const usageSubjects =
     identity.isOwner && identity.ownerUserId
-      ? buildOwnerMeterSubjects(
-          identity.ownerUserId,
-          [
-            identity.publicClientId,
-            ...(await listOwnedPublicClientIds(identity.ownerUserId)),
-          ],
-        )
+      ? buildOwnerMeterSubjects(identity.ownerUserId, [
+          identity.publicClientId,
+          ...(await listOwnedPublicClientIds(identity.ownerUserId)),
+        ])
       : [identity.customerKey];
 
   const used = await querySubjectsUsedUsdMicros(

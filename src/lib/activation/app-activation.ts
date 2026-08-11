@@ -1,8 +1,10 @@
 import { and, count, eq } from "drizzle-orm";
 
 import { writeAuditLog } from "@/lib/audit";
+import { FALLBACK_END_USER_CAP, platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaults";
 import { db } from "@/db/index";
 import { appUsers, developerApps, oidcClients } from "@/db/schema";
+import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import { getAppBillingConfig, upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
@@ -57,8 +59,12 @@ export class AppActivationError extends Error {
   }
 }
 
-/** Default per-app end-user cap for owner_rollup before Connect is ready. */
-export const DEFAULT_END_USER_CAP = 25;
+/**
+ * Default per-app end-user cap when a billing row is missing.
+ * Prefer {@link platformDefaultEndUserCap} at call sites so env policy applies;
+ * this constant mirrors the unset-env fallback for tests/exports.
+ */
+export const DEFAULT_END_USER_CAP = FALLBACK_END_USER_CAP;
 
 type SpendableLookup = typeof getSpendableUsdMicros;
 let spendableLookup: SpendableLookup = getSpendableUsdMicros;
@@ -69,20 +75,23 @@ export function __testSetSpendableLookup(fn: SpendableLookup | null): void {
 }
 
 type PaymentMethodLookup = typeof ownerHasChargeablePaymentMethod;
-let paymentMethodLookup: PaymentMethodLookup = ownerHasChargeablePaymentMethod;
+/**
+ * When set, replaces the live Owner-Paid + PM overage check used after
+ * spendable is exhausted. `null` from the lookup fails open (billable).
+ */
+let overageInvoicingLookup: PaymentMethodLookup | null = null;
 
-/** Test-only override for owner payment-method lookups. */
+/** Test-only override for owner payment-method / overage-invoicing lookups. */
 export function __testSetOwnerPaymentMethodLookup(
   fn: PaymentMethodLookup | null,
 ): void {
-  paymentMethodLookup = fn ?? ownerHasChargeablePaymentMethod;
+  overageInvoicingLookup = fn;
 }
 
 /**
- * OpenMeter bills platform usage on `charge_automatically`, so a dry prepaid
- * wallet is fine as long as there is a card behind it. Only an owner with
- * neither is unbillable, and the payment-method lookup costs a Stripe round
- * trip, so it runs only once the cheap balance read has already failed.
+ * OpenMeter bills platform usage on `charge_automatically` only after the
+ * owner upgrades to Owner Paid with a card. Sandbox Starter is a hard balance
+ * gate — a card alone does not unlock overage while still on Sandbox.
  * Unknown answers (OpenMeter or Stripe unreachable) fail open — an outage must
  * not freeze provisioning.
  */
@@ -97,7 +106,14 @@ async function isOwnerBillable(input: {
   if (spendable == null || hasPositiveUsdMicrosBalance(spendable)) {
     return true;
   }
-  return (await paymentMethodLookup(input.ownerId)) !== false;
+  if (overageInvoicingLookup) {
+    // Test stubs: `null` means chargeability unknown → fail open.
+    return (await overageInvoicingLookup(input.ownerId)) !== false;
+  }
+  const { ownerWalletAllowsOverageInvoicing } = await import(
+    "@/lib/openmeter/owner-paid-plan"
+  );
+  return ownerWalletAllowsOverageInvoicing(input.ownerId);
 }
 
 export function getActivationGateMode(): ActivationGateMode {
@@ -134,13 +150,18 @@ function actionUrlForReason(
   if (reason === "owner_payment_method_required") {
     return `${base}/billing`;
   }
-  return `${base}/apps/${encodeURIComponent(publicClientId)}/settings?tab=billing`;
+  // Cap exhaustion is resolved by reclaiming slots (deactivate identities), not
+  // by editing Payments settings — owners cannot self-raise endUserCap.
+  if (reason === "end_user_cap_reached") {
+    return `${base}/apps/${encodeURIComponent(publicClientId)}/identities`;
+  }
+  return appSettingsAbsoluteUrl(base, publicClientId, "payments");
 }
 
 function messageForReason(reason: ActivationReason): string {
   switch (reason) {
     case "owner_payment_method_required":
-      return "Owner wallet is empty and no payment method is on file";
+      return "Owner wallet is empty and cannot invoice overage — Upgrade to a paid plan with a default payment method, or add prepaid credits";
     case "end_user_cap_reached":
       return "App end-user cap reached";
     case "stripe_connect_required":
@@ -178,13 +199,15 @@ export async function resolveAppActivation(clientId: string): Promise<AppActivat
   const publicClientId = await resolvePublicClientId(app);
   const config = await getAppBillingConfig(app.id);
   const billingMode = normalizeBillingMode(config?.billingMode);
-  const endUserCap = config?.endUserCap ?? DEFAULT_END_USER_CAP;
+  const endUserCap = config?.endUserCap ?? platformDefaultEndUserCap();
   const connectReady = isConnectReady(config);
 
+  // Only *active* identities consume a cap slot. Soft-deactivated (`inactive`)
+  // rows stay for audit/billing history but free capacity for new provisioning.
   const [{ value: appUserCount }] = await db
     .select({ value: count() })
     .from(appUsers)
-    .where(eq(appUsers.clientId, app.id));
+    .where(and(eq(appUsers.clientId, app.id), eq(appUsers.status, "active")));
 
   const isPlatformDefault = app.isPlatformDefault === 1;
   let canProvisionEndUsers = isPlatformDefault;
@@ -261,18 +284,18 @@ async function markActivationNotified(appId: string): Promise<void> {
   });
 }
 
-async function existingAppUser(
+async function existingAppUserStatus(
   appId: string,
   externalUserId: string,
-): Promise<boolean> {
+): Promise<string | null> {
   const rows = await db
-    .select({ id: appUsers.id })
+    .select({ status: appUsers.status })
     .from(appUsers)
     .where(
       and(eq(appUsers.clientId, appId), eq(appUsers.externalUserId, externalUserId)),
     )
     .limit(1);
-  return Boolean(rows[0]);
+  return rows[0]?.status ?? null;
 }
 
 /** True when activating a priced (non-starter) plan requires canSellPaidPlans. */
@@ -288,11 +311,17 @@ export function planRequiresSellGate(input: {
 }
 
 /**
- * Creation-only cost-rail assert. Existing app_users always pass.
+ * Cost-rail assert for consuming an active end-user slot.
+ *
+ * - Already-`active` rows always pass (idempotent mint / key / allowance paths).
+ * - Missing rows (create) and `activating: true` for inactive→active must have
+ *   free cap capacity.
+ * - Inactive rows without `activating` pass so billing ensure / upserts that do
+ *   not reclaim a slot stay ungated.
  */
 export async function assertAppCanProvisionUsers(
   clientId: string,
-  options: { externalUserId: string },
+  options: { externalUserId: string; activating?: boolean },
 ): Promise<AppActivation> {
   const app = await getProviderApp(clientId);
   if (!app) {
@@ -300,7 +329,14 @@ export async function assertAppCanProvisionUsers(
   }
 
   const externalUserId = options.externalUserId.trim();
-  if (externalUserId && (await existingAppUser(app.id, externalUserId))) {
+  const existingStatus = externalUserId
+    ? await existingAppUserStatus(app.id, externalUserId)
+    : null;
+
+  if (existingStatus === "active") {
+    return resolveAppActivation(clientId);
+  }
+  if (existingStatus != null && !options.activating) {
     return resolveAppActivation(clientId);
   }
 
@@ -361,14 +397,17 @@ function shouldEnforce(kind: ActivationGateKind, mode: ActivationGateMode): bool
 async function evaluateActivationGate(
   kind: ActivationGateKind,
   clientId: string,
-  options?: { externalUserId?: string },
+  options?: { externalUserId?: string; activating?: boolean },
 ): Promise<AppActivation> {
   if (kind === "provision") {
     const externalUserId = options?.externalUserId?.trim();
     if (!externalUserId) {
       throw new Error("externalUserId is required for provision gate");
     }
-    return assertAppCanProvisionUsers(clientId, { externalUserId });
+    return assertAppCanProvisionUsers(clientId, {
+      externalUserId,
+      activating: options?.activating,
+    });
   }
   return assertAppCanSellPaidPlans(clientId);
 }
@@ -412,7 +451,11 @@ async function handleActivationDenial(input: {
   throw err;
 }
 
-async function evaluateSoft(kind: ActivationGateKind, clientId: string, options?: { externalUserId?: string }): Promise<AppActivation> {
+async function evaluateSoft(
+  kind: ActivationGateKind,
+  clientId: string,
+  options?: { externalUserId?: string; activating?: boolean },
+): Promise<AppActivation> {
   try {
     return await evaluateActivationGate(kind, clientId, options);
   } catch (err) {
@@ -426,11 +469,14 @@ async function evaluateSoft(kind: ActivationGateKind, clientId: string, options?
 /**
  * Central gate runner: off / log / enforce_revenue / enforce.
  * Returns activation when allowed (or when soft modes skip denial).
+ *
+ * Pass `activating: true` when an existing inactive identity is being restored
+ * to `active` so the end-user cap is enforced for the reclaimed slot.
  */
 export async function runActivationGate(
   kind: ActivationGateKind,
   clientId: string,
-  options?: { externalUserId?: string },
+  options?: { externalUserId?: string; activating?: boolean },
 ): Promise<AppActivation> {
   const mode = getActivationGateMode();
   if (mode === "off") {

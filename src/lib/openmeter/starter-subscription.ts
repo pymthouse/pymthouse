@@ -19,9 +19,11 @@ import {
 } from "./plans-sync";
 import {
   findOpenMeterSubscriptionByPlanKey,
+  listOpenMeterSubscriptionsForCustomer,
   type OpenMeterSubscriptionView,
   verifyOpenMeterSubscriptionId,
 } from "./subscription-read";
+import { pickSlotOccupyingSubscription } from "./subscription-state";
 
 async function refreshStarterPlan(planId: string): Promise<typeof plans.$inferSelect> {
   const refreshed = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
@@ -105,6 +107,23 @@ async function createStarterOpenMeterSubscription(input: {
   });
 }
 
+/**
+ * The subscription already holding this customer's slot, on any plan.
+ *
+ * A user who moved off Starter (Pay as you go, Owner Paid, …) has no Starter row
+ * to find, but their current plan still blocks `subscriptions.create`. Without
+ * this, every mint retried a Starter create that could only 409, which failed
+ * closed as `billing_unavailable` and rejected every signed-payment request.
+ * @internal Exported for unit tests.
+ */
+export async function findSlotOccupyingSubscription(
+  client: OpenMeter,
+  customerId: string,
+): Promise<OpenMeterSubscriptionView | null> {
+  const listed = await listOpenMeterSubscriptionsForCustomer(client, customerId);
+  return pickSlotOccupyingSubscription(listed) ?? null;
+}
+
 async function resolveOpenMeterStarterSubscription(input: {
   client: OpenMeter;
   customerId: string;
@@ -117,7 +136,11 @@ async function resolveOpenMeterStarterSubscription(input: {
       input.client,
       input.hintOpenMeterSubscriptionId,
     );
-    if (verified?.id) {
+    if (
+      verified?.id &&
+      verified.customerId &&
+      verified.customerId === input.customerId
+    ) {
       return verified;
     }
   }
@@ -135,6 +158,7 @@ function subscriptionViewFromCreateResult(
   return {
     id: createdSub.id,
     status: createdSub.status,
+    customerId: createdSub.customerId ?? null,
     planKey,
     planId: openmeterPlanId,
     activeFrom: createdSub.activeFrom?.toISOString?.() ?? null,
@@ -148,8 +172,9 @@ function subscriptionViewFromCreateResult(
  * profile once and retry. On a plain conflict with an existing sub, return
  * that sub. Does not eagerly apply the profile — it only exists to recover
  * from that specific error.
+ * @internal Exported for unit tests.
  */
-async function createStarterSubscriptionWithBillingRecovery(input: {
+export async function createStarterSubscriptionWithBillingRecovery(input: {
   client: OpenMeter;
   customerId: string;
   starter: typeof plans.$inferSelect;
@@ -182,9 +207,24 @@ async function createStarterSubscriptionWithBillingRecovery(input: {
       if (existing) {
         return { subscription: existing, created: false };
       }
+      // Raced past the pre-create check, or the slot is held by another plan.
+      const occupying = await findSlotOccupyingSubscription(
+        input.client,
+        input.customerId,
+      );
+      if (occupying) {
+        return { subscription: occupying, created: false };
+      }
     }
 
     if (!isOpenMeterStripeBillingError(err)) {
+      if (isOpenMeterConflictError(err)) {
+        throw new Error(
+          `OpenMeter rejected the Starter subscription for customer ${input.customerId} ` +
+            `(plan ${input.planKey}) as a conflict, but no subscription holds the slot: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
       throw err;
     }
 
@@ -353,6 +393,10 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     openmeterPlanId: starter.openmeterPlanId,
     hintOpenMeterSubscriptionId: input.hintOpenMeterSubscriptionId,
   });
+
+  // Users who upgraded off Starter keep a slot-holding row on another plan.
+  // They are provisioned; creating Starter for them can only 409.
+  omSubscription ??= await findSlotOccupyingSubscription(client, customer.id);
 
   let created = false;
   let activeStarter = starter;

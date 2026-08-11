@@ -56,7 +56,7 @@ function resolvePlanIncludedMicros(plan: typeof plans.$inferSelect): number | un
   );
 }
 
-function parsePriceAmount(raw: string): string {
+export function parsePriceAmount(raw: string): string {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
     return "0";
@@ -389,6 +389,21 @@ export async function verifyOpenMeterPlanId(
   }
 }
 
+function resolveActivePlanClientId(
+  plan: typeof plans.$inferSelect | undefined,
+): { ok: true; clientId: string } | { ok: false; error: string } {
+  if (plan?.status !== "active") {
+    return { ok: false, error: "Plan not active" };
+  }
+  // Platform-scoped plans (Owner Starter) have no owning app and are synced by
+  // ensureOwnerStarterPlanSynced, not through the per-app rate-card path here.
+  const planClientId = plan.clientId;
+  if (!planClientId) {
+    return { ok: false, error: "Platform-scoped plans are not synced per app" };
+  }
+  return { ok: true, clientId: planClientId };
+}
+
 export async function syncPlanToOpenMeter(planId: string): Promise<{
   ok: boolean;
   openmeterPlanId?: string;
@@ -396,9 +411,11 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
 }> {
   const planRows = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
   const plan = planRows[0];
-  if (plan?.status !== "active") {
-    return { ok: false, error: "Plan not active" };
+  const resolved = resolveActivePlanClientId(plan);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error };
   }
+  const planClientId = resolved.clientId;
 
   if (!isHostedAdminClientAvailable()) {
     return {
@@ -414,13 +431,13 @@ export async function syncPlanToOpenMeter(planId: string): Promise<{
     .where(
       and(
         eq(planCapabilityBundles.planId, planId),
-        eq(planCapabilityBundles.clientId, plan.clientId),
+        eq(planCapabilityBundles.clientId, planClientId),
       ),
     );
 
   const omPlan = await mapPymthousePlanToOpenMeterCreate({
-    clientId: plan.clientId,
-    plan,
+    clientId: planClientId,
+    plan: plan!,
     capabilities: capabilityRows,
     client,
   });

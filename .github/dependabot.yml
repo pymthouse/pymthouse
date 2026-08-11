@@ -1,7 +1,9 @@
 # Keep security updates flowing even when other Dependabot PRs are open:
 # - Group security updates into one PR per ecosystem (security PR limit is ~10)
 # - Raise version-update PR limit so version bumps do not starve the queue
-# - Prefer stable releases for major frameworks (ignore pre-releases)
+# Pre-releases: Dependabot already skips canary/rc/beta when the lockfile is on a
+# stable release. npm `ignore.versions` only accepts semver ranges (^1.0.0, 4.x),
+# not globs like "*-canary*" (those fail config validation).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -13,32 +15,6 @@ updates:
     commit-message:
       prefix: "build"
       include: scope
-    ignore:
-      # Stay on stable channels for major frameworks (no canary/rc/beta/preview)
-      - dependency-name: next
-        versions:
-          - "*-canary*"
-          - "*-rc*"
-          - "*-beta*"
-          - "*-preview*"
-      - dependency-name: eslint-config-next
-        versions:
-          - "*-canary*"
-          - "*-rc*"
-          - "*-beta*"
-          - "*-preview*"
-      - dependency-name: react
-        versions:
-          - "*-canary*"
-          - "*-rc*"
-          - "*-beta*"
-          - "*-experimental*"
-      - dependency-name: react-dom
-        versions:
-          - "*-canary*"
-          - "*-rc*"
-          - "*-beta*"
-          - "*-experimental*"
     groups:
       npm-security:
         applies-to: security-updates

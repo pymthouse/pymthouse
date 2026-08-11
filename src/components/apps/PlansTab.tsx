@@ -38,6 +38,7 @@ import {
   normalizePlanBillingCycle,
   type PlanBillingCycle,
 } from "@/lib/openmeter/billing-cycle";
+import { readMutationError } from "@/lib/http/mutation-error";
 
 // ── Types & utilities ─────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ interface PlanRow {
   overageRateUsd: string | null;
   includedUsdMicros: string | null;
   billingCycle: string;
+  resolvedBehavior?: string;
   discoveryProfileId?: string | null;
   isNetworkDefault?: boolean;
   isStarterDefault?: boolean;
@@ -720,7 +722,8 @@ function PlanDraftForm({
         />
       </div>
 
-      {(draft.type === "subscription" || draft.type === "usage") && (
+      {/* Pay-Per-Use is threshold-only (#398): no user-facing billing cycle. */}
+      {draft.type === "subscription" && (
         <div>
           <label
             htmlFor={`${idPrefix}-billing-cycle`}
@@ -1556,11 +1559,7 @@ function CustomPlanCard({
       });
       const data = await readFetchJson(res);
       if (!data.ok) {
-        setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to save (${res.status})`,
-        );
+        setError(readMutationError(data.body, `Failed to save (${res.status})`));
         return;
       }
       if (typeof data.body.syncError === "string" && data.body.syncError.trim()) {
@@ -1606,6 +1605,9 @@ function CustomPlanCard({
               {`${plan.priceAmount} ${plan.priceCurrency}`}
               {plan.billingCycle && ` · ${plan.billingCycle}`}
             </p>
+          )}
+          {plan.type === "usage" && plan.resolvedBehavior && (
+            <p className="text-xs text-zinc-500 mt-1">{plan.resolvedBehavior}</p>
           )}
           {plan.status === "phase_out" && (
             <p className="text-xs text-amber-400/90 mt-1">
@@ -1793,9 +1795,7 @@ function AddPlanPanel({
       const data = await readFetchJson(res);
       if (!data.ok) {
         setError(
-          typeof data.body.error === "string"
-            ? data.body.error
-            : `Failed to create (${res.status})`,
+          readMutationError(data.body, `Failed to create (${res.status})`),
         );
         return;
       }

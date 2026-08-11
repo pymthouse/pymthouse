@@ -3,6 +3,8 @@ import { authenticateAppClient } from "@/lib/auth";
 import { runActivationGate } from "@/lib/activation/app-activation";
 import { activationErrorResponse } from "@/lib/activation/problem";
 import { getAuthorizedProviderApp, getProviderApp } from "@/lib/provider-apps";
+import { AppUserOwnerWalletMutationError } from "@/lib/openmeter/billing-identity";
+import { describeOpenMeterError } from "@/lib/openmeter/plan-errors";
 import { createEndUserCheckout } from "@/lib/openmeter/subscriptions-billing";
 
 async function resolveCheckoutApp(clientId: string, request: NextRequest) {
@@ -50,7 +52,14 @@ async function runSellGate(appId: string): Promise<NextResponse | null> {
 }
 
 function checkoutErrorResponse(err: unknown): NextResponse {
+  if (err instanceof AppUserOwnerWalletMutationError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code },
+      { status: 400 },
+    );
+  }
   const message = err instanceof Error ? err.message : String(err);
+  const detail = describeOpenMeterError(err);
   if (message.includes("OPENMETER_ROUTE_MODE") || message.includes("OPENMETER_URL")) {
     return NextResponse.json(
       { error: "Checkout is not available for this deployment" },
@@ -67,11 +76,35 @@ function checkoutErrorResponse(err: unknown): NextResponse {
     message.includes("Plan not found") ||
     message.includes("not active") ||
     message.includes("phased out") ||
-    message.includes("not synced")
+    message.includes("not synced") ||
+    message.includes("already on this plan")
   ) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
-  console.error("checkout failed:", message);
+  if (
+    /default payment method/i.test(message) ||
+    /invalid billing setup/i.test(message)
+  ) {
+    console.error("checkout failed:", detail);
+    return NextResponse.json(
+      {
+        error:
+          "A payment method is required before changing plans; complete Stripe Checkout first",
+      },
+      { status: 409 },
+    );
+  }
+  if (/\b409\b/.test(message) || /conflict error/i.test(message)) {
+    console.error("checkout failed:", detail);
+    return NextResponse.json(
+      {
+        error:
+          "Customer already has an active subscription; retry checkout or change plan",
+      },
+      { status: 409 },
+    );
+  }
+  console.error("checkout failed:", detail);
   return NextResponse.json({ error: "Checkout failed" }, { status: 502 });
 }
 

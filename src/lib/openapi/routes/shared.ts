@@ -4,7 +4,7 @@ import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import { OAuthErrorSchema } from "@/lib/openapi/schemas/common";
 import { z } from "@/lib/openapi/zod";
 
-export const genericJsonObject = z.object({}).passthrough().openapi("GenericJsonObject");
+export const genericJsonObject = z.looseObject({}).openapi("GenericJsonObject");
 
 export const jsonSuccess = {
   description: "Success",

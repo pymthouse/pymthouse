@@ -6,7 +6,26 @@ import {
   resolveOwnerBillingPressure,
 } from "@/lib/billing/owner-billing-pressure";
 
-test("chargeable whenever a payment method is on file", () => {
+test("chargeable whenever a default payment method is on file", () => {
+  assert.equal(
+    resolveOwnerBillingPressure({
+      hasPaymentMethod: true,
+      creditBalanceUsdMicros: "0",
+      subscriptions: [
+        {
+          appPublicClientId: null,
+          discountUsdMicros: "5000000",
+          usedUsdMicros: "5000000",
+        },
+      ],
+    }),
+    "chargeable",
+  );
+});
+
+test("chargeable uses the gate default-PM boolean only", () => {
+  // Callers must pass ownerHasChargeablePaymentMethod === true (default PM),
+  // not merely paymentMethods.length > 0.
   assert.equal(
     resolveOwnerBillingPressure({
       hasPaymentMethod: true,

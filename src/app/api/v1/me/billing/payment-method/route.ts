@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
+import {
+  paymentMethodCheckoutErrorResponse,
+  paymentMethodDefaultErrorResponse,
+  paymentMethodUnlinkErrorResponse,
+} from "@/lib/billing/payment-method-http";
 import { authOptions } from "@/lib/next-auth-options";
 import {
   createOwnerPaymentMethodCheckout,
+  ensureOwnerDefaultPaymentMethodIfMissing,
   listOwnerPaymentMethods,
   setOwnerDefaultPaymentMethod,
   unlinkOwnerPaymentMethod,
@@ -45,9 +51,17 @@ export async function GET() {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return NextResponse.json({
-    paymentMethods: await listOwnerPaymentMethods(userId),
-  });
+  try {
+    return NextResponse.json({
+      paymentMethods: await listOwnerPaymentMethods(userId),
+    });
+  } catch (err) {
+    console.warn(
+      "me/billing/payment-method: list failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return NextResponse.json({ paymentMethods: [] });
+  }
 }
 
 /**
@@ -77,23 +91,16 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    let status = 502;
-    if (
-      message.includes("STRIPE_") ||
-      message.includes("OPENMETER_") ||
-      message.includes("No ready Stripe") ||
-      message.includes("No Stripe app")
-    ) {
-      status = 400;
-    } else if (message.includes("Cannot reach OpenMeter")) {
-      status = 503;
-    }
-    return NextResponse.json({ error: message }, { status });
+    return paymentMethodCheckoutErrorResponse(err);
   }
 }
 
-/** Make one attached payment method the default for overage invoices. */
+/**
+ * Make one attached payment method the default for plan fee & overage.
+ * Body `{ ensureDefault: true }` promotes the first attached PM when none is
+ * default yet (post-Checkout return) — requires an authenticated session POST
+ * so billing state is not mutated from a GET redirect.
+ */
 export async function PATCH(request: NextRequest) {
   const session = await getServerSession(authOptions);
   const userId = sessionUserId(session);
@@ -101,7 +108,28 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const paymentMethodId = await paymentMethodIdFromRequest(request);
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    body = {};
+  }
+
+  if (body.ensureDefault === true) {
+    try {
+      const result = await ensureOwnerDefaultPaymentMethodIfMissing(userId);
+      return NextResponse.json(result);
+    } catch (err) {
+      return paymentMethodDefaultErrorResponse(err);
+    }
+  }
+
+  const fromQuery = request.nextUrl.searchParams.get("id")?.trim();
+  const fromBody =
+    typeof body.paymentMethodId === "string"
+      ? body.paymentMethodId.trim() || null
+      : null;
+  const paymentMethodId = fromQuery || fromBody;
   if (!paymentMethodId) {
     return NextResponse.json(
       { error: "paymentMethodId is required" },
@@ -119,8 +147,7 @@ export async function PATCH(request: NextRequest) {
     }
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 502 });
+    return paymentMethodDefaultErrorResponse(err);
   }
 }
 
@@ -141,30 +168,8 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    // Removing the only method would leave overage invoices with nothing to
-    // charge. Enforced here as well as in the UI so the API cannot be used to
-    // reach that state. Empty list is treated as unverifiable (lookup errors
-    // also return []) — fail closed rather than detach blindly.
-    const existing = await listOwnerPaymentMethods(userId);
-    if (existing.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Unable to verify payment methods right now. Try again shortly.",
-        },
-        { status: 503 },
-      );
-    }
-    if (existing.length === 1 && existing[0]?.id === paymentMethodId) {
-      return NextResponse.json(
-        {
-          error:
-            "This is your only payment method. Add another before removing this one.",
-        },
-        { status: 409 },
-      );
-    }
-
+    // Last-method + empty-list checks run inside unlink under an owner-scoped
+    // lock so concurrent DELETEs recheck immediately before detach.
     const result = await unlinkOwnerPaymentMethod(userId, paymentMethodId);
     if (!result.unlinked) {
       return NextResponse.json(
@@ -174,10 +179,6 @@ export async function DELETE(request: NextRequest) {
     }
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("only payment method")) {
-      return NextResponse.json({ error: message }, { status: 409 });
-    }
-    return NextResponse.json({ error: message }, { status: 502 });
+    return paymentMethodUnlinkErrorResponse(err);
   }
 }

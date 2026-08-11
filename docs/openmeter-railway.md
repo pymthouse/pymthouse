@@ -166,21 +166,21 @@ Dashboard / builder-sdk apps use PymtHouse BFF routes; they do not call OpenMete
 
 See [`adr-stripe-connect-openmeter-webhooks.md`](./adr-stripe-connect-openmeter-webhooks.md).
 
-**Plane A — OpenMeter Stripe app (platform cost rail):** Starter is a real synced
-OpenMeter plan on a Stripe billing profile. Included usage/credits let users start
-without a payment method. PymtHouse provisions a Stripe Customer (`cus_…`) via
-`STRIPE_SECRET_KEY` (same Stripe account as Konnect) and upserts Konnect customer
-billing app-data. Owners attach a card from **`/billing` → Add payment method**
-(`POST /api/v1/me/billing/payment-method` → OM Checkout setup) so overage invoices
-can `charge_automatically`.
+**Plane A — OpenMeter Stripe app (platform cost rail):** Owners start on
+**Owner Sandbox Starter** (sandbox/free billing profile, no payment method,
+hard balance gate). Attaching a chargeable payment method
+(`POST /api/v1/me/billing/payment-method`) is required first and does **not**
+subscribe. Explicit **Upgrade** on `/billing` then picks an admin-defined
+Owner Paid tier (`POST /api/v1/me/billing/upgrade-paid` with
+`{ planKey, confirm: true }`): flat monthly fee + included usage + overage.
+Without a chargeable PM, Upgrade returns `payment_method_required` and does
+not change the tier. That path provisions a Stripe Customer (`cus_…`) via
+`STRIPE_SECRET_KEY`, pins the owners Stripe billing profile, starts a new
+billing cycle, and invoices overage `charge_automatically`.
 
-Sandbox billing profiles are **not** used at runtime. Migrate legacy Sandbox-linked customers:
-
-```bash
-npm run openmeter:migrate-sandbox-to-stripe          # dry-run
-npm run openmeter:migrate-sandbox-to-stripe -- --apply
-```
-
+Sandbox is intentional for Sandbox Starter. Owners with a card who remain on
+sandbox should Upgrade to a Paid tier (consistency audit warns). M2M end-user
+sandbox pin / Paid upgrade is a follow-up.
 
 **Plane B — Merchant Stripe Connect:** app **Settings → Payments → Merchant Stripe
 Connect** uses Account Links + `/webhooks/stripe` for end-user retail collection.

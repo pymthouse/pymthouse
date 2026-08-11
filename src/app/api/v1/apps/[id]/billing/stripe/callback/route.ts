@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getAuthorizedProviderApp } from "@/lib/provider-apps";
 import { completeStripeOAuthCallback } from "@/lib/openmeter/stripe-app-install";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
@@ -34,11 +35,17 @@ export async function GET(
         errorDescription: oauthErrorDescription,
       },
     });
-    const redirect = `${getPublicOrigin()}/apps/${encodeURIComponent(clientId)}/settings?tab=payments&connected=1`;
-    return NextResponse.redirect(redirect);
+    return NextResponse.redirect(
+      appSettingsAbsoluteUrl(getPublicOrigin(), clientId, "payments", {
+        connected: "1",
+      }),
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const redirect = `${getPublicOrigin()}/apps/${encodeURIComponent(clientId)}/settings?tab=payments&error=${encodeURIComponent(message)}`;
-    return NextResponse.redirect(redirect);
+    return NextResponse.redirect(
+      appSettingsAbsoluteUrl(getPublicOrigin(), clientId, "payments", {
+        error: message,
+      }),
+    );
   }
 }

@@ -205,6 +205,46 @@ export async function isAppOwnerExternalUser(input: {
 }
 
 /**
+ * Thrown when an app retail subscription mutation targets the shared owner
+ * wallet (ADR: an owner is never subscribed to a plan on an app they own).
+ */
+export class AppUserOwnerWalletMutationError extends Error {
+  readonly code = "owner_wallet_not_app_user" as const;
+
+  constructor(
+    message = "App retail subscription mutations cannot target the owner wallet; use Owner Paid billing APIs",
+  ) {
+    super(message);
+    this.name = "AppUserOwnerWalletMutationError";
+  }
+}
+
+/**
+ * Sync reject for explicit `owner:{users.id}` wire subjects (no DB required).
+ */
+export function rejectOwnerWireRetailSubject(externalUserId: string): void {
+  if (isOwnerWireSubject(externalUserId.trim())) {
+    throw new AppUserOwnerWalletMutationError();
+  }
+}
+
+/**
+ * Reject app-user retail plan checkout/change/cancel/resume when the path
+ * externalUserId resolves to the shared owner wallet. Without this guard,
+ * M2M callers can cancel or replace the platform Owner Paid subscription, or
+ * park the owner customer on the free billing profile during Checkout.
+ */
+export async function assertAppUserRetailBillingSubject(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<void> {
+  rejectOwnerWireRetailSubject(input.externalUserId);
+  if (await isAppOwnerExternalUser(input)) {
+    throw new AppUserOwnerWalletMutationError();
+  }
+}
+
+/**
  * List distinct platform owner ids for the given developer apps (for migration).
  */
 export async function listOwnerIdsForDeveloperApps(

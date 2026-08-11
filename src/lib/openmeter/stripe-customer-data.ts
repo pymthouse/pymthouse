@@ -16,7 +16,7 @@ type KonnectCustomerBillingData = {
 function requireStripeSecretKey(): string {
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key || !key.startsWith("sk_")) {
+  if (!key?.startsWith("sk_")) {
     throw new Error(
       "STRIPE_SECRET_KEY is required to provision Stripe customer data " +
         "(must be sk_… for the same Stripe account installed in Konnect/OpenMeter).",
@@ -90,8 +90,9 @@ async function getKonnectCustomerBilling(
 
 async function getKonnectStripeCustomerId(
   customerId: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  const data = await getKonnectCustomerBilling(customerId);
+  const data = await getKonnectCustomerBilling(customerId, signal);
   const id = data.app_data?.stripe?.customer_id?.trim();
   return id || null;
 }
@@ -425,9 +426,10 @@ export async function ensureKonnectCustomerStripeBilling(input: {
 export async function getStripeCustomerAppDataId(input: {
   client: OpenMeter;
   customerId: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   if (isKonnectMode()) {
-    return getKonnectStripeCustomerId(input.customerId);
+    return getKonnectStripeCustomerId(input.customerId, input.signal);
   }
   return getSelfHostedStripeCustomerId(input.client, input.customerId);
 }

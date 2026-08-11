@@ -67,16 +67,16 @@ export function validateConfidentialWebShape(
   const redirects = input.redirectUris
     .map((u) => u.trim())
     .filter((u) => u.length > 0);
-  const grants = input.grantTypes.flatMap((g) => parseGrantTypes(g));
+  const grants = new Set(input.grantTypes.flatMap((g) => parseGrantTypes(g)));
 
-  if (grants.includes(CLIENT_CREDENTIALS_GRANT)) {
+  if (grants.has(CLIENT_CREDENTIALS_GRANT)) {
     return {
       error: "confidential_web_invalid_shape",
       error_description:
         "Confidential web clients cannot use client_credentials. Use the M2M backend helper for machine tokens.",
     };
   }
-  if (grants.includes(DEVICE_CODE_GRANT)) {
+  if (grants.has(DEVICE_CODE_GRANT)) {
     return {
       error: "confidential_web_invalid_shape",
       error_description:
@@ -86,7 +86,7 @@ export function validateConfidentialWebShape(
 
   const requireRedirects =
     options?.requireRedirects === true ||
-    grants.includes(AUTHORIZATION_CODE_GRANT);
+    grants.has(AUTHORIZATION_CODE_GRANT);
   if (requireRedirects && redirects.length === 0) {
     return {
       error: "confidential_web_invalid_shape",

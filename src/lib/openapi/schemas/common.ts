@@ -1,7 +1,6 @@
 import { z } from "@/lib/openapi/zod";
 
 export const CorrelationIdSchema = z
-  .string()
   .uuid()
   .openapi({ description: "Request correlation id for support and audit." });
 

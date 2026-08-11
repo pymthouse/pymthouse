@@ -86,13 +86,14 @@ Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted
 - Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
 - Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite and `subject_token_type=urn:pymthouse:oauth:token-type:api_key`
 
-Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer.
+Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer. Personal network keys keep a bare `apiKey` for usage, but mint `sdkToken` with the same composite Authorization header.
 
 **Design notes**
 
-- Personal keys stay bare; Builder app-user mint returns composite so pathless signer webhooks can recover `{clientId}`.
+- Personal keys stay bare for usage/self-serve; `sdkToken` (livepeer-python-sdk `--token`) embeds the composite `app_*_*` form so pathless signer webhooks can recover `{clientId}`.
+- Builder app-user mint returns composite as the presented `apiKey` (and in `sdkToken`) for the same reason.
 - Tenancy also lives in the URL for Builder and end-user self-serve routes; the bare secret segment alone is enough there.
-- `formatCompositeApiKey` / `splitCompositeApiKey` parse the Builder presentation form.
+- `formatCompositeApiKey` / `splitCompositeApiKey` parse the composite presentation form.
 
 Do not pass M2M client secrets as `subject_token` on the signer session exchange route — use M2M HTTP Basic instead.
 
@@ -144,10 +145,14 @@ Authorization: Basic base64(client_id:client_secret)
 
 | Method | Path | Required scope | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/apps/{clientId}/users` | `users:read` | List provisioned users |
-| `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required) |
-| `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user attributes |
-| `DELETE` | `/api/v1/apps/{clientId}/users?externalUserId=...` | `users:write` | Deactivate user (`status: inactive`) |
+| `GET` | `/api/v1/apps/{clientId}/users` | `users:read` | List provisioned users (all statuses) |
+| `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required; optional `email`, `status`) |
+| `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user `email` and/or `status` |
+| `DELETE` | `/api/v1/apps/{clientId}/users?externalUserId=...` | `users:write` | Soft-deactivate user (`status: inactive`) — frees an end-user cap slot |
+
+**Status contract:** `status` is `active` or `inactive` only. New users default to `active`. `DELETE` sets `inactive`. Reactivate with `PUT`/`POST` `{ "status": "active" }` (consumes a free cap slot when the activation gate is enforced). Inactive identities cannot mint tokens or resolve API keys; they remain listed for audit and billing history.
+
+**Dashboard:** App → Identities shows every M2M identity and supports deactivate / reactivate for owners and app admins. Payments → Activation shows `active / cap` and links to Identities when the cap is reached. Raising the numeric cap is admin-only (see #401); developers reclaim capacity by deactivating unused identities.
 
 ---
 
@@ -168,10 +173,12 @@ Exchange a user access JWT **or** a per-app-user API key (`pmth_*`) for a short-
 | `subject_token` | User access JWT **or** per-app-user API key (`pmth_*` / composite) |
 | `subject_token_type` | API key: `urn:pymthouse:oauth:token-type:api_key` (canonical). JWT: `urn:ietf:params:oauth:token-type:access_token`. Legacy: `access_token` is still accepted for key-shaped subjects. |
 | `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
+| `discovery_url` | Optional override for network discovery (defaults to `{signer_url}/discover-orchestrators`) |
+| `caps` | Optional; repeatable capability filters for remote-signer discovery (`caps=pipeline/model`) |
 
 Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange. Do not use client secrets (`pmth_cs_*`) as `subject_token`.
 
-Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (Livepeer network discovery, not OIDC metadata), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
+Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (defaults to `{signer_url}/discover-orchestrators`; not OIDC metadata), optional `caps` (remote-signer capability filters), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
 
 Example (bare API key on the issuer token endpoint — personal key, no `{clientId}` in the URL):
 
@@ -413,7 +420,7 @@ Direct signing uses `@pymthouse/builder-sdk/signer/server` — mint a user JWT v
 
 **Rounding policy:** Exact fractional micros at ingest. Balance gate, Usage API totals, and session (`groupBy=manifest`) fees **ceil once** at the read/session boundary so dense sub-micro ticket streams accumulate into whole micros without overbilling. Invoice line totals round **up to the next cent**.
 
-**Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps, subscribed to the platform **Owner Starter** plan (`pymthouse_owner_starter`) with included usage via rate-card `discounts.usage`. M2M end-users remain `app_…:external_user_id` (per app) on per-app Starter plans. Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
+**Prepaid credits:** App owners share one Konnect customer (bare `{users.id}`) across all owned apps. New owners start on **Owner Sandbox Starter** (`pymthouse_owner_starter`) on the free/sandbox billing profile — included usage via rate-card `discounts.usage`, **hard balance gate** (mint/signer returns `trial_credits_exhausted` at spendable=0; no overage invoice). **Owner Paid tiers** (`pymthouse_owner_paid` / `pymthouse_owner_paid_*`) are admin-managed in `owner_subscription_tiers`: flat monthly fee + included usage + overage. Flow: Add payment method (`POST /api/v1/me/billing/payment-method`) — card attach alone does **not** subscribe; setup success promotes the card to the Stripe/Konnect **default** PM when missing — then explicit Upgrade (`POST /api/v1/me/billing/upgrade-paid` with `{ planKey, confirm: true }`): pins the owners Stripe profile, changes the subscription (new billing cycle), invoices the flat fee, and enables overage `charge_automatically`. Mid-cycle gathering invoices are raised opportunistically on SignerSession mint/reauth once unbilled debt enters the lead window, and swept daily by the OpenMeter billing profile's collection alignment (see [Billing state](#billing-state)). Under `owner_rollup`, M2M end-user usage rolls up to that **owner** wallet — session/M2M `…/allowances` credit grants are **not** the shared-owner $5 pool (design.md §1 follow-up). M2M subjects remain `app_…:external_user_id` (per app) on per-app Starter plans (sandbox follow-up). Dashboard owner prepaid strip reads the shared owner wallet; usage and spendable dual-read bare, `owner:`, and compound subjects during transition. Per-app usage pages sum end-user wallets plus the owner row when filtered to the owner.
 
 Retail pricing comes from **OpenMeter plans/rate cards** synced when plans are published (`POST`/`PUT …/plans`), not from bps markup on network cost at sign time.
 
@@ -515,7 +522,7 @@ Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus 
 
 **Balance (Builder M2M):** `GET /api/v1/builder/apps/{clientId}/usage/balance?externalUserId=...` (legacy `/api/v1/apps/...` alias) is the confidential-client equivalent when an end-user JWT is not available.
 
-**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** instead share one platform **Owner Starter** plan (`pymthouse_owner_starter`) on their bare `{users.id}` Konnect customer — not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
+**Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** share one platform wallet on bare `{users.id}`: **Owner Sandbox Starter** (`pymthouse_owner_starter`) first (sandbox profile, hard balance gate), then an **Owner Paid tier** (`pymthouse_owner_paid` / `pymthouse_owner_paid_*`) after payment-method attach and explicit Upgrade (`/api/v1/me/billing/upgrade-paid` with `{ planKey, confirm: true }` — flat fee + included usage + overage). Not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
 
 **Manual allowance top-ups:** `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` with `{ "amountUsdMicros": "5000000", "source": "manual" }` (hosted OpenMeter only). On Konnect this is an additive `POST /credits/grants`; on self-hosted it is an additive entitlement `createGrant`. Granting to an end-user who does not exist yet provisions them, so the call clears the same activation gate as `POST …/users` and can return `402 owner_payment_method_required` / `403 end_user_cap_reached`. Owner top-ups are exempt.
 
@@ -665,7 +672,7 @@ The previous process-local in-memory enforcement cache (`manifest_cache_unavaila
 Billable **`usage_billing_events`** rows are created when the signing request resolves to a full pipeline **and** model constraint for billing. Price evidence (`priceWeiPerUnit` / `pixelsPerUnit` and orchestrator address) comes from the **negotiated ticket** on the request (decoded orchestrator info), i.e. the price agreed with the orchestrator by **`python-gateway`** before signing — PymtHouse does **not** call NaaP on this hot path.
 
 1. **Billing constraint:** `pipeline` + `modelId` on the payment request (from the `python-gateway` metadata envelope or a direct API caller), **or** base64 **`capabilities`** (`net.Capabilities`) from which PymtHouse can derive a single pipeline/model (same shape the Go remote signer uses). Billing requires both fields for **`usage_billing_events`**.
-2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation. **`GET /api/v1/pipeline-pricing`** remains for UIs but discovery-service raw has no pricing rows (empty list).
+2. **No NaaP fetch on signing:** direct DMZ signing does not load dashboard pricing for validation.
 3. **Ledger insert:** When a billing constraint is present, PymtHouse records **`usage_billing_events`** using the signed ticket units and a **`pipeline_model_constraint_hash`** over `{ pipeline, modelId, orchAddress, priceWeiPerUnit, pixelsPerUnit }`. **`price_validation_status`** is **`matched`** in that case.
 4. **Diagnostics:** **`transactions`** always records metering when the signer succeeds and `feeWei > 0`. If pipeline is present but `modelId` cannot be resolved for billing, **`price_validation_status`** is **`missing_constraint`** and no **`usage_billing_events`** row is written. Signing still succeeds regardless.
 
@@ -687,12 +694,11 @@ Billable **`usage_billing_events`** rows are created when the signing request re
 
 PymtHouse uses these fields for attribution and billing-event grouping together with the negotiated ticket price from the request. The go-livepeer remote signer is not required to sign pipeline/model metadata for v1.
 
-### Network catalog and pricing routes
+### Network catalog route
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/v1/pipeline-catalog` | Network pipeline catalog from discovery-service raw (cached 5 min). Used by Plans UI dropdowns. |
-| `GET /api/v1/pipeline-pricing?pipeline=...&model=...` | Pricing rows for UI estimates (empty until a discovery-backed pricing source exists). |
+| `GET /api/v1/pipeline-catalog` | Network pipeline catalog from remote-signer `GET /discover-orchestrators` (cached 5 min). Used by Plans UI dropdowns. |
 
 ### Usage API — pipeline/model grouping
 
@@ -747,11 +753,124 @@ Tenants never receive `OPENMETER_API_KEY` or direct OpenMeter dashboard access. 
 | `GET` | `/api/v1/apps/{clientId}/billing/stripe` | Provider session | Merchant Connect status (`stripeConnectedAccountId`, charges/payouts flags, `applicationFeeBps`, `billingMode`, `endUserCap`, `activation`) + OM profile ids |
 | `POST` | `/api/v1/apps/{clientId}/billing/stripe/connect` | App **owner** or platform admin | Start merchant Connect via Account Links: `{ mode?: "account_link" }` (default). Creates Express/Accounts v2 Connected Account if needed, returns Stripe-hosted `{ url }`. `mode: "oauth"` is rejected. |
 | `POST` | `/api/v1/apps/{clientId}/billing/stripe/account-link` | App owner/admin | Refresh Stripe Account Link for incomplete onboarding |
-| `PATCH` | `/api/v1/apps/{clientId}/billing/stripe` | App owner/admin | Update `progressiveBilling`, `invoiceThresholdUsdMicros`, `applicationFeeBps`, `billingMode`, and/or `endUserCap`. Switching to `merchant` requires Connect ready (`charges_enabled` + `details_submitted`). |
+| `PATCH` | `/api/v1/apps/{clientId}/billing/stripe` | App owner/admin | Update `progressiveBilling`, `softNegativeUsdMicros`, `invoiceLeadUsdMicros`, `applicationFeeBps`, `billingMode`, and/or `endUserCap`. `softNegativeUsdMicros` is the app-wide overage limit — the unbilled debt a subject may accrue while spendable is $0 (mint/signer deny at/above). It must be `0` (no limit) or at least `2000000` ($2.00); smaller limits deadlock, because every invoice raised on the way there falls under Stripe's $0.50 minimum charge. Unset (null) reads as the `2000000` ($2.00) default, so an app never grants unbounded debt unless the owner explicitly sets `0`. `invoiceLeadUsdMicros` overrides the debt level that triggers an invoice, which otherwise derives as `min(ceiling / 2, $5)`. Switching to `merchant` requires Connect ready (`charges_enabled` + `details_submitted`). |
+| `GET` | `/api/v1/apps/{clientId}/billing/state` | **M2M Basic only** | Canonical spend posture for a subject — see [Billing state](#billing-state) |
+| `POST` | `/api/v1/apps/{clientId}/billing/collect` | **M2M Basic only** | Raise an invoice for a subject's unbilled usage now, instead of waiting for the trigger or the daily sweep |
+| `GET` | `/api/v1/apps/{clientId}/billing/wallet` | **M2M Basic only** | Prepaid balance, payment-method status, active Pay-Per-Use plans, and the embedded `billingState` |
+| `POST` | `/api/v1/apps/{clientId}/billing/wallet/top-up` | **M2M Basic only** | Payment-mode Stripe Checkout to add prepaid credit ($1–$10,000) |
 | `DELETE` | `/api/v1/apps/{clientId}/billing/stripe` | App **owner** or platform admin | Disconnect merchant Connect (+ clear OM Stripe profile ids) |
 | `GET` | `/api/v1/apps/{clientId}/billing/invoices` | Provider session (read) | Tenant-scoped invoice list (DTO mapped from OpenMeter) |
 | `POST` | `/api/v1/apps/{clientId}/billing/checkout` | Provider session / M2M | End-user checkout (requires merchant + Connect ready when `ACTIVATION_GATE_MODE` is `enforce_revenue` or `enforce`) |
+| `GET` | `/api/v1/apps/{clientId}/billing/tiers` | **M2M Basic only** | List selectable **Owner Paid** tiers (same catalog as session `/api/v1/me/billing/owner-tiers`) |
+| `GET` | `/api/v1/apps/{clientId}/billing/subscription` | **M2M Basic only** | Owner-wallet switching status: live Paid key, pending Starter downgrade, payment-method readiness |
+| `PUT` | `/api/v1/apps/{clientId}/billing/subscription` | **M2M Basic only** | `{ planKey, confirm: true }` — Starter→Paid or Paid→Paid (idempotent durable op; same codes as session `POST …/me/billing/upgrade-paid`) |
+| `DELETE` | `/api/v1/apps/{clientId}/billing/subscription` | **M2M Basic only** | `{ confirm: true }` — schedule Sandbox Starter at end of cycle |
+| `DELETE` | `/api/v1/apps/{clientId}/billing/subscription/pending-change` | **M2M Basic only** | `{ confirm: true }` — cancel a pending Starter downgrade |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/apps/{clientId}/billing/payment-methods` | **M2M Basic only** | List / setup-checkout / set-default / unlink payment methods on the **app owner** wallet. Attach PM ≠ Paid — Upgrade still requires explicit `confirm` |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/invoices` | M2M / provider | End-user invoice list (`{ items, page, pageSize, totalCount }`) for that app user's OpenMeter customer — not merchant provider-session `/billing/invoices` |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/invoices/{invoiceId}/hosted-url` | M2M / provider | Stripe `{ hostedInvoiceUrl?, invoicePdf? }` for one invoice scoped to that app user |
+| `GET`/`POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/payment-methods` | M2M / provider | List cards / setup-only Checkout for the **end-user** Stripe customer (does not change plan) |
 | `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | M2M / provider | Switch plan via Konnect change; paid targets may return Connect `checkoutUrl`. A **priced target** is gated by `sell_paid_plans` under `enforce_revenue`/`enforce` and denied with `stripe_connect_required`; free, Starter, and draft targets are never gated, so migrating users off a phased-out paid plan stays possible after switching to `owner_rollup` |
+
+**Owner Paid M2M vs session:** human owners still use verb-style `/api/v1/me/billing/*` (`upgrade-paid`, `downgrade-to-starter`, …) + `/billing/upgrade` UI. Confidential backends use the RESTful `/api/v1/apps/{clientId}/billing/{tiers,subscription,payment-methods}` resources above (M2M Basic; subject = `app.ownerId`). Admin tier catalog CRUD stays on `/api/v1/admin/billing/owner-tiers*` and is not part of Builder M2M.
+
+### Billing state
+
+`GET /api/v1/apps/{clientId}/billing/state` answers the three questions an integrator has about a subject: can it spend right now, how much room is left, and what happens next. Merchant apps must pass `externalUserId`; owner-rollup apps may pass one to scope unbilled debt to a single subject. The same object is embedded as `billingState` in `GET …/billing/wallet` and returned by `POST …/billing/collect`, so a read and a rejection never disagree.
+
+Every amount is a `Money` object — `{ usdMicros, usd, currency }` — because `app_billing_config.default_currency` drives settlement and a bare `usdMicros` on the wire loses that.
+
+```json
+{
+  "asOf": "2026-08-08T03:14:00.000Z",
+  "subject": { "type": "end_user", "externalUserId": "user-123", "billingMode": "merchant" },
+  "status": "at_risk",
+  "canSpend": true,
+  "reason": null,
+  "funding": {
+    "prepaid": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+    "included": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+    "includedUsage": {
+      "total": { "usdMicros": "5000000", "usd": "5.00", "currency": "USD" },
+      "remaining": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+      "consumed": { "usdMicros": "5000000", "usd": "5.00", "currency": "USD" },
+      "resetsAt": "2026-09-01T00:00:00.000Z",
+      "sourcePlan": { "id": "plan_starter", "name": "Starter", "type": "free" }
+    },
+    "spendable": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+    "overage": {
+      "eligible": true,
+      "ceiling": { "usdMicros": "10000000", "usd": "10.00", "currency": "USD" },
+      "unbilledDebt": { "usdMicros": "6000000", "usd": "6.00", "currency": "USD" },
+      "remaining": { "usdMicros": "4000000", "usd": "4.00", "currency": "USD" },
+      "utilizationBps": 6000,
+      "debtSource": "gathering_invoice"
+    }
+  },
+  "collection": {
+    "mode": "progressive_invoice",
+    "collector": "settlement_connect",
+    "paymentMethod": { "hasDefault": true, "brand": "visa", "last4": "4242" },
+    "nextAction": "awaiting_settlement",
+    "leadThreshold": { "usdMicros": "5000000", "usd": "5.00", "currency": "USD" },
+    "minimumCharge": { "usdMicros": "500000", "usd": "0.50", "currency": "USD" },
+    "cycle": "MONTH",
+    "collectionInterval": "DAY",
+    "lastRaisedAt": "2026-08-08T02:59:00.000Z",
+    "nextRaiseEligibleAt": "2026-08-08T03:04:00.000Z"
+  },
+  "explain": {
+    "headline": "Collecting recent usage",
+    "detail": "An invoice for your recent usage is being collected. $4.00 of your $10.00 spending buffer is left; requests keep working unless the buffer runs out first.",
+    "docsUrl": "https://docs.pymthouse.com/billing/pay-as-you-go"
+  }
+}
+```
+
+`explain` is customer-facing copy the API owns, so the dashboard, the admin app and your own UI say the same thing without each inventing wording. It never uses internal ledger terms — the ceiling reads as a spending buffer, not "soft negative".
+
+**Funding waterfall:** spendable capacity is **included usage → prepaid credits → spending buffer / invoice**. `funding.includedUsage` is the live plan's rate-card `discounts.usage` for the current period (`total` / `remaining` / `consumed` / `resetsAt` / `sourcePlan`). `funding.included` is an alias of `includedUsage.remaining` for one release. Prepaid credits are never labeled as included usage.
+
+#### Status
+
+| `status` | `canSpend` | Meaning |
+| --- | --- | --- |
+| `active` | `true` | Prepaid credits or included plan usage remain. Usage draws those down first. |
+| `overage` | `true` | Credits are gone. Usage is invoiced automatically as it accrues. |
+| `at_risk` | `true` | Debt has entered the lead window, so an invoice has been raised and is being collected. Requests keep working while the buffer lasts. This is exactly the invoice trigger's condition, so the warning a customer sees is the event that raised the invoice. |
+| `blocked` | `false` | Mint and signer refuse requests. `reason` says why. |
+
+Debt is read from the OpenMeter gathering invoice (`debtSource: "gathering_invoice"`) and falls back to a meter sum net of remaining included usage (`"meter_estimate"`). When neither is available `debtSource` is `"unavailable"`, `unbilledDebt` is `null`, and the state reports the permissive posture rather than inventing a block — the gate does its own authoritative lookup at mint time.
+
+#### Reason codes
+
+`reason` is set only when `status` is `blocked`. The same codes appear as an additive `reason` field on the OAuth `402` from the signer-token mint (alongside the existing `error` code, which keeps its OAuth meaning), so a client can branch on one vocabulary.
+
+| `reason` | `nextAction` | Cause |
+| --- | --- | --- |
+| `no_payment_method` | `add_payment_method` | Credits exhausted and no default card on file, so usage cannot be billed. |
+| `overage_not_available` | `add_funds` | Credits exhausted and this account is not overage-eligible (for example the sandbox Starter's hard gate). |
+| `debt_ceiling_reached` | `awaiting_settlement` | Unbilled debt hit the overage limit while payment is still being collected. Clears on its own once the invoice settles. |
+| `billing_unavailable` | `none` | Allowance could not be confirmed upstream. Usually transient. |
+
+#### Collection timing
+
+Money moves in two ways, both outside the mint path:
+
+- **By amount.** When unbilled debt enters the lead window (`collection.leadThreshold`, default `min(ceiling / 2, $5)`), PymtHouse calls OpenMeter `invoicePendingLines` + `advance` for that customer. Settlement (merchant Connect) or the OpenMeter Stripe app (owner) then collects asynchronously.
+- **By time.** The app's OpenMeter billing profile uses anchored `DAY` collection alignment (`collection.collectionInterval`), so anything still gathering is swept daily even if it never reaches the lead threshold.
+
+Debt under `collection.minimumCharge` ($0.50, Stripe's floor) is never invoiced — such an invoice could only ever become a stuck draft. That floor is why the overage limit must be at least $2.00: the limit has to leave room for an invoice to be raised, settled and cleared before the gate locks the subject out.
+
+`POST …/billing/collect` forces a raise now, bypassing the lead window and OpenMeter's collection period. It is idempotent within the trigger cooldown, so a retry returns `rate_limited` with the current state rather than a duplicate invoice.
+
+| `outcome` | Meaning |
+| --- | --- |
+| `invoiced` | One or more invoices were raised; `invoiceIds` lists them. |
+| `skipped` | Nothing to invoice, or debt is under the minimum charge. |
+| `rate_limited` | A raise for this subject already happened inside the cooldown. |
+| `unavailable` | The OpenMeter admin client is not configured in this environment. |
+| `error` | The upstream call failed (`502`). |
 
 ### App activation gate
 
@@ -774,7 +893,7 @@ Controlled by `ACTIVATION_GATE_MODE` (`off` \| `log` \| `enforce_revenue` \| `en
   "canProvisionEndUsers": true,
   "canSellPaidPlans": false,
   "reason": "stripe_connect_required",
-  "endUserCap": 25,
+  "endUserCap": 10000,
   "appUserCount": 3
 }
 ```
@@ -1064,10 +1183,9 @@ curl -sS -u "${CLIENT_ID}:${CLIENT_SECRET}" \
 - [`src/lib/openmeter/`](../src/lib/openmeter/) (OpenMeter facade: customers, invoices, plans-sync, usage-read)
 - [`src/lib/prices/public-exchange-spot.ts`](../src/lib/prices/public-exchange-spot.ts) (Binance/Kraken spot fetch)
 - [`src/lib/prices/eth-usd-oracle.ts`](../src/lib/prices/eth-usd-oracle.ts) (ETH/USD oracle with DB cache)
-- [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts) (discovery-service raw → pipeline catalog; TTL cache)
+- [`src/lib/network-catalog.ts`](../src/lib/network-catalog.ts) (remote-signer discover-orchestrators → pipeline catalog; TTL cache)
 - [`src/app/api/v1/prices/eth-usd/route.ts`](../src/app/api/v1/prices/eth-usd/route.ts)
 - [`src/app/api/v1/pipeline-catalog/route.ts`](../src/app/api/v1/pipeline-catalog/route.ts)
-- [`src/app/api/v1/pipeline-pricing/route.ts`](../src/app/api/v1/pipeline-pricing/route.ts)
 
 **Gateway payment metadata (cross-repo)**
 

@@ -176,7 +176,7 @@ export default function OnboardingWizard({
         setStep("done");
         return;
       }
-      router.push(`/apps/${encodeURIComponent(clientId)}?tab=credentials`);
+      router.push(`/apps/${encodeURIComponent(clientId)}/credentials`);
     },
     [router],
   );

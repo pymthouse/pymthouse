@@ -260,6 +260,90 @@
       "when": 1785700000000,
       "tag": "0035_app_activation_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1785900000000,
+      "tag": "0036_owner_billing_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0037_platform_billing_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0038_owner_subscription_tiers",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0039_owner_paid_upgrade_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0040_owner_starter_plan_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786400000000,
+      "tag": "0041_merchant_custom_invoicing",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786500000000,
+      "tag": "0042_connect_supplier_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0043_app_user_payment_method_checkouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0044_plans_charge_threshold",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0045_auto_topup_soft_negative",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0046_invoice_lead_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787000000000,
+      "tag": "0047_drop_app_user_auto_topup",
+      "breakpoints": true
     }
   ]
 }

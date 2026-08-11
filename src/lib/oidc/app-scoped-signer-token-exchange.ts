@@ -3,7 +3,10 @@ import {
   resolveActiveAppApiKey,
   resolveActiveAppApiKeyFromBearer,
 } from "@/lib/app-api-keys";
-import { getDiscoveryRawUrl } from "@/lib/discovery-service-url";
+import {
+  buildDiscoverOrchestratorsUrl,
+  normalizeDiscoveryCaps,
+} from "@/lib/discovery-service-url";
 import { validateClientSecret } from "@/lib/oidc/clients";
 import {
   mintSignerJwtForExternalUser,
@@ -116,8 +119,13 @@ export function getSignerTokenAudienceEnv(): string | null {
   return raw ? normalizeUri(raw) : null;
 }
 
-export function getSignerDiscoveryUrl(): string | undefined {
-  return getDiscoveryRawUrl();
+/** Default discovery URL for a signer base: `{signer}/discover-orchestrators`. */
+export function getSignerDiscoveryUrl(
+  appClientId?: string | null,
+): string | undefined {
+  const signerUrl = getClientSignerApiUrl(appClientId).trim();
+  if (!signerUrl) return undefined;
+  return buildDiscoverOrchestratorsUrl(signerUrl);
 }
 
 export function acceptedSignerAudiences(): Set<string> {
@@ -333,6 +341,8 @@ export async function handleAppScopedSignerTokenExchange(
     resource: string;
     audiences: string[];
     correlationId: string;
+    discovery_url?: string;
+    caps?: string[];
   },
   inject: Partial<AppScopedSignerTokenExchangeDeps> = {},
 ): Promise<SignerSession> {
@@ -422,14 +432,22 @@ export async function handleAppScopedSignerTokenExchange(
     throw err;
   }
 
+  const signerUrl = deps.getClientSignerApiUrl(subject.publicClientId);
+  const discoveryOverride = input.discovery_url?.trim();
+  const discoveryUrl =
+    discoveryOverride ||
+    deps.getSignerDiscoveryUrl(subject.publicClientId) ||
+    (signerUrl ? buildDiscoverOrchestratorsUrl(signerUrl) : undefined);
+
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,
     expires_in: minted.expires_in,
     scope: minted.scope,
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-    signer_url: deps.getClientSignerApiUrl(subject.publicClientId),
-    discovery_url: deps.getSignerDiscoveryUrl(),
+    signer_url: signerUrl,
+    discovery_url: discoveryUrl,
+    caps: normalizeDiscoveryCaps(input.caps),
     issued_token_type: ISSUED_ACCESS_TOKEN_TYPE,
     correlation_id: input.correlationId,
   });
@@ -451,6 +469,8 @@ export async function handleIssuerApiKeySignerTokenExchange(
     resource: string;
     audiences: string[];
     correlationId: string;
+    discovery_url?: string;
+    caps?: string[];
   },
   inject: Partial<AppScopedSignerTokenExchangeDeps> & {
     resolveActiveAppApiKeyFromBearer?: typeof resolveActiveAppApiKeyFromBearer;
@@ -501,6 +521,8 @@ export async function handleIssuerApiKeySignerTokenExchange(
       resource: input.resource,
       audiences: input.audiences,
       correlationId: input.correlationId,
+      discovery_url: input.discovery_url,
+      caps: input.caps,
     },
     inject,
   );

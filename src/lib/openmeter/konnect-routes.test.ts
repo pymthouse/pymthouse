@@ -14,9 +14,11 @@ import {
   normalizeKonnectMeterQueryResponse,
   normalizeKonnectListResponse,
   normalizeKonnectSubscriptionRecord,
+  rewriteKonnectInvoiceActionToMeteringV1,
   rewriteKonnectPathname,
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
+  rewriteKonnectSearchParams,
 } from "./konnect-routes";
 import { createKonnectFetch } from "./konnect-fetch";
 
@@ -84,6 +86,100 @@ test("rewriteKonnectRequestUrl maps customer subscriptions to filtered list", ()
   assert.equal(rewritten.pathname, "/v3/openmeter/subscriptions");
   assert.equal(rewritten.searchParams.get("filter[customer_id][eq]"), "cust_1");
   assert.equal(rewritten.searchParams.get("page[size]"), "100");
+});
+
+test("rewriteKonnectInvoiceActionToMeteringV1 moves invoice POSTs off /v3/openmeter", () => {
+  assert.equal(
+    rewriteKonnectInvoiceActionToMeteringV1(
+      "/v3/openmeter/billing/invoices/invoice",
+      "POST",
+    ),
+    "/metering/v1/billing/invoices/invoice",
+  );
+  assert.equal(
+    rewriteKonnectInvoiceActionToMeteringV1(
+      "/v3/openmeter/billing/invoices/01KZJEAJ6E2T497GCHKG8X92TK/advance",
+      "POST",
+    ),
+    "/metering/v1/billing/invoices/01KZJEAJ6E2T497GCHKG8X92TK/advance",
+  );
+  assert.equal(
+    rewriteKonnectInvoiceActionToMeteringV1(
+      "/v3/openmeter/billing/invoices/01KZJEAJ6E2T497GCHKG8X92TK/snapshot-quantities",
+      "POST",
+    ),
+    "/metering/v1/billing/invoices/01KZJEAJ6E2T497GCHKG8X92TK/snapshot-quantities",
+  );
+  // GET list/detail and non-invoice billing stay on v3.
+  assert.equal(
+    rewriteKonnectInvoiceActionToMeteringV1(
+      "/v3/openmeter/billing/invoices/01KZJEAJ6E2T497GCHKG8X92TK",
+      "GET",
+    ),
+    "/v3/openmeter/billing/invoices/01KZJEAJ6E2T497GCHKG8X92TK",
+  );
+  assert.equal(
+    rewriteKonnectInvoiceActionToMeteringV1(
+      "/v3/openmeter/billing/invoices/invoice",
+      "GET",
+    ),
+    "/v3/openmeter/billing/invoices/invoice",
+  );
+});
+
+test("rewriteKonnectRequestUrl routes invoicePendingLines to metering/v1", () => {
+  const url = new URL(
+    "https://us.api.konghq.com/v3/openmeter/api/v1/billing/invoices/invoice",
+  );
+  const rewritten = rewriteKonnectRequestUrl(url, "POST");
+  assert.equal(rewritten.pathname, "/metering/v1/billing/invoices/invoice");
+});
+
+test("createKonnectFetch posts invoicePendingLines to /metering/v1", async (t) => {
+  const calls: URL[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    calls.push(new URL(fetchTargetUrl(input)));
+    return new Response("[]", {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  const konnectFetch = createKonnectFetch(KONNECT_BASE);
+  await konnectFetch(`${KONNECT_BASE}/api/v1/billing/invoices/invoice`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      customerId: "01KZJ7S4KGN08E7NN9YQMY4VX0",
+      progressiveBillingOverride: true,
+    }),
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].origin, "https://metering.konghq.com");
+  assert.equal(calls[0].pathname, "/metering/v1/billing/invoices/invoice");
+});
+
+test("rewriteKonnectSearchParams maps invoice list customers/statuses to filters", () => {
+  const params = rewriteKonnectSearchParams(
+    "/api/v1/billing/invoices",
+    "GET",
+    new URLSearchParams({
+      customers: "01KZJ7S4KGN08E7NN9YQMY4VX0",
+      statuses: "gathering",
+      pageSize: "20",
+      page: "1",
+    }),
+  );
+  assert.equal(
+    params.get("filter[customer.id][eq]"),
+    "01KZJ7S4KGN08E7NN9YQMY4VX0",
+  );
+  assert.equal(params.get("filter[status][eq]"), "gathering");
+  assert.equal(params.get("page[size]"), "20");
+  assert.equal(params.get("page[number]"), "1");
+  assert.equal(params.get("customers"), null);
+  assert.equal(params.get("statuses"), null);
 });
 
 test("rewriteKonnectRequestUrl maps events.list subject/limit/from/to to Konnect filters", () => {

@@ -78,7 +78,7 @@ export default function SidebarCreditPreview() {
       <Link
         href="/billing"
         className="block text-[11px] text-amber-400/90 hover:text-amber-300 transition-colors"
-        title="Attach a payment method to continue usage"
+        title="Add a payment method to continue on Owner Paid"
       >
         Payment method required
       </Link>

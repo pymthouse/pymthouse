@@ -4,7 +4,7 @@ import { getServerSession } from "next-auth";
 import { resolveOwnerBillingPressure } from "@/lib/billing/owner-billing-pressure";
 import { authOptions } from "@/lib/next-auth-options";
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
-import { listOwnerPaymentMethods } from "@/lib/openmeter/owner-payment-method";
+import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
 import { listOwnerActiveSubscriptions } from "@/lib/owner-billing-data";
 
 /**
@@ -20,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [creditAllowance, subscriptions, paymentMethods] = await Promise.all([
+  const [creditAllowance, subscriptions, chargeable] = await Promise.all([
     getOwnerPrepaidCreditBalance(userId),
     listOwnerActiveSubscriptions(userId).catch((err) => {
       console.warn(
@@ -29,17 +29,17 @@ export async function GET() {
       );
       return [];
     }),
-    listOwnerPaymentMethods(userId).catch((err) => {
+    ownerHasChargeablePaymentMethod(userId).catch((err) => {
       console.warn(
-        "me/credits: payment method lookup failed",
+        "me/credits: chargeability lookup failed",
         err instanceof Error ? err.message : String(err),
       );
-      return [];
+      return false;
     }),
   ]);
 
   const billingPressure = resolveOwnerBillingPressure({
-    hasPaymentMethod: paymentMethods.length > 0,
+    hasPaymentMethod: chargeable === true,
     creditBalanceUsdMicros: creditAllowance?.balanceUsdMicros ?? null,
     subscriptions,
   });

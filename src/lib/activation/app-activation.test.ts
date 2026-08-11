@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { appBillingConfig } from "@/db/schema";
+import { appBillingConfig, appUsers } from "@/db/schema";
 import {
   __testDefaultEndUserCap,
   __testSetOwnerPaymentMethodLookup,
@@ -160,6 +160,71 @@ test("resolveAppActivation blocks at end_user_cap boundary", async (t) => {
   assert.equal(activation.appUserCount, 2);
 });
 
+test("resolveAppActivation counts only active end users toward the cap", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+
+  await upsertAppBillingConfig(seeded.clientId, { endUserCap: 2 });
+  stubOwnerBilling(t, { spendableUsdMicros: "1000000", hasPaymentMethod: false });
+
+  await createAppUser({ clientId: seeded.clientId, externalUserId: "eu-1" });
+  await createAppUser({ clientId: seeded.clientId, externalUserId: "eu-2" });
+  await createAppUser({
+    clientId: seeded.clientId,
+    externalUserId: "eu-inactive",
+    status: "inactive",
+  });
+
+  const atCap = await resolveAppActivation(seeded.clientId);
+  assert.equal(atCap.canProvisionEndUsers, false);
+  assert.equal(atCap.appUserCount, 2);
+
+  await db
+    .update(appUsers)
+    .set({ status: "inactive" })
+    .where(
+      and(
+        eq(appUsers.clientId, seeded.clientId),
+        eq(appUsers.externalUserId, "eu-2"),
+      ),
+    );
+
+  const afterDeactivate = await resolveAppActivation(seeded.clientId);
+  assert.equal(afterDeactivate.canProvisionEndUsers, true);
+  assert.equal(afterDeactivate.appUserCount, 1);
+});
+
+test("assertAppCanProvisionUsers gates inactive→active when at cap", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+
+  await upsertAppBillingConfig(seeded.clientId, { endUserCap: 1 });
+  stubOwnerBilling(t, { spendableUsdMicros: "1000000", hasPaymentMethod: false });
+
+  await createAppUser({ clientId: seeded.clientId, externalUserId: "eu-active" });
+  await createAppUser({
+    clientId: seeded.clientId,
+    externalUserId: "eu-inactive",
+    status: "inactive",
+  });
+
+  // Inactive without activating still passes (billing ensure / non-lifecycle paths).
+  const idle = await assertAppCanProvisionUsers(seeded.clientId, {
+    externalUserId: "eu-inactive",
+  });
+  assert.ok(idle);
+
+  await assert.rejects(
+    () =>
+      assertAppCanProvisionUsers(seeded.clientId, {
+        externalUserId: "eu-inactive",
+        activating: true,
+      }),
+    (err: unknown) =>
+      err instanceof AppActivationError && err.code === "end_user_cap_reached",
+  );
+});
+
 test("resolveAppActivation blocks an empty wallet with no payment method", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
@@ -171,11 +236,11 @@ test("resolveAppActivation blocks an empty wallet with no payment method", async
   assert.equal(activation.reason, "owner_payment_method_required");
 });
 
-test("resolveAppActivation allows an empty wallet backed by a card", async (t) => {
+test("resolveAppActivation allows an empty wallet on Owner Paid with a card", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  // OpenMeter invoices charge_automatically, so a card is enough to keep going.
+  // Owner Paid + chargeable PM unlocks overage invoicing past spendable=0.
   stubOwnerBilling(t, { spendableUsdMicros: "0", hasPaymentMethod: true });
 
   const activation = await resolveAppActivation(seeded.clientId);

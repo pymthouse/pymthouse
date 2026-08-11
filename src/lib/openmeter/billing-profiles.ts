@@ -2,6 +2,7 @@ import {
   platformDefaultApplicationFeeBps,
   platformDefaultEndUserCap,
 } from "@/lib/billing/platform-billing-defaults";
+import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "@/db/index";
@@ -12,26 +13,33 @@ import { assignCustomerBillingProfileOverride } from "./customers";
 import {
   createKonnectBillingProfile,
   resolveKonnectStripeAppId,
+  updateKonnectBillingProfileCollection,
   updateKonnectBillingProfileProgressiveBilling,
 } from "./konnect-billing-profiles";
+import { buildCollectionSettings } from "./billing-collection";
 import { getHostedOpenMeterUrl } from "./constants";
 import { shouldUseKonnectRoutes } from "./route-mode";
+import {
+  type BillingProfileSupplierInput,
+  buildOpenMeterSupplierAddress,
+} from "./billing-supplier";
 import {
   ensureKonnectCustomerStripeBilling,
   ensureStripeCustomerAppData,
   setKonnectCustomerBillingProfile,
 } from "./stripe-customer-data";
 
-/** ISO 3166-1 alpha-2; required on billing profile supplier for OpenMeter invoicing. */
-function billingSupplierCountryCode(): string {
-  const raw = process.env.OPENMETER_BILLING_SUPPLIER_COUNTRY?.trim() || "US";
-  return raw.toUpperCase();
-}
+export type { BillingProfileSupplierInput } from "./billing-supplier";
 
-export function buildBillingProfileSupplier(displayName: string) {
+export function buildBillingProfileSupplier(
+  displayName: string,
+  supplier?: BillingProfileSupplierInput,
+) {
+  const taxId = supplier?.taxId?.trim();
   return {
     name: displayName,
-    addresses: [{ country: billingSupplierCountryCode() }],
+    addresses: [buildOpenMeterSupplierAddress(supplier)],
+    ...(taxId ? { taxId: { code: taxId } } : {}),
   };
 }
 
@@ -209,6 +217,7 @@ export async function ensureTenantBillingProfile(input: {
           default: false,
           supplier: buildBillingProfileSupplier(supplierName),
           workflow: {
+            collection: buildCollectionSettings(),
             invoicing: {
               autoAdvance: true,
               draftPeriod: "P0D",
@@ -325,6 +334,7 @@ export async function ensureOwnersBillingProfile(
           default: false,
           supplier: buildBillingProfileSupplier("PymtHouse Owners"),
           workflow: {
+            collection: buildCollectionSettings(),
             invoicing: {
               autoAdvance: true,
               draftPeriod: "P0D",
@@ -357,6 +367,50 @@ export async function prepareAppCustomerStripeBilling(input: {
   customerKey?: string;
   name?: string;
 }): Promise<void> {
+  const config = await getAppBillingConfig(input.clientId);
+  const merchantProfileId =
+    config?.openmeterMerchantBillingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
+    null;
+
+  // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
+  if (config?.billingMode === "merchant") {
+    if (!merchantProfileId) {
+      throw new Error(
+        "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
+      );
+    }
+    await assignMerchantCustomInvoicingProfile({
+      client: input.client,
+      customerId: input.customerId,
+      billingProfileId: merchantProfileId,
+    });
+    const accountId = config.stripeConnectedAccountId?.trim();
+    if (accountId) {
+      const { resolveMerchantChargeModel } = await import("./supplier-sync");
+      const { merchantSettlementMetadata } = await import(
+        "./settlement-metadata"
+      );
+      const { ensureCustomerMetadata } = await import("./customers");
+      const chargeModel = resolveMerchantChargeModel(config);
+      if (chargeModel !== "direct") {
+        console.warn(
+          "merchant customer settlement metadata: supplier incomplete; using destination",
+          sanitizeForLog(input.clientId),
+        );
+      }
+      await ensureCustomerMetadata(
+        input.client,
+        input.customerId,
+        merchantSettlementMetadata({
+          connectedAccountId: accountId,
+          chargeModel,
+        }),
+      );
+    }
+    return;
+  }
+
   const ready = await ensureAppStripeBillingReady({ clientId: input.clientId });
   const useKonnect = shouldUseKonnectRoutes(
     getHostedOpenMeterUrl(),
@@ -447,6 +501,7 @@ export async function ensureFreeBillingProfile(client?: OpenMeter): Promise<stri
     default: false,
     supplier: buildBillingProfileSupplier("PymtHouse Free"),
     workflow: {
+      collection: buildCollectionSettings(),
       invoicing: { autoAdvance: true, draftPeriod: "P0D" },
       payment: { collectionMethod: "charge_automatically" },
     },
@@ -501,39 +556,26 @@ export async function applyTenantBillingProfileToCustomer(input: {
   customerKey?: string;
   name?: string;
 }): Promise<void> {
-  const ready = await ensureAppStripeBillingReady({ clientId: input.clientId });
-  const useKonnect = shouldUseKonnectRoutes(
-    getHostedOpenMeterUrl(),
-    process.env.OPENMETER_API_KEY,
-  );
-  if (useKonnect) {
-    await ensureKonnectCustomerStripeBilling({
-      customerId: input.customerId,
-      customerKey: input.customerKey,
-      name: input.name,
-      billingProfileId: ready.openmeterBillingProfileId,
-    });
-    return;
-  }
-  await assignCustomerBillingProfileOverride({
-    client: input.client,
-    customerId: input.customerId,
-    billingProfileId: ready.openmeterBillingProfileId,
-  });
+  // This helper is used by Checkout flows. A merchant customer must remain
+  // pinned to Custom Invoicing rather than being moved to the tenant Stripe
+  // profile while Checkout is collecting (or has just collected) a card.
+  await prepareAppCustomerStripeBilling(input);
 }
 
 /**
- * Persist progressive-billing / threshold settings and sync progressiveBilling
+ * Persist progressive-billing / overage settings and sync progressiveBilling
  * to the OpenMeter tenant billing profile when connected.
  */
 export async function updateAppBillingProfileSettings(input: {
   clientId: string;
   progressiveBilling?: boolean;
-  invoiceThresholdUsdMicros?: string | null;
+  invoiceLeadUsdMicros?: string | null;
+  softNegativeUsdMicros?: string | null;
   applicationFeeBps?: number;
 }): Promise<{
   progressiveBilling: boolean;
-  invoiceThresholdUsdMicros: string | null;
+  invoiceLeadUsdMicros: string | null;
+  softNegativeUsdMicros: string | null;
   applicationFeeBps: number;
 }> {
   let existing = await getAppBillingConfig(input.clientId);
@@ -546,17 +588,17 @@ export async function updateAppBillingProfileSettings(input: {
   }
 
   const progressiveBilling =
-    input.progressiveBilling === undefined
-      ? existing.progressiveBilling
-      : input.progressiveBilling;
-  const invoiceThresholdUsdMicros =
-    input.invoiceThresholdUsdMicros === undefined
-      ? existing.invoiceThresholdUsdMicros
-      : input.invoiceThresholdUsdMicros;
+    input.progressiveBilling ?? existing.progressiveBilling;
+  const invoiceLeadUsdMicros =
+    input.invoiceLeadUsdMicros !== undefined
+      ? input.invoiceLeadUsdMicros
+      : existing.invoiceLeadUsdMicros;
+  const softNegativeUsdMicros =
+    input.softNegativeUsdMicros !== undefined
+      ? input.softNegativeUsdMicros
+      : existing.softNegativeUsdMicros;
   const applicationFeeBps =
-    input.applicationFeeBps === undefined
-      ? (existing.applicationFeeBps ?? 0)
-      : input.applicationFeeBps;
+    input.applicationFeeBps ?? existing.applicationFeeBps ?? 0;
 
   const progressiveChanged =
     input.progressiveBilling !== undefined &&
@@ -574,13 +616,15 @@ export async function updateAppBillingProfileSettings(input: {
 
   await upsertAppBillingConfig(input.clientId, {
     progressiveBilling,
-    invoiceThresholdUsdMicros,
+    invoiceLeadUsdMicros,
+    softNegativeUsdMicros,
     applicationFeeBps,
   });
 
   return {
     progressiveBilling,
-    invoiceThresholdUsdMicros: invoiceThresholdUsdMicros ?? null,
+    invoiceLeadUsdMicros: invoiceLeadUsdMicros ?? null,
+    softNegativeUsdMicros: softNegativeUsdMicros ?? null,
     applicationFeeBps,
   };
 }
@@ -612,11 +656,51 @@ async function syncProgressiveBillingToOpenMeterProfile(input: {
     default: profile.default ?? false,
     supplier: profile.supplier,
     workflow: {
-      ...(profile.workflow ?? {}),
+      ...profile.workflow,
+      collection: profile.workflow?.collection ?? buildCollectionSettings(),
       invoicing: {
-        ...(profile.workflow?.invoicing ?? {}),
+        ...profile.workflow?.invoicing,
         progressiveBilling: input.progressiveBilling,
       },
+    },
+  } as Parameters<typeof client.billing.profiles.update>[1]);
+}
+
+/**
+ * Move an existing profile onto anchored daily collection.
+ *
+ * Profiles created before this defaulted to `subscription` alignment, which on
+ * a monthly plan leaves usage in gathering for the whole cycle.
+ */
+export async function syncCollectionAlignmentToOpenMeterProfile(input: {
+  profileId: string;
+  anchor?: Date;
+}): Promise<void> {
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  if (useKonnect) {
+    await updateKonnectBillingProfileCollection({
+      profileId: input.profileId,
+      anchor: input.anchor,
+    });
+    return;
+  }
+
+  const client = getHostedAdminClient();
+  const profile = await client.billing.profiles.get(input.profileId);
+  if (!profile?.id) {
+    throw new Error("OpenMeter billing profile not found");
+  }
+
+  await client.billing.profiles.update(input.profileId, {
+    name: profile.name,
+    default: profile.default ?? false,
+    supplier: profile.supplier,
+    workflow: {
+      ...profile.workflow,
+      collection: buildCollectionSettings(input.anchor),
     },
   } as Parameters<typeof client.billing.profiles.update>[1]);
 }
@@ -657,4 +741,44 @@ export async function upsertAppBillingConfig(
     updatedAt: now,
     ...values,
   });
+}
+
+/**
+ * Pin an end-user OM customer to the shared merchant Custom Invoicing billing
+ * profile (never the org default). Requires OPENMETER_MERCHANT_BILLING_PROFILE_ID.
+ */
+export async function assignMerchantCustomInvoicingProfile(input: {
+  client: OpenMeter;
+  customerId: string;
+  billingProfileId?: string;
+}): Promise<string> {
+  const profileId =
+    input.billingProfileId?.trim() ||
+    process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim();
+  if (!profileId) {
+    throw new Error(
+      "OPENMETER_MERCHANT_BILLING_PROFILE_ID is required to assign merchant Custom Invoicing overrides",
+    );
+  }
+  const useKonnect = shouldUseKonnectRoutes(
+    getHostedOpenMeterUrl(),
+    process.env.OPENMETER_API_KEY,
+  );
+  // The SDK override body (`billingProfileId`) is not rewritten to Konnect's
+  // `billing_profile: { id }`, so on Konnect it returns 200 and changes
+  // nothing — leaving merchant customers on the org default (sandbox) profile
+  // and their invoices out of Custom Invoicing. The Konnect write verifies.
+  if (useKonnect) {
+    await setKonnectCustomerBillingProfile({
+      customerId: input.customerId,
+      billingProfileId: profileId,
+    });
+    return profileId;
+  }
+  await assignCustomerBillingProfileOverride({
+    client: input.client,
+    customerId: input.customerId,
+    billingProfileId: profileId,
+  });
+  return profileId;
 }

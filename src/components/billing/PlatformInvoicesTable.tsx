@@ -2,10 +2,19 @@
 
 import { useMemo, useState } from "react";
 
+import {
+  invoiceLineLedgerDescription,
+  invoiceSummaryLabel,
+} from "@/lib/billing/invoice-line-labels";
+import {
+  mergePlatformInvoiceRows,
+  type PlatformInvoiceDisplayRow,
+} from "@/lib/billing/platform-invoice-rows";
 import { formatInvoicePeriodLabel } from "@/lib/billing/transactions-ledger";
 import { formatBillingUtcDate } from "@/lib/billing-format";
 import { formatUsdMicrosSummary } from "@/lib/format-usd-micros";
 import type { TenantInvoiceDto } from "@/lib/openmeter/invoices";
+import type { OwnerStripeInvoiceItem } from "@/lib/stripe/owner-platform-invoices";
 
 const PAGE_SIZE = 10;
 
@@ -26,19 +35,35 @@ function decimalDollarsToMicros(raw: string | null | undefined): string {
   }
 }
 
-function isZeroInvoice(invoice: TenantInvoiceDto): boolean {
+function isZeroInvoice(invoice: PlatformInvoiceDisplayRow): boolean {
   return decimalDollarsToMicros(invoice.totalAmount) === "0";
 }
 
 /**
- * Human label for an invoice, e.g. `Usage overage · Jul 2026`.
+ * Human label for an invoice, e.g. `Plan change · Jul 2026`.
  * Internal identifiers (`OM-SANDBOX-APP_-1`) never surface as the label —
- * they stay available in the details row.
+ * they stay available in the details row. Uses OpenMeter line kinds when
+ * expanded lines are present so subscription / proration are not mislabeled
+ * as usage overage.
  */
 export function invoiceDisplayLabel(invoice: TenantInvoiceDto): string {
+  if (
+    "source" in invoice &&
+    (invoice as PlatformInvoiceDisplayRow).source === "stripe" &&
+    !(invoice.lines && invoice.lines.length > 0)
+  ) {
+    const period = formatInvoicePeriodLabel(
+      invoice.periodStart,
+      invoice.periodEnd,
+    );
+    return period ? `Stripe receipt · ${period}` : "Stripe receipt";
+  }
   const period = formatInvoicePeriodLabel(invoice.periodStart, invoice.periodEnd);
-  const base = isZeroInvoice(invoice) ? "No charges" : "Usage overage";
-  return period ? `${base} · ${period}` : base;
+  return invoiceSummaryLabel({
+    lines: invoice.lines,
+    totalAmount: invoice.totalAmount,
+    periodLabel: period,
+  });
 }
 
 /** Period covered, e.g. `Jul 1 – Jul 31, 2026`. */
@@ -74,11 +99,17 @@ function statusBadgeClass(status: string): string {
   return "bg-blue-500/15 text-blue-300";
 }
 
-function InvoiceLink({ invoice }: Readonly<{ invoice: TenantInvoiceDto }>) {
+function InvoiceLink({ invoice }: Readonly<{ invoice: PlatformInvoiceDisplayRow }>) {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
 
-  if (!invoice.externalInvoicingId) {
+  const directUrl =
+    invoice.hostedInvoiceUrl?.trim() || invoice.invoicePdf?.trim() || null;
+  const canResolve =
+    Boolean(directUrl) ||
+    (invoice.source === "openmeter" && Boolean(invoice.externalInvoicingId));
+
+  if (!canResolve) {
     return <span className="text-xs text-zinc-600">—</span>;
   }
 
@@ -86,6 +117,11 @@ function InvoiceLink({ invoice }: Readonly<{ invoice: TenantInvoiceDto }>) {
     setState("loading");
     setError(null);
     try {
+      if (directUrl) {
+        globalThis.open(directUrl, "_blank", "noopener,noreferrer");
+        setState("idle");
+        return;
+      }
       const res = await fetch(
         `/api/v1/billing/invoices/${encodeURIComponent(invoice.id)}/hosted-url`,
         { credentials: "same-origin" },
@@ -128,37 +164,56 @@ function InvoiceLink({ invoice }: Readonly<{ invoice: TenantInvoiceDto }>) {
 }
 
 /**
- * Platform (PymtHouse → developer) invoices. Zero-value invoices are hidden by
- * default because a settled cycle emits one per period and they crowd out the
- * rows that actually carry a charge.
+ * Platform (PymtHouse → developer) invoices from OpenMeter, merged with Stripe
+ * paid/open receipts. Zero-value invoices are hidden by default because a
+ * settled cycle emits one per period and they crowd out charge rows.
  */
 export default function PlatformInvoicesTable({
   invoices,
-}: Readonly<{ invoices: TenantInvoiceDto[] }>) {
+  stripeInvoices = [],
+  invoicesDegraded = false,
+}: Readonly<{
+  invoices: TenantInvoiceDto[];
+  stripeInvoices?: OwnerStripeInvoiceItem[];
+  invoicesDegraded?: boolean;
+}>) {
   const [showZero, setShowZero] = useState(false);
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  const merged = useMemo(
+    () => mergePlatformInvoiceRows(invoices, stripeInvoices),
+    [invoices, stripeInvoices],
+  );
+
   const zeroCount = useMemo(
-    () => invoices.filter((invoice) => isZeroInvoice(invoice)).length,
-    [invoices],
+    () => merged.filter((invoice) => isZeroInvoice(invoice)).length,
+    [merged],
   );
   const filtered = useMemo(
-    () => (showZero ? invoices : invoices.filter((inv) => !isZeroInvoice(inv))),
-    [invoices, showZero],
+    () => (showZero ? merged : merged.filter((inv) => !isZeroInvoice(inv))),
+    [merged, showZero],
   );
   const page = filtered.slice(0, visible);
 
-  if (invoices.length === 0) {
+  if (merged.length === 0) {
     return (
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-5 text-sm text-zinc-500">
-        No platform invoices yet.
+        {invoicesDegraded
+          ? "Couldn’t load OpenMeter invoices from the billing service. Refresh in a moment."
+          : "No platform invoices yet."}
       </div>
     );
   }
 
   return (
     <>
+      {invoicesDegraded ? (
+        <p className="mb-3 text-xs text-amber-400/90">
+          OpenMeter invoice list timed out or failed — showing whatever loaded,
+          including Stripe receipts when available.
+        </p>
+      ) : null}
       {zeroCount > 0 ? (
         <label className="mb-3 flex items-center gap-2 text-xs text-zinc-500">
           <input
@@ -194,16 +249,17 @@ export default function PlatformInvoicesTable({
             <tbody>
               {page.map((invoice) => {
                 const micros = decimalDollarsToMicros(invoice.totalAmount);
-                const isOpen = expanded === invoice.id;
+                const rowKey = `${invoice.source}:${invoice.id}`;
+                const isOpen = expanded === rowKey;
                 return [
                   <tr
-                    key={invoice.id}
+                    key={rowKey}
                     className="border-b border-white/[0.04] hover:bg-white/[0.02]"
                   >
                     <td className="px-4 py-3">
                       <button
                         type="button"
-                        onClick={() => setExpanded(isOpen ? null : invoice.id)}
+                        onClick={() => setExpanded(isOpen ? null : rowKey)}
                         aria-expanded={isOpen}
                         className="text-left text-zinc-200 transition-colors hover:text-emerald-400"
                       >
@@ -231,13 +287,24 @@ export default function PlatformInvoicesTable({
                     </td>
                   </tr>,
                   isOpen ? (
-                    <tr key={`${invoice.id}:details`} className="bg-black/20">
+                    <tr
+                      key={`${invoice.source}:${invoice.id}:details`}
+                      className="bg-black/20"
+                    >
                       <td colSpan={6} className="px-4 py-3">
                         <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
                           <div className="flex gap-2">
                             <dt className="text-zinc-500">Invoice ID</dt>
                             <dd className="break-all font-mono text-zinc-400">
                               {invoice.id}
+                            </dd>
+                          </div>
+                          <div className="flex gap-2">
+                            <dt className="text-zinc-500">Source</dt>
+                            <dd className="font-mono text-zinc-400">
+                              {invoice.source === "stripe"
+                                ? "Stripe"
+                                : "OpenMeter"}
                             </dd>
                           </div>
                           {invoice.number ? (
@@ -262,6 +329,30 @@ export default function PlatformInvoicesTable({
                               {invoice.currency}
                             </dd>
                           </div>
+                          {invoice.lines && invoice.lines.length > 0 ? (
+                            <div className="sm:col-span-2 mt-2 border-t border-white/[0.06] pt-2">
+                              <dt className="mb-1 text-zinc-500">Charges</dt>
+                              <dd>
+                                <ul className="space-y-1">
+                                  {invoice.lines.map((line) => (
+                                    <li
+                                      key={line.id}
+                                      className="flex justify-between gap-4 font-mono text-zinc-400"
+                                    >
+                                      <span className="min-w-0 truncate">
+                                        {invoiceLineLedgerDescription(line)}
+                                      </span>
+                                      <span className="shrink-0 tabular-nums text-zinc-300">
+                                        {formatUsdMicrosSummary(
+                                          decimalDollarsToMicros(line.totalAmount),
+                                        )}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </dd>
+                            </div>
+                          ) : null}
                         </dl>
                       </td>
                     </tr>

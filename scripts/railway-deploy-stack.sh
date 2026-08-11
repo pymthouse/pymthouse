@@ -41,5 +41,10 @@ if railway_service_in_environment pymthouse-signer-test "$ENV"; then
   bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse-signer-test "$ENV"
 fi
 
+# Preview-only A/B signer (never production — stack.json previewOnlyServices).
+if railway_service_in_environment pymthouse-signer-test-preview-only "$ENV"; then
+  bash "$ROOT/scripts/railway-deploy-signer.sh" pymthouse-signer-test-preview-only "$ENV"
+fi
+
 echo "=== Stack deploy triggered for $ENV ==="
 echo "After deploy, run a signed-ticket request and confirm collector events in OpenMeter."

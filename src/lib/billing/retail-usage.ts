@@ -23,9 +23,10 @@ export async function loadActiveRetailRatesForApp(
   const paid = activePlans.filter(
     (p) => !p.isNetworkDefault && !p.isStarterDefault && p.type !== "free",
   );
-  const plan = paid.sort(
+  const sortedPaid = paid.toSorted(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  )[0];
+  );
+  const plan = sortedPaid[0];
 
   if (!plan) {
     const fallback = resolveEffectiveRetailRateUsd({

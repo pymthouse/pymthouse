@@ -13,10 +13,123 @@ import {
 
 type CredentialsTarget = "m2m" | "web" | "primary";
 
+type CredentialsOidcResolveResult =
+  | { ok: true; targetOidcRowId: string }
+  | { ok: false; response: NextResponse };
+
 function parseTarget(request: NextRequest): CredentialsTarget {
   const raw = new URL(request.url).searchParams.get("target");
   if (raw === "web" || raw === "m2m" || raw === "primary") return raw;
   return "m2m";
+}
+
+async function resolveCredentialsOidcRowId(
+  app: NonNullable<Awaited<ReturnType<typeof getAuthorizedProviderApp>>>["app"],
+  oidcClientId: string,
+  target: CredentialsTarget,
+): Promise<CredentialsOidcResolveResult> {
+  if (target === "web") {
+    return resolveWebTargetOidcRowId(app);
+  }
+  if (target === "m2m") {
+    return resolveM2mTargetOidcRowId(app, oidcClientId);
+  }
+  return resolvePrimaryTargetOidcRowId(app, oidcClientId);
+}
+
+function resolveWebTargetOidcRowId(
+  app: NonNullable<Awaited<ReturnType<typeof getAuthorizedProviderApp>>>["app"],
+): CredentialsOidcResolveResult {
+  const targetOidcRowId = app.webOidcClientId ?? null;
+  if (!targetOidcRowId) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "confidential_web_not_enabled",
+          error_description:
+            "Enable Confidential web RP on App profile, then generate a secret for the web_ client.",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, targetOidcRowId };
+}
+
+async function resolveM2mTargetOidcRowId(
+  app: NonNullable<Awaited<ReturnType<typeof getAuthorizedProviderApp>>>["app"],
+  oidcClientId: string,
+): Promise<CredentialsOidcResolveResult> {
+  const targetOidcRowId = app.m2mOidcClientId ?? null;
+  if (targetOidcRowId) {
+    return { ok: true, targetOidcRowId };
+  }
+
+  // Legacy: if no M2M, allow rotating primary when it is confidential and no siblings.
+  if (app.webOidcClientId) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "interactive_public_no_secret",
+          error_description:
+            "Public apps cannot hold a client secret. Enable Confidential M2M backend for machine credentials, or use ?target=web for the confidential web RP.",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const primaryRows = await db
+    .select()
+    .from(oidcClients)
+    .where(eq(oidcClients.id, oidcClientId))
+    .limit(1);
+  const primary = primaryRows[0];
+  if (!primary) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "OIDC client not found" },
+        { status: 500 },
+      ),
+    };
+  }
+  if (primary.tokenEndpointAuthMethod === "none") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "interactive_public_no_secret",
+          error_description:
+            "Public apps cannot hold a client secret. Enable Confidential M2M backend for machine credentials, or Confidential web RP for portal SSO (auth code + secret + redirects).",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, targetOidcRowId: oidcClientId };
+}
+
+function resolvePrimaryTargetOidcRowId(
+  app: NonNullable<Awaited<ReturnType<typeof getAuthorizedProviderApp>>>["app"],
+  oidcClientId: string,
+): CredentialsOidcResolveResult {
+  if (app.m2mOidcClientId || app.webOidcClientId) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "public_client_no_secret",
+          error_description:
+            "The public app_ client cannot hold a secret while a confidential sibling exists. Use ?target=m2m or ?target=web.",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, targetOidcRowId: oidcClientId };
 }
 
 export async function POST(
@@ -48,72 +161,11 @@ export async function POST(
   }
 
   const target = parseTarget(request);
-  let targetOidcRowId: string | null = null;
-
-  if (target === "web") {
-    targetOidcRowId = app.webOidcClientId ?? null;
-    if (!targetOidcRowId) {
-      return NextResponse.json(
-        {
-          error: "confidential_web_not_enabled",
-          error_description:
-            "Enable Confidential web RP on App profile, then generate a secret for the web_ client.",
-        },
-        { status: 400 },
-      );
-    }
-  } else if (target === "m2m") {
-    targetOidcRowId = app.m2mOidcClientId ?? null;
-    if (!targetOidcRowId) {
-      // Legacy: if no M2M, allow rotating primary when it is confidential and no siblings.
-      if (app.webOidcClientId) {
-        return NextResponse.json(
-          {
-            error: "interactive_public_no_secret",
-            error_description:
-              "Public apps cannot hold a client secret. Enable Confidential M2M backend for machine credentials, or use ?target=web for the confidential web RP.",
-          },
-          { status: 400 },
-        );
-      }
-      const primaryRows = await db
-        .select()
-        .from(oidcClients)
-        .where(eq(oidcClients.id, app.oidcClientId))
-        .limit(1);
-      const primary = primaryRows[0];
-      if (!primary) {
-        return NextResponse.json(
-          { error: "OIDC client not found" },
-          { status: 500 },
-        );
-      }
-      if (primary.tokenEndpointAuthMethod === "none") {
-        return NextResponse.json(
-          {
-            error: "interactive_public_no_secret",
-            error_description:
-              "Public apps cannot hold a client secret. Enable Confidential M2M backend for machine credentials, or Confidential web RP for portal SSO (auth code + secret + redirects).",
-          },
-          { status: 400 },
-        );
-      }
-      targetOidcRowId = app.oidcClientId;
-    }
-  } else {
-    // target === primary — only when no confidential siblings
-    if (app.m2mOidcClientId || app.webOidcClientId) {
-      return NextResponse.json(
-        {
-          error: "public_client_no_secret",
-          error_description:
-            "The public app_ client cannot hold a secret while a confidential sibling exists. Use ?target=m2m or ?target=web.",
-        },
-        { status: 400 },
-      );
-    }
-    targetOidcRowId = app.oidcClientId;
+  const resolved = await resolveCredentialsOidcRowId(app, app.oidcClientId, target);
+  if (!resolved.ok) {
+    return resolved.response;
   }
+  const targetOidcRowId = resolved.targetOidcRowId;
 
   const clientRows = await db
     .select()

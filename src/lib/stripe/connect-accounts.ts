@@ -2,6 +2,7 @@
  * Stripe Connected Accounts helpers for merchant billing (hybrid: OM meters, Connect charges).
  * Uses platform STRIPE_SECRET_KEY. Direct charges on acct_… with optional application fee.
  */
+import { appSettingsAbsoluteUrl } from "@/lib/apps/settings-paths";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
 export type StripeOnboardingMethod = "account_link" | "oauth";
@@ -13,10 +14,110 @@ export type ConnectedAccountStatus = {
   detailsSubmitted: boolean;
 };
 
+/**
+ * KYC-verified merchant identity from the connected account — the supplier on
+ * merchant OpenMeter invoices. Stripe never shares the tax id value itself.
+ */
+export type ConnectedAccountIdentity = {
+  country: string | null;
+  legalName: string | null;
+  businessType: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  addressCity: string | null;
+  addressState: string | null;
+  addressPostalCode: string | null;
+  taxIdProvided: boolean;
+  detailsSubmitted: boolean;
+};
+
+type StripeAddress = {
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+};
+
+type StripeAccountIdentityShape = {
+  id?: string;
+  country?: string | null;
+  business_type?: string | null;
+  details_submitted?: boolean;
+  business_profile?: { name?: string | null } | null;
+  company?: {
+    name?: string | null;
+    address?: StripeAddress | null;
+    tax_id_provided?: boolean;
+    vat_id_provided?: boolean;
+  } | null;
+  individual?: {
+    first_name?: string | null;
+    last_name?: string | null;
+    address?: StripeAddress | null;
+  } | null;
+  settings?: { dashboard?: { display_name?: string | null } | null } | null;
+};
+
+function trimmedOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function resolveLegalName(account: StripeAccountIdentityShape): string | null {
+  const individualName = [
+    trimmedOrNull(account.individual?.first_name),
+    trimmedOrNull(account.individual?.last_name),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return (
+    trimmedOrNull(account.company?.name) ??
+    (individualName || null) ??
+    trimmedOrNull(account.business_profile?.name) ??
+    trimmedOrNull(account.settings?.dashboard?.display_name)
+  );
+}
+
+function mapAccountIdentity(
+  account: StripeAccountIdentityShape,
+): ConnectedAccountIdentity {
+  const address = account.company?.address ?? account.individual?.address ?? null;
+  return {
+    country: trimmedOrNull(account.country)?.toUpperCase() ?? null,
+    legalName: resolveLegalName(account),
+    businessType: trimmedOrNull(account.business_type),
+    addressLine1: trimmedOrNull(address?.line1),
+    addressLine2: trimmedOrNull(address?.line2),
+    addressCity: trimmedOrNull(address?.city),
+    addressState: trimmedOrNull(address?.state),
+    addressPostalCode: trimmedOrNull(address?.postal_code),
+    taxIdProvided: Boolean(
+      account.company?.tax_id_provided || account.company?.vat_id_provided,
+    ),
+    detailsSubmitted: Boolean(account.details_submitted),
+  };
+}
+
+export async function fetchConnectedAccountIdentity(
+  accountId: string,
+): Promise<ConnectedAccountIdentity> {
+  const account = await stripeFormRequest<StripeAccountIdentityShape>({
+    method: "GET",
+    path: `/v1/accounts/${encodeURIComponent(accountId)}`,
+  });
+  return mapAccountIdentity(account);
+}
+
+/** Exported for tests. */
+export const __testMapAccountIdentity = mapAccountIdentity;
+
 function requireStripeSecretKey(): string {
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key || !key.startsWith("sk_")) {
+  if (!key?.startsWith("sk_")) {
     throw new Error(
       "STRIPE_SECRET_KEY is required for Stripe Connect (must be sk_… platform key)",
     );
@@ -307,6 +408,57 @@ export async function createConnectedCustomer(input: {
   return customer.id;
 }
 
+function addCheckoutMetadata(
+  body: URLSearchParams,
+  metadata: Record<string, string> | undefined,
+  prefix = "metadata",
+): void {
+  for (const [key, value] of Object.entries(metadata ?? {})) {
+    if (key.trim() && value.trim()) {
+      body.set(`${prefix}[${key.trim()}]`, value.trim());
+    }
+  }
+}
+
+function addSetupCheckoutFields(
+  body: URLSearchParams,
+  metadata: Record<string, string> | undefined,
+): void {
+  body.set("payment_method_types[0]", "card");
+  addCheckoutMetadata(body, metadata, "setup_intent_data[metadata]");
+}
+
+function addPaymentCheckoutFields(
+  body: URLSearchParams,
+  input: {
+    amountCents?: number;
+    currency?: string;
+    productName?: string;
+    applicationFeeBps?: number;
+  },
+): void {
+  const amount = input.amountCents;
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
+    throw new Error("amountCents must be a positive integer for payment mode");
+  }
+  body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
+  body.set("line_items[0][price_data][unit_amount]", String(amount));
+  body.set(
+    "line_items[0][price_data][product_data][name]",
+    input.productName ?? "Subscription",
+  );
+  body.set("line_items[0][quantity]", "1");
+  const fee = applicationFeeAmountCents({
+    amountCents: amount,
+    applicationFeeBps: input.applicationFeeBps ?? 0,
+  });
+  if (fee > 0) {
+    body.set("payment_intent_data[application_fee_amount]", String(fee));
+  }
+  // Save the card on the Connect customer for later subscription / usage debit.
+  body.set("payment_intent_data[setup_future_usage]", "off_session");
+}
+
 export async function createConnectedCheckoutSession(input: {
   accountId: string;
   customerId: string;
@@ -327,32 +479,11 @@ export async function createConnectedCheckoutSession(input: {
   body.set("success_url", input.successUrl);
   body.set("cancel_url", input.cancelUrl);
   if (mode === "setup") {
-    body.set("payment_method_types[0]", "card");
+    addSetupCheckoutFields(body, input.metadata);
   } else {
-    const amount = input.amountCents;
-    if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
-      throw new Error("amountCents must be a positive integer for payment mode");
-    }
-    body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
-    body.set("line_items[0][price_data][unit_amount]", String(amount));
-    body.set(
-      "line_items[0][price_data][product_data][name]",
-      input.productName ?? "Subscription",
-    );
-    body.set("line_items[0][quantity]", "1");
-    const fee = applicationFeeAmountCents({
-      amountCents: amount,
-      applicationFeeBps: input.applicationFeeBps ?? 0,
-    });
-    if (fee > 0) {
-      body.set("payment_intent_data[application_fee_amount]", String(fee));
-    }
+    addPaymentCheckoutFields(body, input);
   }
-  for (const [key, value] of Object.entries(input.metadata ?? {})) {
-    if (key.trim() && value.trim()) {
-      body.set(`metadata[${key.trim()}]`, value.trim());
-    }
-  }
+  addCheckoutMetadata(body, input.metadata);
   const session = await stripeFormRequest<{ id?: string; url?: string }>({
     method: "POST",
     path: "/v1/checkout/sessions",
@@ -471,10 +602,13 @@ export function connectAccountLinkUrls(clientId: string): {
   returnUrl: string;
 } {
   const origin = getPublicOrigin();
-  const base = `${origin}/apps/${encodeURIComponent(clientId)}/settings?tab=payments`;
   return {
-    refreshUrl: `${base}&connect=refresh`,
-    returnUrl: `${base}&connected=1`,
+    refreshUrl: appSettingsAbsoluteUrl(origin, clientId, "payments", {
+      connect: "refresh",
+    }),
+    returnUrl: appSettingsAbsoluteUrl(origin, clientId, "payments", {
+      connected: "1",
+    }),
   };
 }
 

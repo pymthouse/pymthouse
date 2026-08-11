@@ -415,11 +415,14 @@ export async function getStripeConnectStatus(clientId: string) {
   const accountId = config?.stripeConnectedAccountId?.trim() || null;
   // Merchant Connect only — do not treat legacy OpenMeter Stripe-app installs
   // (stripe_connect_status=connected, no acct_…) as merchant-ready.
-  const status = accountId
-    ? config?.stripeChargesEnabled
-      ? "connected"
-      : "pending"
-    : "disconnected";
+  let status: "connected" | "pending" | "disconnected";
+  if (!accountId) {
+    status = "disconnected";
+  } else if (config?.stripeChargesEnabled) {
+    status = "connected";
+  } else {
+    status = "pending";
+  }
 
   const openmeterStripeAppId = config?.openmeterStripeAppId ?? null;
   const openmeterBillingProfileId = config?.openmeterBillingProfileId ?? null;
@@ -428,8 +431,11 @@ export async function getStripeConnectStatus(clientId: string) {
     openmeterStripeAppId?.trim() && openmeterBillingProfileId?.trim(),
   );
 
-  const { resolveAppActivation, DEFAULT_END_USER_CAP } = await import(
+  const { resolveAppActivation } = await import(
     "@/lib/activation/app-activation"
+  );
+  const { platformDefaultEndUserCap } = await import(
+    "@/lib/billing/platform-billing-defaults"
   );
   let activation = null;
   try {
@@ -437,6 +443,10 @@ export async function getStripeConnectStatus(clientId: string) {
   } catch {
     activation = null;
   }
+
+  const { supplierStatusPayload } = await import(
+    "@/lib/openmeter/supplier-sync"
+  );
 
   return {
     status,
@@ -446,7 +456,8 @@ export async function getStripeConnectStatus(clientId: string) {
     defaultCurrency: config?.defaultCurrency ?? "USD",
     connectedAt: config?.connectedAt ?? null,
     progressiveBilling: config?.progressiveBilling ?? true,
-    invoiceThresholdUsdMicros: config?.invoiceThresholdUsdMicros ?? null,
+    invoiceLeadUsdMicros: config?.invoiceLeadUsdMicros ?? null,
+    softNegativeUsdMicros: config?.softNegativeUsdMicros ?? null,
     stripeConnectedAccountId: accountId,
     stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
     stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
@@ -455,7 +466,8 @@ export async function getStripeConnectStatus(clientId: string) {
     applicationFeeBps: config?.applicationFeeBps ?? 0,
     connectPaymentsOnly: config?.connectPaymentsOnly ?? false,
     billingMode: config?.billingMode === "merchant" ? "merchant" : "owner_rollup",
-    endUserCap: config?.endUserCap ?? DEFAULT_END_USER_CAP,
+    endUserCap: config?.endUserCap ?? platformDefaultEndUserCap(),
     activation,
+    ...supplierStatusPayload(config ?? {}),
   };
 }

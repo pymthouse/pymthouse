@@ -1,7 +1,8 @@
 import { defineRouteMetadata } from "@/lib/openapi/route-metadata";
 import {
-  PublicClientIdPathParamSchema,
   ExternalUserIdParamSchema,
+  OAuthErrorSchema,
+  PublicClientIdPathParamSchema,
 } from "@/lib/openapi/schemas/common";
 import {
   builderErrorResponses,
@@ -14,6 +15,18 @@ import { z } from "@/lib/openapi/zod";
 
 const clientId = PublicClientIdPathParamSchema;
 const externalUserId = ExternalUserIdParamSchema;
+
+/** 502/503 shape from `walletUpstreamErrorResponse` (`{ error: string }`). */
+const walletUpstreamErrorResponses = {
+  502: {
+    description: "Billing provider request failed",
+    content: { "application/json": { schema: OAuthErrorSchema } },
+  },
+  503: {
+    description: "Billing is not available right now",
+    content: { "application/json": { schema: OAuthErrorSchema } },
+  },
+} as const;
 
 function appPath(suffix: string) {
   return `/api/v1/apps/{clientId}${suffix}`;
@@ -29,8 +42,43 @@ function userPath(suffix: string) {
 
 const m2mSecurity: Array<Record<string, string[]>> = [{ m2mBasic: [] }];
 
+const ownerBillingConfirmBody = z
+  .object({
+    confirm: z.literal(true).openapi({
+      description: "Must be true to perform the mutation.",
+    }),
+  })
+  .openapi("OwnerBillingConfirmBody");
+
+const ownerBillingSubscriptionPutBody = z
+  .object({
+    planKey: z.string().min(1).openapi({
+      description: "Owner Paid plan key to upgrade or switch to.",
+    }),
+    confirm: z.literal(true).openapi({
+      description: "Must be true to perform the mutation.",
+    }),
+  })
+  .openapi("OwnerBillingSubscriptionPutBody");
+
+const ownerPaymentMethodSetupBody = z
+  .object({
+    successUrl: z.url().optional(),
+    cancelUrl: z.url().optional(),
+  })
+  .openapi("OwnerPaymentMethodSetupBody");
+
+const ownerPaymentMethodIdBody = z
+  .object({
+    paymentMethodId: z.string().min(1).openapi({
+      description:
+        "Stripe payment method id. Also accepted as query `id` on PATCH/DELETE.",
+    }),
+  })
+  .openapi("OwnerPaymentMethodIdBody");
+
 type MetadataRoute = [
-  method: "get" | "post" | "put" | "delete",
+  method: "get" | "post" | "put" | "patch" | "delete",
   path: string,
   tag: string,
   summary: string,
@@ -38,6 +86,7 @@ type MetadataRoute = [
     includeExternalUserId?: boolean;
     /** Also document 201 Created (upsert/create handlers). */
     created?: boolean;
+    body?: z.ZodTypeAny;
   },
 ];
 
@@ -51,6 +100,15 @@ function registerMetadataRoutes(routes: MetadataRoute[]): void {
         params: options?.includeExternalUserId
           ? z.object({ clientId, externalUserId })
           : z.object({ clientId }),
+        ...(options?.body
+          ? {
+              body: {
+                content: {
+                  "application/json": { schema: options.body },
+                },
+              },
+            }
+          : {}),
       },
       responses: {
         200: jsonSuccess,
@@ -103,7 +161,45 @@ registerMetadataRoutes([
   ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", { includeExternalUserId: true }],
   ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", { includeExternalUserId: true }],
   ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
+  [
+    "get",
+    userPath("/invoices"),
+    OPENAPI_TAGS.billing,
+    "List end-user invoices",
+    { includeExternalUserId: true },
+  ],
+  [
+    "get",
+    userPath("/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "List end-user payment methods",
+    { includeExternalUserId: true },
+  ],
+  [
+    "post",
+    userPath("/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Start end-user payment-method setup",
+    { includeExternalUserId: true, body: ownerPaymentMethodSetupBody },
+  ],
 ]);
+
+defineRouteMetadata("get", userPath("/invoices/{invoiceId}/hosted-url"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Get end-user invoice hosted URL",
+  security: m2mSecurity,
+  request: {
+    params: z.object({
+      clientId,
+      externalUserId,
+      invoiceId: z.string().min(1).openapi({
+        param: { name: "invoiceId", in: "path" },
+        description: "OpenMeter invoice id.",
+      }),
+    }),
+  },
+  responses: { 200: jsonSuccess, ...builderErrorResponses },
+});
 
 const usageQueryParams = z.object({
   ...usageDateRangeQueryParams,
@@ -163,9 +259,248 @@ defineRouteMetadata("get", builderAppPath("/usage/balance"), {
 registerMetadataRoutes([
   ["get", appPath("/billing"), OPENAPI_TAGS.billing, "Billing profile"],
   ["post", appPath("/billing/checkout"), OPENAPI_TAGS.billing, "Create billing checkout"],
+  [
+    "get",
+    appPath("/billing/tiers"),
+    OPENAPI_TAGS.billing,
+    "List Owner Paid tiers",
+  ],
+  [
+    "get",
+    appPath("/billing/subscription"),
+    OPENAPI_TAGS.billing,
+    "Owner subscription switching status",
+  ],
+  [
+    "put",
+    appPath("/billing/subscription"),
+    OPENAPI_TAGS.billing,
+    "Upgrade or change Owner Paid plan",
+    { body: ownerBillingSubscriptionPutBody },
+  ],
+  [
+    "delete",
+    appPath("/billing/subscription"),
+    OPENAPI_TAGS.billing,
+    "Schedule Starter downgrade",
+    { body: ownerBillingConfirmBody },
+  ],
+  [
+    "delete",
+    appPath("/billing/subscription/pending-change"),
+    OPENAPI_TAGS.billing,
+    "Cancel pending Starter downgrade",
+    { body: ownerBillingConfirmBody },
+  ],
+  [
+    "get",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "List owner payment methods",
+  ],
+  [
+    "post",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Start owner payment-method setup",
+    { body: ownerPaymentMethodSetupBody },
+  ],
+  [
+    "patch",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Set default owner payment method",
+    { body: ownerPaymentMethodIdBody },
+  ],
+  [
+    "delete",
+    appPath("/billing/payment-methods"),
+    OPENAPI_TAGS.billing,
+    "Unlink owner payment method",
+    { body: ownerPaymentMethodIdBody },
+  ],
   ["get", appPath("/plans"), OPENAPI_TAGS.billing, "List plans"],
   ["get", appPath("/discovery-profiles"), OPENAPI_TAGS.discovery, "List discovery profiles"],
 ]);
+
+defineRouteMetadata("get", appPath("/billing/state"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Get billing state",
+  description:
+    "M2M Basic only. Canonical spend posture for a subject: `status` " +
+    "(active | overage | at_risk | blocked), `canSpend`, a `reason` when " +
+    "blocked, the funding ladder (prepaid credits, included plan usage, " +
+    "overage ceiling and unbilled debt), and how collection happens. " +
+    "Merchant apps require `externalUserId`; owner rollup apps may pass one " +
+    "to scope unbilled debt to a single subject.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    query: z.object({
+      externalUserId: z
+        .string()
+        .optional()
+        .openapi({ param: { name: "externalUserId", in: "query" } }),
+    }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("post", appPath("/billing/collect"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Collect unbilled usage now",
+  description:
+    "M2M Basic only. Raises an invoice for the subject's unbilled usage " +
+    "instead of waiting for the automatic trigger or the daily collection " +
+    "sweep. Idempotent within a short cooldown: repeat calls return " +
+    "`rate_limited` with the current state rather than duplicate invoices. " +
+    "Debt below the minimum charge returns `skipped`. Responds with " +
+    "`outcome`, `invoiceIds` and the refreshed `billingState`.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            externalUserId: z.string().optional().openapi({
+              description:
+                "Subject to collect for. Required for merchant apps.",
+            }),
+          }),
+        },
+      },
+      required: false,
+    },
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+
+// Owner prepaid wallet (threshold-only Pay-Per-Use, issue #398).
+defineRouteMetadata("get", appPath("/billing/wallet"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Owner prepaid wallet summary",
+  description:
+    "M2M Basic only. Prepaid credit balance, default payment-method status, " +
+    "the embedded `billingState`, and all active Pay-Per-Use plans with " +
+    "resolved settlement behavior (credits first, then auto-debit at the " +
+    "threshold).",
+  security: m2mSecurity,
+  request: { params: z.object({ clientId }) },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("post", appPath("/billing/wallet/top-up"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Create balance top-up checkout",
+  description:
+    "M2M Basic only. Creates a Stripe Checkout (payment mode) session that credits the " +
+    "owner's prepaid balance on completion. Body: `amountUsd` ($1–$10,000), optional " +
+    "`successUrl` / `cancelUrl` (https, or http for localhost).",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            amountUsd: z.union([z.string(), z.number()]).openapi({
+              description: "Top-up amount in USD, e.g. `25` or `\"25.00\"`.",
+            }),
+            successUrl: z.string().optional().openapi({
+              description: "Redirect after a paid Checkout (https or localhost).",
+            }),
+            cancelUrl: z.string().optional().openapi({
+              description: "Redirect after a cancelled Checkout (https or localhost).",
+            }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("get", appPath("/billing/wallet/invoices"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "List owner wallet invoices",
+  description:
+    "M2M Basic only. Past platform invoices for the app owner, newest first. " +
+    "Query: `page` (default 1), `pageSize` (default 20, max 100).",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    query: z.object({
+      page: z.string().optional().openapi({ param: { name: "page", in: "query" } }),
+      pageSize: z
+        .string()
+        .optional()
+        .openapi({ param: { name: "pageSize", in: "query" } }),
+    }),
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("get", appPath("/billing/wallet/payment-methods"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "List owner payment methods",
+  description:
+    "M2M Basic only. Payment methods on file for the app owner, with the default flagged.",
+  security: m2mSecurity,
+  request: { params: z.object({ clientId }) },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("post", appPath("/billing/wallet/payment-methods"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Add owner payment method",
+  description:
+    "M2M Basic only. Creates a Stripe Checkout (setup mode) session to save a new default " +
+    "payment method for auto-debit. Body: optional `successUrl` / `cancelUrl`.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            successUrl: z.string().optional().openapi({
+              description: "Redirect after Checkout completes.",
+            }),
+            cancelUrl: z.string().optional().openapi({
+              description: "Redirect after Checkout is cancelled.",
+            }),
+          }),
+        },
+      },
+      required: false,
+    },
+  },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
 
 defineRouteMetadata("get", "/api/v1/apps/{clientId}/discovery-profiles/{profileId}", {
   tags: [OPENAPI_TAGS.discovery],

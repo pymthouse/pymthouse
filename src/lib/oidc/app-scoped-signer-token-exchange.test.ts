@@ -204,7 +204,8 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
         signerUrlAppId = appClientId ?? undefined;
         return "https://signer.example";
       },
-      getSignerDiscoveryUrl: () => "https://discovery.example/v1/discovery",
+      getSignerDiscoveryUrl: () =>
+        "https://signer.example/discover-orchestrators",
     },
   );
 
@@ -213,10 +214,62 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
   assert.equal(session.correlation_id, "corr-1");
   assert.equal(session.balanceUsdMicros, "1000000");
   assert.equal(session.signer_url, "https://signer.example");
-  assert.equal(session.discovery_url, "https://discovery.example/v1/discovery");
+  assert.equal(
+    session.discovery_url,
+    "https://signer.example/discover-orchestrators",
+  );
   // Signer version is selected per app: the subject's public client id must flow
   // into getClientSignerApiUrl so LATEST_SIGNER_APPS routing applies.
   assert.equal(signerUrlAppId, PUBLIC_ID);
+});
+
+test("handleAppScopedSignerTokenExchange accepts discovery_url and caps overrides", async () => {
+  const session = await handleAppScopedSignerTokenExchange(
+    {
+      publicClientId: PUBLIC_ID,
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: "pmth_abc123",
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-override",
+      discovery_url: "https://custom.example/discover-orchestrators",
+      caps: [" live-video-to-video/streamdiffusion ", "text-to-image/flux"],
+    },
+    {
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async () => ({
+        access_token: "eyJ.signer.jwt",
+        token_type: "Bearer" as const,
+        expires_in: 300,
+        scope: "sign:job",
+        balanceUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      }),
+      getClientSignerApiUrl: () => "https://signer.example",
+      getSignerDiscoveryUrl: () =>
+        "https://signer.example/discover-orchestrators",
+    },
+  );
+
+  assert.equal(
+    session.discovery_url,
+    "https://custom.example/discover-orchestrators",
+  );
+  assert.deepEqual(session.caps, [
+    "live-video-to-video/streamdiffusion",
+    "text-to-image/flux",
+  ]);
 });
 
 test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope", async () => {
@@ -323,6 +376,10 @@ test("handleIssuerApiKeySignerTokenExchange resolves app from bare pmth_ subject
   assert.equal(session.token_type, "Bearer");
   assert.equal(session.issued_token_type, SUBJECT_ACCESS_TOKEN_TYPE);
   assert.equal(session.correlation_id, "corr-issuer");
+  assert.equal(
+    session.discovery_url,
+    "https://signer.example/discover-orchestrators",
+  );
 });
 
 test("handleIssuerApiKeySignerTokenExchange rejects unknown bare key", async () => {

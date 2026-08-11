@@ -4,10 +4,19 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import {
+  classifyInvoiceLineKind,
+  type InvoiceLineSummary,
+} from "@/lib/billing/invoice-line-labels";
+import {
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
 } from "@/lib/openmeter/customer-key";
-import { listTenantCustomerIds } from "./customers";
+import { buildOpenMeterCustomerKey } from "./customer-key";
+import {
+  findOpenMeterCustomerByKey,
+  listTenantCustomerIds,
+} from "./customers";
+import { resolveOpenMeterMeterClientId } from "./meter-client-id";
 
 /**
  * Invoice line rounding policy:
@@ -36,7 +45,127 @@ export type TenantInvoiceDto = {
    * via `retrievePlatformInvoiceLinks`.
    */
   externalInvoicingId?: string;
+  /** OpenMeter invoice type (`standard` | `credit_note`). */
+  invoiceType?: string;
+  /** Expanded charge lines when `expand=lines` is available. */
+  lines?: InvoiceLineSummary[];
 };
+
+type OmInvoiceLineLike = {
+  id?: string;
+  name?: string;
+  description?: string;
+  type?: string;
+  category?: string;
+  managedBy?: string;
+  totals?: { total?: string | number | null } | null;
+  period?: { from?: Date | string | null; to?: Date | string | null } | null;
+  children?: OmInvoiceLineLike[] | null;
+};
+
+function periodIso(
+  value: Date | string | null | undefined,
+): string | undefined {
+  if (!value) return undefined;
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+function mapOmLineToSummary(
+  line: OmInvoiceLineLike,
+  fallbackId: string,
+): InvoiceLineSummary {
+  const id = typeof line.id === "string" && line.id.trim() ? line.id : fallbackId;
+  const name =
+    typeof line.name === "string" && line.name.trim()
+      ? line.name.trim()
+      : "Charge";
+  return {
+    id,
+    name,
+    description:
+      typeof line.description === "string" ? line.description : undefined,
+    totalAmount: String(line.totals?.total ?? "0"),
+    kind: classifyInvoiceLineKind({
+      name,
+      description: line.description,
+      type: line.type,
+      category: line.category,
+      managedBy: line.managedBy,
+    }),
+    periodStart: periodIso(line.period?.from ?? null),
+    periodEnd: periodIso(line.period?.to ?? null),
+  };
+}
+
+/**
+ * Flatten OpenMeter invoice lines: prefer detailed `children` (flat fees /
+ * proration) when present, otherwise the parent usage-based line.
+ */
+export function mapOpenMeterInvoiceLines(
+  rawLines: unknown,
+): InvoiceLineSummary[] {
+  if (!Array.isArray(rawLines)) return [];
+  const out: InvoiceLineSummary[] = [];
+  let index = 0;
+  for (const raw of rawLines) {
+    if (!raw || typeof raw !== "object") continue;
+    const line = raw as OmInvoiceLineLike;
+    const children = Array.isArray(line.children) ? line.children : [];
+    if (children.length > 0) {
+      for (const child of children) {
+        if (!child || typeof child !== "object") continue;
+        out.push(mapOmLineToSummary(child, `line-${index}`));
+        index += 1;
+      }
+      continue;
+    }
+    out.push(mapOmLineToSummary(line, `line-${index}`));
+    index += 1;
+  }
+  return out;
+}
+
+function invoiceScalarString(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
+function mapInvoiceRecord(inv: {
+  id: string;
+  number?: string | null;
+  status?: unknown;
+  currency?: unknown;
+  totals?: { total?: unknown } | null;
+  customer?: { id?: string; key?: string } | null;
+  issuedAt?: Date | null;
+  period?: { from?: Date | null; to?: Date | null } | null;
+  externalIds?: { invoicing?: string | null } | null;
+  type?: unknown;
+  lines?: unknown;
+}): TenantInvoiceDto {
+  const invoiceType =
+    inv.type == null ? undefined : invoiceScalarString(inv.type, "");
+  return {
+    id: inv.id,
+    number: inv.number ?? undefined,
+    status: invoiceScalarString(inv.status, "unknown"),
+    currency: invoiceScalarString(inv.currency, "USD"),
+    totalAmount: invoiceScalarString(inv.totals?.total, "0"),
+    customerId: inv.customer?.id,
+    customerKey: inv.customer?.key,
+    issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
+    periodStart: inv.period?.from?.toISOString?.() ?? undefined,
+    periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
+    externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
+    invoiceType: invoiceType || undefined,
+    lines: mapOpenMeterInvoiceLines(inv.lines),
+  };
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -130,21 +259,10 @@ async function listInvoicesForCustomerIds(input: {
       pageSize: 100,
       order: "DESC",
       orderBy: "createdAt",
+      expand: ["lines"],
     });
     for (const inv of result?.items ?? []) {
-      allItems.push({
-        id: inv.id,
-        number: inv.number ?? undefined,
-        status: String(inv.status ?? "unknown"),
-        currency: String(inv.currency ?? "USD"),
-        totalAmount: String(inv.totals?.total ?? "0"),
-        customerId: inv.customer?.id,
-        customerKey: inv.customer?.key,
-        issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
-        periodStart: inv.period?.from?.toISOString?.() ?? undefined,
-        periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
-        externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
-      });
+      allItems.push(mapInvoiceRecord(inv));
     }
   }
 
@@ -207,6 +325,44 @@ export async function listOwnerWalletInvoices(input: {
   });
 }
 
+async function findInvoiceInCustomerChunk(input: {
+  client: OpenMeter;
+  customers: string[];
+  allowedCustomerIds: string[];
+  invoiceId: string;
+}): Promise<TenantInvoiceDto | null | undefined> {
+  let page = 1;
+  for (;;) {
+    let result: Awaited<ReturnType<typeof input.client.billing.invoices.list>>;
+    try {
+      result = await input.client.billing.invoices.list({
+        customers: input.customers,
+        page,
+        pageSize: 100,
+        order: "DESC",
+        orderBy: "createdAt",
+        expand: ["lines"],
+      });
+    } catch {
+      return null;
+    }
+    const items = result?.items ?? [];
+    const match = items.find((inv) => inv.id === input.invoiceId);
+    if (match?.id) {
+      const invoiceCustomerId = match.customer?.id?.trim();
+      if (
+        invoiceCustomerId &&
+        input.allowedCustomerIds.includes(invoiceCustomerId)
+      ) {
+        return mapInvoiceRecord(match);
+      }
+      return null;
+    }
+    if (items.length < 100 || page >= 50) return undefined;
+    page += 1;
+  }
+}
+
 /**
  * Fetch one platform invoice by id, only when it belongs to the owner's wallet
  * customers. Avoids the page-size cap on {@link listOwnerWalletInvoices}.
@@ -225,30 +381,116 @@ export async function getOwnerWalletInvoice(input: {
   );
   if (customerIds.length === 0) return null;
 
-  let inv: Awaited<ReturnType<typeof input.client.billing.invoices.get>>;
-  try {
-    inv = await input.client.billing.invoices.get(invoiceId);
-  } catch {
-    return null;
-  }
-  if (!inv?.id) return null;
-
-  const invoiceCustomerId = inv.customer?.id?.trim();
-  if (!invoiceCustomerId || !customerIds.includes(invoiceCustomerId)) {
-    return null;
+  for (const idChunk of chunk(customerIds, 50)) {
+    const found = await findInvoiceInCustomerChunk({
+      client: input.client,
+      customers: idChunk,
+      allowedCustomerIds: customerIds,
+      invoiceId,
+    });
+    if (found !== undefined) return found;
   }
 
-  return {
-    id: inv.id,
-    number: inv.number ?? undefined,
-    status: String(inv.status ?? "unknown"),
-    currency: String(inv.currency ?? "USD"),
-    totalAmount: String(inv.totals?.total ?? "0"),
-    customerId: inv.customer?.id,
-    customerKey: inv.customer?.key,
-    issuedAt: inv.issuedAt?.toISOString?.() ?? undefined,
-    periodStart: inv.period?.from?.toISOString?.() ?? undefined,
-    periodEnd: inv.period?.to?.toISOString?.() ?? undefined,
-    externalInvoicingId: inv.externalIds?.invoicing ?? undefined,
-  };
+  return null;
+}
+
+/**
+ * Lookup-only end-user customer for invoice/PM reads.
+ * Always uses compound `{publicClientId}:{externalUserId}` — never the owner
+ * wallet path from {@link ensureOpenMeterCustomerForAppUser}.
+ */
+async function lookupAppUserCustomer(input: {
+  client: OpenMeter;
+  clientId: string;
+  externalUserId: string;
+}): Promise<{ id: string; key: string } | null> {
+  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
+  const externalUserId = input.externalUserId.trim();
+  if (!publicClientId || !externalUserId) {
+    return null;
+  }
+  const key = buildOpenMeterCustomerKey(publicClientId, externalUserId);
+  const existing = await findOpenMeterCustomerByKey(input.client, key);
+  const id = existing?.id?.trim();
+  if (!id) {
+    return null;
+  }
+  return { id, key };
+}
+
+/**
+ * End-user invoices for one app user (`{publicClientId}:{externalUserId}`).
+ * Lookup-only — does not create customers or resolve owner wallets.
+ */
+export async function listAppUserInvoices(input: {
+  client: OpenMeter;
+  clientId: string;
+  externalUserId: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<{
+  items: TenantInvoiceDto[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}> {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 20;
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return { items: [], page, pageSize, totalCount: 0 };
+  }
+
+  const customer = await lookupAppUserCustomer({
+    client: input.client,
+    clientId,
+    externalUserId,
+  });
+  if (!customer) {
+    return { items: [], page, pageSize, totalCount: 0 };
+  }
+
+  return listInvoicesForCustomerIds({
+    client: input.client,
+    customerIds: [customer.id],
+    page,
+    pageSize,
+  });
+}
+
+/**
+ * Fetch one invoice by id, only when it belongs to this app user's customer.
+ * Lookup-only — does not create customers or resolve owner wallets.
+ */
+export async function getAppUserInvoice(input: {
+  client: OpenMeter;
+  clientId: string;
+  externalUserId: string;
+  invoiceId: string;
+}): Promise<TenantInvoiceDto | null> {
+  const invoiceId = input.invoiceId.trim();
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!invoiceId || !clientId || !externalUserId) return null;
+
+  const customer = await lookupAppUserCustomer({
+    client: input.client,
+    clientId,
+    externalUserId,
+  });
+  if (!customer) return null;
+
+  const customerIds = [customer.id];
+  for (const idChunk of chunk(customerIds, 50)) {
+    const found = await findInvoiceInCustomerChunk({
+      client: input.client,
+      customers: idChunk,
+      allowedCustomerIds: customerIds,
+      invoiceId,
+    });
+    if (found !== undefined) return found;
+  }
+
+  return null;
 }

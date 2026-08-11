@@ -81,7 +81,7 @@ function cardStepCopy(input: {
       label: "Needs payment method",
       note: hasOverage
         ? "Usage paused — attach a card to continue"
-        : "Attach a payment method to cover overage",
+        : "Attach a payment method for plan fee & overage",
       muted: false,
       emphasize: true,
     };
