@@ -375,18 +375,30 @@ export function resolveBillingState(input: BillingStateInput): BillingState {
   const spendableUsdMicros =
     input.prepaidUsdMicros + input.includedRemainingUsdMicros;
 
+  // Gathering invoice totals under credit_then_invoice can still include
+  // prepaid/included-covered usage. That is not collectable overage while
+  // spendable remains — reporting it as unbilledDebt makes AVAILABLE
+  // (spendable − debt) double-count the same burn. Soft-negative gating only
+  // consults debt once spendable is exhausted (see resolvePosture).
+  const unbilledDebtUsdMicros =
+    input.unbilledDebtUsdMicros == null
+      ? null
+      : spendableUsdMicros > 0n
+        ? 0n
+        : input.unbilledDebtUsdMicros;
+
   const posture = resolvePosture({
     billingAvailable: input.billingAvailable,
     spendableUsdMicros,
     overageEligible: input.overageEligible,
     hasDefaultPaymentMethod: input.paymentMethod.hasDefault,
     softNegativeUsdMicros: input.softNegativeUsdMicros,
-    unbilledDebtUsdMicros: input.unbilledDebtUsdMicros,
+    unbilledDebtUsdMicros,
     leadUsdMicros: input.leadUsdMicros,
   });
 
   const ceiling = money(input.softNegativeUsdMicros, currency);
-  const debt = input.unbilledDebtUsdMicros;
+  const debt = unbilledDebtUsdMicros;
   const hasCeiling = input.softNegativeUsdMicros > 0n;
 
   let remaining: Money | null = null;
