@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  OWNER_PAID_PLAN_KEY,
-  isOwnerPaidPlanKey,
-} from "@/lib/openmeter/owner-paid-key";
-import {
   ensureOwnerPaidPlanSynced,
   isKonnectScheduledChangeForbidden,
   listScheduledOwnerWalletSubscriptionIds,
