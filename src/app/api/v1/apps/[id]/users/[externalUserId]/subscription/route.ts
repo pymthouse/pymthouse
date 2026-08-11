@@ -198,8 +198,8 @@ export async function GET(
 /**
  * DELETE /api/v1/apps/{clientId}/users/{externalUserId}/subscription
  *
- * Schedule cancel at next billing cycle (owner-paid parity).
- * Body: `{ confirm: true }`.
+ * Cancel paid plan. Body: `{ confirm: true, timing?: "immediate" | "next_billing_cycle" }`.
+ * Default timing is end of cycle (owner-paid parity).
  */
 export async function DELETE(
   request: NextRequest,
@@ -220,11 +220,24 @@ export async function DELETE(
 
   const body = await readJsonObject(request);
 
+  let timing: "immediate" | "next_billing_cycle" | undefined;
+  const rawTiming = body.timing;
+  if (rawTiming !== undefined && rawTiming !== null && rawTiming !== "") {
+    if (rawTiming !== "immediate" && rawTiming !== "next_billing_cycle") {
+      return NextResponse.json(
+        { error: 'timing must be "immediate" or "next_billing_cycle"' },
+        { status: 400 },
+      );
+    }
+    timing = rawTiming;
+  }
+
   try {
     const result = await cancelAppUserSubscription({
       clientId: access.app.id,
       externalUserId,
       confirm: readConfirmFlag(body),
+      timing,
     });
     return NextResponse.json(result);
   } catch (err) {

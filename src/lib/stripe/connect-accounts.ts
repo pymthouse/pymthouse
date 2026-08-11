@@ -455,6 +455,8 @@ function addPaymentCheckoutFields(
   if (fee > 0) {
     body.set("payment_intent_data[application_fee_amount]", String(fee));
   }
+  // Save the card on the Connect customer for later subscription / usage debit.
+  body.set("payment_intent_data[setup_future_usage]", "off_session");
 }
 
 export async function createConnectedCheckoutSession(input: {

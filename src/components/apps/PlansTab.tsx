@@ -22,7 +22,6 @@ import {
   parseMarkupPercentInput,
 } from "@/lib/plan-pricing";
 import { validateCapabilityFeatureKeys } from "@/lib/openmeter/capability-features";
-import { resolvedPayPerUseBehavior } from "@/lib/billing/pay-per-use-threshold";
 import { OPENMETER_DOCS } from "@/lib/openmeter/constants";
 import {
   CUSTOM_PLAN_NAME_MAX_LENGTH,
@@ -55,7 +54,6 @@ interface PlanRow {
   overageRateUsd: string | null;
   includedUsdMicros: string | null;
   billingCycle: string;
-  chargeThresholdUsdMicros?: string | null;
   resolvedBehavior?: string;
   discoveryProfileId?: string | null;
   isNetworkDefault?: boolean;
@@ -105,8 +103,6 @@ interface PlanDraft {
   priceAmount: string;
   priceCurrency: string;
   billingCycle: PlanBillingCycle;
-  /** Pay-Per-Use only: invoice/charge threshold in dollars, e.g. "10.00". */
-  chargeThresholdUsdDisplay: string;
   includedUsdDisplay: string;
   defaultMarkupPct: string;
   capabilityKeys: string[];
@@ -325,7 +321,6 @@ function planToDraft(plan: PlanRow): PlanDraft {
     priceAmount: normalizeUsdCentsDisplay(plan.priceAmount || "0"),
     priceCurrency: plan.priceCurrency,
     billingCycle: normalizePlanBillingCycle(plan.billingCycle),
-    chargeThresholdUsdDisplay: usdMicrosToDisplay(plan.chargeThresholdUsdMicros),
     includedUsdDisplay: usdMicrosToDisplay(plan.includedUsdMicros),
     defaultMarkupPct: retailRateUsdToMarkupPercent(plan.overageRateUsd),
     capabilityKeys,
@@ -342,7 +337,6 @@ function emptyDraft(): PlanDraft {
     priceAmount: "0.00",
     priceCurrency: "USD",
     billingCycle: "monthly",
-    chargeThresholdUsdDisplay: "",
     includedUsdDisplay: "",
     defaultMarkupPct: "0",
     capabilityKeys: [],
@@ -769,39 +763,6 @@ function PlanDraftForm({
         </div>
       )}
 
-      {draft.type === "usage" && (
-        <div>
-          <label
-            htmlFor={`${idPrefix}-charge-threshold`}
-            className="mb-1 flex items-center gap-1.5 text-xs text-zinc-500"
-          >
-            Pay-as-you-go spend guide (USD)
-            <InfoTooltip
-              wide
-              label={
-                "Display only — shown to users as the typical amount of a\n" +
-                "pay-as-you-go invoice once their credits run out. It does not\n" +
-                "trigger collection: overage invoice timing is app-wide, set by\n" +
-                "the overage limit on the Payments tab."
-              }
-            />
-          </label>
-          <DollarCentsInput
-            id={`${idPrefix}-charge-threshold`}
-            value={draft.chargeThresholdUsdDisplay}
-            onChange={(chargeThresholdUsdDisplay) =>
-              onChange({ ...draft, chargeThresholdUsdDisplay })
-            }
-            placeholder="10.00"
-            disabled={!canEdit}
-            aria-label="Pay-as-you-go spend guide in dollars"
-          />
-          <p className="text-xs text-zinc-500 mt-1">
-            {resolvedPayPerUseBehavior()}
-          </p>
-        </div>
-      )}
-
       {(draft.type === "subscription" || draft.type === "usage") && (
         <div>
           <label htmlFor={`${idPrefix}-default-markup`} className="block text-xs text-zinc-500 mb-1">
@@ -1021,12 +982,6 @@ function buildPlanPayload(
         : "0",
     priceCurrency: draft.priceCurrency,
     billingCycle: draft.billingCycle,
-    // Pay-Per-Use is threshold-only (#398): send the threshold; clear it on
-    // other types so switching a plan away from usage drops it server-side.
-    chargeThresholdUsd:
-      draft.type === "usage" && draft.chargeThresholdUsdDisplay.trim()
-        ? draft.chargeThresholdUsdDisplay.trim()
-        : null,
     ...(planId ? {} : { status: "active" }),
     capabilities,
     includedUsdMicros,

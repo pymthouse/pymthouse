@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { OpenMeter } from "@openmeter/sdk";
 import {
+  assignMerchantCustomInvoicingProfile,
   ensureOwnersBillingProfile,
   isAppBillingReady,
   resetOwnersBillingProfileCacheForTests,
@@ -118,4 +119,58 @@ test("ensureOwnersBillingProfile creates Stripe profile when missing", async (t)
   });
   const cachedAgain = await ensureOwnersBillingProfile(client);
   assert.equal(cachedAgain, "prof_new_owners");
+});
+
+test("assignMerchantCustomInvoicingProfile pins via the Konnect billing route", async (t) => {
+  const savedUrl = process.env.OPENMETER_URL;
+  const savedKey = process.env.OPENMETER_API_KEY;
+  const savedMode = process.env.OPENMETER_ROUTE_MODE;
+  process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
+  process.env.OPENMETER_API_KEY = "km_test_key";
+  process.env.OPENMETER_ROUTE_MODE = "hosted";
+  t.after(() => {
+    if (savedUrl === undefined) delete process.env.OPENMETER_URL;
+    else process.env.OPENMETER_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.OPENMETER_API_KEY;
+    else process.env.OPENMETER_API_KEY = savedKey;
+    if (savedMode === undefined) delete process.env.OPENMETER_ROUTE_MODE;
+    else process.env.OPENMETER_ROUTE_MODE = savedMode;
+    resetHostedOpenMeterClientForTests();
+  });
+
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    calls.push({ url: String(input), method, body: String(init?.body ?? "") });
+    return new Response(
+      JSON.stringify({ billing_profile: { id: "prof_merchant" } }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  // The SDK override is a silent no-op on Konnect, so a client that throws on
+  // it proves the merchant pin never takes that path.
+  const client = {
+    billing: {
+      customers: {
+        createOverride: async () => {
+          throw new Error("must not use the SDK override on Konnect");
+        },
+      },
+    },
+  } as unknown as OpenMeter;
+
+  const profileId = await assignMerchantCustomInvoicingProfile({
+    client,
+    customerId: "cust_m1",
+    billingProfileId: "prof_merchant",
+  });
+
+  assert.equal(profileId, "prof_merchant");
+  const put = calls.find((c) => c.method === "PUT");
+  assert.ok(put, "expected a PUT to the Konnect customer billing route");
+  assert.match(put.url, /\/customers\/cust_m1\/billing$/);
+  assert.deepEqual(JSON.parse(put.body), {
+    billing_profile: { id: "prof_merchant" },
+  });
 });

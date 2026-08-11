@@ -4,6 +4,29 @@
   --animate-apps-marquee: apps-marquee 45s linear infinite;
 }
 
+/*
+ * App is dark-only. Native <select> popups ignore most Tailwind on <option>,
+ * so without color-scheme they render a light OS menu with inherited light
+ * text — unreadable. Force dark form chrome + option colors.
+ */
+html {
+  color-scheme: dark;
+}
+
+select {
+  color-scheme: dark;
+}
+
+select option,
+select optgroup {
+  background-color: var(--color-zinc-900);
+  color: var(--color-zinc-100);
+}
+
+select option:disabled {
+  color: var(--color-zinc-500);
+}
+
 @keyframes apps-marquee {
   from {
     transform: translateX(0);
