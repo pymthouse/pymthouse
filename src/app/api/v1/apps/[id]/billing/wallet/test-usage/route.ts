@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authenticateAppClient, hasScope } from "@/lib/auth";
 import { ingestTestUsageEvent } from "@/lib/billing/test-usage-event";
 import { readJsonObjectBody } from "@/lib/billing/owner-wallet-m2m-auth";
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
@@ -13,9 +12,10 @@ import { resolveWalletRouteContext } from "@/lib/billing/wallet-route-context";
  * end-user with an exact USD fee, then optionally force mid-cycle invoice
  * collection so Custom Invoicing → settlement → Stripe Connect can be traced.
  *
- * Production safeguard: this route is disabled by default in production. To
- * enable, operators must set `PYMTHOUSE_ENABLE_WALLET_TEST_USAGE=1` and call
- * with an admin-scoped M2M client.
+ * Production safeguard: this route is disabled by default in production.
+ * Operators enable it with `PYMTHOUSE_ENABLE_WALLET_TEST_USAGE=1`. Any
+ * authenticated M2M caller that can reach the merchant wallet routes may use
+ * it when enabled.
  *
  * Body: `{ "externalUserId": "eu_…", "amountUsd": "10.00", "collect"?: true }`
  */
@@ -42,15 +42,11 @@ export async function POST(
     );
   }
 
-  if (process.env.NODE_ENV === "production") {
-    const testUsageEnabled = process.env.PYMTHOUSE_ENABLE_WALLET_TEST_USAGE === "1";
-    const appClient = await authenticateAppClient(request);
-    const callerHasAdminScope = Boolean(
-      appClient && hasScope(appClient.scopes, "admin"),
-    );
-    if (!testUsageEnabled || !callerHasAdminScope) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.PYMTHOUSE_ENABLE_WALLET_TEST_USAGE !== "1"
+  ) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const collect = body.collect !== false;
