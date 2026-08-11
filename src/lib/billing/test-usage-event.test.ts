@@ -162,3 +162,25 @@ test("ingestTestUsageEvent defaults collect=true and forces collection after set
     invoiceIds: ["inv_9"],
   });
 });
+
+test("ingestTestUsageEvent reports collected=false when collect outcome is not invoiced", async () => {
+  const result = await ingestTestUsageEvent(
+    {
+      publicClientId: "pc_123",
+      externalUserId: "eu_123",
+      amountUsd: "12.34",
+    },
+    createDeps({
+      invoiceGatheringForIdentity: async () => ({
+        outcome: "skipped",
+        invoiceIds: [],
+      }),
+    }),
+  );
+
+  assert.equal(result.collected, false);
+  assert.deepEqual(result.collect, {
+    outcome: "skipped",
+    invoiceIds: [],
+  });
+});

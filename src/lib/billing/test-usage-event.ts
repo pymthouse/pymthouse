@@ -125,7 +125,7 @@ export async function ingestTestUsageEvent(input: {
 
   return {
     ...result,
-    collected: true,
+    collected: collect.outcome === "invoiced",
     collect,
   };
 }
