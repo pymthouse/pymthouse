@@ -4,7 +4,7 @@ import {
   randomBytes,
   verify,
 } from "node:crypto";
-import { eq, lte, sql } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
 import { db } from "@/db/index";
@@ -397,14 +397,8 @@ export async function registerNetworkAgent(input: {
     REGISTER_LIMIT_PER_FINGERPRINT,
   );
 
-  const verified = await verifyEd25519Challenge({
-    publicKey: input.publicKey,
-    challengeId: input.challengeId,
-    signature: input.signature,
-  });
-
   const { clientId } = await ensurePlatformDefaultApp();
-  const externalUserId = verified.externalUserId;
+  const externalUserId = agentExternalUserId(rawPk);
   const correlationId = createCorrelationId();
 
   const appRows = await db
@@ -420,6 +414,32 @@ export async function registerNetworkAgent(input: {
       500,
     );
   }
+
+  // Fail closed on conflict before burning the one-time challenge.
+  const existing = await db
+    .select({ id: appUsers.id })
+    .from(appUsers)
+    .where(
+      and(
+        eq(appUsers.clientId, developerAppId),
+        eq(appUsers.externalUserId, externalUserId),
+      ),
+    )
+    .limit(1);
+  if (existing[0]) {
+    await writeRegisterConflictAudit({
+      clientId,
+      correlationId,
+      externalUserId,
+      fingerprint,
+    });
+  }
+
+  await verifyEd25519Challenge({
+    publicKey: input.publicKey,
+    challengeId: input.challengeId,
+    signature: input.signature,
+  });
 
   const now = new Date().toISOString();
   const newUser = {

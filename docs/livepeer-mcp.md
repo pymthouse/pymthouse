@@ -12,7 +12,9 @@ User-scoped MCP on PymtHouse (`GET/POST /api/v1/mcp`). Auth with the caller’s 
 | Scheme | Credential |
 | --- | --- |
 | `Bearer` | User API key (`pmth_…` / `app_…_…`) or developer/end-user JWT |
-| `Basic` | App M2M `client_id:client_secret` (owner signer session) |
+| `Basic` | App M2M `m2m_…:client_secret` (linked via `m2m_oidc_client_id` only) |
+
+`create_signer_session` with M2M Basic requires `sign:job` on both the M2M client and the public app client (same gates as OIDC `client_credentials` owner `sign:job`).
 
 No platform-fixed M2M behind the MCP. Optional: `DISCOVERY_SERVICE_URL` for orchestrator query / freshness.
 

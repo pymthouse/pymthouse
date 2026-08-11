@@ -74,26 +74,91 @@ function parseClientCredentialsScopes(scopeParam: string | null | undefined): st
     .filter(Boolean);
 }
 
+/**
+ * Resolve an app linked via `developer_apps.m2m_oidc_client_id` only.
+ * Does not accept public (`app_`) or confidential-web (`web_`) clients.
+ */
+export async function resolveLinkedM2mApp(m2mClientId: string): Promise<{
+  developerAppId: string;
+  ownerId: string;
+  publicClientId: string;
+} | null> {
+  const appRows = await db
+    .select({
+      appId: developerApps.id,
+      ownerId: developerApps.ownerId,
+      publicOidcClientRowId: developerApps.oidcClientId,
+    })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.m2mOidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, m2mClientId))
+    .limit(1);
+
+  const row = appRows[0];
+  if (!row?.publicOidcClientRowId) {
+    return null;
+  }
+
+  const publicRows = await db
+    .select({ clientId: oidcClients.clientId })
+    .from(oidcClients)
+    .where(eq(oidcClients.id, row.publicOidcClientRowId))
+    .limit(1);
+  const publicClientId = publicRows[0]?.clientId;
+  if (!publicClientId) {
+    return null;
+  }
+
+  return {
+    developerAppId: row.appId,
+    ownerId: row.ownerId,
+    publicClientId,
+  };
+}
+
 async function authenticateM2mClient(clientId: string, clientSecret: string) {
   if (!(await validateClientSecret(clientId, clientSecret))) {
     throw new MintUserSignerTokenError("invalid_client", "Invalid client credentials", 401);
   }
 
-  const appRows = await db
-    .select({
-      appId: developerApps.id,
-      ownerId: developerApps.ownerId,
-    })
-    .from(developerApps)
-    .innerJoin(oidcClients, eq(developerApps.m2mOidcClientId, oidcClients.id))
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
-
-  const row = appRows[0];
-  if (!row) {
+  const linked = await resolveLinkedM2mApp(clientId);
+  if (!linked) {
     throw new MintUserSignerTokenError("invalid_client", "Unknown M2M client", 401);
   }
-  return row;
+  return {
+    appId: linked.developerAppId,
+    ownerId: linked.ownerId,
+  };
+}
+
+/**
+ * Enforce the same gates as M2M `client_credentials` owner `sign:job`:
+ * M2M must allow `sign:job`, and the public app client must allow `sign:job`.
+ */
+export async function assertM2mCanMintOwnerSignJob(m2mClientId: string): Promise<{
+  developerAppId: string;
+  ownerId: string;
+  publicClientId: string;
+}> {
+  const linked = await resolveLinkedM2mApp(m2mClientId);
+  if (!linked) {
+    throw new MintUserSignerTokenError("invalid_client", "Unknown M2M client", 401);
+  }
+
+  const m2mScopes = await loadM2mAllowedScopes(m2mClientId);
+  if (!m2mScopes.has("sign:job")) {
+    throw new MintUserSignerTokenError(
+      "invalid_scope",
+      "M2M client lacks sign:job",
+    );
+  }
+
+  const publicClient = await loadPublicSignJobClient(linked.developerAppId);
+  return {
+    developerAppId: linked.developerAppId,
+    ownerId: linked.ownerId,
+    publicClientId: publicClient.clientId,
+  };
 }
 
 async function loadM2mAllowedScopes(clientId: string): Promise<Set<string>> {
@@ -503,22 +568,15 @@ export async function handleM2mOwnerSignJob(input: {
   clientId: string;
   clientSecret: string;
 }) {
-  const row = await authenticateM2mClient(input.clientId, input.clientSecret);
-
-  const m2mScopes = await loadM2mAllowedScopes(input.clientId);
-  if (!m2mScopes.has("sign:job")) {
-    throw new MintUserSignerTokenError(
-      "invalid_scope",
-      "M2M client lacks sign:job",
-    );
+  if (!(await validateClientSecret(input.clientId, input.clientSecret))) {
+    throw new MintUserSignerTokenError("invalid_client", "Invalid client credentials", 401);
   }
 
-  const publicClient = await loadPublicSignJobClient(row.appId);
-
+  const allowed = await assertM2mCanMintOwnerSignJob(input.clientId);
   const minted = await mintSignerJwtForExternalUser({
-    publicClientId: publicClient.clientId,
-    developerAppId: row.appId,
-    externalUserId: row.ownerId,
+    publicClientId: allowed.publicClientId,
+    developerAppId: allowed.developerAppId,
+    externalUserId: allowed.ownerId,
   });
-  return signerSessionFromMint(minted, publicClient.clientId);
+  return signerSessionFromMint(minted, allowed.publicClientId);
 }

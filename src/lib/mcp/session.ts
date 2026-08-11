@@ -10,7 +10,11 @@ import {
   handleAppScopedSignerTokenExchange,
   SUBJECT_ACCESS_TOKEN_TYPE,
 } from "@/lib/oidc/app-scoped-signer-token-exchange";
-import { mintSignerJwtForExternalUser } from "@/lib/oidc/mint-user-signer-token";
+import {
+  assertM2mCanMintOwnerSignJob,
+  mintSignerJwtForExternalUser,
+  MintUserSignerTokenError,
+} from "@/lib/oidc/mint-user-signer-token";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import type { SignerSession } from "@/lib/openapi/schemas/credentials-types";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
@@ -56,10 +60,19 @@ export async function createSignerSessionForPrincipal(
   principal: McpPrincipal,
 ): Promise<HostedSignerSession> {
   if (principal.kind === "m2m") {
+    if (!principal.m2mClientId) {
+      throw new MintUserSignerTokenError(
+        "invalid_client",
+        "Missing M2M client for signer session",
+        401,
+      );
+    }
+    // Parity with handleM2mOwnerSignJob: require sign:job on M2M + public clients.
+    const allowed = await assertM2mCanMintOwnerSignJob(principal.m2mClientId);
     const minted = await mintSignerJwtForExternalUser({
-      publicClientId: principal.publicClientId,
-      developerAppId: principal.developerAppId,
-      externalUserId: principal.externalUserId,
+      publicClientId: allowed.publicClientId,
+      developerAppId: allowed.developerAppId,
+      externalUserId: allowed.ownerId,
     });
     const session = buildSignerSessionEnvelope({
       access_token: minted.access_token,
@@ -67,13 +80,13 @@ export async function createSignerSessionForPrincipal(
       scope: minted.scope,
       balanceUsdMicros: minted.balanceUsdMicros,
       lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-      signer_url: getClientSignerApiUrl(principal.publicClientId),
+      signer_url: getClientSignerApiUrl(allowed.publicClientId),
       discovery_url: getSignerDiscoveryUrl(),
       issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
     });
     return {
       ...session,
-      client_id: principal.publicClientId,
+      client_id: allowed.publicClientId,
     };
   }
 

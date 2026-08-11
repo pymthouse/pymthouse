@@ -1,14 +1,14 @@
 import "server-only";
 
-import { authenticateAppClient } from "@/lib/auth";
 import { resolveActiveAppApiKeyFromBearer } from "@/lib/app-api-keys";
+import { authenticateAppClient } from "@/lib/auth";
 import { authenticateEndUser } from "@/lib/auth/end-user";
 import { extractBearerToken } from "@/lib/mcp/config";
 import {
   resolveSubjectAccessToken,
   SubjectAccessTokenResolveError,
 } from "@/lib/oidc/resolve-subject-access-token";
-import { getProviderAppByClientId } from "@/lib/provider-apps";
+import { resolveLinkedM2mApp } from "@/lib/oidc/mint-user-signer-token";
 
 export type McpPrincipal = {
   /** How the caller authenticated to Livepeer MCP. */
@@ -21,6 +21,11 @@ export type McpPrincipal = {
    * Empty for M2M Basic — session mint uses owner identity directly.
    */
   subjectToken: string;
+  /**
+   * Authenticating M2M client id (`m2m_…`). Present only when `kind === "m2m"`.
+   * Used to enforce `sign:job` before minting owner signer sessions.
+   */
+  m2mClientId?: string;
 };
 
 /**
@@ -34,20 +39,21 @@ export async function resolveMcpPrincipal(
   const m2m = await authenticateAppClient(request);
   if (m2m) {
     // Confidential-web (`web_`) clients must not mint owner signer sessions via MCP.
-    // Mirror OIDC M2M policy: Basic auth is restricted to `m2m_*` clients.
+    // Mirror OIDC M2M policy: Basic auth is restricted to linked `m2m_*` clients.
     if (!m2m.clientId.startsWith("m2m_")) {
       return null;
     }
-    const app = await getProviderAppByClientId(m2m.appId);
-    if (!app) {
+    const linked = await resolveLinkedM2mApp(m2m.clientId);
+    if (!linked) {
       return null;
     }
     return {
       kind: "m2m",
-      publicClientId: m2m.appId,
-      developerAppId: app.id,
-      externalUserId: app.ownerId,
+      publicClientId: linked.publicClientId,
+      developerAppId: linked.developerAppId,
+      externalUserId: linked.ownerId,
       subjectToken: "",
+      m2mClientId: m2m.clientId,
     };
   }
 

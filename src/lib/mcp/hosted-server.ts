@@ -10,6 +10,7 @@ import type { McpPrincipal } from "@/lib/mcp/auth";
 import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
 import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
 import { createSignerSessionForPrincipal, discoveryFetch } from "@/lib/mcp/session";
+import { MintUserSignerTokenError } from "@/lib/oidc/mint-user-signer-token";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 
 function textResult(data: unknown) {
@@ -18,6 +19,18 @@ function textResult(data: unknown) {
       {
         type: "text" as const,
         text: typeof data === "string" ? data : JSON.stringify(data, null, 2),
+      },
+    ],
+  };
+}
+
+function errorResult(message: string) {
+  return {
+    isError: true as const,
+    content: [
+      {
+        type: "text" as const,
+        text: message,
       },
     ],
   };
@@ -178,8 +191,15 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
       inputSchema: {},
     },
     async () => {
-      const session = await createSignerSessionForPrincipal(principal);
-      return textResult(session);
+      try {
+        const session = await createSignerSessionForPrincipal(principal);
+        return textResult(session);
+      } catch (err) {
+        if (err instanceof MintUserSignerTokenError) {
+          return errorResult(`${err.code}: ${err.message}`);
+        }
+        throw err;
+      }
     },
   );
 
