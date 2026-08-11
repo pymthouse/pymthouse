@@ -374,12 +374,19 @@ export async function prepareAppCustomerStripeBilling(input: {
     null;
 
   // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
+  // Credits-first Starter users stay on this profile too — Sandbox is wrong
+  // because it fake-pays invoices and bypasses settlement / Connect.
   if (config?.billingMode === "merchant") {
     if (!merchantProfileId) {
       throw new Error(
         "OPENMETER_MERCHANT_BILLING_PROFILE_ID (or app openmeterMerchantBillingProfileId) is required when billingMode=merchant",
       );
     }
+    await persistMerchantBillingProfileIdIfMissing(
+      input.clientId,
+      config.openmeterMerchantBillingProfileId,
+      merchantProfileId,
+    );
     await assignMerchantCustomInvoicingProfile({
       client: input.client,
       customerId: input.customerId,
@@ -711,6 +718,26 @@ export function resetOwnersBillingProfileCacheForTests(): void {
 
 export function resetFreeBillingProfileCacheForTests(): void {
   cachedFreeBillingProfileId = null;
+}
+
+/**
+ * Persist the merchant Custom Invoicing profile id on the app row when it was
+ * only available via env (so later pins do not depend on process env alone).
+ * @internal Exported for unit tests.
+ */
+export async function persistMerchantBillingProfileIdIfMissing(
+  clientId: string,
+  existingProfileId: string | null | undefined,
+  merchantProfileId: string,
+  upsert: typeof upsertAppBillingConfig = upsertAppBillingConfig,
+): Promise<boolean> {
+  if (existingProfileId?.trim()) {
+    return false;
+  }
+  await upsert(clientId, {
+    openmeterMerchantBillingProfileId: merchantProfileId,
+  });
+  return true;
 }
 
 export async function upsertAppBillingConfig(

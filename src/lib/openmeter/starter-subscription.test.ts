@@ -162,3 +162,165 @@ test("a conflict with no occupying row rethrows naming customer and plan", async
     },
   );
 });
+
+test("recoverStarterBillingProfile pins Custom Invoicing for merchant apps", async () => {
+  const { recoverStarterBillingProfile } = await import(
+    "@/lib/openmeter/starter-subscription"
+  );
+  const prepareCalls: string[] = [];
+  const freeCalls: string[] = [];
+  const mode = await recoverStarterBillingProfile(
+    {
+      client: {} as never,
+      customerId: "cust_m",
+      clientId: "app_m",
+    },
+    {
+      getConfig: async () =>
+        ({ billingMode: "merchant" }) as never,
+      prepareMerchant: async (input) => {
+        prepareCalls.push(input.customerId);
+      },
+      applyFree: async (input) => {
+        freeCalls.push(input.customerId);
+      },
+    },
+  );
+  assert.equal(mode, "merchant");
+  assert.deepEqual(prepareCalls, ["cust_m"]);
+  assert.deepEqual(freeCalls, []);
+});
+
+test("recoverStarterBillingProfile uses sandbox free profile otherwise", async () => {
+  const { recoverStarterBillingProfile } = await import(
+    "@/lib/openmeter/starter-subscription"
+  );
+  const prepareCalls: string[] = [];
+  const freeCalls: string[] = [];
+  const mode = await recoverStarterBillingProfile(
+    {
+      client: {} as never,
+      customerId: "cust_f",
+      clientId: "app_f",
+    },
+    {
+      getConfig: async () =>
+        ({ billingMode: "owner_rollup" }) as never,
+      prepareMerchant: async (input) => {
+        prepareCalls.push(input.customerId);
+      },
+      applyFree: async (input) => {
+        freeCalls.push(input.customerId);
+      },
+    },
+  );
+  assert.equal(mode, "free");
+  assert.deepEqual(prepareCalls, []);
+  assert.deepEqual(freeCalls, ["cust_f"]);
+});
+
+test("pinMerchantCustomInvoicingIfNeeded pins only merchant apps", async () => {
+  const { pinMerchantCustomInvoicingIfNeeded } = await import(
+    "@/lib/openmeter/starter-subscription"
+  );
+  type PrepareCall = { clientId: string; customerId: string };
+  const prepareCalls: PrepareCall[] = [];
+  const recordPrepare = async (input: {
+    clientId: string;
+    customerId: string;
+  }) => {
+    prepareCalls.push({
+      clientId: input.clientId,
+      customerId: input.customerId,
+    });
+  };
+
+  assert.equal(
+    await pinMerchantCustomInvoicingIfNeeded(
+      {
+        client: {} as never,
+        clientId: "app_owner",
+        customerId: "cust_o",
+        customerKey: "key_o",
+      },
+      {
+        getConfig: async () =>
+          ({ billingMode: "owner_rollup" }) as never,
+        prepareMerchant: recordPrepare,
+      },
+    ),
+    false,
+  );
+  assert.equal(prepareCalls.length, 0);
+
+  assert.equal(
+    await pinMerchantCustomInvoicingIfNeeded(
+      {
+        client: {} as never,
+        clientId: "app_m",
+        customerId: "cust_m",
+        customerKey: "key_m",
+      },
+      {
+        getConfig: async () =>
+          ({ billingMode: "merchant" }) as never,
+        prepareMerchant: recordPrepare,
+      },
+    ),
+    true,
+  );
+  assert.deepEqual(prepareCalls, [{ clientId: "app_m", customerId: "cust_m" }]);
+});
+test("stripe billing 409 recovers via recoverProfile then creates", async () => {
+  resetPlanKeyCacheForTests();
+  const stripeErr = new Error(
+    "conflict error: invalid billing setup: failed to get stripe customer data: " +
+      "customer has no data for stripe app",
+  );
+  (stripeErr as unknown as { status: number }).status = 409;
+
+  let creates = 0;
+  const recoverCalls: Array<string | undefined> = [];
+  const client = {
+    customers: {
+      listSubscriptions: async () => ({ items: [] }),
+    },
+    plans: {
+      get: async () => ({ key: STARTER_PLAN_KEY }),
+    },
+    subscriptions: {
+      create: async () => {
+        creates += 1;
+        if (creates === 1) {
+          throw stripeErr;
+        }
+        return {
+          id: "sub_after_recover",
+          status: "active",
+          customerId: "cust_stripe",
+        };
+      },
+    },
+  };
+
+  const provisioned = await createStarterSubscriptionWithBillingRecovery(
+    {
+      client: client as never,
+      customerId: "cust_stripe",
+      starter: { openmeterPlanId: "plan_om" } as never,
+      planKey: STARTER_PLAN_KEY,
+      clientId: "app_m",
+    },
+    {
+      recoverProfile: async (input) => {
+        recoverCalls.push(input.clientId);
+        return "merchant";
+      },
+    },
+  );
+
+  assert.equal(provisioned.created, true);
+  assert.equal(provisioned.subscription.id, "sub_after_recover");
+  assert.equal(creates, 2);
+  assert.deepEqual(recoverCalls, ["app_m"]);
+});
