@@ -29,7 +29,7 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   let corsHeaders: Record<string, string> | null = null;
 
-  if (pathname.startsWith("/api/v1")) {
+  if (pathname === "/api/v1" || pathname.startsWith("/api/v1/")) {
     try {
       const origin = request.headers.get("origin");
       const allowOrigin = await resolveBuilderApiCorsOrigin(origin, pathname);

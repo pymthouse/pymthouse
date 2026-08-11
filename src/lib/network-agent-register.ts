@@ -311,7 +311,11 @@ export async function createRegisterChallenge(input: {
   const fingerprint = publicKeyFingerprint(rawPk);
   const ip = input.clientIp?.trim() || "unknown";
 
-  await assertRateLimit(`challenge:ip:${ip}`, CHALLENGE_LIMIT_PER_IP);
+  // Skip the IP bucket when the client IP is unknown so all non-Vercel / headerless
+  // callers do not share one global limiter (DoS). Fingerprint limits still apply.
+  if (ip !== "unknown") {
+    await assertRateLimit(`challenge:ip:${ip}`, CHALLENGE_LIMIT_PER_IP);
+  }
   await assertRateLimit(
     `challenge:fp:${fingerprint}`,
     CHALLENGE_LIMIT_PER_FINGERPRINT,
@@ -391,7 +395,9 @@ export async function registerNetworkAgent(input: {
   const rawPk = normalizeEd25519PublicKey(input.publicKey);
   const fingerprint = publicKeyFingerprint(rawPk);
 
-  await assertRateLimit(`register:ip:${ip}`, REGISTER_LIMIT_PER_IP);
+  if (ip !== "unknown") {
+    await assertRateLimit(`register:ip:${ip}`, REGISTER_LIMIT_PER_IP);
+  }
   await assertRateLimit(
     `register:fp:${fingerprint}`,
     REGISTER_LIMIT_PER_FINGERPRINT,
@@ -469,15 +475,8 @@ export async function registerNetworkAgent(input: {
 
   const appUser = inserted[0]!;
 
-  try {
-    await provisionAppUserBilling({
-      clientId: developerAppId,
-      externalUserId,
-    });
-  } catch (err) {
-    console.error("Network agent billing provision failed:", err);
-  }
-
+  // Mint the API key before billing so a mint failure only rolls back app_users
+  // and never leaves orphaned OpenMeter / end-user billing state.
   let created: Awaited<ReturnType<typeof createAppUserApiKey>>;
   try {
     created = await createAppUserApiKey({
@@ -494,6 +493,15 @@ export async function registerNetworkAgent(input: {
       "Failed to mint API key for network agent",
       500,
     );
+  }
+
+  try {
+    await provisionAppUserBilling({
+      clientId: developerAppId,
+      externalUserId,
+    });
+  } catch (err) {
+    console.error("Network agent billing provision failed:", err);
   }
 
   await writeAuditLog({

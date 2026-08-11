@@ -51,6 +51,34 @@ test("resolveApiCorsAllowOrigin honors configured list and NEXTAUTH_URL", () => 
   );
 });
 
+test("resolveApiCorsAllowOrigin normalizes trailing slash, casing, and default port", () => {
+  assert.equal(
+    resolveApiCorsAllowOrigin("https://portal.example", {
+      configuredOrigins: ["https://portal.example/"],
+    }),
+    "https://portal.example",
+  );
+  assert.equal(
+    resolveApiCorsAllowOrigin("https://Portal.Example", {
+      configuredOrigins: ["https://portal.example"],
+    }),
+    "https://Portal.Example",
+  );
+  assert.equal(
+    resolveApiCorsAllowOrigin("https://portal.example", {
+      configuredOrigins: ["https://portal.example:443"],
+    }),
+    "https://portal.example",
+  );
+  assert.equal(
+    resolveApiCorsAllowOrigin("https://pymthouse.com", {
+      configuredOrigins: [],
+      nextAuthUrl: "https://pymthouse.com/",
+    }),
+    "https://pymthouse.com",
+  );
+});
+
 test("resolveApiCorsAllowOrigin allows localhost", () => {
   assert.equal(
     resolveApiCorsAllowOrigin("http://localhost:3000", {

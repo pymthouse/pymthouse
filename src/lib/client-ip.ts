@@ -165,6 +165,10 @@ function platformPeerIp(request: Request): string | undefined {
 /**
  * Client IP for rate-limit keys. Spoofable headers are ignored unless running
  * on Vercel; `cf-connecting-ip` only when the platform peer is Cloudflare.
+ *
+ * Callers that rate-limit by IP must skip the IP bucket when this returns
+ * `"unknown"` — otherwise every headerless / non-Vercel caller shares one
+ * global limiter and a single actor can DoS registration for everyone.
  */
 export function clientIpFromRequest(request: Request): string {
   if (process.env.VERCEL !== "1") {

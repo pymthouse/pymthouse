@@ -103,14 +103,27 @@ export function resolveApiCorsAllowOrigin(
     return null;
   }
 
-  if (input.configuredOrigins.includes(trimmed)) {
+  const originKey = canonicalOriginKey(trimmed);
+  if (!originKey) {
+    return null;
+  }
+
+  // Compare canonical forms so trailing slashes, casing, and default ports
+  // in env config still match browser Origin values.
+  if (
+    input.configuredOrigins.some((configured) => {
+      const configuredKey = canonicalOriginKey(configured);
+      return configuredKey !== null && configuredKey === originKey;
+    })
+  ) {
     return trimmed;
   }
 
   const nextAuth = input.nextAuthUrl?.trim();
   if (nextAuth) {
     try {
-      if (new URL(nextAuth).origin === trimmed) {
+      const nextAuthKey = canonicalOriginKey(new URL(nextAuth).origin);
+      if (nextAuthKey !== null && nextAuthKey === originKey) {
         return trimmed;
       }
     } catch {
