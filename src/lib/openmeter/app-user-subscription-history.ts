@@ -74,7 +74,8 @@ export function sortSubscriptionHistoryItems(
   return [...items].sort(compareActiveFromDesc);
 }
 
-function matchLocalPlan(
+/** @internal Exported for unit tests. */
+export function matchLocalPlan(
   sub: OpenMeterSubscriptionView,
   byOpenMeterId: Map<string, LocalPlanRow>,
   byPlanKey: Map<string, LocalPlanRow>,
@@ -89,20 +90,19 @@ function matchLocalPlan(
   return null;
 }
 
-async function loadLocalPlans(appId: string): Promise<{
+/** @internal Exported for unit tests. */
+export function indexLocalPlansFromRows(
+  appId: string,
+  rows: Array<{
+    id: string;
+    name: string;
+    isStarterDefault: boolean;
+    openmeterPlanId: string | null;
+  }>,
+): {
   byOpenMeterId: Map<string, LocalPlanRow>;
   byPlanKey: Map<string, LocalPlanRow>;
-}> {
-  const rows = await db
-    .select({
-      id: plans.id,
-      name: plans.name,
-      isStarterDefault: plans.isStarterDefault,
-      openmeterPlanId: plans.openmeterPlanId,
-    })
-    .from(plans)
-    .where(eq(plans.clientId, appId));
-
+} {
   const byOpenMeterId = new Map<string, LocalPlanRow>();
   const byPlanKey = new Map<string, LocalPlanRow>();
   for (const row of rows) {
@@ -120,7 +120,25 @@ async function loadLocalPlans(appId: string): Promise<{
   return { byOpenMeterId, byPlanKey };
 }
 
-function toHistoryItem(
+async function loadLocalPlans(appId: string): Promise<{
+  byOpenMeterId: Map<string, LocalPlanRow>;
+  byPlanKey: Map<string, LocalPlanRow>;
+}> {
+  const rows = await db
+    .select({
+      id: plans.id,
+      name: plans.name,
+      isStarterDefault: plans.isStarterDefault,
+      openmeterPlanId: plans.openmeterPlanId,
+    })
+    .from(plans)
+    .where(eq(plans.clientId, appId));
+
+  return indexLocalPlansFromRows(appId, rows);
+}
+
+/** @internal Exported for unit tests. */
+export function toHistoryItem(
   sub: OpenMeterSubscriptionView,
   local: LocalPlanRow | null,
 ): AppUserSubscriptionHistoryItem {
@@ -162,6 +180,27 @@ async function lookupCustomerId(
   return existing?.id?.trim() || null;
 }
 
+export type ListAppUserSubscriptionHistoryDeps = {
+  isAvailable?: () => boolean;
+  getClient?: () => OpenMeter;
+  lookupCustomerId?: (
+    client: OpenMeter,
+    clientId: string,
+    externalUserId: string,
+  ) => Promise<string | null>;
+  listSubscriptions?: (
+    client: OpenMeter,
+    customerId: string,
+  ) => Promise<OpenMeterSubscriptionView[]>;
+  enrichWindow?: (
+    item: OpenMeterSubscriptionView,
+  ) => Promise<OpenMeterSubscriptionView>;
+  loadPlans?: (appId: string) => Promise<{
+    byOpenMeterId: Map<string, LocalPlanRow>;
+    byPlanKey: Map<string, LocalPlanRow>;
+  }>;
+};
+
 /**
  * Full subscription supersession history for an app end-user.
  * Newest `activeFrom` first. Empty when OpenMeter is offline or the customer
@@ -170,6 +209,8 @@ async function lookupCustomerId(
 export async function listAppUserSubscriptionHistory(input: {
   clientId: string;
   externalUserId: string;
+  /** @internal Test overrides — production callers omit this. */
+  deps?: ListAppUserSubscriptionHistoryDeps;
 }): Promise<ListAppUserSubscriptionHistoryResult> {
   const clientId = input.clientId.trim();
   const externalUserId = input.externalUserId.trim();
@@ -177,24 +218,30 @@ export async function listAppUserSubscriptionHistory(input: {
     items: [],
     externalUserId,
   };
-  if (!clientId || !externalUserId || !isHostedAdminClientAvailable()) {
+  const deps = input.deps;
+  const available = deps?.isAvailable ?? isHostedAdminClientAvailable;
+  if (!clientId || !externalUserId || !available()) {
     return empty;
   }
 
-  const client = getHostedAdminClient();
-  const customerId = await lookupCustomerId(client, clientId, externalUserId);
+  const client = (deps?.getClient ?? getHostedAdminClient)();
+  const resolveCustomer = deps?.lookupCustomerId ?? lookupCustomerId;
+  const customerId = await resolveCustomer(client, clientId, externalUserId);
   if (!customerId) {
     return empty;
   }
 
+  const listSubs =
+    deps?.listSubscriptions ?? listOpenMeterSubscriptionsForCustomer;
+  const enrich = deps?.enrichWindow ?? enrichSubscriptionActiveWindow;
+  const loadPlans = deps?.loadPlans ?? loadLocalPlans;
+
   const [listed, localIndexes] = await Promise.all([
-    listOpenMeterSubscriptionsForCustomer(client, customerId),
-    loadLocalPlans(clientId),
+    listSubs(client, customerId),
+    loadPlans(clientId),
   ]);
 
-  const enriched = await Promise.all(
-    listed.map((item) => enrichSubscriptionActiveWindow(item)),
-  );
+  const enriched = await Promise.all(listed.map((item) => enrich(item)));
 
   const items = sortSubscriptionHistoryItems(
     enriched.map((sub) =>
@@ -207,3 +254,12 @@ export async function listAppUserSubscriptionHistory(input: {
 
   return { items, externalUserId };
 }
+
+/** @internal Pure helpers for unit tests. */
+export const __testAppUserSubscriptionHistory = {
+  matchLocalPlan,
+  toHistoryItem,
+  indexLocalPlansFromRows,
+  lookupCustomerId,
+  loadLocalPlans,
+};
