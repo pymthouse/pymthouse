@@ -42,7 +42,7 @@ export default async function RootLayout({
   const session = await getServerSession(authOptions);
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark scheme-dark">
       <body className="antialiased bg-zinc-950 text-zinc-100">
         <Providers session={session}>{children}</Providers>
       </body>
