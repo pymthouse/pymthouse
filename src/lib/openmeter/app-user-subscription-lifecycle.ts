@@ -474,6 +474,55 @@ export async function immediateCancelOccupyingCapePaid(input: {
 }
 
 /**
+ * No live paid row: honor immediate cancel against a CAPE-occupied slot, else
+ * the already-starter / already-scheduled / nothing-to-cancel exits.
+ */
+async function cancelAbsentLivePaid(input: {
+  timing: SubscriptionChangeTiming;
+  canceledPaid: OpenMeterSubscriptionView | undefined;
+  liveStarter: OpenMeterSubscriptionView | undefined;
+  scheduledIds: string[];
+  clientId: string;
+  starterPlanKey: string;
+  starterLocalPlanId: string;
+  starterOpenMeterPlanId: string | null;
+  customerId: string;
+}): Promise<AppUserSubscriptionCancelResult> {
+  // CAPE-only: end-of-cycle cancel already ran; honor timing=immediate.
+  if (
+    input.timing === "immediate" &&
+    input.canceledPaid?.id &&
+    !input.liveStarter
+  ) {
+    try {
+      return await immediateCancelOccupyingCapePaid({
+        canceledPaid: input.canceledPaid,
+        scheduledIds: input.scheduledIds,
+        clientId: input.clientId,
+        starterPlanKey: input.starterPlanKey,
+        starterLocalPlanId: input.starterLocalPlanId,
+        starterOpenMeterPlanId: input.starterOpenMeterPlanId,
+        customerId: input.customerId,
+      });
+    } catch (err) {
+      if (err instanceof AppUserSubscriptionCancelError) throw err;
+      console.error("App-user immediate cancel from CAPE failed", err);
+      throw new AppUserSubscriptionCancelError(
+        "cancel_failed",
+        "Could not cancel subscription immediately",
+      );
+    }
+  }
+  return cancelWhenNoLivePaid({
+    clientId: input.clientId,
+    liveStarter: input.liveStarter,
+    canceledPaid: input.canceledPaid,
+    starterLocalPlanId: input.starterLocalPlanId,
+    starterPlanKey: input.starterPlanKey,
+  });
+}
+
+/**
  * Cancel the app user's paid (non-Starter) plan.
  * Default: end of cycle (`next_billing_cycle`). Pass `timing: "immediate"` to
  * switch onto Starter now via Konnect `/change`. End-of-cycle cancel provisions
@@ -546,33 +595,16 @@ export async function cancelAppUserSubscription(input: {
   }
 
   if (!livePaid) {
-    // CAPE-only: end-of-cycle cancel already ran; honor timing=immediate.
-    if (timing === "immediate" && canceledPaid?.id && !liveStarter) {
-      try {
-        return await immediateCancelOccupyingCapePaid({
-          canceledPaid,
-          scheduledIds,
-          clientId,
-          starterPlanKey,
-          starterLocalPlanId,
-          starterOpenMeterPlanId,
-          customerId: customer.id,
-        });
-      } catch (err) {
-        if (err instanceof AppUserSubscriptionCancelError) throw err;
-        console.error("App-user immediate cancel from CAPE failed", err);
-        throw new AppUserSubscriptionCancelError(
-          "cancel_failed",
-          "Could not cancel subscription immediately",
-        );
-      }
-    }
-    return cancelWhenNoLivePaid({
-      clientId,
-      liveStarter,
+    return cancelAbsentLivePaid({
+      timing,
       canceledPaid,
-      starterLocalPlanId,
+      liveStarter,
+      scheduledIds,
+      clientId,
       starterPlanKey,
+      starterLocalPlanId,
+      starterOpenMeterPlanId,
+      customerId: customer.id,
     });
   }
 
