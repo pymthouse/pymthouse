@@ -8,7 +8,7 @@ import { DISCOVERY_TOP_N_MAX } from "@/lib/discovery-plans";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import type { McpPrincipal } from "@/lib/mcp/auth";
 import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
-import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
+import { readDiscoveryRawUrl, readDiscoveryServiceUrl } from "@/lib/mcp/config";
 import { createSignerSessionForPrincipal, discoveryFetch } from "@/lib/mcp/session";
 import { MintUserSignerTokenError } from "@/lib/oidc/mint-user-signer-token";
 import { getIssuer } from "@/lib/oidc/issuer-urls";
@@ -68,6 +68,14 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
       } catch {
         /* keep default */
       }
+      let discoveryServiceUrl: string | null = null;
+      let discoveryRawUrl: string | null = null;
+      try {
+        discoveryServiceUrl = readDiscoveryServiceUrl();
+        discoveryRawUrl = readDiscoveryRawUrl();
+      } catch {
+        /* misconfigured discovery env: report null, keep metadata usable */
+      }
       return textResult({
         name: "Livepeer MCP",
         mode: "hosted",
@@ -75,7 +83,10 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
         auth_kind: principal.kind,
         public_client_id: principal.publicClientId,
         developer_app_id: principal.developerAppId,
-        discovery_service_url: readDiscoveryServiceUrl(),
+        // Origin used by query_orchestrators / get_discovery_freshness.
+        discovery_service_url: discoveryServiceUrl,
+        // Full raw endpoint embedded in livepeer-python-gateway `--token`.
+        discovery_raw_url: discoveryRawUrl,
         local_execution:
           "livepeer-python-gateway/examples/comfypeer-mcp (run_capability / start_stream / call_live_runner)",
       });
@@ -141,6 +152,18 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     },
     async ({ capabilities, service_types, top_n }) => {
       const manifest = await buildAppManifestForApp(principal.developerAppId);
+      // An empty manifest means the discovery catalog fetch failed, not that
+      // the app is entitled to nothing. Still fail closed — an outage must not
+      // bypass the allowlist — but say which it is so callers can retry.
+      if (manifest.capabilities.length === 0) {
+        return textResult({
+          error: "catalog_unavailable",
+          detail:
+            "Discovery catalog is empty or unreachable; app entitlements could not be resolved.",
+          requested: capabilities,
+          manifest_version: manifest.manifestVersion,
+        });
+      }
       const filtered = filterAllowedCapabilities(
         capabilities,
         manifest.capabilities,
