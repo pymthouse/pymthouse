@@ -525,7 +525,7 @@ export function clientIpFromRequest(request: Request): string {
       .split(",")
       .map((h) => h.trim())
       .filter(Boolean);
-    const last = hops[hops.length - 1];
+    const last = hops.at(-1);
     if (last) return last;
   }
 
