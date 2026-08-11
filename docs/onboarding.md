@@ -117,6 +117,33 @@ curl -X POST "$BASE/api/v1/apps/$CLIENT_ID/users/$USER_ID/keys" \
 
 Creating an app marks onboarding complete with `persona=builder`. Builders can still call `POST /api/v1/network/key` for a personal network token without changing persona.
 
+## Agent network registration (headless)
+
+Agents without a browser/Turnkey session can mint an Explorer-style network identity on the **platform default app** by proving possession of an Ed25519 public key. This creates an `app_users` row only — **not** a dashboard `users` / Turnkey account. The human path `POST /api/v1/network/key` is unchanged. Rate limits (per IP / fingerprint) and challenge TTL are the abuse controls.
+
+```bash
+# 1) Generate an Ed25519 keypair (example with OpenSSL / Node)
+#    publicKey = 32-byte raw key as hex; keep the private key agent-side.
+
+# 2) Challenge (bind to the public key; ~5 minute TTL)
+CHALLENGE=$(curl -sS "$BASE/api/v1/network/register/challenge?publicKey=$PUBLIC_KEY_HEX")
+# → { challengeId, nonce, expiresAt, alg: "Ed25519" }
+
+# 3) Sign the nonce (UTF-8 bytes) with the Ed25519 private key → 64-byte sig (hex/base64)
+
+# 4) Register (returns apiKey once; repeat → 409)
+curl -sS -X POST "$BASE/api/v1/network/register" \
+  -H "Content-Type: application/json" \
+  -d "{\"publicKey\":\"$PUBLIC_KEY_HEX\",\"challengeId\":\"$CHALLENGE_ID\",\"signature\":\"$SIG_HEX\",\"label\":\"my-agent\"}"
+# → clientId, externalUserId (agent:<fingerprint>), apiKey (app_<24hex>_<secret>), sdkToken?
+
+# 5) Use
+# Authorization: Bearer app_<24hex>_<secret>
+# or: livepeer-python-sdk --token <sdkToken>
+```
+
+Stable subject: `externalUserId = agent:<sha256(publicKey)[0:32]>`. Same public key always maps to the same app user; a second register returns `409` (reuse the key you already hold).
+
 ## Status
 
 ```bash
@@ -131,4 +158,5 @@ Returns `persona`, `onboardingCompletedAt`, `needsOnboarding`, `defaultAppClient
 - Public preview: `/start` → Turnkey → `/onboarding?persona=explorer|builder`
 - Dashboard wizard: `/onboarding`
 - Personal Access Token: `POST /api/v1/network/key` (My Apps card)
+- Agent register (no Turnkey): `GET/POST /api/v1/network/register*`
 - Existing accounts: `/login` (Sign in)

@@ -85,7 +85,9 @@ export default function DomainAllowlistBlock({
         <div>
           <h4 className="text-sm font-medium text-zinc-300">Domain allowlist</h4>
           <p className="text-xs text-zinc-500 mt-1">
-            Shared origins for CORS and request validation.
+            Allowed origins (full scheme + host, e.g. https://example.com) for CORS and request
+            validation. Browser clients (including Kong Dev Portal Try It) must use an origin listed
+            here for app-scoped Builder API calls. Bare hosts are normalized to https origins.
           </p>
         </div>
       )}
@@ -95,8 +97,8 @@ export default function DomainAllowlistBlock({
           value={newDomain}
           onChange={(e) => setNewDomain(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void addDomain())}
-          placeholder="example.com"
-          aria-label="Domain to allowlist"
+          placeholder="https://example.com"
+          aria-label="Origin to allowlist"
           disabled={readOnly}
           className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-zinc-100 placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
         />
@@ -142,7 +144,7 @@ export default function DomainAllowlistBlock({
         </div>
       ) : (
         <div className="text-center py-3 text-zinc-500 text-sm">
-          No domains yet. Add your app&apos;s origins above (adding a redirect URI may suggest
+          No origins yet. Add your app&apos;s origins above (adding a redirect URI may suggest
           one automatically).
         </div>
       )}

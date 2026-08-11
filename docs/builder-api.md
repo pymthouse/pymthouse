@@ -68,6 +68,8 @@ M2M secret rotation remains at `POST /api/v1/apps/{clientId}/credentials` (provi
 | `m2m_…` | Confidential M2M sibling | `client_credentials` only — Builder API / machine tokens |
 | `web_…` | Confidential web RP sibling | `authorization_code` + secret + redirects — portal SSO (e.g. Kong Dev Portal); **not** `client_credentials` |
 
+Headless **agent network registration** (`GET/POST /api/v1/network/register*`) mints the same presented `app_<24hex>_<secret>` on the platform default app via Ed25519 challenge — it is **not** an M2M client and **not** a platform developer / Turnkey `users` account. See [Onboarding → Agent network registration](onboarding.md#agent-network-registration-headless).
+
 ### Client shapes (siblings under one developer app)
 
 | Shape | Client | Secret | Typical grants |

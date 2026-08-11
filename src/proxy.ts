@@ -1,5 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+
+import {
+  buildApiCorsHeaders,
+  resolveBuilderApiCorsOrigin,
+} from "@/lib/api-cors";
 import { getNextAuthSecret } from "@/lib/next-auth-secret";
 
 const SESSION_COOKIE_NAMES = [
@@ -9,7 +14,52 @@ const SESSION_COOKIE_NAMES = [
 
 const nextAuthSecret = getNextAuthSecret({ suppressDevWarning: true });
 
+/**
+ * Node.js request proxy:
+ * - Conditional CORS for `/api/v1/*`
+ * - Clear invalid/mismatched NextAuth session cookies on other routes
+ *
+ * CORS:
+ * - App routes `/api/v1/apps/{clientId}/…`: Origin must be on that app's domain allowlist
+ *   (App Settings → Domain allowlist), or localhost (non-production / opt-in).
+ * - Other `/api/v1/…`: platform allow (env, NEXTAUTH_URL, localhost, *.kongportals.com);
+ *   tenant-shared allowlist fallback only for public metadata paths.
+ */
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  let corsHeaders: Record<string, string> | null = null;
+
+  if (pathname === "/api/v1" || pathname.startsWith("/api/v1/")) {
+    try {
+      const origin = request.headers.get("origin");
+      const allowOrigin = await resolveBuilderApiCorsOrigin(origin, pathname);
+      corsHeaders = allowOrigin ? buildApiCorsHeaders(allowOrigin) : null;
+    } catch (err) {
+      console.error("Builder API CORS resolution failed:", err);
+      corsHeaders = null;
+    }
+
+    if (request.method === "OPTIONS") {
+      return new NextResponse(null, {
+        status: 204,
+        headers: corsHeaders ?? { Vary: "Origin" },
+      });
+    }
+  }
+
+  const response = await resolveSessionCookieResponse(request);
+
+  if (corsHeaders) {
+    for (const [key, value] of Object.entries(corsHeaders)) {
+      response.headers.set(key, value);
+    }
+  }
+  return response;
+}
+
+async function resolveSessionCookieResponse(
+  request: NextRequest,
+): Promise<NextResponse> {
   const hasSessionCookie = SESSION_COOKIE_NAMES.some((name) =>
     Boolean(request.cookies.get(name)?.value),
   );
