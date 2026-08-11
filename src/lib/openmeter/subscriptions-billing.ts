@@ -1067,8 +1067,9 @@ export async function changeAppUserSubscriptionPlan(input: {
   if (paymentMethodCheckout) {
     return {
       subscriptionId: current.id,
+      // Still on the current plan — /change has not run yet.
       planId: currentLocalPlan?.id ?? targetPlan.id,
-      effectiveAt: new Date().toISOString(),
+      effectiveAt: null,
       timing,
       checkoutUrl: paymentMethodCheckout.checkoutUrl,
     };

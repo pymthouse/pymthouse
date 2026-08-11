@@ -8,6 +8,7 @@ import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-clie
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
   cancelKonnectSubscription,
+  changeKonnectSubscription,
   deleteKonnectSubscription,
   estimateNextBillingCycleIso,
   konnectSubscriptionBillingAnchorIso,
@@ -18,7 +19,6 @@ import {
 } from "./konnect-subscriptions";
 import { buildOpenMeterPlanKey } from "./plan-naming";
 import { isOwnerStarterPlanKey } from "./owner-starter-key";
-import { ensureStarterSubscriptionForAppUser } from "./starter-subscription";
 import {
   listOpenMeterSubscriptionsForCustomer,
   pickAppUserSubscriptionToReport,
@@ -343,15 +343,60 @@ async function scheduleLivePaidCancel(input: {
   livePaid: OpenMeterSubscriptionView;
   localPlanId: string | null;
   starterPlanKey: string;
+  starterLocalPlanId: string;
+  starterOpenMeterPlanId: string | null;
   timing: SubscriptionChangeTiming;
-  clientId: string;
-  externalUserId: string;
+  customerId: string;
 }): Promise<AppUserSubscriptionCancelResult> {
+  // Immediate: /change onto Starter so the customer is never left without a
+  // subscription slot (cancel-then-create can fail between the two calls).
+  if (input.timing === "immediate") {
+    const starterPlanId = input.starterOpenMeterPlanId?.trim();
+    if (!starterPlanId) {
+      throw new AppUserSubscriptionCancelError(
+        "cancel_failed",
+        "Starter plan is not synced to OpenMeter",
+      );
+    }
+    try {
+      const changed = await changeKonnectSubscription({
+        subscriptionId: input.livePaid.id,
+        customerId: input.customerId,
+        planId: starterPlanId,
+        timing: "immediate",
+      });
+      const subscriptionId =
+        changed.next?.id?.trim() ||
+        changed.current?.id?.trim() ||
+        input.livePaid.id;
+      return {
+        subscriptionId,
+        planId: input.starterLocalPlanId,
+        planKey: input.starterPlanKey,
+        // Starter is live now — not a future scheduled successor.
+        scheduledPlanKey: null,
+        effectiveAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      if (isKonnectScheduledChangeForbidden(err)) {
+        throw new AppUserSubscriptionCancelError(
+          "cancel_failed",
+          "A scheduled plan change is blocking cancellation. Try again or contact support.",
+        );
+      }
+      console.error("App-user immediate cancel (change to Starter) failed", err);
+      throw new AppUserSubscriptionCancelError(
+        "cancel_failed",
+        "Could not cancel subscription",
+      );
+    }
+  }
+
   let canceled;
   try {
     canceled = await cancelKonnectSubscription({
       subscriptionId: input.livePaid.id,
-      timing: input.timing,
+      timing: "next_billing_cycle",
     });
   } catch (err) {
     if (isKonnectScheduledChangeForbidden(err)) {
@@ -363,40 +408,11 @@ async function scheduleLivePaidCancel(input: {
     console.error("App-user subscription cancel failed", err);
     throw new AppUserSubscriptionCancelError(
       "cancel_failed",
-      input.timing === "immediate"
-        ? "Could not cancel subscription"
-        : "Could not schedule subscription cancellation",
+      "Could not schedule subscription cancellation",
     );
   }
 
   const subscriptionId = canceled.id?.trim() || input.livePaid.id;
-
-  // Immediate cancel ends Paid now — provision Starter so the customer is not
-  // left without a subscription slot (mirrors lazy Starter after period end).
-  if (input.timing === "immediate") {
-    try {
-      const starter = await ensureStarterSubscriptionForAppUser({
-        clientId: input.clientId,
-        externalUserId: input.externalUserId,
-      });
-      return {
-        subscriptionId: starter.openmeterSubscriptionId || subscriptionId,
-        planId: starter.planId,
-        planKey: input.starterPlanKey,
-        scheduledPlanKey: input.starterPlanKey,
-        effectiveAt: new Date().toISOString(),
-      };
-    } catch (starterErr) {
-      console.error(
-        "App-user immediate cancel: Starter provision failed",
-        starterErr,
-      );
-      throw new AppUserSubscriptionCancelError(
-        "cancel_failed",
-        "Subscription canceled but Starter could not be provisioned. Contact support.",
-      );
-    }
-  }
 
   // Same authoritative window the GET reports, so the two can never disagree.
   // The billing-anchor estimate stays as the last resort only.
@@ -417,8 +433,8 @@ async function scheduleLivePaidCancel(input: {
 /**
  * Cancel the app user's paid (non-Starter) plan.
  * Default: end of cycle (`next_billing_cycle`). Pass `timing: "immediate"` to
- * end now and provision Starter. Starter for end-of-cycle cancel is provisioned
- * lazily when Paid ends.
+ * switch onto Starter now via Konnect `/change`. End-of-cycle cancel provisions
+ * Starter lazily when Paid ends.
  */
 export async function cancelAppUserSubscription(input: {
   clientId: string;
@@ -506,9 +522,10 @@ export async function cancelAppUserSubscription(input: {
     livePaid,
     localPlanId,
     starterPlanKey,
+    starterLocalPlanId,
+    starterOpenMeterPlanId,
     timing,
-    clientId,
-    externalUserId,
+    customerId: customer.id,
   });
 }
 

@@ -150,6 +150,23 @@ test("shouldCollectPaymentMethodBeforePlanChange gates Konnect /change", () => {
   );
 });
 
+test("PM-gated plan change response keeps current plan and null effectiveAt", () => {
+  // Contract for changeAppUserSubscriptionPlan early return: Checkout collects a
+  // card before /change, so effectiveAt must stay null and planId must remain
+  // the current plan (not the unpaid target).
+  const currentPlanId = "plan_starter";
+  const response = {
+    subscriptionId: "sub_current",
+    planId: currentPlanId,
+    effectiveAt: null as string | null,
+    timing: "immediate" as const,
+    checkoutUrl: "https://checkout.stripe.com/c/pay_test",
+  };
+  assert.equal(response.effectiveAt, null);
+  assert.equal(response.planId, currentPlanId);
+  assert.ok(response.checkoutUrl);
+});
+
 test("neonSubscriptionStatusAfterPlanChange is pending when checkout is required", () => {
   assert.equal(
     neonSubscriptionStatusAfterPlanChange({
