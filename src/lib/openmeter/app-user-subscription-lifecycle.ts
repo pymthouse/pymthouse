@@ -635,6 +635,16 @@ export async function resumeAppUserSubscriptionFromList(input: {
   const { target, scheduledStarter, livePaid } = resume;
   const scheduledIds = listScheduledSubscriptionIds(input.listed);
 
+  // planId is display context only — a DB lookup failure must never abort a
+  // resume that already succeeded on the Konnect side.
+  const safeResolvePlanId = async () => {
+    try {
+      return await resolveLocalPlanIdFromOpenMeterSubscription(input.clientId, target);
+    } catch {
+      return null;
+    }
+  };
+
   try {
     // Any scheduled successor (Starter or paid from a prior /change) makes
     // unschedule-cancelation 409 with only_single_subscription_allowed. Restore
@@ -649,10 +659,7 @@ export async function resumeAppUserSubscriptionFromList(input: {
       const restored = await restoreKonnectSubscription({
         subscriptionId: target.id,
       });
-      const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
-        input.clientId,
-        target,
-      );
+      const planId = await safeResolvePlanId();
       return {
         resumed: true,
         subscriptionId: restored.id?.trim() || target.id,
@@ -665,10 +672,7 @@ export async function resumeAppUserSubscriptionFromList(input: {
       const resumed = await unscheduleKonnectSubscriptionCancelation({
         subscriptionId: target.id,
       });
-      const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
-        input.clientId,
-        target,
-      );
+      const planId = await safeResolvePlanId();
       return {
         resumed: true,
         subscriptionId: resumed.id?.trim() || target.id,
@@ -687,10 +691,7 @@ export async function resumeAppUserSubscriptionFromList(input: {
       const restored = await restoreKonnectSubscription({
         subscriptionId: target.id,
       });
-      const planId = await resolveLocalPlanIdFromOpenMeterSubscription(
-        input.clientId,
-        target,
-      );
+      const planId = await safeResolvePlanId();
       return {
         resumed: true,
         subscriptionId: restored.id?.trim() || target.id,
