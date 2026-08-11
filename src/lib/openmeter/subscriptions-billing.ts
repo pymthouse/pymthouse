@@ -885,7 +885,7 @@ export async function createEndUserCheckout(
   });
 
   return {
-    checkoutUrl: "",
+    checkoutUrl: checkoutSettings.successUrl,
     subscriptionId: subscription.subscriptionId,
   };
 }
