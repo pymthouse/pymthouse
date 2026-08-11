@@ -6,35 +6,13 @@
  * Cloudflare published address (https://www.cloudflare.com/ips/).
  */
 
+import cloudflareIps from "@/lib/cloudflare-ips.json";
+
 /** Cloudflare IPv4 ranges — https://www.cloudflare.com/ips-v4/ */
-const CLOUDFLARE_IPV4_CIDRS = [
-  "173.245.48.0/20",
-  "103.21.244.0/22",
-  "103.22.200.0/22",
-  "103.31.4.0/22",
-  "141.101.64.0/18",
-  "108.162.192.0/18",
-  "190.93.240.0/20",
-  "188.114.96.0/20",
-  "197.234.240.0/22",
-  "198.41.128.0/17",
-  "162.158.0.0/15",
-  "104.16.0.0/13",
-  "104.24.0.0/14",
-  "172.64.0.0/13",
-  "131.0.72.0/22",
-] as const;
+const CLOUDFLARE_IPV4_CIDRS = cloudflareIps.ipv4;
 
 /** Cloudflare IPv6 ranges — https://www.cloudflare.com/ips-v6/ */
-const CLOUDFLARE_IPV6_CIDRS = [
-  "2400:cb00::/32",
-  "2606:4700::/32",
-  "2803:f800::/32",
-  "2405:b500::/32",
-  "2405:8100::/32",
-  "2a06:98c0::/29",
-  "2c0f:f248::/32",
-] as const;
+const CLOUDFLARE_IPV6_CIDRS = cloudflareIps.ipv6;
 
 type ParsedCidr = {
   network: bigint;
@@ -61,7 +39,7 @@ function parseIpv6ToBigInt(ip: string): bigint | null {
   }
 
   // IPv4-mapped IPv6 (:ffff:a.b.c.d) — expand the dotted quad.
-  const v4Mapped = raw.match(/^(.+):(\d{1,3}(?:\.\d{1,3}){3})$/);
+  const v4Mapped = /^(.+):(\d{1,3}(?:\.\d{1,3}){3})$/.exec(raw);
   if (v4Mapped) {
     const v4 = parseIpv4ToInt(v4Mapped[2]);
     if (v4 === null) return null;
@@ -89,7 +67,7 @@ function parseIpv6ToBigInt(ip: string): bigint | null {
   let heets: number[];
   if (sides.length === 1) {
     const parsed = parseHeets(sides[0]);
-    if (!parsed || parsed.length !== 8) return null;
+    if (parsed?.length !== 8) return null;
     heets = parsed;
   } else {
     const left = parseHeets(sides[0]);
@@ -97,7 +75,7 @@ function parseIpv6ToBigInt(ip: string): bigint | null {
     if (!left || !right) return null;
     const missing = 8 - left.length - right.length;
     if (missing < 0) return null;
-    heets = [...left, ...Array(missing).fill(0), ...right];
+    heets = [...left, ...new Array(missing).fill(0), ...right];
   }
 
   let value = 0n;
