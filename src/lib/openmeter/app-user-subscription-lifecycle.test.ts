@@ -16,6 +16,7 @@ import {
   resumeAppUserSubscription,
   resumeAppUserSubscriptionFromList,
   scheduleLivePaidCancel,
+  immediateCancelOccupyingCapePaid,
 } from "@/lib/openmeter/app-user-subscription-lifecycle";
 import type { OpenMeterSubscriptionView } from "@/lib/openmeter/subscription-read";
 
@@ -732,4 +733,51 @@ test("resumeAppUserSubscriptionFromList falls back to restore on unschedule 409"
   assert.equal(urls.length, 2);
   assert.match(urls[0]!, /unschedule-cancelation/);
   assert.match(urls[1]!, /\/restore$/);
+});
+
+test("immediateCancelOccupyingCapePaid restores then changes onto Starter", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("/restore")) {
+      return new Response(
+        JSON.stringify({ id: "paid_cape", status: "active", customer_id: "c1" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.includes("/change")) {
+      return new Response(
+        JSON.stringify({
+          current: { id: "paid_cape", status: "canceled", customer_id: "c1" },
+          next: { id: "starter_now", status: "active", customer_id: "c1" },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response("unexpected", { status: 500 });
+  });
+
+  const result = await immediateCancelOccupyingCapePaid({
+    canceledPaid: sub({
+      id: "paid_cape",
+      planKey: "paid",
+      status: "canceled",
+      activeTo: "2026-09-01T00:00:00.000Z",
+    }),
+    scheduledIds: ["sched_starter"],
+    clientId: "app_missing_plans_ok",
+    starterPlanKey: "app_starter",
+    starterLocalPlanId: "local_starter",
+    starterOpenMeterPlanId: "om_starter",
+    customerId: "c1",
+  });
+
+  assert.equal(result.subscriptionId, "starter_now");
+  assert.equal(result.planId, "local_starter");
+  assert.equal(result.scheduledPlanKey, null);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0]!, /\/restore$/);
+  assert.match(urls[1]!, /\/change/);
 });

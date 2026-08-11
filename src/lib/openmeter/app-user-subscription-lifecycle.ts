@@ -435,6 +435,45 @@ export async function scheduleLivePaidCancel(input: {
 }
 
 /**
+ * CAPE (cancel-at-period-end) already occupies the slot with no live paid row.
+ * Immediate cancel must still end Paid now: restore (clears successors) then
+ * `/change` onto Starter — `cancelWhenNoLivePaid` only reports alreadyScheduled.
+ */
+export async function immediateCancelOccupyingCapePaid(input: {
+  canceledPaid: OpenMeterSubscriptionView;
+  scheduledIds: string[];
+  clientId: string;
+  starterPlanKey: string;
+  starterLocalPlanId: string;
+  starterOpenMeterPlanId: string | null;
+  customerId: string;
+}): Promise<AppUserSubscriptionCancelResult> {
+  await clearScheduledBeforeMutation({
+    scheduledIds: input.scheduledIds,
+    canceledPaidId: input.canceledPaid.id,
+  });
+  // Restore reactivates the same subscription id; /change does not need a
+  // re-list for the id/planKey we already have.
+  const livePaid: OpenMeterSubscriptionView = {
+    ...input.canceledPaid,
+    status: "active",
+  };
+  const localPlanId = await resolveLocalPlanIdFromOpenMeterSubscription(
+    input.clientId,
+    livePaid,
+  );
+  return scheduleLivePaidCancel({
+    livePaid,
+    localPlanId,
+    starterPlanKey: input.starterPlanKey,
+    starterLocalPlanId: input.starterLocalPlanId,
+    starterOpenMeterPlanId: input.starterOpenMeterPlanId,
+    timing: "immediate",
+    customerId: input.customerId,
+  });
+}
+
+/**
  * Cancel the app user's paid (non-Starter) plan.
  * Default: end of cycle (`next_billing_cycle`). Pass `timing: "immediate"` to
  * switch onto Starter now via Konnect `/change`. End-of-cycle cancel provisions
@@ -507,6 +546,27 @@ export async function cancelAppUserSubscription(input: {
   }
 
   if (!livePaid) {
+    // CAPE-only: end-of-cycle cancel already ran; honor timing=immediate.
+    if (timing === "immediate" && canceledPaid?.id && !liveStarter) {
+      try {
+        return await immediateCancelOccupyingCapePaid({
+          canceledPaid,
+          scheduledIds,
+          clientId,
+          starterPlanKey,
+          starterLocalPlanId,
+          starterOpenMeterPlanId,
+          customerId: customer.id,
+        });
+      } catch (err) {
+        if (err instanceof AppUserSubscriptionCancelError) throw err;
+        console.error("App-user immediate cancel from CAPE failed", err);
+        throw new AppUserSubscriptionCancelError(
+          "cancel_failed",
+          "Could not cancel subscription immediately",
+        );
+      }
+    }
     return cancelWhenNoLivePaid({
       clientId,
       liveStarter,
