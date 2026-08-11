@@ -38,7 +38,7 @@ The public document includes M2M integrator routes and end-user `/api/v1/user/us
 
 Regenerate the route inventory after adding handlers: `npm run openapi:generate`. CI runs `npm run check:openapi` to fail on metadata drift.
 
-OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration`. Signer session exchange accepts a bare `pmth_*` API key as RFC 8693 `subject_token` on both `POST /api/v1/oidc/token` (app resolved from the credential) and `POST /api/v1/apps/{clientId}/oidc/token` (path-scoped).
+OIDC issuer metadata remains at `{issuer}/.well-known/openid-configuration`. Signer session exchange accepts a bare `pmth_*` API key as RFC 8693 `subject_token` on both `POST /api/v1/oidc/token` (app resolved from the credential) and `POST /api/v1/apps/{clientId}/oidc/token` (path-scoped). Canonical `subject_token_type` for API keys is `urn:pymthouse:oauth:token-type:api_key` (legacy `urn:ietf:params:oauth:token-type:access_token` still accepted when the subject is key-shaped).
 
 ### Breaking changes (API cleanup)
 
@@ -86,7 +86,7 @@ Newly issued **personal** keys are returned as bare `pmth_<hex>`. Builder-minted
 
 - Self-serve usage (credential-scoped app): `GET /api/v1/user/usage*` with bare Bearer
 - Self-serve usage (path-scoped app): `GET /api/v1/apps/{clientId}/me/usage*` with bare or composite Bearer
-- Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite
+- Signer session exchange (RFC 8693): `POST /api/v1/oidc/token` or `POST /api/v1/apps/{clientId}/oidc/token` with `subject_token` = bare `pmth_…` or composite and `subject_token_type=urn:pymthouse:oauth:token-type:api_key`
 
 Composite remains the default presentation for Builder keys so pathless callers (e.g. remote-signer identity webhook) can recover the public client id from a single Bearer. Personal network keys keep a bare `apiKey` for usage, but mint `sdkToken` with the same composite Authorization header.
 
@@ -172,8 +172,8 @@ Exchange a user access JWT **or** a per-app-user API key (`pmth_*`) for a short-
 | Field | Value |
 | --- | --- |
 | `grant_type` | `urn:ietf:params:oauth:grant-type:token-exchange` |
-| `subject_token` | User access JWT **or** per-app-user API key (`pmth_*`) |
-| `subject_token_type` | `urn:ietf:params:oauth:token-type:access_token` |
+| `subject_token` | User access JWT **or** per-app-user API key (`pmth_*` / composite) |
+| `subject_token_type` | API key: `urn:pymthouse:oauth:token-type:api_key` (canonical). JWT: `urn:ietf:params:oauth:token-type:access_token`. Legacy: `access_token` is still accepted for key-shaped subjects. |
 | `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
 | `discovery_url` | Optional override for network discovery (defaults to `{signer_url}/discover-orchestrators`) |
 | `caps` | Optional; repeatable capability filters for remote-signer discovery (`caps=pipeline/model`) |
@@ -189,7 +189,7 @@ curl -sS \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
   --data-urlencode "subject_token=pmth_..." \
-  --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  --data-urlencode "subject_token_type=urn:pymthouse:oauth:token-type:api_key" \
   "https://your-pymthouse.example/api/v1/oidc/token"
 ```
 
@@ -200,7 +200,7 @@ curl -sS \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
   --data-urlencode "subject_token=pmth_..." \
-  --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  --data-urlencode "subject_token_type=urn:pymthouse:oauth:token-type:api_key" \
   "https://your-pymthouse.example/api/v1/apps/app_…/oidc/token"
 ```
 
