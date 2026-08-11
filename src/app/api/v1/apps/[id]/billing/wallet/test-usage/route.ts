@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { ingestTestUsageEvent } from "@/lib/billing/test-usage-event";
-import {
-  authorizeOwnerWalletM2m,
-  readJsonObjectBody,
-} from "@/lib/billing/owner-wallet-m2m-auth";
-import {
-  readOptionalExternalUserId,
-  resolveWalletBillingTarget,
-} from "@/lib/billing/wallet-billing-target";
+import { readJsonObjectBody } from "@/lib/billing/owner-wallet-m2m-auth";
 import { walletUpstreamErrorResponse } from "@/lib/billing/wallet-http";
+import { resolveWalletRouteContext } from "@/lib/billing/wallet-route-context";
 
 /**
  * POST /api/v1/apps/{clientId}/billing/wallet/test-usage
@@ -25,25 +19,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: clientId } = await params;
-  const access = await authorizeOwnerWalletM2m(request, clientId);
-  if (!access) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   const body = await readJsonObjectBody(request);
-  const billingTarget = await resolveWalletBillingTarget({
-    appId: access.app.id,
-    ownerUserId: access.ownerUserId,
-    externalUserId: readOptionalExternalUserId(body.externalUserId),
+  const resolved = await resolveWalletRouteContext({
+    request,
+    clientId,
+    externalUserId: body.externalUserId,
   });
-  if (!billingTarget.ok) {
-    return NextResponse.json(
-      { error: billingTarget.error },
-      { status: billingTarget.status },
-    );
+  if (!resolved.ok) {
+    return resolved.response;
   }
 
-  if (billingTarget.target.mode !== "merchant") {
+  const { target } = resolved.context;
+  if (target.mode !== "merchant") {
     return NextResponse.json(
       { error: "test-usage is only available for merchant end-user wallets" },
       { status: 400 },
@@ -55,7 +42,7 @@ export async function POST(
   try {
     const result = await ingestTestUsageEvent({
       publicClientId: clientId,
-      externalUserId: billingTarget.target.externalUserId,
+      externalUserId: target.externalUserId,
       amountUsd: body.amountUsd,
       collect,
     });

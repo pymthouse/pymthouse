@@ -125,6 +125,7 @@ export const OPENAPI_ROUTE_INVENTORY: ScannedRouteOperation[] = [
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/stripe/account-link", "apps/[id]/billing/stripe/account-link/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/stripe/connect", "apps/[id]/billing/stripe/connect/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/wallet/payment-methods", "apps/[id]/billing/wallet/payment-methods/route.ts"),
+  inventoryOp("post", "/api/v1/apps/{clientId}/billing/wallet/test-usage", "apps/[id]/billing/wallet/test-usage/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("post", "/api/v1/apps/{clientId}/billing/wallet/top-up", "apps/[id]/billing/wallet/top-up/route.ts"),
   inventoryOp("post", "/api/v1/apps/{clientId}/credentials", "apps/[id]/credentials/route.ts", true, "not in Builder/End-user/Internal contract"),
   inventoryOp("post", "/api/v1/apps/{clientId}/discovery-profiles", "apps/[id]/discovery-profiles/route.ts", true, "not in Builder/End-user/Internal contract"),
