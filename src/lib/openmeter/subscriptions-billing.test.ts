@@ -6,6 +6,7 @@ import {
   neonSubscriptionStatusAfterPlanChange,
   planRequiresPaymentMethod,
   shouldApplyFreeBillingProfileForCheckout,
+  shouldCollectPaymentMethodBeforePlanChange,
 } from "./subscriptions-billing";
 
 test("planRequiresPaymentMethod is false for free/starter/network", () => {
@@ -122,6 +123,30 @@ test("defaultSubscriptionChangeTiming ends Starter included immediately on PPU",
       targetPlanType: "usage",
     }),
     "next_billing_cycle",
+  );
+});
+
+test("shouldCollectPaymentMethodBeforePlanChange gates Konnect /change", () => {
+  assert.equal(
+    shouldCollectPaymentMethodBeforePlanChange({
+      targetRequiresPaymentMethod: true,
+      hasDefaultPaymentMethod: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCollectPaymentMethodBeforePlanChange({
+      targetRequiresPaymentMethod: true,
+      hasDefaultPaymentMethod: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCollectPaymentMethodBeforePlanChange({
+      targetRequiresPaymentMethod: false,
+      hasDefaultPaymentMethod: false,
+    }),
+    false,
   );
 });
 

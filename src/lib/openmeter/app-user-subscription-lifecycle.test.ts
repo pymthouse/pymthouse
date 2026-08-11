@@ -392,6 +392,32 @@ test("resolveAppUserResumeTarget resumes CAPE primary when a scheduled successor
   const resume = resolveAppUserResumeTarget(listed, "app_starter", null);
   assert.equal(resume?.target.id, "paid_canceled");
   assert.equal(resume?.scheduledStarter?.id, "starter_scheduled");
+  // livePaid is absent for CAPE — resume must still restore (not unschedule)
+  // so Konnect does not 409 only_single_subscription_allowed.
+  assert.equal(resume?.livePaid, undefined);
+});
+
+test("resolveAppUserResumeTarget resumes CAPE when scheduled successor is paid", () => {
+  // Staging 409: CAPE Daydream + scheduled paid successor from a prior /change.
+  // Resume must restore (any scheduled id), not only scheduled Starter.
+  const listed = [
+    sub({
+      id: "01KZQ3YQYZSDKANZC0SAW0VV20",
+      planKey: "paid_a",
+      status: "canceled",
+      activeFrom: "2026-08-11T00:35:58.500843Z",
+      activeTo: "2026-09-10T23:08:53.491143Z",
+    }),
+    sub({
+      id: "sched_paid_b",
+      planKey: "paid_b",
+      status: "scheduled",
+      activeFrom: "2026-09-10T23:08:53.491143Z",
+    }),
+  ];
+  const resume = resolveAppUserResumeTarget(listed, "app_starter", null);
+  assert.equal(resume?.target.id, "01KZQ3YQYZSDKANZC0SAW0VV20");
+  assert.equal(resume?.scheduledStarter, undefined);
 });
 
 test("resolveAppUserResumeTarget keeps a cancel-at-period-end primary resumable", () => {
