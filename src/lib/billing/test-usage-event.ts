@@ -20,6 +20,30 @@ import { parseTopUpAmountUsd } from "@/lib/stripe/topup-checkout";
 
 const INGEST_SETTLE_MS = 2_500;
 
+type TestUsageEventDeps = {
+  isHostedAdminClientAvailable: typeof isHostedAdminClientAvailable;
+  parseTopUpAmountUsd: typeof parseTopUpAmountUsd;
+  getHostedAdminClient: typeof getHostedAdminClient;
+  ensureOpenMeterCustomerForAppUser: typeof ensureOpenMeterCustomerForAppUser;
+  ingestSignedTicketEvent: typeof ingestSignedTicketEvent;
+  invoiceGatheringForIdentity: typeof invoiceGatheringForIdentity;
+  formatUsdMicrosForDisplay: typeof formatUsdMicrosForDisplay;
+  randomUUID: typeof randomUUID;
+  sleep: (ms: number) => Promise<void>;
+};
+
+const DEFAULT_TEST_USAGE_EVENT_DEPS: TestUsageEventDeps = {
+  isHostedAdminClientAvailable,
+  parseTopUpAmountUsd,
+  getHostedAdminClient,
+  ensureOpenMeterCustomerForAppUser,
+  ingestSignedTicketEvent,
+  invoiceGatheringForIdentity,
+  formatUsdMicrosForDisplay,
+  randomUUID,
+  sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
 export type TestUsageEventResult = {
   requestId: string;
   amountUsdMicros: string;
@@ -35,12 +59,12 @@ export async function ingestTestUsageEvent(input: {
   amountUsd: unknown;
   /** When true, force mid-cycle invoice raise after ingest settles. */
   collect?: boolean;
-}): Promise<TestUsageEventResult> {
-  if (!isHostedAdminClientAvailable()) {
+}, deps: TestUsageEventDeps = DEFAULT_TEST_USAGE_EVENT_DEPS): Promise<TestUsageEventResult> {
+  if (!deps.isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured");
   }
 
-  const amount = parseTopUpAmountUsd(input.amountUsd);
+  const amount = deps.parseTopUpAmountUsd(input.amountUsd);
   if (!amount.ok) {
     throw new Error(amount.error);
   }
@@ -51,17 +75,17 @@ export async function ingestTestUsageEvent(input: {
     throw new Error("publicClientId and externalUserId are required");
   }
 
-  const client = getHostedAdminClient();
-  await ensureOpenMeterCustomerForAppUser({
+  const client = deps.getHostedAdminClient();
+  await deps.ensureOpenMeterCustomerForAppUser({
     client,
     clientId: publicClientId,
     externalUserId,
   });
 
-  const requestId = `test-usage-${randomUUID()}`;
+  const requestId = `test-usage-${deps.randomUUID()}`;
   const amountUsdMicros = amount.amountUsdMicros.toString();
 
-  await ingestSignedTicketEvent({
+  await deps.ingestSignedTicketEvent({
     client,
     event: {
       clientId: publicClientId,
@@ -81,7 +105,7 @@ export async function ingestTestUsageEvent(input: {
   const result: TestUsageEventResult = {
     requestId,
     amountUsdMicros,
-    amountUsd: formatUsdMicrosForDisplay(amountUsdMicros),
+    amountUsd: deps.formatUsdMicrosForDisplay(amountUsdMicros),
     subject: `${publicClientId}:${externalUserId}`,
     collected: false,
   };
@@ -91,9 +115,9 @@ export async function ingestTestUsageEvent(input: {
   }
 
   // Metering is eventually consistent; brief pause before forcing collection.
-  await new Promise((resolve) => setTimeout(resolve, INGEST_SETTLE_MS));
+  await deps.sleep(INGEST_SETTLE_MS);
 
-  const collect = await invoiceGatheringForIdentity({
+  const collect = await deps.invoiceGatheringForIdentity({
     clientId: publicClientId,
     externalUserId,
     force: true,
