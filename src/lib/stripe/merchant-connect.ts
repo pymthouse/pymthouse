@@ -73,7 +73,7 @@ export type MerchantBillingHistoryItem = {
   periodStart?: string;
   periodEnd?: string;
   externalInvoicingId?: string;
-  invoiceType: "stripe_connect" | "auto_topup";
+  invoiceType: "stripe_connect" | "auto_topup" | "payment";
 };
 
 function stripeSecretKey(): string {
@@ -159,11 +159,42 @@ function mapLegacyAutoTopUpPaymentIntent(
   };
 }
 
+/**
+ * Merchant billing history includes Stripe invoices plus any succeeded
+ * PaymentIntent on the Connect customer (legacy auto top-ups and ad-hoc
+ * charges). One-time Dashboard/Checkout charges without invoice rows would
+ * otherwise never appear.
+ */
+function mapMerchantPaymentIntent(
+  pi: StripeConnectPaymentIntent,
+): MerchantBillingHistoryItem | null {
+  const legacy = mapLegacyAutoTopUpPaymentIntent(pi);
+  if (legacy) return legacy;
+  const id = pi.id?.trim();
+  if (!id?.startsWith("pi_")) return null;
+  const status = pi.status?.trim() || "unknown";
+  if (status !== "succeeded") return null;
+  const amount = pi.amount ?? 0;
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return {
+    id,
+    number: "Payment",
+    status,
+    currency: pi.currency?.toUpperCase() || "USD",
+    totalAmount: (amount / 100).toFixed(2),
+    customerId: pi.customer?.trim() || undefined,
+    issuedAt: invoiceDate(pi.created),
+    externalInvoicingId: id,
+    invoiceType: "payment",
+  };
+}
+
 /** @internal Exported for unit tests. */
 export const __testMerchantConnectInvoices = {
   invoiceDate,
   mapMerchantInvoice,
   mapLegacyAutoTopUpPaymentIntent,
+  mapMerchantPaymentIntent,
   stripeConnectInvoiceRequest,
 };
 /** @internal Exported for unit tests. */
@@ -591,7 +622,7 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     .map((invoice) => mapMerchantInvoice(invoice))
     .filter((invoice): invoice is MerchantBillingHistoryItem => invoice !== null);
   const topUps = paymentIntentRows
-    .map((pi) => mapLegacyAutoTopUpPaymentIntent(pi))
+    .map((pi) => mapMerchantPaymentIntent(pi))
     .filter((row): row is MerchantBillingHistoryItem => row !== null);
   const merged = [...invoices, ...topUps].sort(
     (a, b) => billingHistorySortKey(b) - billingHistorySortKey(a),
