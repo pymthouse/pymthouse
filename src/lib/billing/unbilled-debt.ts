@@ -1,7 +1,7 @@
 /**
  * Resolve unbilled debt (USD micros) for soft-negative gating / invoice trigger.
- * Prefer gathering invoice totals; fall back to calendar-month meter usage net of
- * remaining included usage (OM-billable amount).
+ * Prefer OpenMeter invoice totals (gathering + unpaid open); fall back to
+ * calendar-month meter usage only when the invoice list fails.
  */
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
@@ -63,7 +63,7 @@ export function netBillableMeterDebtUsdMicros(input: {
     : 0n;
 }
 
-type GatheringInvoiceRow = {
+type InvoiceDebtRow = {
   status?: string | null;
   customer?: { id?: string | null } | null;
   customerId?: string | null;
@@ -71,7 +71,7 @@ type GatheringInvoiceRow = {
   totals?: { total?: unknown } | null;
 };
 
-function invoiceCustomerId(inv: GatheringInvoiceRow): string | null {
+function invoiceCustomerId(inv: InvoiceDebtRow): string | null {
   return (
     inv.customer?.id?.trim() ||
     (typeof inv.customerId === "string" ? inv.customerId.trim() : null) ||
@@ -80,78 +80,139 @@ function invoiceCustomerId(inv: GatheringInvoiceRow): string | null {
   );
 }
 
-function maxGatheringFromItems(
-  items: GatheringInvoiceRow[],
+function statusRoot(status: string): string {
+  const lower = status.toLowerCase();
+  const dot = lower.indexOf(".");
+  return dot >= 0 ? lower.slice(0, dot) : lower;
+}
+
+function isPaidOrClosedStatus(status: string): boolean {
+  const root = statusRoot(status);
+  return (
+    root === "paid" ||
+    root === "void" ||
+    root === "uncollectible" ||
+    root === "deleted"
+  );
+}
+
+function isUnpaidOpenStatus(status: string): boolean {
+  const root = statusRoot(status);
+  return (
+    root === "draft" ||
+    root === "issuing" ||
+    root === "issued" ||
+    root === "payment_processing" ||
+    root === "overdue"
+  );
+}
+
+function invoiceDebtContribution(
+  inv: InvoiceDebtRow,
   customerId: string,
-): bigint | null {
-  let max = 0n;
-  let found = false;
-  for (const inv of items) {
-    if (String(inv.status ?? "").toLowerCase() !== "gathering") {
-      continue;
-    }
-    const invCustomer = invoiceCustomerId(inv);
-    if (invCustomer && invCustomer !== customerId) {
-      continue;
-    }
-    const micros = gatheringTotalUsdMicros(inv.totals?.total);
-    if (micros == null) continue;
-    found = true;
-    if (micros > max) max = micros;
+): { kind: "gathering" | "unpaid"; micros: bigint } | null {
+  const invCustomer = invoiceCustomerId(inv);
+  if (invCustomer && invCustomer !== customerId) {
+    return null;
   }
-  return found ? max : null;
+  const status = String(inv.status ?? "").trim();
+  if (!status) return null;
+  const micros = gatheringTotalUsdMicros(inv.totals?.total);
+  if (micros == null) return null;
+
+  const root = statusRoot(status);
+  if (root === "gathering") {
+    return { kind: "gathering", micros };
+  }
+  if (isPaidOrClosedStatus(status) || !isUnpaidOpenStatus(status)) {
+    return null;
+  }
+  return { kind: "unpaid", micros };
+}
+
+/**
+ * Debt from a successful invoice list: max gathering total + sum of unpaid
+ * open invoices (draft/issued/overdue/…). Paid/void are excluded. Empty list
+ * is 0 — do not fall through to meter.
+ */
+export function unbilledInvoiceDebtFromItems(
+  items: InvoiceDebtRow[],
+  customerId: string,
+): bigint {
+  let gatheringMax = 0n;
+  let hasGathering = false;
+  let unpaidOpenSum = 0n;
+
+  for (const inv of items) {
+    const contrib = invoiceDebtContribution(inv, customerId);
+    if (!contrib) continue;
+    if (contrib.kind === "gathering") {
+      hasGathering = true;
+      if (contrib.micros > gatheringMax) gatheringMax = contrib.micros;
+      continue;
+    }
+    unpaidOpenSum += contrib.micros;
+  }
+
+  return (hasGathering ? gatheringMax : 0n) + unpaidOpenSum;
 }
 
 /**
  * Konnect `customers` list filter is often ignored on `/v3/openmeter`. Prefer
  * `/metering/v1` with an explicit customer filter, then client-side match.
  */
-async function maxGatheringDebtViaMeteringV1(
+async function listInvoicesViaMeteringV1(
   customerId: string,
-): Promise<bigint | null> {
+): Promise<InvoiceDebtRow[] | null> {
   try {
     const params = new URLSearchParams();
     params.set("filter[customer.id][eq]", customerId);
-    params.set("filter[status][eq]", "gathering");
-    params.set("page[size]", "20");
+    params.set("page[size]", "50");
     params.set("page[number]", "1");
     const listed = await konnectMeteringV1Fetch<{
-      items?: GatheringInvoiceRow[];
-    }>(`/billing/invoices?${params.toString()}`, { method: "GET" }, "gathering-invoices");
-    return maxGatheringFromItems(listed?.items ?? [], customerId);
+      items?: InvoiceDebtRow[];
+      data?: InvoiceDebtRow[];
+    }>(`/billing/invoices?${params.toString()}`, { method: "GET" }, "unbilled-invoices");
+    return listed?.items ?? listed?.data ?? [];
   } catch {
-    // Fall through to alternate filter shapes / SDK list.
     try {
       const params = new URLSearchParams();
       params.set("filter[customer_id][eq]", customerId);
-      params.set("statuses", "gathering");
-      params.set("page[size]", "20");
+      params.set("page[size]", "50");
       const listed = await konnectMeteringV1Fetch<{
-        items?: GatheringInvoiceRow[];
+        items?: InvoiceDebtRow[];
+        data?: InvoiceDebtRow[];
       }>(
         `/billing/invoices?${params.toString()}`,
         { method: "GET" },
-        "gathering-invoices",
+        "unbilled-invoices",
       );
-      return maxGatheringFromItems(listed?.items ?? [], customerId);
+      return listed?.items ?? listed?.data ?? [];
     } catch {
       return null;
     }
   }
 }
 
-async function maxGatheringDebtUsdMicros(
+type InvoiceDebtLookup =
+  | { ok: true; usdMicros: bigint }
+  | { ok: false };
+
+async function lookupUnbilledInvoiceDebt(
   customerId: string,
-): Promise<bigint | null> {
+): Promise<InvoiceDebtLookup> {
   if (!isHostedAdminClientAvailable()) {
-    return null;
+    return { ok: false };
   }
 
   const openmeterUrl = getHostedOpenMeterUrl();
   if (isKonnectMeteringUrl(openmeterUrl)) {
-    const viaMetering = await maxGatheringDebtViaMeteringV1(customerId);
+    const viaMetering = await listInvoicesViaMeteringV1(customerId);
     if (viaMetering != null) {
-      return viaMetering;
+      return {
+        ok: true,
+        usdMicros: unbilledInvoiceDebtFromItems(viaMetering, customerId),
+      };
     }
   }
 
@@ -160,13 +221,16 @@ async function maxGatheringDebtUsdMicros(
     const listed = await client.billing.invoices.list({
       customers: [customerId],
       page: 1,
-      pageSize: 20,
+      pageSize: 50,
       order: "DESC",
       orderBy: "createdAt",
     });
-    return maxGatheringFromItems(listed?.items ?? [], customerId);
+    return {
+      ok: true,
+      usdMicros: unbilledInvoiceDebtFromItems(listed?.items ?? [], customerId),
+    };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 
@@ -273,8 +337,9 @@ export type UnbilledDebtSource =
   | "unavailable";
 
 /**
- * Unbilled debt for soft-negative gating. Gathering total when present,
- * else period network-fee meter sum net of remaining included usage.
+ * Unbilled debt for soft-negative gating. Invoice totals when the list
+ * succeeds (including 0 when gathering is empty / only paid remain); else
+ * period network-fee meter sum net of remaining included usage.
  */
 export async function getUnbilledDebtDetails(input: {
   clientId: string;
@@ -295,9 +360,9 @@ export async function getUnbilledDebtDetails(input: {
   });
 
   if (customerId) {
-    const gathering = await maxGatheringDebtUsdMicros(customerId);
-    if (gathering != null) {
-      return { usdMicros: gathering, source: "gathering_invoice" };
+    const looked = await lookupUnbilledInvoiceDebt(customerId);
+    if (looked.ok) {
+      return { usdMicros: looked.usdMicros, source: "gathering_invoice" };
     }
   }
 

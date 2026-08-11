@@ -12,6 +12,7 @@ import {
   isKonnectMeterQueryGet,
   mapKonnectMeterGranularity,
   normalizeKonnectMeterQueryResponse,
+  normalizeKonnectCustomerRecord,
   normalizeKonnectListResponse,
   normalizeKonnectSubscriptionRecord,
   rewriteKonnectInvoiceActionToMeteringV1,
@@ -292,6 +293,59 @@ test("rewriteKonnectRequestBody maps customer usageAttribution to snake_case", (
       subject_keys: ["owner:uuid-1", "app_1:uuid-1"],
     },
   });
+});
+
+test("rewriteKonnectRequestBody maps customer metadata to labels", () => {
+  const rewritten = rewriteKonnectRequestBody(
+    "/v3/openmeter/api/v1/customers/cust_1",
+    "PUT",
+    {
+      name: "eu_1",
+      usageAttribution: { subjectKeys: ["app_1:eu_1"] },
+      metadata: {
+        stripe_charge_model: "direct",
+        stripe_connect_account_id: "acct_1",
+        pymthouse_stripe_customer_id: "cus_1",
+      },
+    },
+  );
+  assert.deepEqual(rewritten, {
+    name: "eu_1",
+    usage_attribution: {
+      subject_keys: ["app_1:eu_1"],
+    },
+    labels: {
+      stripe_charge_model: "direct",
+      stripe_connect_account_id: "acct_1",
+      pymthouse_stripe_customer_id: "cus_1",
+    },
+  });
+  assert.equal(
+    (rewritten as { metadata?: unknown }).metadata,
+    undefined,
+  );
+});
+
+test("normalizeKonnectCustomerRecord merges labels into metadata", () => {
+  const normalized = normalizeKonnectCustomerRecord({
+    id: "01KZQQCY1ZVYN66HBR3V7FJ590",
+    key: "app_1:eu_1",
+    labels: {
+      stripe_charge_model: "direct",
+      stripe_connect_account_id: "acct_1",
+    },
+    metadata: null,
+    usage_attribution: { subject_keys: ["app_1:eu_1"] },
+  }) as {
+    metadata?: Record<string, string>;
+    usageAttribution?: { subjectKeys: string[] };
+  };
+
+  assert.deepEqual(normalized.metadata, {
+    stripe_charge_model: "direct",
+    stripe_connect_account_id: "acct_1",
+  });
+  assert.deepEqual(normalized.usageAttribution?.subjectKeys, ["app_1:eu_1"]);
 });
 
 test("rewriteKonnectRequestBody maps customerId to nested customer for subscription create", () => {
