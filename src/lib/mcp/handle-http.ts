@@ -3,11 +3,15 @@ import "server-only";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
 import { resolveMcpPrincipal } from "@/lib/mcp/auth";
+import {
+  buildMcpWwwAuthenticateHeader,
+  MCP_RESOURCE_SCOPES,
+} from "@/lib/mcp/oauth-resource";
 import { createHostedLivepeerMcpServer } from "@/lib/mcp/hosted-server";
 
 /**
  * Handle one MCP streamable-HTTP request (stateless).
- * Auth: Bearer API key / developer JWT, or Basic M2M — resolved per caller app.
+ * Auth: Bearer API key / developer JWT / MCP OAuth JWT, or Basic M2M.
  */
 export async function handleHostedMcpHttpRequest(request: Request): Promise<Response> {
   const principal = await resolveMcpPrincipal(request);
@@ -16,11 +20,17 @@ export async function handleHostedMcpHttpRequest(request: Request): Promise<Resp
       {
         error: "unauthorized",
         message:
-          "Livepeer MCP requires Authorization: Bearer <API key|JWT> or Basic M2M credentials",
+          "Livepeer MCP requires Authorization: Bearer <API key|JWT> or Basic M2M credentials. MCP clients may complete OAuth (auth code + PKCE) using the resource_metadata challenge.",
       },
       {
         status: 401,
-        headers: { "WWW-Authenticate": 'Bearer realm="livepeer-mcp"' },
+        headers: {
+          "WWW-Authenticate": buildMcpWwwAuthenticateHeader({
+            scope: MCP_RESOURCE_SCOPES.join(" "),
+            error: "invalid_token",
+            errorDescription: "Authentication required",
+          }),
+        },
       },
     );
   }
@@ -35,7 +45,6 @@ export async function handleHostedMcpHttpRequest(request: Request): Promise<Resp
     const response = await transport.handleRequest(request);
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType.includes("text/event-stream") && response.body) {
-      // Defer server.close until the SSE body finishes or the client cancels.
       const { readable, writable } = new TransformStream();
       const closeServer = () => {
         void server.close().catch(() => undefined);

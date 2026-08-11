@@ -5,15 +5,29 @@ import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { getClient } from "@/lib/oidc/clients";
+import { isDcrClientId } from "@/lib/oidc/dcr-client";
+import { listOwnedAppsForUser } from "@/lib/oidc/owned-apps";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
+import { isMcpResourceIndicator } from "@/lib/mcp/oauth-resource";
 import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
+import { getDefaultBranding } from "@/lib/oidc/branding-shared";
 import { eq } from "drizzle-orm";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import ConsentForm from "./consent-form";
+
+function readResourceParam(params: Record<string, unknown>): string | null {
+  const resource = params.resource;
+  if (typeof resource === "string" && resource.trim()) return resource.trim();
+  if (Array.isArray(resource)) {
+    const first = resource.find((r) => typeof r === "string" && r.trim());
+    return typeof first === "string" ? first.trim() : null;
+  }
+  return null;
+}
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -114,9 +128,18 @@ export default async function ConsentPage({
   }
   const redirectUri = interactionDetails.params.redirect_uri as string;
   const scope = interactionDetails.params.scope as string;
+  const resource = readResourceParam(interactionDetails.params);
+  const isMcpOAuth =
+    isDcrClientId(clientId) ||
+    (resource !== null && isMcpResourceIndicator(resource));
 
-  const client = await getClient(clientId);
-  if (!client) {
+  const registeredClient = await getClient(clientId);
+  const provider = await getProvider();
+  const dynamicClient = isDcrClientId(clientId)
+    ? await provider.Client.find(clientId)
+    : null;
+
+  if (!registeredClient && !dynamicClient) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
         <div className="max-w-md w-full border border-red-500/20 bg-zinc-900/40 rounded-xl p-6">
@@ -131,29 +154,66 @@ export default async function ConsentPage({
     );
   }
 
-  const branding = await resolveAppBrandingByClientId(clientId);
-  const isWhiteLabel = shouldUseWhiteLabelBranding(branding);
+  const client = registeredClient ?? {
+    id: clientId,
+    clientId,
+    displayName:
+      (typeof dynamicClient?.clientName === "string" && dynamicClient.clientName) ||
+      "MCP Connector",
+    redirectUris: [],
+    allowedScopes: [
+      "openid",
+      "profile",
+      "email",
+      "offline_access",
+      "sign:job",
+    ],
+    grantTypes: ["authorization_code", "refresh_token"],
+    tokenEndpointAuthMethod: "none",
+    clientSecretHash: null,
+    createdAt: "",
+  };
 
-  const developerAppRows = await db
-    .select({
-      name: developerApps.name,
-      developerName: developerApps.developerName,
-      websiteUrl: developerApps.websiteUrl,
-      privacyPolicyUrl: developerApps.privacyPolicyUrl,
-      supportUrl: developerApps.supportUrl,
-      logoLightUrl: developerApps.logoLightUrl,
-    })
-    .from(developerApps)
-    .where(eq(developerApps.oidcClientId, client.id))
-    .limit(1);
+  const userId = (session.user as Record<string, unknown>).id as string | undefined;
+  const ownedApps = isMcpOAuth && userId
+    ? await listOwnedAppsForUser(userId)
+    : [];
+
+  const branding = registeredClient
+    ? await resolveAppBrandingByClientId(clientId)
+    : {
+        ...getDefaultBranding(),
+        displayName: client.displayName,
+        appName: client.displayName,
+      };
+  const isWhiteLabel = registeredClient
+    ? shouldUseWhiteLabelBranding(branding)
+    : false;
+
+  const developerAppRows = registeredClient
+    ? await db
+        .select({
+          name: developerApps.name,
+          developerName: developerApps.developerName,
+          websiteUrl: developerApps.websiteUrl,
+          privacyPolicyUrl: developerApps.privacyPolicyUrl,
+          supportUrl: developerApps.supportUrl,
+          logoLightUrl: developerApps.logoLightUrl,
+        })
+        .from(developerApps)
+        .where(eq(developerApps.oidcClientId, client.id))
+        .limit(1)
+    : [];
   const developerApp = developerAppRows[0];
 
   // Fetch logo_uri from OIDC client metadata (synced from app settings)
-  const oidcClientRows = await db
-    .select({ logoUri: oidcClients.logoUri })
-    .from(oidcClients)
-    .where(eq(oidcClients.clientId, clientId))
-    .limit(1);
+  const oidcClientRows = registeredClient
+    ? await db
+        .select({ logoUri: oidcClients.logoUri })
+        .from(oidcClients)
+        .where(eq(oidcClients.clientId, clientId))
+        .limit(1)
+    : [];
   const oidcClientRow = oidcClientRows[0];
   const logoUrl = isWhiteLabel 
     ? (branding.logoUrl || oidcClientRow?.logoUri || developerApp?.logoLightUrl || null)
@@ -383,7 +443,15 @@ export default async function ConsentPage({
           </div>
         )}
 
-        <ConsentForm uid={uid} branding={branding} />
+        <ConsentForm
+          uid={uid}
+          branding={branding}
+          requireAppSelection={isMcpOAuth}
+          appOptions={ownedApps.map((a) => ({
+            publicClientId: a.publicClientId,
+            name: a.name,
+          }))}
+        />
 
         <p className="text-xs text-zinc-500 text-center mt-4">
           By authorizing, you let {client.displayName} access only the permissions

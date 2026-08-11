@@ -18,6 +18,17 @@ import { parseGrantTypes } from "./grants";
 import { getTrustedLoginHosts, normalizeDomain } from "./custom-domains";
 import { ensureSigningKey } from "./jwks";
 import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-login";
+import {
+  applyMcpDcrRegistrationPolicy,
+  createDcrClientId,
+} from "./dcr-client";
+import { findMcpAppGrantBinding } from "./mcp-app-grant";
+import {
+  getMcpResourceUrl,
+  isMcpResourceIndicator,
+  MCP_OAUTH_APP_CLAIM,
+  MCP_RESOURCE_SCOPES,
+} from "@/lib/mcp/oauth-resource";
 import { db } from "@/db/index";
 import { oidcSigningKeys, oidcClients, appAllowedDomains, developerApps } from "@/db/schema";
 import { desc, eq, or } from "drizzle-orm";
@@ -369,14 +380,71 @@ export async function getProvider(): Promise<Provider> {
     // Rotate refresh tokens on use
     rotateRefreshToken: true,
 
-    // Always issue refresh tokens when refresh_token grant is allowed
+    // Refresh when the client allows it and the auth code / offline_access
+    // request includes offline_access (Claude always requests it).
     issueRefreshToken: async (_ctx, client, code) => {
       if (!client.grantTypeAllowed("refresh_token")) return false;
+      if (code && typeof code.scopes?.has === "function") {
+        return code.scopes.has("offline_access");
+      }
       return true;
+    },
+
+    extraClientMetadata: {
+      properties: ["pymthouse_dcr"],
+      validator(ctx, _key, _value, metadata) {
+        applyMcpDcrRegistrationPolicy(
+          ctx,
+          metadata as unknown as Record<string, unknown>,
+        );
+      },
+    },
+
+    extraTokenClaims: async (_ctx, token) => {
+      const tokenRecord = token as {
+        grantId?: string;
+        aud?: string | string[];
+        resourceServer?: { audience?: string };
+      };
+      const grantId =
+        typeof tokenRecord.grantId === "string" ? tokenRecord.grantId : undefined;
+      if (!grantId) return undefined;
+
+      const audiences = Array.isArray(tokenRecord.aud)
+        ? tokenRecord.aud
+        : typeof tokenRecord.aud === "string"
+          ? [tokenRecord.aud]
+          : [];
+      const resourceServerAud =
+        typeof tokenRecord.resourceServer?.audience === "string"
+          ? tokenRecord.resourceServer.audience
+          : undefined;
+      const mcpUrl = getMcpResourceUrl();
+      const isMcp =
+        audiences.some((a) => typeof a === "string" && isMcpResourceIndicator(a)) ||
+        (resourceServerAud !== undefined &&
+          isMcpResourceIndicator(resourceServerAud)) ||
+        (typeof tokenRecord.aud === "string" && tokenRecord.aud === mcpUrl);
+
+      if (!isMcp) return undefined;
+
+      const binding = await findMcpAppGrantBinding(grantId);
+      if (!binding) return undefined;
+      return { [MCP_OAUTH_APP_CLAIM]: binding.publicClientId };
     },
 
     features: {
       devInteractions: { enabled: false },
+      registration: {
+        enabled: true,
+        initialAccessToken: false,
+        idFactory: () => createDcrClientId(),
+        issueRegistrationAccessToken: true,
+      },
+      registrationManagement: {
+        enabled: true,
+        rotateRegistrationAccessToken: true,
+      },
       clientCredentials: { enabled: true },
       deviceFlow: {
         enabled: true,
@@ -420,6 +488,18 @@ export async function getProvider(): Promise<Provider> {
           return issuer;
         },
         getResourceServerInfo: async (_ctx, resourceIndicator, _client) => {
+          if (isMcpResourceIndicator(resourceIndicator)) {
+            const mcp = getMcpResourceUrl();
+            return {
+              scope: MCP_RESOURCE_SCOPES.join(" "),
+              audience: mcp,
+              accessTokenFormat: "jwt" as const,
+              accessTokenTTL: 3600,
+              jwt: {
+                sign: { alg: "RS256" as const },
+              },
+            };
+          }
           if (resourceIndicator !== issuer) {
             throw new oidcErrors.InvalidTarget(
               `Unknown resource indicator: ${resourceIndicator}`,

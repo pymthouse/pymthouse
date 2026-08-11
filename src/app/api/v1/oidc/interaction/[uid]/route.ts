@@ -16,8 +16,25 @@ import {
   OIDC_MOUNT_PATH,
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
+import { isDcrClientId } from "@/lib/oidc/dcr-client";
+import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
+import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
+import {
+  getMcpResourceUrl,
+  isMcpResourceIndicator,
+} from "@/lib/mcp/oauth-resource";
 
 const DEBUG_OIDC_LOGS = process.env.OIDC_DEBUG_LOGS === "1";
+
+function readResourceParam(params: Record<string, unknown>): string | null {
+  const resource = params.resource;
+  if (typeof resource === "string" && resource.trim()) return resource.trim();
+  if (Array.isArray(resource)) {
+    const first = resource.find((r) => typeof r === "string" && r.trim());
+    return typeof first === "string" ? first.trim() : null;
+  }
+  return null;
+}
 
 /**
  * Build a minimal Node.js IncomingMessage/ServerResponse pair for calling
@@ -86,7 +103,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const { uid } = await params;
   const provider = await getProvider();
-  let body: { action?: "approve" | "deny" } = {};
+  let body: { action?: "approve" | "deny"; app_client_id?: string } = {};
   try {
     const contentType = request.headers.get("content-type") ?? "";
     if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -95,6 +112,10 @@ export async function POST(
       if (action === "approve" || action === "deny") {
         body = { action };
       }
+      const appClientId = formData.get("app_client_id");
+      if (typeof appClientId === "string" && appClientId.trim()) {
+        body.app_client_id = appClientId.trim();
+      }
     } else {
       body = await request.json();
     }
@@ -102,7 +123,6 @@ export async function POST(
     // Allow login interactions that do not provide a JSON body.
   }
 
-  // Require an authenticated NextAuth session for login/consent completion
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json(
@@ -141,13 +161,70 @@ export async function POST(
           error_description: "User denied the authorization request",
         };
       } else {
+        const clientId = details.params.client_id as string;
+        const resource = readResourceParam(
+          details.params as Record<string, unknown>,
+        );
+        const mcpResource =
+          resource && isMcpResourceIndicator(resource)
+            ? getMcpResourceUrl()
+            : isDcrClientId(clientId)
+              ? getMcpResourceUrl()
+              : null;
+
+        let mcpAppBinding: Awaited<ReturnType<typeof resolveOwnedAppChoice>> =
+          null;
+        if (mcpResource) {
+          if (!body.app_client_id) {
+            return NextResponse.json(
+              {
+                error: "invalid_request",
+                error_description: "app_client_id is required for MCP consent",
+              },
+              { status: 400 },
+            );
+          }
+          mcpAppBinding = await resolveOwnedAppChoice(userId, body.app_client_id);
+          if (!mcpAppBinding) {
+            return NextResponse.json(
+              {
+                error: "access_denied",
+                error_description: "Selected app is not owned by this user",
+              },
+              { status: 403 },
+            );
+          }
+        }
+
         const requestedScopes = details.params.scope as string | undefined;
-        const grantId = await saveOidcConsentGrant({
-          provider,
-          clientId: details.params.client_id as string,
-          accountId: userId,
-          scope: requestedScopes,
-        });
+        let grantId: string | undefined;
+
+        if (mcpResource) {
+          const grant = new provider.Grant();
+          grant.clientId = clientId;
+          grant.accountId = userId;
+          if (requestedScopes) {
+            grant.addOIDCScope(requestedScopes);
+            grant.addResourceScope(mcpResource, requestedScopes);
+          }
+          await grant.save();
+          grantId = grant.jti;
+          if (mcpAppBinding && grantId) {
+            await bindMcpAppToGrant(grantId, {
+              accountId: userId,
+              publicClientId: mcpAppBinding.publicClientId,
+              developerAppId: mcpAppBinding.developerAppId,
+            });
+          }
+        } else {
+          grantId = await saveOidcConsentGrant({
+            provider,
+            clientId,
+            accountId: userId,
+            scope: requestedScopes,
+          });
+        }
+
         if (!grantId) {
           return NextResponse.json(
             { error: "invalid_scope", error_description: "No scopes were requested" },

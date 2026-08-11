@@ -3,7 +3,10 @@ import "server-only";
 import { createCorrelationId } from "@/lib/audit";
 import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
 import type { McpPrincipal } from "@/lib/mcp/auth";
-import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
+import {
+  buildDiscoveryApiUrl,
+  readLiveRunnerDiscoveryUrl,
+} from "@/lib/mcp/config";
 import {
   GRANT_TYPE_TOKEN_EXCHANGE,
   getSignerDiscoveryUrl,
@@ -35,10 +38,12 @@ function attachSdkToken(
       sdkToken = createLivepeerPythonSdkToken({
         apiKey: principal.subjectToken,
         signer: signerUrl,
+        // `||` short-circuits: the discovery-service fallback is only built
+        // (and only able to throw) when no signer discovery URL exists.
         discovery:
           session.discovery_url?.trim() ||
           getSignerDiscoveryUrl() ||
-          `${readDiscoveryServiceUrl()}/v1/discovery/raw?serviceType=live-runner`,
+          readLiveRunnerDiscoveryUrl(),
       });
     } catch {
       sdkToken = undefined;
@@ -111,7 +116,6 @@ export async function discoveryFetch(
   path: string,
   init?: RequestInit,
 ): Promise<unknown> {
-  const base = readDiscoveryServiceUrl();
   const timeoutMs = Math.max(
     3000,
     Number.parseInt(process.env.DISCOVERY_CATALOG_REQUEST_TIMEOUT_MS ?? "15000", 10) ||
@@ -121,7 +125,7 @@ export async function discoveryFetch(
   const signal = init?.signal
     ? AbortSignal.any([init.signal, timeoutSignal])
     : timeoutSignal;
-  const response = await fetch(`${base}${path}`, {
+  const response = await fetch(buildDiscoveryApiUrl(path), {
     ...init,
     signal,
     headers: {

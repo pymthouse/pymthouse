@@ -1,12 +1,14 @@
 /**
  * App access control for OIDC authentication.
  *
- * Ensures the OIDC client is associated with a registered developer app.
+ * Ensures the OIDC client is associated with a registered developer app,
+ * or is an open Dynamic Client Registration (DCR) client used for MCP OAuth.
  * Apps are live on create — no admin approval gate.
  */
 
 import { db } from "@/db/index";
 import { developerApps, oidcClients, users } from "@/db/schema";
+import { isDcrClientId } from "@/lib/oidc/dcr-client";
 import { eq, or } from "drizzle-orm";
 import {
   CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
@@ -18,6 +20,8 @@ export interface AppAccessCheck {
   reason?: string;
   appStatus?: string;
   appName?: string;
+  /** True when the client was created via open DCR (Claude / MCP connectors). */
+  dynamicClient?: boolean;
 }
 
 /**
@@ -25,6 +29,7 @@ export interface AppAccessCheck {
  *
  * Rules:
  * - Registered developer apps are accessible to all users
+ * - Open DCR clients (`dcr_*`) are allowed; app selection happens at consent
  * - Unknown / unregistered clients are blocked
  * - Public `app_`, M2M `m2m_`, and confidential web `web_` siblings all resolve
  *   to the same developer app
@@ -35,7 +40,14 @@ export async function checkAppAccess(
   clientId: string,
   _userId: string | null,
 ): Promise<AppAccessCheck> {
-  // Get the OIDC client
+  if (isDcrClientId(clientId)) {
+    return {
+      allowed: true,
+      dynamicClient: true,
+      appName: "MCP Connector",
+    };
+  }
+
   const clientRows = await db
     .select({ id: oidcClients.id })
     .from(oidcClients)
@@ -72,7 +84,6 @@ export async function checkAppAccess(
     };
   }
 
-  // Public row or confidential sibling (m2m_ / web_) → same developer app
   const appRows = await db
     .select({
       id: developerApps.id,

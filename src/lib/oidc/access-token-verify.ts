@@ -1,18 +1,15 @@
 import * as jose from "jose";
 import { getCanonicalIssuer } from "./issuer-urls";
+import { getMcpResourceUrl } from "@/lib/mcp/oauth-resource";
 
 /**
  * Verify a JWT access token issued by the OIDC provider.
  *
- * Validates the signature against the local JWKS, checks issuer, and
- * verifies the audience matches.
- *
- * This function always validates against the canonical issuer, even when
- * custom domains or future per-tenant issuers are in use. Token validation
- * is issuer-centric and centralized for security.
+ * Accepts audience = canonical issuer (default) or the hosted MCP resource URL.
  */
 export async function verifyAccessToken(
   token: string,
+  options?: { audience?: string | string[] },
 ): Promise<jose.JWTPayload | null> {
   try {
     const issuer = getCanonicalIssuer();
@@ -20,9 +17,13 @@ export async function verifyAccessToken(
     const jwks = await getPublicJWKS();
     const keySet = jose.createLocalJWKSet(jwks);
 
+    const audience =
+      options?.audience ??
+      ([issuer, getMcpResourceUrl()] as string[]);
+
     const { payload } = await jose.jwtVerify(token, keySet, {
       issuer,
-      audience: issuer,
+      audience,
     });
 
     return payload;
@@ -52,7 +53,7 @@ export async function verifyAccessTokenWithIssuer(
 
     const { payload } = await jose.jwtVerify(token, keySet, {
       issuer: expectedIssuer,
-      audience: expectedIssuer,
+      audience: [expectedIssuer, getMcpResourceUrl()],
     });
 
     return payload;

@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appUsers, developerApps, endUsers, oidcClients, users } from "@/db/schema";
 import { findOrCreateAppEndUser } from "@/lib/billing";
+import { MCP_OAUTH_APP_CLAIM } from "@/lib/mcp/oauth-resource";
 import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
 import { TokenExchangeError } from "@/lib/oidc/token-exchange";
 
@@ -40,6 +41,18 @@ function readTokenClientId(payload: Record<string, unknown>): string | null {
   return null;
 }
 
+/**
+ * MCP OAuth tokens bind the Builder app via `pymthouse_app` (public `app_…`
+ * client id), not via the DCR `client_id` / `azp`.
+ */
+function readBoundPublicClientId(payload: Record<string, unknown>): string | null {
+  const bound = payload[MCP_OAUTH_APP_CLAIM];
+  if (typeof bound === "string" && bound.trim()) {
+    return bound.trim();
+  }
+  return readTokenClientId(payload);
+}
+
 async function resolveDeveloperAppFromPublicClient(
   dbConn: typeof db,
   publicClientId: string,
@@ -57,8 +70,13 @@ async function resolveDeveloperAppFromPublicClient(
 }
 
 /**
- * Resolve a PymtHouse-issued user access JWT (`aud=issuer`) to developer app context
- * and stable external user id. Supports `sub` from app_users, end_users, or users.
+ * Resolve a PymtHouse-issued user access JWT to developer app context and a
+ * stable external user id.
+ *
+ * Supports:
+ * - Classic tokens (`aud=issuer`) where `client_id`/`azp` is an app public client
+ * - MCP OAuth tokens (`aud=MCP URL`) where `pymthouse_app` selects the Builder app
+ *   and `sub` is the platform user id
  */
 export async function resolveSubjectAccessToken(
   subjectToken: string,
@@ -78,11 +96,11 @@ export async function resolveSubjectAccessToken(
   }
 
   const rec = payload as Record<string, unknown>;
-  const publicClientId = readTokenClientId(rec);
+  const publicClientId = readBoundPublicClientId(rec);
   if (!publicClientId) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",
-      "subject_token must include client_id or azp",
+      "subject_token must include pymthouse_app, client_id, or azp",
       400,
     );
   }
@@ -93,7 +111,7 @@ export async function resolveSubjectAccessToken(
   ) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",
-      "subject_token must have been issued to the expected public client_id",
+      "subject_token must have been issued for the expected public client_id",
       400,
     );
   }
@@ -105,7 +123,7 @@ export async function resolveSubjectAccessToken(
   if (!developerApp) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",
-      "subject_token client_id does not map to a developer app",
+      "subject_token does not map to a developer app",
       400,
     );
   }
@@ -147,9 +165,8 @@ export async function resolveSubjectAccessToken(
     };
   }
 
-  // Device verification binds accountId to platform users.id (see device/verify approve).
-  // Any such user who received an access token may exchange for a signer JWT; provision
-  // a per-app end_user keyed by user:{sub} (same convention as app owner below).
+  // Device / MCP OAuth bind accountId to platform users.id.
+  // Provision a per-app end_user keyed by user:{sub}.
   const platformUserRows = await dbConn
     .select({ id: users.id })
     .from(users)
