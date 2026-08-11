@@ -133,6 +133,7 @@ async function rejectIfSupplierIncomplete(
     country: config?.supplierCountry,
     name: config?.supplierName,
     taxId: pendingTaxId,
+    taxIdOnFileAtStripe: config?.supplierTaxIdOnFileAtStripe,
   };
   if (supplierIsComplete(supplierInput)) {
     return null;
@@ -142,7 +143,7 @@ async function rejectIfSupplierIncomplete(
     response: NextResponse.json(
       {
         error:
-          "Switching to merchant mode requires a complete invoice supplier (country, legal name, and tax id where required). Complete Connect onboarding and set supplierTaxId if needed.",
+          "Switching to merchant mode requires a complete invoice supplier (country and legal name from Connect; tax id on file at Stripe where required). Finish Connect onboarding and retry.",
         supplierGaps: supplierGaps(supplierInput),
       },
       { status: 400 },

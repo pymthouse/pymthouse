@@ -42,9 +42,6 @@ type StripeStatus = {
   activation?: ActivationInfo | null;
   supplierCountry?: string | null;
   supplierName?: string | null;
-  supplierTaxId?: string | null;
-  supplierTaxIdRequired?: boolean;
-  supplierTaxIdOnFileAtStripe?: boolean;
   supplierGaps?: string[];
   supplierComplete?: boolean;
 };
@@ -89,8 +86,8 @@ function redirectToStripeConnectUrl(url: string): void {
 const BUTTON_CLASS =
   "inline-flex items-center rounded-md bg-emerald-500/15 px-3 py-2 text-sm font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/30 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-emerald-500/15";
 
-const FIELD_CLASS =
-  "mt-1 w-full max-w-xs rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30";
+const BILLING_MODE_OPTION_CLASS =
+  "flex w-full max-w-md items-start gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-green-bright/30 disabled:cursor-not-allowed disabled:opacity-40";
 
 function CapabilityValue({ allowed }: Readonly<{ allowed: boolean }>) {
   return (
@@ -172,7 +169,6 @@ function applyStatusToForm(
     progressiveBilling: (v: boolean) => void;
     billingMode: (v: "owner_rollup" | "merchant") => void;
     thresholdDisplay: (v: string) => void;
-    supplierTaxId: (v: string) => void;
   },
 ): void {
   set.progressiveBilling(nextStatus.progressiveBilling ?? true);
@@ -182,7 +178,6 @@ function applyStatusToForm(
       ? usdMicrosToCentsDisplay(nextStatus.softNegativeUsdMicros)
       : "",
   );
-  set.supplierTaxId(nextStatus.supplierTaxId?.trim() || "");
 }
 
 function parseThresholdMicros(display: string): string | null {
@@ -300,7 +295,6 @@ async function requestSaveBillingSettings(input: {
   progressiveBilling: boolean;
   thresholdDisplay: string;
   billingMode: "owner_rollup" | "merchant";
-  supplierTaxId: string;
   setters: BusySetters & {
     setSettingsSaved: (v: string | null) => void;
     setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
@@ -317,11 +311,6 @@ async function requestSaveBillingSettings(input: {
       softNegativeUsdMicros,
       billingMode: input.billingMode,
     };
-    // Always send when Connect is linked so merchant switch can satisfy tax_id
-    // gaps in the same PATCH as billingMode.
-    if (input.supplierTaxId.trim() || input.billingMode === "merchant") {
-      payload.supplierTaxId = input.supplierTaxId.trim() || null;
-    }
     const res = await fetch(`/api/v1/apps/${input.appId}/billing/stripe`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -380,7 +369,6 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
   const [billingMode, setBillingMode] = useState<"owner_rollup" | "merchant">(
     "owner_rollup",
   );
-  const [supplierTaxId, setSupplierTaxId] = useState("");
   const [settingsSaved, setSettingsSaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -400,7 +388,6 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
         progressiveBilling: setProgressiveBilling,
         billingMode: setBillingMode,
         thresholdDisplay: setThresholdDisplay,
-        supplierTaxId: setSupplierTaxId,
       });
       if (invoicesRes.ok) {
         const body = await invoicesRes.json();
@@ -445,14 +432,12 @@ export default function PaymentsTab({ appId, canManageBilling }: Readonly<Props>
       progressiveBilling={progressiveBilling}
       thresholdDisplay={thresholdDisplay}
       billingMode={billingMode}
-      supplierTaxId={supplierTaxId}
       settingsSaved={settingsSaved}
       setBusy={setBusy}
       setError={setError}
       setStatus={setStatus}
       setSettingsSaved={setSettingsSaved}
       setBillingMode={setBillingMode}
-      setSupplierTaxId={setSupplierTaxId}
       setProgressiveBilling={setProgressiveBilling}
       setThresholdDisplay={setThresholdDisplay}
       reload={load}
@@ -526,66 +511,90 @@ function PaymentsBillingModeForm(props: Readonly<{
   busy: boolean;
   billingMode: "owner_rollup" | "merchant";
   connectReadyForMerchant: boolean;
-  supplierTaxId: string;
-  supplierTaxIdRequired: boolean;
   settingsSaved: string | null;
   setBillingMode: (v: "owner_rollup" | "merchant") => void;
-  setSupplierTaxId: (v: string) => void;
   onSave: () => void;
 }>) {
   const {
     busy,
     billingMode,
     connectReadyForMerchant,
-    supplierTaxId,
-    supplierTaxIdRequired,
     settingsSaved,
     setBillingMode,
-    setSupplierTaxId,
     onSave,
   } = props;
-  const showTaxId =
-    connectReadyForMerchant &&
-    (supplierTaxIdRequired || billingMode === "merchant");
   return (
     <div className="pt-2 border-t border-white/[0.06] space-y-3">
-      <label className="block text-sm">
-        <span className="text-zinc-500">Billing mode</span>
-        <select
-          className={FIELD_CLASS}
-          value={billingMode}
-          onChange={(e) =>
-            setBillingMode(e.target.value === "merchant" ? "merchant" : "owner_rollup")
-          }
-          disabled={busy}
+      <fieldset className="block text-sm" disabled={busy}>
+        <legend className="text-zinc-500">Billing mode</legend>
+        <div
+          role="radiogroup"
+          aria-label="Billing mode"
+          className="mt-1.5 flex flex-col gap-2"
         >
-          <option value="owner_rollup">Owner roll-up (default)</option>
-          <option value="merchant" disabled={!connectReadyForMerchant}>
-            Merchant (requires Connect ready)
-          </option>
-        </select>
-      </label>
-      {showTaxId ? (
-        <label className="block text-sm">
-          <span className="text-zinc-500">
-            Supplier tax ID
-            {supplierTaxIdRequired ? " (required for invoices)" : " (optional)"}
-          </span>
-          <input
-            type="text"
-            className={`${FIELD_CLASS} font-mono`}
-            value={supplierTaxId}
-            onChange={(e) => setSupplierTaxId(e.target.value)}
-            disabled={busy}
-            placeholder="e.g. VAT / EIN"
-            autoComplete="off"
-          />
-          <span className="mt-1 block text-xs text-zinc-500">
-            Stripe does not share the verified tax ID — enter the value that should
-            appear on customer invoices.
-          </span>
-        </label>
-      ) : null}
+          {(
+            [
+              {
+                value: "owner_rollup" as const,
+                title: "Owner roll-up",
+                detail: "Platform bills end-users; default for most apps",
+                disabled: false,
+              },
+              {
+                value: "merchant" as const,
+                title: "Merchant",
+                detail: connectReadyForMerchant
+                  ? "Charges on your Connected Account"
+                  : "Requires Stripe Connect to be ready",
+                disabled: !connectReadyForMerchant,
+              },
+            ] as const
+          ).map((option) => {
+            const selected = billingMode === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={busy || option.disabled}
+                onClick={() => setBillingMode(option.value)}
+                className={`${BILLING_MODE_OPTION_CLASS} ${
+                  selected
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-zinc-100"
+                    : "border-white/10 bg-zinc-950/60 text-zinc-300 hover:border-white/20 hover:bg-zinc-900/80"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                    selected
+                      ? "border-emerald-400 bg-emerald-500/20"
+                      : "border-zinc-600 bg-transparent"
+                  }`}
+                  aria-hidden
+                >
+                  {selected ? (
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  ) : null}
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-medium text-zinc-100">
+                    {option.title}
+                    {option.value === "owner_rollup" ? (
+                      <span className="ml-1.5 text-xs font-normal text-zinc-500">
+                        default
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    {option.detail}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -779,14 +788,12 @@ function PaymentsTabLoaded(props: Readonly<{
   progressiveBilling: boolean;
   thresholdDisplay: string;
   billingMode: "owner_rollup" | "merchant";
-  supplierTaxId: string;
   settingsSaved: string | null;
   setBusy: (v: boolean) => void;
   setError: (v: string | null) => void;
   setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
   setSettingsSaved: (v: string | null) => void;
   setBillingMode: (v: "owner_rollup" | "merchant") => void;
-  setSupplierTaxId: (v: string) => void;
   setProgressiveBilling: (v: boolean) => void;
   setThresholdDisplay: (v: string) => void;
   reload: () => Promise<void>;
@@ -801,14 +808,12 @@ function PaymentsTabLoaded(props: Readonly<{
     progressiveBilling,
     thresholdDisplay,
     billingMode,
-    supplierTaxId,
     settingsSaved,
     setBusy,
     setError,
     setStatus,
     setSettingsSaved,
     setBillingMode,
-    setSupplierTaxId,
     setProgressiveBilling,
     setThresholdDisplay,
     reload,
@@ -823,7 +828,6 @@ function PaymentsTabLoaded(props: Readonly<{
       progressiveBilling,
       thresholdDisplay,
       billingMode,
-      supplierTaxId,
       setters: { setBusy, setError, setSettingsSaved, setStatus },
     });
   const showDetails =
@@ -870,11 +874,8 @@ function PaymentsTabLoaded(props: Readonly<{
             busy={busy}
             billingMode={billingMode}
             connectReadyForMerchant={connectReadyForMerchant}
-            supplierTaxId={supplierTaxId}
-            supplierTaxIdRequired={Boolean(status?.supplierTaxIdRequired)}
             settingsSaved={settingsSaved}
             setBillingMode={setBillingMode}
-            setSupplierTaxId={setSupplierTaxId}
             onSave={save}
           />
         )}
