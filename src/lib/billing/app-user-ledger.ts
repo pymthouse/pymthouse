@@ -173,6 +173,28 @@ export type AppUserBillingLedgerResult = {
   degraded: boolean;
 };
 
+type AppUserBillingLedgerDeps = {
+  resolveOpenMeterMeterClientId: typeof resolveOpenMeterMeterClientId;
+  listAppUserCreditGrants: typeof listAppUserCreditGrants;
+  getPlanDiscountUsdMicros: typeof getPlanDiscountUsdMicros;
+  getTrialCreditBalance: typeof getTrialCreditBalance;
+  listMerchantConnectInvoicesForAppUser: typeof listMerchantConnectInvoicesForAppUser;
+  isHostedAdminClientAvailable: typeof isHostedAdminClientAvailable;
+  getHostedAdminClient: typeof getHostedAdminClient;
+  querySubjectDailyFeeUsage: typeof querySubjectDailyFeeUsage;
+};
+
+const DEFAULT_APP_USER_BILLING_LEDGER_DEPS: AppUserBillingLedgerDeps = {
+  resolveOpenMeterMeterClientId,
+  listAppUserCreditGrants,
+  getPlanDiscountUsdMicros,
+  getTrialCreditBalance,
+  listMerchantConnectInvoicesForAppUser,
+  isHostedAdminClientAvailable,
+  getHostedAdminClient,
+  querySubjectDailyFeeUsage,
+};
+
 /**
  * Build the merchant end-user prepaid ledger (newest first).
  */
@@ -182,7 +204,7 @@ export async function loadAppUserBillingLedger(input: {
   /** Public OAuth client id on the wire. */
   publicClientId: string;
   externalUserId: string;
-}): Promise<AppUserBillingLedgerResult> {
+}, deps: AppUserBillingLedgerDeps = DEFAULT_APP_USER_BILLING_LEDGER_DEPS): Promise<AppUserBillingLedgerResult> {
   const externalUserId = input.externalUserId.trim();
   const publicClientId = input.publicClientId.trim();
   if (!externalUserId || !publicClientId) {
@@ -191,13 +213,13 @@ export async function loadAppUserBillingLedger(input: {
 
   let degraded = false;
   const cycle = calendarMonthBoundsUtc(new Date());
-  const meterClientId = await resolveOpenMeterMeterClientId(input.appId).catch(
+  const meterClientId = await deps.resolveOpenMeterMeterClientId(input.appId).catch(
     () => publicClientId,
   );
   const customerKey = buildOpenMeterCustomerKey(meterClientId, externalUserId);
 
   const [konnectGrants, discount, balance, history] = await Promise.all([
-    listAppUserCreditGrants({
+    deps.listAppUserCreditGrants({
       publicClientId: meterClientId,
       externalUserId,
       onDegraded: () => {
@@ -207,21 +229,21 @@ export async function loadAppUserBillingLedger(input: {
       degraded = true;
       return [] as LedgerGrantInput[];
     }),
-    getPlanDiscountUsdMicros({
+    deps.getPlanDiscountUsdMicros({
       clientId: publicClientId,
       externalUserId,
     }).catch(() => {
       degraded = true;
       return { totalUsdMicros: 0n, remainingUsdMicros: 0n };
     }),
-    getTrialCreditBalance({
+    deps.getTrialCreditBalance({
       clientId: publicClientId,
       externalUserId,
     }).catch(() => {
       degraded = true;
       return null;
     }),
-    listMerchantConnectInvoicesForAppUser({
+    deps.listMerchantConnectInvoicesForAppUser({
       clientId: input.appId,
       externalUserId,
       page: 1,
@@ -244,10 +266,10 @@ export async function loadAppUserBillingLedger(input: {
   const grants = konnectGrants.length > 0 ? konnectGrants : fromHistory.grants;
 
   let dailyUsage: LedgerDailyUsageInput[] = [];
-  if (isHostedAdminClientAvailable()) {
+  if (deps.isHostedAdminClientAvailable()) {
     dailyUsage = await withSoftTimeout({
-      promise: querySubjectDailyFeeUsage({
-        client: getHostedAdminClient(),
+      promise: deps.querySubjectDailyFeeUsage({
+        client: deps.getHostedAdminClient(),
         subjects: [customerKey],
         start: cycle.start,
         end: cycle.end,
