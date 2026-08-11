@@ -14,6 +14,8 @@ import {
   pickAppUserCancelTargets,
   resolveAppUserResumeTarget,
   resumeAppUserSubscription,
+  resumeAppUserSubscriptionFromList,
+  scheduleLivePaidCancel,
 } from "@/lib/openmeter/app-user-subscription-lifecycle";
 import type { OpenMeterSubscriptionView } from "@/lib/openmeter/subscription-read";
 
@@ -499,4 +501,235 @@ test("deriveAppUserPendingCancel ignores a superseded row's cancellation", () =>
     }),
     null,
   );
+});
+
+function withKonnectEnv(t: test.TestContext): void {
+  const savedUrl = process.env.OPENMETER_URL;
+  const savedKey = process.env.OPENMETER_API_KEY;
+  const savedMode = process.env.OPENMETER_ROUTE_MODE;
+  process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
+  process.env.OPENMETER_API_KEY = "km_test_key";
+  process.env.OPENMETER_ROUTE_MODE = "hosted";
+  t.after(() => {
+    if (savedUrl === undefined) delete process.env.OPENMETER_URL;
+    else process.env.OPENMETER_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.OPENMETER_API_KEY;
+    else process.env.OPENMETER_API_KEY = savedKey;
+    if (savedMode === undefined) delete process.env.OPENMETER_ROUTE_MODE;
+    else process.env.OPENMETER_ROUTE_MODE = savedMode;
+  });
+}
+
+test("scheduleLivePaidCancel immediate changes onto Starter with null scheduledPlanKey", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    urls.push(`${init?.method ?? "GET"} ${String(input)}`);
+    return new Response(
+      JSON.stringify({
+        current: { id: "paid_1", status: "canceled", customer_id: "c1" },
+        next: { id: "starter_live", status: "active", customer_id: "c1" },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const result = await scheduleLivePaidCancel({
+    livePaid: sub({ id: "paid_1", planKey: "paid", status: "active" }),
+    localPlanId: "local_paid",
+    starterPlanKey: "app_starter",
+    starterLocalPlanId: "local_starter",
+    starterOpenMeterPlanId: "om_starter",
+    timing: "immediate",
+    customerId: "c1",
+  });
+
+  assert.equal(result.subscriptionId, "starter_live");
+  assert.equal(result.planId, "local_starter");
+  assert.equal(result.planKey, "app_starter");
+  assert.equal(result.scheduledPlanKey, null);
+  assert.ok(result.effectiveAt);
+  assert.equal(urls.length, 1);
+  assert.match(urls[0]!, /\/change/);
+});
+
+test("scheduleLivePaidCancel immediate fails when Starter is not synced", async () => {
+  await assert.rejects(
+    () =>
+      scheduleLivePaidCancel({
+        livePaid: sub({ id: "paid_1", planKey: "paid", status: "active" }),
+        localPlanId: "local_paid",
+        starterPlanKey: "app_starter",
+        starterLocalPlanId: "local_starter",
+        starterOpenMeterPlanId: null,
+        timing: "immediate",
+        customerId: "c1",
+      }),
+    (err: unknown) =>
+      err instanceof AppUserSubscriptionCancelError &&
+      err.code === "cancel_failed",
+  );
+});
+
+test("scheduleLivePaidCancel next_billing_cycle cancels and schedules Starter", async (t) => {
+  withKonnectEnv(t);
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/cancel")) {
+      return new Response(
+        JSON.stringify({
+          id: "paid_1",
+          status: "canceled",
+          customer_id: "c1",
+          billing_anchor: "2026-08-01T00:00:00.000Z",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    // active window lookup
+    return new Response(
+      JSON.stringify({
+        id: "paid_1",
+        status: "canceled",
+        customer_id: "c1",
+        active_to: "2026-09-01T00:00:00.000Z",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const result = await scheduleLivePaidCancel({
+    livePaid: sub({
+      id: "paid_1",
+      planKey: "paid",
+      status: "active",
+      activeTo: null,
+    }),
+    localPlanId: "local_paid",
+    starterPlanKey: "app_starter",
+    starterLocalPlanId: "local_starter",
+    starterOpenMeterPlanId: "om_starter",
+    timing: "next_billing_cycle",
+    customerId: "c1",
+  });
+
+  assert.equal(result.subscriptionId, "paid_1");
+  assert.equal(result.planId, "local_paid");
+  assert.equal(result.scheduledPlanKey, "app_starter");
+  assert.equal(result.effectiveAt, "2026-09-01T00:00:00.000Z");
+});
+
+test("resumeAppUserSubscriptionFromList restores when a scheduled successor exists", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(
+      JSON.stringify({ id: "paid_cape", status: "active", customer_id: "c1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const listed = [
+    sub({
+      id: "paid_cape",
+      planKey: "paid",
+      status: "canceled",
+      activeTo: "2026-09-01T00:00:00.000Z",
+    }),
+    sub({
+      id: "sched_starter",
+      planKey: "app_starter",
+      status: "scheduled",
+      activeFrom: "2026-09-01T00:00:00.000Z",
+    }),
+  ];
+
+  const result = await resumeAppUserSubscriptionFromList({
+    clientId: "app_missing_plans_ok",
+    listed,
+    starterPlanKey: "app_starter",
+    starterOpenMeterPlanId: null,
+  });
+
+  assert.equal(result.resumed, true);
+  assert.equal(result.subscriptionId, "paid_cape");
+  assert.equal(result.planKey, "paid");
+  assert.equal(urls.length, 1);
+  assert.match(urls[0]!, /\/restore$/);
+});
+
+test("resumeAppUserSubscriptionFromList unschedules when no successor exists", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(
+      JSON.stringify({ id: "paid_cape", status: "active", customer_id: "c1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const listed = [
+    sub({
+      id: "paid_cape",
+      planKey: "paid",
+      status: "canceled",
+      activeTo: "2026-09-01T00:00:00.000Z",
+    }),
+  ];
+
+  const result = await resumeAppUserSubscriptionFromList({
+    clientId: "app_missing_plans_ok",
+    listed,
+    starterPlanKey: "app_starter",
+    starterOpenMeterPlanId: null,
+  });
+
+  assert.equal(result.resumed, true);
+  assert.equal(result.subscriptionId, "paid_cape");
+  assert.equal(urls.length, 1);
+  assert.match(urls[0]!, /unschedule-cancelation/);
+});
+
+test("resumeAppUserSubscriptionFromList falls back to restore on unschedule 409", async (t) => {
+  withKonnectEnv(t);
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("unschedule-cancelation")) {
+      return new Response(
+        JSON.stringify({
+          detail: "only_single_subscription_allowed_per_customer_at_a_time",
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ id: "paid_cape", status: "active", customer_id: "c1" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  const listed = [
+    sub({
+      id: "paid_cape",
+      planKey: "paid",
+      status: "canceled",
+      activeTo: "2026-09-01T00:00:00.000Z",
+    }),
+  ];
+
+  const result = await resumeAppUserSubscriptionFromList({
+    clientId: "app_missing_plans_ok",
+    listed,
+    starterPlanKey: "app_starter",
+    starterOpenMeterPlanId: null,
+  });
+
+  assert.equal(result.resumed, true);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0]!, /unschedule-cancelation/);
+  assert.match(urls[1]!, /\/restore$/);
 });

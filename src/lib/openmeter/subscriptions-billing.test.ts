@@ -1,13 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { OpenMeter } from "@openmeter/sdk";
+import { eq } from "drizzle-orm";
 
+import { db } from "@/db/index";
+import { appUserPaymentMethodCheckouts } from "@/db/schema";
 import {
+  createPaymentMethodCheckoutIfNeededForPlanChange,
   defaultSubscriptionChangeTiming,
   neonSubscriptionStatusAfterPlanChange,
   planRequiresPaymentMethod,
   shouldApplyFreeBillingProfileForCheckout,
   shouldCollectPaymentMethodBeforePlanChange,
 } from "./subscriptions-billing";
+import { test as dbTest } from "@/test-utils/db-guard";
+import {
+  cleanupTestApp,
+  seedDeveloperAppWithClient,
+} from "@/test-utils/fixtures";
 
 test("planRequiresPaymentMethod is false for free/starter/network", () => {
   assert.equal(
@@ -153,17 +163,18 @@ test("shouldCollectPaymentMethodBeforePlanChange gates Konnect /change", () => {
 test("PM-gated plan change response keeps current plan and null effectiveAt", () => {
   // Contract for changeAppUserSubscriptionPlan early return: Checkout collects a
   // card before /change, so effectiveAt must stay null and planId must remain
-  // the current plan (not the unpaid target).
-  const currentPlanId = "plan_starter";
+  // the current plan (not the unpaid target). Prefer currentLocalPlanId over any
+  // target fallback when the local plan row is missing.
+  const currentLocalPlanId = "plan_starter";
   const response = {
     subscriptionId: "sub_current",
-    planId: currentPlanId,
+    planId: currentLocalPlanId ?? "",
     effectiveAt: null as string | null,
     timing: "immediate" as const,
     checkoutUrl: "https://checkout.stripe.com/c/pay_test",
   };
   assert.equal(response.effectiveAt, null);
-  assert.equal(response.planId, currentPlanId);
+  assert.equal(response.planId, currentLocalPlanId);
   assert.ok(response.checkoutUrl);
 });
 
@@ -266,3 +277,95 @@ test("checkout recovery fires for a Konnect canceled row that omits activeTo", a
     "01KZCN0AH450JWA381D2AN7NJK",
   );
 });
+
+dbTest(
+  "createPaymentMethodCheckoutIfNeededForPlanChange returns setup Checkout when no PM",
+  async (t) => {
+    const previousUrl = process.env.OPENMETER_URL;
+    const previousKey = process.env.OPENMETER_API_KEY;
+    const previousMode = process.env.OPENMETER_ROUTE_MODE;
+    process.env.OPENMETER_URL = "http://127.0.0.1:48888";
+    delete process.env.OPENMETER_API_KEY;
+    process.env.OPENMETER_ROUTE_MODE = "self_hosted";
+    t.after(() => {
+      if (previousUrl === undefined) delete process.env.OPENMETER_URL;
+      else process.env.OPENMETER_URL = previousUrl;
+      if (previousKey === undefined) delete process.env.OPENMETER_API_KEY;
+      else process.env.OPENMETER_API_KEY = previousKey;
+      if (previousMode === undefined) delete process.env.OPENMETER_ROUTE_MODE;
+      else process.env.OPENMETER_ROUTE_MODE = previousMode;
+    });
+
+    const app = await seedDeveloperAppWithClient({ status: "approved" });
+    t.after(async () => {
+      await db
+        .delete(appUserPaymentMethodCheckouts)
+        .where(eq(appUserPaymentMethodCheckouts.clientId, app.clientId));
+      await cleanupTestApp(app);
+    });
+
+    const client = {
+      apps: {
+        stripe: {
+          createCheckoutSession: async (body: {
+            customer: { id: string };
+            options: { successURL: string; cancelURL: string };
+          }) => {
+            assert.equal(body.customer.id, "cust_pm_gate");
+            // Open redirects must be rejected — evil successUrl falls back.
+            assert.match(
+              body.options.successURL,
+              /^https?:\/\/localhost:3001\//,
+            );
+            assert.match(
+              body.options.cancelURL,
+              /^https?:\/\/localhost:3001\//,
+            );
+            return {
+              url: "https://checkout.stripe.com/c/pay/cs_pm_gate",
+              sessionId: "cs_pm_gate",
+            };
+          },
+        },
+      },
+    } as unknown as OpenMeter;
+
+    const checkout = await createPaymentMethodCheckoutIfNeededForPlanChange({
+      clientId: app.clientId,
+      externalUserId: "user_pm_gate",
+      customerId: "cust_pm_gate",
+      customerKey: "cust_key_pm_gate",
+      targetPlan: {
+        id: "plan_paid",
+        type: "subscription",
+        priceAmount: "29",
+      },
+      client: client as never,
+      successUrl: "http://evil.example/phish",
+      cancelUrl: "http://evil.example/phish",
+    });
+
+    assert.ok(checkout);
+    assert.equal(checkout!.checkoutUrl, "https://checkout.stripe.com/c/pay/cs_pm_gate");
+    assert.equal(checkout!.sessionId, "cs_pm_gate");
+  },
+);
+
+dbTest(
+  "createPaymentMethodCheckoutIfNeededForPlanChange skips free targets",
+  async () => {
+    const checkout = await createPaymentMethodCheckoutIfNeededForPlanChange({
+      clientId: "unused",
+      externalUserId: "unused",
+      customerId: "cust",
+      customerKey: "key",
+      targetPlan: {
+        id: "plan_free",
+        type: "free",
+        priceAmount: "0",
+      },
+      client: {} as never,
+    });
+    assert.equal(checkout, null);
+  },
+);

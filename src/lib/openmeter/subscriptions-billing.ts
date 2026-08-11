@@ -50,6 +50,7 @@ import {
 } from "./subscription-state";
 import {
   recordAppUserPaymentMethodCheckout,
+  resolveAppUserCheckoutReturnUrl,
   resolveAppUserDefaultPaymentMethodId,
 } from "@/lib/openmeter/app-user-payment-method";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
@@ -405,10 +406,14 @@ async function resolveCheckoutSettings(input: EndUserCheckoutInput): Promise<{
   return {
     merchantReady,
     isMerchantBilling: billingConfig?.billingMode === "merchant",
-    successUrl:
-      input.successUrl || billingConfig?.checkoutSuccessUrl || fallbackUrl,
-    cancelUrl:
-      input.cancelUrl || billingConfig?.checkoutCancelUrl || fallbackUrl,
+    successUrl: resolveAppUserCheckoutReturnUrl(
+      input.successUrl || billingConfig?.checkoutSuccessUrl || undefined,
+      fallbackUrl,
+    ),
+    cancelUrl: resolveAppUserCheckoutReturnUrl(
+      input.cancelUrl || billingConfig?.checkoutCancelUrl || undefined,
+      fallbackUrl,
+    ),
   };
 }
 
@@ -715,8 +720,10 @@ async function createCheckoutSession(input: {
  * Returns null when Checkout is not required (plan is free, or a default PM
  * already exists). Must run before Konnect `/change` — Stripe-backed profiles
  * reject the switch without a default payment method.
+ *
+ * Exported for unit tests that exercise the PM-before-/change gate.
  */
-async function createPaymentMethodCheckoutIfNeededForPlanChange(input: {
+export async function createPaymentMethodCheckoutIfNeededForPlanChange(input: {
   clientId: string;
   externalUserId: string;
   customerId: string;
@@ -760,14 +767,15 @@ async function createPaymentMethodCheckoutIfNeededForPlanChange(input: {
   }
 
   const origin = getPublicOrigin();
-  const success =
-    input.successUrl ||
-    billingConfig?.checkoutSuccessUrl ||
-    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
-  const cancel =
-    input.cancelUrl ||
-    billingConfig?.checkoutCancelUrl ||
-    appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+  const fallbackUrl = appSettingsAbsoluteUrl(origin, input.clientId, "payments");
+  const success = resolveAppUserCheckoutReturnUrl(
+    input.successUrl || billingConfig?.checkoutSuccessUrl || undefined,
+    fallbackUrl,
+  );
+  const cancel = resolveAppUserCheckoutReturnUrl(
+    input.cancelUrl || billingConfig?.checkoutCancelUrl || undefined,
+    fallbackUrl,
+  );
 
   const checkout = await createCheckoutSession({
     merchantReady,
@@ -1067,8 +1075,9 @@ export async function changeAppUserSubscriptionPlan(input: {
   if (paymentMethodCheckout) {
     return {
       subscriptionId: current.id,
-      // Still on the current plan — /change has not run yet.
-      planId: currentLocalPlan?.id ?? targetPlan.id,
+      // Still on the current plan — /change has not run yet. Never report the
+      // unpaid target when the local plan row failed to load.
+      planId: currentLocalPlanId ?? "",
       effectiveAt: null,
       timing,
       checkoutUrl: paymentMethodCheckout.checkoutUrl,
