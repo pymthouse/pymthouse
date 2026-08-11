@@ -77,7 +77,7 @@ test("stripePaymentMethodBrandLabel maps LINK and card brands", () => {
     stripePaymentMethodBrandLabel({
       id: "pm_2",
       type: "card",
-      card: { brand: "visa", last4: "4242" },
+      card: { brand: "visa" },
     }),
     "VISA",
   );

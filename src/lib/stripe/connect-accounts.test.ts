@@ -77,6 +77,7 @@ test("merchant invoice mapper preserves Stripe invoice fields for app-user billi
       periodEnd: "2025-01-03T00:00:00.000Z",
       externalInvoicingId: "in_connected",
       invoiceType: "stripe_connect",
+      paymentMethodBrand: null,
     },
   );
 });
