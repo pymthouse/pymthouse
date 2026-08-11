@@ -531,23 +531,4 @@ export async function registerNetworkAgent(input: {
   };
 }
 
-/**
- * Client IP for abuse controls. Prefer Cloudflare's connecting IP when present;
- * otherwise use the rightmost X-Forwarded-For hop (closest to our edge).
- */
-export function clientIpFromRequest(request: Request): string {
-  const cf = request.headers.get("cf-connecting-ip")?.trim();
-  if (cf) return cf;
-
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const hops = forwarded
-      .split(",")
-      .map((h) => h.trim())
-      .filter(Boolean);
-    const last = hops.at(-1);
-    if (last) return last;
-  }
-
-  return request.headers.get("x-real-ip")?.trim() || "unknown";
-}
+export { clientIpFromRequest } from "@/lib/client-ip";
