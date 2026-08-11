@@ -106,6 +106,29 @@ test("shouldTriggerInvoice at the $2 minimum ceiling raises at $1", () => {
   );
 });
 
+test("shouldAttemptPendingLines: force always tries OM even when debt reads $0", () => {
+  // Konnect gathering list can under-report debt; force collect must not skip
+  // before invoicePendingLines when the helper returns 0.
+  assert.equal(
+    __testInvoiceTrigger.shouldAttemptPendingLines({
+      force: true,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros: 2_000_000n,
+      leadUsdMicros: 1_000_000n,
+    }),
+    true,
+  );
+  assert.equal(
+    __testInvoiceTrigger.shouldAttemptPendingLines({
+      force: false,
+      unbilledDebtUsdMicros: 0n,
+      softNegativeUsdMicros: 2_000_000n,
+      leadUsdMicros: 1_000_000n,
+    }),
+    false,
+  );
+});
+
 test("invoiceGatheringForIdentity returns unavailable without OpenMeter", async (t) => {
   __resetInvoiceTriggerCacheForTests();
   const prevUrl = process.env.OPENMETER_URL;

@@ -51,8 +51,7 @@ function shouldTriggerInvoice(input: {
   leadUsdMicros: bigint;
 }): boolean {
   // Below Stripe's minimum charge the invoice cannot be collected, so raising
-  // it would only park a draft that no collector can clear. Anything left under
-  // the floor is swept up by OM's anchored collection alignment or cycle close.
+  // it would only park a draft. OM's daily collection alignment picks these up instead.
   if (input.unbilledDebtUsdMicros < MIN_INVOICE_USD_MICROS) {
     return false;
   }
@@ -65,6 +64,22 @@ function shouldTriggerInvoice(input: {
     softNegativeUsdMicros: input.softNegativeUsdMicros,
     leadUsdMicros: input.leadUsdMicros,
   });
+}
+
+/**
+ * Whether to call OpenMeter `invoicePendingLines`.
+ * Force collect always attempts; automatic mid-cycle uses debt + lead window.
+ */
+function shouldAttemptPendingLines(input: {
+  force: boolean;
+  unbilledDebtUsdMicros: bigint;
+  softNegativeUsdMicros: bigint;
+  leadUsdMicros: bigint;
+}): boolean {
+  if (input.force) {
+    return true;
+  }
+  return shouldTriggerInvoice(input);
 }
 
 export type InvoiceTriggerOutcome =
@@ -82,9 +97,11 @@ export type InvoiceTriggerResult = {
 /**
  * Create invoices from gathering lines and advance each toward collection.
  *
- * `force` skips the lead-window check for an explicit "collect now" request.
- * The Stripe minimum-charge floor always applies: raising an invoice below it
- * only parks a draft no collector can clear.
+ * `force` (test-usage / explicit collect-now) always asks OpenMeter for pending
+ * lines — it must not gate on {@link getUnbilledDebtUsdMicros}, which can read
+ * $0 when Konnect's invoice list misses gathering totals. Empty pending lines
+ * still return `skipped`. Non-force mid-cycle triggers keep the lead-window and
+ * Stripe minimum-charge floors via {@link shouldTriggerInvoice}.
  */
 export async function invoiceGatheringForIdentity(input: {
   clientId: string;
@@ -112,33 +129,34 @@ export async function invoiceGatheringForIdentity(input: {
   }
 
   try {
-    const identity = await resolveOpenMeterBillingIdentity({
-      clientId,
-      externalUserId,
-    });
-    const app = await getProviderApp(clientId);
-    const appId = app?.id?.trim() || identity.developerAppId;
-    const billingConfig = await getAppBillingConfig(appId);
-    const softNegativeUsdMicros = effectiveSoftNegativeUsdMicros(
-      billingConfig?.softNegativeUsdMicros,
-    );
-    const unbilledDebtUsdMicros = await getUnbilledDebtUsdMicros({
-      clientId,
-      externalUserId,
-    });
-    const collectable = unbilledDebtUsdMicros >= MIN_INVOICE_USD_MICROS;
-    const shouldRaise = input.force
-      ? collectable
-      : shouldTriggerInvoice({
-          unbilledDebtUsdMicros,
+    const force = input.force === true;
+    if (!force) {
+      const identity = await resolveOpenMeterBillingIdentity({
+        clientId,
+        externalUserId,
+      });
+      const app = await getProviderApp(clientId);
+      const appId = app?.id?.trim() || identity.developerAppId;
+      const billingConfig = await getAppBillingConfig(appId);
+      const softNegativeUsdMicros = effectiveSoftNegativeUsdMicros(
+        billingConfig?.softNegativeUsdMicros,
+      );
+      const unbilledDebtUsdMicros = await getUnbilledDebtUsdMicros({
+        clientId,
+        externalUserId,
+      });
+      const shouldRaise = shouldAttemptPendingLines({
+        force: false,
+        unbilledDebtUsdMicros,
+        softNegativeUsdMicros,
+        leadUsdMicros: effectiveInvoiceLeadUsdMicros({
+          storedUsdMicros: billingConfig?.invoiceLeadUsdMicros,
           softNegativeUsdMicros,
-          leadUsdMicros: effectiveInvoiceLeadUsdMicros({
-            storedUsdMicros: billingConfig?.invoiceLeadUsdMicros,
-            softNegativeUsdMicros,
-          }),
-        });
-    if (!shouldRaise) {
-      return { outcome: "skipped", invoiceIds: [] };
+        }),
+      });
+      if (!shouldRaise) {
+        return { outcome: "skipped", invoiceIds: [] };
+      }
     }
 
     const customerId = await resolveBillingCustomerId({
@@ -163,7 +181,7 @@ export async function invoiceGatheringForIdentity(input: {
       const invoiceId = invoice.id?.trim();
       if (!invoiceId) continue;
       invoiceIds.push(invoiceId);
-      await advanceInvoice(client, invoiceId, input.force === true);
+      await advanceInvoice(client, invoiceId, force);
     }
     return { outcome: "invoiced", invoiceIds };
   } catch (err) {
@@ -221,4 +239,5 @@ export function scheduleInvoiceTrigger(input: {
 /** @internal Exported for unit tests. */
 export const __testInvoiceTrigger = {
   shouldTriggerInvoice,
+  shouldAttemptPendingLines,
 };
