@@ -11,6 +11,7 @@ import {
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
 import { getHostedAdminClient } from "./admin-client";
+import { assertAppUserRetailBillingSubject } from "./billing-identity";
 import {
   applyFreeBillingProfileToCustomer,
   applyTenantBillingProfileToCustomer,
@@ -801,6 +802,11 @@ export async function createPaymentMethodCheckoutIfNeededForPlanChange(input: {
 export async function createEndUserCheckout(
   input: EndUserCheckoutInput,
 ): Promise<CheckoutResult> {
+  await assertAppUserRetailBillingSubject({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+
   const plan = await loadActiveTargetPlan({
     clientId: input.clientId,
     planId: input.planId,
@@ -926,6 +932,11 @@ export async function changeAppUserSubscriptionPlan(input: {
   successUrl?: string;
   cancelUrl?: string;
 }): Promise<ChangeAppUserSubscriptionPlanResult> {
+  await assertAppUserRetailBillingSubject({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+
   const targetPlan = await loadActiveTargetPlan({
     clientId: input.clientId,
     planId: input.planId,

@@ -60,6 +60,20 @@ test("resumeAppUserSubscription rejects without confirm", async () => {
   );
 });
 
+test("cancelAppUserSubscription rejects owner wire subject before OpenMeter", async () => {
+  await assert.rejects(
+    () =>
+      cancelAppUserSubscription({
+        clientId: "app_test",
+        externalUserId: "owner:user-platform-1",
+        confirm: true,
+      }),
+    (err: unknown) =>
+      err instanceof AppUserSubscriptionCancelError &&
+      err.code === "owner_wallet_not_app_user",
+  );
+});
+
 test("cancelAppUserSubscription rejects when OpenMeter is unavailable", async () => {
   const env = process.env as { NODE_ENV?: string; OPENMETER_TEST_LIVE?: string };
   const prevNodeEnv = env.NODE_ENV;
@@ -90,6 +104,20 @@ test("cancelAppUserSubscription rejects when OpenMeter is unavailable", async ()
       env.OPENMETER_TEST_LIVE = prevLive;
     }
   }
+});
+
+test("resumeAppUserSubscription rejects owner wire subject before OpenMeter", async () => {
+  await assert.rejects(
+    () =>
+      resumeAppUserSubscription({
+        clientId: "app_test",
+        externalUserId: "owner:user-platform-1",
+        confirm: true,
+      }),
+    (err: unknown) =>
+      err instanceof AppUserSubscriptionResumeError &&
+      err.code === "owner_wallet_not_app_user",
+  );
 });
 
 test("resumeAppUserSubscription rejects when OpenMeter is unavailable", async () => {
@@ -136,6 +164,7 @@ test("AppUserSubscriptionCancelError preserves code", () => {
 test("appUserSubscriptionCancelHttpStatus maps known codes", () => {
   assert.equal(appUserSubscriptionCancelHttpStatus("confirm_required"), 400);
   assert.equal(appUserSubscriptionCancelHttpStatus("already_scheduled"), 400);
+  assert.equal(appUserSubscriptionCancelHttpStatus("owner_wallet_not_app_user"), 400);
   assert.equal(appUserSubscriptionCancelHttpStatus("no_subscription"), 404);
   assert.equal(appUserSubscriptionCancelHttpStatus("already_starter"), 404);
   assert.equal(appUserSubscriptionCancelHttpStatus("openmeter_unavailable"), 503);
@@ -144,6 +173,7 @@ test("appUserSubscriptionCancelHttpStatus maps known codes", () => {
 
 test("appUserSubscriptionResumeHttpStatus maps known codes", () => {
   assert.equal(appUserSubscriptionResumeHttpStatus("confirm_required"), 400);
+  assert.equal(appUserSubscriptionResumeHttpStatus("owner_wallet_not_app_user"), 400);
   assert.equal(appUserSubscriptionResumeHttpStatus("nothing_to_resume"), 404);
   assert.equal(appUserSubscriptionResumeHttpStatus("openmeter_unavailable"), 503);
   assert.equal(appUserSubscriptionResumeHttpStatus("resume_failed"), 502);

@@ -5,6 +5,11 @@ import { plans } from "@/db/schema";
 import { getOrCreateStarterPlan } from "@/lib/starter-default-plan";
 import { planDisplayNameWithStarter } from "@/lib/starter-default-plan-display";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
+import {
+  AppUserOwnerWalletMutationError,
+  assertAppUserRetailBillingSubject,
+  rejectOwnerWireRetailSubject,
+} from "./billing-identity";
 import { ensureOpenMeterCustomerForAppUser } from "./customers";
 import {
   cancelKonnectSubscription,
@@ -40,6 +45,7 @@ import {
 export type AppUserSubscriptionCancelErrorCode =
   | "confirm_required"
   | "openmeter_unavailable"
+  | "owner_wallet_not_app_user"
   | "no_subscription"
   | "already_starter"
   | "already_scheduled"
@@ -71,6 +77,7 @@ export type AppUserSubscriptionCancelResult = {
 export type AppUserSubscriptionResumeErrorCode =
   | "confirm_required"
   | "openmeter_unavailable"
+  | "owner_wallet_not_app_user"
   | "nothing_to_resume"
   | "resume_failed";
 
@@ -113,6 +120,18 @@ function assertConfirm(
   if (confirm !== true) {
     throw new ErrorClass(code, message);
   }
+}
+
+function mapOwnerWalletMutationError(
+  err: unknown,
+  ErrorClass:
+    | typeof AppUserSubscriptionCancelError
+    | typeof AppUserSubscriptionResumeError,
+): never {
+  if (err instanceof AppUserOwnerWalletMutationError) {
+    throw new ErrorClass("owner_wallet_not_app_user", err.message);
+  }
+  throw err;
 }
 
 /** @deprecated Use isLiveSubscriptionStatus — scheduled is NOT live. */
@@ -544,13 +563,6 @@ export async function cancelAppUserSubscription(input: {
     "confirm_required",
   );
 
-  if (!isHostedAdminClientAvailable()) {
-    throw new AppUserSubscriptionCancelError(
-      "openmeter_unavailable",
-      "OpenMeter is not configured",
-    );
-  }
-
   const clientId = input.clientId.trim();
   const externalUserId = input.externalUserId.trim();
   if (!clientId || !externalUserId) {
@@ -558,6 +570,25 @@ export async function cancelAppUserSubscription(input: {
       "cancel_failed",
       "clientId and externalUserId are required",
     );
+  }
+
+  try {
+    rejectOwnerWireRetailSubject(externalUserId);
+  } catch (err) {
+    mapOwnerWalletMutationError(err, AppUserSubscriptionCancelError);
+  }
+
+  if (!isHostedAdminClientAvailable()) {
+    throw new AppUserSubscriptionCancelError(
+      "openmeter_unavailable",
+      "OpenMeter is not configured",
+    );
+  }
+
+  try {
+    await assertAppUserRetailBillingSubject({ clientId, externalUserId });
+  } catch (err) {
+    mapOwnerWalletMutationError(err, AppUserSubscriptionCancelError);
   }
 
   const client = getHostedAdminClient();
@@ -636,6 +667,7 @@ export function appUserSubscriptionCancelHttpStatus(
       return 404;
     case "confirm_required":
     case "already_scheduled":
+    case "owner_wallet_not_app_user":
       return 400;
     default:
       return 502;
@@ -756,13 +788,6 @@ export async function resumeAppUserSubscription(input: {
     "confirm_required",
   );
 
-  if (!isHostedAdminClientAvailable()) {
-    throw new AppUserSubscriptionResumeError(
-      "openmeter_unavailable",
-      "OpenMeter is not configured",
-    );
-  }
-
   const clientId = input.clientId.trim();
   const externalUserId = input.externalUserId.trim();
   if (!clientId || !externalUserId) {
@@ -770,6 +795,25 @@ export async function resumeAppUserSubscription(input: {
       "resume_failed",
       "clientId and externalUserId are required",
     );
+  }
+
+  try {
+    rejectOwnerWireRetailSubject(externalUserId);
+  } catch (err) {
+    mapOwnerWalletMutationError(err, AppUserSubscriptionResumeError);
+  }
+
+  if (!isHostedAdminClientAvailable()) {
+    throw new AppUserSubscriptionResumeError(
+      "openmeter_unavailable",
+      "OpenMeter is not configured",
+    );
+  }
+
+  try {
+    await assertAppUserRetailBillingSubject({ clientId, externalUserId });
+  } catch (err) {
+    mapOwnerWalletMutationError(err, AppUserSubscriptionResumeError);
   }
 
   const client = getHostedAdminClient();
@@ -798,6 +842,7 @@ export function appUserSubscriptionResumeHttpStatus(
     case "nothing_to_resume":
       return 404;
     case "confirm_required":
+    case "owner_wallet_not_app_user":
       return 400;
     default:
       return 502;

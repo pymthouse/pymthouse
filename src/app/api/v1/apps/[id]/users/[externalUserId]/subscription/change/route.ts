@@ -8,6 +8,7 @@ import {
 } from "@/lib/activation/app-activation";
 import { activationErrorResponse } from "@/lib/activation/problem";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
+import { AppUserOwnerWalletMutationError } from "@/lib/openmeter/billing-identity";
 import { changeAppUserSubscriptionPlan } from "@/lib/openmeter/subscriptions-billing";
 import type { SubscriptionChangeTiming } from "@/lib/openmeter/konnect-subscriptions";
 
@@ -56,6 +57,12 @@ async function runSellGate(
 }
 
 function subscriptionChangeErrorResponse(err: unknown): NextResponse {
+  if (err instanceof AppUserOwnerWalletMutationError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code },
+      { status: 400 },
+    );
+  }
   const message = err instanceof Error ? err.message : String(err);
   if (message === "User is already on this plan") {
     return NextResponse.json({ error: message }, { status: 400 });
