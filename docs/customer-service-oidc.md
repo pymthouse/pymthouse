@@ -29,8 +29,10 @@ Discovery: `{issuer}/.well-known/openid-configuration`
 | `redirect_uris` | from `CS_OIDC_REDIRECT_URI`, else `{CUSTOMER_SERVICE_URL or NEXT_PUBLIC_CUSTOMER_SERVICE_URL or http://localhost:3010}/api/auth/callback/pymthouse` |
 | `allowed_scopes` | `openid profile email admin` |
 
-Later bootstrap runs merge any missing redirect URIs and repair scopes/grants.
-The client secret is printed **once** on create (or when the hash is missing).
+Later bootstrap runs merge redirect URIs only when `CS_OIDC_REDIRECT_URI`,
+`CUSTOMER_SERVICE_URL`, or `NEXT_PUBLIC_CUSTOMER_SERVICE_URL` are set in
+pymthouse env (customer-service vars are not read from pymthouse by default).
+They also repair scopes/grants. The client secret is printed **once** on create (or when the hash is missing).
 Pass `--rotate-secret` to mint a new secret:
 
 ```bash

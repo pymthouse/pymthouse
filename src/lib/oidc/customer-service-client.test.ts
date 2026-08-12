@@ -12,7 +12,9 @@ import {
   CUSTOMER_SERVICE_OIDC_SCOPES,
   DEFAULT_CUSTOMER_SERVICE_ORIGIN,
   ensureCustomerServiceOidcClient,
+  desiredCustomerServiceRedirectUrisForEnsure,
   getCustomerServiceOidcClientId,
+  hasConfiguredCustomerServiceRedirectOrigin,
   isCustomerServiceOidcClient,
   mergeRedirectUris,
   oidcLoginPathForClient,
@@ -106,6 +108,49 @@ test("mergeRedirectUris is additive and de-dupes", () => {
     ),
     ["https://a.example/cb", "https://b.example/cb", "https://c.example/cb"],
   );
+});
+
+test("hasConfiguredCustomerServiceRedirectOrigin is false when CS env unset", (t) => {
+  restoreEnv(t, "CS_OIDC_REDIRECT_URI");
+  restoreEnv(t, "CUSTOMER_SERVICE_URL");
+  restoreEnv(t, "NEXT_PUBLIC_CUSTOMER_SERVICE_URL");
+  delete process.env.CS_OIDC_REDIRECT_URI;
+  delete process.env.CUSTOMER_SERVICE_URL;
+  delete process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL;
+  assert.equal(hasConfiguredCustomerServiceRedirectOrigin(), false);
+  assert.deepEqual(desiredCustomerServiceRedirectUrisForEnsure(), []);
+
+  process.env.CUSTOMER_SERVICE_URL = "https://cs.example.com";
+  assert.equal(hasConfiguredCustomerServiceRedirectOrigin(), true);
+  assert.deepEqual(desiredCustomerServiceRedirectUrisForEnsure(), [
+    "https://cs.example.com/api/auth/callback/pymthouse",
+  ]);
+});
+
+test("ensureCustomerServiceOidcClient does not add localhost when CS env unset on re-run", async (t) => {
+  const clientId = testClientId();
+  t.after(() => cleanupClient(clientId));
+  restoreEnv(t, "CS_OIDC_REDIRECT_URI");
+  restoreEnv(t, "CUSTOMER_SERVICE_URL");
+  restoreEnv(t, "NEXT_PUBLIC_CUSTOMER_SERVICE_URL");
+  delete process.env.CS_OIDC_REDIRECT_URI;
+  delete process.env.CUSTOMER_SERVICE_URL;
+  delete process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL;
+
+  const first = await ensureCustomerServiceOidcClient({
+    clientId,
+    redirectUris: ["https://cs.example.com/api/auth/callback/pymthouse"],
+  });
+  const second = await ensureCustomerServiceOidcClient({
+    clientId,
+    rotateSecret: true,
+  });
+
+  assert.equal(second.created, false);
+  assert.deepEqual(second.redirectUris, [
+    "https://cs.example.com/api/auth/callback/pymthouse",
+  ]);
+  assert.notEqual(second.clientSecret, first.clientSecret);
 });
 
 test("ensureCustomerServiceOidcClient creates a standalone confidential RP", async (t) => {

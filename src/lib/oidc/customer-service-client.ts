@@ -41,6 +41,15 @@ export type EnsureCustomerServiceOidcClientResult = {
   redirectUris: string[];
 };
 
+/** True when pymthouse env explicitly names CS redirect or origin (not localhost default). */
+export function hasConfiguredCustomerServiceRedirectOrigin(): boolean {
+  return Boolean(
+    process.env.CS_OIDC_REDIRECT_URI?.trim() ||
+      process.env.CUSTOMER_SERVICE_URL?.trim() ||
+      process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL?.trim(),
+  );
+}
+
 export function resolveCustomerServiceRedirectUris(): string[] {
   const explicit = process.env.CS_OIDC_REDIRECT_URI?.trim();
   if (explicit) {
@@ -52,6 +61,19 @@ export function resolveCustomerServiceRedirectUris(): string[] {
     DEFAULT_CUSTOMER_SERVICE_ORIGIN
   ).replace(/\/+$/, "");
   return [`${origin}/api/auth/callback/pymthouse`];
+}
+
+/** Redirects to merge on update; empty when env is unset (avoids localhost on prod re-bootstrap). */
+export function desiredCustomerServiceRedirectUrisForEnsure(
+  opts?: { redirectUris?: string[] },
+): string[] {
+  if (opts?.redirectUris !== undefined) {
+    return mergeRedirectUris([], opts.redirectUris);
+  }
+  if (!hasConfiguredCustomerServiceRedirectOrigin()) {
+    return [];
+  }
+  return resolveCustomerServiceRedirectUris();
 }
 
 export function mergeRedirectUris(
@@ -71,7 +93,7 @@ export function mergeRedirectUris(
 /**
  * Ensure the first-party customer-service confidential web RP exists.
  * Not a developer app — a standalone `oidc_clients` row. Idempotent:
- * later runs merge redirects and repair scopes/grants; the secret is
+ * later runs merge redirects when CS redirect env is set, repair scopes/grants;
  * minted on create (or when missing) and only rotated when asked.
  */
 export async function ensureCustomerServiceOidcClient(opts?: {
@@ -80,10 +102,7 @@ export async function ensureCustomerServiceOidcClient(opts?: {
   rotateSecret?: boolean;
 }): Promise<EnsureCustomerServiceOidcClientResult> {
   const clientId = opts?.clientId?.trim() || getCustomerServiceOidcClientId();
-  const desiredRedirects =
-    opts?.redirectUris !== undefined
-      ? mergeRedirectUris([], opts.redirectUris)
-      : resolveCustomerServiceRedirectUris();
+  const desiredRedirects = desiredCustomerServiceRedirectUrisForEnsure(opts);
 
   const existingRows = await db
     .select()
@@ -93,7 +112,11 @@ export async function ensureCustomerServiceOidcClient(opts?: {
   const existing = existingRows[0];
 
   if (!existing) {
-    if (desiredRedirects.length === 0) {
+    const redirectsForCreate =
+      desiredRedirects.length > 0
+        ? desiredRedirects
+        : resolveCustomerServiceRedirectUris();
+    if (redirectsForCreate.length === 0) {
       throw new Error(
         "Customer-service OIDC client requires at least one redirect URI.",
       );
@@ -101,14 +124,14 @@ export async function ensureCustomerServiceOidcClient(opts?: {
     const secret = generateClientSecret();
     const grantTypes = syncConfidentialWebGrantTypes(
       [...DEFAULT_CONFIDENTIAL_WEB_GRANT_TYPES],
-      desiredRedirects,
+      redirectsForCreate,
     );
     await db.insert(oidcClients).values({
       id: uuidv4(),
       clientId,
       clientSecretHash: hashClientSecret(secret),
       displayName: CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
-      redirectUris: JSON.stringify(desiredRedirects),
+      redirectUris: JSON.stringify(redirectsForCreate),
       allowedScopes: CUSTOMER_SERVICE_OIDC_SCOPES,
       grantTypes: grantTypes.join(","),
       tokenEndpointAuthMethod: "client_secret_post",
@@ -119,14 +142,15 @@ export async function ensureCustomerServiceOidcClient(opts?: {
       created: true,
       secretRotated: true,
       clientSecret: secret,
-      redirectUris: desiredRedirects,
+      redirectUris: redirectsForCreate,
     };
   }
 
-  const redirectUris = mergeRedirectUris(
-    JSON.parse(existing.redirectUris) as string[],
-    desiredRedirects,
-  );
+  const existingRedirects = JSON.parse(existing.redirectUris) as string[];
+  const redirectUris =
+    desiredRedirects.length > 0
+      ? mergeRedirectUris(existingRedirects, desiredRedirects)
+      : existingRedirects;
   if (redirectUris.length === 0) {
     throw new Error(
       "Customer-service OIDC client requires at least one redirect URI.",
