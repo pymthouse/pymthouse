@@ -6,8 +6,12 @@
  */
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
+import { developerApps, oidcClients, users } from "@/db/schema";
 import { eq, or } from "drizzle-orm";
+import {
+  CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
+  isCustomerServiceOidcClient,
+} from "@/lib/oidc/customer-service-id";
 
 export interface AppAccessCheck {
   allowed: boolean;
@@ -24,6 +28,8 @@ export interface AppAccessCheck {
  * - Unknown / unregistered clients are blocked
  * - Public `app_`, M2M `m2m_`, and confidential web `web_` siblings all resolve
  *   to the same developer app
+ * - The reserved customer-service RP (`web_customer_service`) is first-party
+ *   and has no developer app row
  */
 export async function checkAppAccess(
   clientId: string,
@@ -44,6 +50,27 @@ export async function checkAppAccess(
   }
 
   const oidcClientRowId = clientRows[0].id;
+
+  if (isCustomerServiceOidcClient(clientId)) {
+    if (_userId) {
+      const adminRows = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(eq(users.id, _userId))
+        .limit(1);
+      if (adminRows[0]?.role !== "admin") {
+        return {
+          allowed: false,
+          reason: "Customer-service login requires a platform admin account",
+          appName: CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
+        };
+      }
+    }
+    return {
+      allowed: true,
+      appName: CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
+    };
+  }
 
   // Public row or confidential sibling (m2m_ / web_) → same developer app
   const appRows = await db

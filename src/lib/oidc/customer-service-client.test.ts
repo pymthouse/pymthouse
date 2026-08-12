@@ -13,7 +13,10 @@ import {
   DEFAULT_CUSTOMER_SERVICE_ORIGIN,
   ensureCustomerServiceOidcClient,
   getCustomerServiceOidcClientId,
+  isCustomerServiceOidcClient,
   mergeRedirectUris,
+  oidcLoginPathForClient,
+  oidcLoginRedirect,
   resolveCustomerServiceRedirectUris,
 } from "@/lib/oidc/customer-service-client";
 
@@ -40,6 +43,24 @@ test("getCustomerServiceOidcClientId defaults then honors CS_OIDC_CLIENT_ID", (t
 
   process.env.CS_OIDC_CLIENT_ID = " web_already_provisioned ";
   assert.equal(getCustomerServiceOidcClientId(), "web_already_provisioned");
+});
+
+test("isCustomerServiceOidcClient matches reserved and env override ids", (t) => {
+  restoreEnv(t, "CS_OIDC_CLIENT_ID");
+  delete process.env.CS_OIDC_CLIENT_ID;
+  assert.equal(isCustomerServiceOidcClient("web_customer_service"), true);
+  assert.equal(isCustomerServiceOidcClient("web_other"), false);
+  assert.equal(isCustomerServiceOidcClient(null), false);
+  assert.equal(oidcLoginPathForClient("web_customer_service"), "/login/admin");
+  assert.equal(oidcLoginPathForClient("app_abc"), "/login");
+  assert.equal(
+    oidcLoginRedirect("web_customer_service", "/oidc/interaction?uid=abc"),
+    "/login/admin?callbackUrl=%2Foidc%2Finteraction%3Fuid%3Dabc&client_id=web_customer_service",
+  );
+
+  process.env.CS_OIDC_CLIENT_ID = "web_already_provisioned";
+  assert.equal(isCustomerServiceOidcClient("web_already_provisioned"), true);
+  assert.equal(isCustomerServiceOidcClient("web_customer_service"), true);
 });
 
 test("resolveCustomerServiceRedirectUris prefers explicit URI list", (t) => {

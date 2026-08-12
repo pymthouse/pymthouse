@@ -7,7 +7,8 @@ APIs with a Bearer token that includes the `admin` scope. The DB role
 
 This is a **standalone** `oidc_clients` row (not a developer app). There is no
 `developer_apps` owner; only platform admins can see or edit it under
-`/admin/oidc-clients`.
+`/admin/oidc-clients`. OIDC login for this client goes to `/login/admin`
+(bearer token from `npm run bootstrap`), not the public `/login` page.
 
 ## Issuer
 

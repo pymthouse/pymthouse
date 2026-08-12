@@ -11,15 +11,23 @@ import {
   DEFAULT_CONFIDENTIAL_WEB_GRANT_TYPES,
   syncConfidentialWebGrantTypes,
 } from "@/lib/oidc/confidential-web";
+import {
+  CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
+  DEFAULT_CUSTOMER_SERVICE_ORIGIN,
+  getCustomerServiceOidcClientId,
+} from "@/lib/oidc/customer-service-id";
 import { resetProvider } from "@/lib/oidc/provider";
 import { ensureConfidentialWebIdentityScopes } from "@/lib/oidc/scopes";
 
-/** Stable first-party RP id. Override with `CS_OIDC_CLIENT_ID` if already provisioned. */
-export const CUSTOMER_SERVICE_OIDC_CLIENT_ID = "web_customer_service";
-
-export const CUSTOMER_SERVICE_OIDC_DISPLAY_NAME = "Customer Service";
-
-export const DEFAULT_CUSTOMER_SERVICE_ORIGIN = "http://localhost:3010";
+export {
+  CUSTOMER_SERVICE_OIDC_CLIENT_ID,
+  CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
+  DEFAULT_CUSTOMER_SERVICE_ORIGIN,
+  getCustomerServiceOidcClientId,
+  isCustomerServiceOidcClient,
+  oidcLoginPathForClient,
+  oidcLoginRedirect,
+} from "@/lib/oidc/customer-service-id";
 
 export const CUSTOMER_SERVICE_OIDC_SCOPES = ensureConfidentialWebIdentityScopes(
   "openid profile admin",
@@ -32,10 +40,6 @@ export type EnsureCustomerServiceOidcClientResult = {
   clientSecret: string | null;
   redirectUris: string[];
 };
-
-export function getCustomerServiceOidcClientId(): string {
-  return process.env.CS_OIDC_CLIENT_ID?.trim() || CUSTOMER_SERVICE_OIDC_CLIENT_ID;
-}
 
 export function resolveCustomerServiceRedirectUris(): string[] {
   const explicit = process.env.CS_OIDC_REDIRECT_URI?.trim();

@@ -7,6 +7,7 @@ import { authOptions } from "@/lib/next-auth-options";
 import { getProvider } from "@/lib/oidc/provider";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { checkAppAccess } from "@/lib/oidc/app-access";
+import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -75,12 +76,7 @@ export default async function OidcInteractionPage({
   }
 
   if (!session?.user) {
-    const loginUrl = new URL("/login", getPublicOrigin());
-    loginUrl.searchParams.set("callbackUrl", `/oidc/interaction?uid=${uid}`);
-    if (clientId) {
-      loginUrl.searchParams.set("client_id", clientId);
-    }
-    redirect(loginUrl.pathname + loginUrl.search);
+    redirect(oidcLoginRedirect(clientId, `/oidc/interaction?uid=${uid}`));
   }
 
   const requestHeaders = await headers();
