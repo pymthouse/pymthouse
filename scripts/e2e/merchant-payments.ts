@@ -73,35 +73,56 @@ const MIN_INVOICE_USD_MICROS = 500_000n; // Stripe floor, mirrors overage-limits
 type RunState = {
   runId: string;
   externalUserId: string;
-  planId?: string;
+  startedAtUnix: number;
   connectedAccountId?: string;
-  stripeCustomerId?: string;
-  paymentMethodId?: string;
   amountUsdMicros?: string;
-  requestId?: string;
   ingestMode?: "kafka" | "api";
-  invoiceIds?: string[];
-  stripeChargeId?: string;
-  notes: string[];
 };
 
 function loadState(): RunState {
   if (existsSync(STATE_FILE)) {
-    return JSON.parse(readFileSync(STATE_FILE, "utf8")) as RunState;
+    const fromDisk = JSON.parse(readFileSync(STATE_FILE, "utf8")) as Partial<RunState>;
+    return {
+      runId: typeof fromDisk.runId === "string" ? fromDisk.runId : randomUUID().slice(0, 8),
+      externalUserId:
+        typeof fromDisk.externalUserId === "string" && fromDisk.externalUserId.trim()
+          ? fromDisk.externalUserId
+          : `e2e-merchant-${Date.now()}`,
+      startedAtUnix:
+        typeof fromDisk.startedAtUnix === "number"
+          ? Math.floor(fromDisk.startedAtUnix)
+          : Math.floor(Date.now() / 1000),
+      connectedAccountId:
+        typeof fromDisk.connectedAccountId === "string" ? fromDisk.connectedAccountId : undefined,
+      amountUsdMicros:
+        typeof fromDisk.amountUsdMicros === "string" ? fromDisk.amountUsdMicros : undefined,
+      ingestMode:
+        fromDisk.ingestMode === "kafka" || fromDisk.ingestMode === "api"
+          ? fromDisk.ingestMode
+          : undefined,
+    };
   }
   const runId = process.env.GITHUB_RUN_ID?.trim() || randomUUID().slice(0, 8);
   const state: RunState = {
     runId,
+    startedAtUnix: Math.floor(Date.now() / 1000),
     externalUserId:
       process.env.E2E_EXTERNAL_USER_ID?.trim() || `e2e-merchant-${runId}-${Date.now()}`,
-    notes: [],
   };
   saveState(state);
   return state;
 }
 
 function saveState(state: RunState): void {
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  const persisted: RunState = {
+    runId: state.runId,
+    externalUserId: state.externalUserId,
+    startedAtUnix: state.startedAtUnix,
+    connectedAccountId: state.connectedAccountId,
+    amountUsdMicros: state.amountUsdMicros,
+    ingestMode: state.ingestMode,
+  };
+  writeFileSync(STATE_FILE, JSON.stringify(persisted, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -195,9 +216,18 @@ function stage(name: string): void {
   console.log(`\n=== ${name} ===`);
 }
 
+class StageFailure extends Error {}
+
 function fail(message: string): never {
-  console.error(`\n✗ ${message}`);
-  process.exit(1);
+  throw new StageFailure(message);
+}
+
+function connectedAccountIdFromEnv(): string {
+  const accountId = process.env.E2E_STRIPE_CONNECTED_ACCOUNT_ID?.trim();
+  if (!accountId) {
+    fail("E2E_STRIPE_CONNECTED_ACCOUNT_ID is configured");
+  }
+  return accountId;
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -290,8 +320,7 @@ async function preflight(state: RunState): Promise<void> {
     "M2M credential is the app's configured m2m_* client (wallet routes reachable)",
   );
 
-  const account = process.env.E2E_STRIPE_CONNECTED_ACCOUNT_ID?.trim();
-  assert(Boolean(account), "E2E_STRIPE_CONNECTED_ACCOUNT_ID is configured");
+  const account = connectedAccountIdFromEnv();
   const acct = await stripe<{
     id: string;
     charges_enabled: boolean;
@@ -300,7 +329,7 @@ async function preflight(state: RunState): Promise<void> {
   assert(acct.charges_enabled, `connected account ${acct.id} has charges_enabled`);
   assert(acct.details_submitted, `connected account ${acct.id} has details_submitted`);
 
-  state.connectedAccountId = acct.id;
+  state.connectedAccountId = account;
   saveState(state);
 }
 
@@ -335,11 +364,12 @@ async function provision(state: RunState): Promise<void> {
     !change.checkoutUrl,
     "plan change settled server-side (no interactive Connect checkout required)",
   );
-  state.planId = planId;
   saveState(state);
   log(`plan ${planId} active`);
 
   stage("Provision — default payment method on the connected account");
+  const connectedAccountId = state.connectedAccountId ?? connectedAccountIdFromEnv();
+  state.connectedAccountId = connectedAccountId;
   // POST …/wallet/payment-methods creates the setup-mode Checkout session, and
   // as a side effect materialises the customer on the connected account. The
   // hosted URL needs a browser, so CI attaches a sandbox card over the Stripe
@@ -350,23 +380,19 @@ async function provision(state: RunState): Promise<void> {
     body: { externalUserId: state.externalUserId },
   });
 
-  const customerId = await findConnectedCustomerId(state);
-  state.stripeCustomerId = customerId;
-  saveState(state);
+  const customerId = await findConnectedCustomerId(state, connectedAccountId);
   log(`connected-account customer ${customerId}`);
 
   const paymentMethod = await stripe<{ id: string }>("/v1/payment_methods", {
     method: "POST",
-    account: state.connectedAccountId,
+    account: connectedAccountId,
     form: { type: "card", "card[token]": process.env.E2E_STRIPE_CARD_TOKEN || "tok_visa" },
   });
   await stripe(`/v1/payment_methods/${paymentMethod.id}/attach`, {
     method: "POST",
-    account: state.connectedAccountId,
+    account: connectedAccountId,
     form: { customer: customerId },
   });
-  state.paymentMethodId = paymentMethod.id;
-  saveState(state);
   log(`attached ${paymentMethod.id} → ${customerId} (payment_method.attached webhook in flight)`);
 
   const promoted = await apiOk<{ promoted: boolean; paymentMethodId: string | null }>(
@@ -421,7 +447,7 @@ async function resolvePayPerUsePlanId(): Promise<string> {
 }
 
 /** Located by the metadata `ensureMerchantOwnedStripeCustomer` stamps at create. */
-async function findConnectedCustomerId(state: RunState): Promise<string> {
+async function findConnectedCustomerId(state: RunState, connectedAccountId: string): Promise<string> {
   const query = encodeURIComponent(
     `metadata['external_user_id']:'${state.externalUserId}' AND metadata['pymthouse_client_id']:'${CLIENT_ID}'`,
   );
@@ -431,7 +457,7 @@ async function findConnectedCustomerId(state: RunState): Promise<string> {
     probe: async () => {
       const found = await stripe<{ data: Array<{ id: string }> }>(
         `/v1/customers/search?query=${query}`,
-        { account: state.connectedAccountId },
+        { account: connectedAccountId },
       );
       const id = found.data[0]?.id;
       return id ? { done: true, value: id } : { done: false, note: "search index warming" };
@@ -450,7 +476,8 @@ async function findConnectedCustomerId(state: RunState): Promise<string> {
  */
 async function webhookConnect(state: RunState): Promise<void> {
   stage("Webhook Plane B — account.updated");
-  const account = state.connectedAccountId ?? fail("connected account not resolved");
+  const account = state.connectedAccountId ?? connectedAccountIdFromEnv();
+  state.connectedAccountId = account;
   const acct = await stripe<{
     id: string;
     charges_enabled: boolean;
@@ -574,7 +601,6 @@ async function ingestViaKafka(state: RunState): Promise<void> {
     { input: `${message}\n`, stdio: ["pipe", "inherit", "inherit"] },
   );
 
-  state.requestId = requestId;
   log(`produced create_signed_ticket ${requestId} (${feeWei} wei @ $${ethUsd}/ETH ≈ $${AMOUNT_USD})`);
   log("collector consumer group `openmeter-collector` should forward to Konnect within seconds");
 }
@@ -592,8 +618,10 @@ async function ingestViaApi(state: RunState): Promise<void> {
     },
   );
   assert(result.collected === false, "ingest did not pre-raise an invoice (collect=false)");
-  state.requestId = result.requestId;
-  state.amountUsdMicros = result.amountUsdMicros;
+  assert(
+    BigInt(result.amountUsdMicros) === usdMicros(AMOUNT_USD),
+    `ingested amount matches requested charge (${result.amountUsdMicros})`,
+  );
   log(`ingested ${result.requestId} for $${AMOUNT_USD}`);
 }
 
@@ -700,8 +728,6 @@ async function verifyUsage(state: RunState): Promise<void> {
     "wallet.billingState matches GET /billing/state (a read and a rejection never disagree)",
   );
 
-  state.notes.push(`debt after ingest: ${debt} usdMicros`);
-  saveState(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -740,9 +766,6 @@ async function collect(state: RunState): Promise<void> {
     `nextAction handed off to settlement (${collection.nextAction})`,
   );
 
-  state.invoiceIds = result.invoiceIds;
-  saveState(state);
-
   stage("Manual collection — idempotency");
   const repeat = await apiOk<{ outcome: string }>(
     `/api/v1/apps/${CLIENT_ID}/billing/collect`,
@@ -762,14 +785,18 @@ type SettlementCharge = {
   id: string;
   amount: number;
   applicationFee: number;
+  invoiceId: string | null;
   /** `direct` lives on the connected account; `destination` on the platform. */
   model: "direct" | "destination";
 };
 
 type StripeChargeRow = {
   id: string;
+  created: number;
   amount: number;
   paid: boolean;
+  customer?: string | null;
+  invoice?: string | null;
   application_fee_amount?: number | null;
   transfer_data?: { destination?: string } | null;
 };
@@ -782,11 +809,17 @@ type StripeChargeRow = {
  * both scopes rather than timing out against the wrong one.
  */
 async function findSettlementCharge(
-  state: RunState,
+  input: {
+    state: RunState;
+    connectedAccountId: string;
+    stripeCustomerId: string;
+    expectedCents: number;
+  },
 ): Promise<{ done: boolean; value?: SettlementCharge; note?: string }> {
+  const { state, connectedAccountId, stripeCustomerId, expectedCents } = input;
   const direct = await stripe<{ data: StripeChargeRow[] }>(
-    `/v1/charges?customer=${state.stripeCustomerId}&limit=20`,
-    { account: state.connectedAccountId },
+    `/v1/charges?customer=${encodeURIComponent(stripeCustomerId)}&limit=20`,
+    { account: connectedAccountId },
   );
   const directPaid = direct.data.find((row) => row.paid);
   if (directPaid) {
@@ -796,14 +829,22 @@ async function findSettlementCharge(
         id: directPaid.id,
         amount: directPaid.amount,
         applicationFee: directPaid.application_fee_amount ?? 0,
+        invoiceId: directPaid.invoice ?? null,
         model: "direct",
       },
     };
   }
 
-  const platform = await stripe<{ data: StripeChargeRow[] }>("/v1/charges?limit=50");
+  const platform = await stripe<{ data: StripeChargeRow[] }>(
+    `/v1/charges?limit=100&created[gte]=${state.startedAtUnix}`,
+  );
   const destinationPaid = platform.data.find(
-    (row) => row.paid && row.transfer_data?.destination === state.connectedAccountId,
+    (row) =>
+      row.paid &&
+      row.transfer_data?.destination === connectedAccountId &&
+      row.created >= state.startedAtUnix &&
+      row.amount === expectedCents &&
+      (!row.customer || row.customer === stripeCustomerId),
   );
   if (destinationPaid) {
     return {
@@ -812,6 +853,7 @@ async function findSettlementCharge(
         id: destinationPaid.id,
         amount: destinationPaid.amount,
         applicationFee: destinationPaid.application_fee_amount ?? 0,
+        invoiceId: destinationPaid.invoice ?? null,
         model: "destination",
       },
     };
@@ -819,7 +861,7 @@ async function findSettlementCharge(
 
   return {
     done: false,
-    note: `connected=${direct.data.length} charge(s), platform=${platform.data.length}, none settled yet`,
+    note: `connected=${direct.data.length} charge(s), platform=${platform.data.length} charge(s) since ${state.startedAtUnix}, none settled yet`,
   };
 }
 
@@ -829,13 +871,22 @@ async function findSettlementCharge(
  * reports back to OpenMeter, then both read APIs show the money.
  */
 async function settle(state: RunState): Promise<void> {
-  const invoiceIds = state.invoiceIds ?? fail("no invoice ids in state");
+  const connectedAccountId = state.connectedAccountId ?? connectedAccountIdFromEnv();
+  state.connectedAccountId = connectedAccountId;
+  const stripeCustomerId = await findConnectedCustomerId(state, connectedAccountId);
+  const expectedCents = Number(BigInt(state.amountUsdMicros ?? "0") / 10_000n);
 
   stage("Settlement — Stripe charge");
   const charge = await poll<SettlementCharge>({
     label: "settlement charges the default card",
     timeoutMs: SETTLE_TIMEOUT_MS,
-    probe: () => findSettlementCharge(state),
+    probe: () =>
+      findSettlementCharge({
+        state,
+        connectedAccountId,
+        stripeCustomerId,
+        expectedCents,
+      }),
   });
   const expectedModel = process.env.E2E_EXPECTED_CHARGE_MODEL?.trim();
   if (expectedModel) {
@@ -848,14 +899,12 @@ async function settle(state: RunState): Promise<void> {
     `charge ${charge.id} for ${charge.amount} cents on the ${charge.model === "direct" ? "connected" : "platform"} account (application fee ${charge.applicationFee})`,
   );
 
-  const expectedCents = Number(BigInt(state.amountUsdMicros ?? "0") / 10_000n);
   const drift = Math.abs(charge.amount - expectedCents);
   assert(
     expectedCents === 0 || (drift * 10_000) / expectedCents <= AMOUNT_TOLERANCE_BPS,
     `charged ${charge.amount}¢ against an expected ~${expectedCents}¢`,
   );
-  state.stripeChargeId = charge.id;
-  saveState(state);
+  const settledInvoiceIds: string[] = charge.invoiceId ? [charge.invoiceId] : [];
 
   stage("Settlement — OpenMeter invoice reaches paid");
   await poll<true>({
@@ -865,9 +914,14 @@ async function settle(state: RunState): Promise<void> {
       const body = await apiOk<{ items: Array<{ id: string; status: string }> }>(
         `/api/v1/apps/${CLIENT_ID}/billing/wallet/invoices?externalUserId=${encodeURIComponent(state.externalUserId)}&pageSize=50`,
       );
-      const match = body.items.find((item) => invoiceIds.includes(item.id));
+      const match = body.items.find((item) =>
+        settledInvoiceIds.length > 0 ? settledInvoiceIds.includes(item.id) : /paid|succeeded/i.test(item.status),
+      );
       if (!match) {
-        return { done: false, note: `invoice ${invoiceIds[0]} not listed yet` };
+        return { done: false, note: "no paid invoice listed yet" };
+      }
+      if (settledInvoiceIds.length === 0) {
+        settledInvoiceIds.push(match.id);
       }
       return /paid|succeeded/i.test(match.status)
         ? { done: true, value: true }
@@ -880,7 +934,7 @@ async function settle(state: RunState): Promise<void> {
     `/api/v1/apps/${CLIENT_ID}/users/${encodeURIComponent(state.externalUserId)}/invoices`,
   );
   assert(
-    userInvoices.items.some((item) => invoiceIds.includes(item.id)),
+    settledInvoiceIds.length > 0 && userInvoices.items.some((item) => settledInvoiceIds.includes(item.id)),
     "end-user invoices endpoint lists the collected invoice",
   );
 
@@ -902,10 +956,10 @@ async function settle(state: RunState): Promise<void> {
     "## Merchant payment flow — passed",
     "",
     `- End-user: \`${state.externalUserId}\``,
-    `- Ingest mode: \`${state.ingestMode}\``,
-    `- Invoice(s): \`${invoiceIds.join(", ")}\``,
+    `- Ingest mode: \`${state.ingestMode ?? "unknown"}\``,
+    `- Invoice(s): \`${settledInvoiceIds.join(", ")}\``,
     `- Stripe charge: \`${charge.id}\` (${charge.amount}¢, fee ${charge.applicationFee}¢, model ${charge.model})`,
-    `- Connected account: \`${state.connectedAccountId}\``,
+    `- Connected account: \`${connectedAccountId}\``,
   ]);
 }
 
@@ -958,5 +1012,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  fail(err instanceof Error ? (err.stack ?? err.message) : String(err));
+  if (err instanceof StageFailure) {
+    console.error("\n✗ e2e stage failed");
+    process.exit(1);
+  }
+  console.error("\n✗ unexpected e2e stage failure");
+  process.exit(1);
 });

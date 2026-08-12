@@ -16,6 +16,22 @@ const ADMIN_GRANT_SOURCES = new Set<GrantSource>([
   "plan_adjustment",
 ]);
 
+function parsePositiveAmountUsdMicros(value: unknown): bigint | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) {
+    return null;
+  }
+  try {
+    const parsed = BigInt(normalized);
+    return parsed > 0n ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function loadOwnerUser(userId: string) {
   const rows = await db
     .select({
@@ -67,13 +83,8 @@ export const POST = withAdminGuardParams<{ userId: string }>(
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const amountRaw = body.amountUsdMicros;
-    const amountUsdMicros = BigInt(
-      typeof amountRaw === "string" || typeof amountRaw === "number"
-        ? String(amountRaw)
-        : "0",
-    );
-    if (amountUsdMicros <= 0n) {
+    const amountUsdMicros = parsePositiveAmountUsdMicros(body.amountUsdMicros);
+    if (!amountUsdMicros) {
       return NextResponse.json(
         { error: "amountUsdMicros must be positive" },
         { status: 400 },
