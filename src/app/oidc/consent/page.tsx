@@ -21,6 +21,10 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import type { ReactNode } from "react";
 import ConsentForm from "./consent-form";
+import {
+  isTrustedOidcWarmRequest,
+  warmOidcProvider,
+} from "@/lib/oidc/warm";
 
 function readResourceParam(params: Record<string, unknown>): string | null {
   const resource = params.resource;
@@ -621,6 +625,24 @@ export default async function ConsentPage({
   searchParams: Promise<SearchParams>;
 }>) {
   const params = await searchParams;
+
+  if (asSingleValue(params.warm) === "1") {
+    const requestHeaders = await headers();
+    if (!isTrustedOidcWarmRequest(requestHeaders)) {
+      return (
+        <ConsentErrorPanel title="Unauthorized">
+          Warm requests require the Vercel cron header or CRON_SECRET.
+        </ConsentErrorPanel>
+      );
+    }
+    await warmOidcProvider();
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+        <p className="text-sm text-zinc-400">OIDC consent warmed</p>
+      </main>
+    );
+  }
+
   const uid = asSingleValue(params.uid);
 
   if (!uid) {

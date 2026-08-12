@@ -7,7 +7,7 @@ import { buildAppManifestForApp } from "@/lib/app-manifest";
 import { DISCOVERY_TOP_N_MAX } from "@/lib/discovery-plans";
 import { resolvePlansDiscoveryForApp } from "@/lib/discovery-profile-resolve";
 import type { McpPrincipal } from "@/lib/mcp/auth";
-import { filterAllowedCapabilities } from "@/lib/mcp/capability-allow";
+import { partitionByExclusions } from "@/lib/mcp/capability-allow";
 import { readDiscoveryRawUrl, readDiscoveryServiceUrl } from "@/lib/mcp/config";
 import { createSignerSessionForPrincipal, discoveryFetch } from "@/lib/mcp/session";
 import { MintUserSignerTokenError } from "@/lib/oidc/mint-user-signer-token";
@@ -97,8 +97,9 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     "list_capabilities",
     {
       description:
-        "List network capabilities allowed for this app (network default plan / discovery exclusions). " +
-        "This is the app-scoped catalog from PymtHouse application settings.",
+        "List the app-scoped network capability catalog (network default plan minus discovery exclusions) " +
+        "from PymtHouse application settings. Informational: this catalog does not gate requests — " +
+        "only `excludedCapabilities` restricts what `query_orchestrators` will forward.",
       inputSchema: {},
     },
     async () => {
@@ -143,7 +144,7 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     "query_orchestrators",
     {
       description:
-        "Query ranked orchestrators for capability names. Requests are filtered to this app's network allowlist.",
+        "Query ranked orchestrators for capability names. Requests pass through unless this app explicitly excludes them.",
       inputSchema: {
         capabilities: z.array(z.string()).min(1),
         service_types: z.array(z.string()).optional(),
@@ -152,27 +153,22 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
     },
     async ({ capabilities, service_types, top_n }) => {
       const manifest = await buildAppManifestForApp(principal.developerAppId);
-      // An empty manifest means the discovery catalog fetch failed, not that
-      // the app is entitled to nothing. Still fail closed — an outage must not
-      // bypass the allowlist — but say which it is so callers can retry.
-      if (manifest.capabilities.length === 0) {
-        return textResult({
-          error: "catalog_unavailable",
-          detail:
-            "Discovery catalog is empty or unreachable; app entitlements could not be resolved.",
-          requested: capabilities,
-          manifest_version: manifest.manifestVersion,
-        });
-      }
-      const filtered = filterAllowedCapabilities(
+      // Fail open: discovery limits capabilities, it does not grant them. The
+      // resolved `capabilities` list is a catalog view, not an entitlement —
+      // orchestrators advertise names the catalog does not always enumerate, so
+      // gating on it would deny capabilities the app never excluded. Only
+      // `excludedCapabilities` restricts, and a catalog outage preserves those
+      // (see `buildManifestWhenCatalogUnavailable`) while leaving the rest
+      // reachable.
+      const { permitted, excluded } = partitionByExclusions(
         capabilities,
-        manifest.capabilities,
+        manifest.excludedCapabilities,
       );
-      if (filtered.length === 0) {
+      if (permitted.length === 0) {
         return textResult({
-          error: "none_of_requested_capabilities_allowed_for_app",
+          error: "all_requested_capabilities_excluded_for_app",
           requested: capabilities,
-          allowed_sample: manifest.capabilities.slice(0, 25),
+          excluded_capabilities: excluded,
           manifest_version: manifest.manifestVersion,
         });
       }
@@ -180,15 +176,15 @@ export function createHostedLivepeerMcpServer(principal: McpPrincipal): McpServe
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          capabilities: filtered,
+          capabilities: permitted,
           serviceTypes: service_types ?? ["live-video-to-video", "live-runner"],
           topN: top_n ?? 50,
           sortBy: "avail",
         }),
       });
       return textResult({
-        filtered_capabilities: filtered,
-        dropped_capabilities: capabilities.filter((c) => !filtered.includes(c)),
+        filtered_capabilities: permitted,
+        dropped_capabilities: excluded,
         result: data,
       });
     },
