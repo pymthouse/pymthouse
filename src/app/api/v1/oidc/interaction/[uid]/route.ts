@@ -16,7 +16,12 @@ import {
   getIssuer,
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
-import { isDcrClientId } from "@/lib/oidc/dcr-client";
+import { getClient } from "@/lib/oidc/clients";
+import {
+  DCR_ALLOWED_SCOPES,
+  filterScopesToAllowlist,
+  isDcrClientId,
+} from "@/lib/oidc/dcr-client";
 import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
 import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
 import {
@@ -47,6 +52,20 @@ function resolveMcpResource(
     return getMcpResourceUrl();
   }
   return null;
+}
+
+/**
+ * Resolve the allowlist used for both consent display and grant issuance.
+ * DCR clients are capped to MCP scopes; registered clients use DB allowedScopes.
+ */
+async function resolveConsentScopeAllowlist(
+  clientId: string,
+): Promise<readonly string[]> {
+  if (isDcrClientId(clientId)) {
+    return DCR_ALLOWED_SCOPES;
+  }
+  const registered = await getClient(clientId);
+  return registered?.allowedScopes ?? [];
 }
 
 /**
@@ -208,13 +227,19 @@ export async function POST(
         grant.clientId = clientId;
         grant.accountId = userId;
 
-        const requestedScopes = details.params.scope as string;
-        if (requestedScopes) {
-          grant.addOIDCScope(requestedScopes);
+        // Grant only scopes the consent UI would show — never the raw request
+        // string, or a malicious client can hide privileged scopes from the user.
+        const scopeAllowlist = await resolveConsentScopeAllowlist(clientId);
+        const grantedScopes = filterScopesToAllowlist(
+          details.params.scope as string | undefined,
+          scopeAllowlist,
+        ).join(" ");
+        if (grantedScopes) {
+          grant.addOIDCScope(grantedScopes);
           if (mcpResource) {
-            grant.addResourceScope(mcpResource, requestedScopes);
+            grant.addResourceScope(mcpResource, grantedScopes);
           } else {
-            grant.addResourceScope(getIssuer(), requestedScopes);
+            grant.addResourceScope(getIssuer(), grantedScopes);
           }
         }
 
