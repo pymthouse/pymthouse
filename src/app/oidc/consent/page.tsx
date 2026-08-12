@@ -1,4 +1,5 @@
 import { getServerSession } from "next-auth";
+import type { Session } from "next-auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { authOptions } from "@/lib/next-auth-options";
@@ -14,9 +15,11 @@ import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
 import { isMcpResourceIndicator } from "@/lib/mcp/oauth-resource";
 import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { getDefaultBranding } from "@/lib/oidc/branding-shared";
+import type { AppBranding } from "@/lib/oidc/branding-shared";
 import { eq } from "drizzle-orm";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
+import type { ReactNode } from "react";
 import ConsentForm from "./consent-form";
 
 function readResourceParam(params: Record<string, unknown>): string | null {
@@ -56,38 +59,32 @@ function getExternalHref(value: string): string {
   return value;
 }
 
-export default async function ConsentPage({
-  searchParams,
+function ConsentErrorPanel({
+  title,
+  children,
 }: Readonly<{
-  searchParams: Promise<SearchParams>;
+  title: string;
+  children: ReactNode;
 }>) {
-  const params = await searchParams;
-  const uid = asSingleValue(params.uid);
+  return (
+    <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+      <div className="max-w-md w-full border border-red-500/20 bg-zinc-900/40 rounded-xl p-6">
+        <h1 className="text-lg font-semibold text-red-300 mb-2">{title}</h1>
+        <p className="text-sm text-zinc-400">{children}</p>
+      </div>
+    </main>
+  );
+}
 
-  if (!uid) {
-    return (
-      <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
-        <div className="max-w-md w-full border border-red-500/20 bg-zinc-900/40 rounded-xl p-6">
-          <h1 className="text-lg font-semibold text-red-300 mb-2">
-            Invalid Authorization Request
-          </h1>
-          <p className="text-sm text-zinc-400">
-            Missing interaction ID. Please start the authorization flow from the client application.
-          </p>
-        </div>
-      </main>
-    );
-  }
+type InteractionDetails = {
+  prompt: { name: string; details: Record<string, unknown> };
+  params: Record<string, unknown>;
+  session?: { accountId?: string };
+};
 
-  const session = await getServerSession(authOptions);
-
-  // Fetch interaction details from the provider
-  let interactionDetails: {
-    prompt: { name: string; details: Record<string, unknown> };
-    params: Record<string, unknown>;
-    session?: { accountId?: string };
-  };
-
+async function loadInteractionDetails(
+  uid: string,
+): Promise<InteractionDetails | null> {
   try {
     const provider = await getProvider();
     const requestHeaders = await headers();
@@ -106,60 +103,51 @@ export default async function ConsentPage({
     req.push(null);
     const res = new ServerResponse(req);
 
-    interactionDetails = await provider.interactionDetails(req, res);
+    return await provider.interactionDetails(req, res);
   } catch {
-    return (
-      <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
-        <div className="max-w-md w-full border border-red-500/20 bg-zinc-900/40 rounded-xl p-6">
-          <h1 className="text-lg font-semibold text-red-300 mb-2">
-            Expired or Invalid Request
-          </h1>
-          <p className="text-sm text-zinc-400">
-            This authorization request has expired. Please return to the application and try again.
-          </p>
-        </div>
-      </main>
-    );
+    return null;
+  }
+}
+
+type ConsentClient = {
+  id: string;
+  clientId: string;
+  displayName: string;
+  redirectUris: string[];
+  allowedScopes: string[];
+  grantTypes: string[];
+  tokenEndpointAuthMethod: string;
+  clientSecretHash: string | null;
+  createdAt: string;
+};
+
+async function resolveConsentClient(
+  clientId: string,
+  registeredClient: Awaited<ReturnType<typeof getClient>>,
+): Promise<ConsentClient | null> {
+  if (registeredClient) {
+    return registeredClient;
   }
 
-  const clientId = interactionDetails.params.client_id as string;
-  if (!session?.user) {
-    redirect(oidcLoginRedirect(clientId, `/oidc/consent?uid=${uid}`));
+  if (!isDcrClientId(clientId)) {
+    return null;
   }
-  const redirectUri = interactionDetails.params.redirect_uri as string;
-  const scope = interactionDetails.params.scope as string;
-  const resource = readResourceParam(interactionDetails.params);
-  const isMcpOAuth =
-    isDcrClientId(clientId) ||
-    (resource !== null && isMcpResourceIndicator(resource));
 
-  const registeredClient = await getClient(clientId);
   const provider = await getProvider();
-  const dynamicClient = isDcrClientId(clientId)
-    ? await provider.Client.find(clientId)
-    : null;
-
-  if (!registeredClient && !dynamicClient) {
-    return (
-      <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
-        <div className="max-w-md w-full border border-red-500/20 bg-zinc-900/40 rounded-xl p-6">
-          <h1 className="text-lg font-semibold text-red-300 mb-2">
-            Unknown Application
-          </h1>
-          <p className="text-sm text-zinc-400">
-            The requesting application is not registered.
-          </p>
-        </div>
-      </main>
-    );
+  const dynamicClient = await provider.Client.find(clientId);
+  if (!dynamicClient) {
+    return null;
   }
 
-  const client = registeredClient ?? {
+  const displayName =
+    typeof dynamicClient.clientName === "string" && dynamicClient.clientName
+      ? dynamicClient.clientName
+      : "MCP Connector";
+
+  return {
     id: clientId,
     clientId,
-    displayName:
-      (typeof dynamicClient?.clientName === "string" && dynamicClient.clientName) ||
-      "MCP Connector",
+    displayName,
     redirectUris: [],
     allowedScopes: [
       "openid",
@@ -173,11 +161,137 @@ export default async function ConsentPage({
     clientSecretHash: null,
     createdAt: "",
   };
+}
 
-  const userId = (session.user as Record<string, unknown>).id as string | undefined;
-  const ownedApps = isMcpOAuth && userId
-    ? await listOwnedAppsForUser(userId)
+type DeveloperAppMeta = {
+  name: string | null;
+  developerName: string | null;
+  websiteUrl: string | null;
+  privacyPolicyUrl: string | null;
+  supportUrl: string | null;
+  logoLightUrl: string | null;
+};
+
+async function loadDeveloperAppMeta(
+  registeredClientId: string | null,
+  oidcClientId: string,
+): Promise<{
+  developerApp: DeveloperAppMeta | undefined;
+  oidcLogoUri: string | null | undefined;
+}> {
+  if (!registeredClientId) {
+    return { developerApp: undefined, oidcLogoUri: undefined };
+  }
+
+  const [developerAppRows, oidcClientRows] = await Promise.all([
+    db
+      .select({
+        name: developerApps.name,
+        developerName: developerApps.developerName,
+        websiteUrl: developerApps.websiteUrl,
+        privacyPolicyUrl: developerApps.privacyPolicyUrl,
+        supportUrl: developerApps.supportUrl,
+        logoLightUrl: developerApps.logoLightUrl,
+      })
+      .from(developerApps)
+      .where(eq(developerApps.oidcClientId, registeredClientId))
+      .limit(1),
+    db
+      .select({ logoUri: oidcClients.logoUri })
+      .from(oidcClients)
+      .where(eq(oidcClients.clientId, oidcClientId))
+      .limit(1),
+  ]);
+
+  return {
+    developerApp: developerAppRows[0],
+    oidcLogoUri: oidcClientRows[0]?.logoUri,
+  };
+}
+
+function resolveLogoUrl(input: {
+  isWhiteLabel: boolean;
+  brandingLogoUrl: string | null | undefined;
+  oidcLogoUri: string | null | undefined;
+  developerLogoUrl: string | null | undefined;
+}): string | null {
+  const fallback = input.oidcLogoUri || input.developerLogoUrl || null;
+  if (input.isWhiteLabel) {
+    return input.brandingLogoUrl || fallback;
+  }
+  return fallback;
+}
+
+function buildScopeItems(
+  scope: string | undefined,
+  allowedScopes: string[],
+): Array<{
+  name: string;
+  label: string;
+  description: string;
+  required: boolean;
+}> {
+  const scopes = scope
+    ? scope.split(/\s+/).filter((s) => allowedScopes.includes(s))
     : [];
+  return scopes.map((s) => ({
+    name: s,
+    label: getScopeDefinition(s)?.label || s,
+    description:
+      getScopeDefinition(s)?.description ||
+      "Access information associated with this permission",
+    required: getScopeDefinition(s)?.required || false,
+  }));
+}
+
+type ConsentViewModel = {
+  uid: string;
+  client: ConsentClient;
+  branding: AppBranding;
+  isWhiteLabel: boolean;
+  isMcpOAuth: boolean;
+  ownedApps: Array<{ publicClientId: string; name: string }>;
+  developerApp: DeveloperAppMeta | undefined;
+  logoUrl: string | null;
+  scopeItems: Array<{
+    name: string;
+    label: string;
+    description: string;
+    required: boolean;
+  }>;
+  signedInAs: string;
+  userEmail: string | null | undefined;
+  redirectUri: string;
+  redirectHost: string;
+  websiteHost: string | null;
+  heading: string;
+  whiteLabelDescription: string | null;
+  applicationSubtitle: string;
+  permissionCountLabel: string;
+};
+
+async function buildConsentViewModel(
+  uid: string,
+  user: NonNullable<Session["user"]>,
+  interactionDetails: InteractionDetails,
+): Promise<ConsentViewModel | null> {
+  const clientId = interactionDetails.params.client_id as string;
+  const redirectUri = interactionDetails.params.redirect_uri as string;
+  const scope = interactionDetails.params.scope as string;
+  const resource = readResourceParam(interactionDetails.params);
+  const isMcpOAuth =
+    isDcrClientId(clientId) ||
+    (resource !== null && isMcpResourceIndicator(resource));
+
+  const registeredClient = await getClient(clientId);
+  const client = await resolveConsentClient(clientId, registeredClient);
+  if (!client) {
+    return null;
+  }
+
+  const userId = (user as Record<string, unknown>).id as string | undefined;
+  const ownedApps =
+    isMcpOAuth && userId ? await listOwnedAppsForUser(userId) : [];
 
   const branding = registeredClient
     ? await resolveAppBrandingByClientId(clientId)
@@ -190,53 +304,90 @@ export default async function ConsentPage({
     ? shouldUseWhiteLabelBranding(branding)
     : false;
 
-  const developerAppRows = registeredClient
-    ? await db
-        .select({
-          name: developerApps.name,
-          developerName: developerApps.developerName,
-          websiteUrl: developerApps.websiteUrl,
-          privacyPolicyUrl: developerApps.privacyPolicyUrl,
-          supportUrl: developerApps.supportUrl,
-          logoLightUrl: developerApps.logoLightUrl,
-        })
-        .from(developerApps)
-        .where(eq(developerApps.oidcClientId, client.id))
-        .limit(1)
-    : [];
-  const developerApp = developerAppRows[0];
+  const { developerApp, oidcLogoUri } = await loadDeveloperAppMeta(
+    registeredClient?.id ?? null,
+    clientId,
+  );
+  const logoUrl = resolveLogoUrl({
+    isWhiteLabel,
+    brandingLogoUrl: branding.logoUrl,
+    oidcLogoUri,
+    developerLogoUrl: developerApp?.logoLightUrl,
+  });
 
-  // Fetch logo_uri from OIDC client metadata (synced from app settings)
-  const oidcClientRows = registeredClient
-    ? await db
-        .select({ logoUri: oidcClients.logoUri })
-        .from(oidcClients)
-        .where(eq(oidcClients.clientId, clientId))
-        .limit(1)
-    : [];
-  const oidcClientRow = oidcClientRows[0];
-  const logoUrl = isWhiteLabel 
-    ? (branding.logoUrl || oidcClientRow?.logoUri || developerApp?.logoLightUrl || null)
-    : (oidcClientRow?.logoUri || developerApp?.logoLightUrl || null);
-
-  const scopes = scope
-    ? scope.split(/\s+/).filter((s) => client.allowedScopes.includes(s))
-    : [];
-  const scopeItems = scopes.map((s) => ({
-    name: s,
-    label: getScopeDefinition(s)?.label || s,
-    description:
-      getScopeDefinition(s)?.description ||
-      "Access information associated with this permission",
-    required: getScopeDefinition(s)?.required || false,
-  }));
-  const signedInAs = session.user.name || session.user.email || "Your account";
+  const scopeItems = buildScopeItems(scope, client.allowedScopes);
+  const signedInAs = user.name || user.email || "Your account";
   const redirectHost = getHostLabel(redirectUri || "");
   const websiteHost = developerApp?.websiteUrl
     ? getHostLabel(developerApp.websiteUrl)
     : null;
 
+  const heading = isWhiteLabel
+    ? `Sign in to ${branding.displayName}`
+    : `Review access for ${client.displayName}`;
+  const whiteLabelDescription = isWhiteLabel
+    ? `${client.displayName} is requesting access to your account.`
+    : null;
+  const applicationSubtitle = developerApp?.developerName
+    ? `Built by ${developerApp.developerName}`
+    : "Registered application";
+  const permissionCountLabel = `${scopeItems.length} permission${
+    scopeItems.length === 1 ? "" : "s"
+  }`;
+
+  return {
+    uid,
+    client,
+    branding,
+    isWhiteLabel,
+    isMcpOAuth,
+    ownedApps,
+    developerApp,
+    logoUrl,
+    scopeItems,
+    signedInAs,
+    userEmail: user.email,
+    redirectUri,
+    redirectHost,
+    websiteHost,
+    heading,
+    whiteLabelDescription,
+    applicationSubtitle,
+    permissionCountLabel,
+  };
+}
+
+function ConsentAuthorizedView({
+  model,
+}: Readonly<{
+  model: ConsentViewModel;
+}>) {
+  const {
+    uid,
+    client,
+    branding,
+    isWhiteLabel,
+    isMcpOAuth,
+    ownedApps,
+    developerApp,
+    logoUrl,
+    scopeItems,
+    signedInAs,
+    userEmail,
+    redirectUri,
+    redirectHost,
+    websiteHost,
+    heading,
+    whiteLabelDescription,
+    applicationSubtitle,
+    permissionCountLabel,
+  } = model;
   const primaryColorStyle = { backgroundColor: branding.primaryColor };
+  const hasPolicyLinks = Boolean(
+    developerApp?.websiteUrl ||
+      developerApp?.privacyPolicyUrl ||
+      developerApp?.supportUrl,
+  );
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
@@ -251,7 +402,7 @@ export default async function ConsentPage({
               className="w-14 h-14 rounded-2xl object-cover shrink-0 border border-zinc-700"
             />
           ) : (
-            <div 
+            <div
               className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
               style={primaryColorStyle}
             >
@@ -271,9 +422,9 @@ export default async function ConsentPage({
             </div>
           )}
           <div className="min-w-0">
-            <div 
+            <div
               className="inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em]"
-              style={{ 
+              style={{
                 borderColor: `${branding.primaryColor}33`,
                 backgroundColor: `${branding.primaryColor}1a`,
                 color: branding.primaryColor,
@@ -282,16 +433,15 @@ export default async function ConsentPage({
               Permission Request
             </div>
             <h1 className="text-2xl font-semibold text-zinc-100 mt-3">
-              {isWhiteLabel 
-                ? `Sign in to ${branding.displayName}`
-                : `Review access for ${client.displayName}`}
+              {heading}
             </h1>
             <p className="text-sm text-zinc-400 mt-2 max-w-xl">
-              {isWhiteLabel 
-                ? `${client.displayName} is requesting access to your account.`
-                : `Approve this only if you trust this application and expect to return to `}
-              {!isWhiteLabel && <span className="text-zinc-200">{redirectHost}</span>}
-              {!isWhiteLabel && "."}
+              {whiteLabelDescription ?? (
+                <>
+                  Approve this only if you trust this application and expect to
+                  return to <span className="text-zinc-200">{redirectHost}</span>.
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -304,11 +454,7 @@ export default async function ConsentPage({
             <p className="text-sm font-medium text-zinc-100 mt-2">
               {developerApp?.name || client.displayName}
             </p>
-            <p className="text-sm text-zinc-400 mt-1">
-              {developerApp?.developerName
-                ? `Built by ${developerApp.developerName}`
-                : "Registered application"}
-            </p>
+            <p className="text-sm text-zinc-400 mt-1">{applicationSubtitle}</p>
             {websiteHost && (
               <p className="text-xs text-zinc-500 mt-2">
                 Website: <span className="text-zinc-300">{websiteHost}</span>
@@ -321,8 +467,8 @@ export default async function ConsentPage({
               Signed In As
             </p>
             <p className="text-sm font-medium text-zinc-100 mt-2">{signedInAs}</p>
-            {session.user.email && (
-              <p className="text-sm text-zinc-400 mt-1">{session.user.email}</p>
+            {userEmail && (
+              <p className="text-sm text-zinc-400 mt-1">{userEmail}</p>
             )}
             <p className="text-xs text-zinc-500 mt-2">
               You can deny this request if this is not the account you want to use.
@@ -341,7 +487,7 @@ export default async function ConsentPage({
               </p>
             </div>
             <div className="rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs text-zinc-400">
-              {scopeItems.length} permission{scopeItems.length === 1 ? "" : "s"}
+              {permissionCountLabel}
             </div>
           </div>
           <ul className="space-y-3">
@@ -351,7 +497,7 @@ export default async function ConsentPage({
                 className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
               >
                 <div className="flex items-start gap-3">
-                  <div 
+                  <div
                     className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
                     style={{
                       backgroundColor: `${branding.primaryColor}1a`,
@@ -406,9 +552,7 @@ export default async function ConsentPage({
           )}
         </div>
 
-        {(developerApp?.websiteUrl ||
-          developerApp?.privacyPolicyUrl ||
-          developerApp?.supportUrl) && (
+        {hasPolicyLinks && (
           <div className="flex flex-wrap gap-4 text-xs text-zinc-400 mb-6">
             {developerApp?.websiteUrl && (
               <a
@@ -469,4 +613,53 @@ export default async function ConsentPage({
       </div>
     </main>
   );
+}
+
+export default async function ConsentPage({
+  searchParams,
+}: Readonly<{
+  searchParams: Promise<SearchParams>;
+}>) {
+  const params = await searchParams;
+  const uid = asSingleValue(params.uid);
+
+  if (!uid) {
+    return (
+      <ConsentErrorPanel title="Invalid Authorization Request">
+        Missing interaction ID. Please start the authorization flow from the client
+        application.
+      </ConsentErrorPanel>
+    );
+  }
+
+  const session = await getServerSession(authOptions);
+  const interactionDetails = await loadInteractionDetails(uid);
+  if (!interactionDetails) {
+    return (
+      <ConsentErrorPanel title="Expired or Invalid Request">
+        This authorization request has expired. Please return to the application and
+        try again.
+      </ConsentErrorPanel>
+    );
+  }
+
+  const clientId = interactionDetails.params.client_id as string;
+  if (!session?.user) {
+    redirect(oidcLoginRedirect(clientId, `/oidc/consent?uid=${uid}`));
+  }
+
+  const model = await buildConsentViewModel(
+    uid,
+    session.user,
+    interactionDetails,
+  );
+  if (!model) {
+    return (
+      <ConsentErrorPanel title="Unknown Application">
+        The requesting application is not registered.
+      </ConsentErrorPanel>
+    );
+  }
+
+  return <ConsentAuthorizedView model={model} />;
 }
