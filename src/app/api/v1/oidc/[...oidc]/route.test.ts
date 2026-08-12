@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, buildLoopbackRedirectBridgeHtml, isLoopbackHttpRedirect } from "./utils";
 
 test("deriveExternalOriginFromHeaders prefers forwarded host+proto", () => {
   const headers = new Headers({
@@ -32,6 +32,60 @@ test("resolveRedirectLocation passes absolute URL when origin is in allowed set"
     allowed,
   );
   assert.equal(redirect.href, "https://app.example.com/callback?code=abc");
+});
+
+test("resolveRedirectLocation allows Claude Code loopback redirects", () => {
+  const allowed = new Set(["https://pymthouse.com"]);
+  const redirect = resolveRedirectLocation(
+    "http://localhost:52262/callback?code=abc&state=xyz",
+    "https://pymthouse.com",
+    allowed,
+  );
+  assert.equal(
+    redirect.href,
+    "http://localhost:52262/callback?code=abc&state=xyz",
+  );
+});
+
+test("resolveRedirectLocation allows Claude hosted callback origins", () => {
+  const allowed = new Set(["https://pymthouse.com"]);
+  const redirect = resolveRedirectLocation(
+    "https://claude.ai/api/mcp/auth_callback?code=abc",
+    "https://pymthouse.com",
+    allowed,
+  );
+  assert.equal(
+    redirect.href,
+    "https://claude.ai/api/mcp/auth_callback?code=abc",
+  );
+});
+
+test("buildLoopbackRedirectBridgeHtml embeds the callback URL", () => {
+  const html = buildLoopbackRedirectBridgeHtml(
+    new URL("http://127.0.0.1:9999/callback?code=a&state=b"),
+  );
+  assert.match(html, /Return to Claude Code/);
+  assert.match(html, /http:\/\/127\.0\.0\.1:9999\/callback\?code=a&amp;state=b/);
+  assert.match(html, /window\.location\.replace/);
+});
+
+test("isLoopbackHttpRedirect accepts RFC 8252 callback hosts only", () => {
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://localhost:1/callback")),
+    true,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://127.0.0.1:1/callback")),
+    true,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://evil.example/callback")),
+    false,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("https://localhost/callback")),
+    false,
+  );
 });
 
 test("resolveRedirectLocation passes server-origin absolute URL when allowed", () => {
