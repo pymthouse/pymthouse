@@ -368,6 +368,7 @@ export async function getProvider(): Promise<Provider> {
       "openid",
       "email",
       "profile",
+      "offline_access",
       "sign:job",
       "users:read",
       "users:write",
