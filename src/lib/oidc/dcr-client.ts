@@ -4,6 +4,7 @@
 
 import { errors } from "oidc-provider";
 import type { KoaContextWithOIDC } from "oidc-provider";
+import { isAllowedMcpDcrRedirectUri } from "./mcp-dynamic-redirects";
 
 /** Prefix for DCR-issued client_ids so interaction / consent can detect them. */
 export const DCR_CLIENT_ID_PREFIX = "dcr_";
@@ -16,31 +17,7 @@ export function createDcrClientId(): string {
   return `${DCR_CLIENT_ID_PREFIX}${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-const CLAUDE_REDIRECT_URIS = new Set([
-  "https://claude.ai/api/mcp/auth_callback",
-  "https://claude.com/api/mcp/auth_callback",
-]);
-
-/**
- * Allow Claude hosted callbacks and RFC 8252 loopback redirects (Claude Code).
- * Other https redirect URIs are accepted for non-Claude MCP clients.
- */
-export function isAllowedMcpDcrRedirectUri(uri: string): boolean {
-  if (CLAUDE_REDIRECT_URIS.has(uri)) return true;
-  try {
-    const u = new URL(uri);
-    if (u.protocol === "http:") {
-      const host = u.hostname.toLowerCase();
-      if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
-        return u.pathname === "/callback" || u.pathname.endsWith("/callback");
-      }
-      return false;
-    }
-    return u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+export { isAllowedMcpDcrRedirectUri };
 
 /**
  * Applied via `extraClientMetadata.validator` on every DCR request (`ctx` set).

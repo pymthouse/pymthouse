@@ -1,10 +1,9 @@
 import { PROVIDER_ENDPOINT_PATHS } from "@/lib/oidc/routes";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
-
-const CLAUDE_HOSTED_REDIRECT_ORIGINS = new Set([
-  "https://claude.ai",
-  "https://claude.com",
-]);
+import {
+  isLoopbackMcpRedirectUrl,
+  isPermittedMcpDynamicRedirect,
+} from "@/lib/oidc/mcp-dynamic-redirects";
 
 export function deriveExternalOriginFromHeaders(headers: Headers): string {
   const publicFallback = getPublicOrigin();
@@ -50,17 +49,7 @@ export async function getTrustedOidcOrigins(): Promise<Set<string>> {
 
 /** RFC 8252 loopback — Claude Code / native MCP clients. */
 export function isLoopbackHttpRedirect(url: URL): boolean {
-  if (url.protocol !== "http:") return false;
-  const host = url.hostname.toLowerCase();
-  if (host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]") {
-    return false;
-  }
-  return url.pathname === "/callback" || url.pathname.endsWith("/callback");
-}
-
-function isPermittedDynamicRedirect(url: URL): boolean {
-  if (isLoopbackHttpRedirect(url)) return true;
-  return CLAUDE_HOSTED_REDIRECT_ORIGINS.has(url.origin);
+  return isLoopbackMcpRedirectUrl(url);
 }
 
 export function resolveRedirectLocation(
@@ -73,7 +62,7 @@ export function resolveRedirectLocation(
     if (
       allowedOrigins &&
       !allowedOrigins.has(redirectUrl.origin) &&
-      !isPermittedDynamicRedirect(redirectUrl)
+      !isPermittedMcpDynamicRedirect(redirectUrl)
     ) {
       throw new Error(
         `[OIDC] Redirect to unregistered origin blocked: ${redirectUrl.origin}`,
