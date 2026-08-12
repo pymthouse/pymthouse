@@ -33,10 +33,13 @@ function attachSdkToken(
 ): HostedSignerSession {
   const signerUrl = session.signer_url?.trim();
   let sdkToken: string | undefined;
-  if (signerUrl && principal.subjectToken) {
+  if (signerUrl && session.access_token) {
     try {
       sdkToken = createLivepeerPythonSdkToken({
-        apiKey: principal.subjectToken,
+        // The signer verifies the OIDC audience, so the SDK token has to carry
+        // the freshly minted sign:job access_token — not the caller's MCP
+        // bearer, whose audience is the MCP endpoint.
+        apiKey: session.access_token,
         signer: signerUrl,
         // `||` short-circuits: the discovery-service fallback is only built
         // (and only able to throw) when no signer discovery URL exists.
