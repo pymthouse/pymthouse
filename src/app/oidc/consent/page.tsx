@@ -6,7 +6,7 @@ import { authOptions } from "@/lib/next-auth-options";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { getClient } from "@/lib/oidc/clients";
-import { isDcrClientId } from "@/lib/oidc/dcr-client";
+import { DCR_ALLOWED_SCOPES, isDcrClientId } from "@/lib/oidc/dcr-client";
 import { listOwnedAppsForUser } from "@/lib/oidc/owned-apps";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
@@ -153,13 +153,7 @@ async function resolveConsentClient(
     clientId,
     displayName,
     redirectUris: [],
-    allowedScopes: [
-      "openid",
-      "profile",
-      "email",
-      "offline_access",
-      "sign:job",
-    ],
+    allowedScopes: [...DCR_ALLOWED_SCOPES],
     grantTypes: ["authorization_code", "refresh_token"],
     tokenEndpointAuthMethod: "none",
     clientSecretHash: null,

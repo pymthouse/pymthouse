@@ -4,10 +4,17 @@
 
 import { errors } from "oidc-provider";
 import type { KoaContextWithOIDC } from "oidc-provider";
+import { MCP_RESOURCE_SCOPES } from "@/lib/mcp/oauth-resource";
 import { isAllowedMcpDcrRedirectUri } from "./mcp-dynamic-redirects";
 
 /** Prefix for DCR-issued client_ids so interaction / consent can detect them. */
 export const DCR_CLIENT_ID_PREFIX = "dcr_";
+
+/**
+ * Scopes a DCR (MCP) client may register, request, display on consent, and be
+ * granted. Must stay aligned with consent UI filtering.
+ */
+export const DCR_ALLOWED_SCOPES: readonly string[] = [...MCP_RESOURCE_SCOPES];
 
 export function isDcrClientId(clientId: string): boolean {
   return clientId.startsWith(DCR_CLIENT_ID_PREFIX);
@@ -18,6 +25,40 @@ export function createDcrClientId(): string {
 }
 
 export { isAllowedMcpDcrRedirectUri };
+
+/** Split an OAuth scope string into unique tokens. */
+export function parseScopeParam(scope: string | undefined | null): string[] {
+  if (!scope || typeof scope !== "string") return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of scope.split(/[\s,]+/)) {
+    const scopeToken = token.trim();
+    if (!scopeToken || seen.has(scopeToken)) continue;
+    seen.add(scopeToken);
+    out.push(scopeToken);
+  }
+  return out;
+}
+
+/**
+ * Intersect requested scopes with an allowlist (preserves request order).
+ * Used so consent grants only what the UI shows / the client may hold.
+ */
+export function filterScopesToAllowlist(
+  requested: string | string[] | undefined | null,
+  allowlist: readonly string[],
+): string[] {
+  const requestedList = Array.isArray(requested)
+    ? requested.map((s) => s.trim()).filter(Boolean)
+    : parseScopeParam(requested);
+  const allowed = new Set(allowlist);
+  return requestedList.filter((scope) => allowed.has(scope));
+}
+
+/** Fixed scope string written onto every MCP DCR client registration. */
+export function mcpDcrRegisteredScope(): string {
+  return DCR_ALLOWED_SCOPES.join(" ");
+}
 
 /**
  * Applied via `extraClientMetadata.validator` on every DCR request (`ctx` set).
@@ -57,11 +98,7 @@ export function applyMcpDcrRegistrationPolicy(
     properties.client_name = "MCP Connector";
   }
 
-  const existingScope =
-    typeof properties.scope === "string" ? properties.scope.trim() : "";
-  const required = ["openid", "offline_access", "profile", "email"];
-  const scopes = new Set(
-    [...existingScope.split(/\s+/), ...required].filter(Boolean),
-  );
-  properties.scope = [...scopes].join(" ");
+  // Never trust client-supplied scopes: a malicious DCR registrant could
+  // otherwise advertise admin/users:write and receive them at consent time.
+  properties.scope = mcpDcrRegisteredScope();
 }

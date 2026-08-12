@@ -16,7 +16,12 @@ import {
   OIDC_MOUNT_PATH,
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
-import { isDcrClientId } from "@/lib/oidc/dcr-client";
+import { getClient } from "@/lib/oidc/clients";
+import {
+  DCR_ALLOWED_SCOPES,
+  filterScopesToAllowlist,
+  isDcrClientId,
+} from "@/lib/oidc/dcr-client";
 import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
 import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
 import {
@@ -47,6 +52,20 @@ function resolveMcpResource(
     return getMcpResourceUrl();
   }
   return null;
+}
+
+/**
+ * Resolve the allowlist used for both consent display and grant issuance.
+ * DCR clients are capped to MCP scopes; registered clients use DB allowedScopes.
+ */
+async function resolveConsentScopeAllowlist(
+  clientId: string,
+): Promise<readonly string[]> {
+  if (isDcrClientId(clientId)) {
+    return DCR_ALLOWED_SCOPES;
+  }
+  const registered = await getClient(clientId);
+  return registered?.allowedScopes ?? [];
 }
 
 /**
@@ -204,16 +223,22 @@ export async function POST(
           }
         }
 
-        const requestedScopes = details.params.scope as string | undefined;
+        // Grant only scopes the consent UI would show — never the raw request
+        // string, or a malicious client can hide privileged scopes from the user.
+        const scopeAllowlist = await resolveConsentScopeAllowlist(clientId);
+        const grantedScopes = filterScopesToAllowlist(
+          details.params.scope as string | undefined,
+          scopeAllowlist,
+        ).join(" ");
         let grantId: string | undefined;
 
         if (mcpResource) {
           const grant = new provider.Grant();
           grant.clientId = clientId;
           grant.accountId = userId;
-          if (requestedScopes) {
-            grant.addOIDCScope(requestedScopes);
-            grant.addResourceScope(mcpResource, requestedScopes);
+          if (grantedScopes) {
+            grant.addOIDCScope(grantedScopes);
+            grant.addResourceScope(mcpResource, grantedScopes);
           }
           await grant.save();
           grantId = grant.jti;
@@ -229,7 +254,7 @@ export async function POST(
             provider,
             clientId,
             accountId: userId,
-            scope: requestedScopes,
+            scope: grantedScopes || undefined,
           });
         }
 
