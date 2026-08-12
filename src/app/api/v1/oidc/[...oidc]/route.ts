@@ -17,7 +17,7 @@ import {
 import { getRegisteredRedirectOrigins } from "@/lib/oidc/clients";
 import { isVerifiedCustomDomain } from "@/lib/oidc/custom-domains";
 import { getSecureHeaders } from "@/lib/oidc/security";
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins, isLoopbackHttpRedirect, buildLoopbackRedirectBridgeHtml } from "./utils";
 import { isTokenExchangeGrant, handleTokenExchange, TokenExchangeError } from "@/lib/oidc/token-exchange";
 import {
   handleGatewayTokenExchange,
@@ -449,8 +449,56 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
             ...registeredRedirectOriginsList,
             ...trustedOidcOriginsSet,
           ]);
+          let redirectUrl: URL;
+          try {
+            redirectUrl = resolveRedirectLocation(
+              location,
+              externalOrigin,
+              allowedOrigins,
+            );
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Redirect blocked";
+            resolve(
+              NextResponse.json(
+                { error: "invalid_redirect_uri", error_description: message },
+                { status: 400 },
+              ),
+            );
+            return originalEnd(chunk, ...args);
+          }
+
+          // Loopback (Claude Code): avoid CDN-mangled Location: http://localhost…
+          if (isLoopbackHttpRedirect(redirectUrl)) {
+            const htmlResponse = new NextResponse(
+              buildLoopbackRedirectBridgeHtml(redirectUrl),
+              {
+                status: 200,
+                headers: {
+                  "content-type": "text/html; charset=utf-8",
+                  "cache-control": "no-store",
+                },
+              },
+            );
+            const setCookies = rawHeaders["set-cookie"];
+            if (setCookies) {
+              const cookies = Array.isArray(setCookies)
+                ? setCookies
+                : [setCookies];
+              for (const cookie of cookies) {
+                htmlResponse.headers.append("Set-Cookie", String(cookie));
+              }
+            }
+            const redirectSecureHeaders = getSecureHeaders(false);
+            for (const [key, value] of Object.entries(redirectSecureHeaders)) {
+              htmlResponse.headers.set(key, value);
+            }
+            resolve(htmlResponse);
+            return originalEnd(chunk, ...args);
+          }
+
           const redirectResponse = NextResponse.redirect(
-            resolveRedirectLocation(location, externalOrigin, allowedOrigins),
+            redirectUrl,
             statusCode as 301 | 302 | 303 | 307 | 308,
           );
           const setCookies = rawHeaders["set-cookie"];

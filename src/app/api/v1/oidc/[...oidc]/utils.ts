@@ -1,6 +1,11 @@
 import { PROVIDER_ENDPOINT_PATHS } from "@/lib/oidc/routes";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
+const CLAUDE_HOSTED_REDIRECT_ORIGINS = new Set([
+  "https://claude.ai",
+  "https://claude.com",
+]);
+
 export function deriveExternalOriginFromHeaders(headers: Headers): string {
   const publicFallback = getPublicOrigin();
   const xfHostRaw = headers.get("x-forwarded-host");
@@ -43,6 +48,21 @@ export async function getTrustedOidcOrigins(): Promise<Set<string>> {
   return origins;
 }
 
+/** RFC 8252 loopback — Claude Code / native MCP clients. */
+export function isLoopbackHttpRedirect(url: URL): boolean {
+  if (url.protocol !== "http:") return false;
+  const host = url.hostname.toLowerCase();
+  if (host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]") {
+    return false;
+  }
+  return url.pathname === "/callback" || url.pathname.endsWith("/callback");
+}
+
+function isPermittedDynamicRedirect(url: URL): boolean {
+  if (isLoopbackHttpRedirect(url)) return true;
+  return CLAUDE_HOSTED_REDIRECT_ORIGINS.has(url.origin);
+}
+
 export function resolveRedirectLocation(
   location: string,
   origin: string,
@@ -50,8 +70,14 @@ export function resolveRedirectLocation(
 ): URL {
   if (/^https?:\/\//i.test(location)) {
     const redirectUrl = new URL(location);
-    if (allowedOrigins && !allowedOrigins.has(redirectUrl.origin)) {
-      throw new Error(`[OIDC] Redirect to unregistered origin blocked: ${redirectUrl.origin}`);
+    if (
+      allowedOrigins &&
+      !allowedOrigins.has(redirectUrl.origin) &&
+      !isPermittedDynamicRedirect(redirectUrl)
+    ) {
+      throw new Error(
+        `[OIDC] Redirect to unregistered origin blocked: ${redirectUrl.origin}`,
+      );
     }
     return redirectUrl;
   }
@@ -65,4 +91,58 @@ export function resolveRedirectLocation(
   }
 
   return new URL(location, origin);
+}
+
+/**
+ * HTML bridge for loopback redirects. Hosted CDNs often mangle `Location:
+ * http://localhost…` headers (leaving `http:/`); a same-origin page with an
+ * explicit link + copyable URL survives that and matches Claude Code's
+ * "paste the redirect URL" fallback.
+ */
+export function buildLoopbackRedirectBridgeHtml(redirectUrl: URL): string {
+  const href = redirectUrl.href;
+  const safeHref = href
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  const safeText = href
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Return to Claude Code</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #09090b; color: #fafafa;
+      display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; }
+    main { max-width: 36rem; padding: 1.5rem; border: 1px solid #27272a; border-radius: 0.75rem;
+      background: #18181b; }
+    a.button { display: inline-block; margin-top: 1rem; padding: 0.65rem 1rem; border-radius: 0.5rem;
+      background: #10b981; color: #052e1b; font-weight: 600; text-decoration: none; }
+    pre { margin-top: 1rem; padding: 0.75rem; background: #09090b; border-radius: 0.5rem;
+      font-size: 0.75rem; overflow-wrap: anywhere; white-space: pre-wrap; color: #a1a1aa; }
+    p { color: #a1a1aa; line-height: 1.5; }
+    h1 { font-size: 1.125rem; margin: 0 0 0.5rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Authorization complete</h1>
+    <p>Return to Claude Code to finish connecting Livepeer MCP. If the app does not open automatically, use the button or paste the URL into the CLI prompt.</p>
+    <p><a class="button" id="continue" href="${safeHref}">Return to Claude Code</a></p>
+    <pre id="url">${safeText}</pre>
+  </main>
+  <script>
+    (function () {
+      var target = ${JSON.stringify(href)};
+      try { window.location.replace(target); } catch (e) { /* keep manual link */ }
+    })();
+  </script>
+</body>
+</html>`;
 }
