@@ -1,12 +1,17 @@
 /**
  * Bootstrap script: creates the first admin user, ensures the platform default
- * app for Explorers, and prints a bearer token.
+ * app for Explorers, ensures the customer-service OIDC RP, and prints a bearer
+ * token.
  *
  * Usage:
- *   npx tsx scripts/bootstrap-admin.ts [email]
+ *   npx tsx scripts/bootstrap-admin.ts [email] [--rotate-secret]
  *
  * Reads DATABASE_URL from `.env` / `.env.local` or the environment.
  * Requires a migrated database (npm run db:prepare).
+ *
+ * Customer-service RP env: CS_OIDC_CLIENT_ID, CS_OIDC_REDIRECT_URI,
+ * CUSTOMER_SERVICE_URL / NEXT_PUBLIC_CUSTOMER_SERVICE_URL.
+ * Pass --rotate-secret to mint a new CS client secret (printed once).
  */
 
 import "./load-env-first";
@@ -22,6 +27,20 @@ import {
   ensurePlatformDefaultApp,
   findAdminOwnerId,
 } from "../src/lib/platform-default-app";
+import { ensureCustomerServiceOidcClient } from "../src/lib/oidc/customer-service-client";
+import { getIssuer, getPublicOrigin } from "../src/lib/oidc/issuer-urls";
+
+function parseBootstrapArgs(argv: string[]): {
+  email: string;
+  rotateSecret: boolean;
+} {
+  const flags = new Set(argv.filter((arg) => arg.startsWith("--")));
+  const positional = argv.filter((arg) => !arg.startsWith("--"));
+  return {
+    email: positional[0] || "admin@pymthouse.local",
+    rotateSecret: flags.has("--rotate-secret"),
+  };
+}
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -29,6 +48,7 @@ async function main() {
     console.error("DATABASE_URL is required.");
     process.exit(1);
   }
+  const { email, rotateSecret } = parseBootstrapArgs(process.argv.slice(2));
 
   const client = postgres(databaseUrl, { max: 1 });
   const db = drizzle(client, { schema });
@@ -50,7 +70,6 @@ async function main() {
       })
       .onConflictDoNothing({ target: signerConfig.id });
 
-    const email = process.argv[2] || "admin@pymthouse.local";
     const existingAdminId = await findAdminOwnerId(email);
 
     if (existingAdminId) {
@@ -82,6 +101,35 @@ async function main() {
       );
     } catch (err) {
       console.warn("\n  Warning: could not ensure platform default app:", err);
+    }
+
+    try {
+      const cs = await ensureCustomerServiceOidcClient({ rotateSecret });
+      const status = cs.created
+        ? "created"
+        : cs.secretRotated
+          ? "existing, secret rotated"
+          : "existing";
+      console.log(`\n  Customer-service OIDC client: ${cs.clientId} (${status})`);
+      console.log(`  Redirects: ${cs.redirectUris.join(", ")}`);
+      if (cs.clientSecret) {
+        const apiBase = getPublicOrigin();
+        console.log(`\n  ========================================`);
+        console.log(`  customer-service .env.local (copy once)`);
+        console.log(`  ========================================`);
+        console.log(`\n  PYMTHOUSE_ISSUER=${getIssuer()}`);
+        console.log(`  PYMTHOUSE_API_BASE_URL=${apiBase}`);
+        console.log(`  CS_OIDC_CLIENT_ID=${cs.clientId}`);
+        console.log(`  CS_OIDC_CLIENT_SECRET=${cs.clientSecret}`);
+        console.log(`  CS_OIDC_REDIRECT_URI=${cs.redirectUris[0]}`);
+        console.log("");
+      } else {
+        console.log(
+          "  Secret unchanged (pass --rotate-secret to mint a new one).",
+        );
+      }
+    } catch (err) {
+      console.warn("\n  Warning: could not ensure customer-service OIDC client:", err);
     }
 
     const raw = randomBytes(32).toString("hex");
