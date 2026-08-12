@@ -237,10 +237,10 @@ function assert(condition: unknown, message: string): asserts condition {
   log(`✓ ${message}`);
 }
 
-function summary(lines: string[]): void {
+function summary(): void {
   const path = process.env.GITHUB_STEP_SUMMARY;
   if (!path) return;
-  writeFileSync(path, `${lines.join("\n")}\n`, { flag: "a" });
+  writeFileSync(path, "## Merchant payment flow — passed\n", { flag: "a" });
 }
 
 async function poll<T>(input: {
@@ -952,15 +952,7 @@ async function settle(state: RunState): Promise<void> {
   assert(types.has("invoice"), "ledger lists the invoice");
   log(`ledger entry types: ${[...types].join(", ")}`);
 
-  summary([
-    "## Merchant payment flow — passed",
-    "",
-    `- End-user: \`${state.externalUserId}\``,
-    `- Ingest mode: \`${state.ingestMode ?? "unknown"}\``,
-    `- Invoice(s): \`${settledInvoiceIds.join(", ")}\``,
-    `- Stripe charge: \`${charge.id}\` (${charge.amount}¢, fee ${charge.applicationFee}¢, model ${charge.model})`,
-    `- Connected account: \`${connectedAccountId}\``,
-  ]);
+  summary();
 }
 
 // ---------------------------------------------------------------------------
