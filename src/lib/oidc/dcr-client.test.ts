@@ -13,7 +13,7 @@ test("DCR client ids use dcr_ prefix", () => {
   assert.equal(isDcrClientId("app_abc"), false);
 });
 
-test("Claude redirect URIs are allowed", () => {
+test("only Claude hosted and RFC 8252 loopback redirect URIs are allowed", () => {
   assert.equal(
     isAllowedMcpDcrRedirectUri("https://claude.ai/api/mcp/auth_callback"),
     true,
@@ -36,6 +36,6 @@ test("Claude redirect URIs are allowed", () => {
   );
   assert.equal(
     isAllowedMcpDcrRedirectUri("https://example.com/oauth/callback"),
-    true,
+    false,
   );
 });
