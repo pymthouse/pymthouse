@@ -32,7 +32,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 // ---------------------------------------------------------------------------
 
 const STATE_FILE = requireEnv("E2E_STATE_FILE");
-const BASE_URL = requireEnv("E2E_BASE_URL").replace(/\/+$/, "");
+const BASE_URL = trimTrailingSlashes(requireEnv("E2E_BASE_URL"));
 const CLIENT_ID = requireEnv("E2E_CLIENT_ID");
 const M2M_CLIENT_ID = requireEnv("E2E_M2M_CLIENT_ID");
 const M2M_CLIENT_SECRET = requireEnv("E2E_M2M_CLIENT_SECRET");
@@ -65,6 +65,7 @@ const SETTLE_TIMEOUT_MS = Number(process.env.E2E_SETTLE_TIMEOUT_MS || "420000");
 const POLL_INTERVAL_MS = Number(process.env.E2E_POLL_INTERVAL_MS || "5000");
 
 const MIN_INVOICE_USD_MICROS = 500_000n; // Stripe floor, mirrors overage-limits.ts
+const KCAT_BIN = "/usr/bin/kcat";
 
 // ---------------------------------------------------------------------------
 // State
@@ -228,6 +229,14 @@ function connectedAccountIdFromEnv(): string {
     fail("E2E_STRIPE_CONNECTED_ACCOUNT_ID is configured");
   }
   return accountId;
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -595,11 +604,10 @@ async function ingestViaKafka(state: RunState): Promise<void> {
     },
   });
 
-  execFileSync(
-    "kcat",
-    ["-b", KAFKA_BROKERS, "-t", KAFKA_TOPIC, "-P", "-k", `${CLIENT_ID}:${state.externalUserId}`],
-    { input: `${message}\n`, stdio: ["pipe", "inherit", "inherit"] },
-  );
+  execFileSync(KCAT_BIN, ["-b", KAFKA_BROKERS, "-t", KAFKA_TOPIC, "-P", "-k", `${CLIENT_ID}:${state.externalUserId}`], {
+    input: `${message}\n`,
+    stdio: ["pipe", "inherit", "inherit"],
+  });
 
   log(`produced create_signed_ticket ${requestId} (${feeWei} wei @ $${ethUsd}/ETH ≈ $${AMOUNT_USD})`);
   log("collector consumer group `openmeter-collector` should forward to Konnect within seconds");

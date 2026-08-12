@@ -130,41 +130,41 @@ jobs:
       # Refuses a production base URL, a live Stripe key, a missing Connect
       # webhook secret, or a connected account that is not charges_enabled.
       - name: Preflight — safety guards and Connect readiness
-        run: npx tsx scripts/e2e/merchant-payments.ts preflight
+        run: node --import tsx scripts/e2e/merchant-payments.ts preflight
 
       # ---- 1. M2M user: default payment method + pay-per-use subscription --
       # Attaches a sandbox card straight to the connected-account customer, so
       # the REAL payment_method.attached Connect webhook drives the billing
       # profile restore — the hosted Checkout page cannot run headless.
       - name: Provision — end-user, subscription, default payment method
-        run: npx tsx scripts/e2e/merchant-payments.ts provision
+        run: node --import tsx scripts/e2e/merchant-payments.ts provision
 
       # ---- Webhook plane B: signature + handler ---------------------------
       # Replays the account's current flags (a no-op write) and then a forged
       # signature, so both the accept and reject paths are covered.
       - name: Webhook — signed account.updated on /webhooks/stripe
-        run: npx tsx scripts/e2e/merchant-payments.ts webhook-connect
+        run: node --import tsx scripts/e2e/merchant-payments.ts webhook-connect
 
       # ---- 2. Expensive charge event -> Kafka -> collector -> Konnect -----
       - name: Ingest — expensive create_signed_ticket event
-        run: npx tsx scripts/e2e/merchant-payments.ts ingest
+        run: node --import tsx scripts/e2e/merchant-payments.ts ingest
 
       # ---- 3. Usage APIs + balance gate ----------------------------------
       - name: Verify — Usage API surfaces and balance gate
-        run: npx tsx scripts/e2e/merchant-payments.ts verify-usage
+        run: node --import tsx scripts/e2e/merchant-payments.ts verify-usage
 
       # ---- 4. Manual collection: must be `invoiced`, never `skipped` ------
       - name: Collect — force a mid-cycle invoice
-        run: npx tsx scripts/e2e/merchant-payments.ts collect
+        run: node --import tsx scripts/e2e/merchant-payments.ts collect
 
       # ---- 5. Charge, invoices API, transactions ledger -------------------
       - name: Settle — Connect charge, invoices API, transactions ledger
-        run: npx tsx scripts/e2e/merchant-payments.ts settle
+        run: node --import tsx scripts/e2e/merchant-payments.ts settle
 
       - name: Teardown — suspend the fixture end-user
         if: always()
         continue-on-error: true
-        run: npx tsx scripts/e2e/merchant-payments.ts teardown
+        run: node --import tsx scripts/e2e/merchant-payments.ts teardown
 
       # State carries the end-user id, invoice ids and the Stripe charge id —
       # the three things you need to trace a failure through Konnect,
