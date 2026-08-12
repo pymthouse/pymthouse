@@ -41,6 +41,16 @@ const KEY_ALGORITHM = "RS256";
  */
 const REDIRECT_DEPENDENT_GRANTS = new Set(["authorization_code", "implicit"]);
 
+function normalizeTokenAudiences(aud: string | string[] | undefined): string[] {
+  if (Array.isArray(aud)) {
+    return aud;
+  }
+  if (typeof aud === "string") {
+    return [aud];
+  }
+  return [];
+}
+
 /**
  * Load JWKS from the `oidc_signing_keys` table.
  *
@@ -422,11 +432,7 @@ export async function getProvider(): Promise<Provider> {
         typeof tokenRecord.grantId === "string" ? tokenRecord.grantId : undefined;
       if (!grantId) return undefined;
 
-      const audiences = Array.isArray(tokenRecord.aud)
-        ? tokenRecord.aud
-        : typeof tokenRecord.aud === "string"
-          ? [tokenRecord.aud]
-          : [];
+      const audiences = normalizeTokenAudiences(tokenRecord.aud);
       const resourceServerAud =
         typeof tokenRecord.resourceServer?.audience === "string"
           ? tokenRecord.resourceServer.audience

@@ -36,6 +36,19 @@ function readResourceParam(params: Record<string, unknown>): string | null {
   return null;
 }
 
+function resolveMcpResource(
+  resource: string | null,
+  clientId: string,
+): string | null {
+  if (resource && isMcpResourceIndicator(resource)) {
+    return getMcpResourceUrl();
+  }
+  if (isDcrClientId(clientId)) {
+    return getMcpResourceUrl();
+  }
+  return null;
+}
+
 /**
  * Build a minimal Node.js IncomingMessage/ServerResponse pair for calling
  * node-oidc-provider's `interactionDetails` and `interactionResult` APIs.
@@ -165,12 +178,7 @@ export async function POST(
         const resource = readResourceParam(
           details.params as Record<string, unknown>,
         );
-        const mcpResource =
-          resource && isMcpResourceIndicator(resource)
-            ? getMcpResourceUrl()
-            : isDcrClientId(clientId)
-              ? getMcpResourceUrl()
-              : null;
+        const mcpResource = resolveMcpResource(resource, clientId);
 
         let mcpAppBinding: Awaited<ReturnType<typeof resolveOwnedAppChoice>> =
           null;
