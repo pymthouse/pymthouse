@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { withSessionAdminGuard } from "@/lib/api-guards";
+import { withAdminGuard } from "@/lib/api-guards";
 import {
   createOwnerSubscriptionTier,
   listOwnerSubscriptionTiers,
@@ -19,7 +19,7 @@ import { forceSyncOwnerPaidTier } from "@/lib/openmeter/owner-paid-plan";
  * GET /api/v1/admin/billing/owner-tiers
  * List all Owner Paid subscription tiers (including inactive).
  */
-export const GET = withSessionAdminGuard(async () => {
+export const GET = withAdminGuard(async () => {
   const tiers = await listOwnerSubscriptionTiers();
   return NextResponse.json({
     tiers: tiers.map(toOwnerSubscriptionTierPublic),
@@ -30,7 +30,7 @@ export const GET = withSessionAdminGuard(async () => {
  * POST /api/v1/admin/billing/owner-tiers
  * Create a tier and force-sync it to OpenMeter.
  */
-export const POST = withSessionAdminGuard(async (request) => {
+export const POST = withAdminGuard(async (request) => {
   let body: Record<string, unknown>;
   try {
     body = await request.json();

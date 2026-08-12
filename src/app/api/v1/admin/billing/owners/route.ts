@@ -3,7 +3,7 @@ import { and, count, eq, ilike, or, sql } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { ownerBillingConfig, users } from "@/db/schema";
-import { withSessionAdminGuard } from "@/lib/api-guards";
+import { withAdminGuard } from "@/lib/api-guards";
 import { mergeOwnerBilling } from "@/lib/billing/owner-billing-config";
 import { platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaults";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
@@ -27,7 +27,7 @@ function parsePositiveInt(
  * GET /api/v1/admin/billing/owners?q=&page=&pageSize=
  * Search developer accounts with resolved cost-rail billing summary.
  */
-export const GET = withSessionAdminGuard(async (request) => {
+export const GET = withAdminGuard(async (request) => {
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   const page = parsePositiveInt(request.nextUrl.searchParams.get("page"), 1);
   const pageSize = parsePositiveInt(

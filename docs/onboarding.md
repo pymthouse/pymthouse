@@ -26,7 +26,7 @@ Default billing is **without Stripe Connect** (`billing_mode=owner_rollup`). The
 3. **Add payment method** — Stripe Checkout setup (`POST /api/v1/me/billing/payment-method`). Attaching a card does **not** subscribe you.
 4. **Upgrade** — explicit consent on `/billing` (or `POST /api/v1/me/billing/upgrade-paid` with `{ planKey, confirm: true }`). Pick an admin-defined Owner Paid tier: **flat monthly fee** (charged via Konnect invoice) + included usage (`discounts.usage`) + overage invoices `charge_automatically`. Starts a new billing cycle immediately.
 
-Admin configures tiers at `/admin/billing` (`owner_subscription_tiers`). Keys are `pymthouse_owner_paid` or `pymthouse_owner_paid_<slug>`.
+Admin configures tiers in the **customer-service** console (pymthouse APIs under `/api/v1/admin/billing/*`). Keys are `pymthouse_owner_paid` or `pymthouse_owner_paid_<slug>`.
 
 **Builders vs M2M end-users:** A Builder’s own owner wallet follows the same Starter → Upgrade path. End-users of a Builder app under `owner_rollup` ride the **owner’s** cost rail (usage rolls up to the owner Konnect customer). They do **not** each get an Owner Paid plan. Session/M2M allowance grant routes are not the shared-owner credit pool (see follow-ups in PR #352 / design.md §1).
 
