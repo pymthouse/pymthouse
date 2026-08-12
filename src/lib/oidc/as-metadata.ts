@@ -1,6 +1,10 @@
 /**
  * RFC 8414 Authorization Server Metadata for the PymtHouse OIDC AS.
  * Shared by `/.well-known/oauth-authorization-server/…` and discovery helpers.
+ *
+ * Issuer-native discovery (`{issuer}/.well-known/openid-configuration`) MUST
+ * use these builders too — never `getProvider()` — so Claude / MCP clients do
+ * not pay a Vercel cold start just to read scopes_supported.
  */
 
 import { docsOidcUrl } from "@/lib/docs-base-url";
@@ -49,5 +53,25 @@ export function buildAuthorizationServerMetadata(): Record<string, unknown> {
     subject_types_supported: ["public"],
     id_token_signing_alg_values_supported: ["RS256"],
     service_documentation: docsOidcUrl(),
+  };
+}
+
+/** OpenID Provider Metadata (OIDC Discovery 1.0) built without node-oidc-provider. */
+export function buildOpenIdProviderDiscovery(): Record<string, unknown> {
+  const as = buildAuthorizationServerMetadata();
+  return {
+    ...as,
+    claims_supported: [
+      "iss",
+      "sub",
+      "aud",
+      "exp",
+      "iat",
+      "auth_time",
+      "nonce",
+      "email",
+      "name",
+      "pymthouse_app",
+    ],
   };
 }

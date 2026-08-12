@@ -7,6 +7,10 @@ import { authOptions } from "@/lib/next-auth-options";
 import { getProvider } from "@/lib/oidc/provider";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { checkAppAccess } from "@/lib/oidc/app-access";
+import {
+  isTrustedOidcWarmRequest,
+  warmOidcProvider,
+} from "@/lib/oidc/warm";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -45,6 +49,24 @@ export default async function OidcInteractionPage({
   searchParams: Promise<SearchParams>;
 }>) {
   const params = await searchParams;
+
+  if (asSingleValue(params.warm) === "1") {
+    const requestHeaders = await headers();
+    if (!isTrustedOidcWarmRequest(requestHeaders)) {
+      return (
+        <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+          <p className="text-sm text-zinc-400">Unauthorized</p>
+        </main>
+      );
+    }
+    await warmOidcProvider();
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
+        <p className="text-sm text-zinc-400">OIDC interaction warmed</p>
+      </main>
+    );
+  }
+
   const uid = asSingleValue(params.uid);
 
   if (!uid) {

@@ -309,8 +309,10 @@ export async function getProvider(): Promise<Provider> {
   if (_provider) return _provider;
 
   const issuer = getIssuer();
-  const jwks = await loadJWKS();
-  const clients = await loadClients();
+  // JWKS, clients, and CORS are independent DB/crypto work — run together so
+  // Vercel cold starts pay one round-trip wall time instead of three.
+  const corsSeed = getCorsSnapshot();
+  const [jwks, clients] = await Promise.all([loadJWKS(), loadClients()]);
 
   const configuration: Configuration = {
     adapter: PostgresOidcAdapter,
@@ -610,8 +612,8 @@ export async function getProvider(): Promise<Provider> {
   // Trust the proxy (Next.js + reverse proxy)
   _provider.proxy = true;
 
-  // Seed the CORS cache
-  await getCorsSnapshot();
+  // Finish CORS seed started in parallel with JWKS/clients above.
+  await corsSeed;
 
   // Run periodic cleanup of expired adapter rows (deduplicated)
   if (_cleanupInterval) clearInterval(_cleanupInterval);
