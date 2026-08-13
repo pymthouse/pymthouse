@@ -166,6 +166,56 @@ describe("resolveBillingState status", () => {
   });
 });
 
+describe("resolveBillingState funding.net", () => {
+  it("equals spendable when there is no unbilled debt", () => {
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 5_000_000n, unbilledDebtUsdMicros: 0n }),
+    );
+    assert.equal(state.funding.net?.usd, "5.00");
+  });
+
+  it("goes negative once debt outruns spendable — a charge went unpaid", () => {
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 0n, unbilledDebtUsdMicros: 12_340_000n }),
+    );
+    assert.equal(state.funding.net?.usd, "-12.34");
+    assert.equal(state.funding.net?.usdMicros, "-12340000");
+  });
+
+  it("does not double-subtract debt the spendable balance already covers", () => {
+    // Same fixture as "clears unbilledDebt while spendable remains": the
+    // gathering total includes spendable-covered usage, so net must read
+    // spendable exactly, not spendable minus the raw (uncleared) debt.
+    const state = resolveBillingState(
+      input({
+        prepaidUsdMicros: 5_010_000n,
+        unbilledDebtUsdMicros: 19_990_000n,
+      }),
+    );
+    assert.equal(state.funding.net?.usd, "5.01");
+  });
+
+  it("is null exactly when debt is unavailable, matching overage.unbilledDebt", () => {
+    const state = resolveBillingState(
+      input({ unbilledDebtUsdMicros: null, debtSource: "unavailable" }),
+    );
+    assert.equal(state.funding.net, null);
+    assert.equal(state.funding.overage.unbilledDebt, null);
+  });
+
+  it("goes further negative than a zero-floored ceiling remaining would show", () => {
+    // At the ceiling, overage.remaining floors at $0.00 — net still reports
+    // the real, uncapped shortfall so a blocked user sees they owe money,
+    // not merely that their buffer is exhausted.
+    const state = resolveBillingState(
+      input({ unbilledDebtUsdMicros: 10_000_000n }),
+    );
+    assert.equal(state.status, "blocked");
+    assert.equal(state.funding.overage.remaining?.usd, "0.00");
+    assert.equal(state.funding.net?.usd, "-10.00");
+  });
+});
+
 describe("resolveBillingState shape", () => {
   it("carries currency on every money field", () => {
     const state = resolveBillingState(input({ currency: "EUR" }));

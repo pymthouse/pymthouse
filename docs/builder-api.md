@@ -809,6 +809,7 @@ Every amount is a `Money` object — `{ usdMicros, usd, currency }` — because 
       "sourcePlan": { "id": "plan_starter", "name": "Starter", "type": "free" }
     },
     "spendable": { "usdMicros": "0", "usd": "0.00", "currency": "USD" },
+    "net": { "usdMicros": "-6000000", "usd": "-6.00", "currency": "USD" },
     "overage": {
       "eligible": true,
       "ceiling": { "usdMicros": "10000000", "usd": "10.00", "currency": "USD" },
@@ -841,6 +842,8 @@ Every amount is a `Money` object — `{ usdMicros, usd, currency }` — because 
 `explain` is customer-facing copy the API owns, so the dashboard, the admin app and your own UI say the same thing without each inventing wording. It never uses internal ledger terms — the ceiling reads as a spending buffer, not "soft negative".
 
 **Funding waterfall:** spendable capacity is **included usage → prepaid credits → spending buffer / invoice**. `funding.includedUsage` is the live plan's rate-card `discounts.usage` for the current period (`total` / `remaining` / `consumed` / `resetsAt` / `sourcePlan`). `funding.included` is an alias of `includedUsage.remaining` for one release. Prepaid credits are never labeled as included usage.
+
+**`funding.net`** is the one signed field in this response — every other `Money` floors at `$0.00` because it represents a quantity that cannot sensibly go negative (remaining credit, an invoice total). `net` is `spendable − unbilledDebt`: while spendable credit remains it just equals `spendable`, but once debt outruns it (a raised invoice failed to collect, or debt is approaching/at the ceiling) it goes negative and stays negative until the debt clears — the honest "do I owe money right now" number, instead of `spendable` reading `$0.00` as if nothing were owed. `null` exactly when `overage.debtSource` is `"unavailable"`.
 
 #### Status
 

@@ -2,12 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatSignedUsdMicrosForDisplay,
   formatUsdMicrosForDisplay,
   isPayPerUsePlanType,
   parseChargeThresholdUsdInput,
   PAY_PER_USE_NOMINAL_BILLING_CYCLE,
   resolvedPayPerUseBehavior,
 } from "@/lib/billing/pay-per-use-threshold";
+
+test("formatSignedUsdMicrosForDisplay preserves a negative balance", () => {
+  assert.equal(formatSignedUsdMicrosForDisplay("-12340000"), "-12.34");
+  assert.equal(formatSignedUsdMicrosForDisplay("-500000"), "-0.50");
+  assert.equal(formatSignedUsdMicrosForDisplay("10000000"), "10.00");
+  assert.equal(formatSignedUsdMicrosForDisplay("0"), "0.00");
+  assert.equal(formatSignedUsdMicrosForDisplay("garbage"), "0.00");
+});
 
 test("isPayPerUsePlanType matches only the usage plan type", () => {
   assert.equal(isPayPerUsePlanType("usage"), true);

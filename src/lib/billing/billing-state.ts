@@ -18,7 +18,10 @@ import {
   effectiveSoftNegativeUsdMicros,
   parseSoftNegativeUsdMicrosInput,
 } from "@/lib/billing/overage-limits";
-import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
+import {
+  formatSignedUsdMicrosForDisplay,
+  formatUsdMicrosForDisplay,
+} from "@/lib/billing/pay-per-use-threshold";
 
 /**
  * Money is always an object. The sibling `xUsdMicros` / `xUsd` pairs that used
@@ -95,6 +98,15 @@ export type BillingState = {
     included: Money;
     includedUsage: IncludedUsageFunding;
     spendable: Money;
+    /**
+     * Spendable credit minus unbilled debt. Unlike `spendable` (floored at
+     * $0 — "how much room is left") this is signed: once a raised invoice
+     * fails to collect and debt outruns available credit, `net` goes
+     * negative rather than silently reading $0.00 as if nothing were owed.
+     * Null exactly when debt is unknown (`overage.debtSource ===
+     * "unavailable"`), matching `overage.unbilledDebt`.
+     */
+    net: SignedMoney | null;
     overage: {
       eligible: boolean;
       ceiling: Money;
@@ -134,6 +146,25 @@ export function money(usdMicros: bigint, currency: string): Money {
   return {
     usdMicros: clamped.toString(),
     usd: formatUsdMicrosForDisplay(clamped.toString()),
+    currency,
+  };
+}
+
+/**
+ * A net position, unlike {@link Money}: it can genuinely go negative (unbilled
+ * debt outran available credit — a charge went unpaid), and callers should
+ * read the sign rather than only the magnitude.
+ */
+export type SignedMoney = {
+  usdMicros: string;
+  usd: string;
+  currency: string;
+};
+
+function signedMoney(usdMicros: bigint, currency: string): SignedMoney {
+  return {
+    usdMicros: usdMicros.toString(),
+    usd: formatSignedUsdMicrosForDisplay(usdMicros.toString()),
     currency,
   };
 }
@@ -430,6 +461,11 @@ export function resolveBillingState(input: BillingStateInput): BillingState {
     input.includedResetsAt?.trim() ||
     calendarMonthEndIso(asOf);
 
+  // debt is already the same dedup'd value resolvePosture and the ceiling
+  // math above use — spendable-covered gathering totals read as 0 here too,
+  // so net does not double-subtract usage spendable already paid for.
+  const net = debt == null ? null : signedMoney(spendableUsdMicros - debt, currency);
+
   return {
     asOf: asOf.toISOString(),
     subject: input.subject,
@@ -447,6 +483,7 @@ export function resolveBillingState(input: BillingStateInput): BillingState {
         sourcePlan: input.includedSourcePlan ?? null,
       },
       spendable,
+      net,
       overage: {
         eligible: input.overageEligible,
         ceiling,

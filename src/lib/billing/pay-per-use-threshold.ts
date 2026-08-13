@@ -95,6 +95,28 @@ export function formatUsdMicrosForDisplay(usdMicros: string): string {
 }
 
 /**
+ * Signed counterpart of {@link formatUsdMicrosForDisplay}: a genuine net
+ * position (credit minus unbilled debt) needs to be able to read `"-12.34"`
+ * once debt overtakes it, not floor at `"0.00"` and hide that a charge went
+ * unpaid. Every other amount in this codebase (remaining credit, an invoice
+ * total, a top-up) is a quantity that cannot sensibly go negative, which is
+ * why the unsigned formatter above floors — this one is for the one field
+ * that must not.
+ */
+export function formatSignedUsdMicrosForDisplay(usdMicros: string): string {
+  let micros: bigint;
+  try {
+    micros = BigInt(usdMicros);
+  } catch {
+    return "0.00";
+  }
+  const negative = micros < 0n;
+  const magnitude = negative ? -micros : micros;
+  const formatted = formatUsdMicrosForDisplay(magnitude.toString());
+  return negative ? `-${formatted}` : formatted;
+}
+
+/**
  * Plain-language reading of a Pay-Per-Use plan's settlement behaviour
  * (#348 resolved-behavior pattern). Rendering this avoids the reader inferring
  * cycle-based invoicing from a plan that has no user-facing cycle.
