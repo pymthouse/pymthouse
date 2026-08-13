@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,9 +38,14 @@ test("writeCustomerServiceOidcEnvFile writes mode 0600", () => {
   const filePath = join(dir, CUSTOMER_SERVICE_OIDC_ENV_FILENAME);
   try {
     writeCustomerServiceOidcEnvFile(filePath, sample);
-    const mode = statSync(filePath).mode & 0o777;
-    assert.equal(mode, 0o600);
-    assert.equal(readFileSync(filePath, "utf8"), formatCustomerServiceOidcEnv(sample));
+    const fd = openSync(filePath, "r");
+    try {
+      const mode = fstatSync(fd).mode & 0o777;
+      assert.equal(mode, 0o600);
+      assert.equal(readFileSync(fd, "utf8"), formatCustomerServiceOidcEnv(sample));
+    } finally {
+      closeSync(fd);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
