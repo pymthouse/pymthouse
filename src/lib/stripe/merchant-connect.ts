@@ -10,6 +10,8 @@ import {
   appBillingOauthStates,
   appUserStripeCustomers,
 } from "@/db/schema";
+import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
+import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
 import {
   getAppBillingConfig,
   upsertAppBillingConfig,
@@ -83,7 +85,7 @@ export type MerchantBillingHistoryItem = {
   periodStart?: string;
   periodEnd?: string;
   externalInvoicingId?: string;
-  invoiceType: "stripe_connect" | "auto_topup" | "payment";
+  invoiceType: "stripe_connect" | "auto_topup" | "payment" | "pending_usage";
   /** Card brand / LINK when this invoice was paid off-session. */
   paymentMethodBrand?: string | null;
 };
@@ -720,12 +722,75 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
   const merged = [...invoices, ...topUps].sort(
     (a, b) => billingHistorySortKey(b) - billingHistorySortKey(a),
   );
+  const items = merged.slice(offset, offset + input.pageSize);
+
+  // Usage that has accrued but has not yet become a Stripe invoice object
+  // (still gathering on OpenMeter, or mid-raise through settlement) would
+  // otherwise be invisible here — this list only ever reflects Stripe's own
+  // invoices/payment intents. Surface it as a synthetic row instead, so a
+  // charge that has landed but not yet invoiced does not look like it never
+  // happened. Skipped once a real Stripe invoice already carries the same
+  // not-yet-final debt, so the amount is never shown twice; page 1 only,
+  // since it reflects current state rather than a specific list entry.
+  if (input.page === 1) {
+    const pending = await pendingUsageBillingHistoryItem(input, invoices);
+    if (pending) {
+      items.unshift(pending);
+    }
+  }
+
   return {
-    items: merged.slice(offset, offset + input.pageSize),
+    items,
     page: input.page,
     pageSize: input.pageSize,
     totalCount: merged.length,
   };
+}
+
+/** Stripe invoice statuses that still represent live, uncollected debt. */
+const OPEN_STRIPE_INVOICE_STATUSES = new Set(["draft", "open"]);
+
+/**
+ * Whether a real Stripe invoice already carries the debt a synthetic
+ * "pending usage" row would otherwise show — draft and open both still
+ * represent live, uncollected debt, so either makes the synthetic row
+ * redundant (and, once collected, `paid`/`void`/`uncollectible` should not
+ * suppress it: any debt accrued *since* that invoice closed is genuinely new
+ * and unrepresented).
+ */
+export function hasOpenOrDraftInvoice(
+  invoices: Pick<MerchantBillingHistoryItem, "status">[],
+): boolean {
+  return invoices.some((invoice) => OPEN_STRIPE_INVOICE_STATUSES.has(invoice.status));
+}
+
+/** Pure mapping from an unbilled-debt read to the synthetic history row. */
+export function buildPendingUsageBillingHistoryItem(
+  usdMicros: bigint,
+  now: Date = new Date(),
+): MerchantBillingHistoryItem | null {
+  if (usdMicros <= 0n) {
+    return null;
+  }
+  return {
+    id: "pending_usage",
+    status: "pending",
+    currency: "USD",
+    totalAmount: formatUsdMicrosForDisplay(usdMicros.toString()),
+    issuedAt: now.toISOString(),
+    invoiceType: "pending_usage",
+  };
+}
+
+async function pendingUsageBillingHistoryItem(
+  input: { clientId: string; externalUserId: string },
+  invoices: MerchantBillingHistoryItem[],
+): Promise<MerchantBillingHistoryItem | null> {
+  if (hasOpenOrDraftInvoice(invoices)) {
+    return null;
+  }
+  const debt = await getUnbilledDebtDetails(input);
+  return buildPendingUsageBillingHistoryItem(debt.usdMicros);
 }
 
 /** Resolve hosted invoice / receipt links only after proving ownership. */
