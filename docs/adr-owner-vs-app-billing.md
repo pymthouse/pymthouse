@@ -198,9 +198,32 @@ irreversible:
    transitional forms from `buildOwnerMeterSubjects()`.
 5. **Lock the platform fields** — admin-only `403` on `end_user_cap` and
    `application_fee_bps` (independent of the rest; ship first).
+6. **End-user customer keys** — migrate compound `app_…:externalUserId`
+   customers onto stable `eu_{end_users.id}` via
+   `scripts/openmeter-migrate-end-user-customers.ts` (create, transfer balances,
+   cancel legacy subs, release subjects, record `billing_customers`). Exit gate:
+   `classifyUsageAttributionConsistency` must report no unattributed subjects.
 
 Step 5 is severable and should not wait for the model change — it closes a live
 revenue and exposure hole.
+
+### Payer vs actor
+
+Billing identity splits into two independent identifiers:
+
+| Role | OpenMeter meaning | Key shape |
+|---|---|---|
+| **Payer** | Customer that is charged (credits, Starter, invoices) | `{users.id}` or `eu_{end_users.id}` — never encodes an app id |
+| **Actor** | Who consumed compute (`groupBy.external_user_id`) | Integrator `external_user_id` (+ stable `actor_end_user_id`) |
+
+Under `owner_rollup`, the payer is the owner wallet and the actor is the end-user;
+money reads follow the payer, usage/analytics follow the actor. Under `merchant`,
+payer and actor converge on `eu_…` / the external id. Wire encoding is
+`usage_subject = payer#actor` (legacy forms without `#` remain valid for one
+signer JWT TTL). Switching `billing_mode` is mint-forward: bounded by the
+~300s identity/provision/customer caches plus live JWT TTL; already-ingested
+usage stays on the customer it was billed to. `PATCH …/billing/stripe` returns
+`billingModeEffectiveAt` so callers see that cutover.
 
 ## Implementation status
 

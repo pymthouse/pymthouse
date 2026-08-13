@@ -1,12 +1,15 @@
 import { eq } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
+import { v4 as uuidv4 } from "uuid";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
+import { billingCustomers, developerApps, oidcClients } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import {
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
+  isEndUserCustomerKey,
+  parseEndUserCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedOpenMeterUrl } from "./constants";
@@ -404,23 +407,111 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
+
+  // Eagerly ensure the end-user customer (eu_…) so a later merchant switch
+  // never needs a subject-key edit under an active subscription.
+  if (isEndUserCustomerKey(identity.actorEndUserId)) {
+    const endUserCustomer = await ensureOpenMeterCustomer(
+      input.client,
+      identity.actorEndUserId,
+      input.displayName,
+    );
+    await recordBillingCustomer({
+      customerKey: endUserCustomer.key,
+      kind: "end_user",
+      endUserId: parseEndUserCustomerKey(endUserCustomer.key) ?? undefined,
+      clientId: identity.developerAppId,
+      openmeterCustomerId: endUserCustomer.id,
+    });
+  }
+
   const ownerUserId = ownerCostRailUserId(identity);
   if (ownerUserId) {
     const ownedClientIds = await listOwnedPublicClientIds(ownerUserId);
     const publicClientIds = [
       ...new Set([identity.publicClientId, ...ownedClientIds]),
     ];
-    return ensureOwnerCustomer(
+    const owner = await ensureOwnerCustomer(
       input.client,
       ownerUserId,
       publicClientIds,
     );
+    await recordBillingCustomer({
+      customerKey: owner.key,
+      kind: "platform_user",
+      platformUserId: ownerUserId,
+      clientId: identity.developerAppId,
+      openmeterCustomerId: owner.id,
+    });
+    return owner;
   }
-  return ensureOpenMeterCustomer(
+
+  const customer = await ensureOpenMeterCustomer(
     input.client,
     identity.customerKey,
     input.displayName,
   );
+  await recordBillingCustomer({
+    customerKey: customer.key,
+    kind: isEndUserCustomerKey(customer.key) ? "end_user" : "platform_user",
+    endUserId: parseEndUserCustomerKey(customer.key) ?? undefined,
+    clientId: identity.developerAppId,
+    openmeterCustomerId: customer.id,
+  });
+  return customer;
+}
+
+/**
+ * Persist / refresh the local OpenMeter customer registry row.
+ * Best-effort — never fails the billing hot path when Neon is briefly unavailable.
+ */
+export async function recordBillingCustomer(input: {
+  customerKey: string;
+  kind: "platform_user" | "end_user";
+  platformUserId?: string;
+  endUserId?: string;
+  clientId: string;
+  openmeterCustomerId?: string | null;
+}): Promise<void> {
+  const customerKey = input.customerKey.trim();
+  const clientId = input.clientId.trim();
+  const openmeterCustomerId = input.openmeterCustomerId?.trim();
+  if (!customerKey || !clientId || !openmeterCustomerId) {
+    return;
+  }
+  const now = new Date().toISOString();
+  try {
+    await db
+      .insert(billingCustomers)
+      .values({
+        id: uuidv4(),
+        customerKey,
+        kind: input.kind,
+        platformUserId: input.platformUserId?.trim() || null,
+        endUserId: input.endUserId?.trim() || null,
+        clientId,
+        openmeterCustomerId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: billingCustomers.customerKey,
+        set: {
+          kind: input.kind,
+          platformUserId: input.platformUserId?.trim() || null,
+          endUserId: input.endUserId?.trim() || null,
+          clientId,
+          openmeterCustomerId,
+          updatedAt: now,
+        },
+      });
+  } catch (err) {
+    console.warn(
+      "customers: billing_customers upsert failed",
+      sanitizeForLog(customerKey),
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
 /**
@@ -460,7 +551,33 @@ export async function assignCustomerBillingProfileOverride(input: {
   });
 }
 
-export async function listTenantCustomers(
+async function listTenantCustomersFromRegistry(
+  clientId: string,
+): Promise<Array<{ id: string; key: string }>> {
+  const trimmed = clientId.trim();
+  if (!trimmed) {
+    return [];
+  }
+  // Resolve developer_apps.id from a public client id or pass-through app id.
+  const byPublic = await db
+    .select({ developerAppId: developerApps.id })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, trimmed))
+    .limit(1);
+  const developerAppId = byPublic[0]?.developerAppId?.trim() || trimmed;
+
+  const rows = await db
+    .select({
+      id: billingCustomers.openmeterCustomerId,
+      key: billingCustomers.customerKey,
+    })
+    .from(billingCustomers)
+    .where(eq(billingCustomers.clientId, developerAppId));
+  return rows.filter((row) => row.id && row.key);
+}
+
+async function listTenantCustomersFromOpenMeterPrefix(
   client: OpenMeter,
   clientId: string,
 ): Promise<Array<{ id: string; key: string }>> {
@@ -488,6 +605,30 @@ export async function listTenantCustomers(
   }
 
   return rows;
+}
+
+/**
+ * List OpenMeter customers attributed to an app.
+ * Prefers the Neon `billing_customers` registry (works for `eu_…` keys);
+ * falls back to the legacy OpenMeter key-prefix scan for unmigrated rows.
+ */
+export async function listTenantCustomers(
+  client: OpenMeter,
+  clientId: string,
+): Promise<Array<{ id: string; key: string }>> {
+  const fromRegistry = await listTenantCustomersFromRegistry(clientId).catch(
+    () => [] as Array<{ id: string; key: string }>,
+  );
+  const fromPrefix = await listTenantCustomersFromOpenMeterPrefix(
+    client,
+    clientId,
+  ).catch(() => [] as Array<{ id: string; key: string }>);
+
+  const byKey = new Map<string, { id: string; key: string }>();
+  for (const row of [...fromRegistry, ...fromPrefix]) {
+    byKey.set(row.key, row);
+  }
+  return [...byKey.values()];
 }
 
 export async function listTenantCustomerIds(

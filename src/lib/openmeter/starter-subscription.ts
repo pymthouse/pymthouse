@@ -467,7 +467,10 @@ export async function ensureStarterSubscriptionForAppUser(input: {
   }
 
   const client = getHostedAdminClient();
-  const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
+  const customer = await ensureOpenMeterCustomer(
+    client,
+    identity.payerCustomerKey,
+  );
   // Merchant apps: pin Custom Invoicing (+ settlement metadata) at Starter
   // create so credits-first usage still invoices through settlement once a
   // card is on file. Do not use Sandbox — it fake-pays and skips Connect.
@@ -477,7 +480,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     client,
     clientId: identity.developerAppId,
     customerId: customer.id,
-    customerKey: identity.customerKey,
+    customerKey: identity.payerCustomerKey,
   });
 
   const planKey = buildOpenMeterPlanKey(identity.developerAppId, starter.id);

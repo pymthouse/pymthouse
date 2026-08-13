@@ -17,7 +17,7 @@ import {
 import { seedSignerSpendableBalance, seedSignerOverageEligibility } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import {
-  costOwnerUserIdClaim,
+  billingSubjectClaim,
   resolveOpenMeterBillingIdentity,
   signerBalanceGateSubject,
   type ResolvedBillingIdentity,
@@ -509,7 +509,7 @@ export async function mintSignerJwtForExternalUser(input: {
     client_id: input.publicClientId,
     external_user_id: jwtExternalUserId,
     user_type: identity.isOwner ? "app_owner" : "external_user",
-    ...costOwnerUserIdClaim(identity),
+    ...billingSubjectClaim(identity),
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)

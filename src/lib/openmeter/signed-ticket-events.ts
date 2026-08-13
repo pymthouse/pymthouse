@@ -396,6 +396,11 @@ export function normalizeSignedTicketEvent(
 
 async function listSignedTicketRequestsForSubjects(input: {
   subjects: ReadonlySet<string>;
+  /**
+   * When set, post-filter events to these actor external_user_id values
+   * (used for owner_rollup end-user self-serve history).
+   */
+  actorExternalUserIds?: ReadonlySet<string> | null;
   clientId?: string | null;
   clientIds?: string[] | null;
   manifestId?: string | null;
@@ -432,9 +437,26 @@ async function listSignedTicketRequestsForSubjects(input: {
     to,
   });
 
-  const matching = rawEvents.filter((ev) =>
-    eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter),
-  );
+  const actorFilter = input.actorExternalUserIds;
+  const matching = rawEvents.filter((ev) => {
+    if (!eventMatchesViewerSubjects(ev, input.subjects, clientIdFilter)) {
+      return false;
+    }
+    if (actorFilter == null) {
+      return true;
+    }
+    if (actorFilter.size === 0) {
+      return false;
+    }
+    const actor = eventUsageSubject(ev);
+    if (!actor) {
+      return false;
+    }
+    return (
+      actorFilter.has(actor) ||
+      actorFilter.has(normalizePlatformUserId(actor))
+    );
+  });
 
   return pageSignedTicketEvents(matching, limit, offset, input.manifestId);
 }
@@ -565,8 +587,40 @@ export async function listEndUserSignedTicketRequests(
       openMeterConfigured: isOpenMeterEnabled(),
     };
   }
+
+  // Query CE subjects by payer (owner / eu_… / legacy compound) but filter
+  // matches on the actor external_user_id so rollup users only see their rows.
+  const subjects = new Set<string>([externalUserId]);
+  try {
+    const { resolveOpenMeterBillingIdentity } = await import(
+      "@/lib/openmeter/billing-identity"
+    );
+    const { buildOwnerMeterSubjects } = await import(
+      "@/lib/openmeter/customer-key"
+    );
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId,
+      externalUserId,
+    });
+    subjects.add(identity.payerCustomerKey);
+    if (identity.legacyCompoundCustomerKey) {
+      subjects.add(identity.legacyCompoundCustomerKey);
+    }
+    if (identity.payerPlatformUserId) {
+      for (const key of buildOwnerMeterSubjects(identity.payerPlatformUserId, [
+        identity.publicClientId,
+      ])) {
+        subjects.add(key);
+      }
+    }
+  } catch {
+    /* fall through with actor-only subject set */
+  }
+
   return listSignedTicketRequestsForSubjects({
-    subjects: new Set([externalUserId]),
+    subjects,
+    // Actor filter — eventMatchesViewerSubjects matches data.external_user_id.
+    actorExternalUserIds: new Set([externalUserId]),
     clientId,
     manifestId: input.manifestId,
     cursor: input.cursor,

@@ -21,9 +21,9 @@ type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type EndUserVerifier = RemoteSignerWebhookConfig["endUserAuth"];
 
 /**
- * Map owner / owner_rollup JWTs onto webhook usage_subject owner:{id} so
- * go-livepeer auth_id carries a transport marker. The collector strips
- * `owner:` before writing the CloudEvent subject. JWT claims stay bare.
+ * Map JWT billing claims onto webhook usage_subject (payer#actor) so
+ * go-livepeer auth_id carries both identities. The collector splits on `#`
+ * and strips `owner:` before writing the CloudEvent subject.
  */
 function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifier {
   return {
@@ -37,10 +37,20 @@ function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifie
         typeof raw?.cost_owner_user_id === "string"
           ? raw.cost_owner_user_id
           : undefined;
+      const billingSubjectKey =
+        typeof raw?.billing_subject_key === "string"
+          ? raw.billing_subject_key
+          : undefined;
+      const actorExternalUserId =
+        typeof raw?.external_user_id === "string"
+          ? raw.external_user_id
+          : result.identity.usage_subject;
       const rewritten = ownerWireUsageSubjectFromJwt({
         userType,
         usageSubject: result.identity.usage_subject,
         costOwnerUserId,
+        billingSubjectKey,
+        actorExternalUserId,
       });
       if (
         rewritten.usageSubject === result.identity.usage_subject &&

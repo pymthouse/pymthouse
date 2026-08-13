@@ -502,10 +502,18 @@ export async function PATCH(
       parsed.fields,
     );
     const status = await getStripeConnectStatus(access.auth.app.id);
+    // Mode switches are mint-forward: identity/provision caches (default 300s)
+    // plus live signer JWT TTL bound when new sessions pick up the new rail.
+    // Already-ingested CloudEvents stay on the customer they were billed to.
+    const billingModeEffectiveAt =
+      parsed.fields.billingMode !== undefined
+        ? new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        : undefined;
     return NextResponse.json({
       clientId: access.auth.app.id,
       ...status,
       ...updated,
+      ...(billingModeEffectiveAt ? { billingModeEffectiveAt } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

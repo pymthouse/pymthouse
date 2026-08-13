@@ -15,7 +15,7 @@ import { validateClientSecret } from "./clients";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { assertSignJobNotMixedWithAdmin, SignJobScopeExclusivityError } from "@/lib/oidc/scopes";
 import {
-  costOwnerUserIdClaim,
+  billingSubjectClaim,
   resolveOpenMeterBillingIdentity,
 } from "@/lib/openmeter/billing-identity";
 
@@ -126,7 +126,7 @@ export async function issueProgrammaticTokens(input: {
     client_id: binding.oauthClientId,
     external_user_id: externalUserId,
     user_type: billingIdentity.isOwner ? "app_owner" : "app_user",
-    ...costOwnerUserIdClaim(billingIdentity),
+    ...billingSubjectClaim(billingIdentity),
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)

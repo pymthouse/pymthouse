@@ -12,7 +12,6 @@ import {
   ownerCostRailUserId,
   resolveOpenMeterBillingIdentity,
 } from "@/lib/openmeter/billing-identity";
-import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { NETWORK_FEE_USD_MICROS_METER, getHostedOpenMeterUrl, isKonnectMeteringUrl } from "@/lib/openmeter/constants";
 import { buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
 import {
@@ -23,8 +22,6 @@ import {
 } from "@/lib/openmeter/customers";
 import { decimalDollarsToUsdMicros } from "@/lib/openmeter/konnect-credits";
 import { konnectMeteringV1Fetch } from "@/lib/openmeter/konnect-admin-client";
-import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
-import { getProviderApp } from "@/lib/provider-apps";
 import { getRemainingPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import {
   ceilExactUsdMicrosSum,
@@ -273,10 +270,6 @@ async function resolveBillingCustomerAndSubjects(input: {
     externalUserId: input.externalUserId,
   });
   const client = getHostedAdminClient();
-  const app = await getProviderApp(input.clientId);
-  const appId = app?.id?.trim() || identity.developerAppId;
-  const billingConfig = await getAppBillingConfig(appId);
-  const merchant = billingConfig?.billingMode === "merchant";
 
   const ownerUserId = ownerCostRailUserId(identity);
   if (ownerUserId) {
@@ -294,23 +287,21 @@ async function resolveBillingCustomerAndSubjects(input: {
       ]),
     };
   }
-  if (merchant) {
-    const publicClientId = await resolveOpenMeterMeterClientId(appId);
-    const key = `${publicClientId}:${input.externalUserId}`;
-    const customer = await findOpenMeterCustomerByKey(client, key);
-    return {
-      customerId: customer?.id?.trim() || null,
-      meterSubjects: [key],
-    };
-  }
-  await ensureOpenMeterCustomer(client, identity.customerKey);
+
+  await ensureOpenMeterCustomer(client, identity.payerCustomerKey);
   const customer = await findOpenMeterCustomerByKey(
     client,
-    identity.customerKey,
+    identity.payerCustomerKey,
   );
+  const meterSubjects = [
+    identity.payerCustomerKey,
+    ...(identity.legacyCompoundCustomerKey
+      ? [identity.legacyCompoundCustomerKey]
+      : []),
+  ];
   return {
     customerId: customer?.id?.trim() || null,
-    meterSubjects: [identity.customerKey],
+    meterSubjects: [...new Set(meterSubjects)],
   };
 }
 

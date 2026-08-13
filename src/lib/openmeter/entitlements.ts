@@ -10,7 +10,6 @@ import {
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
 } from "./constants";
-import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomer } from "./customers";
 import {
   getHostedTrialOpenMeterClient,
@@ -177,27 +176,26 @@ export async function ingestSignedTicketEvent(input: {
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
   const usageSubject = input.event.externalUserId.trim();
-  const { resolveOpenMeterBillingIdentity } = await import(
-    "@/lib/openmeter/billing-identity"
-  );
+  const { buildPayerActorWireSubject, resolveOpenMeterBillingIdentity } =
+    await import("@/lib/openmeter/billing-identity");
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.event.clientId,
     externalUserId: usageSubject,
   });
-  // Wire auth_id stays compound app_…:{actor} for analytics.
-  // CloudEvent subject is the Konnect customer key: owners, Explorers,
-  // and owner_rollup end-users share `{users.id}`. Merchant EUs stay
-  // compound. Konnect billing beta clears multi-subject attribution
-  // when a subscription is created, so compound subjects cannot settle
-  // on the owner wallet.
-  const platformUserId = identity.isOwner
-    ? (identity.ownerUserId as string)
-    : usageSubject;
-  const wireAuthId = buildOpenMeterCustomerKey(
-    identity.publicClientId,
-    platformUserId,
-  );
-  const meterSubject = identity.customerKey;
+  // CloudEvent subject = payer (Konnect customer key).
+  // data.external_user_id = actor (integrator external id) for meter groupBy.
+  // Wire auth_id embeds payer#actor so the Kafka collector can split them.
+  const meterSubject = identity.payerCustomerKey;
+  const wireUsageSubject = buildPayerActorWireSubject({
+    payerCustomerKey: identity.payerCustomerKey,
+    payerKind: identity.payerKind,
+    actorExternalUserId: identity.actorExternalUserId,
+  });
+  const wireAuthId = `${identity.publicClientId}:${wireUsageSubject}`;
+  const billingSubjectKind =
+    identity.payerKind === "platform_user"
+      ? "owner_wallet"
+      : "app_user_wallet";
 
   // Numbers (not strings) so OpenMeter SUM $.fee_wei / $.billable_secs accumulate.
   // Wei must be a non-negative integer within Number.MAX_SAFE_INTEGER (Konnect SUM).
@@ -215,10 +213,21 @@ export async function ingestSignedTicketEvent(input: {
     source: SIGNED_TICKET_EVENT_SOURCE,
     subject: meterSubject,
     data: {
+      schema_version: "2",
       client_id: identity.publicClientId,
-      usage_subject: platformUserId,
-      usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
-      external_user_id: platformUserId,
+      usage_subject: meterSubject,
+      usage_subject_type:
+        identity.payerKind === "platform_user"
+          ? "app_owner"
+          : "external_user_id",
+      external_user_id: identity.actorExternalUserId,
+      billing_subject_key: identity.payerCustomerKey,
+      billing_subject_kind: billingSubjectKind,
+      actor_end_user_id:
+        identity.payerKind === "end_user" ||
+        identity.actorEndUserId.startsWith("eu_")
+          ? identity.actorEndUserId
+          : "",
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: feeWei,
       pixels: input.event.pixels,
@@ -231,7 +240,7 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
       auth_id: wireAuthId,
-      openmeter_customer_key: identity.customerKey,
+      openmeter_customer_key: identity.payerCustomerKey,
     },
   });
 }

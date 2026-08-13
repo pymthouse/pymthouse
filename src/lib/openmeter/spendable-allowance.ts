@@ -207,7 +207,12 @@ async function remainingDiscountAfterUsage(input: {
         identity.publicClientId,
         ...(await listOwnedPublicClientIds(ownerUserId)),
       ])
-    : [identity.customerKey];
+    : [
+        identity.payerCustomerKey,
+        ...(identity.legacyCompoundCustomerKey
+          ? [identity.legacyCompoundCustomerKey]
+          : []),
+      ];
 
   const used = await querySubjectsUsedUsdMicros(
     usageSubjects,

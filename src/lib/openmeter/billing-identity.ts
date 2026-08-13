@@ -3,41 +3,70 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appBillingConfig, developerApps, oidcClients } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
+import { findOrCreateAppEndUser } from "@/lib/billing";
 import {
+  buildEndUserCustomerKey,
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
+  isEndUserCustomerKey,
   isOwnerWireSubject,
   normalizePlatformUserId,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
-/** JWT claim: owner_rollup end-user tokens name the app owner's wallet. */
+/** JWT claim: owner_rollup end-user tokens name the app owner's wallet (legacy). */
 export const COST_OWNER_USER_ID_CLAIM = "cost_owner_user_id";
+
+/** JWT claim: OpenMeter payer customer key (owner bare id or `eu_…`). */
+export const BILLING_SUBJECT_KEY_CLAIM = "billing_subject_key";
+
+/** Separator between payer and actor in the wire `usage_subject`. */
+export const PAYER_ACTOR_WIRE_SEPARATOR = "#";
+
+export type BillingPayerKind = "platform_user" | "end_user";
 
 export type ResolvedBillingIdentity = {
   /**
    * Konnect customer key for credits, Starter, and CloudEvent subject.
-   * Owner cost rail (the owner, Explorer, or an owner_rollup end-user) is
-   * bare `{users.id}`. Merchant end-users stay on `app_…:externalUserId`.
+   * Alias of {@link payerCustomerKey} — kept for call-site churn.
    */
   customerKey: string;
-  isOwner: boolean;
+  /** OpenMeter customer that is charged (payer). Never encodes an app id. */
+  payerCustomerKey: string;
+  payerKind: BillingPayerKind;
   /**
-   * Platform users.id of the cost-rail wallet when {@link sharesOwnerCostRail}.
+   * Platform users.id of the cost-rail wallet when the payer is a platform user.
    * Set for owners, Explorers, and owner_rollup end-users.
    */
+  payerPlatformUserId?: string;
+  /**
+   * @deprecated Prefer {@link payerPlatformUserId}. Kept for call-site churn.
+   */
   ownerUserId?: string;
+  isOwner: boolean;
   /**
    * True when network usage, spendable balance, and prepaid credits live on
    * the owner platform wallet — including owner_rollup end-users who are not
    * themselves the owner.
    */
   sharesOwnerCostRail: boolean;
+  /**
+   * Stable actor customer key (`eu_{end_users.id}`) when the actor is an
+   * end-user; bare platform user id when the actor is the owner / Explorer.
+   */
+  actorEndUserId: string;
+  /** App-scoped external user id used for meter groupBy / analytics. */
+  actorExternalUserId: string;
   /** Public OIDC client_id (`app_…`) for event data and end-user keys. */
   publicClientId: string;
   /** developer_apps.id for plans / app_users rows. */
   developerAppId: string;
+  /**
+   * Legacy compound customer key `app_…:externalUserId` for dual-read during
+   * the end-user customer migration. Absent for pure platform-user payers.
+   */
+  legacyCompoundCustomerKey?: string;
 };
 
 type AppIdentityRow = {
@@ -48,36 +77,77 @@ type AppIdentityRow = {
   billingMode: "owner_rollup" | "merchant";
 };
 
-function ownerCostRailIdentity(input: {
-  ownerUserId: string;
+function platformUserIdentity(input: {
+  platformUserId: string;
   isOwner: boolean;
   publicClientId: string;
   developerAppId: string;
+  actorExternalUserId: string;
 }): ResolvedBillingIdentity {
+  const payerCustomerKey = buildOwnerCustomerKey(input.platformUserId);
   return {
-    customerKey: buildOwnerCustomerKey(input.ownerUserId),
+    customerKey: payerCustomerKey,
+    payerCustomerKey,
+    payerKind: "platform_user",
+    payerPlatformUserId: input.platformUserId,
+    ownerUserId: input.platformUserId,
     isOwner: input.isOwner,
-    ownerUserId: input.ownerUserId,
     sharesOwnerCostRail: true,
+    actorEndUserId: input.platformUserId,
+    actorExternalUserId: input.actorExternalUserId,
     publicClientId: input.publicClientId,
     developerAppId: input.developerAppId,
   };
 }
 
-function merchantEndUserIdentity(input: {
+function endUserIdentity(input: {
+  payerCustomerKey: string;
+  payerKind: BillingPayerKind;
+  payerPlatformUserId?: string;
+  sharesOwnerCostRail: boolean;
+  actorEndUserId: string;
+  actorExternalUserId: string;
   publicClientId: string;
   developerAppId: string;
-  externalUserId: string;
+  legacyCompoundCustomerKey: string;
 }): ResolvedBillingIdentity {
   return {
-    customerKey: buildOpenMeterCustomerKey(
+    customerKey: input.payerCustomerKey,
+    payerCustomerKey: input.payerCustomerKey,
+    payerKind: input.payerKind,
+    payerPlatformUserId: input.payerPlatformUserId,
+    ownerUserId: input.payerPlatformUserId,
+    isOwner: false,
+    sharesOwnerCostRail: input.sharesOwnerCostRail,
+    actorEndUserId: input.actorEndUserId,
+    actorExternalUserId: input.actorExternalUserId,
+    publicClientId: input.publicClientId,
+    developerAppId: input.developerAppId,
+    legacyCompoundCustomerKey: input.legacyCompoundCustomerKey,
+  };
+}
+
+async function resolveEndUserActorIds(input: {
+  developerAppId: string;
+  publicClientId: string;
+  externalUserId: string;
+}): Promise<{
+  actorEndUserId: string;
+  endUserCustomerKey: string;
+  legacyCompoundCustomerKey: string;
+}> {
+  const { id: endUserRowId } = await findOrCreateAppEndUser(
+    input.developerAppId,
+    input.externalUserId,
+  );
+  const endUserCustomerKey = buildEndUserCustomerKey(endUserRowId);
+  return {
+    actorEndUserId: endUserCustomerKey,
+    endUserCustomerKey,
+    legacyCompoundCustomerKey: buildOpenMeterCustomerKey(
       input.publicClientId,
       input.externalUserId,
     ),
-    isOwner: false,
-    sharesOwnerCostRail: false,
-    publicClientId: input.publicClientId,
-    developerAppId: input.developerAppId,
   };
 }
 
@@ -88,13 +158,15 @@ export function ownerCostRailUserId(
   if (!identity.sharesOwnerCostRail) {
     return undefined;
   }
-  const ownerUserId = identity.ownerUserId?.trim();
+  const ownerUserId =
+    identity.payerPlatformUserId?.trim() || identity.ownerUserId?.trim();
   return ownerUserId || undefined;
 }
 
 /**
  * Webhook / mint cache key for spendable checks: `owner:{id}` on the cost rail
- * so owner_rollup end-users share the owner's balance gate.
+ * so owner_rollup end-users share the owner's balance gate; otherwise the
+ * payer customer key (or actor external id as a last resort).
  */
 export function signerBalanceGateSubject(
   identity: ResolvedBillingIdentity,
@@ -104,10 +176,16 @@ export function signerBalanceGateSubject(
   if (ownerUserId) {
     return buildOwnerWireSubject(ownerUserId);
   }
+  if (identity.payerCustomerKey.trim()) {
+    return identity.payerCustomerKey.trim();
+  }
   return externalUserId.trim();
 }
 
-/** JWT claims that tell the webhook to meter owner_rollup traffic to the owner. */
+/**
+ * @deprecated Prefer {@link billingSubjectClaim}. Kept so existing call sites
+ * and JWTs minted before the cutover continue to work.
+ */
 export function costOwnerUserIdClaim(
   identity: ResolvedBillingIdentity,
 ): Record<string, string> {
@@ -119,25 +197,109 @@ export function costOwnerUserIdClaim(
 }
 
 /**
- * Map JWT user_type / cost_owner_user_id onto the webhook usage_subject the
- * collector bills. `cost_owner_user_id` wins so owner_rollup end-users land
- * on the app owner's wallet, not `owner:{endUserId}`.
+ * JWT claims that tell the webhook which OpenMeter customer to bill.
+ * Emits `billing_subject_key` for every non-owner payer; also keeps
+ * `cost_owner_user_id` for owner_rollup so pre-cutover collectors still work.
  */
-export function ownerWireUsageSubjectFromJwt(input: {
+export function billingSubjectClaim(
+  identity: ResolvedBillingIdentity,
+): Record<string, string> {
+  if (identity.isOwner && identity.payerKind === "platform_user") {
+    return {};
+  }
+  const claims: Record<string, string> = {
+    [BILLING_SUBJECT_KEY_CLAIM]: identity.payerCustomerKey,
+  };
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId && !identity.isOwner) {
+    claims[COST_OWNER_USER_ID_CLAIM] = ownerUserId;
+  }
+  return claims;
+}
+
+/**
+ * Build the wire `usage_subject` that go-livepeer embeds in `auth_id`.
+ * Format: `{payerWire}#{actorExternalUserId}` when the actor differs from the
+ * payer wire form; bare payer wire otherwise (owner self-usage).
+ */
+export function buildPayerActorWireSubject(input: {
+  payerCustomerKey: string;
+  payerKind: BillingPayerKind;
+  actorExternalUserId: string;
+}): string {
+  const actor = input.actorExternalUserId.trim();
+  const payerWire =
+    input.payerKind === "platform_user"
+      ? buildOwnerWireSubject(input.payerCustomerKey)
+      : input.payerCustomerKey.trim();
+  if (!actor || actor === payerWire || actor === input.payerCustomerKey.trim()) {
+    return payerWire;
+  }
+  return `${payerWire}${PAYER_ACTOR_WIRE_SEPARATOR}${actor}`;
+}
+
+export function parsePayerActorWireSubject(usageSubject: string): {
+  payerWire: string;
+  actorExternalUserId: string | null;
+} {
+  const trimmed = usageSubject.trim();
+  const sep = trimmed.indexOf(PAYER_ACTOR_WIRE_SEPARATOR);
+  if (sep <= 0 || sep >= trimmed.length - 1) {
+    return { payerWire: trimmed, actorExternalUserId: null };
+  }
+  return {
+    payerWire: trimmed.slice(0, sep),
+    actorExternalUserId: trimmed.slice(sep + 1),
+  };
+}
+
+/**
+ * Map JWT claims onto the webhook usage_subject the collector bills.
+ * Prefer `billing_subject_key`; fall back to `cost_owner_user_id` so tokens
+ * minted before the cutover still land on the owner wallet.
+ */
+export function wireUsageSubjectFromJwt(input: {
   userType: string;
   usageSubject: string;
+  billingSubjectKey?: string | null;
   costOwnerUserId?: string | null;
+  actorExternalUserId?: string | null;
 }): {
   usageSubject: string;
   usageSubjectType: "app_owner" | "external_user_id";
 } {
+  const billingSubjectKey = input.billingSubjectKey?.trim() || "";
   const costOwnerUserId = input.costOwnerUserId?.trim() || "";
+  const actor =
+    input.actorExternalUserId?.trim() || input.usageSubject.trim() || "";
+
+  if (billingSubjectKey) {
+    const payerKind: BillingPayerKind = isEndUserCustomerKey(billingSubjectKey)
+      ? "end_user"
+      : "platform_user";
+    const wire = buildPayerActorWireSubject({
+      payerCustomerKey: billingSubjectKey,
+      payerKind,
+      actorExternalUserId: actor,
+    });
+    return {
+      usageSubject: wire,
+      usageSubjectType:
+        payerKind === "platform_user" ? "app_owner" : "external_user_id",
+    };
+  }
+
   if (costOwnerUserId) {
     return {
-      usageSubject: buildOwnerWireSubject(costOwnerUserId),
+      usageSubject: buildPayerActorWireSubject({
+        payerCustomerKey: costOwnerUserId,
+        payerKind: "platform_user",
+        actorExternalUserId: actor,
+      }),
       usageSubjectType: "app_owner",
     };
   }
+
   if (input.userType.trim() !== "app_owner") {
     return {
       usageSubject: input.usageSubject,
@@ -155,6 +317,22 @@ export function ownerWireUsageSubjectFromJwt(input: {
     usageSubject: buildOwnerWireSubject(bareId),
     usageSubjectType: "app_owner",
   };
+}
+
+/**
+ * @deprecated Prefer {@link wireUsageSubjectFromJwt}.
+ */
+export function ownerWireUsageSubjectFromJwt(input: {
+  userType: string;
+  usageSubject: string;
+  costOwnerUserId?: string | null;
+  billingSubjectKey?: string | null;
+  actorExternalUserId?: string | null;
+}): {
+  usageSubject: string;
+  usageSubjectType: "app_owner" | "external_user_id";
+} {
+  return wireUsageSubjectFromJwt(input);
 }
 
 function billingModeFromRow(
@@ -241,7 +419,7 @@ export function resetBillingIdentityCacheForTests(): void {
  * Resolve the OpenMeter billing customer for an (app, external user) pair.
  * App owners and owner_rollup end-users share the owner's `{users.id}` wallet;
  * platform-default (Livepeer Direct) members bill their own owner wallet;
- * merchant end-users stay on `app_…:externalUserId`.
+ * merchant end-users bill their stable `eu_{end_users.id}` customer.
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
@@ -268,64 +446,95 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
     // Only wire `owner:{id}` marks owners here — bare UUIDs are common end-user ids.
     if (isOwnerWireSubject(externalUserId)) {
       const ownerUserId = parseOwnerCustomerKey(externalUserId)!;
-      return ownerCostRailIdentity({
-        ownerUserId,
+      return platformUserIdentity({
+        platformUserId: ownerUserId,
         isOwner: true,
         publicClientId: input.clientId.trim(),
         developerAppId: input.clientId.trim(),
+        actorExternalUserId: ownerUserId,
       });
     }
-    return merchantEndUserIdentity({
+    // Without a real app row we cannot mint an end_users id — keep the legacy
+    // compound key as both payer and actor so scripts/tests still resolve.
+    const legacyKey = buildOpenMeterCustomerKey(
+      input.clientId.trim(),
+      externalUserId,
+    );
+    return endUserIdentity({
+      payerCustomerKey: legacyKey,
+      payerKind: "end_user",
+      sharesOwnerCostRail: false,
+      actorEndUserId: externalUserId,
+      actorExternalUserId: externalUserId,
       publicClientId: input.clientId.trim(),
       developerAppId: input.clientId.trim(),
-      externalUserId,
+      legacyCompoundCustomerKey: legacyKey,
     });
   }
 
   if (isOwnerWireSubject(externalUserId)) {
     const ownerUserId = parseOwnerCustomerKey(externalUserId)!;
-    return ownerCostRailIdentity({
-      ownerUserId,
+    return platformUserIdentity({
+      platformUserId: ownerUserId,
       isOwner: true,
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
+      actorExternalUserId: ownerUserId,
     });
   }
 
   const normalized = normalizePlatformUserId(externalUserId);
   if (app.ownerId && normalized === app.ownerId) {
-    return ownerCostRailIdentity({
-      ownerUserId: app.ownerId,
+    return platformUserIdentity({
+      platformUserId: app.ownerId,
       isOwner: true,
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
+      actorExternalUserId: app.ownerId,
     });
   }
 
   // Explorer / personal network keys on Livepeer Direct: each platform user
   // bills their own owner wallet (Owner Starter), not the admin app owner.
   if (app.isPlatformDefault) {
-    return ownerCostRailIdentity({
-      ownerUserId: normalized,
+    return platformUserIdentity({
+      platformUserId: normalized,
       isOwner: true,
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
+      actorExternalUserId: normalized,
     });
   }
+
+  const actorIds = await resolveEndUserActorIds({
+    developerAppId: app.developerAppId,
+    publicClientId: app.publicClientId,
+    externalUserId,
+  });
 
   if (app.billingMode !== "merchant" && app.ownerId) {
-    return ownerCostRailIdentity({
-      ownerUserId: app.ownerId,
-      isOwner: false,
+    return endUserIdentity({
+      payerCustomerKey: buildOwnerCustomerKey(app.ownerId),
+      payerKind: "platform_user",
+      payerPlatformUserId: app.ownerId,
+      sharesOwnerCostRail: true,
+      actorEndUserId: actorIds.actorEndUserId,
+      actorExternalUserId: externalUserId,
       publicClientId: app.publicClientId,
       developerAppId: app.developerAppId,
+      legacyCompoundCustomerKey: actorIds.legacyCompoundCustomerKey,
     });
   }
 
-  return merchantEndUserIdentity({
+  return endUserIdentity({
+    payerCustomerKey: actorIds.endUserCustomerKey,
+    payerKind: "end_user",
+    sharesOwnerCostRail: false,
+    actorEndUserId: actorIds.actorEndUserId,
+    actorExternalUserId: externalUserId,
     publicClientId: app.publicClientId,
     developerAppId: app.developerAppId,
-    externalUserId,
+    legacyCompoundCustomerKey: actorIds.legacyCompoundCustomerKey,
   });
 }
 
@@ -374,7 +583,7 @@ export async function assertAppUserRetailBillingSubject(input: {
 }): Promise<void> {
   rejectOwnerWireRetailSubject(input.externalUserId);
   const identity = await resolveOpenMeterBillingIdentity(input);
-  if (identity.sharesOwnerCostRail) {
+  if (identity.payerKind === "platform_user" || identity.sharesOwnerCostRail) {
     throw new AppUserOwnerWalletMutationError();
   }
 }
