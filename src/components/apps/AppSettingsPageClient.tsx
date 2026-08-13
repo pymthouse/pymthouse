@@ -96,9 +96,11 @@ export default function AppSettingsPageClient({
       .finally(() => setLoading(false));
   }, [id]);
 
+  const resolvedAppName = appData?.formData.name || null;
+
   if (loading) {
     return (
-      <DashboardLayout>
+      <DashboardLayout appName={null}>
         <div className="text-zinc-500 text-center py-12 animate-pulse">
           Loading app…
         </div>
@@ -108,7 +110,7 @@ export default function AppSettingsPageClient({
 
   if (!appData) {
     return (
-      <DashboardLayout>
+      <DashboardLayout appName={null}>
         <div className="text-center py-12">
           <h2 className="text-lg font-medium text-zinc-300">App not found</h2>
         </div>
@@ -117,7 +119,7 @@ export default function AppSettingsPageClient({
   }
 
   return (
-    <DashboardLayout>
+    <DashboardLayout appName={resolvedAppName}>
       <div className="mb-8">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">
@@ -125,9 +127,6 @@ export default function AppSettingsPageClient({
           </h1>
           <AppStatusBadge status={appData.state.status} />
         </div>
-        <p className="text-sm text-zinc-500 mt-1">
-          Edit integration settings, credentials, network discovery, and pricing.
-        </p>
       </div>
 
       <AppSettingsScreen

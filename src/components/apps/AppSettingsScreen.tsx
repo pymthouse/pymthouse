@@ -68,16 +68,7 @@ function mergeFormData(
   };
 }
 
-const INTEGRATION_TABS = [
-  { id: "profile", label: "App profile" },
-  { id: "credentials", label: "Credentials & URLs" },
-  { id: "plans", label: "Billing Plans" },
-  { id: "payments", label: "Payments" },
-] as const satisfies ReadonlyArray<{ id: AppSettingsTab; label: string }>;
-
-type IntegrationSection = AppSettingsTab;
-
-function resolveInitialTab(tab: string | undefined): IntegrationSection {
+function resolveInitialTab(tab: string | undefined): AppSettingsTab {
   return normalizeAppSettingsTab(tab);
 }
 
@@ -395,31 +386,6 @@ export default function AppSettingsScreen({
           </div>
         )}
       </div>
-
-      <nav
-        className="flex flex-wrap gap-1 border-b border-zinc-800 pb-3 mb-6"
-        aria-label="Integration settings sections"
-      >
-        {INTEGRATION_TABS.map(({ id, label }) => {
-          const selected = integrationSection === id;
-          return (
-            <Link
-              key={id}
-              id={`tab-${id}`}
-              href={appSettingsPath(appId, id)}
-              scroll={false}
-              aria-current={selected ? "page" : undefined}
-              className={`px-3 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors ${
-                selected
-                  ? "border-emerald-500 text-emerald-400 bg-zinc-900/50"
-                  : "border-transparent text-zinc-500 hover:text-zinc-300"
-              }`}
-            >
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
 
       {integrationSection === "profile" && (
         <div

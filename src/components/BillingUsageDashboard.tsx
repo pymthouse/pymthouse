@@ -701,10 +701,13 @@ function BillingUsageBody({
 export default function BillingUsageDashboard({
   filterAppId,
   fundPanel,
+  appName,
 }: Readonly<{
   filterAppId?: string | null;
   /** Optional MoonPay / prepaid top-up panel (app owners on pay-per-use). */
   fundPanel?: ReactNode;
+  /** When filtering by app, the app name to show in the sidebar sub-nav. */
+  appName?: string | null;
 }>) {
   const { data: session, status: authStatus } = useSession();
   const pathname = usePathname();
@@ -781,7 +784,7 @@ export default function BillingUsageDashboard({
   }, [filterAppId, activeTab, retryToken, showTabs]);
 
   return (
-    <DashboardLayout>
+    <DashboardLayout appName={filterAppId ? (appName ?? null) : undefined}>
       {fundPanel}
       {state.status === "loading" ? (
         <>

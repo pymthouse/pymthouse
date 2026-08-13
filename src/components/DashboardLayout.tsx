@@ -15,6 +15,20 @@ interface NavItem {
   external?: boolean; // if set, opens in a new tab
 }
 
+interface AppSubNavItem {
+  id: string;
+  label: string;
+  href: string;
+}
+
+const APP_SUB_NAV_ITEMS: AppSubNavItem[] = [
+  { id: "profile", label: "App Profile", href: "" },
+  { id: "credentials", label: "Credentials & URLs", href: "/credentials" },
+  { id: "plans", label: "Billing Plans", href: "/plans" },
+  { id: "payments", label: "Payments", href: "/payments" },
+  { id: "usage", label: "Usage", href: "/usage" },
+];
+
 const API_REFERENCE_URL = "/api/v1/docs";
 const DOCS_URL = "https://docs.pymthouse.com";
 
@@ -97,8 +111,11 @@ const SKELETON_CARD_KEYS = ["card-a", "card-b", "card-c"] as const;
 
 export default function DashboardLayout({
   children,
+  appName,
 }: Readonly<{
   children: React.ReactNode;
+  /** When provided, shows an expanded nested sub-nav under "My Apps" for the active app. */
+  appName?: string | null;
 }>) {
   const pathname = usePathname();
   const router = useRouter();
@@ -236,6 +253,10 @@ export default function DashboardLayout({
             const resourceItems = navItems.filter((i) => i.group === "Resources");
             const otherItems = navItems.filter((i) => !i.group);
 
+            // Detect if we're inside an app detail page: /apps/<appId>/...
+            const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
+            const activeAppId = appDetailMatch?.[1] ?? null;
+
             const renderNavLink = (item: NavItem, isActive: boolean) => {
               const linkClass = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
                 isActive
@@ -298,10 +319,107 @@ export default function DashboardLayout({
               );
             };
 
+            const renderAppSubNav = () => {
+              if (!activeAppId) return null;
+              // Determine the active sub-nav item from the current pathname
+              const pathSuffix = pathname.slice(`/apps/${activeAppId}`.length);
+              const activeSubId =
+                pathSuffix === "" || pathSuffix === "/"
+                  ? "profile"
+                  : (pathSuffix.split("/")[1] ?? "profile");
+
+              return (
+                <div className="mt-0.5">
+                  {/* App name / back-to-list header */}
+                  <div className="flex items-center gap-1.5 px-3 pt-1 pb-1">
+                    <Link
+                      href="/apps"
+                      onClick={() => setMobileNavOpen(false)}
+                      className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                    >
+                      <svg
+                        className="w-3 h-3 shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 19l-7-7 7-7"
+                        />
+                      </svg>
+                      My Apps
+                    </Link>
+                  </div>
+                  {appName && (
+                    <p className="px-3 pb-1.5 text-xs font-semibold text-zinc-300 truncate">
+                      {appName}
+                    </p>
+                  )}
+                  {/* Sub-nav items */}
+                  <div className="ml-3 border-l border-zinc-800 pl-2 space-y-0.5">
+                    {APP_SUB_NAV_ITEMS.map((sub) => {
+                      const href = `/apps/${activeAppId}${sub.href}`;
+                      const isActive = activeSubId === sub.id;
+                      return (
+                        <Link
+                          key={sub.id}
+                          href={href}
+                          onClick={() => setMobileNavOpen(false)}
+                          aria-current={isActive ? "page" : undefined}
+                          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm transition-all duration-150 ${
+                            isActive
+                              ? "bg-emerald-500/10 text-emerald-400 font-medium shadow-[inset_0_0_0_1px_rgba(52,211,153,0.12)]"
+                              : "text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04] font-normal"
+                          }`}
+                        >
+                          {sub.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            };
+
             return (
               <>
                 {otherItems.map((item) => {
-                  const isActive = pathname.startsWith(item.href);
+                  const isAppsItem = item.href === "/apps";
+                  const isActive = activeAppId
+                    ? isAppsItem
+                    : pathname.startsWith(item.href);
+
+                  if (isAppsItem && activeAppId) {
+                    // Render "My Apps" as an expanded section header instead of a link
+                    return (
+                      <div key={item.href}>
+                        <div
+                          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium bg-emerald-500/10 text-emerald-400 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.12)]`}
+                        >
+                          <svg
+                            className="w-5 h-5 shrink-0"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={1.5}
+                              d={item.icon}
+                            />
+                          </svg>
+                          {item.label}
+                        </div>
+                        {renderAppSubNav()}
+                      </div>
+                    );
+                  }
+
                   return renderNavLink(item, isActive);
                 })}
                 {adminItems.length > 0 && (
