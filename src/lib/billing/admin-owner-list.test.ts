@@ -6,7 +6,6 @@ import {
   compareOwnersByUsageDesc,
   ownerMatchesStatusFilter,
   parseOwnerListQuery,
-  parsePositiveInt,
 } from "@/lib/billing/admin-owner-list";
 
 test("parseOwnerListQuery defaults and clamps page size", () => {
@@ -35,10 +34,15 @@ test("parseOwnerListQuery ignores unknown status and oversize pageSize", () => {
   assert.equal(parsed.pageSize, 100);
 });
 
-test("parsePositiveInt rejects zero and non-numeric", () => {
-  assert.equal(parsePositiveInt("0", 7), 7);
-  assert.equal(parsePositiveInt("abc", 7), 7);
-  assert.equal(parsePositiveInt(null, 7), 7);
+test("parseOwnerListQuery rejects fractional page values and clamps huge pages", () => {
+  const junk = parseOwnerListQuery(
+    new URLSearchParams("page=2.9&pageSize=25junk"),
+  );
+  assert.equal(junk.page, 1);
+  assert.equal(junk.pageSize, 25);
+
+  const huge = parseOwnerListQuery(new URLSearchParams("page=99999"));
+  assert.equal(huge.page, 10_000);
 });
 
 test("starter at or over included is blocked", () => {

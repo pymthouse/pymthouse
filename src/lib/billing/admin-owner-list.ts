@@ -13,6 +13,7 @@ import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import { mergeOwnerBilling } from "@/lib/billing/owner-billing-config";
 import { platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaults";
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
+import { clampPageParam } from "@/lib/billing/wallet-http";
 import { parseUsdMicrosString } from "@/lib/format-usd-micros";
 
 export const ADMIN_OWNER_LIST_DEFAULT_PAGE_SIZE = 25;
@@ -90,25 +91,13 @@ function parseStatusFilterParam(raw: string): OwnerListStatusFilter {
   }
 }
 
-export function parsePositiveInt(
-  raw: string | null,
-  fallback: number,
-  max?: number,
-): number {
-  if (!raw) return fallback;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return fallback;
-  if (max != null && n > max) return max;
-  return n;
-}
-
 export function parseOwnerListQuery(
   searchParams: URLSearchParams,
 ): AdminOwnerListQuery {
   return {
     q: searchParams.get("q")?.trim() ?? "",
-    page: parsePositiveInt(searchParams.get("page"), 1),
-    pageSize: parsePositiveInt(
+    page: clampPageParam(searchParams.get("page"), 1, 10_000),
+    pageSize: clampPageParam(
       searchParams.get("pageSize"),
       ADMIN_OWNER_LIST_DEFAULT_PAGE_SIZE,
       ADMIN_OWNER_LIST_MAX_PAGE_SIZE,
