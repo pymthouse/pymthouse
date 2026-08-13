@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { eq } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
-import { authenticateRequest, hasScope } from "@/lib/auth";
+import { authenticateRequestAsync, hasScope } from "@/lib/auth";
 import { db } from "@/db/index";
 import { users } from "@/db/schema";
 
@@ -11,13 +11,22 @@ import { users } from "@/db/schema";
  *
  * Two authentication paths, both of which require `users.role === "admin"`:
  *  - Dashboard NextAuth session cookie.
- *  - `Authorization: Bearer pmth_…` token carrying the `admin` scope.
+ *  - `Authorization: Bearer` with the `admin` scope: `pmth_…` session
+ *    tokens or OIDC access tokens (JWT / opaque) from the CS RP.
  *
  * The DB role is the source of truth on both paths; an admin-scoped token is
  * not sufficient on its own.
  */
+async function dashboardAdminSession() {
+  try {
+    return await getServerSession(authOptions);
+  } catch {
+    return null;
+  }
+}
+
 export async function getAdminUser(request: NextRequest) {
-  const oauthSession = await getServerSession(authOptions);
+  const oauthSession = await dashboardAdminSession();
   if (oauthSession?.user) {
     const sessionUser = oauthSession.user as Record<string, unknown>;
     if (typeof sessionUser.id === "string") {
@@ -33,7 +42,7 @@ export async function getAdminUser(request: NextRequest) {
     }
   }
 
-  const auth = await authenticateRequest(request);
+  const auth = await authenticateRequestAsync(request);
   if (auth && hasScope(auth.scopes, "admin") && auth.userId) {
     const rows = await db
       .select()

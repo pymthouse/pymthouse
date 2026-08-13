@@ -218,8 +218,47 @@ export async function authenticateRequest(request: NextRequest): Promise<AuthRes
   return null;
 }
 
+function oidcScopesFromSpaceList(raw: string): string {
+  return raw.trim().replace(/\s+/g, ",");
+}
+
+/** Opaque node-oidc-provider access tokens (jti as the bearer, stored in oidc_payloads). */
+async function authenticateOpaqueOidcAccessToken(
+  token: string,
+): Promise<AuthResult | null> {
+  if (token.includes(".")) {
+    return null;
+  }
+  try {
+    const { getProvider } = await import("@/lib/oidc/provider");
+    const provider = await getProvider();
+    const accessToken = await provider.AccessToken.find(token);
+    if (!accessToken) {
+      return null;
+    }
+    const accountId =
+      typeof accessToken.accountId === "string" ? accessToken.accountId : null;
+    const scope =
+      typeof accessToken.scope === "string" ? accessToken.scope : "";
+    const clientId =
+      typeof accessToken.clientId === "string" ? accessToken.clientId : null;
+    const jti = typeof accessToken.jti === "string" ? accessToken.jti : token;
+    return {
+      userId: accountId,
+      endUserId: null,
+      appId: clientId,
+      sessionId: jti,
+      scopes: oidcScopesFromSpaceList(scope),
+      tokenHash: "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Authenticate a request, supporting both pmth_ session tokens and OIDC JWTs.
+ * Authenticate a request, supporting pmth_ session tokens and OIDC access
+ * tokens (JWT or opaque).
  */
 export async function authenticateRequestAsync(request: NextRequest): Promise<AuthResult | null> {
   const authHeader = request.headers.get("authorization");
@@ -231,6 +270,10 @@ export async function authenticateRequestAsync(request: NextRequest): Promise<Au
 
   const jwtPayload = await verifyAccessToken(token);
   if (!jwtPayload) {
+    const opaque = await authenticateOpaqueOidcAccessToken(token);
+    if (opaque) {
+      return opaque;
+    }
     if (DEBUG_OIDC_LOGS) {
       const parts = token.split(".");
       const isJwtShaped = parts.length === 3;
@@ -251,10 +294,9 @@ export async function authenticateRequestAsync(request: NextRequest): Promise<Au
       : typeof scpRaw === "string"
         ? scpRaw
         : "";
-  const normalizedScopes = (scopeFromScope || scopeFromScp)
-    .trim()
-    .replace(/\s+/g, ",");
-  const effectiveScopes = normalizedScopes;
+  const effectiveScopes = oidcScopesFromSpaceList(
+    scopeFromScope || scopeFromScp,
+  );
 
   return {
     userId: typeof jwtPayload.sub === "string" ? jwtPayload.sub : null,

@@ -65,8 +65,8 @@ NEXTAUTH_SECRET=…
 
 ## Admin billing APIs used by CS
 
-All require platform admin (session cookie on this host **or** Bearer with
-`admin` scope + DB admin role):
+All require platform admin (session cookie on this host **or** Bearer OIDC /
+`pmth_` token with `admin` scope + DB admin role):
 
 | Method | Path |
 | --- | --- |
