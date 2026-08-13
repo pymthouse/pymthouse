@@ -779,14 +779,24 @@ export async function listOwnerActiveSubscriptions(
 }
 
 /**
- * Billing page payload for the signed-in app owner: prepaid credits +
+ * Billing page payload for a platform owner: prepaid credits +
  * active subscriptions with cycle usage toward any plan usage discount.
+ * Falls back to signed-in session when userId is not provided.
  */
-export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
-  const session = await getServerSession(authOptions);
-  const sessionUser = session?.user as Record<string, unknown> | undefined;
-  const userId = sessionUser?.id as string | undefined;
-  if (!userId?.trim()) {
+export async function getOwnerBillingData(
+  rawUserId?: string,
+): Promise<OwnerBillingResult> {
+  let userId = rawUserId?.trim() ?? "";
+  if (!userId) {
+    const session = await getServerSession(authOptions);
+    const sessionUser = session?.user as Record<string, unknown> | undefined;
+    const sessionUserId = sessionUser?.id as string | undefined;
+    if (!sessionUserId?.trim()) {
+      return { ok: false, reason: "no_session" };
+    }
+    userId = sessionUserId.trim();
+  }
+  if (!userId) {
     return { ok: false, reason: "no_session" };
   }
 
@@ -995,3 +1005,4 @@ export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
     },
   };
 }
+

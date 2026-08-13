@@ -3,7 +3,10 @@
 The [customer-service](https://github.com/pymthouse/customer-service) console
 authenticates agents against this host’s OIDC issuer and calls admin billing
 APIs with a Bearer token that includes the `admin` scope. The DB role
-`users.role = admin` is still required (`getAdminUser`).
+`users.role = admin` is still required (`getAdminUser`). OIDC Bearers are
+accepted only when issued to this reserved RP (`web_customer_service` /
+`CS_OIDC_CLIENT_ID`); a developer app that lists `admin` in `allowed_scopes`
+cannot call `withAdminGuard` even after a platform admin consents.
 
 This is a **standalone** `oidc_clients` row (not a developer app). There is no
 `developer_apps` owner; only platform admins can see or edit it under
@@ -57,16 +60,17 @@ CS_OIDC_CLIENT_SECRET=…
 # Local:
 # CS_OIDC_REDIRECT_URI=http://localhost:3010/api/auth/callback/pymthouse
 # NEXTAUTH_URL=http://localhost:3010
-# Deployed CS console:
-CS_OIDC_REDIRECT_URI=https://ops.pymthouse.com/api/auth/callback/pymthouse
-NEXTAUTH_URL=https://ops.pymthouse.com
+# Deployed CS console (ops + Vercel preview must both be listed):
+CS_OIDC_REDIRECT_URI=https://ops.pymthouse.com/api/auth/callback/pymthouse,https://customer-service-git-feat-bootstrap-cs-oidc-client-ecs-vercel.vercel.app/api/auth/callback/pymthouse
+# NEXTAUTH_URL is local-only; on Vercel the request host is the origin.
 NEXTAUTH_SECRET=…
 ```
 
 ## Admin billing APIs used by CS
 
-All require platform admin (session cookie on this host **or** Bearer with
-`admin` scope + DB admin role):
+All require platform admin (session cookie on this host **or** a first-party
+`pmth_` token with `admin` scope **or** a CS-RP OIDC access token with `admin`
+scope, plus DB admin role):
 
 | Method | Path |
 | --- | --- |

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { withSessionAdminGuardParams } from "@/lib/api-guards";
+import { withAdminGuardParams } from "@/lib/api-guards";
 import {
   deactivateOwnerSubscriptionTier,
   getOwnerSubscriptionTierById,
@@ -66,7 +66,7 @@ async function syncTierResponse(
  * PATCH /api/v1/admin/billing/owner-tiers/[id]
  * Update a tier and re-sync to OpenMeter when name, pricing, or allowance changes.
  */
-export const PATCH = withSessionAdminGuardParams<{ id: string }>(
+export const PATCH = withAdminGuardParams<{ id: string }>(
   async (request, routeContext) => {
     const { id } = await routeContext.params;
     let body: Record<string, unknown>;
@@ -98,7 +98,7 @@ export const PATCH = withSessionAdminGuardParams<{ id: string }>(
  * DELETE /api/v1/admin/billing/owner-tiers/[id]
  * Soft-deactivate (does not delete OM plan or active subscribers).
  */
-export const DELETE = withSessionAdminGuardParams<{ id: string }>(
+export const DELETE = withAdminGuardParams<{ id: string }>(
   async (_request, routeContext) => {
     const { id } = await routeContext.params;
     try {

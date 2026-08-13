@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { withSessionAdminGuard } from "@/lib/api-guards";
+import { withAdminGuard } from "@/lib/api-guards";
 import {
   normalizeOwnerStarterPlanName,
   resolvePlatformOwnerStarterDefault,
@@ -17,7 +17,7 @@ import { OWNER_STARTER_PLAN_KEY } from "@/lib/openmeter/owner-starter-key";
  * GET /api/v1/admin/billing/platform
  * Resolved Owner Starter platform default + Owner Paid published snapshot.
  */
-export const GET = withSessionAdminGuard(async () => {
+export const GET = withAdminGuard(async () => {
   const resolved = await resolvePlatformOwnerStarterDefault();
   const paid = await peekOwnerPaidPlanPublished();
   return NextResponse.json({
@@ -38,7 +38,7 @@ export const GET = withSessionAdminGuard(async () => {
  * Persist a new Developer wallet default and republish Owner Starter + Owner Paid.
  * Pass `resync: true` to also migrate subscribers still on the shared Starter base key.
  */
-export const PATCH = withSessionAdminGuard(async (request, context) => {
+export const PATCH = withAdminGuard(async (request, context) => {
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -80,7 +80,7 @@ export const PATCH = withSessionAdminGuard(async (request, context) => {
     const result = await republishPlatformOwnerAllowancePlans({
       ownerStarterIncludedUsdMicros: micros,
       ownerStarterPlanName,
-      updatedBy: context.userId,
+      updatedBy: context.admin.id,
       resyncSubscribers,
     });
     return NextResponse.json({

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { users } from "@/db/schema";
-import { withSessionAdminGuardParams } from "@/lib/api-guards";
+import { withAdminGuardParams } from "@/lib/api-guards";
 import {
   getOwnerBillingOverrides,
   resolveOwnerBilling,
@@ -17,6 +17,7 @@ import {
   ensureOwnerStarterSubscription,
   invalidateOwnerStarterPlanCache,
 } from "@/lib/openmeter/owner-starter-plan";
+import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 async function loadOwnerUser(userId: string) {
   const rows = await db
@@ -35,7 +36,7 @@ async function loadOwnerUser(userId: string) {
 /**
  * GET /api/v1/admin/billing/owners/[userId]
  */
-export const GET = withSessionAdminGuardParams<{ userId: string }>(
+export const GET = withAdminGuardParams<{ userId: string }>(
   async (_request, routeContext) => {
     const { userId } = await routeContext.params;
     const owner = await loadOwnerUser(userId);
@@ -43,11 +44,21 @@ export const GET = withSessionAdminGuardParams<{ userId: string }>(
       return NextResponse.json({ error: "Owner not found" }, { status: 404 });
     }
 
-    const [overrides, resolved, platformDefault] = await Promise.all([
-      getOwnerBillingOverrides(userId),
-      resolveOwnerBilling(userId),
-      resolvePlatformOwnerStarterIncludedUsdMicros(),
-    ]);
+    const [overrides, resolved, platformDefault, walletResult] =
+      await Promise.all([
+        getOwnerBillingOverrides(userId),
+        resolveOwnerBilling(userId),
+        resolvePlatformOwnerStarterIncludedUsdMicros(),
+        getOwnerBillingData(userId),
+      ]);
+
+    const wallet =
+      walletResult.ok === true
+        ? walletResult.data
+        : {
+            unavailable: true as const,
+            reason: walletResult.reason,
+          };
 
     return NextResponse.json({
       owner,
@@ -60,6 +71,7 @@ export const GET = withSessionAdminGuardParams<{ userId: string }>(
       platformDefault: {
         starterIncludedUsdMicros: platformDefault,
       },
+      wallet,
     });
   },
 );
@@ -68,7 +80,7 @@ export const GET = withSessionAdminGuardParams<{ userId: string }>(
  * PATCH /api/v1/admin/billing/owners/[userId]
  * Upsert cost-rail overrides and ensure the Owner Starter subscription.
  */
-export const PATCH = withSessionAdminGuardParams<{ userId: string }>(
+export const PATCH = withAdminGuardParams<{ userId: string }>(
   async (request, routeContext, context) => {
     const { userId } = await routeContext.params;
     const owner = await loadOwnerUser(userId);
@@ -98,7 +110,7 @@ export const PATCH = withSessionAdminGuardParams<{ userId: string }>(
       await setOwnerBillingOverrides({
         ownerUserId: userId,
         ...parsed.patch,
-        updatedBy: context.userId,
+        updatedBy: context.admin.id,
       });
       invalidateOwnerStarterPlanCache();
 

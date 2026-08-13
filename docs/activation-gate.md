@@ -171,15 +171,14 @@ for any future caller.
 ingest path. Gating it would silently discard signed-ticket records for users that
 already exist, losing both revenue attribution and audit trail. Ingest must always
 record what the network actually did; solvency is enforced at mint time, before work is
-authorised. `grantAllowanceUsdMicros` is likewise ungated — crediting an account must
-never be blocked by that account being empty, and the onramp path relies on that to
-refill a dry wallet.
+`grantAllowanceUsdMicros` is likewise ungated at the library layer — crediting an
+account must never be blocked by that account being empty, and the onramp / Stripe
+top-up / admin grant paths rely on that to refill a dry wallet.
 
-The Builder route `POST …/users/{externalUserId}/allowances` is the one exception: it
-runs the provision gate before granting, because crediting an unknown end-user creates
-an `app_users` row and would otherwise be a way around the cap. Owner subjects
-(`owner:{id}`, or an id matching the app owner) skip the gate so a Builder can always
-top up their own wallet.
+The Builder route `POST …/users/{externalUserId}/allowances` no longer mints free
+credits (`403 free_grant_admin_only`). Platform admins grant via
+`POST /api/v1/admin/billing/owners/{userId}/grants` (customer-service). Paid top-ups
+use Stripe Checkout → webhook (`source: topup`).
 
 ### Revenue rail — enforced
 

@@ -16,10 +16,13 @@ import {
   getCustomerServiceOrigin,
   hasConfiguredCustomerServiceRedirectOrigin,
   isCustomerServiceOidcClient,
+  isOidcReturnPath,
   mergeRedirectUris,
+  oidcInteractionPath,
   oidcLoginPathForClient,
   oidcLoginRedirect,
   resolveCustomerServiceRedirectUris,
+  resumeAfterOidcLogin,
 } from "@/lib/oidc/customer-service-client";
 
 function restoreEnv(t: { after: (fn: () => void) => void }, key: string): void {
@@ -55,6 +58,20 @@ test("isCustomerServiceOidcClient matches reserved and env override ids", (t) =>
   assert.equal(isCustomerServiceOidcClient(null), false);
   assert.equal(oidcLoginPathForClient("web_customer_service"), "/login/admin");
   assert.equal(oidcLoginPathForClient("app_abc"), "/login");
+  assert.equal(
+    oidcInteractionPath("abc", "web_customer_service"),
+    "/oidc/interaction?uid=abc&client_id=web_customer_service",
+  );
+  assert.equal(oidcInteractionPath("abc"), "/oidc/interaction?uid=abc");
+  assert.equal(isOidcReturnPath("/oidc/interaction?uid=abc"), true);
+  assert.equal(isOidcReturnPath("/apps"), false);
+
+  const navigated: string[] = [];
+  resumeAfterOidcLogin("/apps", (path) => {
+    navigated.push(path);
+  });
+  assert.deepEqual(navigated, ["/apps"]);
+
   assert.equal(
     oidcLoginRedirect("web_customer_service", "/oidc/interaction?uid=abc"),
     "/login/admin?callbackUrl=%2Foidc%2Finteraction%3Fuid%3Dabc&client_id=web_customer_service",
