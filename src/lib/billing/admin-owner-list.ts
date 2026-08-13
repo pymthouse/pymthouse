@@ -3,6 +3,7 @@ import { and, eq, exists, gte, ilike, inArray, lte, or, sql } from "drizzle-orm"
 import { db } from "@/db/index";
 import {
   developerApps,
+  oidcClients,
   ownerBillingConfig,
   ownerPaidUpgradeOperations,
   ownerSubscriptionTiers,
@@ -50,6 +51,10 @@ export type AdminOwnerListQuery = {
 export type AdminOwnerListApp = {
   id: string;
   name: string;
+};
+
+type OwnerListOwnedApp = AdminOwnerListApp & {
+  publicClientId: string;
 };
 
 export type AdminOwnerCycleUsage = {
@@ -202,16 +207,17 @@ export function compareOwnersByUsageDesc(
 /**
  * Subject → owner index for list meter queries. Same dual-read set as
  * owner-detail (`buildOwnerMeterSubjects`): bare id, `owner:{id}`, and
- * transitional compound app keys.
+ * transitional compound keys from **public OIDC client ids** (not
+ * `developer_apps.id`, which diverges on legacy apps).
  */
 export function indexOwnerListMeterSubjects(
   ownerIds: readonly string[],
-  appsByOwner: ReadonlyMap<string, readonly AdminOwnerListApp[]>,
+  publicClientIdsByOwner: ReadonlyMap<string, readonly string[]>,
 ): Map<string, string> {
   const index = new Map<string, string>();
   for (const ownerId of ownerIds) {
-    const appIds = (appsByOwner.get(ownerId) ?? []).map((app) => app.id);
-    for (const subject of buildOwnerMeterSubjects(ownerId, appIds)) {
+    const publicClientIds = publicClientIdsByOwner.get(ownerId) ?? [];
+    for (const subject of buildOwnerMeterSubjects(ownerId, [...publicClientIds])) {
       index.set(subject, ownerId);
     }
   }
@@ -340,20 +346,26 @@ async function loadMatchingOwners(q: string): Promise<OwnerRow[]> {
 
 async function loadOwnedAppsByOwner(
   ownerIds: string[],
-): Promise<Map<string, AdminOwnerListApp[]>> {
-  const byOwner = new Map<string, AdminOwnerListApp[]>();
+): Promise<Map<string, OwnerListOwnedApp[]>> {
+  const byOwner = new Map<string, OwnerListOwnedApp[]>();
   if (ownerIds.length === 0) return byOwner;
   const rows = await db
     .select({
       ownerId: developerApps.ownerId,
       id: developerApps.id,
       name: developerApps.name,
+      publicClientId: oidcClients.clientId,
     })
     .from(developerApps)
+    .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
     .where(inArray(developerApps.ownerId, ownerIds));
   for (const row of rows) {
     const list = byOwner.get(row.ownerId) ?? [];
-    list.push({ id: row.id, name: row.name });
+    list.push({
+      id: row.id,
+      name: row.name,
+      publicClientId: row.publicClientId?.trim() || row.id,
+    });
     byOwner.set(row.ownerId, list);
   }
   for (const list of byOwner.values()) {
@@ -362,17 +374,30 @@ async function loadOwnedAppsByOwner(
   return byOwner;
 }
 
+function publicClientIdsByOwner(
+  appsByOwner: ReadonlyMap<string, readonly OwnerListOwnedApp[]>,
+): Map<string, string[]> {
+  const byOwner = new Map<string, string[]>();
+  for (const [ownerId, apps] of appsByOwner) {
+    byOwner.set(
+      ownerId,
+      apps.map((app) => app.publicClientId),
+    );
+  }
+  return byOwner;
+}
+
 async function queryOpenMeterCycleUsageByOwner(input: {
   cycle: { start: string; end: string };
   ownerIds: string[];
-  appsByOwner: Map<string, AdminOwnerListApp[]>;
+  appsByOwner: Map<string, OwnerListOwnedApp[]>;
 }): Promise<Map<string, OwnerListUsageTotals> | null> {
   if (!requireOpenMeterForUsageReads() || !isHostedAdminClientAvailable()) {
     return null;
   }
   const subjectToOwnerId = indexOwnerListMeterSubjects(
     input.ownerIds,
-    input.appsByOwner,
+    publicClientIdsByOwner(input.appsByOwner),
   );
   const subjects = [...subjectToOwnerId.keys()];
   if (subjects.length === 0) {
@@ -453,7 +478,7 @@ async function loadTransactionCycleUsageByOwner(cycle: {
 async function loadCycleUsageByOwner(input: {
   cycle: { start: string; end: string };
   ownerIds: string[];
-  appsByOwner: Map<string, AdminOwnerListApp[]>;
+  appsByOwner: Map<string, OwnerListOwnedApp[]>;
 }): Promise<Map<string, OwnerListUsageTotals>> {
   const fromOpenMeter = await queryOpenMeterCycleUsageByOwner(input);
   if (fromOpenMeter) return fromOpenMeter;
@@ -587,7 +612,10 @@ export async function listAdminBillingOwners(
       role: row.role,
       resolved,
       overrides,
-      ownedApps: appsByOwner.get(row.id) ?? [],
+      ownedApps: (appsByOwner.get(row.id) ?? []).map((app) => ({
+        id: app.id,
+        name: app.name,
+      })),
       cycleUsage: {
         usedUsdMicros,
         includedUsdMicros,
