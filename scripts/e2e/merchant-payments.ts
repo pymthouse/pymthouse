@@ -200,7 +200,7 @@ async function stripe<T = Record<string, unknown>>(
   });
   const body = (await response.json()) as T & { error?: { message?: string } };
   if (!response.ok) {
-    fail(`Stripe ${init.method ?? "GET"} ${path} → ${response.status}: ${body.error?.message}`);
+    fail(`Stripe ${init.method ?? "GET"} request failed (status ${response.status})`);
   }
   return body;
 }
