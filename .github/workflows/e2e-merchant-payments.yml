@@ -89,7 +89,8 @@ jobs:
       url: ${{ vars.E2E_BASE_URL }}
 
     env:
-      E2E_STATE_FILE: ${{ runner.temp }}/merchant-payments-state.json
+      # runner.temp is not resolvable in job-level env (no runner assigned yet
+      # at parse time) — computed into $GITHUB_ENV by the first step instead.
       E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
       E2E_CLIENT_ID: ${{ vars.E2E_CLIENT_ID }}
       E2E_M2M_CLIENT_ID: ${{ vars.E2E_M2M_CLIENT_ID }}
@@ -109,6 +110,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Resolve state file path
+        run: echo "E2E_STATE_FILE=$RUNNER_TEMP/merchant-payments-state.json" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
