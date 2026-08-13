@@ -219,9 +219,11 @@ async function ensureOwnerCustomerUncached(
     trimmedOwnerId,
     uniqueClientIds,
   );
+  // Neon (`listOwnedPublicClientIds`) is the source of truth for owned apps.
+  // Do not write comma-joined client ids into Konnect labels — Kong rejects
+  // commas and values over 63 chars (`labels.* [max_length]` / `[pattern]`).
   const metadata: Record<string, string> = {
     pymthouse_owner_user_id: trimmedOwnerId,
-    pymthouse_owned_client_ids: uniqueClientIds.join(","),
   };
 
   const existing = await findOpenMeterCustomerByKey(client, ownerKey);
