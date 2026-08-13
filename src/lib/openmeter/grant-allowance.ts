@@ -133,6 +133,7 @@ export async function grantAllowanceUsdMicros(input: {
     clientId: identity.publicClientId,
     externalUserId: provisionExternalUserId,
     featureKey,
+    identity,
   });
 
   return {

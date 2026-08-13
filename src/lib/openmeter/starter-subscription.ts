@@ -429,7 +429,7 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     };
   }
 
-  const { resolveOpenMeterBillingIdentity } = await import(
+  const { ownerCostRailUserId, resolveOpenMeterBillingIdentity } = await import(
     "@/lib/openmeter/billing-identity"
   );
   const identity = await resolveOpenMeterBillingIdentity({
@@ -437,16 +437,17 @@ export async function ensureStarterSubscriptionForAppUser(input: {
     externalUserId: input.externalUserId,
   });
 
-  // Owners share one platform Owner Starter plan (not a per-app Neon plans row).
+  // Owners and owner_rollup end-users share one platform Owner Starter.
   // Return the requesting app's local Starter id for callers that cache planId.
-  if (identity.isOwner && identity.ownerUserId) {
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId) {
     const { ensureOwnerStarterSubscription } = await import(
       "@/lib/openmeter/owner-starter-plan"
     );
     const { listOwnedPublicClientIds } = await import("./customers");
-    const ownedClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+    const ownedClientIds = await listOwnedPublicClientIds(ownerUserId);
     const ensured = await ensureOwnerStarterSubscription({
-      ownerUserId: identity.ownerUserId,
+      ownerUserId,
       publicClientIds: [
         ...new Set([identity.publicClientId, ...ownedClientIds]),
       ],

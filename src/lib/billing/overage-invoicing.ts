@@ -18,7 +18,10 @@ import {
 } from "@/lib/openmeter/app-user-payment-method";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
-import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  ownerCostRailUserId,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import {
   getPrimaryOpenMeterSubscriptionForAppUser,
   resolveLocalPlanIdFromOpenMeterSubscription,
@@ -160,16 +163,15 @@ export async function resolveAllowsOverageInvoicing(input: {
       externalUserId,
     }));
 
-  if (identity.isOwner && identity.ownerUserId) {
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId) {
     const { ownerWalletAllowsOverageInvoicing } = await import(
       "@/lib/openmeter/owner-paid-plan"
     );
-    const ownerAllows = await ownerWalletAllowsOverageInvoicing(
-      identity.ownerUserId,
-    );
+    const ownerAllows = await ownerWalletAllowsOverageInvoicing(ownerUserId);
     return decideAllowsOverageInvoicing({
-      isOwner: true,
-      billingMode: null,
+      isOwner: identity.isOwner,
+      billingMode: identity.isOwner ? null : "owner_rollup",
       ownerAllowsOverage: ownerAllows,
       merchantConnectReady: false,
       merchantChargeable: false,

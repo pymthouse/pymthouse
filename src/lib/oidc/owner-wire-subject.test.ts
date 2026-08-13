@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { ownerWireUsageSubjectFromJwt } from "@/lib/openmeter/billing-identity";
 import {
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
@@ -11,12 +12,14 @@ import {
 /**
  * The ingest chain that decides whether usage is billable:
  *
- *   token user_type  →  webhook usage_subject  →  collector CE subject
+ *   token user_type / cost_owner_user_id  →  webhook usage_subject  →  collector CE subject
  *
  * The collector has no database. It decides "owner" purely from the `owner:`
- * prefix the webhook applies when `user_type === "app_owner"`. If a token
- * minter omits that claim, owner traffic lands on `app_…:{ownerId}` — a
- * subject no customer is attributed, so OpenMeter never invoices it.
+ * prefix. Owners get that prefix from `user_type === "app_owner"`. owner_rollup
+ * end-users get it from `cost_owner_user_id` (the app owner's users.id) so
+ * traffic lands on the owner wallet, not `owner:{endUserId}` or the compound
+ * `app_…:{endUserId}` key. If a token minter omits both, owner traffic lands
+ * on `app_…:{ownerId}` — a subject no customer is attributed.
  *
  * These tests pin the contract in the same shape the collector implements
  * (deploy/openmeter-collector/collector.yaml), so a change on either side
@@ -24,10 +27,16 @@ import {
  */
 
 /** Mirrors `withOwnerBillingUsageSubject` in remote-signer-webhook-config. */
-function webhookUsageSubject(userType: string, bareSubject: string): string {
-  if (userType !== "app_owner") return bareSubject;
-  if (bareSubject.startsWith("owner:")) return bareSubject;
-  return buildOwnerWireSubject(bareSubject);
+function webhookUsageSubject(
+  userType: string,
+  bareSubject: string,
+  costOwnerUserId?: string,
+): string {
+  return ownerWireUsageSubjectFromJwt({
+    userType,
+    usageSubject: bareSubject,
+    costOwnerUserId,
+  }).usageSubject;
 }
 
 /** Mirrors the collector's owner-prefix strip in collector.yaml. */
@@ -41,10 +50,11 @@ function ingestSubject(
   userType: string,
   clientId: string,
   bareSubject: string,
+  costOwnerUserId?: string,
 ): string {
   return collectorCloudEventSubject(
     clientId,
-    webhookUsageSubject(userType, bareSubject),
+    webhookUsageSubject(userType, bareSubject, costOwnerUserId),
   );
 }
 
@@ -57,6 +67,19 @@ test("an app_owner token lands on the canonical owner customer key", () => {
 test("an end-user token lands on the canonical compound customer key", () => {
   const subject = ingestSubject("external_user", "app_demo", "ext-9");
   assert.equal(subject, buildOpenMeterCustomerKey("app_demo", "ext-9"));
+});
+
+test("cost_owner_user_id meters owner_rollup traffic onto the owner wallet", () => {
+  const ownerId = "owner-uuid";
+  const subject = ingestSubject(
+    "external_user",
+    "app_demo",
+    "ext-9",
+    ownerId,
+  );
+  assert.equal(subject, buildOwnerCustomerKey(ownerId));
+  assert.notEqual(subject, buildOpenMeterCustomerKey("app_demo", "ext-9"));
+  assert.notEqual(subject, buildOwnerCustomerKey("ext-9"));
 });
 
 test("an app_user token for a non-owner is unchanged", () => {

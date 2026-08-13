@@ -8,7 +8,10 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
-import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  ownerCostRailUserId,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { NETWORK_FEE_USD_MICROS_METER, getHostedOpenMeterUrl, isKonnectMeteringUrl } from "@/lib/openmeter/constants";
 import { buildOwnerMeterSubjects } from "@/lib/openmeter/customer-key";
@@ -275,16 +278,17 @@ async function resolveBillingCustomerAndSubjects(input: {
   const billingConfig = await getAppBillingConfig(appId);
   const merchant = billingConfig?.billingMode === "merchant";
 
-  if (identity.isOwner && identity.ownerUserId) {
-    const publicClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId) {
+    const publicClientIds = await listOwnedPublicClientIds(ownerUserId);
     const ownerCustomer = await ensureOwnerCustomer(
       client,
-      identity.ownerUserId,
+      ownerUserId,
       publicClientIds,
     );
     return {
       customerId: ownerCustomer.id?.trim() || null,
-      meterSubjects: buildOwnerMeterSubjects(identity.ownerUserId, [
+      meterSubjects: buildOwnerMeterSubjects(ownerUserId, [
         identity.publicClientId,
         ...publicClientIds,
       ]),

@@ -397,21 +397,22 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
   externalUserId: string;
   displayName?: string;
 }): Promise<OpenMeterCustomerIdentity> {
-  const { resolveOpenMeterBillingIdentity } = await import(
+  const { ownerCostRailUserId, resolveOpenMeterBillingIdentity } = await import(
     "@/lib/openmeter/billing-identity"
   );
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
-  if (identity.isOwner && identity.ownerUserId) {
-    const ownedClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId) {
+    const ownedClientIds = await listOwnedPublicClientIds(ownerUserId);
     const publicClientIds = [
       ...new Set([identity.publicClientId, ...ownedClientIds]),
     ];
     return ensureOwnerCustomer(
       input.client,
-      identity.ownerUserId,
+      ownerUserId,
       publicClientIds,
     );
   }

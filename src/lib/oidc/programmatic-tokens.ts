@@ -14,7 +14,10 @@ import { and, eq } from "drizzle-orm";
 import { validateClientSecret } from "./clients";
 import { billingPatternFromAllowedScopesString } from "@/lib/allowed-scopes";
 import { assertSignJobNotMixedWithAdmin, SignJobScopeExclusivityError } from "@/lib/oidc/scopes";
-import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  costOwnerUserIdClaim,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -123,6 +126,7 @@ export async function issueProgrammaticTokens(input: {
     client_id: binding.oauthClientId,
     external_user_id: externalUserId,
     user_type: billingIdentity.isOwner ? "app_owner" : "app_user",
+    ...costOwnerUserIdClaim(billingIdentity),
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)

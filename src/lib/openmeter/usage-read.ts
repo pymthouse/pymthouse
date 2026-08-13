@@ -329,17 +329,20 @@ async function resolveUsageMeterSubjects(input: {
   if (!externalUserId) return undefined;
 
   try {
-    const { resolveOpenMeterBillingIdentity } = await import(
+    const { ownerCostRailUserId, resolveOpenMeterBillingIdentity } = await import(
       "@/lib/openmeter/billing-identity"
     );
     const identity = await resolveOpenMeterBillingIdentity({
       clientId: input.clientId,
       externalUserId,
     });
-    if (identity.isOwner && identity.ownerUserId) {
-      return buildOwnerMeterSubjects(identity.ownerUserId, [
-        identity.publicClientId,
-      ]);
+    const ownerUserId = ownerCostRailUserId(identity);
+    if (ownerUserId) {
+      return [
+        ...buildOwnerMeterSubjects(ownerUserId, [identity.publicClientId]),
+        // Dual-read this cycle's pre-rollup compound events for this end-user.
+        buildOpenMeterCustomerKey(identity.publicClientId, externalUserId),
+      ];
     }
     return [identity.customerKey];
   } catch {

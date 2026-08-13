@@ -184,10 +184,12 @@ export async function ingestSignedTicketEvent(input: {
     clientId: input.event.clientId,
     externalUserId: usageSubject,
   });
-  // Wire auth_id stays compound app_…:platformUserId for analytics.
-  // CloudEvent subject must be the Konnect customer key for owners
-  // (owner:{id}) — Konnect billing beta clears multi-subject attribution
-  // when a subscription is created, so compound subjects cannot settle.
+  // Wire auth_id stays compound app_…:{actor} for analytics.
+  // CloudEvent subject is the Konnect customer key: owners, Explorers,
+  // and owner_rollup end-users share `{users.id}`. Merchant EUs stay
+  // compound. Konnect billing beta clears multi-subject attribution
+  // when a subscription is created, so compound subjects cannot settle
+  // on the owner wallet.
   const platformUserId = identity.isOwner
     ? (identity.ownerUserId as string)
     : usageSubject;
