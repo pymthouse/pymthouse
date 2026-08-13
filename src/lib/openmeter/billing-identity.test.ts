@@ -270,10 +270,12 @@ test("assertAppUserRetailBillingSubject allows merchant end-users", async (t) =>
 
   await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
   resetBillingIdentityCacheForTests();
-  await assertAppUserRetailBillingSubject({
-    clientId: seeded.clientId,
-    externalUserId: endUserId,
-  });
+  await assert.doesNotReject(() =>
+    assertAppUserRetailBillingSubject({
+      clientId: seeded.clientId,
+      externalUserId: endUserId,
+    }),
+  );
 });
 
 test("assertAppUserRetailBillingSubject rejects platform-default members", async (t) => {

@@ -45,21 +45,15 @@ import {
   auditBillingConsistency,
   type BillingConsistencyFinding,
 } from "../src/lib/openmeter/billing-consistency";
-import {
-  createKonnectCreditGrant,
-  getKonnectCreditBalance,
-} from "../src/lib/openmeter/konnect-credits";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
 import { ensureStarterSubscriptionForAppUser } from "../src/lib/openmeter/starter-subscription";
+import { requireKonnectConfig } from "./lib/openmeter-konnect-migrate";
 import {
-  isOpenMeterSubscriptionActive,
-  listOpenMeterSubscriptionsForCustomer,
-} from "../src/lib/openmeter/subscription-read";
-import {
-  readKonnectSubjectKeys,
-  replaceKonnectCustomerSubjectKeys,
-  requireKonnectConfig,
-} from "./lib/openmeter-konnect-migrate";
+  cancelLegacySubscriptions,
+  findCustomerIdByKey,
+  releaseLegacySubjectKeys,
+  transferLegacyWalletBalance,
+} from "./lib/openmeter-legacy-wallet-migrate";
 
 type Args = {
   clientId?: string;
@@ -254,121 +248,109 @@ function attributionGateFindings(
   );
 }
 
-async function findCustomerIdByKey(
-  client: ReturnType<typeof getHostedAdminClient>,
-  customerKey: string,
-): Promise<string | null> {
-  const listed = await client.customers.list({
-    key: customerKey,
-    page: 1,
-    pageSize: 50,
-  });
-  const match = (listed?.items ?? []).find((item) => item.key === customerKey);
-  return match?.id ?? null;
-}
-
-async function transferBalance(input: {
-  legacyCustomerId: string;
-  legacyKey: string;
-  targetCustomerId: string;
-  targetKey: string;
-  featureKey: string;
-  apiKey: string | undefined;
-  dryRun: boolean;
-}): Promise<bigint> {
-  const balance = await getKonnectCreditBalance({
-    customerId: input.legacyCustomerId,
-    apiKey: input.apiKey,
-  });
-  if (!balance || balance.balanceUsdMicros <= 0n) {
-    console.log(`  [skip] empty legacy wallet ${input.legacyKey}`);
-    return 0n;
-  }
-  console.log(
-    `  [legacy] ${input.legacyKey} balance=${balance.balanceUsdMicros.toString()} micros`,
-  );
-  if (input.dryRun) {
-    return balance.balanceUsdMicros;
-  }
-  await createKonnectCreditGrant({
-    customerId: input.targetCustomerId,
-    amountUsdMicros: balance.balanceUsdMicros,
-    name: "Migrated end-user prepaid balance",
-    description: `Transferred from legacy ${input.legacyKey}`,
-    featureKey: input.featureKey,
-    idempotencyKey: `migrate-eu:${input.targetCustomerId}:${input.legacyCustomerId}`,
-    apiKey: input.apiKey,
-  });
-  console.log(
-    `  [ok] granted ${balance.balanceUsdMicros.toString()} onto ${input.targetKey}`,
-  );
-  return balance.balanceUsdMicros;
-}
-
-async function cancelLegacySubscriptions(input: {
+async function ensureEndUserCustomer(input: {
   client: ReturnType<typeof getHostedAdminClient>;
-  customerId: string;
-  customerKey: string;
+  app: AppRow;
+  endUser: EndUserRow;
+  euKey: string;
   dryRun: boolean;
-}): Promise<number> {
-  const listed = await listOpenMeterSubscriptionsForCustomer(
-    input.client,
-    input.customerId,
-  );
-  const active = listed.filter((s) => isOpenMeterSubscriptionActive(s.status));
-  let cancels = 0;
-  for (const sub of active) {
-    if (input.dryRun) {
-      console.log(
-        `  [dry-run] would cancel ${sub.id} on legacy ${input.customerKey}`,
-      );
-    } else {
-      await input.client.subscriptions.cancel(sub.id, { timing: "immediate" });
-      console.log(`  [cancel] ${sub.id} on legacy ${input.customerKey}`);
-    }
-    cancels += 1;
+}): Promise<string | null> {
+  if (input.dryRun) {
+    console.log(`  [dry-run] would ensure customer ${input.euKey}`);
+    return null;
   }
-  return cancels;
+  const ensured = await ensureOpenMeterCustomer(
+    input.client,
+    input.euKey,
+    `End user ${input.endUser.externalUserId}`,
+  );
+  await recordBillingCustomer({
+    customerKey: input.euKey,
+    kind: "end_user",
+    endUserId: input.endUser.endUserId,
+    clientId: input.app.developerAppId,
+    openmeterCustomerId: ensured.id,
+  });
+  console.log(`  [ok] ensured ${input.euKey} id=${ensured.id}`);
+  return ensured.id;
 }
 
-async function releaseLegacySubjectKeys(input: {
-  customerId: string;
-  customerKey: string;
+async function migrateLegacyWallet(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  legacyKey: string;
+  euKey: string;
+  euCustomerId: string | null;
+  transferBalances: boolean;
+  cancelLegacy: boolean;
   dryRun: boolean;
+  apiKey: string | undefined;
   baseUrl: string;
-  apiKey: string;
 }): Promise<void> {
+  const legacyId = await findCustomerIdByKey(input.client, input.legacyKey);
+  if (!legacyId) {
+    console.log(`  [skip] no legacy wallet ${input.legacyKey}`);
+    return;
+  }
+
+  if (input.transferBalances) {
+    const targetCustomerId = input.euCustomerId ?? "dry-run";
+    await transferLegacyWalletBalance({
+      legacyCustomerId: legacyId,
+      legacyKey: input.legacyKey,
+      targetCustomerId,
+      targetKey: input.euKey,
+      featureKey: DEFAULT_TRIAL_FEATURE_KEY,
+      grantName: "Migrated end-user prepaid balance",
+      idempotencyKey: `migrate-eu:${targetCustomerId}:${legacyId}`,
+      apiKey: input.apiKey,
+      dryRun: input.dryRun || !input.euCustomerId,
+    });
+  }
+
+  if (!input.cancelLegacy) {
+    return;
+  }
+  await cancelLegacySubscriptions({
+    client: input.client,
+    customerId: legacyId,
+    customerKey: input.legacyKey,
+    dryRun: input.dryRun,
+  });
+  if (!input.apiKey) {
+    throw new Error(
+      "OPENMETER_API_KEY is required to release legacy subjects",
+    );
+  }
+  await releaseLegacySubjectKeys({
+    customerId: legacyId,
+    customerKey: input.legacyKey,
+    dryRun: input.dryRun,
+    baseUrl: input.baseUrl,
+    apiKey: input.apiKey,
+  });
+}
+
+async function provisionMerchantStarter(input: {
+  app: AppRow;
+  endUser: EndUserRow;
+  dryRun: boolean;
+}): Promise<void> {
+  if (input.app.billingMode !== "merchant") {
+    return;
+  }
   if (input.dryRun) {
     console.log(
-      `  [dry-run] would clear subjectKeys on legacy ${input.customerKey}`,
+      `  [dry-run] would provision merchant Starter for ${input.endUser.externalUserId}`,
     );
     return;
   }
-  const retiredKey = `deprecated:${input.customerKey}`;
-  try {
-    const updated = await replaceKonnectCustomerSubjectKeys({
-      baseUrl: input.baseUrl,
-      apiKey: input.apiKey,
-      customerId: input.customerId,
-      name: `Legacy ${input.customerKey}`,
-      subjectKeys: [retiredKey],
-    });
-    const after = readKonnectSubjectKeys(updated);
-    if (after.length !== 1 || after[0] !== retiredKey) {
-      console.warn(
-        `  [warn] release incomplete on ${input.customerKey}: got ${JSON.stringify(after)}`,
-      );
-      return;
-    }
-    console.log(
-      `  [ok] released subjectKeys on ${input.customerKey} → ${retiredKey}`,
-    );
-  } catch (err) {
-    console.warn(
-      `  [warn] could not release subjectKeys on ${input.customerKey}:`,
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+  const sub = await ensureStarterSubscriptionForAppUser({
+    clientId: input.app.publicClientId,
+    externalUserId: input.endUser.externalUserId,
+  });
+  console.log(
+    `  [ok] merchant Starter openmeterSubscriptionId=${sub.openmeterSubscriptionId} created=${sub.created}`,
+  );
 }
 
 async function migrateEndUser(input: {
@@ -391,90 +373,32 @@ async function migrateEndUser(input: {
     `\n[end-user] ext=${input.endUser.externalUserId} eu=${euKey} legacy=${legacyKey}`,
   );
 
-  let euCustomerId: string | null = null;
-  if (input.dryRun) {
-    console.log(`  [dry-run] would ensure customer ${euKey}`);
-  } else {
-    const ensured = await ensureOpenMeterCustomer(
-      input.client,
-      euKey,
-      `End user ${input.endUser.externalUserId}`,
-    );
-    euCustomerId = ensured.id;
-    await recordBillingCustomer({
-      customerKey: euKey,
-      kind: "end_user",
-      endUserId: input.endUser.endUserId,
-      clientId: input.app.developerAppId,
-      openmeterCustomerId: ensured.id,
+  const euCustomerId = await ensureEndUserCustomer({
+    client: input.client,
+    app: input.app,
+    endUser: input.endUser,
+    euKey,
+    dryRun: input.dryRun,
+  });
+
+  await migrateLegacyWallet({
+    client: input.client,
+    legacyKey,
+    euKey,
+    euCustomerId,
+    transferBalances: input.transferBalances,
+    cancelLegacy: input.cancelLegacy,
+    dryRun: input.dryRun,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+
+  if (input.provisionMerchant) {
+    await provisionMerchantStarter({
+      app: input.app,
+      endUser: input.endUser,
+      dryRun: input.dryRun,
     });
-    console.log(`  [ok] ensured ${euKey} id=${ensured.id}`);
-  }
-
-  const legacyId = await findCustomerIdByKey(input.client, legacyKey);
-  if (!legacyId) {
-    console.log(`  [skip] no legacy wallet ${legacyKey}`);
-  } else {
-    if (input.transferBalances && euCustomerId) {
-      await transferBalance({
-        legacyCustomerId: legacyId,
-        legacyKey,
-        targetCustomerId: euCustomerId,
-        targetKey: euKey,
-        featureKey: DEFAULT_TRIAL_FEATURE_KEY,
-        apiKey: input.apiKey,
-        dryRun: input.dryRun,
-      });
-    } else if (input.transferBalances && input.dryRun) {
-      await transferBalance({
-        legacyCustomerId: legacyId,
-        legacyKey,
-        targetCustomerId: "dry-run",
-        targetKey: euKey,
-        featureKey: DEFAULT_TRIAL_FEATURE_KEY,
-        apiKey: input.apiKey,
-        dryRun: true,
-      });
-    }
-
-    if (input.cancelLegacy) {
-      await cancelLegacySubscriptions({
-        client: input.client,
-        customerId: legacyId,
-        customerKey: legacyKey,
-        dryRun: input.dryRun,
-      });
-      if (!input.apiKey) {
-        throw new Error(
-          "OPENMETER_API_KEY is required to release legacy subjects",
-        );
-      }
-      await releaseLegacySubjectKeys({
-        customerId: legacyId,
-        customerKey: legacyKey,
-        dryRun: input.dryRun,
-        baseUrl: input.baseUrl,
-        apiKey: input.apiKey,
-      });
-    }
-  }
-
-  if (
-    input.provisionMerchant &&
-    input.app.billingMode === "merchant" &&
-    !input.dryRun
-  ) {
-    const sub = await ensureStarterSubscriptionForAppUser({
-      clientId: input.app.publicClientId,
-      externalUserId: input.endUser.externalUserId,
-    });
-    console.log(
-      `  [ok] merchant Starter openmeterSubscriptionId=${sub.openmeterSubscriptionId} created=${sub.created}`,
-    );
-  } else if (input.provisionMerchant && input.dryRun) {
-    console.log(
-      `  [dry-run] would provision merchant Starter for ${input.endUser.externalUserId}`,
-    );
   }
 }
 

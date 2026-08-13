@@ -251,6 +251,27 @@ function matchesExternalUserFilter(
   );
 }
 
+/** Client_id match plus optional external_user_id actor filter for meter groupBy rows. */
+function acceptMeterDetailGroup(
+  group: Record<string, unknown>,
+  clientId: string,
+  filterExternalUserId?: string | null,
+  matchKeys?: Set<string>,
+): boolean {
+  if (clientIdFromGroup(group, clientId) !== clientId) {
+    return false;
+  }
+  if (matchKeys === undefined) {
+    return true;
+  }
+  const rawExternalUserId = groupByString(group, "external_user_id", "");
+  return matchesExternalUserFilter(
+    rawExternalUserId,
+    filterExternalUserId,
+    matchKeys,
+  );
+}
+
 /** Union of groupBy.external_user_id variants for one or more viewer subjects. */
 export function buildExternalUserIdMatchKeysForSubjects(
   subjects: ReadonlySet<string> | readonly string[] | null | undefined,
@@ -526,27 +547,22 @@ export function aggregatePipelineModelRows(input: {
   const matchKeys = input.filterExternalUserId
     ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
     : undefined;
-  const acceptGroup = (group: Record<string, unknown>): boolean => {
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) {
-      return false;
-    }
-    if (matchKeys === undefined) {
-      return true;
-    }
-    const rawExternalUserId = groupByString(group, "external_user_id", "");
-    return matchesExternalUserFilter(
-      rawExternalUserId,
-      input.filterExternalUserId,
-      matchKeys,
-    );
-  };
 
   const countByKey = new Map<string, number>();
   const metaByKey = new Map<string, { pipeline: string; modelId: string }>();
 
   for (const row of input.countRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
-    if (!acceptGroup(group)) continue;
+    if (
+      !acceptMeterDetailGroup(
+        group,
+        input.clientId,
+        input.filterExternalUserId,
+        matchKeys,
+      )
+    ) {
+      continue;
+    }
     const pipeline = groupByString(group, "pipeline", "unknown");
     const modelId = groupByString(group, "model_id", "unknown");
     const key = `${pipeline}|${modelId}`;
@@ -560,7 +576,16 @@ export function aggregatePipelineModelRows(input: {
   const feeByKey = new Map<string, number>();
   for (const row of input.feeRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
-    if (!acceptGroup(group)) continue;
+    if (
+      !acceptMeterDetailGroup(
+        group,
+        input.clientId,
+        input.filterExternalUserId,
+        matchKeys,
+      )
+    ) {
+      continue;
+    }
     const pipeline = groupByString(group, "pipeline", "unknown");
     const modelId = groupByString(group, "model_id", "unknown");
     const key = `${pipeline}|${modelId}`;
@@ -945,20 +970,6 @@ export function aggregateDailyPipelineModelRows(input: {
   const matchKeys = input.filterExternalUserId
     ? buildExternalUserIdMatchKeys(input.filterExternalUserId)
     : undefined;
-  const acceptGroup = (group: Record<string, unknown>): boolean => {
-    if (clientIdFromGroup(group, input.clientId) !== input.clientId) {
-      return false;
-    }
-    if (matchKeys === undefined) {
-      return true;
-    }
-    const rawExternalUserId = groupByString(group, "external_user_id", "");
-    return matchesExternalUserFilter(
-      rawExternalUserId,
-      input.filterExternalUserId,
-      matchKeys,
-    );
-  };
 
   const byKey = new Map<
     string,
@@ -973,7 +984,16 @@ export function aggregateDailyPipelineModelRows(input: {
 
   for (const row of input.countRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
-    if (!acceptGroup(group)) continue;
+    if (
+      !acceptMeterDetailGroup(
+        group,
+        input.clientId,
+        input.filterExternalUserId,
+        matchKeys,
+      )
+    ) {
+      continue;
+    }
     const pipeline = groupByString(group, "pipeline", "unknown");
     const modelId = groupByString(group, "model_id", "unknown");
     const day = dateKeyFromMeterWindow(row);
@@ -992,7 +1012,16 @@ export function aggregateDailyPipelineModelRows(input: {
 
   for (const row of input.feeRows) {
     const group = (row.groupBy || {}) as Record<string, unknown>;
-    if (!acceptGroup(group)) continue;
+    if (
+      !acceptMeterDetailGroup(
+        group,
+        input.clientId,
+        input.filterExternalUserId,
+        matchKeys,
+      )
+    ) {
+      continue;
+    }
     const pipeline = groupByString(group, "pipeline", "unknown");
     const modelId = groupByString(group, "model_id", "unknown");
     const day = dateKeyFromMeterWindow(row);
