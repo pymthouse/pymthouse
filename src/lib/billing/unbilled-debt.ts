@@ -356,8 +356,34 @@ export async function getUnbilledDebtDetails(input: {
 
   if (customerId) {
     const looked = await lookupUnbilledInvoiceDebt(customerId);
-    if (looked.ok) {
+    // A confirmed non-zero read is trusted outright: at least one item in the
+    // list genuinely matched this customer, so the filter demonstrably did
+    // its job for this call. A confident-looking $0 is NOT trusted on its
+    // own — Konnect's customer filter on the invoice list has been observed
+    // to be silently ignored, returning an unfiltered page that happens to
+    // contain none of this customer's invoices. That's indistinguishable
+    // from a genuine zero from this signal alone, so cross-check against the
+    // meter estimate below rather than risk under-reporting debt (the unsafe
+    // direction for a spend gate) on a false negative.
+    if (looked.ok && looked.usdMicros > 0n) {
       return { usdMicros: looked.usdMicros, source: "gathering_invoice" };
+    }
+    if (looked.ok) {
+      const [meter, remainingIncluded] = await Promise.all([
+        periodMeterDebtUsdMicros(meterSubjects),
+        getRemainingPlanDiscountUsdMicros({ clientId, externalUserId }).catch(
+          () => 0n,
+        ),
+      ]);
+      const meterDebt = netBillableMeterDebtUsdMicros({
+        meterUsdMicros: meter,
+        remainingIncludedUsdMicros: remainingIncluded,
+      });
+      // Both signals agree on zero: genuine, not a filter miss.
+      if (meterDebt <= 0n) {
+        return { usdMicros: 0n, source: "gathering_invoice" };
+      }
+      return { usdMicros: meterDebt, source: "meter_estimate" };
     }
   }
 
