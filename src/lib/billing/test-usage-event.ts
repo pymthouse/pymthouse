@@ -57,7 +57,18 @@ export async function ingestTestUsageEvent(input: {
   publicClientId: string;
   externalUserId: string;
   amountUsd: unknown;
-  /** When true, force mid-cycle invoice raise after ingest settles. */
+  /**
+   * Force a mid-cycle invoice raise after ingest settles. Opt-in — ingesting
+   * usage and demanding immediate collection are separate actions; forcing
+   * on every call regardless of caller intent is what produced repeated
+   * collisions with an already-unresolved invoicing run for the same
+   * customer back when this called OpenMeter directly. Settlement's
+   * per-customer Kafka lane now absorbs that collision instead (see
+   * invoice-trigger's `"queued"` outcome), but the opt-in stays: ingesting
+   * usage and demanding immediate collection are still separate actions.
+   * Callers that want the old always-collect behavior should pass
+   * `collect: true` explicitly.
+   */
   collect?: boolean;
 }, deps: TestUsageEventDeps = DEFAULT_TEST_USAGE_EVENT_DEPS): Promise<TestUsageEventResult> {
   if (!deps.isHostedAdminClientAvailable()) {
@@ -125,7 +136,9 @@ export async function ingestTestUsageEvent(input: {
 
   return {
     ...result,
-    collected: collect.outcome === "invoiced",
+    // "queued" means settlement accepted the raise onto its Kafka lane, not
+    // that an invoice exists yet — see invoice-trigger's outcome doc comment.
+    collected: collect.outcome === "queued",
     collect,
   };
 }

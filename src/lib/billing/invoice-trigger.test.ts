@@ -169,3 +169,4 @@ test("invoiceGatheringForIdentity skips blank ids", async () => {
     { outcome: "skipped", invoiceIds: [] },
   );
 });
+

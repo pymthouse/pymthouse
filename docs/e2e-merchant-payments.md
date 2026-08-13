@@ -29,7 +29,8 @@ kcat → livepeer-gateway-events      → benthos openmeter-collector
                                     → Konnect /events (CloudEvent)
 GET  …/usage, …/usage/balance,
      …/billing/state, …/billing/wallet → metering + balance gate
-POST …/billing/collect              → OpenMeter invoicePendingLines + advance
+POST …/billing/collect              → settlement /requests/collect (Kafka lane)
+                                       → OpenMeter invoicePendingLines + advance
 OpenMeter invoice notification      → settlement producer → Kafka → worker  ─┐
 worker                              → Stripe Connect off-session charge      ├─ Plane C
 worker                              → custom-invoicing payment/status        ─┘
@@ -180,12 +181,19 @@ subject is still permitted to spend precisely because a card is on file.
 
 ### 4. Manual collection (`collect`)
 
-`POST …/billing/collect` must return `outcome: "invoiced"` with a non-empty
-`invoiceIds`. `skipped` and `rate_limited` fail the stage — they are the two ways
-this test silently stops testing anything. The stage also asserts
-`collection.nextAction === "awaiting_settlement"`, then calls collect a second
-time and requires `rate_limited` or `skipped`, pinning the documented
-idempotency.
+Settlement owns the actual raise now (its own per-customer Kafka lane calls
+OpenMeter `invoicePendingLines`, not pymthouse), so `POST …/billing/collect`
+must return `outcome: "queued"` — that only confirms settlement accepted the
+request, not that an invoice exists yet. `skipped` and `rate_limited` fail the
+stage — they are the two ways this test silently stops testing anything.
+
+The stage then polls `GET …/billing/state` until `collection.nextAction ===
+"awaiting_settlement"`, which is the actual assertion that settlement raised
+the invoice. It then calls collect a second time and requires `rate_limited`,
+`skipped`, or `queued` — a second `queued` is expected here (the poll above
+usually outlasts the trigger cooldown) and is fine: settlement's Kafka lane,
+not pymthouse's cooldown, is what now guarantees the second request cannot
+raise a duplicate invoice.
 
 ### 5. Charge, invoices, transactions (`settle`)
 

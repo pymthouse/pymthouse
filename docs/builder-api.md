@@ -868,20 +868,20 @@ Debt is read from the OpenMeter gathering invoice (`debtSource: "gathering_invoi
 
 Money moves in two ways, both outside the mint path:
 
-- **By amount.** When unbilled debt enters the lead window (`collection.leadThreshold`, default `min(ceiling / 2, $5)`), PymtHouse calls OpenMeter `invoicePendingLines` + `advance` for that customer. Settlement (merchant Connect) or the OpenMeter Stripe app (owner) then collects asynchronously.
+- **By amount.** When unbilled debt enters the lead window (`collection.leadThreshold`, default `min(ceiling / 2, $5)`), PymtHouse asks settlement to raise that customer's pending gathering lines into a real invoice (`POST /requests/collect` on the settlement producer). Settlement's per-customer Kafka lane executes the raise — serialized against any other raise already in flight for the same customer — then advances it the same as before; settlement (merchant Connect) or the OpenMeter Stripe app (owner) then collects asynchronously.
 - **By time.** The app's OpenMeter billing profile uses anchored `DAY` collection alignment (`collection.collectionInterval`), so anything still gathering is swept daily even if it never reaches the lead threshold.
 
 Debt under `collection.minimumCharge` ($0.50, Stripe's floor) is never invoiced — such an invoice could only ever become a stuck draft. That floor is why the overage limit must be at least $2.00: the limit has to leave room for an invoice to be raised, settled and cleared before the gate locks the subject out.
 
-`POST …/billing/collect` forces a raise now, bypassing the lead window and OpenMeter's collection period. It is idempotent within the trigger cooldown, so a retry returns `rate_limited` with the current state rather than a duplicate invoice.
+`POST …/billing/collect` requests a raise now, bypassing the lead window and asking settlement to push past OpenMeter's collection period and approval delay too. It is idempotent within the trigger cooldown, so a retry returns `rate_limited` with the current state rather than queuing a duplicate raise. `outcome: "queued"` means settlement accepted the request onto its lane, not that an invoice exists yet — settlement raises it asynchronously, so watch `billingState` (returned alongside the outcome) or billing history for the invoice to land rather than treating this response as the final word.
 
 | `outcome` | Meaning |
 | --- | --- |
-| `invoiced` | One or more invoices were raised; `invoiceIds` lists them. |
+| `queued` | Settlement accepted the raise request onto its per-customer Kafka lane. `invoiceIds` is always empty — the invoice, if any, is created asynchronously; read it back from billing history or `billingState`. |
 | `skipped` | Nothing to invoice, or debt is under the minimum charge. |
 | `rate_limited` | A raise for this subject already happened inside the cooldown. |
-| `unavailable` | The OpenMeter admin client is not configured in this environment. |
-| `error` | The upstream call failed (`502`). |
+| `unavailable` | The OpenMeter admin client or settlement's collect endpoint is not configured in this environment. |
+| `error` | The request to settlement failed (`502`). |
 
 ### App activation gate
 

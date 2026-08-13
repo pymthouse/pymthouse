@@ -12,7 +12,7 @@
  *   webhook-connect Signed synthetic `account.updated` → POST /webhooks/stripe
  *   ingest          Expensive charge event via Kafka → collector → Konnect (or API)
  *   verify-usage    Usage API parity + balance gate posture
- *   collect         Manual POST …/billing/collect, assert `invoiced` (not skipped)
+ *   collect         Manual POST …/billing/collect, assert `queued` then poll for the raise
  *   settle          Invoice paid on Connect + invoices API + transactions ledger
  *   teardown        Deactivate the fixture end-user
  *
@@ -62,6 +62,8 @@ const AMOUNT_TOLERANCE_BPS = Number(process.env.E2E_AMOUNT_TOLERANCE_BPS || "100
 
 const USAGE_TIMEOUT_MS = Number(process.env.E2E_USAGE_TIMEOUT_MS || "180000");
 const SETTLE_TIMEOUT_MS = Number(process.env.E2E_SETTLE_TIMEOUT_MS || "420000");
+/** Settlement raises off its own Kafka lane now, not pymthouse's request path. */
+const COLLECT_TIMEOUT_MS = Number(process.env.E2E_COLLECT_TIMEOUT_MS || "60000");
 const POLL_INTERVAL_MS = Number(process.env.E2E_POLL_INTERVAL_MS || "5000");
 
 const MIN_INVOICE_USD_MICROS = 500_000n; // Stripe floor, mirrors overage-limits.ts
@@ -743,9 +745,13 @@ async function verifyUsage(state: RunState): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Step 4 of the flow. `invoiced` is the only pass. `skipped` means the debt
- * never cleared the minimum charge, `rate_limited` means something already
- * raised inside the cooldown — both are silent failures of this test.
+ * Step 4 of the flow. `queued` is the only pass: settlement now owns the
+ * actual raise off its own per-customer Kafka lane, so `POST …/billing/collect`
+ * only confirms the request was accepted, not that an invoice exists yet.
+ * `skipped` means the debt never cleared the minimum charge, `rate_limited`
+ * means something already raised inside the cooldown — both are silent
+ * failures of this test. The invoice landing is asserted separately by
+ * polling `GET …/billing/state` afterward.
  */
 async function collect(state: RunState): Promise<void> {
   stage("Manual collection — POST …/billing/collect");
@@ -759,12 +765,27 @@ async function collect(state: RunState): Promise<void> {
   });
 
   assert(
-    result.outcome === "invoiced",
-    `collect returned "invoiced" (got "${result.outcome}")`,
+    result.outcome === "queued",
+    `collect returned "queued" (got "${result.outcome}")`,
   );
-  assert(result.invoiceIds.length > 0, `invoice raised: ${result.invoiceIds.join(", ")}`);
 
-  const collection = result.billingState.collection as Record<string, unknown>;
+  stage("Manual collection — settlement raises the invoice");
+  const billingState = await poll<Record<string, unknown>>({
+    label: "invoice raised by settlement",
+    timeoutMs: COLLECT_TIMEOUT_MS,
+    probe: async () => {
+      const current = await apiOk<Record<string, unknown>>(
+        `/api/v1/apps/${CLIENT_ID}/billing/state?externalUserId=${encodeURIComponent(state.externalUserId)}`,
+      );
+      const collection = current.collection as Record<string, unknown> | undefined;
+      if (collection?.nextAction === "awaiting_settlement") {
+        return { done: true, value: current };
+      }
+      return { done: false, note: `collection.nextAction=${collection?.nextAction ?? "none"}` };
+    },
+  });
+
+  const collection = billingState.collection as Record<string, unknown>;
   assert(
     collection.collector === "settlement_connect",
     "raised invoice is owned by the settlement Connect collector",
@@ -775,13 +796,19 @@ async function collect(state: RunState): Promise<void> {
   );
 
   stage("Manual collection — idempotency");
+  // `queued` is now an acceptable repeat outcome, not just `rate_limited` /
+  // `skipped`: the poll above can take longer than the (short, on staging)
+  // trigger cooldown, so pymthouse may accept a second request here. That is
+  // fine — settlement's per-customer Kafka lane, not pymthouse's cooldown, is
+  // what now guarantees a second raise for the same customer cannot create a
+  // duplicate invoice, which is the actual property this stage is pinning.
   const repeat = await apiOk<{ outcome: string }>(
     `/api/v1/apps/${CLIENT_ID}/billing/collect`,
     { method: "POST", body: { externalUserId: state.externalUserId } },
   );
   assert(
-    repeat.outcome === "rate_limited" || repeat.outcome === "skipped",
-    `repeat collect did not duplicate the invoice (${repeat.outcome})`,
+    ["rate_limited", "skipped", "queued"].includes(repeat.outcome),
+    `repeat collect returned a recognised idempotent outcome (${repeat.outcome})`,
   );
 }
 

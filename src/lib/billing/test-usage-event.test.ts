@@ -17,7 +17,7 @@ function createDeps(overrides: Partial<TestUsageDeps> = {}): TestUsageDeps {
     }),
     ingestSignedTicketEvent: async () => undefined,
     invoiceGatheringForIdentity: async () => ({
-      outcome: "invoiced",
+      outcome: "queued",
       invoiceIds: ["inv_1"],
     }),
     formatUsdMicrosForDisplay: (amountUsdMicros: string) => `usd:${amountUsdMicros}`,
@@ -104,7 +104,7 @@ test("ingestTestUsageEvent with collect=false skips settle wait and forced colle
       },
       invoiceGatheringForIdentity: async () => {
         invoiceCalled += 1;
-        return { outcome: "invoiced", invoiceIds: ["inv_1"] };
+        return { outcome: "queued", invoiceIds: ["inv_1"] };
       },
       sleep: async () => {
         sleepCalled += 1;
@@ -145,7 +145,7 @@ test("ingestTestUsageEvent defaults collect=true and forces collection after set
       },
       invoiceGatheringForIdentity: async (input) => {
         collectInput = input as unknown as Record<string, unknown>;
-        return { outcome: "invoiced", invoiceIds: ["inv_9"] };
+        return { outcome: "queued", invoiceIds: ["inv_9"] };
       },
     }),
   );
@@ -158,12 +158,12 @@ test("ingestTestUsageEvent defaults collect=true and forces collection after set
   });
   assert.equal(result.collected, true);
   assert.deepEqual(result.collect, {
-    outcome: "invoiced",
+    outcome: "queued",
     invoiceIds: ["inv_9"],
   });
 });
 
-test("ingestTestUsageEvent reports collected=false when collect outcome is not invoiced", async () => {
+test("ingestTestUsageEvent reports collected=false when collect outcome is not queued", async () => {
   const result = await ingestTestUsageEvent(
     {
       publicClientId: "pc_123",
