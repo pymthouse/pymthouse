@@ -3,7 +3,10 @@
 The [customer-service](https://github.com/pymthouse/customer-service) console
 authenticates agents against this host’s OIDC issuer and calls admin billing
 APIs with a Bearer token that includes the `admin` scope. The DB role
-`users.role = admin` is still required (`getAdminUser`).
+`users.role = admin` is still required (`getAdminUser`). OIDC Bearers are
+accepted only when issued to this reserved RP (`web_customer_service` /
+`CS_OIDC_CLIENT_ID`); a developer app that lists `admin` in `allowed_scopes`
+cannot call `withAdminGuard` even after a platform admin consents.
 
 This is a **standalone** `oidc_clients` row (not a developer app). There is no
 `developer_apps` owner; only platform admins can see or edit it under
@@ -65,8 +68,9 @@ NEXTAUTH_SECRET=…
 
 ## Admin billing APIs used by CS
 
-All require platform admin (session cookie on this host **or** Bearer OIDC /
-`pmth_` token with `admin` scope + DB admin role):
+All require platform admin (session cookie on this host **or** a first-party
+`pmth_` token with `admin` scope **or** a CS-RP OIDC access token with `admin`
+scope, plus DB admin role):
 
 | Method | Path |
 | --- | --- |

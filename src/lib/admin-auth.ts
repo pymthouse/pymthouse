@@ -2,21 +2,38 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { eq } from "drizzle-orm";
 import { authOptions } from "@/lib/next-auth-options";
-import { authenticateRequestAsync, hasScope } from "@/lib/auth";
+import {
+  authenticateRequestAsync,
+  hasScope,
+  type AuthResult,
+} from "@/lib/auth";
 import { db } from "@/db/index";
 import { users } from "@/db/schema";
+import { isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
 
 /**
  * Resolve the platform-admin user for a request, or null.
  *
  * Two authentication paths, both of which require `users.role === "admin"`:
  *  - Dashboard NextAuth session cookie.
- *  - `Authorization: Bearer` with the `admin` scope: `pmth_…` session
- *    tokens or OIDC access tokens (JWT / opaque) from the CS RP.
+ *  - `Authorization: Bearer` with the `admin` scope:
+ *      - first-party `pmth_…` session tokens, or
+ *      - OIDC access tokens (JWT / opaque) whose `client_id` is the reserved
+ *        customer-service RP (`web_customer_service` / `CS_OIDC_CLIENT_ID`).
  *
  * The DB role is the source of truth on both paths; an admin-scoped token is
- * not sufficient on its own.
+ * not sufficient on its own. Developer-app OIDC clients must not reach
+ * `withAdminGuard` even if a platform admin consented to `admin`.
  */
+
+function isAllowedAdminBearer(auth: AuthResult): boolean {
+  if (!hasScope(auth.scopes, "admin") || !auth.userId) return false;
+  if (auth.source === "oidc") {
+    return isCustomerServiceOidcClient(auth.appId);
+  }
+  return true;
+}
+
 async function dashboardAdminSession() {
   try {
     return await getServerSession(authOptions);
@@ -43,7 +60,7 @@ export async function getAdminUser(request: NextRequest) {
   }
 
   const auth = await authenticateRequestAsync(request);
-  if (auth && hasScope(auth.scopes, "admin") && auth.userId) {
+  if (auth && isAllowedAdminBearer(auth) && auth.userId) {
     const rows = await db
       .select()
       .from(users)

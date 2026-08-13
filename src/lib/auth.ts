@@ -154,6 +154,7 @@ export async function consumeSessionByIdAndToken(
     label: row.label || null,
     scopes: row.scopes,
     tokenHash: hash,
+    source: "session",
   };
 }
 
@@ -165,6 +166,8 @@ export interface AuthResult {
   label?: string | null;
   scopes: string;
   tokenHash: string;
+  /** `session` = `pmth_` row; `oidc` = issuer JWT or opaque access token. */
+  source: "session" | "oidc";
 }
 
 /**
@@ -194,6 +197,7 @@ export async function validateBearerToken(token: string): Promise<AuthResult | n
     label: session.label || null,
     scopes: session.scopes,
     tokenHash: hash,
+    source: "session",
   };
 }
 
@@ -250,6 +254,7 @@ async function authenticateOpaqueOidcAccessToken(
       sessionId: jti,
       scopes: oidcScopesFromSpaceList(scope),
       tokenHash: "",
+      source: "oidc",
     };
   } catch {
     return null;
@@ -305,6 +310,7 @@ export async function authenticateRequestAsync(request: NextRequest): Promise<Au
     sessionId: typeof jwtPayload.jti === "string" ? jwtPayload.jti : `jwt_${Date.now()}`,
     scopes: effectiveScopes,
     tokenHash: "",
+    source: "oidc",
   };
 }
 
