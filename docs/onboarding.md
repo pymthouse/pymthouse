@@ -32,7 +32,7 @@ Admin configures tiers at `/admin/billing` (`owner_subscription_tiers`). Keys ar
 
 The platform default app is flagged `is_platform_default = 1` (or pinned via `PYMTHOUSE_DEFAULT_APP_CLIENT_ID`). Only platform **admins** may edit its config. Its `m2m_…` credentials are **not** for third-party Builder integrations — use your own app.
 
-Bootstrap ensures the default app exists: `npm run bootstrap`.
+Bootstrap ensures the default app and the customer-service OIDC client exist: `npm run bootstrap`.
 
 ## Personal Access Token (all developers)
 
