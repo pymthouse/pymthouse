@@ -339,9 +339,11 @@ async function resolveUsageMeterSubjects(input: {
     const ownerUserId = ownerCostRailUserId(identity);
     if (ownerUserId) {
       return [
-        ...buildOwnerMeterSubjects(ownerUserId, [identity.publicClientId]),
-        // Dual-read this cycle's pre-rollup compound events for this end-user.
-        buildOpenMeterCustomerKey(identity.publicClientId, externalUserId),
+        ...new Set([
+          ...buildOwnerMeterSubjects(ownerUserId, [identity.publicClientId]),
+          // Dual-read this cycle's pre-rollup compound events for this end-user.
+          buildOpenMeterCustomerKey(identity.publicClientId, externalUserId),
+        ]),
       ];
     }
     return [identity.customerKey];
