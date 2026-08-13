@@ -14,6 +14,7 @@ import { TurnkeyEmbeddedAuth } from "@/components/TurnkeyEmbeddedAuth";
 import { toSafeLogoUrl } from "@/lib/safe-logo-url";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
+import { isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
 
 interface AppBranding {
   mode: "blackLabel" | "whiteLabel";
@@ -266,6 +267,7 @@ export function LoginForm() {
   const sanitizedCallbackUrl = safeCallbackUrl(callbackUrl, "/onboarding");
   const clientId = searchParams.get("client_id");
   const isAdmin = searchParams.get("admin") === "1";
+  const sendToAdminLogin = isAdmin || isCustomerServiceOidcClient(clientId);
   const isOidcFlow = sanitizedCallbackUrl.includes("/oidc/");
   const needsBranding = !!(clientId && isOidcFlow);
   const { branding, brandingResolved } = useAppBranding(clientId, needsBranding);
@@ -273,14 +275,14 @@ export function LoginForm() {
   const resumePersona = personaFromCallback(sanitizedCallbackUrl);
   const oauthCallbackMessage = authErrorMessage(searchParams.get("error"));
 
-  // Preserve legacy ?admin=1 links by sending them to the dedicated admin login.
+  // Preserve legacy ?admin=1 links, and send the CS RP to token login.
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!sendToAdminLogin) return;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("admin");
     const qs = params.toString();
     router.replace(qs ? `/login/admin?${qs}` : "/login/admin");
-  }, [isAdmin, router, searchParams]);
+  }, [sendToAdminLogin, router, searchParams]);
 
   const isWhiteLabel = branding?.mode === "whiteLabel";
   const primaryColor = branding?.primaryColor || "#10b981";
@@ -294,7 +296,7 @@ export function LoginForm() {
     }
   }, [session, status, router, sanitizedCallbackUrl]);
 
-  const splash = splashMessage(isAdmin, status);
+  const splash = splashMessage(sendToAdminLogin, status);
   if (splash) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-zinc-950">

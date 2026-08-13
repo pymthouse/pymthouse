@@ -11,9 +11,9 @@ import { authOptions } from "@/lib/next-auth-options";
 import { getProvider } from "@/lib/oidc/provider";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
+import { asOidcAccountId, saveOidcConsentGrant } from "@/lib/oidc/consent-grant";
 import {
   OIDC_MOUNT_PATH,
-  getIssuer,
   getPublicOrigin,
 } from "@/lib/oidc/issuer-urls";
 
@@ -111,7 +111,7 @@ export async function POST(
     );
   }
 
-  const userId = (session.user as Record<string, unknown>).id as string;
+  const userId = asOidcAccountId((session.user as Record<string, unknown>).id);
   if (!userId) {
     return NextResponse.json(
       { error: "unauthorized", error_description: "Invalid session" },
@@ -141,22 +141,23 @@ export async function POST(
           error_description: "User denied the authorization request",
         };
       } else {
-        // Grant the requested scopes (OIDC + resource)
-        const grant = new provider.Grant();
-        grant.clientId = details.params.client_id as string;
-        grant.accountId = userId;
-
-        const requestedScopes = details.params.scope as string;
-        if (requestedScopes) {
-          grant.addOIDCScope(requestedScopes);
-          grant.addResourceScope(getIssuer(), requestedScopes);
+        const requestedScopes = details.params.scope as string | undefined;
+        const grantId = await saveOidcConsentGrant({
+          provider,
+          clientId: details.params.client_id as string,
+          accountId: userId,
+          scope: requestedScopes,
+        });
+        if (!grantId) {
+          return NextResponse.json(
+            { error: "invalid_scope", error_description: "No scopes were requested" },
+            { status: 400 },
+          );
         }
-
-        await grant.save();
 
         result = {
           consent: {
-            grantId: grant.jti,
+            grantId,
           },
         };
       }

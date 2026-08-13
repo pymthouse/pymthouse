@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { test } from "@/test-utils/db-guard";
-import { cleanupTestApp, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
+import { cleanupTestApp, createTestUserWithCleanup, seedDeveloperAppWithClient } from "@/test-utils/fixtures";
 import { checkAppAccess } from "./app-access";
 import {
   ensureConfidentialWebClient,
@@ -12,6 +12,7 @@ import {
   removeConfidentialWebClient,
   removeM2mBackendClient,
 } from "./clients";
+import { ensureCustomerServiceOidcClient } from "./customer-service-client";
 
 test("checkAppAccess allows public, m2m, and web sibling client ids", async (t) => {
   const app = await seedDeveloperAppWithClient({ status: "approved" });
@@ -71,4 +72,34 @@ test("checkAppAccess rejects oidc row with no developer app link", async (t) => 
     result.reason,
     "Client is not associated with a registered developer app",
   );
+});
+
+test("checkAppAccess allows the reserved customer-service RP without a developer app", async (t) => {
+  const clientId = `web_cs_${Date.now().toString(16)}`;
+  t.after(async () => {
+    await db.delete(oidcClients).where(eq(oidcClients.clientId, clientId));
+  });
+  const previous = process.env.CS_OIDC_CLIENT_ID;
+  process.env.CS_OIDC_CLIENT_ID = clientId;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CS_OIDC_CLIENT_ID;
+    else process.env.CS_OIDC_CLIENT_ID = previous;
+  });
+
+  await ensureCustomerServiceOidcClient({
+    clientId,
+    redirectUris: ["http://localhost:3010/api/auth/callback/pymthouse"],
+  });
+  const result = await checkAppAccess(clientId, null);
+  assert.equal(result.allowed, true);
+  assert.equal(result.appName, "Customer Service");
+
+  const developer = await createTestUserWithCleanup(t, { role: "developer" });
+  const denied = await checkAppAccess(clientId, developer);
+  assert.equal(denied.allowed, false);
+  assert.match(denied.reason ?? "", /platform admin/);
+
+  const admin = await createTestUserWithCleanup(t, { role: "admin" });
+  const allowed = await checkAppAccess(clientId, admin);
+  assert.equal(allowed.allowed, true);
 });

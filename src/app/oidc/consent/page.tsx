@@ -8,6 +8,7 @@ import { getClient } from "@/lib/oidc/clients";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
 import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { eq } from "drizzle-orm";
 import { IncomingMessage, ServerResponse } from "node:http";
@@ -65,9 +66,6 @@ export default async function ConsentPage({
   }
 
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    redirect(`/login?callbackUrl=${encodeURIComponent(`/oidc/consent?uid=${uid}`)}`);
-  }
 
   // Fetch interaction details from the provider
   let interactionDetails: {
@@ -111,6 +109,9 @@ export default async function ConsentPage({
   }
 
   const clientId = interactionDetails.params.client_id as string;
+  if (!session?.user) {
+    redirect(oidcLoginRedirect(clientId, `/oidc/consent?uid=${uid}`));
+  }
   const redirectUri = interactionDetails.params.redirect_uri as string;
   const scope = interactionDetails.params.scope as string;
 
