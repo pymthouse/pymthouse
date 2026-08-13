@@ -4,8 +4,9 @@
  * Replaces the 7 custom OIDC route files with a single certified provider.
  */
 
-import { Provider, interactionPolicy } from "oidc-provider";
+import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
+import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
 import { PostgresOidcAdapter } from "./adapter";
 import { findAccount } from "./account";
 import { getIssuer } from "./issuer-urls";
@@ -433,7 +434,9 @@ export async function getProvider(): Promise<Provider> {
         },
         getResourceServerInfo: async (_ctx, resourceIndicator, _client) => {
           if (resourceIndicator !== issuer) {
-            throw new Error(`Unknown resource indicator: ${resourceIndicator}`);
+            throw new oidcErrors.InvalidTarget(
+              `Unknown resource indicator: ${resourceIndicator}`,
+            );
           }
           return {
             scope: "openid email profile sign:job users:read users:write users:token device:approve admin",
@@ -491,6 +494,11 @@ export async function getProvider(): Promise<Provider> {
         sameSite: "lax" as const,
         path: "/",
       },
+      long: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+      },
     },
 
     // Conformant id_token claims (only include sub by default, rest via userinfo)
@@ -502,23 +510,20 @@ export async function getProvider(): Promise<Provider> {
       idTokenSigningAlgValues: ["RS256"],
     },
 
-    // Load existing grants for returning users
-    loadExistingGrant: async (ctx) => {
-      const grantId =
-        ctx.oidc.result?.consent?.grantId ||
-        ctx.oidc.session!.grantIdFor(ctx.oidc.client!.clientId);
-
-      if (grantId) {
-        const grant = await ctx.oidc.provider.Grant.find(grantId);
-        if (grant) return grant;
-      }
-
-      return undefined;
-    },
+    loadExistingGrant,
   };
 
   _provider = new Provider(issuer, configuration);
   patchHashedClientSecretComparison(_provider);
+  _provider.on("server_error", (ctx, err) => {
+    const clientId = (ctx as { oidc?: { client?: { clientId?: string } } })
+      .oidc?.client?.clientId;
+    console.error("[OIDC] server_error", {
+      path: (ctx as { path?: string }).path,
+      clientId,
+      err,
+    });
+  });
 
   // Trust the proxy (Next.js + reverse proxy)
   _provider.proxy = true;
