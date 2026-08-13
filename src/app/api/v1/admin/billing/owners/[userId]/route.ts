@@ -17,7 +17,7 @@ import {
   ensureOwnerStarterSubscription,
   invalidateOwnerStarterPlanCache,
 } from "@/lib/openmeter/owner-starter-plan";
-import { getOwnerBillingDataForUser } from "@/lib/owner-billing-data";
+import { getOwnerBillingData } from "@/lib/owner-billing-data";
 
 async function loadOwnerUser(userId: string) {
   const rows = await db
@@ -49,7 +49,7 @@ export const GET = withAdminGuardParams<{ userId: string }>(
         getOwnerBillingOverrides(userId),
         resolveOwnerBilling(userId),
         resolvePlatformOwnerStarterIncludedUsdMicros(),
-        getOwnerBillingDataForUser(userId),
+        getOwnerBillingData(userId),
       ]);
 
     const wallet =

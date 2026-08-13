@@ -781,13 +781,22 @@ export async function listOwnerActiveSubscriptions(
 /**
  * Billing page payload for a platform owner: prepaid credits +
  * active subscriptions with cycle usage toward any plan usage discount.
- * No session check — callers (owner self-serve, admin CS) authorize first.
+ * Falls back to signed-in session when userId is not provided.
  */
-export async function getOwnerBillingDataForUser(
-  userId: string,
+export async function getOwnerBillingData(
+  rawUserId?: string,
 ): Promise<OwnerBillingResult> {
-  const trimmed = userId.trim();
-  if (!trimmed) {
+  let userId = rawUserId?.trim() ?? "";
+  if (!userId) {
+    const session = await getServerSession(authOptions);
+    const sessionUser = session?.user as Record<string, unknown> | undefined;
+    const sessionUserId = sessionUser?.id as string | undefined;
+    if (!sessionUserId?.trim()) {
+      return { ok: false, reason: "no_session" };
+    }
+    userId = sessionUserId.trim();
+  }
+  if (!userId) {
     return { ok: false, reason: "no_session" };
   }
 
@@ -802,10 +811,10 @@ export async function getOwnerBillingDataForUser(
   // Resolve owned apps + wallet subjects once: subscriptions and daily usage
   // both read the same attributed subject set, and a second customer lookup
   // would be a wasted round trip with a consistency risk between the two.
-  const ownedApps = await listOwnedApps(trimmed);
+  const ownedApps = await listOwnedApps(userId);
   const ownerWalletSubjects = await resolveOwnerWalletReadSubjects({
     client: adminClient,
-    ownerUserId: trimmed,
+    ownerUserId: userId,
     ownedApps,
   });
   // Invoices hit Konnect /billing/invoices (often multi-second). Soft-timeout so
@@ -825,7 +834,7 @@ export async function getOwnerBillingDataForUser(
     stripeInvoices,
     creditGrants,
   ] = await Promise.all([
-      getOwnerPrepaidCreditBalance(trimmed).catch((err) => {
+      getOwnerPrepaidCreditBalance(userId).catch((err) => {
         console.warn(
           "owner-billing: credit lookup failed",
           err instanceof Error ? err.message : String(err),
@@ -833,7 +842,7 @@ export async function getOwnerBillingDataForUser(
         return null;
       }),
       withSoftTimeout(
-        listOwnerPaymentMethods(trimmed),
+        listOwnerPaymentMethods(userId),
         // Above the lookup's own budget, so its deadline fires first and we
         // keep whatever it resolved instead of falling back to empty.
         OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
@@ -841,13 +850,13 @@ export async function getOwnerBillingDataForUser(
         "payment method lookup",
       ),
       withSoftTimeout(
-        ownerHasChargeablePaymentMethod(trimmed),
+        ownerHasChargeablePaymentMethod(userId),
         OWNER_PAYMENT_METHOD_BUDGET_MS + 1_000,
         null as boolean | null,
         "payment method chargeability",
       ),
       withSoftTimeout(
-        listOwnerActiveSubscriptions(trimmed, {
+        listOwnerActiveSubscriptions(userId, {
           ownedApps,
           ownerWalletSubjects,
         }),
@@ -858,7 +867,7 @@ export async function getOwnerBillingDataForUser(
       withSoftTimeout(
         listOwnerWalletInvoices({
           client: adminClient,
-          ownerUserId: trimmed,
+          ownerUserId: userId,
           page: 1,
           pageSize: 20,
         }),
@@ -870,7 +879,7 @@ export async function getOwnerBillingDataForUser(
         },
       ),
       withSoftTimeout(
-        listOwnerStripeInvoices(trimmed),
+        listOwnerStripeInvoices(userId),
         OWNER_INVOICE_LOOKUP_BUDGET_MS,
         [] as OwnerStripeInvoiceItem[],
         "stripe invoice lookup",
@@ -879,7 +888,7 @@ export async function getOwnerBillingDataForUser(
         },
       ),
       withSoftTimeout(
-        listOwnerCreditGrants(trimmed),
+        listOwnerCreditGrants(userId),
         2_500,
         [] as OwnerCreditGrant[],
         "credit grant lookup",
@@ -932,7 +941,7 @@ export async function getOwnerBillingDataForUser(
         (async () => {
           const customer = await ensureOpenMeterCustomer(
             adminClient,
-            buildOwnerCustomerKey(trimmed),
+            buildOwnerCustomerKey(userId),
           );
           await applyFreeBillingProfileToCustomer({
             client: adminClient,
@@ -974,7 +983,7 @@ export async function getOwnerBillingDataForUser(
   return {
     ok: true,
     data: {
-      userId: trimmed,
+      userId,
       cycle,
       creditAllowance,
       paymentMethods,
@@ -997,15 +1006,3 @@ export async function getOwnerBillingDataForUser(
   };
 }
 
-/**
- * Billing page payload for the signed-in app owner.
- */
-export async function getOwnerBillingData(): Promise<OwnerBillingResult> {
-  const session = await getServerSession(authOptions);
-  const sessionUser = session?.user as Record<string, unknown> | undefined;
-  const userId = sessionUser?.id as string | undefined;
-  if (!userId?.trim()) {
-    return { ok: false, reason: "no_session" };
-  }
-  return getOwnerBillingDataForUser(userId);
-}
