@@ -18,12 +18,23 @@
 #
 # Identity (go-livepeer Kafka wire -> normalized CloudEvent egress):
 # - Upstream auth_id stays client_id:usage_subject (webhook -> go-livepeer state -> Kafka).
-# - For app owners, webhook maps JWT sub (bare user id) to usage_subject owner:{users.id}
-#   so auth_id is app_…:owner:{id}. The collector strips the owner: prefix so CloudEvent
-#   subject / openmeter_customer_key = bare {users.id} (canonical shared Konnect customer).
-#   data.client_id retains the app id; data.usage_subject / external_user_id are bare ids.
-# - End-users keep CloudEvent subject = full compound auth_id.
-# - data.client_id / data.usage_subject always retain the parsed tenant + subject.
+# - Wire usage_subject may be:
+#     owner:{users.id}              — owner self-usage (legacy / no actor split)
+#     owner:{users.id}#actorExtId   — owner_rollup end-user (payer#actor)
+#     eu_{end_users.id}#actorExtId  — merchant end-user (payer#actor)
+#     actorExtId / app:actorExtId   — legacy compound / bare end-user
+# - CloudEvent subject / openmeter_customer_key = payer (bare owner id or eu_…).
+# - data.external_user_id = actor (integrator external id) for meter groupBy.
+# - data.billing_subject_key / billing_subject_kind / actor_end_user_id added in schema v2.
+# - data.client_id retains the app id for tenant attribution.
+#
+# Kong / OpenMeter meter backward compatibility:
+# - Existing meters (network_fee_usd_micros, signed_ticket_count, analytics) still
+#   groupBy only $.client_id + $.external_user_id. No meter slug or groupBy changes.
+# - No "#" in the wire → same CE subject / external_user_id mapping as pre-v2
+#   (owner: strip; end-user compound auth_id subject). Safe to deploy before JWT
+#   producers start emitting payer#actor.
+# - Extra data.* fields are CloudEvent-only; Konnect meters ignore unknown paths.
 #
 # Pipeline / model (wire -> CloudEvent dims):
 # - Preferred: Kafka pipeline is "base:model" (e.g. live-video-to-video:comfyui). Split on
@@ -132,18 +143,67 @@ pipeline:
         let is_compound = $colon > 0 && $colon < $auth_id.length() - 1
         let client_id = if $is_compound { $auth_id.slice(0, $colon) } else { $auth_id }
         let usage_subject_parsed = if $is_compound { $auth_id.slice($colon + 1) } else { $auth_id }
-        # Owner wallet: wire usage_subject is owner:{users.id}; CE subject = bare id.
-        # End-users: meter subject = full compound auth_id.
-        let is_owner_subject = $usage_subject_parsed.index_of("owner:") == 0
-        let usage_subject_type = if $is_owner_subject { "app_owner" } else { "external_user_id" }
-        let owner_bare_id = if $is_owner_subject {
-          $usage_subject_parsed.slice("owner:".length())
+
+        # Payer#actor split (schema v2). No "#" means legacy single-subject form.
+        let hash = $usage_subject_parsed.index_of("#")
+        let has_actor_split = $hash > 0 && $hash < $usage_subject_parsed.length() - 1
+        let payer_wire = if $has_actor_split {
+          $usage_subject_parsed.slice(0, $hash)
         } else {
           $usage_subject_parsed
         }
-        let openmeter_subject = if $is_owner_subject { $owner_bare_id } else { $auth_id }
+        let actor_external_user_id = if $has_actor_split {
+          $usage_subject_parsed.slice($hash + 1)
+        } else {
+          ""
+        }
+
+        let is_owner_subject = $payer_wire.index_of("owner:") == 0
+        let is_end_user_customer = $payer_wire.index_of("eu_") == 0
+        let usage_subject_type = if $is_owner_subject {
+          "app_owner"
+        } else {
+          "external_user_id"
+        }
+        let billing_subject_kind = if $is_owner_subject {
+          "owner_wallet"
+        } else if $is_end_user_customer {
+          "app_user_wallet"
+        } else {
+          "legacy_compound"
+        }
+        let owner_bare_id = if $is_owner_subject {
+          $payer_wire.slice("owner:".length())
+        } else {
+          $payer_wire
+        }
+        # CE subject = payer customer key (bare owner id, eu_…, or legacy compound auth_id).
+        let openmeter_subject = if $is_owner_subject {
+          $owner_bare_id
+        } else if $is_end_user_customer {
+          $payer_wire
+        } else if $has_actor_split {
+          $payer_wire
+        } else {
+          $auth_id
+        }
         let openmeter_customer_key = $openmeter_subject
-        let usage_subject_out = if $is_owner_subject { $owner_bare_id } else { $usage_subject_parsed }
+        let usage_subject_out = if $is_owner_subject { $owner_bare_id } else { $payer_wire }
+        # Actor for meter groupBy — never overwrite with the payer.
+        let external_user_id_out = if $actor_external_user_id != "" {
+          $actor_external_user_id
+        } else if $is_owner_subject {
+          $owner_bare_id
+        } else if $is_end_user_customer {
+          $payer_wire
+        } else {
+          $usage_subject_parsed
+        }
+        let actor_end_user_id_out = if $is_end_user_customer {
+          $payer_wire
+        } else {
+          ""
+        }
 
         let eth_usd = meta("eth_usd_price").number()
         root = if $eth_usd == null { throw("eth_usd price cache miss") }
@@ -213,10 +273,14 @@ pipeline:
             "subject": $openmeter_subject,
             "time": $data.current_time.or(now()),
             "data": {
+              "schema_version": "2",
               "client_id": $client_id,
               "usage_subject": $usage_subject_out,
               "usage_subject_type": $usage_subject_type,
-              "external_user_id": $usage_subject_out,
+              "external_user_id": $external_user_id_out,
+              "billing_subject_key": $openmeter_customer_key,
+              "billing_subject_kind": $billing_subject_kind,
+              "actor_end_user_id": $actor_end_user_id_out,
               "network_fee_usd_micros": $fee_usd_micros,
               "pipeline": $pipeline_out,
               "model_id": $model_id_out,

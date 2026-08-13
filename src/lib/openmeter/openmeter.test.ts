@@ -4,7 +4,7 @@ import type { OpenMeter } from "@openmeter/sdk";
 
 import { buildOpenMeterCustomerKey, parseOpenMeterCustomerKey } from "./customer-key";
 import { buildBillingProfileSupplier } from "./billing-profiles";
-import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects } from "./customers";
+import { ensureOpenMeterCustomer, ensureOwnerCustomerWireSubjects, resetEnsuredCustomerCacheForTests } from "./customers";
 import { listOwnerWalletInvoices, listTenantInvoices } from "./invoices";
 import { mapPymthousePlanToOpenMeterCreate } from "./plans-sync";
 import {
@@ -757,6 +757,7 @@ test("ensureOpenMeterCustomer returns existing id and key", async () => {
 });
 
 test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updatedSubjectKeys: string[] | undefined;
   const client = {
     customers: {
@@ -785,6 +786,7 @@ test("ensureOpenMeterCustomer repairs missing usageAttribution subjectKeys", asy
 });
 
 test("ensureOpenMeterCustomer preserves settlement metadata on subject-key repair", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updatedMetadata: Record<string, string> | undefined;
   const settlement = {
     stripe_charge_model: "direct",
@@ -841,6 +843,7 @@ test("ensureOpenMeterCustomer creates customer when missing", async () => {
 });
 
 test("ensureOwnerCustomer attaches transitional keys only on create", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updatedSubjectKeys: string[] | undefined;
   let createdBody: {
     key?: string;
@@ -902,6 +905,7 @@ test("ensureOwnerCustomer attaches transitional keys only on create", async () =
 });
 
 test("ensureOwnerCustomer keeps settlement subject only on existing customers", async () => {
+  resetEnsuredCustomerCacheForTests();
   let updateCalls = 0;
   let updatedSubjectKeys: string[] | undefined;
   const ownerKey = "uuid-1";
@@ -948,7 +952,8 @@ test("ensureOwnerCustomer keeps settlement subject only on existing customers", 
   // Bare settlement key already present; update re-sends the same set (Konnect
   // PUT is a full replace, so omitting it would wipe subject_keys).
   assert.deepEqual(updatedSubjectKeys, [ownerKey]);
-  assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, "app_aaa,app_bbb");
+  assert.equal(customerRecord.metadata.pymthouse_owner_user_id, "uuid-1");
+  assert.equal(customerRecord.metadata.pymthouse_owned_client_ids, undefined);
   assert.ok(updateCalls >= 1);
 });
 

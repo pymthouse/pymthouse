@@ -9,6 +9,7 @@ import {
 } from "./konnect-plan-body";
 import {
   buildKonnectMeterQueryBody,
+  isKonnectLabelValue,
   isKonnectMeterQueryGet,
   mapKonnectMeterGranularity,
   normalizeKonnectMeterQueryResponse,
@@ -20,6 +21,7 @@ import {
   rewriteKonnectRequestBody,
   rewriteKonnectRequestUrl,
   rewriteKonnectSearchParams,
+  sanitizeKonnectLabels,
 } from "./konnect-routes";
 import { createKonnectFetch } from "./konnect-fetch";
 
@@ -324,6 +326,36 @@ test("rewriteKonnectRequestBody maps customer metadata to labels", () => {
     (rewritten as { metadata?: unknown }).metadata,
     undefined,
   );
+});
+
+test("rewriteKonnectRequestBody drops Kong-invalid customer label values", () => {
+  assert.equal(isKonnectLabelValue("app_aaa"), true);
+  assert.equal(isKonnectLabelValue("app_aaa,app_bbb"), false);
+  assert.equal(isKonnectLabelValue("a".repeat(64)), false);
+  assert.deepEqual(
+    sanitizeKonnectLabels({
+      pymthouse_owner_user_id: "uuid-1",
+      pymthouse_owned_client_ids: "app_aaa,app_bbb",
+    }),
+    { pymthouse_owner_user_id: "uuid-1" },
+  );
+
+  const rewritten = rewriteKonnectRequestBody(
+    "/v3/openmeter/api/v1/customers/cust_1",
+    "PUT",
+    {
+      name: "uuid-1",
+      usageAttribution: { subjectKeys: ["uuid-1"] },
+      metadata: {
+        pymthouse_owner_user_id: "uuid-1",
+        pymthouse_owned_client_ids: "app_aaa,app_bbb",
+      },
+    },
+  ) as { labels?: Record<string, string> };
+
+  assert.deepEqual(rewritten.labels, {
+    pymthouse_owner_user_id: "uuid-1",
+  });
 });
 
 test("normalizeKonnectCustomerRecord merges labels into metadata", () => {
