@@ -1,10 +1,30 @@
 /** Reserved first-party customer-service RP. Safe to import from Client Components. */
 
+import { ensureHttpsForProduction, getPublicOrigin } from "@/lib/oidc/issuer-urls";
+
 export const CUSTOMER_SERVICE_OIDC_CLIENT_ID = "web_customer_service";
 
 export const CUSTOMER_SERVICE_OIDC_DISPLAY_NAME = "Customer Service";
 
-export const DEFAULT_CUSTOMER_SERVICE_ORIGIN = "http://localhost:3010";
+/**
+ * Customer-service console origin. NextAuth builds `redirect_uri` from
+ * `NEXTAUTH_URL`. Optional `CUSTOMER_SERVICE_URL` / `NEXT_PUBLIC_CUSTOMER_SERVICE_URL`
+ * override when the console is on a different host than this issuer.
+ */
+export function getCustomerServiceOrigin(): string {
+  const raw =
+    process.env.CUSTOMER_SERVICE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL?.trim();
+  if (raw) {
+    return ensureHttpsForProduction(raw).replace(/\/+$/, "");
+  }
+  return getPublicOrigin();
+}
+
+export function customerServiceCallbackUri(origin?: string): string {
+  const base = (origin ?? getCustomerServiceOrigin()).replace(/\/+$/, "");
+  return `${base}/api/auth/callback/pymthouse`;
+}
 
 export function getCustomerServiceOidcClientId(): string {
   return process.env.CS_OIDC_CLIENT_ID?.trim() || CUSTOMER_SERVICE_OIDC_CLIENT_ID;

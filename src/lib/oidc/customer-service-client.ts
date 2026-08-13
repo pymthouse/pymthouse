@@ -13,7 +13,7 @@ import {
 } from "@/lib/oidc/confidential-web";
 import {
   CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
-  DEFAULT_CUSTOMER_SERVICE_ORIGIN,
+  customerServiceCallbackUri,
   getCustomerServiceOidcClientId,
 } from "@/lib/oidc/customer-service-id";
 import { resetProvider } from "@/lib/oidc/provider";
@@ -22,8 +22,9 @@ import { ensureConfidentialWebIdentityScopes } from "@/lib/oidc/scopes";
 export {
   CUSTOMER_SERVICE_OIDC_CLIENT_ID,
   CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
-  DEFAULT_CUSTOMER_SERVICE_ORIGIN,
+  customerServiceCallbackUri,
   getCustomerServiceOidcClientId,
+  getCustomerServiceOrigin,
   isCustomerServiceOidcClient,
   oidcLoginPathForClient,
   oidcLoginRedirect,
@@ -41,7 +42,7 @@ export type EnsureCustomerServiceOidcClientResult = {
   redirectUris: string[];
 };
 
-/** True when pymthouse env explicitly names CS redirect or origin (not localhost default). */
+/** True when pymthouse env explicitly names CS redirect or origin (not NEXTAUTH_URL fallback). */
 export function hasConfiguredCustomerServiceRedirectOrigin(): boolean {
   return Boolean(
     process.env.CS_OIDC_REDIRECT_URI?.trim() ||
@@ -55,15 +56,10 @@ export function resolveCustomerServiceRedirectUris(): string[] {
   if (explicit) {
     return mergeRedirectUris([], explicit.split(/[\s,]+/));
   }
-  const origin = (
-    process.env.CUSTOMER_SERVICE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL?.trim() ||
-    DEFAULT_CUSTOMER_SERVICE_ORIGIN
-  ).replace(/\/+$/, "");
-  return [`${origin}/api/auth/callback/pymthouse`];
+  return [customerServiceCallbackUri()];
 }
 
-/** Redirects to merge on update; empty when env is unset (avoids localhost on prod re-bootstrap). */
+/** Redirects to merge on update; empty when CS origin env is unset (avoids localhost on prod re-bootstrap). */
 export function desiredCustomerServiceRedirectUrisForEnsure(
   opts?: { redirectUris?: string[] },
 ): string[] {

@@ -105,9 +105,9 @@ DATABASE_URL='postgresql://...' npm run bootstrap
 
 This creates an admin user, ensures the platform default app and the
 customer-service OIDC client (`web_customer_service`), and prints a `pmth_...`
-bearer token (valid 1 year). On first create it also prints CS client env to
-copy into customer-service `.env.local`. Re-run with `--rotate-secret` to mint
-a new CS secret.
+bearer token (valid 1 year). On first create (or `--rotate-secret`) it writes
+CS client env to `.env.customer-service-oidc` (gitignored, mode 600) — copy
+that into customer-service `.env`, do not paste the secret into logs.
 
 Optionally specify an email for the admin user:
 

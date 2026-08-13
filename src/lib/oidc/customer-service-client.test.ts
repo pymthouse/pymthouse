@@ -10,10 +10,10 @@ import {
   CUSTOMER_SERVICE_OIDC_CLIENT_ID,
   CUSTOMER_SERVICE_OIDC_DISPLAY_NAME,
   CUSTOMER_SERVICE_OIDC_SCOPES,
-  DEFAULT_CUSTOMER_SERVICE_ORIGIN,
   ensureCustomerServiceOidcClient,
   desiredCustomerServiceRedirectUrisForEnsure,
   getCustomerServiceOidcClientId,
+  getCustomerServiceOrigin,
   hasConfiguredCustomerServiceRedirectOrigin,
   isCustomerServiceOidcClient,
   mergeRedirectUris,
@@ -78,15 +78,24 @@ test("resolveCustomerServiceRedirectUris prefers explicit URI list", (t) => {
   ]);
 });
 
-test("resolveCustomerServiceRedirectUris derives callback from origin env", (t) => {
+test("resolveCustomerServiceRedirectUris derives callback from NEXTAUTH_URL", (t) => {
   restoreEnv(t, "CS_OIDC_REDIRECT_URI");
   restoreEnv(t, "CUSTOMER_SERVICE_URL");
   restoreEnv(t, "NEXT_PUBLIC_CUSTOMER_SERVICE_URL");
+  restoreEnv(t, "NEXTAUTH_URL");
   delete process.env.CS_OIDC_REDIRECT_URI;
   delete process.env.CUSTOMER_SERVICE_URL;
   delete process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL;
+  process.env.NEXTAUTH_URL = "http://localhost:3010";
+  assert.equal(getCustomerServiceOrigin(), "http://localhost:3010");
   assert.deepEqual(resolveCustomerServiceRedirectUris(), [
-    `${DEFAULT_CUSTOMER_SERVICE_ORIGIN}/api/auth/callback/pymthouse`,
+    "http://localhost:3010/api/auth/callback/pymthouse",
+  ]);
+
+  process.env.NEXTAUTH_URL = "https://ops.pymthouse.com";
+  assert.equal(getCustomerServiceOrigin(), "https://ops.pymthouse.com");
+  assert.deepEqual(resolveCustomerServiceRedirectUris(), [
+    "https://ops.pymthouse.com/api/auth/callback/pymthouse",
   ]);
 
   process.env.NEXT_PUBLIC_CUSTOMER_SERVICE_URL = "https://cs.example.com/";
@@ -94,9 +103,10 @@ test("resolveCustomerServiceRedirectUris derives callback from origin env", (t) 
     "https://cs.example.com/api/auth/callback/pymthouse",
   ]);
 
-  process.env.CUSTOMER_SERVICE_URL = "https://cs.internal.example";
+  process.env.CUSTOMER_SERVICE_URL = "https://ops.pymthouse.com";
+  assert.equal(getCustomerServiceOrigin(), "https://ops.pymthouse.com");
   assert.deepEqual(resolveCustomerServiceRedirectUris(), [
-    "https://cs.internal.example/api/auth/callback/pymthouse",
+    "https://ops.pymthouse.com/api/auth/callback/pymthouse",
   ]);
 });
 

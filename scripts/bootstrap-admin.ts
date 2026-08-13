@@ -11,13 +11,15 @@
  *
  * Customer-service RP env: CS_OIDC_CLIENT_ID, CS_OIDC_REDIRECT_URI,
  * CUSTOMER_SERVICE_URL / NEXT_PUBLIC_CUSTOMER_SERVICE_URL.
- * Pass --rotate-secret to mint a new CS client secret (printed once).
+ * Pass --rotate-secret to mint a new CS client secret (written to
+ * .env.customer-service-oidc, not stdout).
  */
 
 import "./load-env-first";
+import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { randomBytes } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import * as schema from "../src/db/schema";
 import { users, sessions, signerConfig } from "../src/db/schema";
@@ -28,6 +30,10 @@ import {
   findAdminOwnerId,
 } from "../src/lib/platform-default-app";
 import { ensureCustomerServiceOidcClient } from "../src/lib/oidc/customer-service-client";
+import {
+  CUSTOMER_SERVICE_OIDC_ENV_FILENAME,
+  writeCustomerServiceOidcEnvFile,
+} from "../src/lib/oidc/customer-service-oidc-env";
 import { getIssuer, getPublicOrigin } from "../src/lib/oidc/issuer-urls";
 
 function parseBootstrapArgs(argv: string[]): {
@@ -113,16 +119,18 @@ async function main() {
       console.log(`\n  Customer-service OIDC client: ${cs.clientId} (${status})`);
       console.log(`  Redirects: ${cs.redirectUris.join(", ")}`);
       if (cs.clientSecret) {
-        const apiBase = getPublicOrigin();
-        console.log(`\n  ========================================`);
-        console.log(`  customer-service .env.local (copy once)`);
-        console.log(`  ========================================`);
-        console.log(`\n  PYMTHOUSE_ISSUER=${getIssuer()}`);
-        console.log(`  PYMTHOUSE_API_BASE_URL=${apiBase}`);
-        console.log(`  CS_OIDC_CLIENT_ID=${cs.clientId}`);
-        console.log(`  CS_OIDC_CLIENT_SECRET=${cs.clientSecret}`);
-        console.log(`  CS_OIDC_REDIRECT_URI=${cs.redirectUris[0]}`);
-        console.log("");
+        const envPath = resolve(CUSTOMER_SERVICE_OIDC_ENV_FILENAME);
+        writeCustomerServiceOidcEnvFile(envPath, {
+          issuer: getIssuer(),
+          apiBaseUrl: getPublicOrigin(),
+          clientId: cs.clientId,
+          clientSecret: cs.clientSecret,
+          redirectUri: cs.redirectUris[0] ?? "",
+        });
+        console.log(`\n  Wrote CS OIDC credentials to ${envPath} (mode 600)`);
+        console.log(
+          "  Copy into customer-service .env — do not commit or paste the secret into logs.",
+        );
       } else {
         console.log(
           "  Secret unchanged (pass --rotate-secret to mint a new one).",

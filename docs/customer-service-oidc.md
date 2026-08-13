@@ -26,13 +26,15 @@ Discovery: `{issuer}/.well-known/openid-configuration`
 | `client_id` | `web_customer_service` (override with `CS_OIDC_CLIENT_ID`) |
 | `token_endpoint_auth_method` | `client_secret_post` |
 | `grant_types` | `authorization_code`, `refresh_token` |
-| `redirect_uris` | from `CS_OIDC_REDIRECT_URI`, else `{CUSTOMER_SERVICE_URL or NEXT_PUBLIC_CUSTOMER_SERVICE_URL or http://localhost:3010}/api/auth/callback/pymthouse` |
+| `redirect_uris` | from `CS_OIDC_REDIRECT_URI`, else `{CUSTOMER_SERVICE_URL or NEXT_PUBLIC_CUSTOMER_SERVICE_URL or NEXTAUTH_URL}/api/auth/callback/pymthouse` |
 | `allowed_scopes` | `openid profile email admin` |
 
 Later bootstrap runs merge redirect URIs only when `CS_OIDC_REDIRECT_URI`,
 `CUSTOMER_SERVICE_URL`, or `NEXT_PUBLIC_CUSTOMER_SERVICE_URL` are set in
-pymthouse env (customer-service vars are not read from pymthouse by default).
-They also repair scopes/grants. The client secret is printed **once** on create (or when the hash is missing).
+pymthouse env. They do **not** merge `NEXTAUTH_URL` on re-run (avoids adding
+the issuer origin). They also repair scopes/grants. The client secret is
+written **once** on create (or when the hash is missing) to
+`.env.customer-service-oidc` (gitignored, mode 600) — not stdout.
 Pass `--rotate-secret` to mint a new secret:
 
 ```bash
@@ -41,8 +43,8 @@ npm run bootstrap -- --rotate-secret
 npm run bootstrap -- admin@example.com --rotate-secret
 ```
 
-Copy the printed `CS_OIDC_*` lines into customer-service server env (never
-`NEXT_PUBLIC_*`). Day-to-day redirect edits can also be done on
+Copy values from `.env.customer-service-oidc` into customer-service server env
+(never `NEXT_PUBLIC_*`). Day-to-day redirect edits can also be done on
 `/admin/oidc-clients`; bootstrap will not remove extra URIs.
 
 ## customer-service env
@@ -52,8 +54,12 @@ PYMTHOUSE_ISSUER=https://pymthouse.com/api/v1/oidc
 PYMTHOUSE_API_BASE_URL=https://pymthouse.com
 CS_OIDC_CLIENT_ID=web_customer_service
 CS_OIDC_CLIENT_SECRET=…
-CS_OIDC_REDIRECT_URI=http://localhost:3010/api/auth/callback/pymthouse
-NEXTAUTH_URL=http://localhost:3010
+# Local:
+# CS_OIDC_REDIRECT_URI=http://localhost:3010/api/auth/callback/pymthouse
+# NEXTAUTH_URL=http://localhost:3010
+# Deployed CS console:
+CS_OIDC_REDIRECT_URI=https://ops.pymthouse.com/api/auth/callback/pymthouse
+NEXTAUTH_URL=https://ops.pymthouse.com
 NEXTAUTH_SECRET=…
 ```
 
