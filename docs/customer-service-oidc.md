@@ -81,5 +81,11 @@ scope, plus DB admin role):
 | GET/PATCH | `/api/v1/admin/billing/owners/{userId}` (GET includes `wallet`) |
 | POST | `/api/v1/admin/billing/owners/{userId}/grants` |
 
+`GET /owners` accepts `q` (email, name, user id, **app name**, or app id),
+`status=blocked|overage|attention`, and `page`/`pageSize`. Results are ordered
+by current-cycle usage (local confirmed tickets). Each row includes
+`ownedApps`, `cycleUsage`, `usageStatus`, and `planKind`. Prepaid credits and
+live OpenMeter subscriptions remain on the owner detail `wallet`.
+
 Free Builder `POST …/users/{externalUserId}/allowances` is disabled
 (`403 free_grant_admin_only`).
