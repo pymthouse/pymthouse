@@ -1012,10 +1012,14 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  // A private CI log is not a public-facing surface — the whole point of this
+  // script is a diagnosable failure. Print the real message, not a stub.
   if (err instanceof StageFailure) {
-    console.error("\n✗ e2e stage failed");
+    console.error(`\n✗ ${err.message}`);
     process.exit(1);
   }
-  console.error("\n✗ unexpected e2e stage failure");
+  console.error(
+    `\n✗ ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+  );
   process.exit(1);
 });
