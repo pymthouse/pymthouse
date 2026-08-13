@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  accumulateOwnerListMeterUsage,
   classifyOwnerListUsage,
   compareOwnersByUsageDesc,
+  indexOwnerListMeterSubjects,
+  ownerIdFromOwnerListMeterRow,
   ownerMatchesStatusFilter,
   parseOwnerListQuery,
 } from "@/lib/billing/admin-owner-list";
@@ -115,6 +118,63 @@ test("ownerMatchesStatusFilter attention is blocked or overage", () => {
   assert.equal(ownerMatchesStatusFilter("overage", "attention"), true);
   assert.equal(ownerMatchesStatusFilter("blocked", "blocked"), true);
   assert.equal(ownerMatchesStatusFilter("overage", "blocked"), false);
+});
+
+test("indexOwnerListMeterSubjects includes bare, owner:, and compound keys", () => {
+  const ownerId = "owner-uuid-1";
+  const index = indexOwnerListMeterSubjects(
+    [ownerId],
+    new Map([[ownerId, [{ id: "app_abc", name: "Demo" }]]]),
+  );
+  assert.equal(index.get(ownerId), ownerId);
+  assert.equal(index.get(`owner:${ownerId}`), ownerId);
+  assert.equal(index.get("app_abc:owner-uuid-1"), ownerId);
+  assert.equal(index.get("app_abc:owner:owner-uuid-1"), ownerId);
+});
+
+test("ownerIdFromOwnerListMeterRow maps subject and external_user_id", () => {
+  const ownerId = "owner-uuid-1";
+  const index = indexOwnerListMeterSubjects([ownerId], new Map());
+  assert.equal(
+    ownerIdFromOwnerListMeterRow({ subject: ownerId, value: 1 }, index),
+    ownerId,
+  );
+  assert.equal(
+    ownerIdFromOwnerListMeterRow(
+      { subject: null, value: 1, groupBy: { external_user_id: `owner:${ownerId}` } },
+      index,
+    ),
+    ownerId,
+  );
+  assert.equal(
+    ownerIdFromOwnerListMeterRow(
+      { subject: "someone-else", value: 1, groupBy: { external_user_id: "eu-9" } },
+      index,
+    ),
+    null,
+  );
+});
+
+test("accumulateOwnerListMeterUsage sums fees and counts per owner", () => {
+  const ownerA = "owner-a";
+  const ownerB = "owner-b";
+  const index = indexOwnerListMeterSubjects([ownerA, ownerB], new Map());
+  const totals = accumulateOwnerListMeterUsage({
+    feeRows: [
+      { subject: ownerA, value: "100" },
+      { groupBy: { external_user_id: ownerA }, value: "50" },
+      { subject: ownerB, value: "7" },
+    ],
+    countRows: [
+      { subject: ownerA, value: 3 },
+      { subject: ownerB, value: 1 },
+    ],
+    subjectToOwnerId: index,
+  });
+  assert.equal(totals.get(ownerA)?.usedUsdMicros, "150");
+  assert.equal(totals.get(ownerA)?.requestCount, 3);
+  assert.equal(totals.get(ownerB)?.usedUsdMicros, "7");
+  assert.equal(totals.get(ownerB)?.requestCount, 1);
 });
 
 test("compareOwnersByUsageDesc puts highest spend first", () => {

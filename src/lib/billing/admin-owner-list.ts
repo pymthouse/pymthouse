@@ -15,9 +15,26 @@ import { platformDefaultEndUserCap } from "@/lib/billing/platform-billing-defaul
 import { resolvePlatformOwnerStarterIncludedUsdMicros } from "@/lib/billing/platform-owner-starter-default";
 import { clampPageParam } from "@/lib/billing/wallet-http";
 import { parseUsdMicrosString } from "@/lib/format-usd-micros";
+import {
+  getHostedAdminClient,
+  isHostedAdminClientAvailable,
+} from "@/lib/openmeter/admin-client";
+import {
+  NETWORK_FEE_USD_MICROS_METER,
+  requireOpenMeterForUsageReads,
+  SIGNED_TICKET_COUNT_METER,
+} from "@/lib/openmeter/constants";
+import {
+  buildOwnerMeterSubjects,
+  normalizePlatformUserId,
+} from "@/lib/openmeter/customer-key";
+import { meterRowValueToBigInt } from "@/lib/openmeter/usage-read";
 
 export const ADMIN_OWNER_LIST_DEFAULT_PAGE_SIZE = 25;
 export const ADMIN_OWNER_LIST_MAX_PAGE_SIZE = 100;
+
+/** Konnect `subject in [...]` batches; unfiltered meter scans 504. */
+const OWNER_LIST_METER_SUBJECT_CHUNK = 80;
 
 export type OwnerListStatusFilter = "all" | "blocked" | "overage" | "attention";
 export type OwnerListUsageStatus = "ok" | "blocked" | "overage";
@@ -41,6 +58,17 @@ export type AdminOwnerCycleUsage = {
   remainingUsdMicros: string;
   overageUsdMicros: string;
   requestCount: number;
+};
+
+type OwnerListUsageTotals = {
+  usedUsdMicros: string;
+  requestCount: number;
+};
+
+export type OwnerListMeterRow = {
+  subject?: string | null;
+  value?: unknown;
+  groupBy?: Record<string, string | null> | null;
 };
 
 export type AdminOwnerListItem = {
@@ -171,6 +199,95 @@ export function compareOwnersByUsageDesc(
   return a.id.localeCompare(b.id);
 }
 
+/**
+ * Subject → owner index for list meter queries. Same dual-read set as
+ * owner-detail (`buildOwnerMeterSubjects`): bare id, `owner:{id}`, and
+ * transitional compound app keys.
+ */
+export function indexOwnerListMeterSubjects(
+  ownerIds: readonly string[],
+  appsByOwner: ReadonlyMap<string, readonly AdminOwnerListApp[]>,
+): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const ownerId of ownerIds) {
+    const appIds = (appsByOwner.get(ownerId) ?? []).map((app) => app.id);
+    for (const subject of buildOwnerMeterSubjects(ownerId, appIds)) {
+      index.set(subject, ownerId);
+    }
+  }
+  return index;
+}
+
+export function ownerIdFromOwnerListMeterRow(
+  row: OwnerListMeterRow,
+  subjectToOwnerId: ReadonlyMap<string, string>,
+): string | null {
+  const group = row.groupBy ?? {};
+  const rawCandidates = [row.subject, group.subject, group.external_user_id];
+  for (const raw of rawCandidates) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const exact = subjectToOwnerId.get(trimmed);
+    if (exact) return exact;
+    const normalized = normalizePlatformUserId(trimmed);
+    if (normalized !== trimmed) {
+      const viaNorm = subjectToOwnerId.get(normalized);
+      if (viaNorm) return viaNorm;
+    }
+  }
+  return null;
+}
+
+export function accumulateOwnerListMeterUsage(input: {
+  feeRows: readonly OwnerListMeterRow[];
+  countRows: readonly OwnerListMeterRow[];
+  subjectToOwnerId: ReadonlyMap<string, string>;
+}): Map<string, OwnerListUsageTotals> {
+  const used = new Map<string, bigint>();
+  const counts = new Map<string, number>();
+  for (const row of input.feeRows) {
+    const ownerId = ownerIdFromOwnerListMeterRow(row, input.subjectToOwnerId);
+    if (!ownerId) continue;
+    used.set(ownerId, (used.get(ownerId) ?? 0n) + meterRowValueToBigInt(row.value));
+  }
+  for (const row of input.countRows) {
+    const ownerId = ownerIdFromOwnerListMeterRow(row, input.subjectToOwnerId);
+    if (!ownerId) continue;
+    const n = Number(row.value);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    counts.set(ownerId, (counts.get(ownerId) ?? 0) + Math.trunc(n));
+  }
+  const byOwner = new Map<string, OwnerListUsageTotals>();
+  for (const ownerId of new Set([...used.keys(), ...counts.keys()])) {
+    byOwner.set(ownerId, {
+      usedUsdMicros: (used.get(ownerId) ?? 0n).toString(),
+      requestCount: counts.get(ownerId) ?? 0,
+    });
+  }
+  return byOwner;
+}
+
+function mergeOwnerUsageMaps(
+  target: Map<string, OwnerListUsageTotals>,
+  source: Map<string, OwnerListUsageTotals>,
+): void {
+  for (const [ownerId, usage] of source) {
+    const existing = target.get(ownerId);
+    if (!existing) {
+      target.set(ownerId, usage);
+      continue;
+    }
+    target.set(ownerId, {
+      usedUsdMicros: (
+        (parseUsdMicrosString(existing.usedUsdMicros) ?? 0n) +
+        (parseUsdMicrosString(usage.usedUsdMicros) ?? 0n)
+      ).toString(),
+      requestCount: existing.requestCount + usage.requestCount,
+    });
+  }
+}
+
 function ownerSearchFilter(q: string) {
   if (!q) return undefined;
   const pattern = `%${q}%`;
@@ -245,10 +362,62 @@ async function loadOwnedAppsByOwner(
   return byOwner;
 }
 
-async function loadCycleUsageByOwner(cycle: {
+async function queryOpenMeterCycleUsageByOwner(input: {
+  cycle: { start: string; end: string };
+  ownerIds: string[];
+  appsByOwner: Map<string, AdminOwnerListApp[]>;
+}): Promise<Map<string, OwnerListUsageTotals> | null> {
+  if (!requireOpenMeterForUsageReads() || !isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const subjectToOwnerId = indexOwnerListMeterSubjects(
+    input.ownerIds,
+    input.appsByOwner,
+  );
+  const subjects = [...subjectToOwnerId.keys()];
+  if (subjects.length === 0) {
+    return new Map();
+  }
+
+  const client = getHostedAdminClient();
+  const merged = new Map<string, OwnerListUsageTotals>();
+  try {
+    for (let i = 0; i < subjects.length; i += OWNER_LIST_METER_SUBJECT_CHUNK) {
+      const chunk = subjects.slice(i, i + OWNER_LIST_METER_SUBJECT_CHUNK);
+      const baseQuery = {
+        windowSize: "MONTH" as const,
+        from: new Date(input.cycle.start),
+        to: new Date(input.cycle.end),
+        subject: chunk,
+        groupBy: ["external_user_id"],
+      };
+      const [feeResult, countResult] = await Promise.all([
+        client.meters.query(NETWORK_FEE_USD_MICROS_METER, baseQuery),
+        client.meters.query(SIGNED_TICKET_COUNT_METER, baseQuery),
+      ]);
+      mergeOwnerUsageMaps(
+        merged,
+        accumulateOwnerListMeterUsage({
+          feeRows: feeResult.data || [],
+          countRows: countResult.data || [],
+          subjectToOwnerId,
+        }),
+      );
+    }
+    return merged;
+  } catch (err) {
+    console.warn(
+      "admin-owner-list: meter query failed",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+async function loadTransactionCycleUsageByOwner(cycle: {
   start: string;
   end: string;
-}): Promise<Map<string, { usedUsdMicros: string; requestCount: number }>> {
+}): Promise<Map<string, OwnerListUsageTotals>> {
   const rows = await db
     .select({
       ownerId: developerApps.ownerId,
@@ -270,7 +439,7 @@ async function loadCycleUsageByOwner(cycle: {
     )
     .groupBy(developerApps.ownerId);
 
-  const byOwner = new Map<string, { usedUsdMicros: string; requestCount: number }>();
+  const byOwner = new Map<string, OwnerListUsageTotals>();
   for (const row of rows) {
     const requestCount = Number(row.requestCount);
     byOwner.set(row.ownerId, {
@@ -279,6 +448,16 @@ async function loadCycleUsageByOwner(cycle: {
     });
   }
   return byOwner;
+}
+
+async function loadCycleUsageByOwner(input: {
+  cycle: { start: string; end: string };
+  ownerIds: string[];
+  appsByOwner: Map<string, AdminOwnerListApp[]>;
+}): Promise<Map<string, OwnerListUsageTotals>> {
+  const fromOpenMeter = await queryOpenMeterCycleUsageByOwner(input);
+  if (fromOpenMeter) return fromOpenMeter;
+  return loadTransactionCycleUsageByOwner(input.cycle);
 }
 
 async function loadPaidPlanByOwner(
@@ -365,9 +544,13 @@ export async function listAdminBillingOwners(
       },
     };
   }
-  const [appsByOwner, usageByOwner, paidByOwner] = await Promise.all([
-    loadOwnedAppsByOwner(ownerIds),
-    loadCycleUsageByOwner(cycle),
+  const appsByOwner = await loadOwnedAppsByOwner(ownerIds);
+  const [usageByOwner, paidByOwner] = await Promise.all([
+    loadCycleUsageByOwner({
+      cycle,
+      ownerIds,
+      appsByOwner,
+    }),
     loadPaidPlanByOwner(ownerIds),
   ]);
 
