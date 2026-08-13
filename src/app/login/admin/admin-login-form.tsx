@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { MarketingFooter } from "@/components/MarketingFooter";
+import { resumeAfterOidcLogin } from "@/lib/oidc/customer-service-id";
 
 export function AdminLoginForm() {
   const { data: session, status } = useSession();
@@ -33,7 +34,9 @@ export function AdminLoginForm() {
 
   useEffect(() => {
     if (status === "authenticated" && session) {
-      router.push(safeCallbackUrl);
+      resumeAfterOidcLogin(safeCallbackUrl, (path) => {
+        router.push(path);
+      });
     }
   }, [session, status, router, safeCallbackUrl]);
 
@@ -61,7 +64,9 @@ export function AdminLoginForm() {
       setError("Invalid token or insufficient permissions.");
       setLoading(false);
     } else if (result?.ok) {
-      router.push(safeCallbackUrl);
+      resumeAfterOidcLogin(safeCallbackUrl, (path) => {
+        router.push(path);
+      });
     }
   }
 

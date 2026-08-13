@@ -26,8 +26,11 @@ export {
   getCustomerServiceOidcClientId,
   getCustomerServiceOrigin,
   isCustomerServiceOidcClient,
+  isOidcReturnPath,
+  oidcInteractionPath,
   oidcLoginPathForClient,
   oidcLoginRedirect,
+  resumeAfterOidcLogin,
 } from "@/lib/oidc/customer-service-id";
 
 export const CUSTOMER_SERVICE_OIDC_SCOPES = ensureConfidentialWebIdentityScopes(

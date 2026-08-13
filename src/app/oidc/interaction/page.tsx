@@ -7,7 +7,11 @@ import { authOptions } from "@/lib/next-auth-options";
 import { getProvider } from "@/lib/oidc/provider";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { checkAppAccess } from "@/lib/oidc/app-access";
-import { oidcLoginRedirect, isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
+import {
+  isCustomerServiceOidcClient,
+  oidcInteractionPath,
+  oidcLoginRedirect,
+} from "@/lib/oidc/customer-service-id";
 import { asOidcAccountId, saveOidcConsentGrant } from "@/lib/oidc/consent-grant";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -25,8 +29,7 @@ function buildNodeRequest(
   const socket = new Socket();
   const req = new IncomingMessage(socket);
   req.method = method;
-  // Use the actual request path so the provider's cookie middleware can find the
-  // _interaction cookie (set with path=/oidc/interaction when redirecting from authorize).
+  // Use the interaction page path so cookie middleware can find `_interaction`.
   req.url = `/oidc/interaction?uid=${uid}`;
   requestHeaders.forEach((value, key) => {
     req.headers[key.toLowerCase()] = value;
@@ -48,6 +51,7 @@ export default async function OidcInteractionPage({
 }>) {
   const params = await searchParams;
   const uid = asSingleValue(params.uid);
+  const clientIdFromQuery = asSingleValue(params.client_id);
 
   if (!uid) {
     return (
@@ -63,21 +67,23 @@ export default async function OidcInteractionPage({
   }
 
   const session = await getServerSession(authOptions);
-  
-  // Try to get interaction details early to extract client_id for branded login redirect
-  let clientId: string | null = null;
+
+  // Prefer the cookie-backed interaction, then the query stamp from authorize.
+  let clientId: string | null = clientIdFromQuery;
   try {
     const requestHeaders = await headers();
     const preflightReq = buildNodeRequest("GET", uid, requestHeaders);
     const provider = await getProvider();
     const preflightDetails = await provider.interactionDetails(preflightReq.req, preflightReq.res);
-    clientId = preflightDetails.params.client_id as string || null;
+    clientId =
+      (preflightDetails.params.client_id as string | undefined)?.trim() ||
+      clientIdFromQuery;
   } catch {
     // Interaction may be invalid/expired; we'll handle this after session check
   }
 
   if (!session?.user) {
-    redirect(oidcLoginRedirect(clientId, `/oidc/interaction?uid=${uid}`));
+    redirect(oidcLoginRedirect(clientId, oidcInteractionPath(uid, clientId)));
   }
 
   const requestHeaders = await headers();

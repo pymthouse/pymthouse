@@ -48,6 +48,38 @@ export function oidcLoginPathForClient(
   return isCustomerServiceOidcClient(clientId) ? "/login/admin" : "/login";
 }
 
+/** Interaction UI path; `client_id` is query-stamped so login branding survives a missing cookie. */
+export function oidcInteractionPath(
+  uid: string,
+  clientId?: string | null,
+): string {
+  const params = new URLSearchParams();
+  params.set("uid", uid);
+  if (clientId?.trim()) {
+    params.set("client_id", clientId.trim());
+  }
+  return `/oidc/interaction?${params.toString()}`;
+}
+
+export function isOidcReturnPath(callbackPath: string): boolean {
+  return (
+    callbackPath.startsWith("/oidc/interaction") ||
+    callbackPath.startsWith("/oidc/consent")
+  );
+}
+
+/** Full document navigation after login so the interaction RSC sees the new session cookie. */
+export function resumeAfterOidcLogin(
+  callbackPath: string,
+  fallbackNavigate: (path: string) => void,
+): void {
+  if (typeof window !== "undefined" && isOidcReturnPath(callbackPath)) {
+    window.location.replace(callbackPath);
+    return;
+  }
+  fallbackNavigate(callbackPath);
+}
+
 export function oidcLoginRedirect(
   clientId: string | null | undefined,
   callbackPath: string,

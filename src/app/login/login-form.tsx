@@ -14,7 +14,7 @@ import { TurnkeyEmbeddedAuth } from "@/components/TurnkeyEmbeddedAuth";
 import { toSafeLogoUrl } from "@/lib/safe-logo-url";
 import { safeCallbackUrl } from "@/lib/turnkey-nextauth-bridge";
 import { isTurnkeyWalletConfigured } from "@/lib/turnkey-wallet-config";
-import { isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
+import { isCustomerServiceOidcClient, resumeAfterOidcLogin } from "@/lib/oidc/customer-service-id";
 
 interface AppBranding {
   mode: "blackLabel" | "whiteLabel";
@@ -292,7 +292,9 @@ export function LoginForm() {
 
   useEffect(() => {
     if (status === "authenticated" && session) {
-      router.push(sanitizedCallbackUrl);
+      resumeAfterOidcLogin(sanitizedCallbackUrl, (path) => {
+        router.push(path);
+      });
     }
   }, [session, status, router, sanitizedCallbackUrl]);
 

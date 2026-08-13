@@ -5,6 +5,7 @@ import {
   buildApiCorsHeaders,
   resolveBuilderApiCorsOrigin,
 } from "@/lib/api-cors";
+import { isOidcHandshakePath } from "@/lib/oidc/handshake-path";
 import { getNextAuthSecret } from "@/lib/next-auth-secret";
 
 const SESSION_COOKIE_NAMES = [
@@ -18,6 +19,8 @@ const nextAuthSecret = getNextAuthSecret({ suppressDevWarning: true });
  * Node.js request proxy:
  * - Conditional CORS for `/api/v1/*`
  * - Clear invalid/mismatched NextAuth session cookies on other routes
+ * - Leave OIDC authorize/interaction/resume responses alone (those Set-Cookie
+ *   headers are the handshake; wiping NextAuth here restarts login).
  *
  * CORS:
  * - App routes `/api/v1/apps/{clientId}/…`: Origin must be on that app's domain allowlist
@@ -60,6 +63,10 @@ export async function proxy(request: NextRequest) {
 async function resolveSessionCookieResponse(
   request: NextRequest,
 ): Promise<NextResponse> {
+  if (isOidcHandshakePath(request.nextUrl.pathname)) {
+    return NextResponse.next();
+  }
+
   const hasSessionCookie = SESSION_COOKIE_NAMES.some((name) =>
     Boolean(request.cookies.get(name)?.value),
   );
