@@ -53,6 +53,25 @@ test("netBillableMeterDebtUsdMicros subtracts remaining included usage", () => {
   );
 });
 
+// getUnbilledDebtDetails folds "already collected this cycle" into this same
+// subtrahend (remainingIncludedUsdMicros + alreadyCollected) rather than
+// giving netBillableMeterDebtUsdMicros a third parameter, so this is the
+// exact bug the fix targets: the calendar-month meter sum includes usage
+// already paid off mid-cycle, and without netting it out the account looks
+// stuck in debt for the rest of the month right after clearing it.
+test("netBillableMeterDebtUsdMicros: paid-this-cycle netting clears a paid invoice's usage", () => {
+  const wholeMonthMeterTotal = 1_071_000_000n; // $1,071 — everything charged this cycle
+  const paidEarlierThisCycle = 1_061_000_000n; // $1,061 already collected via an invoice
+  const remainingIncluded = 0n;
+  assert.equal(
+    netBillableMeterDebtUsdMicros({
+      meterUsdMicros: wholeMonthMeterTotal,
+      remainingIncludedUsdMicros: remainingIncluded + paidEarlierThisCycle,
+    }),
+    10_000_000n, // $10 of genuinely new, unbilled usage since that payment
+  );
+});
+
 test("unbilledInvoiceDebtFromItems returns 0 for empty successful list", () => {
   assert.equal(unbilledInvoiceDebtFromItems([], "cus_1"), 0n);
 });

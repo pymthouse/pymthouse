@@ -234,6 +234,35 @@ async function lookupUnbilledInvoiceDebt(
   }
 }
 
+/**
+ * Amount already collected this cycle, netted out of the meter estimate
+ * below so it does not double-count usage a customer already paid for
+ * earlier in the same month as still owed.
+ *
+ * Dynamically imported: merchant-connect.ts imports this module (for the
+ * billing-history "pending usage" row), so a static import here would be
+ * circular. Merchant Stripe Connect is the only billing rail this can read
+ * reliably today — Stripe's own `customer=` filter works, unlike Konnect's
+ * invoice-list filter, which is why the meter estimate exists at all. Owner
+ * rollup (the OM-native Stripe app) has no equivalent reliable read yet, so
+ * this nets 0 there and that path keeps today's (still imperfect) behavior.
+ * Never allowed to fail the whole debt read: any error here just means no
+ * netting happens, not that debt can't be reported at all.
+ */
+async function alreadyCollectedThisCycleUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<bigint> {
+  try {
+    const { getMerchantPaidDebtThisCycleUsdMicros } = await import(
+      "@/lib/stripe/merchant-connect"
+    );
+    return await getMerchantPaidDebtThisCycleUsdMicros(input);
+  } catch {
+    return 0n;
+  }
+}
+
 async function periodMeterDebtUsdMicros(subjects: string[]): Promise<bigint> {
   if (!isHostedAdminClientAvailable()) {
     return 0n;
@@ -369,15 +398,16 @@ export async function getUnbilledDebtDetails(input: {
       return { usdMicros: looked.usdMicros, source: "gathering_invoice" };
     }
     if (looked.ok) {
-      const [meter, remainingIncluded] = await Promise.all([
+      const [meter, remainingIncluded, alreadyCollected] = await Promise.all([
         periodMeterDebtUsdMicros(meterSubjects),
         getRemainingPlanDiscountUsdMicros({ clientId, externalUserId }).catch(
           () => 0n,
         ),
+        alreadyCollectedThisCycleUsdMicros({ clientId, externalUserId }),
       ]);
       const meterDebt = netBillableMeterDebtUsdMicros({
         meterUsdMicros: meter,
-        remainingIncludedUsdMicros: remainingIncluded,
+        remainingIncludedUsdMicros: remainingIncluded + alreadyCollected,
       });
       // Both signals agree on zero: genuine, not a filter miss.
       if (meterDebt <= 0n) {
@@ -387,18 +417,19 @@ export async function getUnbilledDebtDetails(input: {
     }
   }
 
-  const [meter, remainingIncluded] = await Promise.all([
+  const [meter, remainingIncluded, alreadyCollected] = await Promise.all([
     periodMeterDebtUsdMicros(meterSubjects),
     getRemainingPlanDiscountUsdMicros({
       clientId,
       externalUserId,
     }).catch(() => 0n),
+    alreadyCollectedThisCycleUsdMicros({ clientId, externalUserId }),
   ]);
 
   return {
     usdMicros: netBillableMeterDebtUsdMicros({
       meterUsdMicros: meter,
-      remainingIncludedUsdMicros: remainingIncluded,
+      remainingIncludedUsdMicros: remainingIncluded + alreadyCollected,
     }),
     source: "meter_estimate",
   };

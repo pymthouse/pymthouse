@@ -2,11 +2,49 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildPendingUsageBillingHistoryItem,
+  centsToUsdMicros,
   connectPaymentsOnlyEnabled,
+  friendlyPaymentFailureMessage,
   hasOpenOrDraftInvoice,
   isMerchantConnectPaymentsReady,
   stripePaymentMethodBrandLabel,
+  sumPaidInvoiceCentsSince,
 } from "./merchant-connect";
+
+test("sumPaidInvoiceCentsSince sums only paid invoices at/after the cutoff", () => {
+  // This is the exact bug: a $1,000 invoice paid earlier in the cycle must
+  // not still count as owed once it settles, or the meter-estimate fallback
+  // reports "everything charged this cycle" instead of genuinely unbilled
+  // usage — the account looks stuck in debt even right after paying it off.
+  const cutoff = 1_000_000;
+  assert.equal(
+    sumPaidInvoiceCentsSince(
+      [
+        { status: "paid", created: 1_000_500, total: 100_000 }, // in window, paid
+        { status: "paid", created: 999_999, total: 50_000 }, // before window
+        { status: "open", created: 1_000_500, total: 25_000 }, // not paid yet
+        { status: "paid", created: 1_000_500, total: null }, // no total
+      ],
+      cutoff,
+    ),
+    100_000,
+  );
+});
+
+test("sumPaidInvoiceCentsSince is zero with no matching invoices", () => {
+  assert.equal(sumPaidInvoiceCentsSince([], 0), 0);
+  assert.equal(
+    sumPaidInvoiceCentsSince([{ status: "open", created: 0, total: 500 }], 0),
+    0,
+  );
+});
+
+test("centsToUsdMicros converts without floating point drift", () => {
+  assert.equal(centsToUsdMicros(107_100), 1_071_000_000n);
+  assert.equal(centsToUsdMicros(1), 10_000n);
+  assert.equal(centsToUsdMicros(0), 0n);
+  assert.equal(centsToUsdMicros(-5), 0n);
+});
 
 test("isMerchantConnectPaymentsReady requires account, charges, and details", () => {
   assert.equal(isMerchantConnectPaymentsReady(null), false);
@@ -100,6 +138,31 @@ test("buildPendingUsageBillingHistoryItem formats a pending row for real debt", 
     issuedAt: "2026-08-13T12:00:00.000Z",
     invoiceType: "pending_usage",
   });
+});
+
+test("friendlyPaymentFailureMessage translates common decline codes", () => {
+  assert.equal(friendlyPaymentFailureMessage(null), null);
+  assert.equal(friendlyPaymentFailureMessage(undefined), null);
+  assert.equal(
+    friendlyPaymentFailureMessage({ decline_code: "insufficient_funds" }),
+    "Your card was declined for insufficient funds.",
+  );
+  assert.equal(
+    friendlyPaymentFailureMessage({ code: "expired_card" }),
+    "Your card has expired.",
+  );
+  // decline_code wins over the generic code when both are present.
+  assert.equal(
+    friendlyPaymentFailureMessage({
+      code: "card_declined",
+      decline_code: "insufficient_funds",
+    }),
+    "Your card was declined for insufficient funds.",
+  );
+  assert.equal(
+    friendlyPaymentFailureMessage({ code: "some_unrecognized_reason" }),
+    "We could not charge your payment method.",
+  );
 });
 
 test("stripePaymentMethodBrandLabel maps LINK and card brands", () => {
