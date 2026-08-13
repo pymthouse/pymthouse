@@ -124,12 +124,22 @@ test("indexOwnerListMeterSubjects includes bare, owner:, and compound keys", () 
   const ownerId = "owner-uuid-1";
   const index = indexOwnerListMeterSubjects(
     [ownerId],
-    new Map([[ownerId, [{ id: "app_abc", name: "Demo" }]]]),
+    new Map([[ownerId, ["app_abc"]]]),
   );
   assert.equal(index.get(ownerId), ownerId);
   assert.equal(index.get(`owner:${ownerId}`), ownerId);
   assert.equal(index.get("app_abc:owner-uuid-1"), ownerId);
   assert.equal(index.get("app_abc:owner:owner-uuid-1"), ownerId);
+});
+
+test("indexOwnerListMeterSubjects uses public client ids not developer app ids", () => {
+  const ownerId = "owner-uuid-1";
+  const index = indexOwnerListMeterSubjects(
+    [ownerId],
+    new Map([[ownerId, ["pc_public"]]]),
+  );
+  assert.equal(index.get("pc_public:owner-uuid-1"), ownerId);
+  assert.equal(index.has("dev_internal:owner-uuid-1"), false);
 });
 
 test("ownerIdFromOwnerListMeterRow maps subject and external_user_id", () => {
