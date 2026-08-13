@@ -51,10 +51,14 @@ export function hasConfiguredCustomerServiceRedirectOrigin(): boolean {
   );
 }
 
+function splitRedirectUriList(raw: string): string[] {
+  return raw.split(/[,\s]/);
+}
+
 export function resolveCustomerServiceRedirectUris(): string[] {
   const explicit = process.env.CS_OIDC_REDIRECT_URI?.trim();
   if (explicit) {
-    return mergeRedirectUris([], explicit.split(/[\s,]+/));
+    return mergeRedirectUris([], splitRedirectUriList(explicit));
   }
   return [customerServiceCallbackUri()];
 }

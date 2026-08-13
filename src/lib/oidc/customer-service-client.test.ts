@@ -70,7 +70,7 @@ test("resolveCustomerServiceRedirectUris prefers explicit URI list", (t) => {
   restoreEnv(t, "CUSTOMER_SERVICE_URL");
   restoreEnv(t, "NEXT_PUBLIC_CUSTOMER_SERVICE_URL");
   process.env.CS_OIDC_REDIRECT_URI =
-    "http://localhost:3010/api/auth/callback/pymthouse, https://cs.example.com/api/auth/callback/pymthouse";
+    "http://localhost:3010/api/auth/callback/pymthouse,,  https://cs.example.com/api/auth/callback/pymthouse";
   process.env.CUSTOMER_SERVICE_URL = "https://ignored.example";
   assert.deepEqual(resolveCustomerServiceRedirectUris(), [
     "http://localhost:3010/api/auth/callback/pymthouse",

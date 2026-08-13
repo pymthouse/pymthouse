@@ -40,12 +40,19 @@ function parseBootstrapArgs(argv: string[]): {
   email: string;
   rotateSecret: boolean;
 } {
-  const flags = new Set(argv.filter((arg) => arg.startsWith("--")));
-  const positional = argv.filter((arg) => !arg.startsWith("--"));
   return {
-    email: positional[0] || "admin@pymthouse.local",
-    rotateSecret: flags.has("--rotate-secret"),
+    email: argv.find((arg) => !arg.startsWith("--")) || "admin@pymthouse.local",
+    rotateSecret: argv.includes("--rotate-secret"),
   };
+}
+
+function customerServiceOidcStatus(cs: {
+  created: boolean;
+  secretRotated: boolean;
+}): string {
+  if (cs.created) return "created";
+  if (cs.secretRotated) return "existing, secret rotated";
+  return "existing";
 }
 
 async function main() {
@@ -111,12 +118,9 @@ async function main() {
 
     try {
       const cs = await ensureCustomerServiceOidcClient({ rotateSecret });
-      const status = cs.created
-        ? "created"
-        : cs.secretRotated
-          ? "existing, secret rotated"
-          : "existing";
-      console.log(`\n  Customer-service OIDC client: ${cs.clientId} (${status})`);
+      console.log(
+        `\n  Customer-service OIDC client: ${cs.clientId} (${customerServiceOidcStatus(cs)})`,
+      );
       console.log(`  Redirects: ${cs.redirectUris.join(", ")}`);
       if (cs.clientSecret) {
         const envPath = resolve(CUSTOMER_SERVICE_OIDC_ENV_FILENAME);
