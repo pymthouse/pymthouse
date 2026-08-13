@@ -57,9 +57,9 @@ CS_OIDC_CLIENT_SECRET=…
 # Local:
 # CS_OIDC_REDIRECT_URI=http://localhost:3010/api/auth/callback/pymthouse
 # NEXTAUTH_URL=http://localhost:3010
-# Deployed CS console:
-CS_OIDC_REDIRECT_URI=https://ops.pymthouse.com/api/auth/callback/pymthouse
-NEXTAUTH_URL=https://ops.pymthouse.com
+# Deployed CS console (ops + Vercel preview must both be listed):
+CS_OIDC_REDIRECT_URI=https://ops.pymthouse.com/api/auth/callback/pymthouse,https://customer-service-git-feat-bootstrap-cs-oidc-client-ecs-vercel.vercel.app/api/auth/callback/pymthouse
+# NEXTAUTH_URL is local-only; on Vercel the request host is the origin.
 NEXTAUTH_SECRET=…
 ```
 
