@@ -592,6 +592,56 @@ test("createConnectedOffSessionPaymentIntent rejects a non-positive amount", asy
       }),
     /amountCents must be a positive integer/,
   );
+  await assert.rejects(
+    () =>
+      createConnectedOffSessionPaymentIntent({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        paymentMethodId: "pm_1",
+        amountCents: 1.5,
+      }),
+    /amountCents must be a positive integer/,
+  );
+});
+
+test("createConnectedOffSessionPaymentIntent omits fee, sends idempotency, defaults status", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  let body = "";
+  let idempotency = "";
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = String(init?.body ?? "");
+    idempotency = new Headers(init?.headers).get("Idempotency-Key") ?? "";
+    return jsonResponse({ id: "pi_no_fee" });
+  });
+
+  assert.deepEqual(
+    await createConnectedOffSessionPaymentIntent({
+      accountId: "acct_1",
+      customerId: "cus_1",
+      paymentMethodId: "pm_1",
+      amountCents: 500,
+      idempotencyKey: "autotopup-pi:dev:eu:1",
+    }),
+    { id: "pi_no_fee", status: "" },
+  );
+  assert.equal(idempotency, "autotopup-pi:dev:eu:1");
+  assert.match(body, /currency=usd/);
+  assert.doesNotMatch(body, /application_fee_amount/);
+});
+
+test("createConnectedOffSessionPaymentIntent rejects a response without id", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  t.mock.method(globalThis, "fetch", async () => jsonResponse({ status: "succeeded" }));
+  await assert.rejects(
+    () =>
+      createConnectedOffSessionPaymentIntent({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        paymentMethodId: "pm_1",
+        amountCents: 100,
+      }),
+    /PaymentIntent unavailable/,
+  );
 });
 
 test("createConnectedInvoice creates item then invoice with fee", async (t) => {

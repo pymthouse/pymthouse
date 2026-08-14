@@ -151,6 +151,31 @@ test("buildSignerBalanceCheck rejects non-integer balance", async (t) => {
   );
 });
 
+test("buildSignerBalanceCheck denies when auto-top-up throws", async (t) => {
+  withOpenMeterConfigured(t);
+  t.after(() => __setTryAutoTopUpIfEnabledForTests(null));
+  __setTryAutoTopUpIfEnabledForTests(async () => {
+    throw new Error("stripe down");
+  });
+
+  seedSignerSpendableBalance("app_test_overage", "eu_topup_err", "0");
+  seedSignerOverageEligibility("app_test_overage", "eu_topup_err", false);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  await assert.rejects(
+    async () => {
+      await check({
+        identity: identity("eu_topup_err"),
+        expiry: Math.floor(Date.now() / 1000) + 60,
+        payload: {},
+        request: new Request("http://localhost/authorize"),
+      });
+    },
+    (err: unknown) => err instanceof WebhookError && err.status === 483,
+  );
+});
+
 test("buildSignerBalanceCheck allows zero spendable after auto-top-up charge", async (t) => {
   withOpenMeterConfigured(t);
   t.after(() => __setTryAutoTopUpIfEnabledForTests(null));

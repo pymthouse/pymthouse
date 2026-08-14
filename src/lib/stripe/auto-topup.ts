@@ -51,7 +51,40 @@ type TryAutoTopUpFn = (input: {
   externalUserId: string;
 }) => Promise<AutoTopUpResult>;
 
+/** Injectable collaborators for unit tests (Stripe / OM / DB stay out of process). */
+export type AutoTopUpRuntime = {
+  getProviderApp: (publicClientId: string) => Promise<{ id?: string } | null>;
+  loadPrefs: (input: {
+    appId: string;
+    externalUserId: string;
+  }) => Promise<AutoTopUpPrefs>;
+  getAppBillingConfig: (developerAppId: string) => Promise<{
+    billingMode?: string | null;
+    stripeConnectedAccountId?: string | null;
+    defaultCurrency?: string | null;
+    applicationFeeBps?: number | null;
+  } | null>;
+  listAppUserPaymentMethods: (input: {
+    clientId: string;
+    externalUserId: string;
+  }) => Promise<Array<{ id?: string; isDefault?: boolean }>>;
+  getAppUserStripeCustomer: (input: {
+    clientId: string;
+    externalUserId: string;
+  }) => Promise<{
+    stripeCustomerId?: string | null;
+    stripeConnectedAccountId?: string | null;
+  } | null>;
+  createConnectedOffSessionPaymentIntent: (
+    input: Parameters<typeof createConnectedOffSessionPaymentIntent>[0],
+  ) => ReturnType<typeof createConnectedOffSessionPaymentIntent>;
+  grantAllowanceUsdMicros: (
+    input: Parameters<typeof grantAllowanceUsdMicros>[0],
+  ) => ReturnType<typeof grantAllowanceUsdMicros>;
+};
+
 let tryAutoTopUpForTests: TryAutoTopUpFn | null = null;
+let autoTopUpRuntimeForTests: AutoTopUpRuntime | null = null;
 
 export function __setTryAutoTopUpIfEnabledForTests(
   fn: TryAutoTopUpFn | null,
@@ -62,6 +95,40 @@ export function __setTryAutoTopUpIfEnabledForTests(
     );
   }
   tryAutoTopUpForTests = fn;
+}
+
+/**
+ * Test-only override for the charge path (provider app, prefs, Stripe, grant).
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setAutoTopUpRuntimeForTests(
+  runtime: AutoTopUpRuntime | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setAutoTopUpRuntimeForTests is only available in test",
+    );
+  }
+  autoTopUpRuntimeForTests = runtime;
+}
+
+function autoTopUpRuntime(): AutoTopUpRuntime {
+  const defaults: AutoTopUpRuntime = {
+    getProviderApp,
+    loadPrefs: loadAppUserAutoTopUpPrefs,
+    getAppBillingConfig,
+    listAppUserPaymentMethods,
+    getAppUserStripeCustomer,
+    createConnectedOffSessionPaymentIntent,
+    grantAllowanceUsdMicros,
+  };
+  if (!autoTopUpRuntimeForTests) {
+    return defaults;
+  }
+  return {
+    ...defaults,
+    ...autoTopUpRuntimeForTests,
+  };
 }
 
 const autoTopUpFlight = createAsyncTtlCache<AutoTopUpResult>({
@@ -176,7 +243,8 @@ async function executeEnabledAutoTopUp(input: {
   externalUserId: string;
   amountUsdMicros: bigint;
 }): Promise<AutoTopUpResult> {
-  const billingConfig = await getAppBillingConfig(input.developerAppId);
+  const runtime = autoTopUpRuntime();
+  const billingConfig = await runtime.getAppBillingConfig(input.developerAppId);
   if (billingConfig?.billingMode !== "merchant") {
     return { status: "skipped", reason: "not_merchant" };
   }
@@ -185,7 +253,7 @@ async function executeEnabledAutoTopUp(input: {
     return { status: "skipped", reason: "connect_not_ready" };
   }
 
-  const paymentMethods = await listAppUserPaymentMethods({
+  const paymentMethods = await runtime.listAppUserPaymentMethods({
     clientId: input.developerAppId,
     externalUserId: input.externalUserId,
   });
@@ -194,7 +262,7 @@ async function executeEnabledAutoTopUp(input: {
     return { status: "skipped", reason: "no_payment_method" };
   }
 
-  const customer = await getAppUserStripeCustomer({
+  const customer = await runtime.getAppUserStripeCustomer({
     clientId: input.developerAppId,
     externalUserId: input.externalUserId,
   });
@@ -213,7 +281,7 @@ async function executeEnabledAutoTopUp(input: {
 
   let pi: { id: string; status: string };
   try {
-    pi = await createConnectedOffSessionPaymentIntent({
+    pi = await runtime.createConnectedOffSessionPaymentIntent({
       accountId,
       customerId: stripeCustomerId,
       paymentMethodId: defaultPm.id,
@@ -245,7 +313,7 @@ async function executeEnabledAutoTopUp(input: {
   }
 
   try {
-    await grantAllowanceUsdMicros({
+    await runtime.grantAllowanceUsdMicros({
       clientId: input.publicClientId,
       externalUserId: input.externalUserId,
       amountUsdMicros: input.amountUsdMicros,
@@ -287,14 +355,15 @@ export async function tryAutoTopUpIfEnabled(input: {
     return { status: "skipped", reason: "missing_identity" };
   }
 
+  const runtime = autoTopUpRuntime();
   return autoTopUpFlight.get(
     `${publicClientId}\u0000${externalUserId}`,
     async () => {
-      const app = await getProviderApp(publicClientId);
+      const app = await runtime.getProviderApp(publicClientId);
       if (!app?.id) {
         return { status: "skipped", reason: "app_not_found" };
       }
-      const prefs = await loadAppUserAutoTopUpPrefs({
+      const prefs = await runtime.loadPrefs({
         appId: app.id,
         externalUserId,
       });
