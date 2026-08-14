@@ -14,10 +14,17 @@ import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
 import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
+  getHostedAdminClient,
+  isHostedAdminClientAvailable,
+} from "@/lib/openmeter/admin-client";
+import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
   getAppBillingConfig,
   upsertAppBillingConfig,
   ensureAppStripeBillingReady,
 } from "@/lib/openmeter/billing-profiles";
+import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import { rememberStripeCustomerId } from "@/lib/openmeter/stripe-customer-data";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { isLegacyAutoTopUpPaymentIntentMetadata } from "@/lib/stripe/legacy-auto-topup";
 import {
@@ -200,6 +207,47 @@ async function stripeConnectInvoiceRequest<T>(
     );
   }
   return body;
+}
+
+/** Escape a value for a Stripe Search query quoted string. */
+export function escapeStripeSearchValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/**
+ * Stripe Customer Search queries that find Connect customers settlement (or
+ * an older identity) may have created alongside the PymtHouse checkout `cus_`.
+ */
+export function relatedConnectCustomerSearchQueries(input: {
+  externalUserId: string;
+  payerCustomerKey?: string | null;
+  openmeterCustomerId?: string | null;
+}): string[] {
+  const queries: string[] = [];
+  const seen = new Set<string>();
+  const add = (query: string) => {
+    if (seen.has(query)) return;
+    seen.add(query);
+    queries.push(query);
+  };
+  const addMetadata = (field: string, value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (!trimmed) return;
+    add(`metadata['${field}']:'${escapeStripeSearchValue(trimmed)}'`);
+  };
+  const addName = (value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (!trimmed) return;
+    add(`name:'${escapeStripeSearchValue(trimmed)}'`);
+  };
+
+  addMetadata("external_user_id", input.externalUserId);
+  addMetadata("openmeter_customer_id", input.openmeterCustomerId);
+  addMetadata("openmeter_customer_key", input.payerCustomerKey);
+  addMetadata("customer_key", input.payerCustomerKey);
+  addName(input.externalUserId);
+  addName(input.payerCustomerKey);
+  return queries;
 }
 
 function mapMerchantInvoice(
@@ -715,6 +763,172 @@ async function listAllMerchantConnectPaymentIntents(
   return intents;
 }
 
+const MAX_RELATED_CONNECT_CUSTOMERS = 8;
+
+function uniqueByStripeId<T extends { id?: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const id = row.id?.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(row);
+  }
+  return out;
+}
+
+async function searchConnectedCustomerIds(
+  accountId: string,
+  query: string,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    query,
+    limit: "20",
+  });
+  try {
+    const result = await stripeConnectInvoiceRequest<{
+      data?: { id?: string; deleted?: boolean }[];
+    }>(accountId, `/v1/customers/search?${params.toString()}`);
+    return (result.data ?? []).flatMap((customer) => {
+      if (customer.deleted) return [];
+      const id = customer.id?.trim();
+      if (!id?.startsWith("cus_")) return [];
+      return [id];
+    });
+  } catch (err) {
+    console.warn("merchant-connect: customer search failed", {
+      error: err instanceof Error ? err.message : err,
+    });
+    return [];
+  }
+}
+
+async function listRelatedConnectCustomerIds(input: {
+  accountId: string;
+  primaryCustomerId: string;
+  clientId: string;
+  externalUserId: string;
+  openmeterCustomerId?: string | null;
+  openmeterCustomerKey?: string | null;
+}): Promise<string[]> {
+  const ids = new Set<string>([input.primaryCustomerId]);
+  let payerCustomerKey = input.openmeterCustomerKey?.trim() || undefined;
+  const openmeterCustomerId = input.openmeterCustomerId?.trim() || undefined;
+  try {
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+    payerCustomerKey = identity.payerCustomerKey.trim() || payerCustomerKey;
+  } catch (err) {
+    console.warn("merchant-connect: identity resolve failed for invoice fan-out", {
+      error: err instanceof Error ? err.message : err,
+    });
+  }
+  const queries = relatedConnectCustomerSearchQueries({
+    externalUserId: input.externalUserId,
+    payerCustomerKey,
+    openmeterCustomerId,
+  });
+  const found = await Promise.all(
+    queries.map((query) => searchConnectedCustomerIds(input.accountId, query)),
+  );
+  for (const id of found.flat()) {
+    ids.add(id);
+    if (ids.size >= MAX_RELATED_CONNECT_CUSTOMERS) {
+      break;
+    }
+  }
+  return [...ids].slice(0, MAX_RELATED_CONNECT_CUSTOMERS);
+}
+
+async function merchantConnectCustomerContext(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<{
+  accountId: string;
+  customerIds: string[];
+} | null> {
+  const config = await getAppBillingConfig(input.clientId);
+  if (!isMerchantConnectPaymentsReady(config)) {
+    return null;
+  }
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  const customer = await getAppUserStripeCustomer(input);
+  if (
+    !accountId ||
+    customer?.stripeConnectedAccountId !== accountId ||
+    !customer.stripeCustomerId?.trim()
+  ) {
+    return null;
+  }
+  const primaryCustomerId = customer.stripeCustomerId.trim();
+  const customerIds = await listRelatedConnectCustomerIds({
+    accountId,
+    primaryCustomerId,
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    openmeterCustomerId: customer.openmeterCustomerId,
+    openmeterCustomerKey: customer.openmeterCustomerKey,
+  });
+  return { accountId, customerIds };
+}
+
+async function listHistoryForConnectCustomers(
+  accountId: string,
+  stripeCustomerIds: string[],
+): Promise<{
+  invoices: StripeConnectInvoice[];
+  paymentIntents: StripeConnectPaymentIntent[];
+}> {
+  const chunks = await Promise.all(
+    stripeCustomerIds.map(async (stripeCustomerId) => {
+      const [invoices, paymentIntents] = await Promise.all([
+        listAllMerchantConnectInvoices(accountId, stripeCustomerId),
+        listAllMerchantConnectPaymentIntents(accountId, stripeCustomerId),
+      ]);
+      return { invoices, paymentIntents };
+    }),
+  );
+  return {
+    invoices: uniqueByStripeId(chunks.flatMap((chunk) => chunk.invoices)),
+    paymentIntents: uniqueByStripeId(
+      chunks.flatMap((chunk) => chunk.paymentIntents),
+    ),
+  };
+}
+
+async function mirrorConnectStripeCustomerQuietly(input: {
+  clientId: string;
+  externalUserId: string;
+  stripeCustomerId: string;
+  openmeterCustomerId?: string;
+}): Promise<void> {
+  try {
+    let customerId = input.openmeterCustomerId?.trim();
+    if (!customerId && isHostedAdminClientAvailable()) {
+      const identity = await resolveOpenMeterBillingIdentity({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+      });
+      const omCustomer = await ensureOpenMeterCustomer(
+        getHostedAdminClient(),
+        identity.customerKey,
+      );
+      customerId = omCustomer.id;
+    }
+    if (!customerId) return;
+    await rememberStripeCustomerId({
+      customerId,
+      stripeCustomerId: input.stripeCustomerId,
+    });
+  } catch (err) {
+    console.warn("merchant-connect: failed to mirror Stripe customer onto OpenMeter", {
+      error: err instanceof Error ? err.message : err,
+    });
+  }
+}
+
 /** invoice id → brand from the PI that settled it (LINK, VISA, …). */
 function paymentBrandByInvoiceId(
   paymentIntents: StripeConnectPaymentIntent[],
@@ -756,24 +970,13 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
   pageSize: number;
   totalCount: number;
 }> {
-  const config = await getAppBillingConfig(input.clientId);
-  if (!isMerchantConnectPaymentsReady(config)) {
-    return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
-  }
-  const accountId = config?.stripeConnectedAccountId?.trim();
-  const customer = await getAppUserStripeCustomer(input);
-  if (
-    !accountId ||
-    customer?.stripeConnectedAccountId !== accountId ||
-    !customer.stripeCustomerId?.trim()
-  ) {
+  const ctx = await merchantConnectCustomerContext(input);
+  if (!ctx) {
     return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
   }
   const offset = (input.page - 1) * input.pageSize;
-  const [invoiceRows, paymentIntentRows] = await Promise.all([
-    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
-    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
-  ]);
+  const { invoices: invoiceRows, paymentIntents: paymentIntentRows } =
+    await listHistoryForConnectCustomers(ctx.accountId, ctx.customerIds);
   const paidBrands = paymentBrandByInvoiceId(paymentIntentRows);
   const invoices = invoiceRows
     .map((invoice) => {
@@ -930,27 +1133,18 @@ export async function getMerchantPaidDebtThisCycleUsdMicros(input: {
   clientId: string;
   externalUserId: string;
 }): Promise<bigint> {
-  const config = await getAppBillingConfig(input.clientId);
-  if (!isMerchantConnectPaymentsReady(config)) {
-    return 0n;
-  }
-  const accountId = config?.stripeConnectedAccountId?.trim();
-  const customer = await getAppUserStripeCustomer(input);
-  if (
-    !accountId ||
-    customer?.stripeConnectedAccountId !== accountId ||
-    !customer.stripeCustomerId?.trim()
-  ) {
+  const ctx = await merchantConnectCustomerContext(input);
+  if (!ctx) {
     return 0n;
   }
 
   const cycle = calendarMonthBoundsUtc(new Date());
   const cycleStartSeconds = Math.floor(new Date(cycle.start).getTime() / 1000);
 
-  const [invoices, paymentIntents] = await Promise.all([
-    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
-    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
-  ]);
+  const { invoices, paymentIntents } = await listHistoryForConnectCustomers(
+    ctx.accountId,
+    ctx.customerIds,
+  );
   return centsToUsdMicros(
     sumPaidInvoiceCentsSince(invoices, cycleStartSeconds) +
       sumSucceededStandalonePaymentCentsSince(paymentIntents, cycleStartSeconds),
@@ -963,28 +1157,19 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
   externalUserId: string;
   invoiceId: string;
 }): Promise<{ hostedInvoiceUrl: string | null; invoicePdf: string | null } | null> {
-  const config = await getAppBillingConfig(input.clientId);
-  if (!isMerchantConnectPaymentsReady(config)) {
-    return null;
-  }
-  const accountId = config?.stripeConnectedAccountId?.trim();
-  const customer = await getAppUserStripeCustomer(input);
+  const ctx = await merchantConnectCustomerContext(input);
   const invoiceId = input.invoiceId.trim();
-  if (
-    !accountId ||
-    customer?.stripeConnectedAccountId !== accountId ||
-    !customer.stripeCustomerId?.trim() ||
-    !invoiceId
-  ) {
+  if (!ctx || !invoiceId) {
     return null;
   }
+  const owned = new Set(ctx.customerIds);
 
   if (invoiceId.startsWith("pi_")) {
     const pi = await stripeConnectInvoiceRequest<StripeConnectPaymentIntent>(
-      accountId,
+      ctx.accountId,
       `/v1/payment_intents/${encodeURIComponent(invoiceId)}?expand[]=latest_charge`,
     );
-    if (pi.customer !== customer.stripeCustomerId) {
+    if (!pi.customer || !owned.has(pi.customer)) {
       return null;
     }
     if (!isLegacyAutoTopUpPaymentIntentMetadata(pi.metadata)) {
@@ -999,10 +1184,10 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
   }
 
   const invoice = await stripeConnectInvoiceRequest<StripeConnectInvoice>(
-    accountId,
+    ctx.accountId,
     `/v1/invoices/${encodeURIComponent(invoiceId)}`,
   );
-  if (invoice.customer !== customer.stripeCustomerId) {
+  if (!invoice.customer || !owned.has(invoice.customer)) {
     return null;
   }
   return {
@@ -1027,6 +1212,13 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     existing?.stripeCustomerId &&
     existing.stripeConnectedAccountId === input.accountId
   ) {
+    await mirrorConnectStripeCustomerQuietly({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+      stripeCustomerId: existing.stripeCustomerId,
+      openmeterCustomerId:
+        input.openmeterCustomerId ?? existing.openmeterCustomerId ?? undefined,
+    });
     return existing.stripeCustomerId;
   }
   const stripeCustomerId = await createConnectedCustomer({
@@ -1039,7 +1231,10 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
         ? { openmeter_customer_id: input.openmeterCustomerId }
         : {}),
       ...(input.openmeterCustomerKey
-        ? { customer_key: input.openmeterCustomerKey }
+        ? {
+            customer_key: input.openmeterCustomerKey,
+            openmeter_customer_key: input.openmeterCustomerKey,
+          }
         : {}),
     },
   });
@@ -1050,6 +1245,12 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     stripeCustomerId,
     openmeterCustomerId: input.openmeterCustomerId,
     openmeterCustomerKey: input.openmeterCustomerKey,
+  });
+  await mirrorConnectStripeCustomerQuietly({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    stripeCustomerId,
+    openmeterCustomerId: input.openmeterCustomerId,
   });
   return stripeCustomerId;
 }

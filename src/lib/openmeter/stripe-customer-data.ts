@@ -103,7 +103,13 @@ async function getKonnectStripeCustomerId(
  * customer metadata. Re-provisioning reads it back from there instead of creating
  * a duplicate Stripe customer.
  */
-const STRIPE_CUSTOMER_LABEL_KEY = "pymthouse_stripe_customer_id";
+export const PYMTHOUSE_STRIPE_CUSTOMER_LABEL_KEY =
+  "pymthouse_stripe_customer_id";
+/**
+ * Settlement looks up this Konnect label (`SETTLEMENT_STRIPE_CUSTOMER_METADATA_KEY`)
+ * before creating its own Connect customer. Must stay in lockstep with that default.
+ */
+export const SETTLEMENT_STRIPE_CUSTOMER_LABEL_KEY = "stripe_customer_id";
 
 /**
  * Konnect stores customer key/value data in `labels`; a `metadata` field is
@@ -131,10 +137,15 @@ async function getKonnectCustomer(
 
 async function recallStripeCustomerId(customerId: string): Promise<string | null> {
   const customer = await getKonnectCustomer(customerId);
-  return customer?.labels?.[STRIPE_CUSTOMER_LABEL_KEY]?.trim() || null;
+  const labels = customer?.labels;
+  return (
+    labels?.[PYMTHOUSE_STRIPE_CUSTOMER_LABEL_KEY]?.trim() ||
+    labels?.[SETTLEMENT_STRIPE_CUSTOMER_LABEL_KEY]?.trim() ||
+    null
+  );
 }
 
-async function rememberStripeCustomerId(input: {
+export async function rememberStripeCustomerId(input: {
   customerId: string;
   stripeCustomerId: string;
 }): Promise<void> {
@@ -143,9 +154,13 @@ async function rememberStripeCustomerId(input: {
     if (!customer) {
       throw new Error(`customer ${input.customerId} not readable`);
     }
+    const currentPymt =
+      customer.labels?.[PYMTHOUSE_STRIPE_CUSTOMER_LABEL_KEY]?.trim();
+    const currentSettlement =
+      customer.labels?.[SETTLEMENT_STRIPE_CUSTOMER_LABEL_KEY]?.trim();
     if (
-      customer.labels?.[STRIPE_CUSTOMER_LABEL_KEY]?.trim() ===
-      input.stripeCustomerId
+      currentPymt === input.stripeCustomerId &&
+      currentSettlement === input.stripeCustomerId
     ) {
       return;
     }
@@ -164,7 +179,8 @@ async function rememberStripeCustomerId(input: {
           },
           labels: {
             ...customer.labels,
-            [STRIPE_CUSTOMER_LABEL_KEY]: input.stripeCustomerId,
+            [PYMTHOUSE_STRIPE_CUSTOMER_LABEL_KEY]: input.stripeCustomerId,
+            [SETTLEMENT_STRIPE_CUSTOMER_LABEL_KEY]: input.stripeCustomerId,
           },
         }),
       },

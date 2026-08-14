@@ -4,9 +4,11 @@ import {
   buildPendingUsageBillingHistoryItem,
   centsToUsdMicros,
   connectPaymentsOnlyEnabled,
+  escapeStripeSearchValue,
   friendlyPaymentFailureMessage,
   hasOpenOrDraftInvoice,
   isMerchantConnectPaymentsReady,
+  relatedConnectCustomerSearchQueries,
   stripePaymentMethodBrandLabel,
   sumPaidInvoiceCentsSince,
   sumSucceededStandalonePaymentCentsSince,
@@ -218,5 +220,29 @@ test("stripePaymentMethodBrandLabel maps LINK and card brands", () => {
       card: { brand: "visa" },
     }),
     "VISA",
+  );
+});
+
+test("escapeStripeSearchValue escapes backslash and single quote", () => {
+  assert.equal(escapeStripeSearchValue("eu_abc"), "eu_abc");
+  assert.equal(escapeStripeSearchValue("app_x:eu_y"), "app_x:eu_y");
+  assert.equal(escapeStripeSearchValue("o'reilly"), "o\\'reilly");
+  assert.equal(escapeStripeSearchValue("a\\b"), "a\\\\b");
+});
+
+test("relatedConnectCustomerSearchQueries uses the eu_ customer, not the retired compound key", () => {
+  const eu = "eu_43eac8e3fe4dd854633da7a23fb21114";
+  const queries = relatedConnectCustomerSearchQueries({
+    externalUserId: eu,
+    payerCustomerKey: eu,
+    openmeterCustomerId: "01KCUST",
+  });
+  assert.ok(queries.includes(`metadata['external_user_id']:'${eu}'`));
+  assert.ok(queries.includes("metadata['openmeter_customer_id']:'01KCUST'"));
+  assert.ok(queries.includes(`metadata['openmeter_customer_key']:'${eu}'`));
+  assert.ok(queries.includes(`name:'${eu}'`));
+  assert.equal(
+    queries.some((q) => q.includes("app_f28038d792df4256b59931e1:")),
+    false,
   );
 });
