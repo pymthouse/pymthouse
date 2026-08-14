@@ -9,9 +9,9 @@ import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
-  isEndUserCustomerKey,
   isOwnerWireSubject,
   normalizePlatformUserId,
+  parseCustomerKey,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
@@ -281,9 +281,19 @@ export function wireUsageSubjectFromJwt(input: {
     input.actorExternalUserId?.trim() || input.usageSubject.trim() || "";
 
   if (billingSubjectKey) {
-    const payerKind: BillingPayerKind = isEndUserCustomerKey(billingSubjectKey)
-      ? "end_user"
-      : "platform_user";
+    const parsed = parseCustomerKey(billingSubjectKey);
+    // Compound legacy keys must never take the owner: wire path — that would
+    // meter to a non-existent owner wallet (attributed nowhere).
+    if (parsed?.kind === "legacy_compound") {
+      const wire = buildPayerActorWireSubject({
+        payerCustomerKey: billingSubjectKey,
+        payerKind: "end_user",
+        actorExternalUserId: actor,
+      });
+      return { usageSubject: wire, usageSubjectType: "external_user_id" };
+    }
+    const payerKind: BillingPayerKind =
+      parsed?.kind === "end_user" ? "end_user" : "platform_user";
     const wire = buildPayerActorWireSubject({
       payerCustomerKey: billingSubjectKey,
       payerKind,
@@ -402,7 +412,7 @@ function getIdentityCache() {
   return identityCache;
 }
 
-export function resetBillingIdentityCacheForTests(): void {
+export function resetBillingIdentityCache(): void {
   identityCache = null;
 }
 

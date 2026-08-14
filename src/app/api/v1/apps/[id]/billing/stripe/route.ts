@@ -24,6 +24,7 @@ import {
   getStripeConnectStatus,
 } from "@/lib/openmeter/stripe-app-install";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
+import { resetBillingIdentityCache } from "@/lib/openmeter/billing-identity";
 import { isConnectReady } from "@/lib/activation/app-activation";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
@@ -501,10 +502,17 @@ export async function PATCH(
       access.auth.app.id,
       parsed.fields,
     );
+    // Drop cached (clientId, externalUserId) → identity rows so the next mint
+    // / debt / webhook resolve sees the new billingMode immediately. JWT TTL
+    // still bounds already-issued sessions (mint-forward).
+    if (parsed.fields.billingMode !== undefined) {
+      resetBillingIdentityCache();
+    }
     const status = await getStripeConnectStatus(access.auth.app.id);
     // Mode switches are mint-forward: identity/provision caches (default 300s)
     // plus live signer JWT TTL bound when new sessions pick up the new rail.
     // Already-ingested CloudEvents stay on the customer they were billed to.
+    // Cache is busted above; effectiveAt remains a client hint for JWT expiry.
     const billingModeEffectiveAt =
       parsed.fields.billingMode !== undefined
         ? new Date(Date.now() + 5 * 60 * 1000).toISOString()

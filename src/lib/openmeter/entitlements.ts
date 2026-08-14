@@ -305,11 +305,10 @@ export async function ingestSignedTicketEvent(input: {
       external_user_id: identity.actorExternalUserId,
       billing_subject_key: identity.payerCustomerKey,
       billing_subject_kind: billingSubjectKind,
-      actor_end_user_id:
-        identity.payerKind === "end_user" ||
-        identity.actorEndUserId.startsWith("eu_")
-          ? identity.actorEndUserId
-          : "",
+      // Collector schema v2 only sets actor_end_user_id for stable eu_… keys.
+      actor_end_user_id: identity.actorEndUserId.startsWith("eu_")
+        ? identity.actorEndUserId
+        : "",
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: feeWei,
       pixels: input.event.pixels,

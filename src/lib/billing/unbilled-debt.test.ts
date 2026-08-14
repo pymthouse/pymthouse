@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   gatheringTotalUsdMicros,
   netBillableMeterDebtUsdMicros,
+  paidInvoiceTotalUsdMicrosSince,
   unbilledInvoiceDebtFromItems,
 } from "@/lib/billing/unbilled-debt";
 
@@ -174,5 +175,86 @@ test("unbilledInvoiceDebtFromItems counts unpaid open without gathering", () => 
       "cus_1",
     ),
     4_750_000n,
+  );
+});
+
+test("unbilledInvoiceDebtFromItems ignores invoices without a matching customer id", () => {
+  // Unfiltered Konnect pages can omit customer.id. Those rows must not invent
+  // debt for this subject or short-circuit the meter cross-check.
+  assert.equal(
+    unbilledInvoiceDebtFromItems(
+      [
+        {
+          status: "gathering",
+          totals: { total: "99.00" },
+        },
+        {
+          status: "draft",
+          customer: { id: "cus_other" },
+          totals: { total: "50.00" },
+        },
+        {
+          status: "gathering",
+          customer: "cus_1",
+          totals: { total: "2.00" },
+        },
+      ],
+      "cus_1",
+    ),
+    2_000_000n,
+  );
+  assert.equal(
+    unbilledInvoiceDebtFromItems(
+      [
+        {
+          status: "gathering",
+          totals: { total: "99.00" },
+        },
+        {
+          status: "issued",
+          customerId: null,
+          totals: { total: "12.00" },
+        },
+      ],
+      "cus_1",
+    ),
+    0n,
+  );
+});
+
+test("paidInvoiceTotalUsdMicrosSince nets owner-rail mid-cycle paid invoices", () => {
+  const cycleStart = Date.parse("2026-08-01T00:00:00.000Z");
+  assert.equal(
+    paidInvoiceTotalUsdMicrosSince(
+      [
+        {
+          status: "paid",
+          customer: { id: "cus_owner" },
+          totals: { total: "1061.00" },
+          createdAt: "2026-08-10T12:00:00.000Z",
+        },
+        {
+          status: "paid",
+          customer: { id: "cus_owner" },
+          totals: { total: "5.00" },
+          createdAt: "2026-07-31T23:00:00.000Z",
+        },
+        {
+          status: "gathering",
+          customer: { id: "cus_owner" },
+          totals: { total: "10.00" },
+          createdAt: "2026-08-13T12:00:00.000Z",
+        },
+        {
+          status: "paid",
+          customer: { id: "cus_other" },
+          totals: { total: "999.00" },
+          createdAt: "2026-08-10T12:00:00.000Z",
+        },
+      ],
+      "cus_owner",
+      cycleStart,
+    ),
+    1_061_000_000n,
   );
 });

@@ -23,6 +23,9 @@ import {
  * Poll `billingState` (already returned alongside it) or billing history to
  * see the result land.
  *
+ * HTTP status: `queued` / `skipped` / `rate_limited` → 200; settlement not
+ * configured → 503 (`unavailable`); settlement rejected/failed → 502 (`error`).
+ *
  * Idempotent within the trigger cooldown: repeat calls return `rate_limited`
  * with the current state rather than queuing duplicate raises. Debt below
  * Stripe's minimum charge returns `skipped`, since such an invoice could never
@@ -76,6 +79,13 @@ export async function POST(
     externalUserId: subjectId,
   });
 
+  const status =
+    result.outcome === "error"
+      ? 502
+      : result.outcome === "unavailable"
+        ? 503
+        : 200;
+
   return NextResponse.json(
     {
       outcome: result.outcome,
@@ -83,7 +93,7 @@ export async function POST(
       billingState: state,
     },
     {
-      status: result.outcome === "error" ? 502 : 200,
+      status,
       headers: { "Cache-Control": "no-store" },
     },
   );

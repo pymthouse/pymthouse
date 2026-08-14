@@ -22,7 +22,9 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "idx_billing_customers_customer_key" ON "billing_customers" USING btree ("customer_key");
+-- Per-(customer_key, client_id) so shared owner wallets can be registered
+-- under every app that uses them without clobbering sibling rows.
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_billing_customers_customer_key_client" ON "billing_customers" USING btree ("customer_key", "client_id");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "idx_billing_customers_client_id" ON "billing_customers" USING btree ("client_id");
 --> statement-breakpoint

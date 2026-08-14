@@ -495,12 +495,11 @@ export async function recordBillingCustomer(input: {
         updatedAt: now,
       })
       .onConflictDoUpdate({
-        target: billingCustomers.customerKey,
+        target: [billingCustomers.customerKey, billingCustomers.clientId],
         set: {
           kind: input.kind,
           platformUserId: input.platformUserId?.trim() || null,
           endUserId: input.endUserId?.trim() || null,
-          clientId,
           openmeterCustomerId,
           updatedAt: now,
         },
@@ -571,10 +570,17 @@ async function listTenantCustomersFromRegistry(
     .select({
       id: billingCustomers.openmeterCustomerId,
       key: billingCustomers.customerKey,
+      kind: billingCustomers.kind,
     })
     .from(billingCustomers)
     .where(eq(billingCustomers.clientId, developerAppId));
-  return rows.filter((row) => row.id && row.key);
+  // Tenant invoice / credit lists are end-user customers. Shared owner
+  // wallets are resolved separately (resolveOwnerCustomerIdsForApp) — a
+  // platform_user registry row whose client_id was last touched by another
+  // app of the same owner must not leak into this app's end-user list.
+  return rows.filter(
+    (row) => row.id && row.key && row.kind === "end_user",
+  );
 }
 
 async function listTenantCustomersFromOpenMeterPrefix(

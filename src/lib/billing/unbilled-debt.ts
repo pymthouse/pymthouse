@@ -75,19 +75,59 @@ export function netBillableMeterDebtUsdMicros(input: {
 
 type InvoiceDebtRow = {
   status?: string | null;
-  customer?: { id?: string | null } | null;
+  /** Konnect sometimes returns an embedded object; some paths send a bare id. */
+  customer?: string | { id?: string | null } | null;
   customerId?: string | null;
   customer_id?: string | null;
   totals?: { total?: unknown } | null;
+  createdAt?: string | number | Date | null;
+  created_at?: string | number | Date | null;
+  created?: string | number | Date | null;
 };
 
 function invoiceCustomerId(inv: InvoiceDebtRow): string | null {
-  return (
-    inv.customer?.id?.trim() ||
-    (typeof inv.customerId === "string" ? inv.customerId.trim() : null) ||
-    (typeof inv.customer_id === "string" ? inv.customer_id.trim() : null) ||
-    null
-  );
+  if (typeof inv.customer === "string") {
+    const trimmed = inv.customer.trim();
+    if (trimmed) return trimmed;
+  } else {
+    const embedded = inv.customer?.id?.trim();
+    if (embedded) return embedded;
+  }
+  if (typeof inv.customerId === "string") {
+    const trimmed = inv.customerId.trim();
+    if (trimmed) return trimmed;
+  }
+  if (typeof inv.customer_id === "string") {
+    const trimmed = inv.customer_id.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+/** Invoice created-at as epoch ms, or null when missing / unparseable. */
+function invoiceCreatedMs(inv: InvoiceDebtRow): number | null {
+  const raw = inv.createdAt ?? inv.created_at ?? inv.created;
+  if (raw == null) return null;
+  if (raw instanceof Date) {
+    const ms = raw.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    // Seconds vs millis: Stripe-style seconds are < 1e12.
+    return raw < 1_000_000_000_000 ? raw * 1000 : raw;
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) {
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) return null;
+      return n < 1_000_000_000_000 ? n * 1000 : n;
+    }
+    const ms = Date.parse(trimmed);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
 }
 
 function statusRoot(status: string): string {
@@ -121,8 +161,11 @@ function invoiceDebtContribution(
   inv: InvoiceDebtRow,
   customerId: string,
 ): { kind: "gathering" | "unpaid"; micros: bigint } | null {
+  // Require an explicit match. Missing customer ids on an unfiltered Konnect
+  // page must not count as "this customer" — that would invent debt for the
+  // wrong subject and short-circuit the meter cross-check below.
   const invCustomer = invoiceCustomerId(inv);
-  if (invCustomer && invCustomer !== customerId) {
+  if (!invCustomer || invCustomer !== customerId) {
     return null;
   }
   const status = String(inv.status ?? "").trim();
@@ -168,6 +211,32 @@ export function unbilledInvoiceDebtFromItems(
 }
 
 /**
+ * Sum of `paid` invoice totals for this customer created at/after
+ * `cycleStartMs`. Used to net the calendar-month meter estimate so
+ * mid-cycle collections (owner OM Stripe app and merchant Custom Invoicing
+ * alike) are not still counted as unbilled debt for the rest of the month.
+ */
+export function paidInvoiceTotalUsdMicrosSince(
+  items: InvoiceDebtRow[],
+  customerId: string,
+  cycleStartMs: number,
+): bigint {
+  let paid = 0n;
+  for (const inv of items) {
+    const invCustomer = invoiceCustomerId(inv);
+    if (!invCustomer || invCustomer !== customerId) continue;
+    const status = String(inv.status ?? "").trim();
+    if (!status || statusRoot(status) !== "paid") continue;
+    const createdMs = invoiceCreatedMs(inv);
+    if (createdMs == null || createdMs < cycleStartMs) continue;
+    const micros = gatheringTotalUsdMicros(inv.totals?.total);
+    if (micros == null || micros <= 0n) continue;
+    paid += micros;
+  }
+  return paid;
+}
+
+/**
  * Konnect `customers` list filter is often ignored on `/v3/openmeter`. Prefer
  * `/metering/v1` with an explicit customer filter, then client-side match.
  */
@@ -205,7 +274,7 @@ async function listInvoicesViaMeteringV1(
 }
 
 type InvoiceDebtLookup =
-  | { ok: true; usdMicros: bigint }
+  | { ok: true; usdMicros: bigint; items: InvoiceDebtRow[] }
   | { ok: false };
 
 async function lookupUnbilledInvoiceDebt(
@@ -221,6 +290,7 @@ async function lookupUnbilledInvoiceDebt(
     if (viaMetering != null) {
       return {
         ok: true,
+        items: viaMetering,
         usdMicros: unbilledInvoiceDebtFromItems(viaMetering, customerId),
       };
     }
@@ -235,9 +305,11 @@ async function lookupUnbilledInvoiceDebt(
       order: "DESC",
       orderBy: "createdAt",
     });
+    const items = listed?.items ?? [];
     return {
       ok: true,
-      usdMicros: unbilledInvoiceDebtFromItems(listed?.items ?? [], customerId),
+      items,
+      usdMicros: unbilledInvoiceDebtFromItems(items, customerId),
     };
   } catch {
     return { ok: false };
@@ -249,25 +321,43 @@ async function lookupUnbilledInvoiceDebt(
  * below so it does not double-count usage a customer already paid for
  * earlier in the same month as still owed.
  *
- * Dynamically imported: merchant-connect.ts imports this module (for the
- * billing-history "pending usage" row), so a static import here would be
- * circular. Merchant Stripe Connect is the only billing rail this can read
- * reliably today — Stripe's own `customer=` filter works, unlike Konnect's
- * invoice-list filter, which is why the meter estimate exists at all. Owner
- * rollup (the OM-native Stripe app) has no equivalent reliable read yet, so
- * this nets 0 there and that path keeps today's (still imperfect) behavior.
- * Never allowed to fail the whole debt read: any error here just means no
- * netting happens, not that debt can't be reported at all.
+ * Owner cost rail (OM Stripe app): net OpenMeter `paid` invoices for this
+ * customer from the same invoice list used for gathering debt.
+ * Merchant Connect: net Stripe paid invoices + Checkout PaymentIntents only
+ * (do not also sum OM paid — settlement's Stripe invoice is the same money).
+ *
+ * Dynamically imported Stripe path: merchant-connect.ts imports this module
+ * (for the billing-history "pending usage" row), so a static import here
+ * would be circular. Never allowed to fail the whole debt read: any error
+ * here just means no netting happens, not that debt can't be reported at all.
  */
 async function alreadyCollectedThisCycleUsdMicros(input: {
   clientId: string;
   externalUserId: string;
+  customerId?: string | null;
+  invoiceItems?: InvoiceDebtRow[] | null;
+  /** True when billing is the shared owner wallet (OM Stripe app). */
+  ownerCostRail: boolean;
 }): Promise<bigint> {
+  if (input.ownerCostRail) {
+    if (!input.customerId || !input.invoiceItems) {
+      return 0n;
+    }
+    const cycle = calendarMonthBoundsUtc(new Date());
+    return paidInvoiceTotalUsdMicrosSince(
+      input.invoiceItems,
+      input.customerId,
+      new Date(cycle.start).getTime(),
+    );
+  }
   try {
     const { getMerchantPaidDebtThisCycleUsdMicros } = await import(
       "@/lib/stripe/merchant-connect"
     );
-    return await getMerchantPaidDebtThisCycleUsdMicros(input);
+    return await getMerchantPaidDebtThisCycleUsdMicros({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
   } catch {
     return 0n;
   }
@@ -303,7 +393,11 @@ async function periodMeterDebtUsdMicros(subjects: string[]): Promise<bigint> {
 async function resolveBillingCustomerAndSubjects(input: {
   clientId: string;
   externalUserId: string;
-}): Promise<{ customerId: string | null; meterSubjects: string[] }> {
+}): Promise<{
+  customerId: string | null;
+  meterSubjects: string[];
+  ownerCostRail: boolean;
+}> {
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
@@ -324,6 +418,7 @@ async function resolveBillingCustomerAndSubjects(input: {
         identity.publicClientId,
         ...publicClientIds,
       ]),
+      ownerCostRail: true,
     };
   }
 
@@ -341,6 +436,7 @@ async function resolveBillingCustomerAndSubjects(input: {
   return {
     customerId: customer?.id?.trim() || null,
     meterSubjects: [...new Set(meterSubjects)],
+    ownerCostRail: false,
   };
 }
 
@@ -348,6 +444,9 @@ async function meterEstimateDebtUsdMicros(input: {
   meterSubjects: string[];
   clientId: string;
   externalUserId: string;
+  customerId?: string | null;
+  invoiceItems?: InvoiceDebtRow[] | null;
+  ownerCostRail: boolean;
 }): Promise<bigint> {
   const [meter, discount, alreadyCollected] = await Promise.all([
     periodMeterDebtUsdMicros(input.meterSubjects),
@@ -358,6 +457,9 @@ async function meterEstimateDebtUsdMicros(input: {
     alreadyCollectedThisCycleUsdMicros({
       clientId: input.clientId,
       externalUserId: input.externalUserId,
+      customerId: input.customerId,
+      invoiceItems: input.invoiceItems,
+      ownerCostRail: input.ownerCostRail,
     }),
   ]);
   const includedTotal =
@@ -413,22 +515,24 @@ export async function getUnbilledDebtDetails(input: {
     return { usdMicros: 0n, source: "unavailable" };
   }
 
-  const { customerId, meterSubjects } = await resolveBillingCustomerAndSubjects({
-    clientId,
-    externalUserId,
-  });
+  const { customerId, meterSubjects, ownerCostRail } =
+    await resolveBillingCustomerAndSubjects({
+      clientId,
+      externalUserId,
+    });
 
   if (customerId) {
     const looked = await lookupUnbilledInvoiceDebt(customerId);
-    // A confirmed non-zero read is trusted outright: at least one item in the
-    // list genuinely matched this customer, so the filter demonstrably did
-    // its job for this call. A confident-looking $0 is NOT trusted on its
-    // own — Konnect's customer filter on the invoice list has been observed
-    // to be silently ignored, returning an unfiltered page that happens to
-    // contain none of this customer's invoices. That's indistinguishable
-    // from a genuine zero from this signal alone, so cross-check against the
-    // meter estimate below rather than risk under-reporting debt (the unsafe
-    // direction for a spend gate) on a false negative.
+    // A confirmed non-zero read is trusted only when invoiceDebtContribution
+    // required customer.id === customerId for every counted row — so a non-
+    // zero total means at least one invoice genuinely matched this customer.
+    // A confident-looking $0 is NOT trusted on its own — Konnect's customer
+    // filter on the invoice list has been observed to be silently ignored,
+    // returning an unfiltered page that happens to contain none of this
+    // customer's invoices. That's indistinguishable from a genuine zero from
+    // this signal alone, so cross-check against the meter estimate below
+    // rather than risk under-reporting debt (the unsafe direction for a
+    // spend gate) on a false negative.
     if (looked.ok && looked.usdMicros > 0n) {
       return { usdMicros: looked.usdMicros, source: "gathering_invoice" };
     }
@@ -437,6 +541,9 @@ export async function getUnbilledDebtDetails(input: {
         meterSubjects,
         clientId,
         externalUserId,
+        customerId,
+        invoiceItems: looked.items,
+        ownerCostRail,
       });
       // Both signals agree on zero: genuine, not a filter miss.
       if (meterDebt <= 0n) {
@@ -451,6 +558,8 @@ export async function getUnbilledDebtDetails(input: {
       meterSubjects,
       clientId,
       externalUserId,
+      customerId,
+      ownerCostRail,
     }),
     source: "meter_estimate",
   };

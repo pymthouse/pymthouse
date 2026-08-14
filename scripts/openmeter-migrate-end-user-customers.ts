@@ -109,6 +109,13 @@ function parseArgs(argv: string[]): Args {
     }
     throw new Error(`Unknown argument: ${token}\n${usage()}`);
   }
+  if (args.transferBalances && !args.cancelLegacy) {
+    throw new Error(
+      "--transfer-balances requires --cancel-legacy so credits are not left " +
+        "live on both the legacy compound wallet and the new eu_ customer.\n" +
+        usage(),
+    );
+  }
   return args;
 }
 
@@ -118,7 +125,9 @@ function usage(): string {
     "  npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id <app_…>",
     "  --client-id <id>         Public client id or developer_apps.id (required)",
     "  --transfer-balances      Grant remaining credits from legacy compound wallets",
-    "  --cancel-legacy          Cancel active subscriptions on legacy customers",
+    "                           (requires --cancel-legacy — never leave dual live wallets)",
+    "  --cancel-legacy          Cancel active subscriptions on legacy customers and",
+    "                           release their subjectKeys",
     "  --provision-merchant     Create Starter on eu_ customers when billingMode=merchant",
     "  --dry-run                Print actions without OpenMeter mutations",
     "  --help",

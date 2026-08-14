@@ -832,7 +832,10 @@ export const billingCustomers = pgTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (t) => [
-    uniqueIndex("idx_billing_customers_customer_key").on(t.customerKey),
+    uniqueIndex("idx_billing_customers_customer_key_client").on(
+      t.customerKey,
+      t.clientId,
+    ),
     index("idx_billing_customers_client_id").on(t.clientId),
     index("idx_billing_customers_openmeter_id").on(t.openmeterCustomerId),
   ],

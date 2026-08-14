@@ -11,7 +11,7 @@ import {
   ownerCostRailUserId,
   parsePayerActorWireSubject,
   rejectOwnerWireRetailSubject,
-  resetBillingIdentityCacheForTests,
+  resetBillingIdentityCache,
   resolveOpenMeterBillingIdentity,
   signerBalanceGateSubject,
   signerSpendableCacheSubject,
@@ -69,6 +69,17 @@ nodeTest("wireUsageSubjectFromJwt prefers billing_subject_key", () => {
   assert.equal(rewritten.usageSubjectType, "external_user_id");
 });
 
+nodeTest("wireUsageSubjectFromJwt does not owner-prefix compound billing keys", () => {
+  const rewritten = wireUsageSubjectFromJwt({
+    userType: "external_user",
+    usageSubject: "ext-9",
+    billingSubjectKey: "app_demo:ext-9",
+  });
+  assert.equal(rewritten.usageSubject, "app_demo:ext-9#ext-9");
+  assert.equal(rewritten.usageSubjectType, "external_user_id");
+  assert.ok(!rewritten.usageSubject.startsWith("owner:"));
+});
+
 nodeTest("wireUsageSubjectFromJwt leaves merchant end-users on the actor id", () => {
   const rewritten = wireUsageSubjectFromJwt({
     userType: "app_user",
@@ -111,9 +122,9 @@ test("platform-default member bills their own owner wallet", async (t) => {
   t.after(async () => cleanupTestApp(seeded));
   const memberId = await createTestUserWithCleanup(t);
 
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   await withTemporaryPlatformDefault(seeded.clientId, async () => {
-    resetBillingIdentityCacheForTests();
+    resetBillingIdentityCache();
     const identity = await resolveOpenMeterBillingIdentity({
       clientId: seeded.clientId,
       externalUserId: memberId,
@@ -133,9 +144,9 @@ test("platform-default admin owner still bills own wallet", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   await withTemporaryPlatformDefault(seeded.clientId, async () => {
-    resetBillingIdentityCacheForTests();
+    resetBillingIdentityCache();
     const identity = await resolveOpenMeterBillingIdentity({
       clientId: seeded.clientId,
       externalUserId: seeded.userId,
@@ -153,7 +164,7 @@ test("owner_rollup end-user shares the owner wallet with eu_ actor", async (t) =
   t.after(async () => cleanupTestApp(seeded));
   const endUserId = `ext-${randomUUID()}`;
 
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: seeded.clientId,
     externalUserId: endUserId,
@@ -189,7 +200,7 @@ test("merchant end-user bills stable eu_ customer", async (t) => {
   const endUserId = `ext-${randomUUID()}`;
 
   await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: seeded.clientId,
     externalUserId: endUserId,
@@ -224,7 +235,7 @@ test("normal app owner bills shared owner wallet", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
 
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: seeded.clientId,
     externalUserId: seeded.userId,
@@ -243,7 +254,7 @@ test("assertAppUserRetailBillingSubject rejects owner wallet targets", async (t)
   t.after(async () => cleanupTestApp(seeded));
   const endUserId = `ext-${randomUUID()}`;
 
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   await assert.rejects(
     () =>
       assertAppUserRetailBillingSubject({
@@ -278,7 +289,7 @@ test("assertAppUserRetailBillingSubject allows merchant end-users", async (t) =>
   const endUserId = `ext-${randomUUID()}`;
 
   await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   await assert.doesNotReject(() =>
     assertAppUserRetailBillingSubject({
       clientId: seeded.clientId,
@@ -292,9 +303,9 @@ test("assertAppUserRetailBillingSubject rejects platform-default members", async
   t.after(async () => cleanupTestApp(seeded));
   const memberId = await createTestUserWithCleanup(t);
 
-  resetBillingIdentityCacheForTests();
+  resetBillingIdentityCache();
   await withTemporaryPlatformDefault(seeded.clientId, async () => {
-    resetBillingIdentityCacheForTests();
+    resetBillingIdentityCache();
     await assert.rejects(
       () =>
         assertAppUserRetailBillingSubject({
