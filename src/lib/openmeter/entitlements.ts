@@ -15,7 +15,11 @@ import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "./client-factory";
-import { getKonnectCreditBalance } from "./konnect-credits";
+import {
+  getKonnectCreditBalance,
+  readKonnectUsdCreditBalance,
+  usdMicrosToDecimalDollars,
+} from "./konnect-credits";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
@@ -26,6 +30,17 @@ export type TrialCreditBalance = {
   balanceUsdMicros: string;
   consumedUsdMicros: string;
   lifetimeGrantedUsdMicros: string;
+};
+
+/** End-user credit balance: Konnect GET /credits/balance, no reconstructed totals. */
+export type AppUserCreditBalance = {
+  externalUserId: string;
+  customerId: string;
+  currency: string;
+  live: string;
+  pending: string;
+  settled: string;
+  retrievedAt: string | null;
 };
 
 export async function grantTrialCredits(input: {
@@ -124,6 +139,73 @@ export async function getTrialCreditBalance(input: {
     balanceUsdMicros: balance.toString(),
     consumedUsdMicros: usage.toString(),
     lifetimeGrantedUsdMicros: granted.toString(),
+  };
+}
+
+/**
+ * Resolve the OpenMeter customer, then return Konnect credits/balance
+ * (`live` / `pending` / `settled`) for one currency. Does not list grants.
+ */
+export async function readAppUserCreditBalance(input: {
+  clientId: string;
+  externalUserId: string;
+  currency?: string;
+  featureKey?: string;
+}): Promise<AppUserCreditBalance | null> {
+  const client = getHostedTrialOpenMeterClient();
+  if (!client) {
+    return null;
+  }
+
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  const currency = (input.currency ?? "USD").trim().toUpperCase() || "USD";
+
+  if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
+    const snapshot = await readKonnectUsdCreditBalance({
+      customerId: customer.id,
+      currency,
+      featureKey: input.featureKey,
+      apiKey,
+    });
+    if (!snapshot) {
+      return null;
+    }
+    return {
+      externalUserId: input.externalUserId,
+      customerId: customer.id,
+      currency: snapshot.currency,
+      live: snapshot.live,
+      pending: snapshot.pending,
+      settled: snapshot.settled,
+      retrievedAt: snapshot.retrievedAt,
+    };
+  }
+
+  const featureKey =
+    input.featureKey?.trim() ||
+    (await getTrialFeatureKeyForApp(identity.developerAppId));
+  const value = await client.customers.entitlements.value(
+    identity.customerKey,
+    featureKey,
+  );
+  const remaining = value ? entitlementAmountToMicros(value.balance) : 0n;
+  const dollars = usdMicrosToDecimalDollars(remaining > 0n ? remaining : 0n);
+  return {
+    externalUserId: input.externalUserId,
+    customerId: customer.id,
+    currency,
+    live: dollars,
+    pending: dollars,
+    settled: dollars,
+    retrievedAt: null,
   };
 }
 

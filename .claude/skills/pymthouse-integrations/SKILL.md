@@ -49,7 +49,7 @@ They are siblings: `developer_apps.oidc_client_id` → public row; `developer_ap
 - **Mint user access token**: `POST .../users/{externalUserId}/token` with optional `{ "scope": "sign:job" }`. Issued JWT `sub` is **`app_users.id`** (app user row), not necessarily a `users` / `end_users` row by itself.
 - **Signer session exchange (canonical)**: `POST /api/v1/apps/{clientId}/oidc/token` — RFC 8693 form body with `subject_token` = user JWT or `pmth_*` API key. Optional M2M Basic auth.
 - **Clearinghouse direct signer mint**: M2M `POST /api/v1/oidc/token` with `scope=sign:mint_user_token`, `external_user_id` — see `src/lib/oidc/mint-user-signer-token.ts`. Requires M2M `sign:mint_user_token` (inherited when public client has `sign:job`).
-- **Allowances**: balance `GET .../users/{externalUserId}/allowances` or `GET .../usage/balance?externalUserId=...`. Free grants are admin-only (`POST /api/v1/admin/billing/owners/{userId}/grants` via customer-service).
+- **Allowances**: Konnect credit balance `GET .../users/{externalUserId}/allowances` (`live` / `pending` / `settled`). Plan included remaining is `GET .../usage/balance?externalUserId=...`. Free grants are admin-only (`POST /api/v1/admin/billing/owners/{userId}/grants` via customer-service).
 
 ## OpenMeter / usage ingest
 

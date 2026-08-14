@@ -535,7 +535,29 @@ Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus 
 
 **Starter plan (per app):** Each app has a seeded **Starter** plan (`isStarterDefault`) for M2M end users, separate from **Network Price** (discovery-only, not synced to OpenMeter). End-user Starter syncs to OpenMeter/Konnect with a `network_spend` rate card for settlement (`credit_then_invoice`) and included usage via `discounts.usage` (amount from `OPENMETER_DEFAULT_STARTER_INCLUDED_USD_MICROS`, default `$5`). **App owners** share one platform wallet on bare `{users.id}`: **Owner Sandbox Starter** (`pymthouse_owner_starter`) first (sandbox profile, hard balance gate), then an **Owner Paid tier** (`pymthouse_owner_paid` / `pymthouse_owner_paid_*`) after payment-method attach and explicit Upgrade (`/api/v1/me/billing/upgrade-paid` with `{ planKey, confirm: true }` — flat fee + included usage + overage). Not a per-app Neon plan row. New end users are auto-subscribed to the app Starter when provisioned (`POST /users`, signer mint, Kafka collector ingest / `openmeter-ensure-customer`).
 
-**Manual allowance top-ups:** Free prepaid grants are **admin-only** via `POST /api/v1/admin/billing/owners/{userId}/grants` (customer-service / platform admin Bearer or session). Builder `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` returns `403 free_grant_admin_only`. Paid balance adds use Stripe Checkout wallet top-up (`source: topup` via webhook). GET on the allowances path still returns the subject’s prepaid balance.
+**Manual allowance top-ups:** Free prepaid grants are **admin-only** via `POST /api/v1/admin/billing/owners/{userId}/grants` (customer-service / platform admin Bearer or session). Builder `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` returns `403 free_grant_admin_only`. Paid balance adds use Stripe Checkout wallet top-up (`source: topup` via webhook).
+
+**Credit balance (Builder M2M):** `GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances` is a thin Konnect `GET /v3/openmeter/customers/{customerID}/credits/balance` read. PymtHouse resolves the OpenMeter customer for that end user, then returns that currency’s `live`, `pending`, and `settled` decimal-dollar strings. Do not merge currencies. Use **pending** for operational spend checks (“can they spend more?”) and **settled** for audit-style views.
+
+```bash
+curl -sS \
+  -u "${M2M_ID}:${M2M_SECRET}" \
+  "${BASE_URL}/api/v1/apps/${CLIENT_ID}/users/${EXTERNAL_USER_ID}/allowances"
+```
+
+```json
+{
+  "externalUserId": "eu_43eac8e3fe4dd854633da7a23fb21114",
+  "customerId": "01K…",
+  "currency": "USD",
+  "live": "0.50",
+  "pending": "0.50",
+  "settled": "0.50",
+  "retrievedAt": "2026-08-13T12:00:00.000Z"
+}
+```
+
+Optional Konnect filters: `filter[currency][eq]=USD` (default USD) and `filter[feature_key][eq]=input_tokens` (unrestricted credits plus credits restricted to that feature). `GET .../usage/balance` remains plan **included** remaining — it is not this credits ledger.
 
 **Endpoint:** `GET /api/v1/builder/apps/{clientId}/usage` (legacy alias: `GET /api/v1/apps/{clientId}/usage`)
 
@@ -958,7 +980,7 @@ Dry-run is the default; `--to-plan` defaults to `replacementPlanId` then the app
 | `GET` | `/api/v1/apps/{clientId}/plans?apiVersion=2` | Returns `products[]` (`BillingProduct` DTOs with `sync`, `capabilities[].effectiveRetailRateUsd`) |
 | `POST` | `/api/v1/apps/{clientId}/plans/{planId}/sync` | Explicit OpenMeter sync command |
 | `GET` | `/api/v1/apps/{clientId}/signer/routing` | Direct DMZ signing + webhook routing config |
-| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Prepaid balance (GET only; POST is admin-only elsewhere) |
+| `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/allowances` | Konnect credits/balance (`live`, `pending`, `settled`) |
 | `GET` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription` | End-user subscription read model (`actionRequired`, `plan` phase-out fields) |
 | `POST` | `/api/v1/apps/{clientId}/users/{externalUserId}/subscription/change` | Switch plan (Konnect change + optional checkout) |
 
