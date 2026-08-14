@@ -200,9 +200,26 @@ irreversible:
    `application_fee_bps` (independent of the rest; ship first).
 6. **End-user customer keys** — migrate compound `app_…:externalUserId`
    customers onto stable `eu_{end_users.id}` via
-   `scripts/openmeter-migrate-end-user-customers.ts` (create, transfer balances,
-   cancel legacy subs, release subjects, record `billing_customers`). Exit gate:
-   `classifyUsageAttributionConsistency` must report no unattributed subjects.
+   `scripts/openmeter-migrate-end-user-customers.ts`. Production cutover:
+
+   ```bash
+   # 1) Owner wallets first (all owners)
+   npm run openmeter:migrate-owner-customers -- --provision --transfer-balances --cancel-legacy
+   npm run openmeter:dedupe-owner-subscriptions -- --apply
+
+   # 2) End-users, all apps, mode-aware (--full)
+   #    merchant     → prepaid → eu_, cancel legacy, provision Starter
+   #    owner_rollup → prepaid → owner wallet, cancel legacy (eu_ is actor-only)
+   npm run openmeter:migrate-end-user-customers -- --full --dry-run
+   npm run openmeter:migrate-end-user-customers -- --full
+
+   # 3) Verify
+   npm run openmeter:audit-billing
+   ```
+
+   Exit gate: `classifyUsageAttributionConsistency` must report no
+   unattributed subjects. `--provision-merchant` is only for the granular
+   single-app path; `--full` implies it for merchant apps.
 
 Step 5 is severable and should not wait for the model change — it closes a live
 revenue and exposure hole.
