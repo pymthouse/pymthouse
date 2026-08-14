@@ -537,7 +537,7 @@ Responses include `items`, `nextCursor`, `openMeterConfigured`, `groupBy`, plus 
 
 **Manual allowance top-ups:** Free prepaid grants are **admin-only** via `POST /api/v1/admin/billing/owners/{userId}/grants` (customer-service / platform admin Bearer or session). Builder `POST /api/v1/apps/{clientId}/users/{externalUserId}/allowances` returns `403 free_grant_admin_only`. Paid balance adds use Stripe Checkout wallet top-up (`source: topup` via webhook).
 
-**Credit balance (Builder M2M):** `GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances` is a thin Konnect `GET /v3/openmeter/customers/{customerID}/credits/balance` read. PymtHouse resolves the OpenMeter customer for that end user, then returns that currency’s `live`, `pending`, and `settled` decimal-dollar strings. Do not merge currencies. Use **pending** for operational spend checks (“can they spend more?”) and **settled** for audit-style views.
+**Credit balance (Builder M2M):** `GET /api/v1/apps/{clientId}/users/{externalUserId}/allowances` is a thin Konnect `GET /v3/openmeter/customers/{customerID}/credits/balance` read. PymtHouse resolves the OpenMeter customer for that end user, then returns that currency’s `live`, `pending`, and `settled` decimal-dollar strings. Do not merge currencies. Use **live** for operational spend checks (“can they spend more?” — open charges already applied). Use **settled** for audit-style views. **pending** is unbooked / future-dated grants and is not spendable yet.
 
 ```bash
 curl -sS \

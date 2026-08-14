@@ -253,6 +253,20 @@ export function parsePayerActorWireSubject(usageSubject: string): {
   };
 }
 
+/** Mint/webhook spendable cache key: payer side of `payer#actor`. */
+export function signerSpendableCacheSubject(usageSubject: string): string {
+  return parsePayerActorWireSubject(usageSubject).payerWire;
+}
+
+/**
+ * Neon/OpenMeter lookup id from a webhook `usage_subject`.
+ * Actor is the app external id mint used; fall back to the bare payer wire.
+ */
+export function signerSpendableLookupSubject(usageSubject: string): string {
+  const parsed = parsePayerActorWireSubject(usageSubject);
+  return parsed.actorExternalUserId ?? parsed.payerWire;
+}
+
 /**
  * Map JWT claims onto the webhook usage_subject the collector bills.
  * Prefer `billing_subject_key`; fall back to `cost_owner_user_id` so tokens

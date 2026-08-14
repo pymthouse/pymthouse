@@ -207,7 +207,8 @@ export async function listKonnectCreditGrants(input: {
 /**
  * Thin Konnect credits/balance read. Does not list grants or invent
  * consumed/lifetime totals. Filter by currency; do not merge currencies.
- * `pending` is the operational spendable view; `settled` is the committed ledger.
+ * `live` is spendable (open charges applied). `settled` is the committed ledger.
+ * `pending` is unbooked / future-dated grants — not spendable yet.
  */
 export async function readKonnectUsdCreditBalance(input: {
   customerId: string;

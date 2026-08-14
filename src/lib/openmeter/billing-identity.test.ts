@@ -15,6 +15,8 @@ import {
   resetBillingIdentityCacheForTests,
   resolveOpenMeterBillingIdentity,
   signerBalanceGateSubject,
+  signerSpendableCacheSubject,
+  signerSpendableLookupSubject,
   wireUsageSubjectFromJwt,
 } from "@/lib/openmeter/billing-identity";
 import {
@@ -86,6 +88,15 @@ nodeTest("parsePayerActorWireSubject splits payer#actor", () => {
     payerWire: "owner:abc",
     actorExternalUserId: null,
   });
+  assert.equal(
+    signerSpendableCacheSubject("eu_payer#eu_actor"),
+    "eu_payer",
+  );
+  assert.equal(
+    signerSpendableLookupSubject("eu_payer#eu_actor"),
+    "eu_actor",
+  );
+  assert.equal(signerSpendableLookupSubject("eu_payer"), "eu_payer");
   assert.equal(
     buildPayerActorWireSubject({
       payerCustomerKey: "owner-uuid",
