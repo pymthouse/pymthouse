@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { plans } from "@/db/schema";
+import { developerApps, oidcClients, plans } from "@/db/schema";
 import {
   STARTER_DEFAULT_PLAN_INTERNAL_NAME,
   defaultStarterIncludedUsdMicros,
@@ -31,9 +31,38 @@ function isUniqueConstraintError(err: unknown): boolean {
   );
 }
 
-export async function selectStarterDefaultPlan(
-  clientId: string,
+/**
+ * `plans.client_id` is `developer_apps.id`. Callers often pass the public
+ * `app_…` oidc client id; resolve that before insert/lookup.
+ */
+export async function resolveDeveloperAppIdForPlans(
+  clientIdOrPublic: string,
   executor: Pick<typeof db, "select"> = db,
+): Promise<string> {
+  const trimmed = clientIdOrPublic.trim();
+  if (!trimmed) return trimmed;
+
+  const byId = await executor
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .where(eq(developerApps.id, trimmed))
+    .limit(1);
+  if (byId[0]?.id) return byId[0].id;
+
+  const byPublic = await executor
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, trimmed))
+    .limit(1);
+  if (byPublic[0]?.id) return byPublic[0].id;
+
+  return trimmed;
+}
+
+async function selectStarterDefaultPlanByClientId(
+  clientId: string,
+  executor: Pick<typeof db, "select">,
 ): Promise<typeof plans.$inferSelect | undefined> {
   const rows = await executor
     .select()
@@ -43,10 +72,24 @@ export async function selectStarterDefaultPlan(
   return rows[0];
 }
 
+export async function selectStarterDefaultPlan(
+  clientId: string,
+  executor: Pick<typeof db, "select"> = db,
+): Promise<typeof plans.$inferSelect | undefined> {
+  const resolved = await resolveDeveloperAppIdForPlans(clientId, executor);
+  const byResolved = await selectStarterDefaultPlanByClientId(resolved, executor);
+  if (byResolved) return byResolved;
+  if (resolved !== clientId.trim()) {
+    return selectStarterDefaultPlanByClientId(clientId.trim(), executor);
+  }
+  return undefined;
+}
+
 export async function getOrCreateStarterPlan(
   clientId: string,
   executor: Pick<typeof db, "select" | "insert"> = db,
 ): Promise<typeof plans.$inferSelect> {
+  const plansClientId = await resolveDeveloperAppIdForPlans(clientId, executor);
   const existing = await selectStarterDefaultPlan(clientId, executor);
   if (existing) {
     return existing;
@@ -56,7 +99,7 @@ export async function getOrCreateStarterPlan(
   try {
     await executor.insert(plans).values({
       id,
-      clientId,
+      clientId: plansClientId,
       name: STARTER_DEFAULT_PLAN_INTERNAL_NAME,
       type: "usage",
       priceAmount: "0",

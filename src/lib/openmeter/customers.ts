@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
 import { v4 as uuidv4 } from "uuid";
 
@@ -480,30 +480,46 @@ export async function recordBillingCustomer(input: {
     return;
   }
   const now = new Date().toISOString();
+  const kind = input.kind;
+  const platformUserId = input.platformUserId?.trim() || null;
+  const endUserId = input.endUserId?.trim() || null;
   try {
-    await db
-      .insert(billingCustomers)
-      .values({
-        id: uuidv4(),
-        customerKey,
-        kind: input.kind,
-        platformUserId: input.platformUserId?.trim() || null,
-        endUserId: input.endUserId?.trim() || null,
-        clientId,
-        openmeterCustomerId,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [billingCustomers.customerKey, billingCustomers.clientId],
-        set: {
-          kind: input.kind,
-          platformUserId: input.platformUserId?.trim() || null,
-          endUserId: input.endUserId?.trim() || null,
+    // Select-then-write avoids ON CONFLICT requiring a UNIQUE CONSTRAINT
+    // (prod may only have a UNIQUE INDEX from drizzle migrations).
+    const existing = await db
+      .select({ id: billingCustomers.id })
+      .from(billingCustomers)
+      .where(
+        and(
+          eq(billingCustomers.customerKey, customerKey),
+          eq(billingCustomers.clientId, clientId),
+        ),
+      )
+      .limit(1);
+    if (existing[0]?.id) {
+      await db
+        .update(billingCustomers)
+        .set({
+          kind,
+          platformUserId,
+          endUserId,
           openmeterCustomerId,
           updatedAt: now,
-        },
-      });
+        })
+        .where(eq(billingCustomers.id, existing[0].id));
+      return;
+    }
+    await db.insert(billingCustomers).values({
+      id: uuidv4(),
+      customerKey,
+      kind,
+      platformUserId,
+      endUserId,
+      clientId,
+      openmeterCustomerId,
+      createdAt: now,
+      updatedAt: now,
+    });
   } catch (err) {
     console.warn(
       "customers: billing_customers upsert failed",
