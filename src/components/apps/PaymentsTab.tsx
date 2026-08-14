@@ -555,14 +555,15 @@ function PaymentsBillingModeForm(props: Readonly<{
               {
                 value: "owner_rollup" as const,
                 title: "Owner roll-up",
-                detail: "Platform bills end-users; default for most apps",
+                detail:
+                  "End-user usage meters to your owner wallet; default for most apps",
                 disabled: false,
               },
               {
                 value: "merchant" as const,
                 title: "Merchant",
                 detail: connectReadyForMerchant
-                  ? "Charges on your Connected Account"
+                  ? "Charges end users on your Connected Account; network cost still settles on your owner wallet"
                   : "Requires Stripe Connect to be ready",
                 disabled: !connectReadyForMerchant,
               },
@@ -613,6 +614,13 @@ function PaymentsBillingModeForm(props: Readonly<{
           })}
         </div>
       </fieldset>
+      <p className="text-xs text-zinc-500">
+        Switching billing mode affects{" "}
+        <span className="text-zinc-400">new</span> signer and M2M sessions only
+        (after identity cache expiry, typically within a few minutes). Usage
+        already ingested stays on the OpenMeter customer it was billed to;
+        tokens already issued keep their current cost rail until they expire.
+      </p>
       <div className="flex items-center gap-3">
         <button
           type="button"

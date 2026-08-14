@@ -10,6 +10,9 @@ import {
   appBillingOauthStates,
   appUserStripeCustomers,
 } from "@/db/schema";
+import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
+import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
+import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import {
   getAppBillingConfig,
   upsertAppBillingConfig,
@@ -30,6 +33,14 @@ import {
 
 export type MerchantConnectMode = "account_link";
 
+/** Shape of a Stripe PaymentIntent/Invoice decline — same fields either way. */
+type StripePaymentError = {
+  code?: string | null;
+  decline_code?: string | null;
+  message?: string | null;
+  type?: string | null;
+};
+
 type StripeConnectInvoice = {
   id?: string;
   number?: string | null;
@@ -42,6 +53,11 @@ type StripeConnectInvoice = {
   period_end?: number | null;
   hosted_invoice_url?: string | null;
   invoice_pdf?: string | null;
+  /** Set only if finalization itself failed (rare — e.g. tax calculation). */
+  last_finalization_error?: StripePaymentError | null;
+  /** Expanded (see the `expand[]` param below) so a declined autopay attempt
+   * is visible without a second Stripe round-trip per invoice. */
+  payment_intent?: string | { last_payment_error?: StripePaymentError | null } | null;
 };
 
 type StripeConnectPaymentMethod = {
@@ -83,10 +99,46 @@ export type MerchantBillingHistoryItem = {
   periodStart?: string;
   periodEnd?: string;
   externalInvoicingId?: string;
-  invoiceType: "stripe_connect" | "auto_topup" | "payment";
+  invoiceType: "stripe_connect" | "auto_topup" | "payment" | "pending_usage";
   /** Card brand / LINK when this invoice was paid off-session. */
   paymentMethodBrand?: string | null;
+  /**
+   * Friendly reason the most recent automatic charge attempt on this
+   * invoice failed ("Your card was declined for insufficient funds."), or
+   * null when the invoice has no failed attempt on record. Distinct from
+   * `status`, which stays `"open"` while Stripe keeps retrying — this is
+   * what a customer needs to actually understand why.
+   */
+  paymentFailureMessage?: string | null;
 };
+
+/**
+ * Friendly, non-technical reading of a Stripe decline. Deliberately coarse —
+ * "we could not charge your payment method" covers the long tail — with a
+ * handful of the most common, most actionable codes called out by name so a
+ * customer with a fixable problem (an expired card, a thin balance) knows
+ * what to go do about it instead of just retrying blind.
+ */
+const FRIENDLY_DECLINE_MESSAGES: Record<string, string> = {
+  insufficient_funds: "Your card was declined for insufficient funds.",
+  card_declined: "Your card was declined.",
+  expired_card: "Your card has expired.",
+  incorrect_cvc: "Your card's security code was incorrect.",
+  processing_error: "There was an error processing your card. Please try again.",
+  lost_card: "Your card was declined.",
+  stolen_card: "Your card was declined.",
+};
+
+export function friendlyPaymentFailureMessage(
+  error: StripePaymentError | null | undefined,
+): string | null {
+  if (!error) return null;
+  const code = error.decline_code?.trim() || error.code?.trim();
+  if (code && FRIENDLY_DECLINE_MESSAGES[code]) {
+    return FRIENDLY_DECLINE_MESSAGES[code];
+  }
+  return "We could not charge your payment method.";
+}
 
 /** Human label for a Connect payment method (LINK, VISA, …). */
 export function stripePaymentMethodBrandLabel(
@@ -156,10 +208,11 @@ function mapMerchantInvoice(
 ): MerchantBillingHistoryItem | null {
   const id = invoice.id?.trim();
   if (!id) return null;
+  const status = invoice.status?.trim() || "unknown";
   return {
     id,
     number: invoice.number?.trim() || undefined,
-    status: invoice.status?.trim() || "unknown",
+    status,
     currency: invoice.currency?.toUpperCase() || "USD",
     totalAmount: ((invoice.total ?? 0) / 100).toFixed(2),
     customerId: invoice.customer?.trim() || undefined,
@@ -169,7 +222,23 @@ function mapMerchantInvoice(
     externalInvoicingId: id,
     invoiceType: "stripe_connect",
     paymentMethodBrand: paymentMethodBrand?.trim() || null,
+    // Once paid or void the invoice is resolved — a PaymentIntent's
+    // last_payment_error is a record of its most recent failed *attempt*,
+    // which can predate a later attempt that succeeded, so surfacing it on
+    // a paid/void invoice would misreport it as still failing.
+    paymentFailureMessage:
+      status === "paid" || status === "void" ? null : invoicePaymentFailureMessage(invoice),
   };
+}
+
+function invoicePaymentFailureMessage(invoice: StripeConnectInvoice): string | null {
+  const fromFinalization = friendlyPaymentFailureMessage(invoice.last_finalization_error);
+  if (fromFinalization) return fromFinalization;
+  const pi = invoice.payment_intent;
+  if (pi && typeof pi === "object") {
+    return friendlyPaymentFailureMessage(pi.last_payment_error);
+  }
+  return null;
 }
 
 function mapLegacyAutoTopUpPaymentIntent(
@@ -590,6 +659,7 @@ async function listAllMerchantConnectInvoices(
     const params = new URLSearchParams({
       customer: stripeCustomerId,
       limit: String(STRIPE_INVOICE_PAGE_LIMIT),
+      "expand[]": "data.payment_intent",
     });
     if (startingAfter) {
       params.set("starting_after", startingAfter);
@@ -720,12 +790,171 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
   const merged = [...invoices, ...topUps].sort(
     (a, b) => billingHistorySortKey(b) - billingHistorySortKey(a),
   );
+  const items = merged.slice(offset, offset + input.pageSize);
+
+  // Usage that has accrued but has not yet become a Stripe invoice object
+  // (still gathering on OpenMeter, or mid-raise through settlement) would
+  // otherwise be invisible here — this list only ever reflects Stripe's own
+  // invoices/payment intents. Surface it as a synthetic row instead, so a
+  // charge that has landed but not yet invoiced does not look like it never
+  // happened. Skipped once a real Stripe invoice already carries the same
+  // not-yet-final debt, so the amount is never shown twice; page 1 only,
+  // since it reflects current state rather than a specific list entry.
+  if (input.page === 1) {
+    const pending = await pendingUsageBillingHistoryItem(input, invoices);
+    if (pending) {
+      items.unshift(pending);
+    }
+  }
+
   return {
-    items: merged.slice(offset, offset + input.pageSize),
+    items,
     page: input.page,
     pageSize: input.pageSize,
     totalCount: merged.length,
   };
+}
+
+/** Stripe invoice statuses that still represent live, uncollected debt. */
+const OPEN_STRIPE_INVOICE_STATUSES = new Set(["draft", "open"]);
+
+/**
+ * Whether a real Stripe invoice already carries the debt a synthetic
+ * "pending usage" row would otherwise show — draft and open both still
+ * represent live, uncollected debt, so either makes the synthetic row
+ * redundant (and, once collected, `paid`/`void`/`uncollectible` should not
+ * suppress it: any debt accrued *since* that invoice closed is genuinely new
+ * and unrepresented).
+ */
+export function hasOpenOrDraftInvoice(
+  invoices: Pick<MerchantBillingHistoryItem, "status">[],
+): boolean {
+  return invoices.some((invoice) => OPEN_STRIPE_INVOICE_STATUSES.has(invoice.status));
+}
+
+/** Pure mapping from an unbilled-debt read to the synthetic history row. */
+export function buildPendingUsageBillingHistoryItem(
+  usdMicros: bigint,
+  now: Date = new Date(),
+): MerchantBillingHistoryItem | null {
+  if (usdMicros <= 0n) {
+    return null;
+  }
+  return {
+    id: "pending_usage",
+    status: "pending",
+    currency: "USD",
+    totalAmount: formatUsdMicrosForDisplay(usdMicros.toString()),
+    issuedAt: now.toISOString(),
+    invoiceType: "pending_usage",
+  };
+}
+
+async function pendingUsageBillingHistoryItem(
+  input: { clientId: string; externalUserId: string },
+  invoices: MerchantBillingHistoryItem[],
+): Promise<MerchantBillingHistoryItem | null> {
+  if (hasOpenOrDraftInvoice(invoices)) {
+    return null;
+  }
+  const debt = await getUnbilledDebtDetails(input);
+  return buildPendingUsageBillingHistoryItem(debt.usdMicros);
+}
+
+/**
+ * Sum of this Connect customer's `paid` Stripe invoices *and* standalone
+ * succeeded PaymentIntents (Checkout top-ups) whose `created` timestamp
+ * falls in the current UTC calendar month — used to net the calendar-month
+ * meter estimate (see unbilled-debt.ts) down to genuinely unbilled usage.
+ *
+ * The meter estimate exists as a fallback for when Konnect's own invoice
+ * list can't be trusted (its customer filter is unreliable), but it sums
+ * *all* usage in the window regardless of whether some of it was already
+ * paid earlier in the same cycle. Invoice-only netting missed the common
+ * prepaid path: "Add credit" is a Checkout PaymentIntent, not a Stripe
+ * invoice, so a customer who topped up mid-month still looked $N in debt
+ * for the rest of the month. Invoice-backed PIs are omitted so the same
+ * charge is not counted twice. Stripe's `customer=` filter, unlike
+ * Konnect's, is not broken — the request is scoped to one Connect
+ * customer and can be trusted directly.
+ *
+ * `sumPaidInvoiceCentsSince` is the invoice half: `paid` invoices created
+ * at/after `cycleStartSeconds` (Stripe `created` is Unix seconds). Pure so
+ * the cycle-boundary and status filtering can be tested without live
+ * Stripe/DB access.
+ */
+export function sumPaidInvoiceCentsSince(
+  invoices: Pick<StripeConnectInvoice, "status" | "created" | "total">[],
+  cycleStartSeconds: number,
+): number {
+  let paidCents = 0;
+  for (const invoice of invoices) {
+    if ((invoice.status?.trim() || "") !== "paid") continue;
+    if ((invoice.created ?? 0) < cycleStartSeconds) continue;
+    paidCents += invoice.total ?? 0;
+  }
+  return paidCents;
+}
+
+/**
+ * Sum, in cents, of succeeded standalone PaymentIntents created at/after
+ * `cycleStartSeconds`. Invoice-backed intents are skipped — those cents
+ * already live on the invoice row.
+ */
+export function sumSucceededStandalonePaymentCentsSince(
+  intents: Pick<
+    StripeConnectPaymentIntent,
+    "status" | "created" | "amount" | "invoice"
+  >[],
+  cycleStartSeconds: number,
+): number {
+  let paidCents = 0;
+  for (const intent of intents) {
+    if ((intent.status?.trim() || "") !== "succeeded") continue;
+    if ((intent.created ?? 0) < cycleStartSeconds) continue;
+    if (paymentIntentInvoiceId(intent)) continue;
+    const amount = intent.amount ?? 0;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    paidCents += amount;
+  }
+  return paidCents;
+}
+
+/** Cents -> USD micros without floating point: (cents * 1_000_000) / 100. */
+export function centsToUsdMicros(cents: number): bigint {
+  if (!Number.isFinite(cents) || cents <= 0) return 0n;
+  return (BigInt(Math.round(cents)) * 1_000_000n) / 100n;
+}
+
+export async function getMerchantPaidDebtThisCycleUsdMicros(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<bigint> {
+  const config = await getAppBillingConfig(input.clientId);
+  if (!isMerchantConnectPaymentsReady(config)) {
+    return 0n;
+  }
+  const accountId = config?.stripeConnectedAccountId?.trim();
+  const customer = await getAppUserStripeCustomer(input);
+  if (
+    !accountId ||
+    customer?.stripeConnectedAccountId !== accountId ||
+    !customer.stripeCustomerId?.trim()
+  ) {
+    return 0n;
+  }
+
+  const cycle = calendarMonthBoundsUtc(new Date());
+  const cycleStartSeconds = Math.floor(new Date(cycle.start).getTime() / 1000);
+
+  const [invoices, paymentIntents] = await Promise.all([
+    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
+    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
+  ]);
+  return centsToUsdMicros(
+    sumPaidInvoiceCentsSince(invoices, cycleStartSeconds) +
+      sumSucceededStandalonePaymentCentsSince(paymentIntents, cycleStartSeconds),
+  );
 }
 
 /** Resolve hosted invoice / receipt links only after proving ownership. */

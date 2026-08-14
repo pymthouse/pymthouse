@@ -158,7 +158,7 @@ registerMetadataRoutes([
     { includeExternalUserId: true, created: true },
   ],
   ["delete", userPath("/keys"), OPENAPI_TAGS.users, "Revoke user API key", { includeExternalUserId: true }],
-  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", { includeExternalUserId: true }],
+  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "Read customer credit balance", { includeExternalUserId: true }],
   ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", { includeExternalUserId: true }],
   ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
   [

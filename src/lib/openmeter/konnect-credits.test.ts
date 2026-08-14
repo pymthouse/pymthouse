@@ -5,6 +5,7 @@ import {
   createKonnectCreditGrant,
   decimalDollarsToUsdMicros,
   getKonnectCreditBalance,
+  readKonnectUsdCreditBalance,
   usdMicrosToDecimalDollars,
 } from "./konnect-credits";
 
@@ -82,6 +83,111 @@ test("getKonnectCreditBalance maps live balance and active grants", async () => 
     assert.equal(calls.length, 2);
     assert.match(calls[0].url, /credits\/balance/);
     assert.match(calls[1].url, /credits\/grants/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) {
+      delete process.env.OPENMETER_API_KEY;
+    } else {
+      process.env.OPENMETER_API_KEY = previousKey;
+    }
+    if (previousUrl === undefined) {
+      delete process.env.OPENMETER_URL;
+    } else {
+      process.env.OPENMETER_URL = previousUrl;
+    }
+  }
+});
+
+test("readKonnectUsdCreditBalance returns live pending settled without listing grants", async () => {
+  const previousKey = process.env.OPENMETER_API_KEY;
+  const previousUrl = process.env.OPENMETER_URL;
+  process.env.OPENMETER_API_KEY = "spat_test";
+  process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
+
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+
+  globalThis.fetch = (async (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    calls.push(url);
+    if (url.includes("/credits/balance")) {
+      return new Response(
+        JSON.stringify({
+          balances: [
+            { currency: "EUR", live: "9.00", settled: "9.00", pending: "8.00" },
+            { currency: "USD", live: "0.50", settled: "0.40", pending: "0.35" },
+          ],
+          retrieved_at: "2026-08-13T12:00:00Z",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const balance = await readKonnectUsdCreditBalance({
+      customerId: "01KW2BBAK6V8K9B2K83SX1MW03",
+    });
+    assert.deepEqual(balance, {
+      currency: "USD",
+      live: "0.50",
+      pending: "0.35",
+      settled: "0.40",
+      retrievedAt: "2026-08-13T12:00:00Z",
+    });
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /credits\/balance/);
+    assert.match(calls[0], /filter%5Bcurrency%5D%5Beq%5D=USD/);
+    assert.doesNotMatch(calls[0], /credits\/grants/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) {
+      delete process.env.OPENMETER_API_KEY;
+    } else {
+      process.env.OPENMETER_API_KEY = previousKey;
+    }
+    if (previousUrl === undefined) {
+      delete process.env.OPENMETER_URL;
+    } else {
+      process.env.OPENMETER_URL = previousUrl;
+    }
+  }
+});
+
+test("readKonnectUsdCreditBalance filters by feature key and does not merge currencies", async () => {
+  const previousKey = process.env.OPENMETER_API_KEY;
+  const previousUrl = process.env.OPENMETER_URL;
+  process.env.OPENMETER_API_KEY = "spat_test";
+  process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
+
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = input instanceof Request ? input.url : input.toString();
+    return new Response(
+      JSON.stringify({
+        balances: [{ currency: "EUR", live: "9.00", settled: "9.00", pending: "8.00" }],
+        retrieved_at: "2026-08-13T12:00:00Z",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  try {
+    const balance = await readKonnectUsdCreditBalance({
+      customerId: "01KW2BBAK6V8K9B2K83SX1MW03",
+      featureKey: "input_tokens",
+    });
+    assert.deepEqual(balance, {
+      currency: "USD",
+      live: "0",
+      pending: "0",
+      settled: "0",
+      retrievedAt: "2026-08-13T12:00:00Z",
+    });
+    assert.match(requestedUrl, /filter%5Bfeature_key%5D%5Beq%5D=input_tokens/);
   } finally {
     globalThis.fetch = originalFetch;
     if (previousKey === undefined) {

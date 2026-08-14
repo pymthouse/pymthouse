@@ -16,12 +16,16 @@ import {
 } from "@/lib/billing/provision-app-user";
 import { seedSignerSpendableBalance, seedSignerOverageEligibility } from "@/lib/oidc/signer-balance-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
-import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
+import {
+  billingSubjectClaim,
+  resolveOpenMeterBillingIdentity,
+  signerBalanceGateSubject,
+  type ResolvedBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import { isOpenMeterConflictError } from "@/lib/openmeter/plan-errors";
 import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowance";
-import type { ResolvedBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
 import { buildDiscoverOrchestratorsUrl } from "@/lib/discovery-service-url";
@@ -343,9 +347,10 @@ async function loadMintAllowance(input: {
   if (spendable == null) {
     return null;
   }
-  const gateSubject = input.identity.isOwner
-    ? buildOwnerWireSubject(input.provisionExternalUserId)
-    : input.provisionExternalUserId;
+  const gateSubject = signerBalanceGateSubject(
+    input.identity,
+    input.provisionExternalUserId,
+  );
   // Seed under the same client id the webhook balance gate looks up
   // (UsageIdentity.client_id === public OIDC client id).
   seedSignerSpendableBalance(
@@ -444,17 +449,14 @@ export async function mintSignerJwtForExternalUser(input: {
     );
   }
 
-  const { resolveOpenMeterBillingIdentity } = await import(
-    "@/lib/openmeter/billing-identity"
-  );
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.publicClientId,
     externalUserId,
   });
-  // Wire JWT/sub stays the bare platform user id. Owner billing wallet is
-  // owner:{users.id} via resolveOpenMeterBillingIdentity / Konnect attribution.
+  // Wire JWT/sub stays the actor id. Cost-rail wallet is owner:{users.id}
+  // via identity / cost_owner_user_id (owner_rollup end-users).
   const provisionExternalUserId = identity.isOwner
-    ? (identity.ownerUserId as string)
+    ? identity.payerPlatformUserId || externalUserId
     : externalUserId;
   const jwtExternalUserId = provisionExternalUserId;
 
@@ -476,9 +478,7 @@ export async function mintSignerJwtForExternalUser(input: {
     identity,
   });
   const spendableMicros = BigInt(allowance?.balanceUsdMicros ?? "0");
-  const gateSubject = identity.isOwner
-    ? buildOwnerWireSubject(provisionExternalUserId)
-    : provisionExternalUserId;
+  const gateSubject = signerBalanceGateSubject(identity, provisionExternalUserId);
 
   if (isHostedAdminClientAvailable() && spendableMicros <= 0n) {
     await enforceMintSoftNegativeOrOverage({
@@ -509,6 +509,7 @@ export async function mintSignerJwtForExternalUser(input: {
     client_id: input.publicClientId,
     external_user_id: jwtExternalUserId,
     user_type: identity.isOwner ? "app_owner" : "external_user",
+    ...billingSubjectClaim(identity),
   })
     .setProtectedHeader({ alg: "RS256", kid: keyPair.kid, typ: ACCESS_TOKEN_JWT_TYP })
     .setIssuer(issuer)

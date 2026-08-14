@@ -351,6 +351,20 @@
       "when": 1787100000000,
       "tag": "0048_network_agent_register_state",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1787200000000,
+      "tag": "0049_billing_customers",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1787300000000,
+      "tag": "0050_billing_customers_key_client_unique",
+      "breakpoints": true
     }
   ]
 }

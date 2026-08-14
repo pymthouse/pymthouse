@@ -1,7 +1,16 @@
 # E2E: merchant Stripe Connect webhook + payment flow (staging)
 
-Runbook for [`.github/workflows/e2e-merchant-payments.yml`](../.github/workflows/e2e-merchant-payments.yml)
-and its driver [`scripts/e2e/merchant-payments.ts`](../scripts/e2e/merchant-payments.ts).
+Manual driver: [`scripts/e2e/merchant-payments.ts`](../scripts/e2e/merchant-payments.ts).
+This is **not** a GitHub Actions check. A reusable workflow for it used to live
+in `.github/workflows/e2e-merchant-payments.yml` and failed every push: job-level
+`${{ runner.temp }}` is invalid YAML (no runner assigned yet), so GitHub
+registered a 0-second failure with no jobs. It also never passed when dispatched
+— staging.pymthouse.com is re-aliased on every feature-branch deploy, and the
+Connect/OpenMeter/settlement fixtures were never a stable gate.
+
+Keep this script for an operator with a dedicated sandbox app. Do not put it
+back on the PR/push critical path. Invoice-lifecycle coverage lives in
+`pymthouse/settlement` against `stripefake`.
 
 Companion to [`adr-stripe-connect-openmeter-webhooks.md`](./adr-stripe-connect-openmeter-webhooks.md)
 (what the planes are) and [`builder-api.md`](./builder-api.md) (what the routes return).
@@ -17,7 +26,7 @@ It proves the invoice lifecycle. It cannot prove that a **real** Stripe Connect
 sandbox charge clears against a card a **real** Builder API call attached, or
 that pymthouse's own read APIs then agree about what happened.
 
-This workflow closes that gap. Every hop is the deployed staging stack:
+The driver closes that gap when you point it at a **stable** staging stack:
 
 ```
 POST …/users                        → app user provisioned
@@ -29,7 +38,8 @@ kcat → livepeer-gateway-events      → benthos openmeter-collector
                                     → Konnect /events (CloudEvent)
 GET  …/usage, …/usage/balance,
      …/billing/state, …/billing/wallet → metering + balance gate
-POST …/billing/collect              → OpenMeter invoicePendingLines + advance
+POST …/billing/collect              → settlement /requests/collect (Kafka lane)
+                                       → OpenMeter invoicePendingLines + advance
 OpenMeter invoice notification      → settlement producer → Kafka → worker  ─┐
 worker                              → Stripe Connect off-session charge      ├─ Plane C
 worker                              → custom-invoicing payment/status        ─┘
@@ -56,8 +66,7 @@ A fresh subject per run is not cosmetic. The invoice trigger holds a per-subject
 cooldown (`INVOICE_TRIGGER_COOLDOWN_SECONDS`, default 60s) and included plan usage
 resets monthly — reusing one fixture user would make `collect` return
 `rate_limited` on the second run of the hour and `skipped` once the allowance
-drifts. `concurrency: e2e-merchant-payments` with `cancel-in-progress: false`
-enforces the same thing across runs.
+drifts. Do not run two copies of the driver against the same subject at once.
 
 The cost is Konnect customer sprawl: one customer per run, forever. Budget for a
 reaper (or a monthly sweep of `e2e-merchant-*` subjects) before turning the
@@ -67,31 +76,23 @@ nightly schedule on.
 
 ## Configuration
 
-### Environment `e2e / staging` — secrets
-
-| Secret | Value |
-| --- | --- |
-| `E2E_M2M_CLIENT_SECRET` | Fixture app's `m2m_*` client secret. `authorizeOwnerWalletM2m` rejects the public/web sibling clients, so this must be the backend helper credential or every wallet route answers `404`. |
-| `E2E_STRIPE_SECRET_KEY` | **Sandbox** key. Preflight refuses anything that is not `sk_test_` / `rk_test_`. |
-| `E2E_STRIPE_CONNECT_WEBHOOK_SECRET` | The `whsec_…` of the Connect endpoint that staging verifies against. Must match staging's `STRIPE_CONNECT_WEBHOOK_SECRET`, or the synthetic `account.updated` is rejected. |
-
-### Environment `e2e / staging` — variables
+Export these in the shell that runs the driver. A wallet `404` almost always
+means `E2E_M2M_CLIENT_ID` is the public or web sibling, not the app's `m2m_*`
+client — `authorizeOwnerWalletM2m` maps that to 404 so existence is not leaked.
 
 | Variable | Value |
 | --- | --- |
-| `E2E_BASE_URL` | `https://staging.pymthouse.com` |
+| `E2E_M2M_CLIENT_SECRET` | Fixture app's `m2m_*` client secret |
+| `E2E_STRIPE_SECRET_KEY` | **Sandbox** key. Preflight refuses anything that is not `sk_test_` / `rk_test_`. |
+| `E2E_STRIPE_CONNECT_WEBHOOK_SECRET` | The `whsec_…` of the Connect endpoint the target stack verifies against |
+| `E2E_BASE_URL` | Target stack, e.g. `https://staging.pymthouse.com` — must be a **stable** alias, not a moving preview |
 | `E2E_CLIENT_ID` | Fixture app public client id (`app_…`) |
 | `E2E_M2M_CLIENT_ID` | Fixture app M2M client id |
 | `E2E_STRIPE_CONNECTED_ACCOUNT_ID` | `acct_…`, onboarded once by hand in the sandbox |
 | `E2E_PLAN_ID` | Optional. Otherwise the first `type=usage, status=active` plan on the app |
-| `E2E_KAFKA_BROKERS` | Optional `host:port` of the staging Redpanda TCP proxy. Present → `kafka` ingest; absent → `api` ingest |
+| `E2E_KAFKA_BROKERS` | Optional `host:port` of the Redpanda TCP proxy. Present → `kafka` ingest; absent → `api` ingest |
 | `E2E_KAFKA_TOPIC` | Optional; defaults to `livepeer-gateway-events` |
 | `E2E_EXPECTED_CHARGE_MODEL` | Optional `direct` / `destination`. Set it to fail the run when settlement routes the charge the other way; unset, the model is only reported |
-
-### Repository variable
-
-`E2E_MERCHANT_PAYMENTS=true` enables the nightly schedule. `workflow_dispatch`
-and `workflow_call` always run.
 
 ### Staging deployment prerequisites
 
@@ -145,10 +146,12 @@ available on this path and asking for them would make the job flaky.
 CloudEvent directly with exact micros. It skips Kafka and the collector, so it
 validates the billing half only. Use it when the broker is not reachable from CI.
 
-> `collect: false` on the test-usage body is load-bearing. The route defaults to
-> `true`; a raise there would put stage 4 inside the trigger cooldown, so the
-> manual collect would return `rate_limited` and the test would pass having
-> proved nothing.
+> `collect: false` on the test-usage body matches the route's own default
+> (opt-in, off unless requested — production usage never forces collection
+> either) — kept explicit so this stays correct if that default ever
+> changes. A raise here would put stage 4 inside the trigger cooldown, so
+> the manual collect would return `rate_limited` and the test would pass
+> having proved nothing.
 
 **Amount.** The default `$12.00` has to clear three floors simultaneously, or the
 flow degrades into a green run that tested nothing:
@@ -180,12 +183,19 @@ subject is still permitted to spend precisely because a card is on file.
 
 ### 4. Manual collection (`collect`)
 
-`POST …/billing/collect` must return `outcome: "invoiced"` with a non-empty
-`invoiceIds`. `skipped` and `rate_limited` fail the stage — they are the two ways
-this test silently stops testing anything. The stage also asserts
-`collection.nextAction === "awaiting_settlement"`, then calls collect a second
-time and requires `rate_limited` or `skipped`, pinning the documented
-idempotency.
+Settlement owns the actual raise now (its own per-customer Kafka lane calls
+OpenMeter `invoicePendingLines`, not pymthouse), so `POST …/billing/collect`
+must return `outcome: "queued"` — that only confirms settlement accepted the
+request, not that an invoice exists yet. `skipped` and `rate_limited` fail the
+stage — they are the two ways this test silently stops testing anything.
+
+The stage then polls `GET …/billing/state` until `collection.nextAction ===
+"awaiting_settlement"`, which is the actual assertion that settlement raised
+the invoice. It then calls collect a second time and requires `rate_limited`,
+`skipped`, or `queued` — a second `queued` is expected here (the poll above
+usually outlasts the trigger cooldown) and is fine: settlement's Kafka lane,
+not pymthouse's cooldown, is what now guarantees the second request cannot
+raise a duplicate invoice.
 
 ### 5. Charge, invoices, transactions (`settle`)
 
@@ -269,12 +279,12 @@ cooldown), and `E2E_KEEP_FIXTURES=true` to skip teardown while debugging.
 - **Plane A (owner cost rail) is not covered.** Different profile, different
   collector; it deserves its own job rather than a branch inside this one.
 - **Connect onboarding is not covered.** Account Links need a browser, so the
-  connected account is provisioned once by hand and this workflow asserts its
+  connected account is provisioned once by hand and the driver asserts its
   readiness rather than creating it.
 - **The gateway is not in the loop.** `ingest` synthesises the signed-ticket
   message that go-livepeer's remote signer would emit. Validating the signer
   itself belongs with the clearinghouse stack.
-- **This never runs on pull requests.** It spends sandbox money, mutates shared
-  Konnect state and needs environment secrets — `workflow_dispatch`, a gated
-  nightly schedule, and `workflow_call` from the staging deploy are the intended
-  triggers.
+- **This is not a CI job.** It spends sandbox money, mutates shared Konnect
+  state, and needs a stable target plus fixture secrets. Run it locally with
+  `npm run e2e:merchant-payments`. Invoice lifecycle in CI belongs to
+  `pymthouse/settlement` against `stripefake`.

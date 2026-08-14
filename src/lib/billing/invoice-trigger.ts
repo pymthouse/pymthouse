@@ -13,14 +13,12 @@ import {
   isInInvoiceTriggerLeadWindow,
   MIN_INVOICE_USD_MICROS,
 } from "@/lib/billing/overage-limits";
+import { requestSettlementCollect } from "@/lib/billing/settlement-collect-client";
 import {
   getUnbilledDebtUsdMicros,
   resolveBillingCustomerId,
 } from "@/lib/billing/unbilled-debt";
-import {
-  getHostedAdminClient,
-  isHostedAdminClientAvailable,
-} from "@/lib/openmeter/admin-client";
+import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import { getProviderApp } from "@/lib/provider-apps";
@@ -67,7 +65,7 @@ function shouldTriggerInvoice(input: {
 }
 
 /**
- * Whether to call OpenMeter `invoicePendingLines`.
+ * Whether to ask settlement to raise a customer's pending lines.
  * Force collect always attempts; automatic mid-cycle uses debt + lead window.
  */
 function shouldAttemptPendingLines(input: {
@@ -83,7 +81,7 @@ function shouldAttemptPendingLines(input: {
 }
 
 export type InvoiceTriggerOutcome =
-  | "invoiced"
+  | "queued"
   | "skipped"
   | "rate_limited"
   | "unavailable"
@@ -91,17 +89,33 @@ export type InvoiceTriggerOutcome =
 
 export type InvoiceTriggerResult = {
   outcome: InvoiceTriggerOutcome;
+  /**
+   * Always empty. Settlement raises the invoice asynchronously off its own
+   * Kafka lane, so pymthouse never learns the resulting invoice id
+   * synchronously here — read it back from billing history / billing state
+   * instead. Kept as a field so existing callers that destructure it need no
+   * further change if a future round-trip repopulates it.
+   */
   invoiceIds: string[];
 };
 
 /**
- * Create invoices from gathering lines and advance each toward collection.
+ * Ask settlement to raise a customer's pending gathering lines into a real
+ * invoice.
  *
- * `force` (test-usage / explicit collect-now) always asks OpenMeter for pending
- * lines — it must not gate on {@link getUnbilledDebtUsdMicros}, which can read
- * $0 when Konnect's invoice list misses gathering totals. Empty pending lines
- * still return `skipped`. Non-force mid-cycle triggers keep the lead-window and
- * Stripe minimum-charge floors via {@link shouldTriggerInvoice}.
+ * `force` (test-usage / explicit collect-now) always asks — it must not gate
+ * on {@link getUnbilledDebtUsdMicros}, which can read $0 when Konnect's
+ * invoice list misses gathering totals. Non-force mid-cycle triggers keep the
+ * lead-window and Stripe minimum-charge floors via {@link shouldTriggerInvoice}.
+ *
+ * The raise itself happens in settlement, not here: settlement's per-customer
+ * Kafka lane already serializes every event for one customer, so a second
+ * raise request for a customer already mid-raise waits its turn there instead
+ * of reaching Konnect at the same time and racing the first one into "an
+ * active realization run already exists" — the collision this function used
+ * to hit directly back when it called OpenMeter itself. This also gets the
+ * raise off pymthouse's request path: `"queued"` means settlement accepted
+ * the request onto its lane, not that an invoice exists yet.
  */
 export async function invoiceGatheringForIdentity(input: {
   clientId: string;
@@ -117,7 +131,7 @@ export async function invoiceGatheringForIdentity(input: {
     return { outcome: "unavailable", invoiceIds: [] };
   }
 
-  const rateKey = `${clientId}\u0000${externalUserId}`;
+  const rateKey = `${clientId} ${externalUserId}`;
   const cache = getAttemptCache();
   const marker = { attempted: false };
   await cache.get(rateKey, async () => {
@@ -167,72 +181,25 @@ export async function invoiceGatheringForIdentity(input: {
       return { outcome: "skipped", invoiceIds: [] };
     }
 
-    const client = getHostedAdminClient();
-    const invoices = await client.billing.invoices.invoicePendingLines({
+    const settlementOutcome = await requestSettlementCollect({
+      clientId,
+      externalUserId,
       customerId,
-      progressiveBillingOverride: true,
+      force,
     });
-    if (!invoices?.length) {
-      return { outcome: "skipped", invoiceIds: [] };
+    if (settlementOutcome === "unavailable") {
+      return { outcome: "unavailable", invoiceIds: [] };
     }
-
-    const invoiceIds: string[] = [];
-    for (const invoice of invoices) {
-      const invoiceId = invoice.id?.trim();
-      if (!invoiceId) continue;
-      invoiceIds.push(invoiceId);
-      await advanceInvoice(client, invoiceId, force);
+    if (settlementOutcome === "error") {
+      return { outcome: "error", invoiceIds: [] };
     }
-    return { outcome: "invoiced", invoiceIds };
+    return { outcome: "queued", invoiceIds: [] };
   } catch (err) {
     console.warn(
       "[invoice-trigger] unexpected failure",
       sanitizeForLog(err instanceof Error ? err.message : String(err)),
     );
     return { outcome: "error", invoiceIds: [] };
-  }
-}
-
-/**
- * Push a freshly raised invoice toward collection. With auto_advance + P0D
- * `advance` is often a no-op; Custom Invoicing may pause at draft.sync and
- * settlement drives the rest. Force collect also snapshots + approves so
- * waiting_for_collection / waiting_auto_approval do not park the raise.
- */
-async function advanceInvoice(
-  client: ReturnType<typeof getHostedAdminClient>,
-  invoiceId: string,
-  force: boolean,
-): Promise<void> {
-  if (force) {
-    try {
-      // Native way to skip the collection period for an invoice parked in
-      // draft.waiting_for_collection.
-      await client.billing.invoices.snapshotQuantities(invoiceId);
-    } catch {
-      // Not in a snapshot-able state; advance below still applies.
-    }
-  }
-  try {
-    await client.billing.invoices.advance(invoiceId);
-  } catch (err) {
-    console.warn(
-      "[invoice-trigger] advance skipped",
-      sanitizeForLog(invoiceId),
-      sanitizeForLog(err instanceof Error ? err.message : String(err)),
-    );
-  }
-  if (force) {
-    try {
-      // Skip draft.waiting_auto_approval so settlement can issue immediately.
-      await client.billing.invoices.approve(invoiceId);
-    } catch (err) {
-      console.warn(
-        "[invoice-trigger] approve skipped",
-        sanitizeForLog(invoiceId),
-        sanitizeForLog(err instanceof Error ? err.message : String(err)),
-      );
-    }
   }
 }
 

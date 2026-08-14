@@ -166,6 +166,115 @@ describe("resolveBillingState status", () => {
   });
 });
 
+describe("resolveBillingState funding.net", () => {
+  it("equals spendable when there is no unbilled debt", () => {
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 5_000_000n, unbilledDebtUsdMicros: 0n }),
+    );
+    assert.equal(state.funding.net?.usd, "5.00");
+  });
+
+  it("goes negative once debt outruns spendable — a charge went unpaid", () => {
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 0n, unbilledDebtUsdMicros: 12_340_000n }),
+    );
+    assert.equal(state.funding.net?.usd, "-12.34");
+    assert.equal(state.funding.net?.usdMicros, "-12340000");
+  });
+
+  it("does not double-subtract debt the spendable balance already covers", () => {
+    // Same fixture as "clears unbilledDebt while spendable remains": the
+    // gathering total includes spendable-covered usage, so net must read
+    // spendable exactly, not spendable minus the raw (uncleared) debt.
+    const state = resolveBillingState(
+      input({
+        prepaidUsdMicros: 5_010_000n,
+        unbilledDebtUsdMicros: 19_990_000n,
+      }),
+    );
+    assert.equal(state.funding.net?.usd, "5.01");
+  });
+
+  it("is null exactly when debt is unavailable, matching overage.unbilledDebt", () => {
+    const state = resolveBillingState(
+      input({ unbilledDebtUsdMicros: null, debtSource: "unavailable" }),
+    );
+    assert.equal(state.funding.net, null);
+    assert.equal(state.funding.overage.unbilledDebt, null);
+  });
+
+  it("goes further negative than a zero-floored ceiling remaining would show", () => {
+    // At the ceiling, overage.remaining floors at $0.00 — net still reports
+    // the real, uncapped shortfall so a blocked user sees they owe money,
+    // not merely that their buffer is exhausted.
+    const state = resolveBillingState(
+      input({ unbilledDebtUsdMicros: 10_000_000n }),
+    );
+    assert.equal(state.status, "blocked");
+    assert.equal(state.funding.overage.remaining?.usd, "0.00");
+    assert.equal(state.funding.net?.usd, "-10.00");
+  });
+});
+
+// The full lifecycle a user actually lives through: credit a prepaid amount,
+// send usage that exceeds it, let the resulting debt accrue toward (and
+// past) the ceiling, then confirm it charges and recovers cleanly once
+// collected — without the gate getting stuck or a stale number lingering.
+// resolveBillingState is pure, so "recovery" here really means: once the
+// debt input correctly reads back down (getUnbilledDebtDetails's job, fixed
+// separately for the case where already-paid usage this cycle was being
+// double-counted as still owed), the gate reopens on the very next read with
+// no separate reset step required.
+describe("resolveBillingState credit -> overage -> charge -> recovery lifecycle", () => {
+  it("credits $10, usage of $15 clears it and spends into overage while still allowing requests", () => {
+    // $10 credited, $15 of usage: $10 drawn from spendable, $5 becomes debt.
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 0n, unbilledDebtUsdMicros: 5_000_000n }),
+    );
+    assert.equal(state.canSpend, true, "usage past the credited amount must still go through while overage-eligible");
+    assert.equal(state.funding.spendable.usd, "0.00");
+    assert.equal(state.funding.overage.unbilledDebt?.usd, "5.00");
+    assert.equal(state.funding.net?.usd, "-5.00", "net reflects the $5 owed, not a floored $0.00");
+  });
+
+  it("crossing the ceiling blocks further spend rather than letting debt run unbounded", () => {
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 0n, unbilledDebtUsdMicros: 10_000_000n }), // ceiling is $10
+    );
+    assert.equal(state.status, "blocked");
+    assert.equal(state.canSpend, false);
+    assert.equal(state.reason, "debt_ceiling_reached");
+    assert.equal(state.collection.nextAction, "awaiting_settlement");
+  });
+
+  it("recovers to active with a clean $0 debt and positive net the moment the charge is paid", () => {
+    // Same subject, later read: settlement collected the invoice, so the
+    // next unbilled-debt read reports 0 (this is exactly the read that used
+    // to be wrong when the meter-estimate fallback still counted the
+    // already-paid amount as owed for the rest of the month).
+    const recovered = resolveBillingState(
+      input({ prepaidUsdMicros: 0n, unbilledDebtUsdMicros: 0n }),
+    );
+    assert.equal(recovered.status, "overage");
+    assert.equal(recovered.canSpend, true);
+    assert.equal(recovered.reason, null);
+    assert.equal(recovered.funding.overage.unbilledDebt?.usd, "0.00");
+    assert.equal(recovered.funding.net?.usd, "0.00");
+  });
+
+  it("recovers to active immediately on fresh prepaid credit, independent of any debt-read timing", () => {
+    // A manual top-up must unblock on its own, in the same read, without
+    // waiting on the debt signal to catch up — spendable > 0 short-circuits
+    // resolvePosture before unbilledDebt is even considered.
+    const state = resolveBillingState(
+      input({ prepaidUsdMicros: 10_000_000n, unbilledDebtUsdMicros: 10_000_000n }),
+    );
+    assert.equal(state.status, "active");
+    assert.equal(state.canSpend, true);
+    assert.equal(state.funding.spendable.usd, "10.00");
+  });
+});
+
 describe("resolveBillingState shape", () => {
   it("carries currency on every money field", () => {
     const state = resolveBillingState(input({ currency: "EUR" }));
