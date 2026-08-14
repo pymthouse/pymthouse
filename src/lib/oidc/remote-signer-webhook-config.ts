@@ -13,7 +13,7 @@ import { createLocalSignerJwksResolver } from "@/lib/oidc/local-signer-jwks";
 import { createLocalTokenExchangeFetch } from "@/lib/oidc/local-token-exchange-fetch";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
-import { ownerWireUsageSubjectFromJwt } from "@/lib/openmeter/billing-identity";
+import { wireUsageSubjectFromJwt } from "@/lib/openmeter/billing-identity";
 import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -45,7 +45,7 @@ function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifie
         typeof raw?.external_user_id === "string"
           ? raw.external_user_id
           : result.identity.usage_subject;
-      const rewritten = ownerWireUsageSubjectFromJwt({
+      const rewritten = wireUsageSubjectFromJwt({
         userType,
         usageSubject: result.identity.usage_subject,
         costOwnerUserId,

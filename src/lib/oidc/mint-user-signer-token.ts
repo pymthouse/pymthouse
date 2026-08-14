@@ -456,7 +456,7 @@ export async function mintSignerJwtForExternalUser(input: {
   // Wire JWT/sub stays the actor id. Cost-rail wallet is owner:{users.id}
   // via identity / cost_owner_user_id (owner_rollup end-users).
   const provisionExternalUserId = identity.isOwner
-    ? (identity.ownerUserId as string)
+    ? identity.payerPlatformUserId || externalUserId
     : externalUserId;
   const jwtExternalUserId = provisionExternalUserId;
 

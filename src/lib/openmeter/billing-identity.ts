@@ -40,10 +40,6 @@ export type ResolvedBillingIdentity = {
    * Set for owners, Explorers, and owner_rollup end-users.
    */
   payerPlatformUserId?: string;
-  /**
-   * @deprecated Prefer {@link payerPlatformUserId}. Kept for call-site churn.
-   */
-  ownerUserId?: string;
   isOwner: boolean;
   /**
    * True when network usage, spendable balance, and prepaid credits live on
@@ -90,7 +86,6 @@ function platformUserIdentity(input: {
     payerCustomerKey,
     payerKind: "platform_user",
     payerPlatformUserId: input.platformUserId,
-    ownerUserId: input.platformUserId,
     isOwner: input.isOwner,
     sharesOwnerCostRail: true,
     actorEndUserId: input.platformUserId,
@@ -116,7 +111,6 @@ function endUserIdentity(input: {
     payerCustomerKey: input.payerCustomerKey,
     payerKind: input.payerKind,
     payerPlatformUserId: input.payerPlatformUserId,
-    ownerUserId: input.payerPlatformUserId,
     isOwner: false,
     sharesOwnerCostRail: input.sharesOwnerCostRail,
     actorEndUserId: input.actorEndUserId,
@@ -158,8 +152,7 @@ export function ownerCostRailUserId(
   if (!identity.sharesOwnerCostRail) {
     return undefined;
   }
-  const ownerUserId =
-    identity.payerPlatformUserId?.trim() || identity.ownerUserId?.trim();
+  const ownerUserId = identity.payerPlatformUserId?.trim();
   return ownerUserId || undefined;
 }
 
@@ -331,22 +324,6 @@ export function wireUsageSubjectFromJwt(input: {
     usageSubject: buildOwnerWireSubject(bareId),
     usageSubjectType: "app_owner",
   };
-}
-
-/**
- * @deprecated Prefer {@link wireUsageSubjectFromJwt}.
- */
-export function ownerWireUsageSubjectFromJwt(input: {
-  userType: string;
-  usageSubject: string;
-  costOwnerUserId?: string | null;
-  billingSubjectKey?: string | null;
-  actorExternalUserId?: string | null;
-}): {
-  usageSubject: string;
-  usageSubjectType: "app_owner" | "external_user_id";
-} {
-  return wireUsageSubjectFromJwt(input);
 }
 
 function billingModeFromRow(

@@ -9,7 +9,6 @@ import {
   buildPayerActorWireSubject,
   costOwnerUserIdClaim,
   ownerCostRailUserId,
-  ownerWireUsageSubjectFromJwt,
   parsePayerActorWireSubject,
   rejectOwnerWireRetailSubject,
   resetBillingIdentityCacheForTests,
@@ -46,8 +45,8 @@ nodeTest("rejectOwnerWireRetailSubject rejects owner: subjects only", () => {
   rejectOwnerWireRetailSubject("ext-abc");
 });
 
-nodeTest("ownerWireUsageSubjectFromJwt prefers cost_owner_user_id over user_type", () => {
-  const rewritten = ownerWireUsageSubjectFromJwt({
+nodeTest("wireUsageSubjectFromJwt prefers cost_owner_user_id over user_type", () => {
+  const rewritten = wireUsageSubjectFromJwt({
     userType: "external_user",
     usageSubject: "ext-9",
     costOwnerUserId: "owner-uuid",
@@ -70,8 +69,8 @@ nodeTest("wireUsageSubjectFromJwt prefers billing_subject_key", () => {
   assert.equal(rewritten.usageSubjectType, "external_user_id");
 });
 
-nodeTest("ownerWireUsageSubjectFromJwt leaves merchant end-users on the actor id", () => {
-  const rewritten = ownerWireUsageSubjectFromJwt({
+nodeTest("wireUsageSubjectFromJwt leaves merchant end-users on the actor id", () => {
+  const rewritten = wireUsageSubjectFromJwt({
     userType: "app_user",
     usageSubject: "ext-9",
   });
@@ -123,7 +122,6 @@ test("platform-default member bills their own owner wallet", async (t) => {
     assert.equal(identity.sharesOwnerCostRail, true);
     assert.equal(identity.payerKind, "platform_user");
     assert.equal(identity.payerPlatformUserId, memberId);
-    assert.equal(identity.ownerUserId, memberId);
     assert.equal(identity.customerKey, buildOwnerCustomerKey(memberId));
     assert.equal(identity.payerCustomerKey, buildOwnerCustomerKey(memberId));
     assert.notEqual(identity.customerKey, buildOwnerCustomerKey(seeded.userId));
@@ -145,7 +143,7 @@ test("platform-default admin owner still bills own wallet", async (t) => {
     assert.equal(identity.isOwner, true);
     assert.equal(identity.sharesOwnerCostRail, true);
     assert.equal(identity.payerKind, "platform_user");
-    assert.equal(identity.ownerUserId, seeded.userId);
+    assert.equal(identity.payerPlatformUserId, seeded.userId);
     assert.equal(identity.customerKey, buildOwnerCustomerKey(seeded.userId));
   });
 });
@@ -199,7 +197,7 @@ test("merchant end-user bills stable eu_ customer", async (t) => {
   assert.equal(identity.isOwner, false);
   assert.equal(identity.sharesOwnerCostRail, false);
   assert.equal(identity.payerKind, "end_user");
-  assert.equal(identity.ownerUserId, undefined);
+  assert.equal(identity.payerPlatformUserId, undefined);
   assert.ok(isEndUserCustomerKey(identity.payerCustomerKey));
   assert.equal(identity.customerKey, identity.payerCustomerKey);
   assert.equal(identity.actorEndUserId, identity.payerCustomerKey);
@@ -234,7 +232,7 @@ test("normal app owner bills shared owner wallet", async (t) => {
   assert.equal(identity.isOwner, true);
   assert.equal(identity.sharesOwnerCostRail, true);
   assert.equal(identity.payerKind, "platform_user");
-  assert.equal(identity.ownerUserId, seeded.userId);
+  assert.equal(identity.payerPlatformUserId, seeded.userId);
   assert.equal(identity.customerKey, buildOwnerCustomerKey(seeded.userId));
   assert.deepEqual(costOwnerUserIdClaim(identity), {});
   assert.deepEqual(billingSubjectClaim(identity), {});

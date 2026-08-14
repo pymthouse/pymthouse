@@ -780,10 +780,14 @@ async function collect(state: RunState): Promise<void> {
         `/api/v1/apps/${CLIENT_ID}/billing/state?externalUserId=${encodeURIComponent(state.externalUserId)}`,
       );
       const collection = current.collection as Record<string, unknown> | undefined;
-      if (collection?.nextAction === "awaiting_settlement") {
+      const nextAction =
+        typeof collection?.nextAction === "string"
+          ? collection.nextAction
+          : "none";
+      if (nextAction === "awaiting_settlement") {
         return { done: true, value: current };
       }
-      return { done: false, note: `collection.nextAction=${collection?.nextAction ?? "none"}` };
+      return { done: false, note: `collection.nextAction=${nextAction}` };
     },
   });
 
