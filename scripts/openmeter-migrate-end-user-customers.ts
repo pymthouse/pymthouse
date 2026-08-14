@@ -10,8 +10,9 @@
  * - Optionally provisions Starter on the eu_ customer for merchant apps
  *
  * Usage:
+ *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --all
  *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id app_…
- *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id app_… --transfer-balances --cancel-legacy
+ *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --all --transfer-balances --cancel-legacy
  *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id app_… --provision-merchant --dry-run
  */
 import "./load-env-first";
@@ -57,6 +58,7 @@ import {
 
 type Args = {
   clientId?: string;
+  all: boolean;
   transferBalances: boolean;
   cancelLegacy: boolean;
   provisionMerchant: boolean;
@@ -76,6 +78,7 @@ type EndUserRow = {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
+    all: false,
     transferBalances: false,
     cancelLegacy: false,
     provisionMerchant: false,
@@ -85,6 +88,10 @@ function parseArgs(argv: string[]): Args {
     const token = argv[i];
     if (token === "--client-id") {
       args.clientId = argv[++i]?.trim();
+      continue;
+    }
+    if (token === "--all") {
+      args.all = true;
       continue;
     }
     if (token === "--transfer-balances") {
@@ -109,6 +116,12 @@ function parseArgs(argv: string[]): Args {
     }
     throw new Error(`Unknown argument: ${token}\n${usage()}`);
   }
+  if (!args.all && !args.clientId) {
+    throw new Error(`Provide --client-id <app_…> or --all\n${usage()}`);
+  }
+  if (args.all && args.clientId) {
+    throw new Error(`Use either --client-id or --all, not both\n${usage()}`);
+  }
   if (args.transferBalances && !args.cancelLegacy) {
     throw new Error(
       "--transfer-balances requires --cancel-legacy so credits are not left " +
@@ -122,8 +135,10 @@ function parseArgs(argv: string[]): Args {
 function usage(): string {
   return [
     "Usage:",
+    "  npx tsx scripts/openmeter-migrate-end-user-customers.ts --all",
     "  npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id <app_…>",
-    "  --client-id <id>         Public client id or developer_apps.id (required)",
+    "  --all                    Migrate end-users for every developer app",
+    "  --client-id <id>         Public client id or developer_apps.id (one app)",
     "  --transfer-balances      Grant remaining credits from legacy compound wallets",
     "                           (requires --cancel-legacy — never leave dual live wallets)",
     "  --cancel-legacy          Cancel active subscriptions on legacy customers and",
@@ -176,6 +191,30 @@ async function resolveApp(clientIdOrAppId: string): Promise<AppRow> {
     publicClientId: row.publicClientId?.trim() || row.developerAppId,
     billingMode: row.billingMode === "merchant" ? "merchant" : "owner_rollup",
   };
+}
+
+async function listAllApps(): Promise<AppRow[]> {
+  const rows = await db
+    .select({
+      developerAppId: developerApps.id,
+      publicClientId: oidcClients.clientId,
+      billingMode: appBillingConfig.billingMode,
+    })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .leftJoin(appBillingConfig, eq(appBillingConfig.clientId, developerApps.id));
+
+  const apps: AppRow[] = [];
+  for (const row of rows) {
+    const publicClientId = row.publicClientId?.trim();
+    if (!publicClientId || !row.developerAppId) continue;
+    apps.push({
+      developerAppId: row.developerAppId,
+      publicClientId,
+      billingMode: row.billingMode === "merchant" ? "merchant" : "owner_rollup",
+    });
+  }
+  return apps;
 }
 
 async function listEndUsersForApp(
@@ -411,17 +450,82 @@ async function migrateEndUser(input: {
   }
 }
 
+async function migrateApp(input: {
+  app: AppRow;
+  client: ReturnType<typeof getHostedAdminClient>;
+  transferBalances: boolean;
+  cancelLegacy: boolean;
+  provisionMerchant: boolean;
+  dryRun: boolean;
+  apiKey: string | undefined;
+  baseUrl: string;
+}): Promise<number> {
+  const endUsersForApp = await listEndUsersForApp(input.app, {
+    dryRun: input.dryRun,
+  });
+  console.log(
+    `\n=== ${input.app.publicClientId} (${input.app.developerAppId}) ` +
+      `mode=${input.app.billingMode} endUsers=${endUsersForApp.length} ===`,
+  );
+
+  for (const endUser of endUsersForApp) {
+    await migrateEndUser({
+      client: input.client,
+      app: input.app,
+      endUser,
+      transferBalances: input.transferBalances,
+      cancelLegacy: input.cancelLegacy,
+      provisionMerchant: input.provisionMerchant,
+      dryRun: input.dryRun,
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+    });
+  }
+  return endUsersForApp.length;
+}
+
+async function runAttributionExitGate(publicClientId: string): Promise<void> {
+  console.log(
+    `\nRunning attribution consistency exit gate for ${publicClientId}…`,
+  );
+  const findings = await auditBillingConsistency({
+    clientId: publicClientId,
+  });
+  const attributionErrors = attributionGateFindings(findings);
+  if (attributionErrors.length > 0) {
+    for (const f of attributionErrors) {
+      console.error(`[FAIL] ${publicClientId} ${f.code}: ${f.message}`);
+      if (f.remediation) {
+        console.error(`  fix: ${f.remediation}`);
+      }
+    }
+    throw new Error(
+      `Attribution exit gate failed for ${publicClientId}: ` +
+        `${attributionErrors.length} error(s). ` +
+        "No subject may carry usage that no customer is attributed. " +
+        "Fix with ensure/release, then re-run.",
+    );
+  }
+  console.log(
+    `[ok] ${publicClientId} attribution exit gate passed ` +
+      "(no usage_on_unattributed_subject / customer_has_no_usage_attribution errors).",
+  );
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.clientId) {
-    throw new Error(`--client-id is required\n${usage()}`);
-  }
   if (!isHostedAdminClientAvailable()) {
     throw new Error("OpenMeter is not configured (OPENMETER_URL / API key)");
   }
 
-  const app = await resolveApp(args.clientId);
-  const endUsersForApp = await listEndUsersForApp(app, { dryRun: args.dryRun });
+  const apps = args.all
+    ? await listAllApps()
+    : [await resolveApp(args.clientId!)];
+  if (apps.length === 0) {
+    console.log("No developer apps to migrate.");
+    return;
+  }
+
   const client = getHostedAdminClient();
   let apiKey = process.env.OPENMETER_API_KEY?.trim();
   let baseUrl = getHostedOpenMeterUrl();
@@ -434,17 +538,16 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `Migrating ${endUsersForApp.length} end-user(s) for ${app.publicClientId} ` +
-      `mode=${app.billingMode} transfer=${args.transferBalances} ` +
-      `cancelLegacy=${args.cancelLegacy} provisionMerchant=${args.provisionMerchant} ` +
-      `dryRun=${args.dryRun}`,
+    `Migrating end-users for ${apps.length} app(s) ` +
+      `transfer=${args.transferBalances} cancelLegacy=${args.cancelLegacy} ` +
+      `provisionMerchant=${args.provisionMerchant} dryRun=${args.dryRun}`,
   );
 
-  for (const endUser of endUsersForApp) {
-    await migrateEndUser({
-      client,
+  let totalEndUsers = 0;
+  for (const app of apps) {
+    totalEndUsers += await migrateApp({
       app,
-      endUser,
+      client,
       transferBalances: args.transferBalances,
       cancelLegacy: args.cancelLegacy,
       provisionMerchant: args.provisionMerchant,
@@ -454,6 +557,11 @@ async function main(): Promise<void> {
     });
   }
 
+  console.log(
+    `\nDone. Migrated subjects across ${apps.length} app(s); ` +
+      `${totalEndUsers} end-user row(s) considered.`,
+  );
+
   if (args.dryRun) {
     console.log(
       "\n[dry-run] skipped attribution exit gate. Re-run without --dry-run, then confirm " +
@@ -462,28 +570,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log("\nRunning attribution consistency exit gate…");
-  const findings = await auditBillingConsistency({
-    clientId: app.publicClientId,
-  });
-  const attributionErrors = attributionGateFindings(findings);
-  if (attributionErrors.length > 0) {
-    for (const f of attributionErrors) {
-      console.error(`[FAIL] ${f.code}: ${f.message}`);
-      if (f.remediation) {
-        console.error(`  fix: ${f.remediation}`);
-      }
-    }
-    throw new Error(
-      `Attribution exit gate failed: ${attributionErrors.length} error(s). ` +
-        "No subject may carry usage that no customer is attributed. " +
-        "Fix with ensure/release, then re-run.",
-    );
+  for (const app of apps) {
+    await runAttributionExitGate(app.publicClientId);
   }
-  console.log(
-    "Attribution exit gate passed (no usage_on_unattributed_subject / " +
-      "customer_has_no_usage_attribution errors).",
-  );
 }
 
 main()
