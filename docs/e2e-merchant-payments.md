@@ -146,10 +146,12 @@ available on this path and asking for them would make the job flaky.
 CloudEvent directly with exact micros. It skips Kafka and the collector, so it
 validates the billing half only. Use it when the broker is not reachable from CI.
 
-> `collect: false` on the test-usage body is load-bearing. The route defaults to
-> `true`; a raise there would put stage 4 inside the trigger cooldown, so the
-> manual collect would return `rate_limited` and the test would pass having
-> proved nothing.
+> `collect: false` on the test-usage body matches the route's own default
+> (opt-in, off unless requested — production usage never forces collection
+> either) — kept explicit so this stays correct if that default ever
+> changes. A raise here would put stage 4 inside the trigger cooldown, so
+> the manual collect would return `rate_limited` and the test would pass
+> having proved nothing.
 
 **Amount.** The default `$12.00` has to clear three floors simultaneously, or the
 flow degrades into a green run that tested nothing:

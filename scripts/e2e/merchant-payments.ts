@@ -617,9 +617,11 @@ async function ingestViaKafka(state: RunState): Promise<void> {
 
 async function ingestViaApi(state: RunState): Promise<void> {
   stage("Ingest — test-usage API (Kafka + collector bypassed)");
-  // `collect: false` is load-bearing. The route defaults to true, and a raise
-  // here would put the manual-collect stage inside the trigger cooldown, so it
-  // would return `rate_limited` and the flow would prove nothing.
+  // `collect: false` matches the route's own default (opt-in, off unless
+  // requested) — kept explicit so this stays correct if that default ever
+  // changes. A raise here would put the manual-collect stage inside the
+  // trigger cooldown, so it would return `rate_limited` and the flow would
+  // prove nothing.
   const result = await apiOk<{ requestId: string; amountUsdMicros: string; collected: boolean }>(
     `/api/v1/apps/${CLIENT_ID}/billing/wallet/test-usage`,
     {

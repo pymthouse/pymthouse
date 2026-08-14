@@ -9,15 +9,18 @@ import { resolveWalletRouteContext } from "@/lib/billing/wallet-route-context";
  * POST /api/v1/apps/{clientId}/billing/wallet/test-usage
  *
  * Demo helper: ingest a create_signed_ticket CloudEvent for the merchant
- * end-user with an exact USD fee, then optionally force mid-cycle invoice
- * collection so Custom Invoicing → settlement → Stripe Connect can be traced.
+ * end-user with an exact USD fee. Collection is opt-in (`collect: true`) —
+ * production usage never forces it, only the balance gate's automatic
+ * trigger does, so this defaults to the same behavior real traffic gets.
+ * Pass `collect: true` to also force a mid-cycle raise and trace Custom
+ * Invoicing → settlement → Stripe Connect end to end.
  *
  * Production safeguard: this route is disabled by default in production.
  * Operators enable it with `PYMTHOUSE_ENABLE_WALLET_TEST_USAGE=1`. Any
  * authenticated M2M caller that can reach the merchant wallet routes may use
  * it when enabled.
  *
- * Body: `{ "externalUserId": "eu_…", "amountUsd": "10.00", "collect"?: true }`
+ * Body: `{ "externalUserId": "eu_…", "amountUsd": "10.00", "collect"?: false }`
  */
 export async function POST(
   request: NextRequest,
@@ -49,7 +52,7 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const collect = body.collect !== false;
+  const collect = body.collect === true;
 
   try {
     const result = await ingestTestUsageEvent({

@@ -58,16 +58,17 @@ export async function ingestTestUsageEvent(input: {
   externalUserId: string;
   amountUsd: unknown;
   /**
-   * Force a mid-cycle invoice raise after ingest settles. Opt-in — ingesting
-   * usage and demanding immediate collection are separate actions; forcing
-   * on every call regardless of caller intent is what produced repeated
-   * collisions with an already-unresolved invoicing run for the same
-   * customer back when this called OpenMeter directly. Settlement's
-   * per-customer Kafka lane now absorbs that collision instead (see
-   * invoice-trigger's `"queued"` outcome), but the opt-in stays: ingesting
-   * usage and demanding immediate collection are still separate actions.
-   * Callers that want the old always-collect behavior should pass
-   * `collect: true` explicitly.
+   * Force a mid-cycle invoice raise after ingest settles. Opt-in (defaults
+   * to false) — ingesting usage and demanding immediate collection are
+   * separate actions, and forcing on every call is not what production
+   * traffic does: comfypeer's real usage only ever reaches
+   * invoiceGatheringForIdentity through the balance gate's automatic,
+   * non-forced scheduleInvoiceTrigger. A test tool that always forces
+   * collection exercises a path real usage never takes and hides how the
+   * automatic trigger actually behaves. Pass `collect: true` explicitly to
+   * exercise the force path (e.g. testing the /billing/collect endpoint
+   * itself) — see BillingPanel.tsx for why the UI no longer does this by
+   * default.
    */
   collect?: boolean;
 }, deps: TestUsageEventDeps = DEFAULT_TEST_USAGE_EVENT_DEPS): Promise<TestUsageEventResult> {
@@ -121,7 +122,7 @@ export async function ingestTestUsageEvent(input: {
     collected: false,
   };
 
-  if (input.collect === false) {
+  if (input.collect !== true) {
     return result;
   }
 
