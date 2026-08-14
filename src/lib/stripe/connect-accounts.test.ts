@@ -9,6 +9,7 @@ import {
   createConnectedCheckoutSession,
   createConnectedCustomer,
   createConnectedInvoice,
+  createConnectedOffSessionPaymentIntent,
   createMerchantConnectedAccount,
   exchangeConnectOAuthCode,
   refreshConnectedAccountStatus,
@@ -537,6 +538,56 @@ test("createConnectedCheckoutSession rejects payment mode without a valid amount
         successUrl: "https://ok",
         cancelUrl: "https://cancel",
         mode: "payment",
+        amountCents: 0,
+      }),
+    /amountCents must be a positive integer/,
+  );
+});
+
+test("createConnectedOffSessionPaymentIntent confirms off-session with fee metadata", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  let path = "";
+  let body = "";
+  let stripeAccount = "";
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    path = String(input);
+    body = String(init?.body ?? "");
+    stripeAccount = new Headers(init?.headers).get("Stripe-Account") ?? "";
+    return jsonResponse({ id: "pi_off_1", status: "succeeded" });
+  });
+
+  assert.deepEqual(
+    await createConnectedOffSessionPaymentIntent({
+      accountId: "acct_1",
+      customerId: "cus_1",
+      paymentMethodId: "pm_1",
+      amountCents: 1000,
+      applicationFeeBps: 250,
+      metadata: {
+        pymthouse_auto_topup: "1",
+        client_id: "app_merchant",
+        external_user_id: "user_1",
+      },
+    }),
+    { id: "pi_off_1", status: "succeeded" },
+  );
+  assert.equal(path, "https://api.stripe.com/v1/payment_intents");
+  assert.equal(stripeAccount, "acct_1");
+  assert.match(body, /confirm=true/);
+  assert.match(body, /off_session=true/);
+  assert.match(body, /application_fee_amount=25/);
+  assert.match(body, /metadata%5Bpymthouse_auto_topup%5D=1/);
+  assert.doesNotMatch(body, /payment_method_types/);
+});
+
+test("createConnectedOffSessionPaymentIntent rejects a non-positive amount", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  await assert.rejects(
+    () =>
+      createConnectedOffSessionPaymentIntent({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        paymentMethodId: "pm_1",
         amountCents: 0,
       }),
     /amountCents must be a positive integer/,

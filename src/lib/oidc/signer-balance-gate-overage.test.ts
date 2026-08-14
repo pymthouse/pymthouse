@@ -9,6 +9,7 @@ import {
   seedSignerOverageEligibility,
   seedSignerSpendableBalance,
 } from "@/lib/oidc/signer-balance-gate";
+import { __setTryAutoTopUpIfEnabledForTests } from "@/lib/stripe/auto-topup";
 
 function identity(subject: string): UsageIdentity {
   return {
@@ -31,12 +32,17 @@ function withOpenMeterConfigured(t: test.TestContext) {
     if (prevLive === undefined) delete process.env.OPENMETER_TEST_LIVE;
     else process.env.OPENMETER_TEST_LIVE = prevLive;
     __resetSignerBalanceCachesForTests();
+    __setTryAutoTopUpIfEnabledForTests(null);
   });
 
   process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
   process.env.OPENMETER_API_KEY = "om_test_key";
   process.env.OPENMETER_TEST_LIVE = "1";
   __resetSignerBalanceCachesForTests();
+  __setTryAutoTopUpIfEnabledForTests(async () => ({
+    status: "skipped",
+    reason: "test",
+  }));
 }
 
 test("buildSignerBalanceCheck is undefined when OpenMeter is not configured", (t) => {
@@ -143,6 +149,29 @@ test("buildSignerBalanceCheck rejects non-integer balance", async (t) => {
     },
     (err: unknown) => err instanceof WebhookError && err.status === 503,
   );
+});
+
+test("buildSignerBalanceCheck allows zero spendable after auto-top-up charge", async (t) => {
+  withOpenMeterConfigured(t);
+  t.after(() => __setTryAutoTopUpIfEnabledForTests(null));
+  __setTryAutoTopUpIfEnabledForTests(async () => ({
+    status: "charged",
+    paymentIntentId: "pi_reload",
+    grantedUsdMicros: "10000000",
+  }));
+
+  seedSignerSpendableBalance("app_test_overage", "eu_reload", "0");
+  seedSignerOverageEligibility("app_test_overage", "eu_reload", false);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  const result = await check({
+    identity: identity("eu_reload"),
+    expiry: Math.floor(Date.now() / 1000) + 60,
+    payload: {},
+    request: new Request("http://localhost/authorize"),
+  });
+  assert.ok(result && typeof result === "object" && "expiry" in result);
 });
 
 test("__resetSignerBalanceCachesForTests is test-only", () => {
