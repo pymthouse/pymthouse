@@ -474,9 +474,14 @@ export async function recordBillingCustomer(input: {
   openmeterCustomerId?: string | null;
 }): Promise<void> {
   const customerKey = input.customerKey.trim();
-  const clientId = input.clientId.trim();
   const openmeterCustomerId = input.openmeterCustomerId?.trim();
-  if (!customerKey || !clientId || !openmeterCustomerId) {
+  if (!customerKey || !openmeterCustomerId) {
+    return;
+  }
+  // plans/billing_customers.client_id is developer_apps.id — callers sometimes
+  // pass the public app_… oidc id (especially audit spendable probes).
+  const clientId = await resolveBillingCustomersClientId(input.clientId);
+  if (!clientId) {
     return;
   }
   const now = new Date().toISOString();
@@ -527,6 +532,26 @@ export async function recordBillingCustomer(input: {
       err instanceof Error ? err.message : String(err),
     );
   }
+}
+
+async function resolveBillingCustomersClientId(
+  clientIdOrPublic: string,
+): Promise<string | null> {
+  const trimmed = clientIdOrPublic.trim();
+  if (!trimmed) return null;
+  const byId = await db
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .where(eq(developerApps.id, trimmed))
+    .limit(1);
+  if (byId[0]?.id) return byId[0].id;
+  const byPublic = await db
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, trimmed))
+    .limit(1);
+  return byPublic[0]?.id ?? null;
 }
 
 /**
