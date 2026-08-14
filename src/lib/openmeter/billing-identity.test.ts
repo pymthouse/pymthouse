@@ -222,28 +222,6 @@ test("merchant end-user bills stable eu_ customer", async (t) => {
   );
 });
 
-test("merchant end-user that already has an eu_ id keeps that as the customer", async (t) => {
-  const seeded = await seedDeveloperAppWithClient();
-  t.after(async () => cleanupTestApp(seeded));
-  const endUserId = `eu_${randomUUID().replaceAll("-", "")}`;
-
-  await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
-  resetBillingIdentityCacheForTests();
-  const identity = await resolveOpenMeterBillingIdentity({
-    clientId: seeded.clientId,
-    externalUserId: endUserId,
-  });
-  assert.equal(identity.payerKind, "end_user");
-  assert.equal(identity.payerCustomerKey, endUserId);
-  assert.equal(identity.actorEndUserId, endUserId);
-  assert.equal(identity.actorExternalUserId, endUserId);
-  assert.notEqual(
-    identity.legacyCompoundCustomerKey,
-    endUserId,
-    "retired compound key must not replace the eu_ customer",
-  );
-});
-
 test("normal app owner bills shared owner wallet", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));

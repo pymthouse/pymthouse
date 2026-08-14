@@ -140,12 +140,7 @@ async function resolveEndUserActorIds(input: {
     input.developerAppId,
     input.externalUserId,
   );
-  // Callers that already mint a canonical `eu_…` id (ComfyPeer user ids) keep
-  // that as the OpenMeter / Stripe customer — do not wrap it as `eu_{row uuid}`
-  // or the retired `app_…:eu_…` compound key.
-  const endUserCustomerKey = isEndUserCustomerKey(input.externalUserId)
-    ? input.externalUserId.trim()
-    : buildEndUserCustomerKey(endUserRowId);
+  const endUserCustomerKey = buildEndUserCustomerKey(endUserRowId);
   return {
     actorEndUserId: endUserCustomerKey,
     endUserCustomerKey,
