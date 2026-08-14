@@ -22,7 +22,7 @@ import {
 } from "@/lib/openmeter/customers";
 import { decimalDollarsToUsdMicros } from "@/lib/openmeter/konnect-credits";
 import { konnectMeteringV1Fetch } from "@/lib/openmeter/konnect-admin-client";
-import { getRemainingPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
+import { getPlanDiscountUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import {
   ceilExactUsdMicrosSum,
   meterRowValueToNumber,
@@ -49,7 +49,17 @@ export function gatheringTotalUsdMicros(total: unknown): bigint | null {
   return null;
 }
 
-/** Net meter estimate against remaining included usage (never negative). */
+/**
+ * Net meter estimate against usage already covered this cycle (never
+ * negative). Callers fold included-plan total (consumed + remaining) and
+ * already-collected Stripe money into `remainingIncludedUsdMicros` — the
+ * name is historical; it is the full subtrahend, not remaining-only.
+ *
+ * Subtracting only leftover included usage left already-burned included
+ * (and, before PaymentIntents were folded in, prepaid top-ups) inside
+ * "unbilled" debt. Once spendable hit $0 the Available figure then read
+ * as −(whole month's meter) instead of −(meter − already paid).
+ */
 export function netBillableMeterDebtUsdMicros(input: {
   meterUsdMicros: bigint;
   remainingIncludedUsdMicros: bigint;
@@ -334,6 +344,30 @@ async function resolveBillingCustomerAndSubjects(input: {
   };
 }
 
+async function meterEstimateDebtUsdMicros(input: {
+  meterSubjects: string[];
+  clientId: string;
+  externalUserId: string;
+}): Promise<bigint> {
+  const [meter, discount, alreadyCollected] = await Promise.all([
+    periodMeterDebtUsdMicros(input.meterSubjects),
+    getPlanDiscountUsdMicros({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }).catch(() => ({ totalUsdMicros: 0n, remainingUsdMicros: 0n })),
+    alreadyCollectedThisCycleUsdMicros({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    }),
+  ]);
+  const includedTotal =
+    discount.totalUsdMicros > 0n ? discount.totalUsdMicros : 0n;
+  return netBillableMeterDebtUsdMicros({
+    meterUsdMicros: meter,
+    remainingIncludedUsdMicros: includedTotal + alreadyCollected,
+  });
+}
+
 /** OpenMeter customer id for the billing identity (owner / merchant / rollup). */
 export async function resolveBillingCustomerId(input: {
   clientId: string;
@@ -363,7 +397,8 @@ export type UnbilledDebtSource =
 /**
  * Unbilled debt for soft-negative gating. Invoice totals when the list
  * succeeds (including 0 when gathering is empty / only paid remain); else
- * period network-fee meter sum net of remaining included usage.
+ * period network-fee meter sum net of the included-plan grant and
+ * already-collected Stripe money (paid invoices + Checkout top-ups).
  */
 export async function getUnbilledDebtDetails(input: {
   clientId: string;
@@ -398,16 +433,10 @@ export async function getUnbilledDebtDetails(input: {
       return { usdMicros: looked.usdMicros, source: "gathering_invoice" };
     }
     if (looked.ok) {
-      const [meter, remainingIncluded, alreadyCollected] = await Promise.all([
-        periodMeterDebtUsdMicros(meterSubjects),
-        getRemainingPlanDiscountUsdMicros({ clientId, externalUserId }).catch(
-          () => 0n,
-        ),
-        alreadyCollectedThisCycleUsdMicros({ clientId, externalUserId }),
-      ]);
-      const meterDebt = netBillableMeterDebtUsdMicros({
-        meterUsdMicros: meter,
-        remainingIncludedUsdMicros: remainingIncluded + alreadyCollected,
+      const meterDebt = await meterEstimateDebtUsdMicros({
+        meterSubjects,
+        clientId,
+        externalUserId,
       });
       // Both signals agree on zero: genuine, not a filter miss.
       if (meterDebt <= 0n) {
@@ -417,19 +446,11 @@ export async function getUnbilledDebtDetails(input: {
     }
   }
 
-  const [meter, remainingIncluded, alreadyCollected] = await Promise.all([
-    periodMeterDebtUsdMicros(meterSubjects),
-    getRemainingPlanDiscountUsdMicros({
+  return {
+    usdMicros: await meterEstimateDebtUsdMicros({
+      meterSubjects,
       clientId,
       externalUserId,
-    }).catch(() => 0n),
-    alreadyCollectedThisCycleUsdMicros({ clientId, externalUserId }),
-  ]);
-
-  return {
-    usdMicros: netBillableMeterDebtUsdMicros({
-      meterUsdMicros: meter,
-      remainingIncludedUsdMicros: remainingIncluded + alreadyCollected,
     }),
     source: "meter_estimate",
   };

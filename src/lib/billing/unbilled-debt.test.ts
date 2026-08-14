@@ -53,12 +53,16 @@ test("netBillableMeterDebtUsdMicros subtracts remaining included usage", () => {
   );
 });
 
-// getUnbilledDebtDetails folds "already collected this cycle" into this same
-// subtrahend (remainingIncludedUsdMicros + alreadyCollected) rather than
-// giving netBillableMeterDebtUsdMicros a third parameter, so this is the
-// exact bug the fix targets: the calendar-month meter sum includes usage
-// already paid off mid-cycle, and without netting it out the account looks
-// stuck in debt for the rest of the month right after clearing it.
+// getUnbilledDebtDetails folds included-plan total + already-collected
+// Stripe money (paid invoices AND standalone Checkout PaymentIntents)
+// into this same subtrahend rather than giving the helper extra
+// parameters. Two bugs this covers:
+//
+// 1. Calendar-month meter includes usage already paid mid-cycle. Without
+//    netting, the account looks stuck in debt for the rest of the month.
+// 2. Subtracting only leftover included usage left the consumed included
+//    grant inside "unbilled". Once spendable hit $0, Available read as
+//    −(whole month) instead of −(meter − included − already paid).
 test("netBillableMeterDebtUsdMicros: paid-this-cycle netting clears a paid invoice's usage", () => {
   const wholeMonthMeterTotal = 1_071_000_000n; // $1,071 — everything charged this cycle
   const paidEarlierThisCycle = 1_061_000_000n; // $1,061 already collected via an invoice
@@ -69,6 +73,24 @@ test("netBillableMeterDebtUsdMicros: paid-this-cycle netting clears a paid invoi
       remainingIncludedUsdMicros: remainingIncluded + paidEarlierThisCycle,
     }),
     10_000_000n, // $10 of genuinely new, unbilled usage since that payment
+  );
+});
+
+test("netBillableMeterDebtUsdMicros: Checkout top-ups and consumed included are not unbilled", () => {
+  // Live shape from eu_43eac8e3… (2026-08-13): $1,164.50 metered, $5
+  // Starter included (all consumed), $16 paid invoice, $1,111 Checkout
+  // top-ups that never became a Stripe invoice. Before PaymentIntents
+  // were folded into alreadyCollected, Available read −$1,164.50.
+  const meter = 1_164_500_000n;
+  const includedTotal = 5_000_000n;
+  const paidInvoice = 16_000_000n;
+  const topUpPayments = 1_111_000_000n;
+  assert.equal(
+    netBillableMeterDebtUsdMicros({
+      meterUsdMicros: meter,
+      remainingIncludedUsdMicros: includedTotal + paidInvoice + topUpPayments,
+    }),
+    32_500_000n,
   );
 });
 

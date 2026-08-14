@@ -862,24 +862,26 @@ async function pendingUsageBillingHistoryItem(
 }
 
 /**
- * Sum of this Connect customer's `paid` Stripe invoices whose `created`
- * timestamp falls in the current UTC calendar month — used to net the
- * calendar-month meter estimate (see unbilled-debt.ts) down to genuinely
- * unbilled usage.
+ * Sum of this Connect customer's `paid` Stripe invoices *and* standalone
+ * succeeded PaymentIntents (Checkout top-ups) whose `created` timestamp
+ * falls in the current UTC calendar month — used to net the calendar-month
+ * meter estimate (see unbilled-debt.ts) down to genuinely unbilled usage.
  *
  * The meter estimate exists as a fallback for when Konnect's own invoice
  * list can't be trusted (its customer filter is unreliable), but it sums
  * *all* usage in the window regardless of whether some of it was already
- * collected earlier in the same cycle — a customer who paid an invoice
- * mid-month and then kept using the product would otherwise see that paid
- * amount counted as still owed for the rest of the month. Stripe's own
- * `customer=` filter on this list, unlike Konnect's, is not broken — the
- * request is scoped to one Connect customer and can be trusted directly.
- */
-/**
- * Sum, in cents, of `paid` invoices created at/after `cycleStartSeconds`
- * (Stripe `created` is Unix seconds). Pure so the cycle-boundary and
- * status filtering can be tested without live Stripe/DB access.
+ * paid earlier in the same cycle. Invoice-only netting missed the common
+ * prepaid path: "Add credit" is a Checkout PaymentIntent, not a Stripe
+ * invoice, so a customer who topped up mid-month still looked $N in debt
+ * for the rest of the month. Invoice-backed PIs are omitted so the same
+ * charge is not counted twice. Stripe's `customer=` filter, unlike
+ * Konnect's, is not broken — the request is scoped to one Connect
+ * customer and can be trusted directly.
+ *
+ * `sumPaidInvoiceCentsSince` is the invoice half: `paid` invoices created
+ * at/after `cycleStartSeconds` (Stripe `created` is Unix seconds). Pure so
+ * the cycle-boundary and status filtering can be tested without live
+ * Stripe/DB access.
  */
 export function sumPaidInvoiceCentsSince(
   invoices: Pick<StripeConnectInvoice, "status" | "created" | "total">[],
@@ -890,6 +892,30 @@ export function sumPaidInvoiceCentsSince(
     if ((invoice.status?.trim() || "") !== "paid") continue;
     if ((invoice.created ?? 0) < cycleStartSeconds) continue;
     paidCents += invoice.total ?? 0;
+  }
+  return paidCents;
+}
+
+/**
+ * Sum, in cents, of succeeded standalone PaymentIntents created at/after
+ * `cycleStartSeconds`. Invoice-backed intents are skipped — those cents
+ * already live on the invoice row.
+ */
+export function sumSucceededStandalonePaymentCentsSince(
+  intents: Pick<
+    StripeConnectPaymentIntent,
+    "status" | "created" | "amount" | "invoice"
+  >[],
+  cycleStartSeconds: number,
+): number {
+  let paidCents = 0;
+  for (const intent of intents) {
+    if ((intent.status?.trim() || "") !== "succeeded") continue;
+    if ((intent.created ?? 0) < cycleStartSeconds) continue;
+    if (paymentIntentInvoiceId(intent)) continue;
+    const amount = intent.amount ?? 0;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    paidCents += amount;
   }
   return paidCents;
 }
@@ -921,8 +947,14 @@ export async function getMerchantPaidDebtThisCycleUsdMicros(input: {
   const cycle = calendarMonthBoundsUtc(new Date());
   const cycleStartSeconds = Math.floor(new Date(cycle.start).getTime() / 1000);
 
-  const invoices = await listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId);
-  return centsToUsdMicros(sumPaidInvoiceCentsSince(invoices, cycleStartSeconds));
+  const [invoices, paymentIntents] = await Promise.all([
+    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
+    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
+  ]);
+  return centsToUsdMicros(
+    sumPaidInvoiceCentsSince(invoices, cycleStartSeconds) +
+      sumSucceededStandalonePaymentCentsSince(paymentIntents, cycleStartSeconds),
+  );
 }
 
 /** Resolve hosted invoice / receipt links only after proving ownership. */

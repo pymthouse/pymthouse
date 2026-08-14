@@ -9,6 +9,7 @@ import {
   isMerchantConnectPaymentsReady,
   stripePaymentMethodBrandLabel,
   sumPaidInvoiceCentsSince,
+  sumSucceededStandalonePaymentCentsSince,
 } from "./merchant-connect";
 
 test("sumPaidInvoiceCentsSince sums only paid invoices at/after the cutoff", () => {
@@ -35,6 +36,44 @@ test("sumPaidInvoiceCentsSince is zero with no matching invoices", () => {
   assert.equal(sumPaidInvoiceCentsSince([], 0), 0);
   assert.equal(
     sumPaidInvoiceCentsSince([{ status: "open", created: 0, total: 500 }], 0),
+    0,
+  );
+});
+
+test("sumSucceededStandalonePaymentCentsSince nets Checkout top-ups, not invoice-backed PIs", () => {
+  // "Add $N credit" is a succeeded PaymentIntent with no invoice. Those
+  // cents must count as already paid or the meter-estimate fallback
+  // reports the whole month as still owed. A PI that settled an invoice
+  // is skipped so the invoice row (sumPaidInvoiceCentsSince) owns it.
+  const cutoff = 1_000_000;
+  assert.equal(
+    sumSucceededStandalonePaymentCentsSince(
+      [
+        { status: "succeeded", created: 1_000_500, amount: 100_00, invoice: null },
+        { status: "succeeded", created: 1_000_600, amount: 16_00, invoice: null },
+        { status: "succeeded", created: 999_999, amount: 50_00, invoice: null },
+        { status: "requires_payment_method", created: 1_000_500, amount: 25_00, invoice: null },
+        {
+          status: "succeeded",
+          created: 1_000_500,
+          amount: 16_00,
+          invoice: "in_already_counted",
+        },
+        { status: "succeeded", created: 1_000_500, amount: 0, invoice: null },
+      ],
+      cutoff,
+    ),
+    116_00,
+  );
+});
+
+test("sumSucceededStandalonePaymentCentsSince is zero with no matching intents", () => {
+  assert.equal(sumSucceededStandalonePaymentCentsSince([], 0), 0);
+  assert.equal(
+    sumSucceededStandalonePaymentCentsSince(
+      [{ status: "processing", created: 0, amount: 500, invoice: null }],
+      0,
+    ),
     0,
   );
 });
