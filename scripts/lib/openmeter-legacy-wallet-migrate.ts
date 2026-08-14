@@ -81,18 +81,38 @@ export async function cancelLegacySubscriptions(input: {
     input.client,
     input.customerId,
   );
-  const active = listed.filter((s) => isOpenMeterSubscriptionActive(s.status));
   let cancels = 0;
-  for (const sub of active) {
+  for (const sub of listed) {
+    const status = (sub.status ?? "").toLowerCase();
+    // Konnect rejects cancel for `scheduled` ("transition cancel in state
+    // scheduled not allowed"). Only attempt live/pending rows.
+    if (status === "scheduled") {
+      console.warn(
+        `  [skip] scheduled subscription ${sub.id} on legacy ${input.customerKey} ` +
+          "(Konnect cannot cancel scheduled; leave for dual-read / later cleanup)",
+      );
+      continue;
+    }
+    if (!isOpenMeterSubscriptionActive(sub.status)) {
+      continue;
+    }
     if (input.dryRun) {
       console.log(
-        `  [dry-run] would cancel ${sub.id} on legacy ${input.customerKey}`,
+        `  [dry-run] would cancel ${sub.id} (${status}) on legacy ${input.customerKey}`,
       );
-    } else {
+      cancels += 1;
+      continue;
+    }
+    try {
       await input.client.subscriptions.cancel(sub.id, { timing: "immediate" });
       console.log(`  [cancel] ${sub.id} on legacy ${input.customerKey}`);
+      cancels += 1;
+    } catch (err) {
+      console.warn(
+        `  [warn] could not cancel ${sub.id} (${status}) on legacy ${input.customerKey}:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
-    cancels += 1;
   }
   return cancels;
 }

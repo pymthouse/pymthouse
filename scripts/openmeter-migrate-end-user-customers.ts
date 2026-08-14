@@ -4,15 +4,19 @@
  *
  * - Ensures the eu_ customer exists with subjectKeys = [eu_…]
  * - Records the mapping in Neon `billing_customers`
- * - Optionally transfers prepaid balances from the legacy compound wallet
- * - Optionally cancels active subscriptions on the legacy customer
- * - Optionally releases legacy subject keys
- * - Optionally provisions Starter on the eu_ customer for merchant apps
+ * - Under `--full`, applies mode-aware balance cutover:
+ *     merchant      → transfer prepaid onto eu_, cancel legacy, provision Starter
+ *     owner_rollup  → transfer prepaid onto the owner wallet, cancel legacy
+ *                     (eu_ is actor-only; do not strand credits on eu_)
+ * - Without `--full`, granular flags still work for merchant apps
  *
- * Usage:
- *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id app_…
- *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id app_… --transfer-balances --cancel-legacy
- *   npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id app_… --provision-merchant --dry-run
+ * Production cutover (all apps):
+ *   npm run openmeter:migrate-end-user-customers -- --full --dry-run
+ *   npm run openmeter:migrate-end-user-customers -- --full
+ *
+ * Single app:
+ *   npm run openmeter:migrate-end-user-customers -- --client-id app_… --full
+ *   npm run openmeter:migrate-end-user-customers -- --client-id app_… --transfer-balances --cancel-legacy --provision-merchant
  */
 import "./load-env-first";
 import { and, eq } from "drizzle-orm";
@@ -36,15 +40,22 @@ import {
 import {
   buildEndUserCustomerKey,
   buildOpenMeterCustomerKey,
+  buildOwnerCustomerKey,
 } from "../src/lib/openmeter/customer-key";
 import {
   ensureOpenMeterCustomer,
+  ensureOwnerCustomer,
   recordBillingCustomer,
 } from "../src/lib/openmeter/customers";
 import {
   auditBillingConsistency,
   type BillingConsistencyFinding,
 } from "../src/lib/openmeter/billing-consistency";
+import {
+  resolveEndUserMigratePolicy,
+  type EndUserMigratePolicy,
+  type EndUserTransferTarget,
+} from "../src/lib/openmeter/end-user-migrate-policy";
 import { shouldUseKonnectRoutes } from "../src/lib/openmeter/route-mode";
 import { ensureStarterSubscriptionForAppUser } from "../src/lib/openmeter/starter-subscription";
 import { requireKonnectConfig } from "./lib/openmeter-konnect-migrate";
@@ -57,6 +68,7 @@ import {
 
 type Args = {
   clientId?: string;
+  full: boolean;
   transferBalances: boolean;
   cancelLegacy: boolean;
   provisionMerchant: boolean;
@@ -67,6 +79,7 @@ type AppRow = {
   developerAppId: string;
   publicClientId: string;
   billingMode: "owner_rollup" | "merchant";
+  ownerId: string | null;
 };
 
 type EndUserRow = {
@@ -76,6 +89,7 @@ type EndUserRow = {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
+    full: false,
     transferBalances: false,
     cancelLegacy: false,
     provisionMerchant: false,
@@ -85,6 +99,10 @@ function parseArgs(argv: string[]): Args {
     const token = argv[i];
     if (token === "--client-id") {
       args.clientId = argv[++i]?.trim();
+      continue;
+    }
+    if (token === "--full") {
+      args.full = true;
       continue;
     }
     if (token === "--transfer-balances") {
@@ -109,10 +127,13 @@ function parseArgs(argv: string[]): Args {
     }
     throw new Error(`Unknown argument: ${token}\n${usage()}`);
   }
+  if (args.full) {
+    return args;
+  }
   if (args.transferBalances && !args.cancelLegacy) {
     throw new Error(
       "--transfer-balances requires --cancel-legacy so credits are not left " +
-        "live on both the legacy compound wallet and the new eu_ customer.\n" +
+        "live on both the legacy compound wallet and the target customer.\n" +
         usage(),
     );
   }
@@ -122,16 +143,39 @@ function parseArgs(argv: string[]): Args {
 function usage(): string {
   return [
     "Usage:",
-    "  npx tsx scripts/openmeter-migrate-end-user-customers.ts --client-id <app_…>",
-    "  --client-id <id>         Public client id or developer_apps.id (required)",
-    "  --transfer-balances      Grant remaining credits from legacy compound wallets",
-    "                           (requires --cancel-legacy — never leave dual live wallets)",
-    "  --cancel-legacy          Cancel active subscriptions on legacy customers and",
-    "                           release their subjectKeys",
-    "  --provision-merchant     Create Starter on eu_ customers when billingMode=merchant",
+    "  npm run openmeter:migrate-end-user-customers -- --full [--dry-run]",
+    "  npm run openmeter:migrate-end-user-customers -- --client-id <app_…> --full",
+    "  npm run openmeter:migrate-end-user-customers -- --client-id <app_…> [flags]",
+    "",
+    "  (no --client-id)         Migrate every app with a public client id",
+    "  --client-id <id>         Public client id or developer_apps.id",
+    "  --full                   Mode-aware production cutover (recommended):",
+    "                           merchant → transfer→eu_, cancel legacy, Starter",
+    "                           owner_rollup → transfer→owner wallet, cancel legacy",
+    "  --transfer-balances      Merchant-only granular path: grant from legacy→eu_",
+    "                           (requires --cancel-legacy; rejected for owner_rollup)",
+    "  --cancel-legacy          Cancel legacy compound subs and release subjectKeys",
+    "  --provision-merchant     Create Starter on eu_ when billingMode=merchant",
+    "                           (implied by --full for merchant apps)",
     "  --dry-run                Print actions without OpenMeter mutations",
     "  --help",
   ].join("\n");
+}
+
+function toAppRow(row: {
+  developerAppId: string;
+  publicClientId: string | null;
+  billingMode: string | null;
+  ownerId: string | null;
+}): AppRow | null {
+  const publicClientId = row.publicClientId?.trim();
+  if (!publicClientId) return null;
+  return {
+    developerAppId: row.developerAppId,
+    publicClientId,
+    billingMode: row.billingMode === "merchant" ? "merchant" : "owner_rollup",
+    ownerId: row.ownerId?.trim() || null,
+  };
 }
 
 async function resolveApp(clientIdOrAppId: string): Promise<AppRow> {
@@ -141,19 +185,16 @@ async function resolveApp(clientIdOrAppId: string): Promise<AppRow> {
       developerAppId: developerApps.id,
       publicClientId: oidcClients.clientId,
       billingMode: appBillingConfig.billingMode,
+      ownerId: developerApps.ownerId,
     })
     .from(developerApps)
     .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
     .leftJoin(appBillingConfig, eq(appBillingConfig.clientId, developerApps.id))
     .where(eq(oidcClients.clientId, id))
     .limit(1);
-  if (byPublic[0]?.publicClientId) {
-    return {
-      developerAppId: byPublic[0].developerAppId,
-      publicClientId: byPublic[0].publicClientId,
-      billingMode:
-        byPublic[0].billingMode === "merchant" ? "merchant" : "owner_rollup",
-    };
+  if (byPublic[0]) {
+    const app = toAppRow(byPublic[0]);
+    if (app) return app;
   }
 
   const byApp = await db
@@ -161,6 +202,7 @@ async function resolveApp(clientIdOrAppId: string): Promise<AppRow> {
       developerAppId: developerApps.id,
       publicClientId: oidcClients.clientId,
       billingMode: appBillingConfig.billingMode,
+      ownerId: developerApps.ownerId,
     })
     .from(developerApps)
     .leftJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
@@ -171,11 +213,34 @@ async function resolveApp(clientIdOrAppId: string): Promise<AppRow> {
   if (!row?.developerAppId) {
     throw new Error(`App not found: ${id}`);
   }
-  return {
-    developerAppId: row.developerAppId,
+  const app = toAppRow({
+    ...row,
     publicClientId: row.publicClientId?.trim() || row.developerAppId,
-    billingMode: row.billingMode === "merchant" ? "merchant" : "owner_rollup",
-  };
+  });
+  if (!app) {
+    throw new Error(`App has no public client id: ${id}`);
+  }
+  return app;
+}
+
+async function listAllApps(): Promise<AppRow[]> {
+  const rows = await db
+    .select({
+      developerAppId: developerApps.id,
+      publicClientId: oidcClients.clientId,
+      billingMode: appBillingConfig.billingMode,
+      ownerId: developerApps.ownerId,
+    })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .leftJoin(appBillingConfig, eq(appBillingConfig.clientId, developerApps.id));
+
+  const apps: AppRow[] = [];
+  for (const row of rows) {
+    const app = toAppRow(row);
+    if (app) apps.push(app);
+  }
+  return apps;
 }
 
 async function listEndUsersForApp(
@@ -284,12 +349,57 @@ async function ensureEndUserCustomer(input: {
   return ensured.id;
 }
 
+async function resolveTransferTarget(input: {
+  client: ReturnType<typeof getHostedAdminClient>;
+  app: AppRow;
+  euKey: string;
+  euCustomerId: string | null;
+  transferTarget: EndUserTransferTarget;
+  dryRun: boolean;
+}): Promise<{ targetKey: string; targetCustomerId: string | null } | null> {
+  if (input.transferTarget === "none") {
+    return null;
+  }
+  if (input.transferTarget === "eu") {
+    return {
+      targetKey: input.euKey,
+      targetCustomerId: input.euCustomerId,
+    };
+  }
+
+  if (!input.app.ownerId) {
+    throw new Error(
+      `owner_rollup app ${input.app.publicClientId} has no ownerId; ` +
+        "cannot transfer legacy end-user prepaid onto the owner wallet",
+    );
+  }
+  const ownerKey = buildOwnerCustomerKey(input.app.ownerId);
+  if (input.dryRun) {
+    console.log(
+      `  [dry-run] would transfer legacy prepaid onto owner wallet ${ownerKey}`,
+    );
+    return { targetKey: ownerKey, targetCustomerId: null };
+  }
+  const owner = await ensureOwnerCustomer(input.client, input.app.ownerId, [
+    input.app.publicClientId,
+  ]);
+  await recordBillingCustomer({
+    customerKey: ownerKey,
+    kind: "platform_user",
+    platformUserId: input.app.ownerId,
+    clientId: input.app.developerAppId,
+    openmeterCustomerId: owner.id,
+  });
+  console.log(`  [ok] owner wallet ${ownerKey} id=${owner.id}`);
+  return { targetKey: ownerKey, targetCustomerId: owner.id };
+}
+
 async function migrateLegacyWallet(input: {
   client: ReturnType<typeof getHostedAdminClient>;
   legacyKey: string;
-  euKey: string;
-  euCustomerId: string | null;
-  transferBalances: boolean;
+  transferTarget: EndUserTransferTarget;
+  targetKey: string | null;
+  targetCustomerId: string | null;
   cancelLegacy: boolean;
   dryRun: boolean;
   apiKey: string | undefined;
@@ -301,18 +411,21 @@ async function migrateLegacyWallet(input: {
     return;
   }
 
-  if (input.transferBalances) {
-    const targetCustomerId = input.euCustomerId ?? "dry-run";
+  if (input.transferTarget !== "none" && input.targetKey) {
+    const targetCustomerId = input.targetCustomerId ?? "dry-run";
     await transferLegacyWalletBalance({
       legacyCustomerId: legacyId,
       legacyKey: input.legacyKey,
       targetCustomerId,
-      targetKey: input.euKey,
+      targetKey: input.targetKey,
       featureKey: DEFAULT_TRIAL_FEATURE_KEY,
-      grantName: "Migrated end-user prepaid balance",
-      idempotencyKey: `migrate-eu:${targetCustomerId}:${legacyId}`,
+      grantName:
+        input.transferTarget === "owner"
+          ? "Migrated end-user prepaid → owner wallet"
+          : "Migrated end-user prepaid balance",
+      idempotencyKey: `migrate-eu:${input.transferTarget}:${targetCustomerId}:${legacyId}`,
       apiKey: input.apiKey,
-      dryRun: input.dryRun || !input.euCustomerId,
+      dryRun: input.dryRun || !input.targetCustomerId,
     });
   }
 
@@ -366,9 +479,7 @@ async function migrateEndUser(input: {
   client: ReturnType<typeof getHostedAdminClient>;
   app: AppRow;
   endUser: EndUserRow;
-  transferBalances: boolean;
-  cancelLegacy: boolean;
-  provisionMerchant: boolean;
+  policy: EndUserMigratePolicy;
   dryRun: boolean;
   apiKey: string | undefined;
   baseUrl: string;
@@ -379,7 +490,8 @@ async function migrateEndUser(input: {
     input.endUser.externalUserId,
   );
   console.log(
-    `\n[end-user] ext=${input.endUser.externalUserId} eu=${euKey} legacy=${legacyKey}`,
+    `\n[end-user] ext=${input.endUser.externalUserId} eu=${euKey} legacy=${legacyKey} ` +
+      `transfer=${input.policy.transferTarget}`,
   );
 
   const euCustomerId = await ensureEndUserCustomer({
@@ -390,19 +502,28 @@ async function migrateEndUser(input: {
     dryRun: input.dryRun,
   });
 
+  const transfer = await resolveTransferTarget({
+    client: input.client,
+    app: input.app,
+    euKey,
+    euCustomerId,
+    transferTarget: input.policy.transferTarget,
+    dryRun: input.dryRun,
+  });
+
   await migrateLegacyWallet({
     client: input.client,
     legacyKey,
-    euKey,
-    euCustomerId,
-    transferBalances: input.transferBalances,
-    cancelLegacy: input.cancelLegacy,
+    transferTarget: input.policy.transferTarget,
+    targetKey: transfer?.targetKey ?? null,
+    targetCustomerId: transfer?.targetCustomerId ?? null,
+    cancelLegacy: input.policy.cancelLegacy,
     dryRun: input.dryRun,
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
   });
 
-  if (input.provisionMerchant) {
+  if (input.policy.provisionMerchantStarter) {
     await provisionMerchantStarter({
       app: input.app,
       endUser: input.endUser,
@@ -411,61 +532,25 @@ async function migrateEndUser(input: {
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  if (!args.clientId) {
-    throw new Error(`--client-id is required\n${usage()}`);
-  }
-  if (!isHostedAdminClientAvailable()) {
-    throw new Error("OpenMeter is not configured (OPENMETER_URL / API key)");
-  }
-
-  const app = await resolveApp(args.clientId);
-  const endUsersForApp = await listEndUsersForApp(app, { dryRun: args.dryRun });
-  const client = getHostedAdminClient();
-  let apiKey = process.env.OPENMETER_API_KEY?.trim();
-  let baseUrl = getHostedOpenMeterUrl();
-  if (args.cancelLegacy || args.transferBalances) {
-    if (shouldUseKonnectRoutes(baseUrl, apiKey)) {
-      const konnect = requireKonnectConfig();
-      baseUrl = konnect.baseUrl;
-      apiKey = konnect.apiKey;
-    }
-  }
-
-  console.log(
-    `Migrating ${endUsersForApp.length} end-user(s) for ${app.publicClientId} ` +
-      `mode=${app.billingMode} transfer=${args.transferBalances} ` +
-      `cancelLegacy=${args.cancelLegacy} provisionMerchant=${args.provisionMerchant} ` +
-      `dryRun=${args.dryRun}`,
-  );
-
-  for (const endUser of endUsersForApp) {
-    await migrateEndUser({
-      client,
-      app,
-      endUser,
-      transferBalances: args.transferBalances,
-      cancelLegacy: args.cancelLegacy,
-      provisionMerchant: args.provisionMerchant,
-      dryRun: args.dryRun,
-      apiKey,
-      baseUrl,
+async function runAttributionExitGate(publicClientId: string): Promise<void> {
+  console.log(`\nRunning attribution consistency exit gate for ${publicClientId}…`);
+  let findings;
+  try {
+    findings = await auditBillingConsistency({
+      clientId: publicClientId,
     });
-  }
-
-  if (args.dryRun) {
-    console.log(
-      "\n[dry-run] skipped attribution exit gate. Re-run without --dry-run, then confirm " +
-        "classifyUsageAttributionConsistency (via openmeter:audit-billing) is clean.",
+  } catch (err) {
+    // Spendable probes may touch local Starter plan rows; never abort the
+    // remaining apps mid-cutover because one audit side-effect failed.
+    console.warn(
+      `[warn] attribution audit threw for ${publicClientId}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    console.warn(
+      `  continuing — re-check with: npm run openmeter:audit-billing -- --client-id ${publicClientId}`,
     );
     return;
   }
-
-  console.log("\nRunning attribution consistency exit gate…");
-  const findings = await auditBillingConsistency({
-    clientId: app.publicClientId,
-  });
   const attributionErrors = attributionGateFindings(findings);
   if (attributionErrors.length > 0) {
     for (const f of attributionErrors) {
@@ -474,16 +559,118 @@ async function main(): Promise<void> {
         console.error(`  fix: ${f.remediation}`);
       }
     }
-    throw new Error(
-      `Attribution exit gate failed: ${attributionErrors.length} error(s). ` +
-        "No subject may carry usage that no customer is attributed. " +
-        "Fix with ensure/release, then re-run.",
+    console.error(
+      `[FAIL] Attribution exit gate failed for ${publicClientId}: ` +
+        `${attributionErrors.length} error(s). Continuing remaining apps; ` +
+        "fix with ensure/release, then re-run --full and audit-billing.",
     );
+    return;
   }
   console.log(
-    "Attribution exit gate passed (no usage_on_unattributed_subject / " +
-      "customer_has_no_usage_attribution errors).",
+    `Attribution exit gate passed for ${publicClientId} ` +
+      "(no usage_on_unattributed_subject / customer_has_no_usage_attribution errors).",
   );
+}
+
+async function migrateApp(input: {
+  app: AppRow;
+  args: Args;
+  client: ReturnType<typeof getHostedAdminClient>;
+  apiKey: string | undefined;
+  baseUrl: string;
+}): Promise<void> {
+  const policy = resolveEndUserMigratePolicy({
+    billingMode: input.app.billingMode,
+    full: input.args.full,
+    transferBalances: input.args.transferBalances,
+    cancelLegacy: input.args.cancelLegacy,
+    provisionMerchant: input.args.provisionMerchant,
+  });
+  const endUsersForApp = await listEndUsersForApp(input.app, {
+    dryRun: input.args.dryRun,
+  });
+
+  console.log(
+    `\n=== ${input.app.publicClientId} mode=${input.app.billingMode} ` +
+      `users=${endUsersForApp.length} transfer=${policy.transferTarget} ` +
+      `cancelLegacy=${policy.cancelLegacy} ` +
+      `provisionMerchant=${policy.provisionMerchantStarter} ` +
+      `dryRun=${input.args.dryRun} ===`,
+  );
+
+  for (const endUser of endUsersForApp) {
+    await migrateEndUser({
+      client: input.client,
+      app: input.app,
+      endUser,
+      policy,
+      dryRun: input.args.dryRun,
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+    });
+  }
+
+  if (input.args.dryRun) {
+    console.log(
+      `\n[dry-run] skipped attribution exit gate for ${input.app.publicClientId}.`,
+    );
+    return;
+  }
+  await runAttributionExitGate(input.app.publicClientId);
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  if (!isHostedAdminClientAvailable()) {
+    throw new Error("OpenMeter is not configured (OPENMETER_URL / API key)");
+  }
+
+  const apps = args.clientId
+    ? [await resolveApp(args.clientId)]
+    : await listAllApps();
+  if (apps.length === 0) {
+    console.log("No apps found.");
+    return;
+  }
+
+  if (!args.full && !args.clientId) {
+    console.log(
+      "Migrating all apps in ensure-only mode (no balance transfer / cancel). " +
+        "Pass --full for production cutover, or --client-id for one app.",
+    );
+  }
+
+  const client = getHostedAdminClient();
+  let apiKey = process.env.OPENMETER_API_KEY?.trim();
+  let baseUrl = getHostedOpenMeterUrl();
+  const needsKonnect =
+    args.full || args.cancelLegacy || args.transferBalances;
+  if (needsKonnect && shouldUseKonnectRoutes(baseUrl, apiKey)) {
+    const konnect = requireKonnectConfig();
+    baseUrl = konnect.baseUrl;
+    apiKey = konnect.apiKey;
+  }
+
+  console.log(
+    `End-user migrate apps=${apps.length} full=${args.full} dryRun=${args.dryRun}`,
+  );
+
+  for (const app of apps) {
+    await migrateApp({
+      app,
+      args,
+      client,
+      apiKey,
+      baseUrl,
+    });
+  }
+
+  if (args.dryRun) {
+    console.log(
+      "\n[dry-run] done. Re-run without --dry-run, then " +
+        "`npm run openmeter:audit-billing`.",
+    );
+  }
 }
 
 main()
