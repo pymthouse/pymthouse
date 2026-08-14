@@ -496,6 +496,58 @@ export async function createConnectedCheckoutSession(input: {
   return { url: session.url, sessionId: session.id };
 }
 
+/**
+ * Confirm an off-session PaymentIntent on a Connected Account using a saved
+ * payment method. Omit `payment_method_types` (dynamic methods).
+ */
+export async function createConnectedOffSessionPaymentIntent(input: {
+  accountId: string;
+  customerId: string;
+  paymentMethodId: string;
+  amountCents: number;
+  currency?: string;
+  applicationFeeBps?: number;
+  metadata?: Record<string, string>;
+  idempotencyKey?: string;
+}): Promise<{ id: string; status: string }> {
+  const amount = input.amountCents;
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error("amountCents must be a positive integer");
+  }
+  const body = new URLSearchParams();
+  body.set("amount", String(amount));
+  body.set("currency", (input.currency ?? "usd").toLowerCase());
+  body.set("customer", input.customerId);
+  body.set("payment_method", input.paymentMethodId);
+  body.set("confirm", "true");
+  body.set("off_session", "true");
+  const fee = applicationFeeAmountCents({
+    amountCents: amount,
+    applicationFeeBps: input.applicationFeeBps ?? 0,
+  });
+  if (fee > 0) {
+    body.set("application_fee_amount", String(fee));
+  }
+  addCheckoutMetadata(body, input.metadata);
+  const pi = await stripeFormRequest<{
+    id?: string;
+    status?: string;
+  }>({
+    method: "POST",
+    path: "/v1/payment_intents",
+    body,
+    stripeAccount: input.accountId,
+    idempotencyKey: input.idempotencyKey,
+  });
+  if (!pi.id) {
+    throw new Error("Stripe PaymentIntent unavailable on Connected Account");
+  }
+  return {
+    id: pi.id,
+    status: pi.status ?? "",
+  };
+}
+
 export async function createConnectedInvoice(input: {
   accountId: string;
   customerId: string;

@@ -26,6 +26,7 @@ import {
 } from "@/lib/openmeter/billing-identity";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
+import { tryAutoTopUpIfEnabled } from "@/lib/stripe/auto-topup";
 
 const DEFAULT_EXPIRY_TTL_SECONDS = 60;
 const DEFAULT_BALANCE_CACHE_TTL_SECONDS = 20;
@@ -292,6 +293,27 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       }
 
       if (!softAllow) {
+        try {
+          const topped = await tryAutoTopUpIfEnabled({
+            publicClientId: ctx.identity.client_id,
+            externalUserId: lookupSubject,
+          });
+          if (topped.status === "charged") {
+            seedSignerSpendableBalance(
+              ctx.identity.client_id,
+              ctx.identity.usage_subject,
+              topped.grantedUsdMicros,
+            );
+            return {
+              expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds,
+            };
+          }
+        } catch (err) {
+          console.warn(
+            `[remote-signer] auto-top-up failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+            sanitizeForLog(err),
+          );
+        }
         console.warn(
           `[remote-signer] soft-negative deny client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)} reason=${denyReason} overageEligible=${allowsOverage}`,
         );

@@ -71,6 +71,7 @@ const BUILDER_OPERATION_KEYS = new Set([
   "GET /api/v1/apps/{clientId}/billing/state",
   "POST /api/v1/apps/{clientId}/billing/collect",
   "GET /api/v1/apps/{clientId}/billing/wallet",
+  "PATCH /api/v1/apps/{clientId}/billing/wallet",
   "POST /api/v1/apps/{clientId}/billing/wallet/top-up",
   "GET /api/v1/apps/{clientId}/billing/wallet/invoices",
   "GET /api/v1/apps/{clientId}/billing/wallet/payment-methods",

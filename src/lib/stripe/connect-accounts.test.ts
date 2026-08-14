@@ -9,6 +9,7 @@ import {
   createConnectedCheckoutSession,
   createConnectedCustomer,
   createConnectedInvoice,
+  createConnectedOffSessionPaymentIntent,
   createMerchantConnectedAccount,
   exchangeConnectOAuthCode,
   refreshConnectedAccountStatus,
@@ -540,6 +541,106 @@ test("createConnectedCheckoutSession rejects payment mode without a valid amount
         amountCents: 0,
       }),
     /amountCents must be a positive integer/,
+  );
+});
+
+test("createConnectedOffSessionPaymentIntent confirms off-session with fee metadata", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  let path = "";
+  let body = "";
+  let stripeAccount = "";
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    path = String(input);
+    body = String(init?.body ?? "");
+    stripeAccount = new Headers(init?.headers).get("Stripe-Account") ?? "";
+    return jsonResponse({ id: "pi_off_1", status: "succeeded" });
+  });
+
+  assert.deepEqual(
+    await createConnectedOffSessionPaymentIntent({
+      accountId: "acct_1",
+      customerId: "cus_1",
+      paymentMethodId: "pm_1",
+      amountCents: 1000,
+      applicationFeeBps: 250,
+      metadata: {
+        pymthouse_auto_topup: "1",
+        client_id: "app_merchant",
+        external_user_id: "user_1",
+      },
+    }),
+    { id: "pi_off_1", status: "succeeded" },
+  );
+  assert.equal(path, "https://api.stripe.com/v1/payment_intents");
+  assert.equal(stripeAccount, "acct_1");
+  assert.match(body, /confirm=true/);
+  assert.match(body, /off_session=true/);
+  assert.match(body, /application_fee_amount=25/);
+  assert.match(body, /metadata%5Bpymthouse_auto_topup%5D=1/);
+  assert.doesNotMatch(body, /payment_method_types/);
+});
+
+test("createConnectedOffSessionPaymentIntent rejects a non-positive amount", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  await assert.rejects(
+    () =>
+      createConnectedOffSessionPaymentIntent({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        paymentMethodId: "pm_1",
+        amountCents: 0,
+      }),
+    /amountCents must be a positive integer/,
+  );
+  await assert.rejects(
+    () =>
+      createConnectedOffSessionPaymentIntent({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        paymentMethodId: "pm_1",
+        amountCents: 1.5,
+      }),
+    /amountCents must be a positive integer/,
+  );
+});
+
+test("createConnectedOffSessionPaymentIntent omits fee, sends idempotency, defaults status", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  let body = "";
+  let idempotency = "";
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = String(init?.body ?? "");
+    idempotency = new Headers(init?.headers).get("Idempotency-Key") ?? "";
+    return jsonResponse({ id: "pi_no_fee" });
+  });
+
+  assert.deepEqual(
+    await createConnectedOffSessionPaymentIntent({
+      accountId: "acct_1",
+      customerId: "cus_1",
+      paymentMethodId: "pm_1",
+      amountCents: 500,
+      idempotencyKey: "autotopup-pi:dev:eu:1",
+    }),
+    { id: "pi_no_fee", status: "" },
+  );
+  assert.equal(idempotency, "autotopup-pi:dev:eu:1");
+  assert.match(body, /currency=usd/);
+  assert.doesNotMatch(body, /application_fee_amount/);
+});
+
+test("createConnectedOffSessionPaymentIntent rejects a response without id", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  t.mock.method(globalThis, "fetch", async () => jsonResponse({ status: "succeeded" }));
+  await assert.rejects(
+    () =>
+      createConnectedOffSessionPaymentIntent({
+        accountId: "acct_1",
+        customerId: "cus_1",
+        paymentMethodId: "pm_1",
+        amountCents: 100,
+      }),
+    /PaymentIntent unavailable/,
   );
 });
 

@@ -481,13 +481,43 @@ export async function mintSignerJwtForExternalUser(input: {
   const gateSubject = signerBalanceGateSubject(identity, provisionExternalUserId);
 
   if (isHostedAdminClientAvailable() && spendableMicros <= 0n) {
-    await enforceMintSoftNegativeOrOverage({
-      publicClientId: input.publicClientId,
-      gateSubject,
-      allowance,
-      allowsOverageInvoicing,
-      spendableMicros,
-    });
+    const { tryAutoTopUpIfEnabled } = await import("@/lib/stripe/auto-topup");
+    let topped: Awaited<ReturnType<typeof tryAutoTopUpIfEnabled>> | null = null;
+    try {
+      topped = await tryAutoTopUpIfEnabled({
+        publicClientId: input.publicClientId,
+        externalUserId: provisionExternalUserId,
+      });
+    } catch (err) {
+      console.warn(
+        `[mint] auto-top-up failed subject=${provisionExternalUserId}:`,
+        err,
+      );
+    }
+    if (topped?.status === "charged") {
+      seedSignerSpendableBalance(
+        input.publicClientId,
+        gateSubject,
+        topped.grantedUsdMicros,
+      );
+      enforceMintAllowanceGate(
+        {
+          hasAccess: true,
+          balanceUsdMicros: topped.grantedUsdMicros,
+          consumedUsdMicros: allowance?.consumedUsdMicros ?? "0",
+          lifetimeGrantedUsdMicros: topped.grantedUsdMicros,
+        },
+        { allowsOverageInvoicing },
+      );
+    } else {
+      await enforceMintSoftNegativeOrOverage({
+        publicClientId: input.publicClientId,
+        gateSubject,
+        allowance,
+        allowsOverageInvoicing,
+        spendableMicros,
+      });
+    }
   } else {
     enforceMintAllowanceGate(allowance, { allowsOverageInvoicing });
   }

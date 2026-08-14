@@ -23,6 +23,12 @@ test("buildPublicOpenApiDocument includes Builder + End-user and omits Internal"
   assert.equal(doc.paths["/api/v1/internal/apps"], undefined);
 
   assert.ok(doc.paths["/api/v1/apps/{clientId}/users"]?.get);
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/billing/wallet"]?.get);
+  assert.ok(doc.paths["/api/v1/apps/{clientId}/billing/wallet"]?.patch);
+  assert.equal(
+    doc.paths["/api/v1/apps/{clientId}/billing/wallet"]?.patch?.summary,
+    "Set merchant auto top-up prefs",
+  );
   assert.ok(doc.paths["/api/v1/apps/{clientId}/oidc/token"]?.post);
   assert.ok(doc.paths["/api/v1/builder/apps/{clientId}/usage"]?.get);
   assert.ok(doc.paths["/api/v1/apps/{clientId}/me/usage"]?.get);

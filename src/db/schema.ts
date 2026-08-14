@@ -304,6 +304,10 @@ export const appUsers = pgTable(
     depositWalletAddress: text("deposit_wallet_address"),
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
+    /** Off-session prepaid reload when live spendable hits $0. Merchant end-users. */
+    autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
+    /** Reload amount in USD micros; null falls back to $10 when enabling. */
+    autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

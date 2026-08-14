@@ -1,10 +1,8 @@
 /**
- * Legacy off-session auto-top-up PaymentIntent helpers.
+ * Off-session auto-top-up PaymentIntent helpers.
  *
- * Direct auto-top-up charges are retired (invoice-trigger + settlement / Stripe
- * app collect instead). Keep metadata parse helpers so in-flight
- * `pymthouse_auto_topup=1` PaymentIntents can still settle via the Stripe
- * webhook drain path and appear in merchant history.
+ * Metadata flag + grant idempotency key are shared by the sync charge path
+ * and the Stripe `payment_intent.succeeded` webhook so retries credit once.
  */
 const LEGACY_AUTO_TOP_UP_METADATA_FLAG = "pymthouse_auto_topup";
 
