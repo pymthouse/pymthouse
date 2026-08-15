@@ -157,6 +157,36 @@ export default function AppSettingsScreen({
     [],
   );
 
+  const markPrimarySecretGenerated = useCallback(() => {
+    setAppState((s) => ({ ...s, hasSecret: true }));
+    updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
+  }, [updateFormData]);
+
+  const markBackendSecretGenerated = useCallback(() => {
+    setAppState((s) => ({
+      ...s,
+      backendHelper: s.backendHelper
+        ? { ...s.backendHelper, hasSecret: true }
+        : s.backendHelper,
+    }));
+  }, []);
+
+  const markWebSecretGenerated = useCallback(() => {
+    setAppState((s) => ({
+      ...s,
+      webHelper: s.webHelper
+        ? { ...s.webHelper, hasSecret: true }
+        : s.webHelper,
+    }));
+  }, []);
+
+  const handlePostLogoutRedirectUrisChange = useCallback(
+    (uris: string[]) => {
+      updatePostLogoutRedirectUris(uris);
+    },
+    [updatePostLogoutRedirectUris],
+  );
+
   const syncCredentialsFromServer = useCallback(async () => {
     const res = await fetch(`/api/v1/apps/${appId}`);
     if (!res.ok) {
@@ -323,6 +353,22 @@ export default function AppSettingsScreen({
   const showWebCredentialsTab =
     Boolean(formData.confidentialWebHelper) || Boolean(appState.webHelper);
 
+  const credentialsTestingStep = {
+    appId,
+    appState,
+    formData,
+    domains,
+    onChange: updateFormData,
+    onDomainsChange: setDomains,
+    onSecretGenerated: markPrimarySecretGenerated,
+    onBackendSecretGenerated: markBackendSecretGenerated,
+    onWebSecretGenerated: markWebSecretGenerated,
+    ownerExternalUserId,
+    readOnly: !canEdit,
+    postLogoutRedirectUris,
+    onPostLogoutRedirectUrisChange: handlePostLogoutRedirectUrisChange,
+    showPostLogoutRedirectUris,
+  };
 
   return (
     <div className="max-w-3xl">
@@ -440,59 +486,14 @@ export default function AppSettingsScreen({
             label="Public / SDK"
             prefix="app_"
             description="For SDKs, CLIs, and device login. No secret — public only."
-            accentClass="border-emerald-500/25 bg-emerald-500/5"
             labelClass="text-emerald-200/90"
             prefixClass="text-emerald-400/70"
             expanded={expandedCredentials.has("public")}
             onToggle={() => toggleCredential("public")}
           >
-            <TestingStep
-              appId={appId}
-              clientId={appState.clientId}
-              grantTypes={formData.grantTypes}
-              tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
-              redirectUris={formData.redirectUris}
-              allowedScopes={formData.allowedScopes}
-              hasSecret={appState.hasSecret}
-              backendHelper={appState.backendHelper}
-              backendDeviceHelper={formData.backendDeviceHelper}
-              webHelper={appState.webHelper}
-              confidentialWebHelper={formData.confidentialWebHelper}
-              confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
-              initiateLoginUri={formData.initiateLoginUri}
-              deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
-              domains={domains}
-              onChange={updateFormData}
-              onDomainsChange={setDomains}
-              onSecretGenerated={() => {
-                setAppState((s) => ({ ...s, hasSecret: true }));
-                updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
-              }}
-              onBackendSecretGenerated={() => {
-                setAppState((s) => ({
-                  ...s,
-                  backendHelper: s.backendHelper
-                    ? { ...s.backendHelper, hasSecret: true }
-                    : s.backendHelper,
-                }));
-              }}
-              onWebSecretGenerated={() => {
-                setAppState((s) => ({
-                  ...s,
-                  webHelper: s.webHelper
-                    ? { ...s.webHelper, hasSecret: true }
-                    : s.webHelper,
-                }));
-              }}
-              ownerExternalUserId={ownerExternalUserId}
-              readOnly={!canEdit}
+            <CredentialsTestingStep
               activeClient="public"
-              hideHeader
-              postLogoutRedirectUris={postLogoutRedirectUris}
-              onPostLogoutRedirectUrisChange={(uris) =>
-                updatePostLogoutRedirectUris(uris)
-              }
-              showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+              {...credentialsTestingStep}
             />
           </CredentialAccordionSection>
 
@@ -503,59 +504,14 @@ export default function AppSettingsScreen({
               label="M2M / Builder"
               prefix="m2m_"
               description="Server credentials for Builder APIs and device approval."
-              accentClass="border-cyan-500/25 bg-cyan-500/5"
               labelClass="text-cyan-200/90"
               prefixClass="text-cyan-400/70"
               expanded={expandedCredentials.has("m2m")}
               onToggle={() => toggleCredential("m2m")}
             >
-              <TestingStep
-                appId={appId}
-                clientId={appState.clientId}
-                grantTypes={formData.grantTypes}
-                tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
-                redirectUris={formData.redirectUris}
-                allowedScopes={formData.allowedScopes}
-                hasSecret={appState.hasSecret}
-                backendHelper={appState.backendHelper}
-                backendDeviceHelper={formData.backendDeviceHelper}
-                webHelper={appState.webHelper}
-                confidentialWebHelper={formData.confidentialWebHelper}
-                confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
-                initiateLoginUri={formData.initiateLoginUri}
-                deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
-                domains={domains}
-                onChange={updateFormData}
-                onDomainsChange={setDomains}
-                onSecretGenerated={() => {
-                  setAppState((s) => ({ ...s, hasSecret: true }));
-                  updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
-                }}
-                onBackendSecretGenerated={() => {
-                  setAppState((s) => ({
-                    ...s,
-                    backendHelper: s.backendHelper
-                      ? { ...s.backendHelper, hasSecret: true }
-                      : s.backendHelper,
-                  }));
-                }}
-                onWebSecretGenerated={() => {
-                  setAppState((s) => ({
-                    ...s,
-                    webHelper: s.webHelper
-                      ? { ...s.webHelper, hasSecret: true }
-                      : s.webHelper,
-                  }));
-                }}
-                ownerExternalUserId={ownerExternalUserId}
-                readOnly={!canEdit}
+              <CredentialsTestingStep
                 activeClient="m2m"
-                hideHeader
-                postLogoutRedirectUris={postLogoutRedirectUris}
-                onPostLogoutRedirectUrisChange={(uris) =>
-                  updatePostLogoutRedirectUris(uris)
-                }
-                showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+                {...credentialsTestingStep}
               />
             </CredentialAccordionSection>
           )}
@@ -567,59 +523,14 @@ export default function AppSettingsScreen({
               label="Web SSO"
               prefix="web_"
               description="Confidential client for portal single sign-on."
-              accentClass="border-violet-500/25 bg-violet-500/5"
               labelClass="text-violet-200/90"
               prefixClass="text-violet-400/70"
               expanded={expandedCredentials.has("web")}
               onToggle={() => toggleCredential("web")}
             >
-              <TestingStep
-                appId={appId}
-                clientId={appState.clientId}
-                grantTypes={formData.grantTypes}
-                tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
-                redirectUris={formData.redirectUris}
-                allowedScopes={formData.allowedScopes}
-                hasSecret={appState.hasSecret}
-                backendHelper={appState.backendHelper}
-                backendDeviceHelper={formData.backendDeviceHelper}
-                webHelper={appState.webHelper}
-                confidentialWebHelper={formData.confidentialWebHelper}
-                confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
-                initiateLoginUri={formData.initiateLoginUri}
-                deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
-                domains={domains}
-                onChange={updateFormData}
-                onDomainsChange={setDomains}
-                onSecretGenerated={() => {
-                  setAppState((s) => ({ ...s, hasSecret: true }));
-                  updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
-                }}
-                onBackendSecretGenerated={() => {
-                  setAppState((s) => ({
-                    ...s,
-                    backendHelper: s.backendHelper
-                      ? { ...s.backendHelper, hasSecret: true }
-                      : s.backendHelper,
-                  }));
-                }}
-                onWebSecretGenerated={() => {
-                  setAppState((s) => ({
-                    ...s,
-                    webHelper: s.webHelper
-                      ? { ...s.webHelper, hasSecret: true }
-                      : s.webHelper,
-                  }));
-                }}
-                ownerExternalUserId={ownerExternalUserId}
-                readOnly={!canEdit}
+              <CredentialsTestingStep
                 activeClient="web"
-                hideHeader
-                postLogoutRedirectUris={postLogoutRedirectUris}
-                onPostLogoutRedirectUrisChange={(uris) =>
-                  updatePostLogoutRedirectUris(uris)
-                }
-                showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+                {...credentialsTestingStep}
               />
             </CredentialAccordionSection>
           )}
@@ -696,12 +607,77 @@ export default function AppSettingsScreen({
   );
 }
 
+function CredentialsTestingStep({
+  activeClient,
+  appId,
+  appState,
+  formData,
+  domains,
+  onChange,
+  onDomainsChange,
+  onSecretGenerated,
+  onBackendSecretGenerated,
+  onWebSecretGenerated,
+  ownerExternalUserId,
+  readOnly,
+  postLogoutRedirectUris,
+  onPostLogoutRedirectUrisChange,
+  showPostLogoutRedirectUris,
+}: Readonly<{
+  activeClient: CredentialsClientTab;
+  appId: string;
+  appState: AppState;
+  formData: AppFormData;
+  domains: { id: string; domain: string }[];
+  onChange: (updates: Partial<AppFormData>) => void;
+  onDomainsChange: (domains: { id: string; domain: string }[]) => void;
+  onSecretGenerated: () => void;
+  onBackendSecretGenerated: () => void;
+  onWebSecretGenerated: () => void;
+  ownerExternalUserId: string | null;
+  readOnly: boolean;
+  postLogoutRedirectUris: string[];
+  onPostLogoutRedirectUrisChange: (uris: string[]) => void;
+  showPostLogoutRedirectUris: boolean;
+}>) {
+  return (
+    <TestingStep
+      appId={appId}
+      clientId={appState.clientId}
+      grantTypes={formData.grantTypes}
+      tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
+      redirectUris={formData.redirectUris}
+      allowedScopes={formData.allowedScopes}
+      hasSecret={appState.hasSecret}
+      backendHelper={appState.backendHelper}
+      backendDeviceHelper={formData.backendDeviceHelper}
+      webHelper={appState.webHelper}
+      confidentialWebHelper={formData.confidentialWebHelper}
+      confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
+      initiateLoginUri={formData.initiateLoginUri}
+      deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
+      domains={domains}
+      onChange={onChange}
+      onDomainsChange={onDomainsChange}
+      onSecretGenerated={onSecretGenerated}
+      onBackendSecretGenerated={onBackendSecretGenerated}
+      onWebSecretGenerated={onWebSecretGenerated}
+      ownerExternalUserId={ownerExternalUserId}
+      readOnly={readOnly}
+      activeClient={activeClient}
+      hideHeader
+      postLogoutRedirectUris={postLogoutRedirectUris}
+      onPostLogoutRedirectUrisChange={onPostLogoutRedirectUrisChange}
+      showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+    />
+  );
+}
+
 function CredentialAccordionSection({
   id,
   label,
   prefix,
   description,
-  accentClass,
   labelClass,
   prefixClass,
   expanded,
@@ -712,7 +688,6 @@ function CredentialAccordionSection({
   label: string;
   prefix: string;
   description: string;
-  accentClass: string;
   labelClass: string;
   prefixClass: string;
   expanded: boolean;
@@ -720,21 +695,23 @@ function CredentialAccordionSection({
   children: React.ReactNode;
 }>) {
   return (
-    <div className={`rounded-xl border overflow-hidden ${accentClass}`}>
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={`credential-panel-${id}`}
-        className="flex w-full items-center justify-between px-5 py-4 text-left hover:bg-white/[0.02] transition-colors"
+        className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left hover:bg-white/[0.03] transition-colors"
       >
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-          <span className={`text-sm font-semibold ${labelClass}`}>{label}</span>
-          <code className={`font-mono text-xs ${prefixClass}`}>{prefix}</code>
-          <span className="text-xs text-zinc-500">{description}</span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className={`text-sm font-semibold ${labelClass}`}>{label}</span>
+            <code className={`font-mono text-xs ${prefixClass}`}>{prefix}</code>
+          </div>
+          <p className="text-xs text-zinc-500 mt-0.5">{description}</p>
         </div>
         <svg
-          className={`w-4 h-4 shrink-0 ml-3 text-zinc-500 transition-transform duration-200 ${
+          className={`w-4 h-4 shrink-0 mt-0.5 text-zinc-500 transition-transform duration-200 ${
             expanded ? "rotate-180" : ""
           }`}
           fill="none"
@@ -748,7 +725,7 @@ function CredentialAccordionSection({
       {expanded && (
         <div
           id={`credential-panel-${id}`}
-          className="border-t border-zinc-800/60 p-5 sm:p-6 space-y-8"
+          className="border-t border-white/[0.06] px-5 py-5 sm:px-6 sm:py-6"
         >
           {children}
         </div>
