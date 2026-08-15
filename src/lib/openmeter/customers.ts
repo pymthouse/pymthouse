@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
 import { v4 as uuidv4 } from "uuid";
 
@@ -489,42 +489,29 @@ export async function recordBillingCustomer(input: {
   const platformUserId = input.platformUserId?.trim() || null;
   const endUserId = input.endUserId?.trim() || null;
   try {
-    // Select-then-write avoids ON CONFLICT requiring a UNIQUE CONSTRAINT
-    // (prod may only have a UNIQUE INDEX from drizzle migrations).
-    const existing = await db
-      .select({ id: billingCustomers.id })
-      .from(billingCustomers)
-      .where(
-        and(
-          eq(billingCustomers.customerKey, customerKey),
-          eq(billingCustomers.clientId, clientId),
-        ),
-      )
-      .limit(1);
-    if (existing[0]?.id) {
-      await db
-        .update(billingCustomers)
-        .set({
+    await db
+      .insert(billingCustomers)
+      .values({
+        id: uuidv4(),
+        customerKey,
+        kind,
+        platformUserId,
+        endUserId,
+        clientId,
+        openmeterCustomerId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [billingCustomers.customerKey, billingCustomers.clientId],
+        set: {
           kind,
           platformUserId,
           endUserId,
           openmeterCustomerId,
           updatedAt: now,
-        })
-        .where(eq(billingCustomers.id, existing[0].id));
-      return;
-    }
-    await db.insert(billingCustomers).values({
-      id: uuidv4(),
-      customerKey,
-      kind,
-      platformUserId,
-      endUserId,
-      clientId,
-      openmeterCustomerId,
-      createdAt: now,
-      updatedAt: now,
-    });
+        },
+      });
   } catch (err) {
     console.warn(
       "customers: billing_customers upsert failed",
