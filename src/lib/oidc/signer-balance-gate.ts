@@ -262,6 +262,9 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
             expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds,
           };
         }
+        console.info(
+          `[remote-signer] auto-top-up ${topped.status} client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)} reason=${topped.reason}`,
+        );
       } catch (err) {
         console.warn(
           `[remote-signer] auto-top-up failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,

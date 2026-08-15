@@ -5,6 +5,11 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { appUsers } from "@/db/schema";
 import {
+  findOrCreateAppEndUser,
+  resolveAppUserExternalIdFromCustomerKey,
+} from "@/lib/billing/end-users";
+import { buildEndUserCustomerKey } from "@/lib/openmeter/customer-key";
+import {
   loadAppUserAutoTopUpPrefs,
   saveAppUserAutoTopUpPrefs,
 } from "@/lib/stripe/auto-topup";
@@ -75,4 +80,29 @@ test("saveAppUserAutoTopUpPrefs upserts the app user and persists prefs", async 
     autoTopUpEnabled: false,
     autoTopUpUsdMicros: "10000000",
   });
+});
+
+test("resolveAppUserExternalIdFromCustomerKey maps eu_ keys to the integrator id", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `AutoTopUp ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+  const externalUserId = `comfy-${randomUUID()}`;
+  const created = await findOrCreateAppEndUser(app.clientId, externalUserId);
+  const customerKey = buildEndUserCustomerKey(created.id);
+
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey(customerKey),
+    externalUserId,
+  );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey(externalUserId),
+    externalUserId,
+  );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey("eu_missing-row"),
+    "eu_missing-row",
+  );
 });

@@ -1,16 +1,16 @@
 /**
  * Optional merchant end-user prepaid auto-reload.
  *
- * When live spendable hits $0, charge the saved Connect card for a user-set
- * amount and grant Konnect credits so mint/signer can continue. Overage
- * invoicing is unchanged: this path only runs when the soft-negative gate
- * would otherwise deny.
+ * When live spendable hits $0, mint and the remote-signer live gate charge the
+ * saved Connect card before falling back to soft-negative overage. Users with
+ * a card are overage-eligible, so reload must run first or it never fires.
  */
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db/index";
 import { appUsers } from "@/db/schema";
 import { createAsyncTtlCache } from "@/lib/async-ttl-cache";
+import { resolveAppUserExternalIdFromCustomerKey } from "@/lib/billing/end-users";
 import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
 import { listAppUserPaymentMethods } from "@/lib/openmeter/app-user-payment-method";
 import { getAppBillingConfig } from "@/lib/openmeter/billing-profiles";
@@ -81,6 +81,10 @@ export type AutoTopUpRuntime = {
   grantAllowanceUsdMicros: (
     input: Parameters<typeof grantAllowanceUsdMicros>[0],
   ) => ReturnType<typeof grantAllowanceUsdMicros>;
+  resolveAppUserExternalId: (input: {
+    developerAppId: string;
+    externalUserId: string;
+  }) => Promise<string>;
 };
 
 let tryAutoTopUpForTests: TryAutoTopUpFn | null = null;
@@ -121,6 +125,8 @@ function autoTopUpRuntime(): AutoTopUpRuntime {
     getAppUserStripeCustomer,
     createConnectedOffSessionPaymentIntent,
     grantAllowanceUsdMicros,
+    resolveAppUserExternalId: ({ externalUserId }) =>
+      resolveAppUserExternalIdFromCustomerKey(externalUserId),
   };
   if (!autoTopUpRuntimeForTests) {
     return defaults;
@@ -352,7 +358,10 @@ export async function tryAutoTopUpIfEnabled(input: {
   const publicClientId = input.publicClientId.trim();
   const externalUserId = input.externalUserId.trim();
   if (!publicClientId || !externalUserId) {
-    return { status: "skipped", reason: "missing_identity" };
+    return logAutoTopUpOutcome(publicClientId, externalUserId, {
+      status: "skipped",
+      reason: "missing_identity",
+    });
   }
 
   const runtime = autoTopUpRuntime();
@@ -361,14 +370,24 @@ export async function tryAutoTopUpIfEnabled(input: {
     async () => {
       const app = await runtime.getProviderApp(publicClientId);
       if (!app?.id) {
-        return { status: "skipped", reason: "app_not_found" };
+        return logAutoTopUpOutcome(publicClientId, externalUserId, {
+          status: "skipped",
+          reason: "app_not_found",
+        });
       }
-      const prefs = await runtime.loadPrefs({
-        appId: app.id,
+      const resolvedExternalUserId = await runtime.resolveAppUserExternalId({
+        developerAppId: app.id,
         externalUserId,
       });
+      const prefs = await runtime.loadPrefs({
+        appId: app.id,
+        externalUserId: resolvedExternalUserId,
+      });
       if (!prefs.enabled) {
-        return { status: "skipped", reason: "disabled" };
+        return logAutoTopUpOutcome(publicClientId, resolvedExternalUserId, {
+          status: "skipped",
+          reason: "disabled",
+        });
       }
       let amountUsdMicros = DEFAULT_AUTO_TOP_UP_USD_MICROS;
       if (prefs.amountUsd) {
@@ -377,12 +396,34 @@ export async function tryAutoTopUpIfEnabled(input: {
           amountUsdMicros = parsed.amountUsdMicros;
         }
       }
-      return executeEnabledAutoTopUp({
+      return logAutoTopUpOutcome(
         publicClientId,
-        developerAppId: app.id,
-        externalUserId,
-        amountUsdMicros,
-      });
+        resolvedExternalUserId,
+        await executeEnabledAutoTopUp({
+          publicClientId,
+          developerAppId: app.id,
+          externalUserId: resolvedExternalUserId,
+          amountUsdMicros,
+        }),
+      );
     },
   );
+}
+
+function logAutoTopUpOutcome(
+  publicClientId: string,
+  externalUserId: string,
+  result: AutoTopUpResult,
+): AutoTopUpResult {
+  if (result.status === "charged") {
+    return result;
+  }
+  console.info(
+    "[auto-topup]",
+    result.status,
+    result.reason,
+    sanitizeForLog(publicClientId),
+    sanitizeForLog(externalUserId),
+  );
+  return result;
 }

@@ -1,5 +1,6 @@
 import { db } from "@/db/index";
 import { endUsers, transactions } from "@/db/schema";
+import { parseEndUserCustomerKey } from "@/lib/openmeter/customer-key";
 import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
@@ -56,6 +57,34 @@ export async function findOrCreateAppEndUser(
       if (retryRows[0]) return { id: retryRows[0].id, isNew: false };
     }
     throw err;
+  }
+}
+
+/**
+ * Map a canonical OpenMeter end-user key (`eu_{end_users.id}`) back to the
+ * integrator `external_user_id` used by `app_users` prefs and Connect
+ * customers. Non-`eu_` values pass through unchanged.
+ */
+export async function resolveAppUserExternalIdFromCustomerKey(
+  externalUserId: string,
+): Promise<string> {
+  const trimmed = externalUserId.trim();
+  const endUserRowId = parseEndUserCustomerKey(trimmed);
+  if (!endUserRowId) {
+    return trimmed;
+  }
+  try {
+    const rows = await db
+      .select({
+        externalUserId: endUsers.externalUserId,
+      })
+      .from(endUsers)
+      .where(eq(endUsers.id, endUserRowId))
+      .limit(1);
+    const resolved = rows[0]?.externalUserId?.trim();
+    return resolved || trimmed;
+  } catch {
+    return trimmed;
   }
 }
 
