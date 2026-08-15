@@ -243,6 +243,32 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       const lookupSubject = signerSpendableLookupSubject(
         ctx.identity.usage_subject,
       );
+
+      // Match mint: try auto-top-up before soft-negative overage. Users with a
+      // saved card are overage-eligible, which would otherwise skip reload and
+      // only raise pending_usage / mid-cycle invoices.
+      try {
+        const topped = await tryAutoTopUpIfEnabled({
+          publicClientId: ctx.identity.client_id,
+          externalUserId: lookupSubject,
+        });
+        if (topped.status === "charged") {
+          seedSignerSpendableBalance(
+            ctx.identity.client_id,
+            ctx.identity.usage_subject,
+            topped.grantedUsdMicros,
+          );
+          return {
+            expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds,
+          };
+        }
+      } catch (err) {
+        console.warn(
+          `[remote-signer] auto-top-up failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+          sanitizeForLog(err),
+        );
+      }
+
       let allowsOverage = false;
       try {
         allowsOverage = await identityAllowsOverage(ctx.identity);
@@ -293,27 +319,6 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       }
 
       if (!softAllow) {
-        try {
-          const topped = await tryAutoTopUpIfEnabled({
-            publicClientId: ctx.identity.client_id,
-            externalUserId: lookupSubject,
-          });
-          if (topped.status === "charged") {
-            seedSignerSpendableBalance(
-              ctx.identity.client_id,
-              ctx.identity.usage_subject,
-              topped.grantedUsdMicros,
-            );
-            return {
-              expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds,
-            };
-          }
-        } catch (err) {
-          console.warn(
-            `[remote-signer] auto-top-up failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
-            sanitizeForLog(err),
-          );
-        }
         console.warn(
           `[remote-signer] soft-negative deny client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)} reason=${denyReason} overageEligible=${allowsOverage}`,
         );
