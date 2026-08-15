@@ -66,7 +66,7 @@ export const SignerSessionSchema = z
     }),
     discovery_url: z.url().optional().openapi({
       description:
-        "Remote-signer discover-orchestrators URL (default `{signer_url}/discover-orchestrators`). Not OIDC issuer metadata.",
+        "Remote-signer discover-orchestrators URL (request override → app-user discoveryUrl preference → `{signer_url}/discover-orchestrators`). Not OIDC issuer metadata.",
     }),
     caps: z
       .array(z.string().min(1))
@@ -114,7 +114,7 @@ export const TokenExchangeRequestSchema = z
     }),
     discovery_url: z.url().optional().openapi({
       description:
-        "Optional override for SignerSession.discovery_url. Defaults to `{signer_url}/discover-orchestrators`.",
+        "Optional override for SignerSession.discovery_url. When omitted, uses the app user's discoveryUrl preference if set, otherwise `{signer_url}/discover-orchestrators`.",
     }),
     caps: z
       .array(z.string().min(1))

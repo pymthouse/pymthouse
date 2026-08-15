@@ -1,6 +1,10 @@
 import "server-only";
 
 import { createCorrelationId } from "@/lib/audit";
+import {
+  loadAppUserDiscoveryUrl,
+  resolveSignerSessionDiscoveryUrl,
+} from "@/lib/app-user-discovery-url";
 import { createLivepeerPythonSdkToken } from "@/lib/livepeer-python-sdk-token";
 import type { McpPrincipal } from "@/lib/mcp/auth";
 import { readDiscoveryServiceUrl } from "@/lib/mcp/config";
@@ -74,14 +78,23 @@ export async function createSignerSessionForPrincipal(
       developerAppId: allowed.developerAppId,
       externalUserId: allowed.ownerId,
     });
+    const signerUrl = getClientSignerApiUrl(allowed.publicClientId);
+    const userPreference = await loadAppUserDiscoveryUrl({
+      appId: allowed.developerAppId,
+      externalUserId: allowed.ownerId,
+    });
     const session = buildSignerSessionEnvelope({
       access_token: minted.access_token,
       expires_in: minted.expires_in,
       scope: minted.scope,
       balanceUsdMicros: minted.balanceUsdMicros,
       lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
-      signer_url: getClientSignerApiUrl(allowed.publicClientId),
-      discovery_url: getSignerDiscoveryUrl(),
+      signer_url: signerUrl,
+      discovery_url: resolveSignerSessionDiscoveryUrl({
+        userPreference,
+        publicClientId: allowed.publicClientId,
+        signerUrl,
+      }),
       issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
     });
     return {

@@ -308,6 +308,12 @@ export const appUsers = pgTable(
     autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
     /** Reload amount in USD micros; null falls back to $10 when enabling. */
     autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
+    /**
+     * Preferred SignerSession.discovery_url for this identity.
+     * Applied on every signer-session exchange/mint for the user unless the
+     * request supplies an explicit discovery_url override.
+     */
+    discoveryUrl: text("discovery_url"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

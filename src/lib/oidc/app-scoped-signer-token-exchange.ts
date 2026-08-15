@@ -4,6 +4,10 @@ import {
   resolveActiveAppApiKeyFromBearer,
 } from "@/lib/app-api-keys";
 import {
+  loadAppUserDiscoveryUrl,
+  resolveSignerSessionDiscoveryUrl,
+} from "@/lib/app-user-discovery-url";
+import {
   buildDiscoverOrchestratorsUrl,
   normalizeDiscoveryCaps,
 } from "@/lib/discovery-service-url";
@@ -317,7 +321,7 @@ export type AppScopedSignerTokenExchangeDeps = {
   resolveSubjectAccessToken: typeof resolveSubjectAccessToken;
   mintSignerJwtForExternalUser: typeof mintSignerJwtForExternalUser;
   getClientSignerApiUrl: typeof getClientSignerApiUrl;
-  getSignerDiscoveryUrl: typeof getSignerDiscoveryUrl;
+  loadAppUserDiscoveryUrl: typeof loadAppUserDiscoveryUrl;
 };
 
 const defaultAppScopedExchangeDeps: AppScopedSignerTokenExchangeDeps = {
@@ -326,7 +330,7 @@ const defaultAppScopedExchangeDeps: AppScopedSignerTokenExchangeDeps = {
   resolveSubjectAccessToken,
   mintSignerJwtForExternalUser,
   getClientSignerApiUrl,
-  getSignerDiscoveryUrl,
+  loadAppUserDiscoveryUrl,
 };
 
 export async function handleAppScopedSignerTokenExchange(
@@ -433,11 +437,16 @@ export async function handleAppScopedSignerTokenExchange(
   }
 
   const signerUrl = deps.getClientSignerApiUrl(subject.publicClientId);
-  const discoveryOverride = input.discovery_url?.trim();
-  const discoveryUrl =
-    discoveryOverride ||
-    deps.getSignerDiscoveryUrl(subject.publicClientId) ||
-    (signerUrl ? buildDiscoverOrchestratorsUrl(signerUrl) : undefined);
+  const userPreference = await deps.loadAppUserDiscoveryUrl({
+    appId: subject.developerAppId,
+    externalUserId: subject.externalUserId,
+  });
+  const discoveryUrl = resolveSignerSessionDiscoveryUrl({
+    requestOverride: input.discovery_url,
+    userPreference,
+    publicClientId: subject.publicClientId,
+    signerUrl,
+  });
 
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,

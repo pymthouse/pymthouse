@@ -15,6 +15,7 @@ import { runActivationGate } from "@/lib/activation/app-activation";
 import { activationErrorResponse } from "@/lib/activation/problem";
 import { parseAppUserStatus, type AppUserStatus } from "@/lib/billing/app-user-status";
 import { provisionAppUserBilling } from "@/lib/billing/provision-app-user";
+import { parseDiscoveryUrlPreference } from "@/lib/app-user-discovery-url";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
 async function canAccessUsers(request: NextRequest, clientId: string, requiredScope: string) {
@@ -86,8 +87,10 @@ function parseUpsertUserBody(body: Record<string, unknown>): {
   externalUserId: string;
   hasEmail: boolean;
   hasStatus: boolean;
+  hasDiscoveryUrl: boolean;
   email: string | null;
   status: AppUserStatus;
+  discoveryUrl: string | null;
 } | { ok: false; response: NextResponse } {
   const externalUserId =
     typeof body.externalUserId === "string" ? body.externalUserId.trim() : "";
@@ -113,13 +116,22 @@ function parseUpsertUserBody(body: Record<string, unknown>): {
     }
     status = parsedStatus.status;
   }
+  const discoveryParsed = parseDiscoveryUrlPreference(body.discoveryUrl);
+  if (!discoveryParsed.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: discoveryParsed.error }, { status: 400 }),
+    };
+  }
   return {
     ok: true,
     externalUserId,
     hasEmail,
     hasStatus,
+    hasDiscoveryUrl: discoveryParsed.present,
     email: hasEmail ? (body.email as string).trim() : null,
     status,
+    discoveryUrl: discoveryParsed.present ? discoveryParsed.discoveryUrl : null,
   };
 }
 
@@ -128,8 +140,10 @@ async function upsertAppUserRow(input: {
   externalUserId: string;
   email: string | null;
   status: AppUserStatus;
+  discoveryUrl: string | null;
   hasEmail: boolean;
   hasStatus: boolean;
+  hasDiscoveryUrl: boolean;
 }) {
   const newUser = {
     id: uuidv4(),
@@ -137,14 +151,21 @@ async function upsertAppUserRow(input: {
     externalUserId: input.externalUserId,
     email: input.email,
     status: input.status,
+    discoveryUrl: input.hasDiscoveryUrl ? input.discoveryUrl : null,
     role: "user" as const,
     createdAt: new Date().toISOString(),
   };
-  const updateSet: { email?: string | null; status?: AppUserStatus; role: "user" } = {
+  const updateSet: {
+    email?: string | null;
+    status?: AppUserStatus;
+    discoveryUrl?: string | null;
+    role: "user";
+  } = {
     role: "user",
   };
   if (input.hasEmail) updateSet.email = input.email;
   if (input.hasStatus) updateSet.status = input.status;
+  if (input.hasDiscoveryUrl) updateSet.discoveryUrl = input.discoveryUrl;
 
   const upserted = await db
     .insert(appUsers)
@@ -249,10 +270,12 @@ export async function POST(
     externalUserId: parsed.externalUserId,
     email: parsed.email,
     status: nextStatus,
+    discoveryUrl: parsed.discoveryUrl,
     hasEmail: parsed.hasEmail,
     // Persist the resolved next status so create defaults to active and
     // reactivate paths write explicitly without requiring a status field.
     hasStatus: parsed.hasStatus || activating || previousStatus == null,
+    hasDiscoveryUrl: parsed.hasDiscoveryUrl,
   });
 
   const provisionProblem = await provisionAfterUpsert(
@@ -332,6 +355,11 @@ export async function PUT(
     nextStatus = parsedStatus.status;
   }
 
+  const discoveryParsed = parseDiscoveryUrlPreference(body.discoveryUrl);
+  if (!discoveryParsed.ok) {
+    return NextResponse.json({ error: discoveryParsed.error }, { status: 400 });
+  }
+
   if (nextStatus === "active" && existing.status !== "active") {
     const gateProblem = await runProvisionGate(
       access.app.id,
@@ -348,6 +376,9 @@ export async function PUT(
     .set({
       email: typeof body.email === "string" ? body.email.trim() : existing.email,
       status: nextStatus,
+      ...(discoveryParsed.present
+        ? { discoveryUrl: discoveryParsed.discoveryUrl }
+        : {}),
       role: "user",
     })
     .where(eq(appUsers.id, existing.id));

@@ -146,8 +146,19 @@ defineRouteMetadata("get", appPath(""), {
 
 registerMetadataRoutes([
   ["get", appPath("/users"), OPENAPI_TAGS.users, "List provisioned users"],
-  ["post", appPath("/users"), OPENAPI_TAGS.users, "Upsert provisioned user", { created: true }],
-  ["put", appPath("/users"), OPENAPI_TAGS.users, "Update provisioned user"],
+  [
+    "post",
+    appPath("/users"),
+    OPENAPI_TAGS.users,
+    "Upsert provisioned user (optional discoveryUrl preference)",
+    { created: true },
+  ],
+  [
+    "put",
+    appPath("/users"),
+    OPENAPI_TAGS.users,
+    "Update provisioned user (email, status, discoveryUrl)",
+  ],
   ["delete", appPath("/users"), OPENAPI_TAGS.users, "Deactivate provisioned user"],
   ["get", userPath("/keys"), OPENAPI_TAGS.users, "List user API keys", { includeExternalUserId: true }],
   [

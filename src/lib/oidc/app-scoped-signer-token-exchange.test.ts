@@ -204,8 +204,7 @@ test("handleAppScopedSignerTokenExchange mints signer session from API key subje
         signerUrlAppId = appClientId ?? undefined;
         return "https://signer.example";
       },
-      getSignerDiscoveryUrl: () =>
-        "https://signer.example/discover-orchestrators",
+      loadAppUserDiscoveryUrl: async () => undefined,
     },
   );
 
@@ -257,8 +256,8 @@ test("handleAppScopedSignerTokenExchange accepts discovery_url and caps override
         lifetimeGrantedUsdMicros: "0",
       }),
       getClientSignerApiUrl: () => "https://signer.example",
-      getSignerDiscoveryUrl: () =>
-        "https://signer.example/discover-orchestrators",
+      loadAppUserDiscoveryUrl: async () =>
+        "https://pref.example/discover-orchestrators",
     },
   );
 
@@ -270,6 +269,56 @@ test("handleAppScopedSignerTokenExchange accepts discovery_url and caps override
     "live-video-to-video/streamdiffusion",
     "text-to-image/flux",
   ]);
+});
+
+test("handleAppScopedSignerTokenExchange uses user discoveryUrl preference", async () => {
+  let loadedFor: { appId: string; externalUserId: string } | undefined;
+  const session = await handleAppScopedSignerTokenExchange(
+    {
+      publicClientId: PUBLIC_ID,
+      clientId: "",
+      clientSecret: "",
+      grantType: GRANT_TYPE_TOKEN_EXCHANGE,
+      subjectToken: "pmth_abc123",
+      subjectTokenType: SUBJECT_ACCESS_TOKEN_TYPE,
+      requestedTokenType: "",
+      resource: "",
+      audiences: [],
+      correlationId: "corr-pref",
+    },
+    {
+      resolveActiveAppApiKey: async () => ({
+        apiKeyId: "key-1",
+        developerAppId: "dev-app-1",
+        publicClientId: PUBLIC_ID,
+        appUserId: "au-1",
+        externalUserId: "ext-1",
+        label: null,
+      }),
+      mintSignerJwtForExternalUser: async () => ({
+        access_token: "eyJ.signer.jwt",
+        token_type: "Bearer" as const,
+        expires_in: 300,
+        scope: "sign:job",
+        balanceUsdMicros: "0",
+        lifetimeGrantedUsdMicros: "0",
+      }),
+      getClientSignerApiUrl: () => "https://signer.example",
+      loadAppUserDiscoveryUrl: async (input) => {
+        loadedFor = input;
+        return "https://pref.example/discover-orchestrators";
+      },
+    },
+  );
+
+  assert.deepEqual(loadedFor, {
+    appId: "dev-app-1",
+    externalUserId: "ext-1",
+  });
+  assert.equal(
+    session.discovery_url,
+    "https://pref.example/discover-orchestrators",
+  );
 });
 
 test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope", async () => {
@@ -303,7 +352,7 @@ test("handleAppScopedSignerTokenExchange mints from user JWT with sign:job scope
         lifetimeGrantedUsdMicros: "0",
       }),
       getClientSignerApiUrl: () => undefined as unknown as string,
-      getSignerDiscoveryUrl: () => undefined,
+      loadAppUserDiscoveryUrl: async () => undefined,
     },
   );
 
@@ -368,7 +417,7 @@ test("handleIssuerApiKeySignerTokenExchange resolves app from bare pmth_ subject
         };
       },
       getClientSignerApiUrl: () => "https://signer.example",
-      getSignerDiscoveryUrl: () => undefined,
+      loadAppUserDiscoveryUrl: async () => undefined,
     },
   );
 
@@ -452,7 +501,7 @@ test("handleAppScopedSignerTokenExchange accepts canonical api_key type", async 
         lifetimeGrantedUsdMicros: "0",
       }),
       getClientSignerApiUrl: () => "https://signer.example",
-      getSignerDiscoveryUrl: () => undefined,
+      loadAppUserDiscoveryUrl: async () => undefined,
     },
   );
 
@@ -546,7 +595,7 @@ test("handleIssuerApiKeySignerTokenExchange accepts canonical api_key type", asy
         lifetimeGrantedUsdMicros: "0",
       }),
       getClientSignerApiUrl: () => "https://signer.example",
-      getSignerDiscoveryUrl: () => undefined,
+      loadAppUserDiscoveryUrl: async () => undefined,
     },
   );
 

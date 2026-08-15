@@ -148,11 +148,13 @@ Authorization: Basic base64(client_id:client_secret)
 | Method | Path | Required scope | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/apps/{clientId}/users` | `users:read` | List provisioned users (all statuses) |
-| `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required; optional `email`, `status`) |
-| `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user `email` and/or `status` |
+| `POST` | `/api/v1/apps/{clientId}/users` | `users:write` | Create/upsert user (`externalUserId` required; optional `email`, `status`, `discoveryUrl`) |
+| `PUT` | `/api/v1/apps/{clientId}/users` | `users:write` | Update user `email`, `status`, and/or `discoveryUrl` |
 | `DELETE` | `/api/v1/apps/{clientId}/users?externalUserId=...` | `users:write` | Soft-deactivate user (`status: inactive`) — frees an end-user cap slot |
 
 **Status contract:** `status` is `active` or `inactive` only. New users default to `active`. `DELETE` sets `inactive`. Reactivate with `PUT`/`POST` `{ "status": "active" }` (consumes a free cap slot when the activation gate is enforced). Inactive identities cannot mint tokens or resolve API keys; they remain listed for audit and billing history.
+
+**Discovery URL preference:** Optional `discoveryUrl` (absolute `http(s)` URL) is stored on the app user and returned on list/upsert. It becomes the default `SignerSession.discovery_url` for every signer-session exchange or mint on behalf of that user. A per-request `discovery_url` form field on token exchange still overrides it. Pass `null` or `""` on `PUT`/`POST` to clear the preference.
 
 **Dashboard:** App → Identities shows every M2M identity and supports deactivate / reactivate for owners and app admins. Payments → Activation shows `active / cap` and links to Identities when the cap is reached. Raising the numeric cap is admin-only (see #401); developers reclaim capacity by deactivating unused identities.
 
@@ -175,12 +177,12 @@ Exchange a user access JWT **or** a per-app-user API key (`pmth_*`) for a short-
 | `subject_token` | User access JWT **or** per-app-user API key (`pmth_*` / composite) |
 | `subject_token_type` | API key: `urn:pymthouse:oauth:token-type:api_key` (canonical). JWT: `urn:ietf:params:oauth:token-type:access_token`. Legacy: `access_token` is still accepted for key-shaped subjects. |
 | `audience` / `resource` | Optional; when provided must match configured signer audience (issuer URL, `SIGNER_TOKEN_AUDIENCE`, or legacy `livepeer-clearinghouse` / `livepeer-remote-signer`) |
-| `discovery_url` | Optional override for network discovery (defaults to `{signer_url}/discover-orchestrators`) |
+| `discovery_url` | Optional override for network discovery (user `discoveryUrl` preference when set; else `{signer_url}/discover-orchestrators`) |
 | `caps` | Optional; repeatable capability filters for remote-signer discovery (`caps=pipeline/model`) |
 
 Optional HTTP Basic with the M2M client (`m2m_*` + secret). When omitted, the `subject_token` alone authenticates the exchange. Do not use client secrets (`pmth_cs_*`) as `subject_token`.
 
-Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (defaults to `{signer_url}/discover-orchestrators`; not OIDC metadata), optional `caps` (remote-signer capability filters), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
+Returns the canonical **`SignerSession`** envelope: `access_token`, `token_type`, `expires_in`, `scope`, optional `signer_url`, optional `discovery_url` (request override → user `discoveryUrl` preference → `{signer_url}/discover-orchestrators`; not OIDC metadata), optional `caps` (remote-signer capability filters), optional `issued_token_type`, optional `correlation_id`, and optional PymtHouse extensions `balanceUsdMicros` / `lifetimeGrantedUsdMicros`.
 
 Example (bare API key on the issuer token endpoint — personal key, no `{clientId}` in the URL):
 

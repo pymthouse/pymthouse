@@ -27,8 +27,11 @@ import { hasPositiveUsdMicrosBalance } from "@/lib/format-usd-micros";
 import type { TrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { getSpendableAllowanceDetails } from "@/lib/openmeter/spendable-allowance";
 import { SIGN_MINT_USER_TOKEN_SCOPE } from "@/lib/oidc/scopes";
+import {
+  loadAppUserDiscoveryUrl,
+  resolveSignerSessionDiscoveryUrl,
+} from "@/lib/app-user-discovery-url";
 import { buildSignerSessionEnvelope } from "@/lib/openapi/signer-session";
-import { buildDiscoverOrchestratorsUrl } from "@/lib/discovery-service-url";
 import { getClientSignerApiUrl } from "@/lib/signer-proxy";
 
 export { SIGN_MINT_USER_TOKEN_SCOPE };
@@ -196,11 +199,17 @@ async function loadPublicSignJobClient(appId: string) {
   return publicClient;
 }
 
-function signerSessionFromMint(
+async function signerSessionFromMint(
   minted: Awaited<ReturnType<typeof mintSignerJwtForExternalUser>>,
   publicClientId: string,
+  developerAppId: string,
+  externalUserId: string,
 ) {
   const signerUrl = getClientSignerApiUrl(publicClientId);
+  const userPreference = await loadAppUserDiscoveryUrl({
+    appId: developerAppId,
+    externalUserId,
+  });
   return buildSignerSessionEnvelope({
     access_token: minted.access_token,
     expires_in: minted.expires_in,
@@ -208,7 +217,11 @@ function signerSessionFromMint(
     balanceUsdMicros: minted.balanceUsdMicros,
     lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
     signer_url: signerUrl,
-    discovery_url: buildDiscoverOrchestratorsUrl(signerUrl),
+    discovery_url: resolveSignerSessionDiscoveryUrl({
+      userPreference,
+      publicClientId,
+      signerUrl,
+    }),
     issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
   });
 }
@@ -592,7 +605,12 @@ export async function handleMintUserSignerToken(input: {
     developerAppId: row.appId,
     externalUserId,
   });
-  return signerSessionFromMint(minted, publicClient.clientId);
+  return signerSessionFromMint(
+    minted,
+    publicClient.clientId,
+    row.appId,
+    externalUserId,
+  );
 }
 
 export async function handleM2mOwnerSignJob(input: {
@@ -609,5 +627,10 @@ export async function handleM2mOwnerSignJob(input: {
     developerAppId: allowed.developerAppId,
     externalUserId: allowed.ownerId,
   });
-  return signerSessionFromMint(minted, allowed.publicClientId);
+  return signerSessionFromMint(
+    minted,
+    allowed.publicClientId,
+    allowed.developerAppId,
+    allowed.ownerId,
+  );
 }
