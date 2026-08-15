@@ -318,7 +318,9 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
           `[remote-signer] soft-negative check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
           sanitizeForLog(err),
         );
-        softAllow = false;
+        // Overage-eligible subjects stay authorized when the ceiling lookup
+        // throws — same fail-open as resolveSoftNegativeGate's debt path.
+        softAllow = allowsOverage;
       }
 
       if (!softAllow) {
