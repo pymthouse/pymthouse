@@ -55,6 +55,7 @@ function merchantRuntime(
       status: "succeeded",
     }),
     grantAllowanceUsdMicros: async () => GRANT_RESULT,
+    resolveAppUserExternalId: async ({ externalUserId }) => externalUserId,
     ...overrides,
   };
 }
@@ -180,6 +181,32 @@ test("tryAutoTopUpIfEnabled skips when the public app is unknown", async (t) => 
     await tryAutoTopUpIfEnabled(uniqueIds("unknown_app")),
     { status: "skipped", reason: "app_not_found" },
   );
+});
+
+test("tryAutoTopUpIfEnabled resolves eu_ customer keys before prefs and charge", async (t) => {
+  let prefUser: string | undefined;
+  let chargeUser: string | undefined;
+  withRuntime(t, {
+    resolveAppUserExternalId: async ({ externalUserId }) =>
+      externalUserId === "eu_row1" ? "comfy-user" : externalUserId,
+    loadPrefs: async ({ externalUserId }) => {
+      prefUser = externalUserId;
+      return externalUserId === "comfy-user"
+        ? { enabled: true, amountUsd: "10.00" }
+        : { enabled: false, amountUsd: null };
+    },
+    createConnectedOffSessionPaymentIntent: async (input) => {
+      chargeUser = input.metadata?.external_user_id;
+      return { id: "pi_eu", status: "succeeded" };
+    },
+  });
+  const result = await tryAutoTopUpIfEnabled({
+    publicClientId: `app_eu_resolve_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    externalUserId: "eu_row1",
+  });
+  assert.equal(result.status, "charged");
+  assert.equal(prefUser, "comfy-user");
+  assert.equal(chargeUser, "comfy-user");
 });
 
 test("tryAutoTopUpIfEnabled skips when prefs are disabled", async (t) => {

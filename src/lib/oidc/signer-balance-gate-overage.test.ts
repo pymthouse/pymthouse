@@ -199,6 +199,34 @@ test("buildSignerBalanceCheck allows zero spendable after auto-top-up charge", a
   assert.ok(result && typeof result === "object" && "expiry" in result);
 });
 
+test("buildSignerBalanceCheck prefers auto-top-up over overage when both apply", async (t) => {
+  withOpenMeterConfigured(t);
+  t.after(() => __setTryAutoTopUpIfEnabledForTests(null));
+  let topUpCalls = 0;
+  __setTryAutoTopUpIfEnabledForTests(async () => {
+    topUpCalls += 1;
+    return {
+      status: "charged",
+      paymentIntentId: "pi_reload_overage",
+      grantedUsdMicros: "25000000",
+    };
+  });
+
+  seedSignerSpendableBalance("app_test_overage", "eu_topup_over_overage", "0");
+  seedSignerOverageEligibility("app_test_overage", "eu_topup_over_overage", true);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  const result = await check({
+    identity: identity("eu_topup_over_overage"),
+    expiry: Math.floor(Date.now() / 1000) + 60,
+    payload: {},
+    request: new Request("http://localhost/authorize"),
+  });
+  assert.ok(result && typeof result === "object" && "expiry" in result);
+  assert.equal(topUpCalls, 1);
+});
+
 test("__resetSignerBalanceCachesForTests is test-only", () => {
   assert.doesNotThrow(() => __resetSignerBalanceCachesForTests());
 });
