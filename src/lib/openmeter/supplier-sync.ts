@@ -137,6 +137,7 @@ export async function syncTenantSupplierFromConnect(input: {
   clientId: string;
   accountId?: string;
   identity?: ConnectedAccountIdentity;
+  livemode?: boolean;
 }): Promise<SyncTenantSupplierResult> {
   const config = await getAppBillingConfig(input.clientId);
   if (!config) {
@@ -151,8 +152,13 @@ export async function syncTenantSupplierFromConnect(input: {
     return { status: "no_account", gaps: ["country", "name"] };
   }
 
+  const livemode =
+    input.livemode !== undefined
+      ? input.livemode
+      : config.stripeLivemode !== false;
   const identity =
-    input.identity ?? (await fetchConnectedAccountIdentity(accountId));
+    input.identity ??
+    (await fetchConnectedAccountIdentity(accountId, livemode));
 
   // Bail when onboarding has not produced a country yet — avoid blanking a
   // good supplier during re-onboarding.

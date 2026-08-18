@@ -389,6 +389,8 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     stripePayoutsEnabled: false,
     stripeDetailsSubmitted: false,
     connectPaymentsOnly: false,
+    // Unlock sandbox/live switch for the next Connect onboarding.
+    stripeLivemode: true,
   });
 }
 
@@ -460,6 +462,7 @@ export async function getStripeConnectStatus(clientId: string) {
     softNegativeUsdMicros: config?.softNegativeUsdMicros ?? null,
     stripeConnectedAccountId: accountId,
     stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
+    stripeLivemode: config?.stripeLivemode !== false,
     stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
     stripePayoutsEnabled: config?.stripePayoutsEnabled ?? false,
     stripeDetailsSubmitted: config?.stripeDetailsSubmitted ?? false,

@@ -63,6 +63,7 @@ export type AutoTopUpRuntime = {
     stripeConnectedAccountId?: string | null;
     defaultCurrency?: string | null;
     applicationFeeBps?: number | null;
+    stripeLivemode?: boolean | null;
   } | null>;
   listAppUserPaymentMethods: (input: {
     clientId: string;
@@ -294,6 +295,7 @@ async function executeEnabledAutoTopUp(input: {
       amountCents,
       currency: (billingConfig.defaultCurrency ?? "usd").toLowerCase(),
       applicationFeeBps: billingConfig.applicationFeeBps ?? 0,
+      livemode: billingConfig.stripeLivemode !== false,
       idempotencyKey: stripeIdempotencyKey(
         input.developerAppId,
         input.externalUserId,

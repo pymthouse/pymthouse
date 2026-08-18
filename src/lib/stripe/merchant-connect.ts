@@ -28,6 +28,7 @@ import {
   createMerchantConnectedAccount,
   exchangeConnectOAuthCode,
   refreshConnectedAccountStatus,
+  resolveStripePlatformSecretKey,
   type StripeOnboardingMethod,
 } from "@/lib/stripe/connect-accounts";
 
@@ -161,15 +162,15 @@ export function stripePaymentMethodBrandLabel(
   return null;
 }
 
-function stripeSecretKey(): string {
-  const key =
-    process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key?.startsWith("sk_")) {
-    throw new Error(
-      "STRIPE_SECRET_KEY or STRIPE_API_KEY is required for Stripe Connect",
-    );
-  }
-  return key;
+/** Resolve Merchant Connect livemode from app billing config (default live). */
+export function appStripeLivemode(
+  config: { stripeLivemode?: boolean | null } | null | undefined,
+): boolean {
+  return config?.stripeLivemode !== false;
+}
+
+function stripeSecretKey(livemode = true): string {
+  return resolveStripePlatformSecretKey(livemode);
 }
 
 function invoiceDate(seconds: number | null | undefined): string | undefined {
@@ -181,10 +182,11 @@ function invoiceDate(seconds: number | null | undefined): string | undefined {
 async function stripeConnectInvoiceRequest<T>(
   accountId: string,
   path: string,
+  livemode = true,
 ): Promise<T> {
   const response = await fetch(`https://api.stripe.com${path}`, {
     headers: {
-      Authorization: `Bearer ${stripeSecretKey()}`,
+      Authorization: `Bearer ${stripeSecretKey(livemode)}`,
       "Stripe-Account": accountId,
     },
     signal: AbortSignal.timeout(30_000),
@@ -361,12 +363,13 @@ async function persistConnectedAccountFlags(input: {
 async function syncConnectedAccountFlags(
   clientId: string,
   accountId: string,
+  livemode = true,
 ): Promise<{
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   detailsSubmitted: boolean;
 }> {
-  const status = await refreshConnectedAccountStatus(accountId);
+  const status = await refreshConnectedAccountStatus(accountId, livemode);
   await persistConnectedAccountFlags({
     clientId,
     accountId,
@@ -377,7 +380,7 @@ async function syncConnectedAccountFlags(
   // Keep invoice supplier columns in sync whenever we refresh Connect flags
   // (return URL, Account Link refresh, GET status). Webhook path uses the
   // same helper — without this, merchant mode sees empty country/name.
-  await syncSupplierBestEffort(clientId, accountId);
+  await syncSupplierBestEffort(clientId, accountId, livemode);
   return {
     chargesEnabled: status.chargesEnabled,
     payoutsEnabled: status.payoutsEnabled,
@@ -388,6 +391,7 @@ async function syncConnectedAccountFlags(
 async function syncSupplierBestEffort(
   clientId: string,
   accountId: string,
+  livemode = true,
 ): Promise<void> {
   try {
     const { syncTenantSupplierFromConnect } = await import(
@@ -396,6 +400,7 @@ async function syncSupplierBestEffort(
     await syncTenantSupplierFromConnect({
       clientId,
       accountId,
+      livemode,
     });
   } catch (err) {
     console.warn(
@@ -432,7 +437,12 @@ export async function applyConnectedAccountWebhookUpdate(input: {
     payoutsEnabled: input.payoutsEnabled,
     detailsSubmitted: input.detailsSubmitted,
   });
-  await syncSupplierBestEffort(clientId, input.accountId);
+  const config = await getAppBillingConfig(clientId);
+  await syncSupplierBestEffort(
+    clientId,
+    input.accountId,
+    appStripeLivemode(config),
+  );
   return { updated: true, clientId };
 }
 
@@ -460,12 +470,14 @@ export async function startMerchantConnect({
   await ensureOmStarterSideEffect(clientId);
 
   const existing = await getAppBillingConfig(clientId);
+  const livemode = appStripeLivemode(existing);
   let accountId = existing?.stripeConnectedAccountId?.trim() || "";
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
       clientId,
       email,
       displayName,
+      livemode,
     });
     await upsertAppBillingConfig(clientId, {
       stripeConnectedAccountId: accountId,
@@ -473,6 +485,7 @@ export async function startMerchantConnect({
       stripeChargesEnabled: false,
       stripePayoutsEnabled: false,
       stripeDetailsSubmitted: false,
+      stripeLivemode: livemode,
     });
   }
 
@@ -481,8 +494,9 @@ export async function startMerchantConnect({
     accountId,
     refreshUrl: urls.refreshUrl,
     returnUrl: urls.returnUrl,
+    livemode,
   });
-  await syncConnectedAccountFlags(clientId, accountId);
+  await syncConnectedAccountFlags(clientId, accountId, livemode);
   return { method: "account_link", url: linkUrl, accountId };
 }
 
@@ -498,13 +512,15 @@ export async function refreshMerchantAccountLink(clientId: string): Promise<{
   if (config.stripeOnboardingMethod === "oauth" && config.stripeChargesEnabled) {
     throw new Error("OAuth-linked accounts do not use Account Links");
   }
+  const livemode = appStripeLivemode(config);
   const urls = connectAccountLinkUrls(clientId);
   const url = await createAccountOnboardingLink({
     accountId,
     refreshUrl: urls.refreshUrl,
     returnUrl: urls.returnUrl,
+    livemode,
   });
-  await syncConnectedAccountFlags(clientId, accountId);
+  await syncConnectedAccountFlags(clientId, accountId, livemode);
   return { url, accountId };
 }
 
@@ -530,12 +546,15 @@ export async function completeMerchantConnectOAuth(input: {
     throw new Error("OAuth state expired");
   }
 
-  const accountId = await exchangeConnectOAuthCode(input.code);
+  const existing = await getAppBillingConfig(input.clientId);
+  const livemode = appStripeLivemode(existing);
+  const accountId = await exchangeConnectOAuthCode(input.code, livemode);
   await upsertAppBillingConfig(input.clientId, {
     stripeConnectedAccountId: accountId,
     stripeOnboardingMethod: "oauth",
+    stripeLivemode: livemode,
   });
-  await syncConnectedAccountFlags(input.clientId, accountId);
+  await syncConnectedAccountFlags(input.clientId, accountId, livemode);
   await ensureOmStarterSideEffect(input.clientId);
 }
 
@@ -545,7 +564,7 @@ export async function syncMerchantConnectStatus(clientId: string): Promise<void>
   if (!accountId) {
     return;
   }
-  await syncConnectedAccountFlags(clientId, accountId);
+  await syncConnectedAccountFlags(clientId, accountId, appStripeLivemode(config));
 }
 
 export function isMerchantConnectPaymentsReady(
@@ -652,6 +671,7 @@ const MAX_MERCHANT_INVOICE_PAGES = 50;
 async function listAllMerchantConnectInvoices(
   accountId: string,
   stripeCustomerId: string,
+  livemode = true,
 ): Promise<StripeConnectInvoice[]> {
   const invoices: StripeConnectInvoice[] = [];
   let startingAfter: string | undefined;
@@ -667,7 +687,7 @@ async function listAllMerchantConnectInvoices(
     const result = await stripeConnectInvoiceRequest<{
       data?: StripeConnectInvoice[];
       has_more?: boolean;
-    }>(accountId, `/v1/invoices?${params.toString()}`);
+    }>(accountId, `/v1/invoices?${params.toString()}`, livemode);
     const batch = result.data ?? [];
     invoices.push(...batch);
     if (!result.has_more || batch.length === 0) {
@@ -685,6 +705,7 @@ async function listAllMerchantConnectInvoices(
 async function listAllMerchantConnectPaymentIntents(
   accountId: string,
   stripeCustomerId: string,
+  livemode = true,
 ): Promise<StripeConnectPaymentIntent[]> {
   const intents: StripeConnectPaymentIntent[] = [];
   let startingAfter: string | undefined;
@@ -700,7 +721,7 @@ async function listAllMerchantConnectPaymentIntents(
     const result = await stripeConnectInvoiceRequest<{
       data?: StripeConnectPaymentIntent[];
       has_more?: boolean;
-    }>(accountId, `/v1/payment_intents?${params.toString()}`);
+    }>(accountId, `/v1/payment_intents?${params.toString()}`, livemode);
     const batch = result.data ?? [];
     intents.push(...batch);
     if (!result.has_more || batch.length === 0) {
@@ -770,9 +791,14 @@ export async function listMerchantConnectInvoicesForAppUser(input: {
     return { items: [], page: input.page, pageSize: input.pageSize, totalCount: 0 };
   }
   const offset = (input.page - 1) * input.pageSize;
+  const livemode = appStripeLivemode(config);
   const [invoiceRows, paymentIntentRows] = await Promise.all([
-    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
-    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
+    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId, livemode),
+    listAllMerchantConnectPaymentIntents(
+      accountId,
+      customer.stripeCustomerId,
+      livemode,
+    ),
   ]);
   const paidBrands = paymentBrandByInvoiceId(paymentIntentRows);
   const invoices = invoiceRows
@@ -946,10 +972,15 @@ export async function getMerchantPaidDebtThisCycleUsdMicros(input: {
 
   const cycle = calendarMonthBoundsUtc(new Date());
   const cycleStartSeconds = Math.floor(new Date(cycle.start).getTime() / 1000);
+  const livemode = appStripeLivemode(config);
 
   const [invoices, paymentIntents] = await Promise.all([
-    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId),
-    listAllMerchantConnectPaymentIntents(accountId, customer.stripeCustomerId),
+    listAllMerchantConnectInvoices(accountId, customer.stripeCustomerId, livemode),
+    listAllMerchantConnectPaymentIntents(
+      accountId,
+      customer.stripeCustomerId,
+      livemode,
+    ),
   ]);
   return centsToUsdMicros(
     sumPaidInvoiceCentsSince(invoices, cycleStartSeconds) +
@@ -983,6 +1014,7 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
     const pi = await stripeConnectInvoiceRequest<StripeConnectPaymentIntent>(
       accountId,
       `/v1/payment_intents/${encodeURIComponent(invoiceId)}?expand[]=latest_charge`,
+      appStripeLivemode(config),
     );
     if (pi.customer !== customer.stripeCustomerId) {
       return null;
@@ -1001,6 +1033,7 @@ export async function getMerchantConnectInvoiceLinksForAppUser(input: {
   const invoice = await stripeConnectInvoiceRequest<StripeConnectInvoice>(
     accountId,
     `/v1/invoices/${encodeURIComponent(invoiceId)}`,
+    appStripeLivemode(config),
   );
   if (invoice.customer !== customer.stripeCustomerId) {
     return null;
@@ -1018,6 +1051,7 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
   name?: string;
   openmeterCustomerId?: string;
   openmeterCustomerKey?: string;
+  livemode?: boolean;
 }): Promise<string> {
   const existing = await getAppUserStripeCustomer({
     clientId: input.clientId,
@@ -1032,6 +1066,7 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
   const stripeCustomerId = await createConnectedCustomer({
     accountId: input.accountId,
     name: input.name ?? input.externalUserId,
+    livemode: input.livemode !== false,
     metadata: {
       pymthouse_client_id: input.clientId,
       external_user_id: input.externalUserId,
@@ -1067,12 +1102,14 @@ export async function createMerchantConnectCheckoutForUser(input: {
     throw new Error("Merchant Stripe Connect is not ready to accept payments");
   }
   const accountId = config!.stripeConnectedAccountId!;
+  const livemode = appStripeLivemode(config);
   const customerId = await ensureMerchantOwnedStripeCustomer({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
     accountId,
     openmeterCustomerId: input.openmeterCustomerId,
     openmeterCustomerKey: input.openmeterCustomerKey,
+    livemode,
   });
   const session = await createConnectedCheckoutSession({
     accountId,
@@ -1081,6 +1118,7 @@ export async function createMerchantConnectCheckoutForUser(input: {
     cancelUrl: input.cancelUrl,
     mode: "setup",
     applicationFeeBps: config!.applicationFeeBps ?? 0,
+    livemode,
     metadata: {
       pymthouse_client_id: input.clientId,
       external_user_id: input.externalUserId,

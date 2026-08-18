@@ -147,6 +147,10 @@ failover design.
 Dashboard: **Developers → Webhooks → Listen to events on Connected accounts**.  
 Env: `STRIPE_CONNECT_WEBHOOK_SECRET` (preferred) or `STRIPE_WEBHOOK_SECRET` (`whsec_…`),
 endpoint `POST /webhooks/stripe`.  
+Sandbox Connect (per-app `stripeLivemode=false`): `STRIPE_SANDBOX_SECRET_KEY` +
+`STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET` / `STRIPE_SANDBOX_WEBHOOK_SECRET`,
+endpoint `POST /webhooks/stripe/sandbox` (register new Dashboard endpoints —
+do not reuse staging `whsec_` values).  
 Verify `Stripe-Signature` over the raw body (`src/lib/stripe/webhook.ts`).
 
 | Event | Handler intent | Neon / OM effect |

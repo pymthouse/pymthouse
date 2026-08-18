@@ -596,6 +596,12 @@ export const appBillingConfig = pgTable(
     invoiceLeadUsdMicros: text("invoice_lead_usd_micros"),
     /** Merchant Stripe Connected Account id (`acct_…`). */
     stripeConnectedAccountId: text("stripe_connected_account_id"),
+    /**
+     * When true (default), Merchant Connect uses the live platform key.
+     * When false, Connect uses STRIPE_SANDBOX_SECRET_KEY (test/sandbox platform).
+     * Locked once stripeConnectedAccountId is set — disconnect to switch.
+     */
+    stripeLivemode: boolean("stripe_livemode").notNull().default(true),
     /** How the merchant linked: account_link | oauth */
     stripeOnboardingMethod: text("stripe_onboarding_method"),
     stripeChargesEnabled: boolean("stripe_charges_enabled").notNull().default(false),

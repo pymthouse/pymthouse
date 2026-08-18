@@ -22,6 +22,7 @@ import {
 const ENV_KEYS = [
   "STRIPE_SECRET_KEY",
   "STRIPE_API_KEY",
+  "STRIPE_SANDBOX_SECRET_KEY",
   "STRIPE_CONNECT_CLIENT_ID",
   "NEXTAUTH_URL",
 ] as const;
@@ -363,6 +364,29 @@ test("createMerchantConnectedAccount rejects missing secret", async (t) => {
     () => createMerchantConnectedAccount({ clientId: "app_1" }),
     /STRIPE_SECRET_KEY/,
   );
+});
+
+test("createMerchantConnectedAccount uses sandbox key when livemode=false", async (t) => {
+  withEnv(t, {
+    STRIPE_SECRET_KEY: "sk_live_unit",
+    STRIPE_SANDBOX_SECRET_KEY: "sk_test_sandbox",
+  });
+  let auth: string | null = null;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    auth = headers.get("Authorization");
+    const url = String(input);
+    if (url.includes("/v2/core/accounts")) {
+      return jsonResponse({ error: { message: "v2 unavailable" } }, 400);
+    }
+    return jsonResponse({ id: "acct_sandbox_1" });
+  });
+  const id = await createMerchantConnectedAccount({
+    clientId: "app_1",
+    livemode: false,
+  });
+  assert.equal(id, "acct_sandbox_1");
+  assert.equal(auth, "Bearer sk_test_sandbox");
 });
 
 test("createMerchantConnectedAccount rejects invalid account id", async (t) => {

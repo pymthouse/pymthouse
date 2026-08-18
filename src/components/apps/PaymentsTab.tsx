@@ -33,6 +33,8 @@ type StripeStatus = {
   softNegativeUsdMicros?: string | null;
   stripeConnectedAccountId?: string | null;
   stripeOnboardingMethod?: string | null;
+  /** When false, Merchant Connect uses the sandbox platform. Defaults true. */
+  stripeLivemode?: boolean;
   stripeChargesEnabled?: boolean;
   stripePayoutsEnabled?: boolean;
   stripeDetailsSubmitted?: boolean;
@@ -349,6 +351,104 @@ async function requestSaveBillingSettings(input: {
   } finally {
     setters.setBusy(false);
   }
+}
+
+async function requestSetStripeLivemode(input: {
+  appId: string;
+  stripeLivemode: boolean;
+  setters: BusySetters & {
+    setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  };
+}): Promise<void> {
+  const { setters } = input;
+  setters.setBusy(true);
+  setters.setError(null);
+  try {
+    const res = await fetch(`/api/v1/apps/${input.appId}/billing/stripe`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stripeLivemode: input.stripeLivemode }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(body.error || "Failed to update Stripe mode");
+    }
+    setters.setStatus((prev) => (prev ? { ...prev, ...body } : body));
+  } catch (err) {
+    setters.setError(err instanceof Error ? err.message : String(err));
+  } finally {
+    setters.setBusy(false);
+  }
+}
+
+function PaymentsLivemodeToggle(props: Readonly<{
+  appId: string;
+  busy: boolean;
+  locked: boolean;
+  stripeLivemode: boolean;
+  setters: BusySetters & {
+    setStatus: Dispatch<SetStateAction<StripeStatus | null>>;
+  };
+}>) {
+  const { appId, busy, locked, stripeLivemode, setters } = props;
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-zinc-200">Stripe platform</p>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            {locked
+              ? "Locked while a Connected Account is linked. Disconnect to switch."
+              : "Choose sandbox before onboarding to test with test cards (no real money)."}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={busy || locked || stripeLivemode}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              stripeLivemode
+                ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
+            }`}
+            onClick={() =>
+              void requestSetStripeLivemode({
+                appId,
+                stripeLivemode: true,
+                setters,
+              })
+            }
+          >
+            Live
+          </button>
+          <button
+            type="button"
+            disabled={busy || locked || !stripeLivemode}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              !stripeLivemode
+                ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+                : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
+            }`}
+            onClick={() =>
+              void requestSetStripeLivemode({
+                appId,
+                stripeLivemode: false,
+                setters,
+              })
+            }
+          >
+            Sandbox
+          </button>
+        </div>
+      </div>
+      {!stripeLivemode ? (
+        <p className="mt-2 text-xs text-amber-300/90">
+          Sandbox mode: Connect onboarding and end-user charges use Stripe test
+          mode. Owner network billing stays on the live platform.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function PaymentsInvoicesList({ invoices }: Readonly<{ invoices: InvoiceRow[] }>) {
@@ -759,6 +859,16 @@ function PaymentsStatusDetails({ status }: Readonly<{ status: StripeStatus | nul
         </dd>
       </div>
       <div>
+        <dt className="text-zinc-500">Stripe mode</dt>
+        <dd className="text-zinc-300">
+          {status?.stripeLivemode === false ? (
+            <span className="text-amber-300">Sandbox (test charges only)</span>
+          ) : (
+            "Live"
+          )}
+        </dd>
+      </div>
+      <div>
         <dt className="text-zinc-500">Onboarding</dt>
         <dd className="text-zinc-300">{status?.stripeOnboardingMethod ?? "—"}</dd>
       </div>
@@ -884,6 +994,16 @@ function PaymentsTabLoaded(props: Readonly<{
         </div>
 
         {showDetails && <PaymentsStatusDetails status={status} />}
+
+        {canManageBilling && (
+          <PaymentsLivemodeToggle
+            appId={appId}
+            busy={busy}
+            locked={flags.hasAccount}
+            stripeLivemode={status?.stripeLivemode !== false}
+            setters={{ setBusy, setError, setStatus }}
+          />
+        )}
 
         {canManageBilling && (
           <PaymentsConnectActions
