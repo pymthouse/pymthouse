@@ -13,6 +13,7 @@ import {
 import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
 import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
+import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
 import {
   getAppBillingConfig,
   upsertAppBillingConfig,
@@ -586,6 +587,55 @@ export function connectPaymentsOnlyEnabled(
   return Boolean(config?.connectPaymentsOnly);
 }
 
+/**
+ * OpenMeter customer stamped on `app_user_stripe_customers`.
+ *
+ * Callers (payment-method checkout, cutover scripts) still pass the legacy
+ * compound `app_…:externalUserId` key. Persist the billing-identity payer
+ * instead — `eu_{end_users.id}` in merchant mode — so Stripe customers point
+ * at the customer that actually holds usage, credits, and invoices.
+ *
+ * Trust a caller/stored OpenMeter id only when its key already matches that
+ * canonical payer; otherwise drop the id rather than keep a legacy customer.
+ */
+async function resolveCanonicalOpenMeterCustomerLink(input: {
+  clientId: string;
+  externalUserId: string;
+  openmeterCustomerId?: string | null;
+  openmeterCustomerKey?: string | null;
+  storedCustomerId?: string | null;
+  storedCustomerKey?: string | null;
+}): Promise<{
+  openmeterCustomerKey: string;
+  openmeterCustomerId: string | null;
+}> {
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const openmeterCustomerKey = identity.customerKey;
+  const callerKey = input.openmeterCustomerKey?.trim() || "";
+  const callerId = input.openmeterCustomerId?.trim() || "";
+  if (callerKey === openmeterCustomerKey && callerId) {
+    return {
+      openmeterCustomerKey,
+      openmeterCustomerId: callerId,
+    };
+  }
+  const storedKey = input.storedCustomerKey?.trim() || "";
+  const storedId = input.storedCustomerId?.trim() || "";
+  if (storedKey === openmeterCustomerKey && storedId) {
+    return {
+      openmeterCustomerKey,
+      openmeterCustomerId: storedId,
+    };
+  }
+  return {
+    openmeterCustomerKey,
+    openmeterCustomerId: null,
+  };
+}
+
 export async function upsertAppUserStripeCustomer(input: {
   clientId: string;
   externalUserId: string;
@@ -604,6 +654,14 @@ export async function upsertAppUserStripeCustomer(input: {
       ),
     )
     .limit(1);
+  const canonical = await resolveCanonicalOpenMeterCustomerLink({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    openmeterCustomerId: input.openmeterCustomerId,
+    openmeterCustomerKey: input.openmeterCustomerKey,
+    storedCustomerId: existing[0]?.openmeterCustomerId,
+    storedCustomerKey: existing[0]?.openmeterCustomerKey,
+  });
   const now = new Date().toISOString();
   if (existing[0]) {
     await db
@@ -611,8 +669,8 @@ export async function upsertAppUserStripeCustomer(input: {
       .set({
         stripeConnectedAccountId: input.stripeConnectedAccountId,
         stripeCustomerId: input.stripeCustomerId,
-        openmeterCustomerId: input.openmeterCustomerId ?? null,
-        openmeterCustomerKey: input.openmeterCustomerKey ?? null,
+        openmeterCustomerId: canonical.openmeterCustomerId,
+        openmeterCustomerKey: canonical.openmeterCustomerKey,
         updatedAt: now,
       })
       .where(eq(appUserStripeCustomers.id, existing[0].id));
@@ -624,8 +682,8 @@ export async function upsertAppUserStripeCustomer(input: {
     externalUserId: input.externalUserId,
     stripeConnectedAccountId: input.stripeConnectedAccountId,
     stripeCustomerId: input.stripeCustomerId,
-    openmeterCustomerId: input.openmeterCustomerId ?? null,
-    openmeterCustomerKey: input.openmeterCustomerKey ?? null,
+    openmeterCustomerId: canonical.openmeterCustomerId,
+    openmeterCustomerKey: canonical.openmeterCustomerKey,
     createdAt: now,
     updatedAt: now,
   });
@@ -1057,10 +1115,32 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
+  const canonical = await resolveCanonicalOpenMeterCustomerLink({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    openmeterCustomerId: input.openmeterCustomerId,
+    openmeterCustomerKey: input.openmeterCustomerKey,
+    storedCustomerId: existing?.openmeterCustomerId,
+    storedCustomerKey: existing?.openmeterCustomerKey,
+  });
   if (
     existing?.stripeCustomerId &&
     existing.stripeConnectedAccountId === input.accountId
   ) {
+    const keyStale =
+      existing.openmeterCustomerKey !== canonical.openmeterCustomerKey;
+    const idStale =
+      (existing.openmeterCustomerId ?? null) !== canonical.openmeterCustomerId;
+    if (keyStale || idStale) {
+      await upsertAppUserStripeCustomer({
+        clientId: input.clientId,
+        externalUserId: input.externalUserId,
+        stripeConnectedAccountId: input.accountId,
+        stripeCustomerId: existing.stripeCustomerId,
+        openmeterCustomerId: canonical.openmeterCustomerId,
+        openmeterCustomerKey: canonical.openmeterCustomerKey,
+      });
+    }
     return existing.stripeCustomerId;
   }
   const stripeCustomerId = await createConnectedCustomer({
@@ -1070,12 +1150,10 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     metadata: {
       pymthouse_client_id: input.clientId,
       external_user_id: input.externalUserId,
-      ...(input.openmeterCustomerId
-        ? { openmeter_customer_id: input.openmeterCustomerId }
+      ...(canonical.openmeterCustomerId
+        ? { openmeter_customer_id: canonical.openmeterCustomerId }
         : {}),
-      ...(input.openmeterCustomerKey
-        ? { customer_key: input.openmeterCustomerKey }
-        : {}),
+      customer_key: canonical.openmeterCustomerKey,
     },
   });
   await upsertAppUserStripeCustomer({
@@ -1083,8 +1161,8 @@ export async function ensureMerchantOwnedStripeCustomer(input: {
     externalUserId: input.externalUserId,
     stripeConnectedAccountId: input.accountId,
     stripeCustomerId,
-    openmeterCustomerId: input.openmeterCustomerId,
-    openmeterCustomerKey: input.openmeterCustomerKey,
+    openmeterCustomerId: canonical.openmeterCustomerId,
+    openmeterCustomerKey: canonical.openmeterCustomerKey,
   });
   return stripeCustomerId;
 }
