@@ -1266,6 +1266,7 @@ export async function createMerchantConnectCheckoutForUser(input: {
     successUrl: input.successUrl,
     cancelUrl: input.cancelUrl,
     mode: "setup",
+    currency: config!.defaultCurrency ?? "usd",
     applicationFeeBps: config!.applicationFeeBps ?? 0,
     livemode,
     metadata: {
