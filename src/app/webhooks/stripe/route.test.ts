@@ -745,3 +745,124 @@ test("POST checkout PM restore prefers server-issued session mapping over metada
   assert.deepEqual(sessions, ["cs_pm_restore_1"]);
   assert.equal(afterAttachCalled, false);
 });
+
+const SANDBOX_PLATFORM_SECRET = "whsec_sandbox_platform_test";
+const SANDBOX_CONNECT_SECRET = "whsec_sandbox_connect_test";
+
+function withSandboxWebhookEnv(t: { after: (fn: () => void) => void }): void {
+  const prevConnect = process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET;
+  const prevPlatform = process.env.STRIPE_SANDBOX_WEBHOOK_SECRET;
+  t.after(() => {
+    if (prevConnect === undefined) {
+      delete process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET;
+    } else {
+      process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET = prevConnect;
+    }
+    if (prevPlatform === undefined) {
+      delete process.env.STRIPE_SANDBOX_WEBHOOK_SECRET;
+    } else {
+      process.env.STRIPE_SANDBOX_WEBHOOK_SECRET = prevPlatform;
+    }
+    __setGrantAllowanceUsdMicrosForTests(null);
+    __setTopUpClientOwnedByOwnerForTests(null);
+    __setMerchantTopUpAccountMatchesForTests(null);
+    __setResolveAppBillingCurrencyForTests(null);
+  });
+  process.env.STRIPE_SANDBOX_WEBHOOK_SECRET = SANDBOX_PLATFORM_SECRET;
+  process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET = SANDBOX_CONNECT_SECRET;
+  __setResolveAppBillingCurrencyForTests(async () => "usd");
+}
+
+async function postSignedSandbox(
+  rawBody: string,
+  secret: string,
+): Promise<Response> {
+  const { POST } = await import("./sandbox/route");
+  const now = Math.floor(Date.now() / 1000);
+  return POST(
+    new Request("http://localhost/webhooks/stripe/sandbox", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": signBody(secret, now, rawBody),
+      },
+      body: rawBody,
+    }),
+  );
+}
+
+test("POST sandbox owner top-up does not grant production credits", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setTopUpClientOwnedByOwnerForTests(async () => true);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "owner:user_route_1",
+      source: "topup",
+      grantedUsdMicros: "25000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = topUpEventBody("checkout.session.completed");
+  const res = await postSignedSandbox(rawBody, SANDBOX_PLATFORM_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean; ignored?: string };
+  assert.equal(json.credited, undefined);
+  assert.equal(json.ignored, "sandbox_owner_grant");
+  assert.equal(granted, false);
+});
+
+test("POST sandbox merchant Connect top-up still credits the end user", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  const calls: Array<Record<string, unknown>> = [];
+  __setGrantAllowanceUsdMicrosForTests(async (input) => {
+    calls.push({ ...input, amountUsdMicros: input.amountUsdMicros.toString() });
+    return {
+      externalUserId: input.externalUserId,
+      source: input.source,
+      grantedUsdMicros: input.amountUsdMicros.toString(),
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = merchantTopUpEventBody("checkout.session.completed", {
+    account: "acct_sandbox_1",
+  });
+  const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean };
+  assert.equal(json.credited, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.externalUserId, "eu_route_1");
+});
+
+test("POST sandbox platform auto-topup does not grant owner credits", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setTopUpClientOwnedByOwnerForTests(async () => true);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "owner:user_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({
+    externalUserId: "owner:user_route_1",
+  });
+  const res = await postSignedSandbox(rawBody, SANDBOX_PLATFORM_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean; ignored?: string };
+  assert.equal(json.credited, undefined);
+  assert.equal(json.ignored, "sandbox_owner_grant");
+  assert.equal(granted, false);
+});

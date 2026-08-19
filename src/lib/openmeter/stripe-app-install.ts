@@ -389,8 +389,6 @@ export async function disconnectStripeConnect(clientId: string): Promise<void> {
     stripePayoutsEnabled: false,
     stripeDetailsSubmitted: false,
     connectPaymentsOnly: false,
-    // Unlock sandbox/live switch for the next Connect onboarding.
-    stripeLivemode: true,
   });
 }
 

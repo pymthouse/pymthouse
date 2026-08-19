@@ -27,8 +27,12 @@ import {
   getKonnectStripeBillingRefs,
   getStripeCustomerAppDataId,
 } from "@/lib/openmeter/stripe-customer-data";
-import { createConnectedCheckoutSession } from "@/lib/stripe/connect-accounts";
 import {
+  createConnectedCheckoutSession,
+  resolveStripePlatformSecretKeyOrNull,
+} from "@/lib/stripe/connect-accounts";
+import {
+  appStripeLivemode,
   ensureMerchantOwnedStripeCustomer,
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
@@ -102,9 +106,7 @@ export function resolveTopUpReturnUrl(
 }
 
 function stripeSecretKeyOrNull(): string | null {
-  const key =
-    process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  return key?.startsWith("sk_") ? key : null;
+  return resolveStripePlatformSecretKeyOrNull(true);
 }
 
 /**
@@ -302,6 +304,7 @@ export async function createMerchantEndUserTopUpCheckoutSession(input: {
     throw new Error("Merchant Stripe Connect is not ready to accept payments");
   }
   const accountId = config!.stripeConnectedAccountId!.trim();
+  const livemode = appStripeLivemode(config);
 
   let openmeterCustomerId: string | undefined;
   let openmeterCustomerKey: string | undefined;
@@ -331,6 +334,7 @@ export async function createMerchantEndUserTopUpCheckoutSession(input: {
     accountId,
     openmeterCustomerId,
     openmeterCustomerKey,
+    livemode,
   });
 
   const origin = getPublicOrigin();
@@ -351,6 +355,7 @@ export async function createMerchantEndUserTopUpCheckoutSession(input: {
     currency: "usd",
     productName: "PymtHouse prepaid credits",
     applicationFeeBps: config!.applicationFeeBps ?? 0,
+    livemode,
     metadata: {
       [TOP_UP_METADATA_FLAG]: "1",
       client_id: publicClientId,

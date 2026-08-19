@@ -13,7 +13,10 @@ import {
 import { formatUsdMicrosForDisplay } from "@/lib/billing/pay-per-use-threshold";
 import { getUnbilledDebtDetails } from "@/lib/billing/unbilled-debt";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
-import { resolveOpenMeterBillingIdentity } from "@/lib/openmeter/billing-identity";
+import {
+  appUserRetailCustomerKey,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import {
   getAppBillingConfig,
   upsertAppBillingConfig,
@@ -591,12 +594,14 @@ export function connectPaymentsOnlyEnabled(
  * OpenMeter customer stamped on `app_user_stripe_customers`.
  *
  * Callers (payment-method checkout, cutover scripts) still pass the legacy
- * compound `app_…:externalUserId` key. Persist the billing-identity payer
- * instead — `eu_{end_users.id}` in merchant mode — so Stripe customers point
- * at the customer that actually holds usage, credits, and invoices.
+ * compound `app_…:externalUserId` key. Persist the retail customer instead —
+ * `eu_{end_users.id}` for end-users even under owner_rollup /
+ * connectPaymentsOnly — so Stripe customers point at the card holder, not
+ * the owner wallet.
  *
  * Trust a caller/stored OpenMeter id only when its key already matches that
- * canonical payer; otherwise drop the id rather than keep a legacy customer.
+ * canonical retail customer; otherwise drop the id rather than keep a
+ * legacy or owner-wallet customer.
  */
 async function resolveCanonicalOpenMeterCustomerLink(input: {
   clientId: string;
@@ -613,7 +618,7 @@ async function resolveCanonicalOpenMeterCustomerLink(input: {
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
-  const openmeterCustomerKey = identity.customerKey;
+  const openmeterCustomerKey = appUserRetailCustomerKey(identity);
   const callerKey = input.openmeterCustomerKey?.trim() || "";
   const callerId = input.openmeterCustomerId?.trim() || "";
   if (callerKey === openmeterCustomerKey && callerId) {

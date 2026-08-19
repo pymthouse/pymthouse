@@ -227,7 +227,14 @@ async function settleOwnerTopUp(input: {
   clientId: string;
   ownerUserId: string;
   amountUsdMicros: bigint;
+  livemode: boolean;
 }): Promise<Response> {
+  if (!input.livemode) {
+    return NextResponse.json({
+      received: true,
+      ignored: "sandbox_owner_grant",
+    });
+  }
   if (input.secretKind !== "platform") {
     return NextResponse.json({
       received: true,
@@ -342,6 +349,7 @@ async function authorizeLegacyAutoTopUpTenancy(input: {
   secretKind: StripeWebhookSecretKind;
   clientId: string;
   externalUserId: string;
+  livemode: boolean;
 }): Promise<Response | null> {
   // Same tenancy binding as sibling top-up handlers:
   // - Connect events: account must match the target app's Connected Account
@@ -368,6 +376,13 @@ async function authorizeLegacyAutoTopUpTenancy(input: {
       });
     }
     return null;
+  }
+
+  if (!input.livemode) {
+    return NextResponse.json({
+      received: true,
+      ignored: "sandbox_owner_grant",
+    });
   }
 
   if (input.secretKind !== "platform") {
@@ -415,6 +430,7 @@ async function authorizeLegacyAutoTopUpTenancy(input: {
 async function handleLegacyAutoTopUpPaymentIntentSucceeded(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
+  livemode: boolean,
 ): Promise<Response> {
   // DRAIN + ACTIVE: off-session auto-top-up PaymentIntents grant prepaid
   // credits. Sync grant uses the same idempotency key; webhook retries are safe.
@@ -493,6 +509,7 @@ async function handleLegacyAutoTopUpPaymentIntentSucceeded(
     secretKind,
     clientId,
     externalUserId,
+    livemode,
   });
   if (denied) {
     return denied;
@@ -522,6 +539,7 @@ async function handleLegacyAutoTopUpPaymentIntentSucceeded(
 async function handleCheckoutSessionCompleted(
   rawBody: string,
   secretKind: StripeWebhookSecretKind,
+  livemode: boolean,
 ): Promise<Response> {
   const topUp = parseTopUpCheckoutSessionCompleted(rawBody);
   if (topUp) {
@@ -544,6 +562,7 @@ async function handleCheckoutSessionCompleted(
         clientId: topUp.clientId,
         ownerUserId: topUp.ownerUserId,
         amountUsdMicros: topUp.amountUsdMicros,
+        livemode,
       });
     }
   }
@@ -598,8 +617,9 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  * PaymentIntent / charge / dispute events for Custom Invoicing settlement are
  * handled by pymthouse/settlement (Kafka producer), not this route.
  *
- * Owner top-up grants require the platform webhook secret and a platform
- * (non-Connect) event. Merchant end-user top-ups and Connect auto top-ups
+ * Owner top-up grants require the live webhook plane, the platform webhook
+ * secret, and a platform (non-Connect) event. Sandbox ingress never credits
+ * owner Plane A wallets. Merchant end-user top-ups and Connect auto top-ups
  * require a Connect `account` field matching the app's Connected Account.
  * Platform auto top-ups require the platform secret plus `owner:{userId}`
  * ownership of `client_id`. Auto-topup settlement also requires PI currency
@@ -610,6 +630,7 @@ function eventTypeFromRawBody(rawBody: string): string | null {
 export async function handleStripeWebhookPost(
   request: Request,
   resolveSecrets: () => StripeWebhookSecret[],
+  livemode = true,
 ): Promise<Response> {
   let secrets: StripeWebhookSecret[];
   try {
@@ -642,10 +663,14 @@ export async function handleStripeWebhookPost(
     type === "checkout.session.completed" ||
     type === "checkout.session.async_payment_succeeded"
   ) {
-    return handleCheckoutSessionCompleted(rawBody, secretKind);
+    return handleCheckoutSessionCompleted(rawBody, secretKind, livemode);
   }
   if (type === "payment_intent.succeeded") {
-    return handleLegacyAutoTopUpPaymentIntentSucceeded(rawBody, secretKind);
+    return handleLegacyAutoTopUpPaymentIntentSucceeded(
+      rawBody,
+      secretKind,
+      livemode,
+    );
   }
   if (type === "setup_intent.succeeded" || type === "payment_method.attached") {
     try {

@@ -116,32 +116,52 @@ export async function fetchConnectedAccountIdentity(
 /** Exported for tests. */
 export const __testMapAccountIdentity = mapAccountIdentity;
 
+function isStripeSecretOrRestrictedKey(key: string): boolean {
+  return key.startsWith("sk_") || key.startsWith("rk_");
+}
+
+function isStripeTestModeKey(key: string): boolean {
+  return key.startsWith("sk_test_") || key.startsWith("rk_test_");
+}
+
 /**
  * Resolve the platform secret key for Merchant Connect.
  * Live (default) uses STRIPE_SECRET_KEY; sandbox uses STRIPE_SANDBOX_SECRET_KEY.
- * Owner Plane A callers must keep using the live key directly — do not pass
- * livemode=false into owner top-up / OM Stripe customer mint paths.
+ * Sandbox requires a test-mode key (`sk_test_` / `rk_test_`) so a live key
+ * cannot be selected by flipping stripeLivemode. Restricted keys (`rk_`) are
+ * accepted. Owner Plane A callers must keep using the live key directly.
  */
 export function resolveStripePlatformSecretKey(livemode = true): string {
   if (livemode === false) {
     const sandbox =
       process.env.STRIPE_SANDBOX_SECRET_KEY?.trim() ||
       process.env.STRIPE_SANDBOX_API_KEY?.trim();
-    if (!sandbox?.startsWith("sk_")) {
+    if (!sandbox || !isStripeSecretOrRestrictedKey(sandbox) || !isStripeTestModeKey(sandbox)) {
       throw new Error(
-        "STRIPE_SANDBOX_SECRET_KEY is required for sandbox Merchant Connect (must be sk_… sandbox platform key)",
+        "STRIPE_SANDBOX_SECRET_KEY is required for sandbox Merchant Connect (must be sk_test_… or rk_test_…)",
       );
     }
     return sandbox;
   }
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key?.startsWith("sk_")) {
+  if (!key || !isStripeSecretOrRestrictedKey(key)) {
     throw new Error(
-      "STRIPE_SECRET_KEY is required for Stripe Connect (must be sk_… platform key)",
+      "STRIPE_SECRET_KEY is required for Stripe Connect (must be sk_… or rk_… platform key)",
     );
   }
   return key;
+}
+
+/** Lookup-only sibling for list/chargeability paths that fail open to []. */
+export function resolveStripePlatformSecretKeyOrNull(
+  livemode = true,
+): string | null {
+  try {
+    return resolveStripePlatformSecretKey(livemode);
+  } catch {
+    return null;
+  }
 }
 
 function requireStripeSecretKey(livemode = true): string {
@@ -465,7 +485,7 @@ function addSetupCheckoutFields(
   body: URLSearchParams,
   metadata: Record<string, string> | undefined,
 ): void {
-  body.set("payment_method_types[0]", "card");
+  // Omit payment_method_types so Checkout uses Dashboard dynamic methods.
   addCheckoutMetadata(body, metadata, "setup_intent_data[metadata]");
 }
 

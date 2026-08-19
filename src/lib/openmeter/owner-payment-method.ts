@@ -1,5 +1,6 @@
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
+import { resolveStripePlatformSecretKeyOrNull } from "@/lib/stripe/connect-accounts";
 import { getHostedAdminClient, isHostedAdminClientAvailable } from "./admin-client";
 import { prepareOwnerCustomerStripeBilling } from "./billing-profiles";
 import {
@@ -89,13 +90,8 @@ export type OwnerPaymentMethodListItem = {
   isDefault: boolean;
 };
 
-function stripeSecretKeyOrNull(): string | null {
-  const key =
-    process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key?.startsWith("sk_")) {
-    return null;
-  }
-  return key;
+function stripeSecretKeyOrNull(livemode = true): string | null {
+  return resolveStripePlatformSecretKeyOrNull(livemode);
 }
 
 /**
@@ -119,6 +115,8 @@ type StripeDeps = {
   signal: AbortSignal;
   /** Routes the request to a merchant's Stripe Connected Account. */
   stripeAccount?: string;
+  /** When false, authorize with the sandbox platform key. Defaults live. */
+  livemode?: boolean;
 };
 
 function liveStripeDeps(budgetMs: number): StripeDeps {
@@ -131,7 +129,7 @@ async function stripeRequestJson<T>(input: {
   body?: URLSearchParams;
   deps: StripeDeps;
 }): Promise<T | null> {
-  const apiKey = stripeSecretKeyOrNull();
+  const apiKey = stripeSecretKeyOrNull(input.deps.livemode !== false);
   if (!apiKey) {
     return null;
   }
@@ -517,6 +515,7 @@ export async function unlinkStripeCustomerPaymentMethod(input: {
   stripeCustomerId: string;
   paymentMethodId: string;
   stripeAccount?: string;
+  livemode?: boolean;
 }): Promise<{
   unlinked: boolean;
   paymentMethodId: string | null;
@@ -533,6 +532,7 @@ export async function unlinkStripeCustomerPaymentMethod(input: {
     const deps: StripeDeps = {
       ...liveStripeDeps(MUTATION_BUDGET_MS),
       ...(input.stripeAccount ? { stripeAccount: input.stripeAccount } : {}),
+      livemode: input.livemode !== false,
     };
     const paymentMethod = await retrieveStripePaymentMethod(paymentMethodId, deps);
     if (paymentMethod?.customer !== stripeCustomerId) {
@@ -591,6 +591,7 @@ export async function setStripeCustomerDefaultPaymentMethod(input: {
   stripeCustomerId: string;
   paymentMethodId: string;
   stripeAccount?: string;
+  livemode?: boolean;
 }): Promise<{ updated: boolean; paymentMethodId: string | null }> {
   const stripeCustomerId = input.stripeCustomerId.trim();
   const paymentMethodId = input.paymentMethodId.trim();
@@ -603,6 +604,7 @@ export async function setStripeCustomerDefaultPaymentMethod(input: {
     const deps: StripeDeps = {
       ...liveStripeDeps(MUTATION_BUDGET_MS),
       ...(input.stripeAccount ? { stripeAccount: input.stripeAccount } : {}),
+      livemode: input.livemode !== false,
     };
     const paymentMethod = await retrieveStripePaymentMethod(paymentMethodId, deps);
     if (paymentMethod?.customer !== stripeCustomerId) {

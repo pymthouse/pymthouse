@@ -9,6 +9,7 @@ import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
+  isEndUserCustomerKey,
   isOwnerWireSubject,
   normalizePlatformUserId,
   parseCustomerKey,
@@ -143,6 +144,20 @@ async function resolveEndUserActorIds(input: {
       input.externalUserId,
     ),
   };
+}
+
+/**
+ * OpenMeter customer for app-user retail billing (payment methods, Checkout).
+ * End-users use `eu_{end_users.id}` even under owner_rollup so cards never
+ * land on the owner wallet. Owners and Explorers use the owner customer key.
+ */
+export function appUserRetailCustomerKey(
+  identity: ResolvedBillingIdentity,
+): string {
+  if (isEndUserCustomerKey(identity.actorEndUserId)) {
+    return identity.actorEndUserId;
+  }
+  return identity.customerKey;
 }
 
 /** Owner wallet id when this identity's cost rail is the shared owner customer. */

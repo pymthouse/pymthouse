@@ -245,6 +245,30 @@ test("disconnectStripeConnect clears config and uninstalls on self-hosted", asyn
   assert.equal(status.connectedAt, null);
 });
 
+test("disconnectStripeConnect preserves sandbox stripeLivemode", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(() => cleanupTestApp(seeded));
+
+  const now = new Date().toISOString();
+  await db.insert(appBillingConfig).values({
+    id: crypto.randomUUID(),
+    clientId: seeded.clientId,
+    stripeConnectStatus: "connected",
+    stripeConnectedAccountId: "acct_sandbox_keep",
+    stripeLivemode: false,
+    defaultCurrency: "USD",
+    connectedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await disconnectStripeConnect(seeded.clientId);
+  const status = await getStripeConnectStatus(seeded.clientId);
+  assert.equal(status.status, "disconnected");
+  assert.equal(status.stripeConnectedAccountId, null);
+  assert.equal(status.stripeLivemode, false);
+});
+
 test("getStripeConnectStatus defaults to disconnected when no config row", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(() => cleanupTestApp(seeded));

@@ -6,6 +6,7 @@ import { db } from "@/db/index";
 import { appUserStripeCustomers } from "@/db/schema";
 import { findOrCreateAppEndUser } from "@/lib/billing/end-users";
 import {
+  appUserRetailCustomerKey,
   resetBillingIdentityCache,
   resolveOpenMeterBillingIdentity,
 } from "@/lib/openmeter/billing-identity";
@@ -140,4 +141,59 @@ test("ensureMerchantOwnedStripeCustomer repairs a legacy compound key on an exis
   assert.equal(rows[0]?.openmeterCustomerKey, identity.customerKey);
   assert.equal(rows[0]?.openmeterCustomerId, null);
   assert.equal(rows[0]?.stripeCustomerId, "cus_test_repair");
+});
+
+test("ensureMerchantOwnedStripeCustomer stamps retail eu_ key under owner_rollup connectPaymentsOnly", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripeRetail ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "owner_rollup",
+    connectPaymentsOnly: true,
+  });
+  resetBillingIdentityCache();
+
+  const externalUserId = `eu_${randomUUID().replaceAll("-", "")}`;
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: app.clientId,
+    externalUserId,
+  });
+  const retailKey = appUserRetailCustomerKey(identity);
+  assert.notEqual(retailKey, identity.customerKey);
+
+  await db.insert(appUserStripeCustomers).values({
+    id: randomUUID(),
+    clientId: app.clientId,
+    externalUserId,
+    stripeConnectedAccountId: "acct_test_retail",
+    stripeCustomerId: "cus_test_retail",
+    openmeterCustomerId: "01OWNERCUSTOMERID00000000001",
+    openmeterCustomerKey: identity.customerKey,
+  });
+
+  const stripeCustomerId = await ensureMerchantOwnedStripeCustomer({
+    clientId: app.clientId,
+    externalUserId,
+    accountId: "acct_test_retail",
+    openmeterCustomerId: "01OWNERCUSTOMERID00000000001",
+    openmeterCustomerKey: identity.customerKey,
+  });
+
+  assert.equal(stripeCustomerId, "cus_test_retail");
+  const rows = await db
+    .select()
+    .from(appUserStripeCustomers)
+    .where(
+      and(
+        eq(appUserStripeCustomers.clientId, app.clientId),
+        eq(appUserStripeCustomers.externalUserId, externalUserId),
+      ),
+    )
+    .limit(1);
+  assert.equal(rows[0]?.openmeterCustomerKey, retailKey);
+  assert.equal(rows[0]?.openmeterCustomerId, null);
 });

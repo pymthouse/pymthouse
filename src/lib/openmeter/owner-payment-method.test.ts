@@ -284,6 +284,42 @@ test("setStripeCustomerDefaultPaymentMethod updates a connected customer", async
   );
 });
 
+test("setStripeCustomerDefaultPaymentMethod uses sandbox key when livemode=false", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const auths: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    auths.push(headers.get("Authorization") ?? "");
+    if (String(input).includes("/payment_methods/pm_card")) {
+      return Response.json({ ...CARD, customer: "cus_connected" });
+    }
+    return Response.json({ id: "cus_connected" });
+  };
+  const previousLive = process.env.STRIPE_SECRET_KEY;
+  const previousSandbox = process.env.STRIPE_SANDBOX_SECRET_KEY;
+  process.env.STRIPE_SECRET_KEY = "sk_live_fake";
+  process.env.STRIPE_SANDBOX_SECRET_KEY = "sk_test_sandbox_pm";
+  t.after(() => {
+    if (previousLive === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = previousLive;
+    if (previousSandbox === undefined) delete process.env.STRIPE_SANDBOX_SECRET_KEY;
+    else process.env.STRIPE_SANDBOX_SECRET_KEY = previousSandbox;
+  });
+
+  const result = await setStripeCustomerDefaultPaymentMethod({
+    stripeCustomerId: "cus_connected",
+    paymentMethodId: "pm_card",
+    stripeAccount: "acct_merchant",
+    livemode: false,
+  });
+
+  assert.deepEqual(result, { updated: true, paymentMethodId: "pm_card" });
+  assert.ok(auths.every((auth) => auth === "Bearer sk_test_sandbox_pm"));
+});
+
 test("unlinkStripeCustomerPaymentMethod refuses the only attached method", async (t) => {
   const previousFetch = globalThis.fetch;
   t.after(() => {

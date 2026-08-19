@@ -12,15 +12,17 @@ import {
   isHostedAdminClientAvailable,
 } from "./admin-client";
 import {
+  appUserRetailCustomerKey,
+  resolveOpenMeterBillingIdentity,
+} from "./billing-identity";
+import {
   getAppBillingConfig,
   prepareAppCustomerStripeBilling,
 } from "./billing-profiles";
-import { buildOpenMeterCustomerKey } from "./customer-key";
 import {
   ensureOpenMeterCustomer,
   findOpenMeterCustomerByKey,
 } from "./customers";
-import { resolveOpenMeterMeterClientId } from "./meter-client-id";
 import {
   buildOwnerPaymentMethodList,
   OWNER_PAYMENT_METHOD_BUDGET_MS,
@@ -29,11 +31,13 @@ import {
   unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
 import {
+  appStripeLivemode,
   connectPaymentsOnlyEnabled,
   createMerchantConnectCheckoutForUser,
   getAppUserStripeCustomer,
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
+import { resolveStripePlatformSecretKeyOrNull } from "@/lib/stripe/connect-accounts";
 import { createOpenMeterStripeCheckoutSession } from "./stripe-checkout-session";
 import {
   clearKonnectStripeDefaultPaymentMethod,
@@ -119,9 +123,46 @@ export async function recordAppUserPaymentMethodCheckout(input: {
 }
 
 /**
+ * Retail OpenMeter customer for app-user payment methods.
+ * Uses `eu_{end_users.id}` for end-users — never the owner wallet and never
+ * the legacy `app_…:externalUserId` compound key.
+ */
+async function loadAppUserRetailOpenMeterCustomer(input: {
+  clientId: string;
+  externalUserId: string;
+  ensure: boolean;
+}): Promise<{ id: string; key: string } | null> {
+  if (!input.ensure && !isHostedAdminClientAvailable()) {
+    return null;
+  }
+  const client = getHostedAdminClient();
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const customerKey = appUserRetailCustomerKey(identity);
+  if (input.ensure) {
+    const customer = await ensureOpenMeterCustomer(client, customerKey);
+    return {
+      id: customer.id,
+      key: customer.key,
+    };
+  }
+  const customer = await findOpenMeterCustomerByKey(client, customerKey);
+  const id = customer?.id?.trim();
+  if (!customer || !id) {
+    return null;
+  }
+  return {
+    id,
+    key: customer.key?.trim() || customerKey,
+  };
+}
+
+/**
  * Restore the billing profile after Stripe has attached a payment method.
- * Uses the compound `{publicClientId}:{externalUserId}` customer — never the
- * owner-wallet path — matching {@link createAppUserPaymentMethodCheckout}.
+ * Uses the retail `eu_{end_users.id}` customer — never the owner-wallet path —
+ * matching {@link createAppUserPaymentMethodCheckout}.
  * Reassigning the mode-correct profile is safe for webhook retries.
  *
  * When a `paymentMethodId` is known (or the first attached method), promote it
@@ -135,12 +176,14 @@ export async function restoreAppUserBillingProfileAfterPaymentMethodAttached(
     return;
   }
   const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
-  const customerKey = buildOpenMeterCustomerKey(
-    publicClientId,
-    input.externalUserId,
-  );
-  const customer = await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await loadAppUserRetailOpenMeterCustomer({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    ensure: true,
+  });
+  if (!customer) {
+    throw new Error("app user OpenMeter customer not found for billing restore");
+  }
   await prepareAppCustomerStripeBilling({
     client,
     clientId: input.clientId,
@@ -181,11 +224,7 @@ export async function ensureAppUserDefaultPaymentMethodAfterAttach(input: {
     const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: refs.stripeCustomerId,
       konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-      deps: {
-        fetchImpl: fetch,
-        signal,
-        stripeAccount: refs.stripeAccount,
-      },
+      deps: stripeDepsForRefs(refs, signal),
     });
     // Stripe lists newest first; use the newest attached method.
     paymentMethodId = items[0]?.id?.trim() || null;
@@ -265,11 +304,7 @@ export async function resolveAppUserDefaultPaymentMethodId(input: {
   const { items } = await buildOwnerPaymentMethodList({
     stripeCustomerId: refs.stripeCustomerId,
     konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-    deps: {
-      fetchImpl: fetch,
-      signal,
-      stripeAccount: refs.stripeAccount,
-    },
+    deps: stripeDepsForRefs(refs, signal),
   });
   return items.find((pm) => pm.isDefault)?.id?.trim() || null;
 }
@@ -324,15 +359,24 @@ type AppUserStripeRefs = {
   stripeCustomerId: string;
   konnectDefaultPaymentMethodId: string | null;
   stripeAccount: string | undefined;
+  livemode: boolean;
 };
 
-function stripeSecretKeyOrNull(): string | null {
-  const key =
-    process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key?.startsWith("sk_")) {
-    return null;
-  }
-  return key;
+function stripeDepsForRefs(
+  refs: AppUserStripeRefs,
+  signal: AbortSignal,
+): {
+  fetchImpl: typeof fetch;
+  signal: AbortSignal;
+  stripeAccount: string | undefined;
+  livemode: boolean;
+} {
+  return {
+    fetchImpl: fetch,
+    signal,
+    stripeAccount: refs.stripeAccount,
+    livemode: refs.livemode,
+  };
 }
 
 /**
@@ -393,9 +437,6 @@ export async function listAppUserPaymentMethods(input: {
   if (!clientId || !externalUserId) {
     return [];
   }
-  if (!stripeSecretKeyOrNull()) {
-    return [];
-  }
 
   const billingConfig = await getAppBillingConfig(clientId);
   if (appUserPaymentMethodRequiresMerchantConnect(billingConfig)) {
@@ -404,6 +445,10 @@ export async function listAppUserPaymentMethods(input: {
     }
     const connectedAccountId =
       billingConfig?.stripeConnectedAccountId?.trim() || "";
+    const livemode = appStripeLivemode(billingConfig);
+    if (!resolveStripePlatformSecretKeyOrNull(livemode)) {
+      return [];
+    }
     const merchantCustomer = await getAppUserStripeCustomer({
       clientId,
       externalUserId,
@@ -424,18 +469,25 @@ export async function listAppUserPaymentMethods(input: {
         fetchImpl: fetch,
         signal,
         stripeAccount: connectedAccountId,
+        livemode,
       },
     });
     return items;
+  }
+
+  if (!resolveStripePlatformSecretKeyOrNull(true)) {
+    return [];
   }
 
   if (!isHostedAdminClientAvailable()) {
     return [];
   }
   const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
-  const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-  const customer = await findOpenMeterCustomerByKey(client, customerKey);
+  const customer = await loadAppUserRetailOpenMeterCustomer({
+    clientId,
+    externalUserId,
+    ensure: false,
+  });
   const customerId = customer?.id?.trim();
   if (!customerId) {
     return [];
@@ -473,14 +525,14 @@ export async function appUserHasChargeablePaymentMethod(input: {
   if (!clientId || !externalUserId) {
     return false;
   }
-  if (!stripeSecretKeyOrNull()) {
-    return null;
-  }
 
   try {
     const refs = await resolveAppUserStripeRefs({ clientId, externalUserId });
     if (!refs) {
       return false;
+    }
+    if (!resolveStripePlatformSecretKeyOrNull(refs.livemode)) {
+      return null;
     }
     if (refs.konnectDefaultPaymentMethodId) {
       return true;
@@ -490,11 +542,7 @@ export async function appUserHasChargeablePaymentMethod(input: {
     const { items } = await buildOwnerPaymentMethodList({
       stripeCustomerId: refs.stripeCustomerId,
       konnectDefaultPaymentMethodId: refs.konnectDefaultPaymentMethodId,
-      deps: {
-        fetchImpl: fetch,
-        signal,
-        stripeAccount: refs.stripeAccount,
-      },
+      deps: stripeDepsForRefs(refs, signal),
     });
     return items.some((pm) => pm.isDefault);
   } catch (err) {
@@ -529,6 +577,7 @@ async function resolveAppUserStripeRefs(input: {
       stripeCustomerId: merchantCustomer.stripeCustomerId,
       konnectDefaultPaymentMethodId: null,
       stripeAccount,
+      livemode: appStripeLivemode(billingConfig),
     };
   }
 
@@ -536,12 +585,11 @@ async function resolveAppUserStripeRefs(input: {
     return null;
   }
   const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
-  const customerKey = buildOpenMeterCustomerKey(
-    publicClientId,
-    input.externalUserId,
-  );
-  const customer = await findOpenMeterCustomerByKey(client, customerKey);
+  const customer = await loadAppUserRetailOpenMeterCustomer({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+    ensure: false,
+  });
   const customerId = customer?.id?.trim();
   if (!customerId) {
     return null;
@@ -559,6 +607,7 @@ async function resolveAppUserStripeRefs(input: {
     stripeCustomerId,
     konnectDefaultPaymentMethodId: konnect.defaultPaymentMethodId,
     stripeAccount: undefined,
+    livemode: true,
   };
 }
 
@@ -576,6 +625,7 @@ export async function unlinkAppUserPaymentMethod(input: {
     stripeCustomerId: refs.stripeCustomerId,
     paymentMethodId: input.paymentMethodId,
     stripeAccount: refs.stripeAccount,
+    livemode: refs.livemode,
   });
   if (
     refs.customerId &&
@@ -607,6 +657,7 @@ export async function setAppUserDefaultPaymentMethod(input: {
     stripeCustomerId: refs.stripeCustomerId,
     paymentMethodId: input.paymentMethodId,
     stripeAccount: refs.stripeAccount,
+    livemode: refs.livemode,
   });
   if (result.updated && refs.customerId) {
     await setKonnectStripeDefaultPaymentMethod({
@@ -619,9 +670,9 @@ export async function setAppUserDefaultPaymentMethod(input: {
 }
 
 /**
- * Start setup-only Stripe Checkout for the app end-user's compound-key customer.
- * Does not change the user's plan/subscription and never redirects to the
- * owner-wallet customer path.
+ * Start setup-only Stripe Checkout for the app end-user's retail customer
+ * (`eu_{end_users.id}`). Does not change the user's plan/subscription and
+ * never redirects to the owner-wallet customer path.
  */
 export async function createAppUserPaymentMethodCheckout(input: {
   clientId: string;
@@ -636,9 +687,14 @@ export async function createAppUserPaymentMethodCheckout(input: {
   }
 
   const client = getHostedAdminClient();
-  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
-  const customerKey = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-  const customer = await ensureOpenMeterCustomer(client, customerKey);
+  const customer = await loadAppUserRetailOpenMeterCustomer({
+    clientId,
+    externalUserId,
+    ensure: true,
+  });
+  if (!customer) {
+    throw new Error("app user OpenMeter customer not found for checkout");
+  }
   await prepareAppCustomerStripeBilling({
     client,
     clientId,
