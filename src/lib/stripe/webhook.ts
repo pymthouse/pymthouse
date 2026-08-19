@@ -246,6 +246,35 @@ export type StripeWebhookSecret = {
   kind: StripeWebhookSecretKind;
 };
 
+function collectWebhookSecretsByKind(input: {
+  platformEnv: string | undefined;
+  connectEnv: string | undefined;
+  platformLabel: string;
+  connectLabel: string;
+}): StripeWebhookSecret[] {
+  const platformSecret = input.platformEnv?.trim();
+  const connectSecret = input.connectEnv?.trim();
+  const resolved: StripeWebhookSecret[] = [];
+  if (platformSecret?.startsWith("whsec_")) {
+    resolved.push({ secret: platformSecret, kind: "platform" });
+  }
+  if (connectSecret?.startsWith("whsec_") && connectSecret !== platformSecret) {
+    resolved.push({ secret: connectSecret, kind: "connect" });
+  }
+  if (resolved.length > 0) {
+    return resolved;
+  }
+  if (connectSecret) {
+    throw new Error(`${input.connectLabel} must start with whsec_ when set`);
+  }
+  if (platformSecret) {
+    throw new Error(`${input.platformLabel} must start with whsec_ when set`);
+  }
+  throw new Error(
+    `${input.platformLabel} is required (whsec_… from Stripe Dashboard → Webhooks)`,
+  );
+}
+
 /**
  * All signing secrets the shared webhook route accepts, deduplicated and
  * tagged by endpoint. The route receives both Connect account events and
@@ -262,31 +291,25 @@ export type StripeWebhookSecret = {
  * no usable secret remains.
  */
 export function resolveStripeWebhookSecretsByKind(): StripeWebhookSecret[] {
-  const platformSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-  const connectSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET?.trim();
-  const resolved: StripeWebhookSecret[] = [];
-  if (platformSecret?.startsWith("whsec_")) {
-    resolved.push({ secret: platformSecret, kind: "platform" });
-  }
-  if (connectSecret?.startsWith("whsec_") && connectSecret !== platformSecret) {
-    resolved.push({ secret: connectSecret, kind: "connect" });
-  }
-  if (resolved.length > 0) {
-    return resolved;
-  }
-  if (connectSecret) {
-    throw new Error(
-      "STRIPE_CONNECT_WEBHOOK_SECRET must start with whsec_ when set",
-    );
-  }
-  if (platformSecret) {
-    throw new Error(
-      "STRIPE_WEBHOOK_SECRET must start with whsec_ when set",
-    );
-  }
-  throw new Error(
-    "STRIPE_WEBHOOK_SECRET is required (whsec_… from Stripe Dashboard → Webhooks)",
-  );
+  return collectWebhookSecretsByKind({
+    platformEnv: process.env.STRIPE_WEBHOOK_SECRET,
+    connectEnv: process.env.STRIPE_CONNECT_WEBHOOK_SECRET,
+    platformLabel: "STRIPE_WEBHOOK_SECRET",
+    connectLabel: "STRIPE_CONNECT_WEBHOOK_SECRET",
+  });
+}
+
+/**
+ * Sandbox Connect / platform webhook secrets for `POST /webhooks/stripe/sandbox`.
+ * Separate from live so production can receive both without mixing whsec values.
+ */
+export function resolveSandboxStripeWebhookSecretsByKind(): StripeWebhookSecret[] {
+  return collectWebhookSecretsByKind({
+    platformEnv: process.env.STRIPE_SANDBOX_WEBHOOK_SECRET,
+    connectEnv: process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET,
+    platformLabel: "STRIPE_SANDBOX_WEBHOOK_SECRET",
+    connectLabel: "STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET",
+  });
 }
 
 /** Secrets only, for callers that do not care which endpoint signed. */

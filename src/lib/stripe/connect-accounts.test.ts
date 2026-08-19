@@ -22,6 +22,7 @@ import {
 const ENV_KEYS = [
   "STRIPE_SECRET_KEY",
   "STRIPE_API_KEY",
+  "STRIPE_SANDBOX_SECRET_KEY",
   "STRIPE_CONNECT_CLIENT_ID",
   "NEXTAUTH_URL",
 ] as const;
@@ -365,6 +366,63 @@ test("createMerchantConnectedAccount rejects missing secret", async (t) => {
   );
 });
 
+test("createMerchantConnectedAccount uses sandbox key when livemode=false", async (t) => {
+  withEnv(t, {
+    STRIPE_SECRET_KEY: "sk_live_unit",
+    STRIPE_SANDBOX_SECRET_KEY: "sk_test_sandbox",
+  });
+  let auth: string | null = null;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    auth = headers.get("Authorization");
+    const url = String(input);
+    if (url.includes("/v2/core/accounts")) {
+      return jsonResponse({ error: { message: "v2 unavailable" } }, 400);
+    }
+    return jsonResponse({ id: "acct_sandbox_1" });
+  });
+  const id = await createMerchantConnectedAccount({
+    clientId: "app_1",
+    livemode: false,
+  });
+  assert.equal(id, "acct_sandbox_1");
+  assert.equal(auth, "Bearer sk_test_sandbox");
+});
+
+test("createMerchantConnectedAccount rejects a live key as sandbox secret", async (t) => {
+  withEnv(t, {
+    STRIPE_SECRET_KEY: "sk_live_unit",
+    STRIPE_SANDBOX_SECRET_KEY: "sk_live_not_test",
+  });
+  await assert.rejects(
+    () => createMerchantConnectedAccount({ clientId: "app_1", livemode: false }),
+    /STRIPE_SANDBOX_SECRET_KEY/,
+  );
+});
+
+test("createMerchantConnectedAccount accepts a sandbox restricted key", async (t) => {
+  withEnv(t, {
+    STRIPE_SECRET_KEY: "sk_live_unit",
+    STRIPE_SANDBOX_SECRET_KEY: "rk_test_sandbox",
+  });
+  let auth: string | null = null;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    auth = headers.get("Authorization");
+    const url = String(input);
+    if (url.includes("/v2/core/accounts")) {
+      return jsonResponse({ error: { message: "v2 unavailable" } }, 400);
+    }
+    return jsonResponse({ id: "acct_sandbox_rk" });
+  });
+  const id = await createMerchantConnectedAccount({
+    clientId: "app_1",
+    livemode: false,
+  });
+  assert.equal(id, "acct_sandbox_rk");
+  assert.equal(auth, "Bearer rk_test_sandbox");
+});
+
 test("createMerchantConnectedAccount rejects invalid account id", async (t) => {
   withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
   t.mock.method(globalThis, "fetch", async () => jsonResponse({ id: "not_an_acct" }));
@@ -490,6 +548,7 @@ test("createConnectedCheckoutSession setup and payment modes", async (t) => {
   });
   assert.equal(setup.sessionId, "cs_test_1");
   assert.match(bodies[0]!, /mode=setup/);
+  assert.doesNotMatch(bodies[0]!, /payment_method_types/);
   assert.match(
     bodies[0]!,
     /setup_intent_data%5Bmetadata%5D%5Bpymthouse_client_id%5D=app_merchant/,

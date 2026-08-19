@@ -165,4 +165,5 @@ test("merchantSettlementMetadata stamps settlement keys", () => {
   });
   assert.equal(meta[SETTLEMENT_CHARGE_MODEL_KEY], "direct");
   assert.equal(meta[SETTLEMENT_CONNECT_ACCOUNT_KEY], "acct_123");
+  assert.equal(meta.stripe_livemode, "true");
 });

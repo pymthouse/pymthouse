@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import nodeTest from "node:test";
 
 import {
+  appUserRetailCustomerKey,
   AppUserOwnerWalletMutationError,
   assertAppUserRetailBillingSubject,
   billingSubjectClaim,
@@ -43,6 +44,51 @@ nodeTest("rejectOwnerWireRetailSubject rejects owner: subjects only", () => {
   );
   rejectOwnerWireRetailSubject("user-1");
   rejectOwnerWireRetailSubject("ext-abc");
+});
+
+nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", () => {
+  assert.equal(
+    appUserRetailCustomerKey({
+      customerKey: "owner-uuid",
+      payerCustomerKey: "owner-uuid",
+      payerKind: "platform_user",
+      isOwner: false,
+      sharesOwnerCostRail: true,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+    }),
+    "eu_end-user-1",
+  );
+  assert.equal(
+    appUserRetailCustomerKey({
+      customerKey: "eu_end-user-1",
+      payerCustomerKey: "eu_end-user-1",
+      payerKind: "end_user",
+      isOwner: false,
+      sharesOwnerCostRail: false,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+    }),
+    "eu_end-user-1",
+  );
+  assert.equal(
+    appUserRetailCustomerKey({
+      customerKey: "owner-uuid",
+      payerCustomerKey: "owner-uuid",
+      payerKind: "platform_user",
+      isOwner: true,
+      sharesOwnerCostRail: true,
+      actorEndUserId: "owner-uuid",
+      actorExternalUserId: "owner-uuid",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+    }),
+    "owner-uuid",
+  );
 });
 
 nodeTest("wireUsageSubjectFromJwt prefers cost_owner_user_id over user_type", () => {
@@ -181,6 +227,8 @@ test("owner_rollup end-user shares the owner wallet with eu_ actor", async (t) =
     identity.legacyCompoundCustomerKey,
     buildOpenMeterCustomerKey(seeded.clientId, endUserId),
   );
+  assert.equal(appUserRetailCustomerKey(identity), identity.actorEndUserId);
+  assert.notEqual(appUserRetailCustomerKey(identity), identity.customerKey);
   assert.deepEqual(costOwnerUserIdClaim(identity), {
     cost_owner_user_id: seeded.userId,
   });
@@ -213,6 +261,7 @@ test("merchant end-user bills stable eu_ customer", async (t) => {
   assert.equal(identity.customerKey, identity.payerCustomerKey);
   assert.equal(identity.actorEndUserId, identity.payerCustomerKey);
   assert.equal(identity.actorExternalUserId, endUserId);
+  assert.equal(appUserRetailCustomerKey(identity), identity.customerKey);
   assert.equal(
     identity.legacyCompoundCustomerKey,
     buildOpenMeterCustomerKey(seeded.clientId, endUserId),
@@ -245,6 +294,7 @@ test("normal app owner bills shared owner wallet", async (t) => {
   assert.equal(identity.payerKind, "platform_user");
   assert.equal(identity.payerPlatformUserId, seeded.userId);
   assert.equal(identity.customerKey, buildOwnerCustomerKey(seeded.userId));
+  assert.equal(appUserRetailCustomerKey(identity), identity.customerKey);
   assert.deepEqual(costOwnerUserIdClaim(identity), {});
   assert.deepEqual(billingSubjectClaim(identity), {});
 });

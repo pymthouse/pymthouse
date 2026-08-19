@@ -36,6 +36,8 @@ type BillingPatchFields = {
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
   supplierTaxId?: string | null;
+  /** Merchant Connect platform mode; locked once a Connected Account exists. */
+  stripeLivemode?: boolean;
 };
 
 type ParseResult =
@@ -223,8 +225,29 @@ function hasBillingPatchFields(body: Record<string, unknown>): boolean {
     body.applicationFeeBps !== undefined ||
     body.billingMode !== undefined ||
     body.endUserCap !== undefined ||
-    body.supplierTaxId !== undefined
+    body.supplierTaxId !== undefined ||
+    body.stripeLivemode !== undefined
   );
+}
+
+function applyStripeLivemodeField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== "boolean") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "stripeLivemode must be a boolean" },
+        { status: 400 },
+      ),
+    };
+  }
+  fields.stripeLivemode = value;
+  return null;
 }
 
 function applySupplierTaxIdField(
@@ -312,7 +335,7 @@ async function parseBillingPatchBody(
       response: NextResponse.json(
         {
           error:
-            "Provide progressiveBilling, invoiceLeadUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
+            "Provide progressiveBilling, invoiceLeadUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, supplierTaxId, and/or stripeLivemode to update",
         },
         { status: 400 },
       ),
@@ -361,6 +384,9 @@ async function parseBillingPatchBody(
   );
   if (capErr) return capErr;
 
+  const livemodeErr = applyStripeLivemodeField(body.stripeLivemode, fields);
+  if (livemodeErr) return livemodeErr;
+
   return { ok: true, fields };
 }
 
@@ -396,6 +422,7 @@ async function persistBillingPatch(
     billingMode,
     endUserCap,
     supplierTaxId,
+    stripeLivemode,
   } = fields;
   // Persist OpenMeter profile settings before Neon billingMode/endUserCap so
   // a failed OM write cannot leave the app on a new revenue plane.
@@ -418,6 +445,16 @@ async function persistBillingPatch(
       "@/lib/openmeter/supplier-sync"
     );
     await setAppSupplierTaxId({ clientId: appId, taxId: supplierTaxId });
+  }
+
+  if (stripeLivemode !== undefined) {
+    const existing = await getAppBillingConfig(appId);
+    if (existing?.stripeConnectedAccountId?.trim()) {
+      throw new Error(
+        "Cannot change stripeLivemode while a Connected Account is linked. Disconnect Stripe Connect first, then switch sandbox/live and re-onboard.",
+      );
+    }
+    await upsertAppBillingConfig(appId, { stripeLivemode });
   }
 
   if (billingMode !== undefined || endUserCap !== undefined) {

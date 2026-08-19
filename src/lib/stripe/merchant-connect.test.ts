@@ -7,10 +7,63 @@ import {
   friendlyPaymentFailureMessage,
   hasOpenOrDraftInvoice,
   isMerchantConnectPaymentsReady,
+  merchantConnectOnboardingLivemode,
   stripePaymentMethodBrandLabel,
   sumPaidInvoiceCentsSince,
   sumSucceededStandalonePaymentCentsSince,
 } from "./merchant-connect";
+
+test("merchantConnectOnboardingLivemode defaults owner_rollup first Connect to sandbox", () => {
+  assert.equal(merchantConnectOnboardingLivemode(null), false);
+  assert.equal(merchantConnectOnboardingLivemode(undefined), false);
+  assert.equal(
+    merchantConnectOnboardingLivemode({ billingMode: "owner_rollup" }),
+    false,
+  );
+  assert.equal(
+    merchantConnectOnboardingLivemode({
+      billingMode: "owner_rollup",
+      stripeLivemode: false,
+    }),
+    false,
+  );
+  assert.equal(
+    merchantConnectOnboardingLivemode({
+      billingMode: "owner_rollup",
+      stripeLivemode: true,
+    }),
+    true,
+  );
+});
+
+test("merchantConnectOnboardingLivemode keeps stored livemode for merchant and linked accounts", () => {
+  assert.equal(
+    merchantConnectOnboardingLivemode({ billingMode: "merchant" }),
+    true,
+  );
+  assert.equal(
+    merchantConnectOnboardingLivemode({
+      billingMode: "merchant",
+      stripeLivemode: false,
+    }),
+    false,
+  );
+  assert.equal(
+    merchantConnectOnboardingLivemode({
+      billingMode: "owner_rollup",
+      stripeConnectedAccountId: "acct_live",
+    }),
+    true,
+  );
+  assert.equal(
+    merchantConnectOnboardingLivemode({
+      billingMode: "owner_rollup",
+      stripeConnectedAccountId: "acct_sandbox",
+      stripeLivemode: false,
+    }),
+    false,
+  );
+});
 
 test("sumPaidInvoiceCentsSince sums only paid invoices at/after the cutoff", () => {
   // This is the exact bug: a $1,000 invoice paid earlier in the cycle must
