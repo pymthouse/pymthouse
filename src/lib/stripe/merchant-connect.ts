@@ -417,14 +417,17 @@ async function syncSupplierBestEffort(
 
 /**
  * Apply Connect capability flags from a verified `account.updated` webhook.
- * No-ops (returns updated:false) when the acct_ is not linked to an app.
+ * No-ops when the acct_ is not linked, or when the app's stripeLivemode does
+ * not match the webhook plane (`ignored: livemode_mismatch`).
  */
 export async function applyConnectedAccountWebhookUpdate(input: {
   accountId: string;
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   detailsSubmitted: boolean;
-}): Promise<{ updated: boolean; clientId?: string }> {
+  /** Webhook plane: live ingress must not mutate sandbox apps, and vice versa. */
+  expectedLivemode: boolean;
+}): Promise<{ updated: boolean; clientId?: string; ignored?: string }> {
   const rows = await db
     .select({ clientId: appBillingConfig.clientId })
     .from(appBillingConfig)
@@ -434,6 +437,10 @@ export async function applyConnectedAccountWebhookUpdate(input: {
   if (!clientId) {
     return { updated: false };
   }
+  const config = await getAppBillingConfig(clientId);
+  if (appStripeLivemode(config) !== input.expectedLivemode) {
+    return { updated: false, clientId, ignored: "livemode_mismatch" };
+  }
   await persistConnectedAccountFlags({
     clientId,
     accountId: input.accountId,
@@ -441,11 +448,10 @@ export async function applyConnectedAccountWebhookUpdate(input: {
     payoutsEnabled: input.payoutsEnabled,
     detailsSubmitted: input.detailsSubmitted,
   });
-  const config = await getAppBillingConfig(clientId);
   await syncSupplierBestEffort(
     clientId,
     input.accountId,
-    appStripeLivemode(config),
+    input.expectedLivemode,
   );
   return { updated: true, clientId };
 }

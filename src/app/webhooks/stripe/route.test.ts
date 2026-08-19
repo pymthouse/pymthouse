@@ -815,16 +815,16 @@ test("POST sandbox owner top-up does not grant production credits", async (t) =>
   assert.equal(granted, false);
 });
 
-test("POST sandbox merchant Connect top-up still credits the end user", async (t) => {
+test("POST sandbox merchant Connect top-up does not grant production credits", async (t) => {
   withSandboxWebhookEnv(t);
   __setMerchantTopUpAccountMatchesForTests(async () => true);
-  const calls: Array<Record<string, unknown>> = [];
-  __setGrantAllowanceUsdMicrosForTests(async (input) => {
-    calls.push({ ...input, amountUsdMicros: input.amountUsdMicros.toString() });
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
     return {
-      externalUserId: input.externalUserId,
-      source: input.source,
-      grantedUsdMicros: input.amountUsdMicros.toString(),
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "25000000",
       featureKey: "usd_credits",
       balance: null,
     };
@@ -835,10 +835,10 @@ test("POST sandbox merchant Connect top-up still credits the end user", async (t
   });
   const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
   assert.equal(res.status, 200);
-  const json = (await res.json()) as { credited?: boolean };
-  assert.equal(json.credited, true);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.externalUserId, "eu_route_1");
+  const json = (await res.json()) as { credited?: boolean; ignored?: string };
+  assert.equal(json.credited, undefined);
+  assert.equal(json.ignored, "sandbox_merchant_grant");
+  assert.equal(granted, false);
 });
 
 test("POST sandbox platform auto-topup does not grant owner credits", async (t) => {
@@ -864,5 +864,29 @@ test("POST sandbox platform auto-topup does not grant owner credits", async (t) 
   const json = (await res.json()) as { credited?: boolean; ignored?: string };
   assert.equal(json.credited, undefined);
   assert.equal(json.ignored, "sandbox_owner_grant");
+  assert.equal(granted, false);
+});
+
+test("POST sandbox Connect auto-topup does not grant production credits", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  let granted = false;
+  __setGrantAllowanceUsdMicrosForTests(async () => {
+    granted = true;
+    return {
+      externalUserId: "eu_route_1",
+      source: "topup",
+      grantedUsdMicros: "10000000",
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = autoTopUpPaymentIntentBody({ account: "acct_sandbox_1" });
+  const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean; ignored?: string };
+  assert.equal(json.credited, undefined);
+  assert.equal(json.ignored, "sandbox_merchant_grant");
   assert.equal(granted, false);
 });

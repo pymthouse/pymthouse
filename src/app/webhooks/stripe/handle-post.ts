@@ -202,17 +202,24 @@ async function handlePaymentMethodRestore(
   return NextResponse.json({ received: true, restored });
 }
 
-async function handleAccountUpdated(rawBody: string): Promise<Response> {
+async function handleAccountUpdated(
+  rawBody: string,
+  livemode: boolean,
+): Promise<Response> {
   const account = parseStripeAccountUpdated(rawBody);
   if (!account) {
     return NextResponse.json({ received: true, ignored: "malformed_account" });
   }
   try {
-    const result = await applyConnectedAccountWebhookUpdate(account);
+    const result = await applyConnectedAccountWebhookUpdate({
+      ...account,
+      expectedLivemode: livemode,
+    });
     return NextResponse.json({
       received: true,
       updated: result.updated,
       clientId: result.clientId ?? null,
+      ...(result.ignored ? { ignored: result.ignored } : {}),
     });
   } catch (err) {
     logHandlerError("account.updated", err);
@@ -296,7 +303,14 @@ async function settleMerchantTopUp(input: {
   clientId: string;
   externalUserId: string;
   amountUsdMicros: bigint;
+  livemode: boolean;
 }): Promise<Response> {
+  if (!input.livemode) {
+    return NextResponse.json({
+      received: true,
+      ignored: "sandbox_merchant_grant",
+    });
+  }
   const account = stripeEventAccount(input.rawBody);
   if (!account) {
     return NextResponse.json({
@@ -373,6 +387,12 @@ async function authorizeLegacyAutoTopUpTenancy(input: {
       return NextResponse.json({
         received: true,
         ignored: "connect_account_mismatch",
+      });
+    }
+    if (!input.livemode) {
+      return NextResponse.json({
+        received: true,
+        ignored: "sandbox_merchant_grant",
       });
     }
     return null;
@@ -552,6 +572,7 @@ async function handleCheckoutSessionCompleted(
         clientId: topUp.clientId,
         externalUserId: topUp.externalUserId,
         amountUsdMicros: topUp.amountUsdMicros,
+        livemode,
       });
     }
     if (topUp.ownerUserId) {
@@ -619,8 +640,10 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  *
  * Owner top-up grants require the live webhook plane, the platform webhook
  * secret, and a platform (non-Connect) event. Sandbox ingress never credits
- * owner Plane A wallets. Merchant end-user top-ups and Connect auto top-ups
- * require a Connect `account` field matching the app's Connected Account.
+ * Konnect prepaid wallets (owner or merchant). Merchant end-user top-ups and
+ * Connect auto top-ups on the live plane require a Connect `account` field
+ * matching the app's Connected Account. `account.updated` is bound to the
+ * webhook plane's livemode so sandbox ingress cannot flip live Connect flags.
  * Platform auto top-ups require the platform secret plus `owner:{userId}`
  * ownership of `client_id`. Auto-topup settlement also requires PI currency
  * to match `app_billing_config.default_currency`. Payment-method restore from
@@ -657,7 +680,7 @@ export async function handleStripeWebhookPost(
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
   if (type === "account.updated") {
-    return handleAccountUpdated(rawBody);
+    return handleAccountUpdated(rawBody, livemode);
   }
   if (
     type === "checkout.session.completed" ||

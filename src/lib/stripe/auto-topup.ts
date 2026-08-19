@@ -259,6 +259,9 @@ async function executeEnabledAutoTopUp(input: {
   if (!accountId) {
     return { status: "skipped", reason: "connect_not_ready" };
   }
+  if (billingConfig.stripeLivemode === false) {
+    return { status: "skipped", reason: "sandbox_livemode" };
+  }
 
   const paymentMethods = await runtime.listAppUserPaymentMethods({
     clientId: input.developerAppId,
@@ -295,7 +298,7 @@ async function executeEnabledAutoTopUp(input: {
       amountCents,
       currency: (billingConfig.defaultCurrency ?? "usd").toLowerCase(),
       applicationFeeBps: billingConfig.applicationFeeBps ?? 0,
-      livemode: billingConfig.stripeLivemode !== false,
+      livemode: true,
       idempotencyKey: stripeIdempotencyKey(
         input.developerAppId,
         input.externalUserId,

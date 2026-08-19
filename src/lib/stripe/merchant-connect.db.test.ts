@@ -10,12 +10,16 @@ import {
   resetBillingIdentityCache,
   resolveOpenMeterBillingIdentity,
 } from "@/lib/openmeter/billing-identity";
-import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
+import {
+  getAppBillingConfig,
+  upsertAppBillingConfig,
+} from "@/lib/openmeter/billing-profiles";
 import {
   buildEndUserCustomerKey,
   buildOpenMeterCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import {
+  applyConnectedAccountWebhookUpdate,
   ensureMerchantOwnedStripeCustomer,
   upsertAppUserStripeCustomer,
 } from "@/lib/stripe/merchant-connect";
@@ -196,4 +200,34 @@ test("ensureMerchantOwnedStripeCustomer stamps retail eu_ key under owner_rollup
     .limit(1);
   assert.equal(rows[0]?.openmeterCustomerKey, retailKey);
   assert.equal(rows[0]?.openmeterCustomerId, null);
+});
+
+test("applyConnectedAccountWebhookUpdate ignores livemode mismatch", async (t) => {
+  const app = await seedDeveloperAppWithClient({
+    name: `StripeLiveMismatch ${randomUUID().slice(0, 8)}`,
+  });
+  t.after(async () => {
+    await cleanupTestApp(app);
+  });
+
+  await upsertAppBillingConfig(app.clientId, {
+    billingMode: "merchant",
+    stripeConnectedAccountId: "acct_livemode_mismatch",
+    stripeLivemode: true,
+    stripeChargesEnabled: false,
+  });
+
+  const result = await applyConnectedAccountWebhookUpdate({
+    accountId: "acct_livemode_mismatch",
+    chargesEnabled: true,
+    payoutsEnabled: true,
+    detailsSubmitted: true,
+    expectedLivemode: false,
+  });
+  assert.equal(result.updated, false);
+  assert.equal(result.clientId, app.clientId);
+  assert.equal(result.ignored, "livemode_mismatch");
+
+  const config = await getAppBillingConfig(app.clientId);
+  assert.equal(config?.stripeChargesEnabled, false);
 });

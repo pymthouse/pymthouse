@@ -34,7 +34,9 @@ Dashboard endpoints pointed at production hosts and copy those new secrets.
 
 Leave Konnect / `OPENMETER_STRIPE_APP_ID` on the **live** Stripe app. Owner Plane A
 stays live; only Merchant Connect (Plane B) uses the sandbox key when
-`app_billing_config.stripe_livemode = false`.
+`app_billing_config.stripe_livemode = false`. Sandbox webhooks restore payment
+methods and drive settlement collect; they never grant production Konnect
+prepaid (`usd_credits`) for owner or merchant top-ups.
 
 ### 3. Smoke
 

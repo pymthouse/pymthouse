@@ -527,12 +527,13 @@ export async function appUserHasChargeablePaymentMethod(input: {
   }
 
   try {
+    const billingConfig = await getAppBillingConfig(clientId);
+    if (!resolveStripePlatformSecretKeyOrNull(appStripeLivemode(billingConfig))) {
+      return null;
+    }
     const refs = await resolveAppUserStripeRefs({ clientId, externalUserId });
     if (!refs) {
       return false;
-    }
-    if (!resolveStripePlatformSecretKeyOrNull(refs.livemode)) {
-      return null;
     }
     if (refs.konnectDefaultPaymentMethodId) {
       return true;

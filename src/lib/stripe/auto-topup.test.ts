@@ -240,6 +240,20 @@ test("tryAutoTopUpIfEnabled skips when billing config is missing", async (t) => 
   );
 });
 
+test("tryAutoTopUpIfEnabled skips sandbox livemode apps", async (t) => {
+  withRuntime(t, {
+    getAppBillingConfig: async () => ({
+      billingMode: "merchant",
+      stripeConnectedAccountId: "acct_1",
+      stripeLivemode: false,
+    }),
+  });
+  assert.deepEqual(
+    await tryAutoTopUpIfEnabled(uniqueIds("sandbox")),
+    { status: "skipped", reason: "sandbox_livemode" },
+  );
+});
+
 test("tryAutoTopUpIfEnabled skips when Connect is not ready", async (t) => {
   withRuntime(t, {
     getAppBillingConfig: async () => ({
