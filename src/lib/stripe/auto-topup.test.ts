@@ -240,18 +240,25 @@ test("tryAutoTopUpIfEnabled skips when billing config is missing", async (t) => 
   );
 });
 
-test("tryAutoTopUpIfEnabled skips sandbox livemode apps", async (t) => {
+test("tryAutoTopUpIfEnabled charges sandbox livemode apps with the sandbox key", async (t) => {
+  let charged: { livemode?: boolean } | undefined;
   withRuntime(t, {
     getAppBillingConfig: async () => ({
       billingMode: "merchant",
       stripeConnectedAccountId: "acct_1",
       stripeLivemode: false,
     }),
+    createConnectedOffSessionPaymentIntent: async (input) => {
+      charged = input;
+      return { id: "pi_sandbox", status: "succeeded" };
+    },
   });
-  assert.deepEqual(
-    await tryAutoTopUpIfEnabled(uniqueIds("sandbox")),
-    { status: "skipped", reason: "sandbox_livemode" },
-  );
+  assert.deepEqual(await tryAutoTopUpIfEnabled(uniqueIds("sandbox")), {
+    status: "charged",
+    paymentIntentId: "pi_sandbox",
+    grantedUsdMicros: "10000000",
+  });
+  assert.equal(charged?.livemode, false);
 });
 
 test("tryAutoTopUpIfEnabled skips when Connect is not ready", async (t) => {
@@ -344,6 +351,7 @@ test("tryAutoTopUpIfEnabled charges, grants, and uses the parsed amount", async 
   });
   assert.equal((charged as { amountCents: number }).amountCents, 2500);
   assert.equal((charged as { currency: string }).currency, "usd");
+  assert.equal((charged as { livemode?: boolean }).livemode, true);
   assert.equal((charged as { applicationFeeBps: number }).applicationFeeBps, 0);
   assert.equal(
     (charged as { metadata: Record<string, string> }).metadata[

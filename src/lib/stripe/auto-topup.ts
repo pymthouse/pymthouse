@@ -24,7 +24,10 @@ import {
   LEGACY_AUTO_TOP_UP_METADATA_FLAG,
   legacyAutoTopUpGrantIdempotencyKey,
 } from "@/lib/stripe/legacy-auto-topup";
-import { getAppUserStripeCustomer } from "@/lib/stripe/merchant-connect";
+import {
+  appStripeLivemode,
+  getAppUserStripeCustomer,
+} from "@/lib/stripe/merchant-connect";
 import {
   parseTopUpAmountUsd,
   TOP_UP_MIN_USD_MICROS,
@@ -259,9 +262,7 @@ async function executeEnabledAutoTopUp(input: {
   if (!accountId) {
     return { status: "skipped", reason: "connect_not_ready" };
   }
-  if (billingConfig.stripeLivemode === false) {
-    return { status: "skipped", reason: "sandbox_livemode" };
-  }
+  const livemode = appStripeLivemode(billingConfig);
 
   const paymentMethods = await runtime.listAppUserPaymentMethods({
     clientId: input.developerAppId,
@@ -298,7 +299,7 @@ async function executeEnabledAutoTopUp(input: {
       amountCents,
       currency: (billingConfig.defaultCurrency ?? "usd").toLowerCase(),
       applicationFeeBps: billingConfig.applicationFeeBps ?? 0,
-      livemode: true,
+      livemode,
       idempotencyKey: stripeIdempotencyKey(
         input.developerAppId,
         input.externalUserId,
