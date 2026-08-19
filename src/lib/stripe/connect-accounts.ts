@@ -481,12 +481,23 @@ function addCheckoutMetadata(
   }
 }
 
+/** Stripe Checkout / PaymentIntent currency: lowercase ISO 4217, default usd. */
+function stripeFormCurrency(value?: string): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || "usd";
+}
+
 function addSetupCheckoutFields(
   body: URLSearchParams,
-  metadata: Record<string, string> | undefined,
+  input: {
+    currency?: string;
+    metadata?: Record<string, string>;
+  },
 ): void {
   // Omit payment_method_types so Checkout uses Dashboard dynamic methods.
-  addCheckoutMetadata(body, metadata, "setup_intent_data[metadata]");
+  // Setup mode then requires `currency` (Stripe 400 otherwise).
+  body.set("currency", stripeFormCurrency(input.currency));
+  addCheckoutMetadata(body, input.metadata, "setup_intent_data[metadata]");
 }
 
 function addPaymentCheckoutFields(
@@ -502,7 +513,7 @@ function addPaymentCheckoutFields(
   if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
     throw new Error("amountCents must be a positive integer for payment mode");
   }
-  body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
+  body.set("line_items[0][price_data][currency]", stripeFormCurrency(input.currency));
   body.set("line_items[0][price_data][unit_amount]", String(amount));
   body.set(
     "line_items[0][price_data][product_data][name]",
@@ -541,7 +552,7 @@ export async function createConnectedCheckoutSession(input: {
   body.set("success_url", input.successUrl);
   body.set("cancel_url", input.cancelUrl);
   if (mode === "setup") {
-    addSetupCheckoutFields(body, input.metadata);
+    addSetupCheckoutFields(body, input);
   } else {
     addPaymentCheckoutFields(body, input);
   }
@@ -580,7 +591,7 @@ export async function createConnectedOffSessionPaymentIntent(input: {
   }
   const body = new URLSearchParams();
   body.set("amount", String(amount));
-  body.set("currency", (input.currency ?? "usd").toLowerCase());
+  body.set("currency", stripeFormCurrency(input.currency));
   body.set("customer", input.customerId);
   body.set("payment_method", input.paymentMethodId);
   body.set("confirm", "true");
@@ -624,7 +635,7 @@ export async function createConnectedInvoice(input: {
   idempotencyKey?: string;
   livemode?: boolean;
 }): Promise<{ invoiceId: string; hostedInvoiceUrl: string | null }> {
-  const currency = (input.currency ?? "usd").toLowerCase();
+  const currency = stripeFormCurrency(input.currency);
   const idempotencyBase = input.idempotencyKey?.trim();
   const livemode = input.livemode !== false;
   const itemBody = new URLSearchParams();

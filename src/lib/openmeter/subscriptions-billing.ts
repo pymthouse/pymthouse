@@ -393,6 +393,7 @@ async function resolveCheckoutSettings(input: EndUserCheckoutInput): Promise<{
   isMerchantBilling: boolean;
   successUrl: string;
   cancelUrl: string;
+  currency: string;
 }> {
   const billingConfig = await getAppBillingConfig(input.clientId);
   const merchantReady = isMerchantConnectPaymentsReady(billingConfig);
@@ -407,6 +408,7 @@ async function resolveCheckoutSettings(input: EndUserCheckoutInput): Promise<{
   return {
     merchantReady,
     isMerchantBilling: billingConfig?.billingMode === "merchant",
+    currency: billingConfig?.defaultCurrency?.trim() || "USD",
     successUrl: resolveAppUserCheckoutReturnUrl(
       input.successUrl || billingConfig?.checkoutSuccessUrl || undefined,
       fallbackUrl,
@@ -689,6 +691,7 @@ async function createCheckoutSession(input: {
   customerKey: string;
   successUrl: string;
   cancelUrl: string;
+  currency?: string;
 }): Promise<{ checkoutUrl: string; sessionId: string | null }> {
   if (input.merchantReady) {
     const checkout = await createMerchantConnectCheckoutForUser({
@@ -709,6 +712,7 @@ async function createCheckoutSession(input: {
     customerId: input.customerId,
     successUrl: input.successUrl,
     cancelUrl: input.cancelUrl,
+    currency: input.currency,
   });
   return {
     checkoutUrl: checkout.checkoutUrl,
@@ -790,6 +794,7 @@ export async function createPaymentMethodCheckoutIfNeededForPlanChange(input: {
     customerKey: input.customerKey,
     successUrl: success,
     cancelUrl: cancel,
+    currency: billingConfig?.defaultCurrency,
   });
   await recordAppUserPaymentMethodCheckout({
     sessionId: checkout.sessionId,
@@ -854,6 +859,7 @@ export async function createEndUserCheckout(
       customerKey: customer.key,
       successUrl: checkoutSettings.successUrl,
       cancelUrl: checkoutSettings.cancelUrl,
+      currency: checkoutSettings.currency,
     });
     await recordAppUserPaymentMethodCheckout({
       sessionId: checkout.sessionId,

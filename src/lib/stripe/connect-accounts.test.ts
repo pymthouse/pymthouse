@@ -548,6 +548,7 @@ test("createConnectedCheckoutSession setup and payment modes", async (t) => {
   });
   assert.equal(setup.sessionId, "cs_test_1");
   assert.match(bodies[0]!, /mode=setup/);
+  assert.match(bodies[0]!, /(?:^|&)currency=usd(?:&|$)/);
   assert.doesNotMatch(bodies[0]!, /payment_method_types/);
   assert.match(
     bodies[0]!,
@@ -570,6 +571,26 @@ test("createConnectedCheckoutSession setup and payment modes", async (t) => {
     bodies[1]!,
     /payment_intent_data%5Bsetup_future_usage%5D=off_session/,
   );
+});
+
+test("createConnectedCheckoutSession setup mode uses the given currency", async (t) => {
+  withEnv(t, { STRIPE_SECRET_KEY: "sk_test_unit" });
+  let body = "";
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = String(init?.body ?? "");
+    return jsonResponse({ id: "cs_test_eur", url: "https://checkout.stripe.com/c/pay/cs_test_eur" });
+  });
+
+  await createConnectedCheckoutSession({
+    accountId: "acct_1",
+    customerId: "cus_1",
+    successUrl: "https://ok",
+    cancelUrl: "https://cancel",
+    mode: "setup",
+    currency: "EUR",
+  });
+  assert.match(body, /(?:^|&)currency=eur(?:&|$)/);
+  assert.doesNotMatch(body, /payment_method_types/);
 });
 
 test("createConnectedCheckoutSession fails without session url", async (t) => {
