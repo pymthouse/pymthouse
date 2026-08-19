@@ -40,7 +40,9 @@ prepaid (`usd_credits`) for owner or merchant top-ups.
 
 ### 3. Smoke
 
-1. On pymthouse.com, create/open a merchant app → Payments → **Sandbox**
+1. On pymthouse.com, create/open a merchant app → Payments. First Connect from
+   owner roll-up defaults to **Sandbox**; switch to Live before onboarding if
+   you want real charges.
 2. Complete Account Link with Stripe test data
 3. Attach `pm_card_visa` for an end user
 4. `POST …/billing/collect` → settlement charges on the sandbox connected account

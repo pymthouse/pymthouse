@@ -399,7 +399,7 @@ function PaymentsLivemodeToggle(props: Readonly<{
           <p className="mt-0.5 text-xs text-zinc-500">
             {locked
               ? "Locked while a Connected Account is linked. Disconnect to switch."
-              : "Choose sandbox before onboarding to test with test cards (no real money)."}
+              : "Defaults to sandbox (test cards, no real money). Switch to Live before onboarding for live charges."}
           </p>
         </div>
         <div className="flex gap-2">
@@ -1000,7 +1000,7 @@ function PaymentsTabLoaded(props: Readonly<{
             appId={appId}
             busy={busy}
             locked={flags.hasAccount}
-            stripeLivemode={status?.stripeLivemode !== false}
+            stripeLivemode={status?.stripeLivemode === true}
             setters={{ setBusy, setError, setStatus }}
           />
         )}

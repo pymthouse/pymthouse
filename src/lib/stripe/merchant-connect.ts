@@ -173,6 +173,28 @@ export function appStripeLivemode(
   return config?.stripeLivemode !== false;
 }
 
+/**
+ * Livemode for a new Merchant Connect onboarding (no acct_ yet).
+ * Linked accounts and merchant-mode apps keep stored stripeLivemode (live
+ * unless explicitly sandbox). First Connect from owner_rollup defaults to
+ * sandbox unless the operator already PATCHed stripeLivemode true.
+ */
+export function merchantConnectOnboardingLivemode(
+  config: {
+    stripeLivemode?: boolean | null;
+    billingMode?: string | null;
+    stripeConnectedAccountId?: string | null;
+  } | null | undefined,
+): boolean {
+  if (config?.stripeConnectedAccountId?.trim()) {
+    return appStripeLivemode(config);
+  }
+  if (config?.billingMode === "merchant") {
+    return appStripeLivemode(config);
+  }
+  return config?.stripeLivemode === true;
+}
+
 function stripeSecretKey(livemode = true): string {
   return resolveStripePlatformSecretKey(livemode);
 }
@@ -480,7 +502,7 @@ export async function startMerchantConnect({
   await ensureOmStarterSideEffect(clientId);
 
   const existing = await getAppBillingConfig(clientId);
-  const livemode = appStripeLivemode(existing);
+  const livemode = merchantConnectOnboardingLivemode(existing);
   let accountId = existing?.stripeConnectedAccountId?.trim() || "";
   if (!accountId) {
     accountId = await createMerchantConnectedAccount({
@@ -557,7 +579,7 @@ export async function completeMerchantConnectOAuth(input: {
   }
 
   const existing = await getAppBillingConfig(input.clientId);
-  const livemode = appStripeLivemode(existing);
+  const livemode = merchantConnectOnboardingLivemode(existing);
   const accountId = await exchangeConnectOAuthCode(input.code, livemode);
   await upsertAppBillingConfig(input.clientId, {
     stripeConnectedAccountId: accountId,

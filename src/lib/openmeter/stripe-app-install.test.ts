@@ -276,6 +276,7 @@ test("getStripeConnectStatus defaults to disconnected when no config row", async
   assert.equal(status.status, "disconnected");
   assert.equal(status.billingReady, false);
   assert.equal(status.defaultCurrency, "USD");
+  assert.equal(status.stripeLivemode, false);
 });
 
 test("getStripeConnectStatus uses merchant account flags, not legacy OM status", async (t) => {

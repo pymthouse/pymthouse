@@ -398,9 +398,10 @@ export async function purgeExpiredOAuthStates(): Promise<void> {
 }
 
 export async function getStripeConnectStatus(clientId: string) {
-  const { syncMerchantConnectStatus } = await import(
-    "@/lib/stripe/merchant-connect"
-  );
+  const {
+    merchantConnectOnboardingLivemode,
+    syncMerchantConnectStatus,
+  } = await import("@/lib/stripe/merchant-connect");
   try {
     await syncMerchantConnectStatus(clientId);
   } catch {
@@ -460,7 +461,7 @@ export async function getStripeConnectStatus(clientId: string) {
     softNegativeUsdMicros: config?.softNegativeUsdMicros ?? null,
     stripeConnectedAccountId: accountId,
     stripeOnboardingMethod: config?.stripeOnboardingMethod ?? null,
-    stripeLivemode: config?.stripeLivemode !== false,
+    stripeLivemode: merchantConnectOnboardingLivemode(config),
     stripeChargesEnabled: config?.stripeChargesEnabled ?? false,
     stripePayoutsEnabled: config?.stripePayoutsEnabled ?? false,
     stripeDetailsSubmitted: config?.stripeDetailsSubmitted ?? false,
