@@ -173,6 +173,44 @@ export function appStripeLivemode(
   return config?.stripeLivemode !== false;
 }
 
+export type ResolveAppLivemodeForWebhook = (
+  clientId: string,
+) => Promise<boolean>;
+
+let resolveAppLivemodeForWebhookForTests: ResolveAppLivemodeForWebhook | null =
+  null;
+
+/**
+ * Test-only override for webhook plane livemode checks (PM restore).
+ * Always `null` (inert) outside NODE_ENV=test.
+ */
+export function __setResolveAppLivemodeForWebhookForTests(
+  fn: ResolveAppLivemodeForWebhook | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__setResolveAppLivemodeForWebhookForTests is only available in test",
+    );
+  }
+  resolveAppLivemodeForWebhookForTests = fn;
+}
+
+/**
+ * True when the app's stored stripeLivemode matches the webhook ingress plane.
+ * Sandbox deliveries must not mutate live apps (and vice versa).
+ */
+export async function appLivemodeMatchesWebhookPlane(
+  clientId: string,
+  expectedLivemode: boolean,
+): Promise<boolean> {
+  if (resolveAppLivemodeForWebhookForTests) {
+    const appLivemode = await resolveAppLivemodeForWebhookForTests(clientId);
+    return appLivemode === expectedLivemode;
+  }
+  const config = await getAppBillingConfig(clientId);
+  return appStripeLivemode(config) === expectedLivemode;
+}
+
 /**
  * Livemode for a new Merchant Connect onboarding (no acct_ yet).
  * Linked accounts and merchant-mode apps keep stored stripeLivemode (live

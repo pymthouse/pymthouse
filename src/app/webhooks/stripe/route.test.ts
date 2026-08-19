@@ -8,6 +8,9 @@ import {
 } from "@/lib/openmeter/app-user-payment-method";
 import { __setGrantAllowanceUsdMicrosForTests } from "@/lib/openmeter/grant-allowance";
 import { legacyAutoTopUpGrantIdempotencyKey } from "@/lib/stripe/legacy-auto-topup";
+import {
+  __setResolveAppLivemodeForWebhookForTests,
+} from "@/lib/stripe/merchant-connect";
 import { topUpGrantIdempotencyKey } from "@/lib/stripe/topup-checkout";
 import {
   __setMerchantTopUpAccountMatchesForTests,
@@ -155,6 +158,7 @@ function withWebhookEnv(
     __setTopUpClientOwnedByOwnerForTests(null);
     __setMerchantTopUpAccountMatchesForTests(null);
     __setResolveAppBillingCurrencyForTests(null);
+    __setResolveAppLivemodeForWebhookForTests(null);
     __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(null);
     __setRestoreAppUserBillingProfileForCheckoutSessionForTests(null);
   });
@@ -164,6 +168,8 @@ function withWebhookEnv(
   else process.env.STRIPE_WEBHOOK_SECRET = env.platform;
   // Auto-topup settlement matches app defaultCurrency (USD unless overridden).
   __setResolveAppBillingCurrencyForTests(async () => "usd");
+  // Live webhook plane: apps default to live so restore unit tests skip Neon.
+  __setResolveAppLivemodeForWebhookForTests(async () => true);
 }
 
 async function postSigned(
@@ -733,7 +739,7 @@ test("POST checkout PM restore prefers server-issued session mapping over metada
   __setRestoreAppUserBillingProfileForCheckoutSessionForTests(
     async (sessionId) => {
       sessions.push(sessionId);
-      return true;
+      return { restored: true };
     },
   );
 
@@ -767,6 +773,9 @@ function withSandboxWebhookEnv(t: { after: (fn: () => void) => void }): void {
     __setTopUpClientOwnedByOwnerForTests(null);
     __setMerchantTopUpAccountMatchesForTests(null);
     __setResolveAppBillingCurrencyForTests(null);
+    __setResolveAppLivemodeForWebhookForTests(null);
+    __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(null);
+    __setRestoreAppUserBillingProfileForCheckoutSessionForTests(null);
   });
   process.env.STRIPE_SANDBOX_WEBHOOK_SECRET = SANDBOX_PLATFORM_SECRET;
   process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET = SANDBOX_CONNECT_SECRET;
@@ -889,4 +898,49 @@ test("POST sandbox Connect auto-topup does not grant production credits", async 
   assert.equal(json.credited, undefined);
   assert.equal(json.ignored, "sandbox_merchant_grant");
   assert.equal(granted, false);
+});
+
+test("POST sandbox setup_intent restore ignores live app livemode mismatch", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  // Default / live app: stripeLivemode true must not restore from sandbox plane.
+  __setResolveAppLivemodeForWebhookForTests(async () => true);
+  let restored = false;
+  __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+    async () => {
+      restored = true;
+    },
+  );
+
+  const rawBody = setupIntentRestoreBody({ account: "acct_live_1" });
+  const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { ignored?: string; restored?: boolean };
+  assert.equal(json.ignored, "livemode_mismatch");
+  assert.equal(json.restored, undefined);
+  assert.equal(restored, false);
+});
+
+test("POST sandbox setup_intent restore succeeds for sandbox app", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  __setResolveAppLivemodeForWebhookForTests(async () => false);
+  const restores: Array<Record<string, unknown>> = [];
+  __setRestoreAppUserBillingProfileAfterPaymentMethodAttachedForTests(
+    async (input) => {
+      restores.push({ ...input });
+    },
+  );
+
+  const rawBody = setupIntentRestoreBody({ account: "acct_sandbox_1" });
+  const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { restored?: boolean; clientId?: string };
+  assert.equal(json.restored, true);
+  assert.equal(json.clientId, "app_pub_route_1");
+  assert.deepEqual(restores[0], {
+    clientId: "app_pub_route_1",
+    externalUserId: "eu_route_1",
+    paymentMethodId: "pm_restore_1",
+  });
 });

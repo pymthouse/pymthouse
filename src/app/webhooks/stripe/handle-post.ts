@@ -7,6 +7,7 @@ import {
 import { grantAllowanceUsdMicros } from "@/lib/openmeter/grant-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import {
+  appLivemodeMatchesWebhookPlane,
   applyConnectedAccountWebhookUpdate,
   findAppUserStripeCustomerByStripeId,
 } from "@/lib/stripe/merchant-connect";
@@ -81,17 +82,27 @@ function stripeEventAccount(rawBody: string): string | null {
  * Metadata alone is not a restore authority. Prefer a server-issued Checkout
  * session mapping; otherwise require the emitting Connect `account` to match
  * the target app's Connected Account (same binding as merchant top-up).
+ * Webhook plane livemode must also match the app's stripeLivemode.
  */
 async function restoreFromMetadataTarget(
   restoreTarget: StripePaymentMethodAttachedPayload,
   account: string | null,
+  livemode: boolean,
 ): Promise<Response> {
   if (restoreTarget.checkoutSessionId) {
-    const restored = await restoreAppUserBillingProfileForCheckoutSession(
+    const result = await restoreAppUserBillingProfileForCheckoutSession(
       restoreTarget.checkoutSessionId,
       restoreTarget.paymentMethodId,
+      livemode,
     );
-    return NextResponse.json({ received: true, restored });
+    if (result.ignored) {
+      return NextResponse.json({
+        received: true,
+        ignored: result.ignored,
+        ...(result.clientId ? { clientId: result.clientId } : {}),
+      });
+    }
+    return NextResponse.json({ received: true, restored: result.restored });
   }
 
   if (!account) {
@@ -121,6 +132,30 @@ async function restoreFromMetadataTarget(
       ignored: "connect_account_mismatch",
     });
   }
+
+  let livemodeMatches: boolean;
+  try {
+    livemodeMatches = await appLivemodeMatchesWebhookPlane(
+      restoreTarget.clientId,
+      livemode,
+    );
+  } catch (err) {
+    logHandlerError("payment method restore livemode match", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!livemodeMatches) {
+    console.warn(
+      TAG,
+      "payment method restore ignored: livemode mismatch",
+      sanitizeForLog(restoreTarget.clientId),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "livemode_mismatch",
+      clientId: restoreTarget.clientId,
+    });
+  }
+
   await restoreAppUserBillingProfileAfterPaymentMethodAttached({
     clientId: restoreTarget.clientId,
     externalUserId: restoreTarget.externalUserId,
@@ -136,6 +171,7 @@ async function restoreFromMetadataTarget(
 async function restoreFromStripeCustomer(
   byCustomer: { stripeCustomerId: string; paymentMethodId: string | null },
   account: string | null,
+  livemode: boolean,
 ): Promise<Response | null> {
   const row = await findAppUserStripeCustomerByStripeId(
     byCustomer.stripeCustomerId,
@@ -158,6 +194,30 @@ async function restoreFromStripeCustomer(
       });
     }
   }
+
+  let livemodeMatches: boolean;
+  try {
+    livemodeMatches = await appLivemodeMatchesWebhookPlane(
+      row.clientId,
+      livemode,
+    );
+  } catch (err) {
+    logHandlerError("payment method restore livemode match", err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+  if (!livemodeMatches) {
+    console.warn(
+      TAG,
+      "payment method restore ignored: livemode mismatch",
+      sanitizeForLog(row.clientId),
+    );
+    return NextResponse.json({
+      received: true,
+      ignored: "livemode_mismatch",
+      clientId: row.clientId,
+    });
+  }
+
   await restoreAppUserBillingProfileAfterPaymentMethodAttached({
     clientId: row.clientId,
     externalUserId: row.externalUserId,
@@ -172,6 +232,7 @@ async function restoreFromStripeCustomer(
 
 async function handlePaymentMethodRestore(
   rawBody: string,
+  livemode: boolean,
 ): Promise<Response | null> {
   const account = stripeEventAccount(rawBody);
   const restoreTarget = parseStripePaymentMethodAttached(rawBody);
@@ -179,13 +240,17 @@ async function handlePaymentMethodRestore(
     // When metadata has a Checkout session, or Connect account, handle here.
     // Without either, fall through to customer / completed-session reverse lookup.
     if (restoreTarget.checkoutSessionId || account) {
-      return restoreFromMetadataTarget(restoreTarget, account);
+      return restoreFromMetadataTarget(restoreTarget, account, livemode);
     }
   }
 
   const byCustomer = parseStripePaymentMethodAttachedCustomer(rawBody);
   if (byCustomer) {
-    const restored = await restoreFromStripeCustomer(byCustomer, account);
+    const restored = await restoreFromStripeCustomer(
+      byCustomer,
+      account,
+      livemode,
+    );
     if (restored) {
       return restored;
     }
@@ -195,11 +260,19 @@ async function handlePaymentMethodRestore(
   if (!checkoutSessionId) {
     return null;
   }
-  const restored = await restoreAppUserBillingProfileForCheckoutSession(
+  const result = await restoreAppUserBillingProfileForCheckoutSession(
     checkoutSessionId,
     parseStripeAttachedPaymentMethodId(rawBody),
+    livemode,
   );
-  return NextResponse.json({ received: true, restored });
+  if (result.ignored) {
+    return NextResponse.json({
+      received: true,
+      ignored: result.ignored,
+      ...(result.clientId ? { clientId: result.clientId } : {}),
+    });
+  }
+  return NextResponse.json({ received: true, restored: result.restored });
 }
 
 async function handleAccountUpdated(
@@ -590,7 +663,7 @@ async function handleCheckoutSessionCompleted(
 
   // Setup-mode / subscribe checkouts restore the app-user billing profile.
   try {
-    const restored = await handlePaymentMethodRestore(rawBody);
+    const restored = await handlePaymentMethodRestore(rawBody, livemode);
     if (restored) {
       return restored;
     }
@@ -648,7 +721,8 @@ function eventTypeFromRawBody(rawBody: string): string | null {
  * ownership of `client_id`. Auto-topup settlement also requires PI currency
  * to match `app_billing_config.default_currency`. Payment-method restore from
  * Connect metadata also requires that account match (or a server-issued
- * Checkout session mapping).
+ * Checkout session mapping) and that the app's stripeLivemode matches the
+ * webhook plane so sandbox ingress cannot restore live billing profiles.
  */
 export async function handleStripeWebhookPost(
   request: Request,
@@ -697,7 +771,7 @@ export async function handleStripeWebhookPost(
   }
   if (type === "setup_intent.succeeded" || type === "payment_method.attached") {
     try {
-      const restored = await handlePaymentMethodRestore(rawBody);
+      const restored = await handlePaymentMethodRestore(rawBody, livemode);
       if (restored) {
         return restored;
       }

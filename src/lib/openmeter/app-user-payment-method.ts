@@ -31,6 +31,7 @@ import {
   unlinkStripeCustomerPaymentMethod,
 } from "./owner-payment-method";
 import {
+  appLivemodeMatchesWebhookPlane,
   appStripeLivemode,
   connectPaymentsOnlyEnabled,
   createMerchantConnectCheckoutForUser,
@@ -64,10 +65,17 @@ export type AppUserPaymentMethodRestoreTarget = {
 type RestoreAfterAttachFn = (
   input: AppUserPaymentMethodRestoreTarget,
 ) => Promise<void>;
+export type CheckoutSessionRestoreResult = {
+  restored: boolean;
+  ignored?: string;
+  clientId?: string;
+};
+
 type RestoreForCheckoutSessionFn = (
   sessionId: string,
   paymentMethodId?: string | null,
-) => Promise<boolean>;
+  expectedLivemode?: boolean,
+) => Promise<CheckoutSessionRestoreResult>;
 
 let restoreAfterAttachForTests: RestoreAfterAttachFn | null = null;
 let restoreForCheckoutSessionForTests: RestoreForCheckoutSessionFn | null =
@@ -312,13 +320,18 @@ export async function resolveAppUserDefaultPaymentMethodId(input: {
 export async function restoreAppUserBillingProfileForCheckoutSession(
   sessionId: string,
   paymentMethodId?: string | null,
-): Promise<boolean> {
+  expectedLivemode?: boolean,
+): Promise<CheckoutSessionRestoreResult> {
   if (restoreForCheckoutSessionForTests) {
-    return restoreForCheckoutSessionForTests(sessionId, paymentMethodId);
+    return restoreForCheckoutSessionForTests(
+      sessionId,
+      paymentMethodId,
+      expectedLivemode,
+    );
   }
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
-    return false;
+    return { restored: false };
   }
   const checkoutRows = await db
     .select({
@@ -345,13 +358,26 @@ export async function restoreAppUserBillingProfileForCheckoutSession(
         .limit(1)
     )[0];
   if (!target?.clientId || !target.externalUserId) {
-    return false;
+    return { restored: false };
+  }
+  if (expectedLivemode !== undefined) {
+    const matches = await appLivemodeMatchesWebhookPlane(
+      target.clientId,
+      expectedLivemode,
+    );
+    if (!matches) {
+      return {
+        restored: false,
+        ignored: "livemode_mismatch",
+        clientId: target.clientId,
+      };
+    }
   }
   await restoreAppUserBillingProfileAfterPaymentMethodAttached({
     ...target,
     paymentMethodId,
   });
-  return true;
+  return { restored: true, clientId: target.clientId };
 }
 
 type AppUserStripeRefs = {
