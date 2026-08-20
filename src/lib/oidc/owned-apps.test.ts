@@ -18,6 +18,19 @@ const beta: OwnedAppChoice = {
   name: "Beta",
 };
 
+test("Claude DCR authorize params do not name an app", () => {
+  const params = {
+    response_type: "code",
+    client_id: "dcr_299a362a4f80400d88b24b12ce60aeb7",
+    redirect_uri: "http://localhost:58333/callback",
+    scope: "openid profile email offline_access sign:job",
+    prompt: "consent",
+    resource: "https://staging.pymthouse.com/api/v1/mcp",
+  };
+  assert.equal(readSpecifiedAppClientId(params), null);
+  assert.deepEqual(pickOwnedAppForMcp([alpha], null), alpha);
+});
+
 test("readSpecifiedAppClientId prefers app_client_id", () => {
   assert.equal(
     readSpecifiedAppClientId({ app_client_id: "app_public_b", app: "ignored" }),
