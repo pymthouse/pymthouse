@@ -31,11 +31,8 @@ test("consentPromptNeeded uses result.consent grantId before session", async () 
     requestedScopes: ["openid", "profile", "admin"],
     resultConsentGrantId: "g_result",
     sessionGrantId: "g_session",
-    findGrant: async (id) => {
-      assert.equal(id, "g_result");
-      return {
-        getOIDCScope: () => "openid profile email admin",
-      };
+    findGrant: async () => {
+      throw new Error("should not reload a grant after this request consents");
     },
   });
   assert.equal(needed, false);
@@ -97,10 +94,19 @@ test("consentPromptNeeded is true when the session grant belongs to another acco
   assert.equal(needed, true);
 });
 
-test("consentPromptNeeded is true when the grant row is missing", async () => {
+test("consentPromptNeeded is false after this request grants even if the row is not readable yet", async () => {
   const needed = await consentPromptNeeded({
     requestedScopes: ["openid"],
-    resultConsentGrantId: "missing",
+    resultConsentGrantId: "g_just_saved",
+    findGrant: async () => undefined,
+  });
+  assert.equal(needed, false);
+});
+
+test("consentPromptNeeded is true when the session grant row is missing", async () => {
+  const needed = await consentPromptNeeded({
+    requestedScopes: ["openid"],
+    sessionGrantId: "missing",
     findGrant: async () => undefined,
   });
   assert.equal(needed, true);

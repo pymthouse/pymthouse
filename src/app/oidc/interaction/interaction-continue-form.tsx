@@ -12,8 +12,13 @@ export default function InteractionContinueForm({
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
+    const key = `oidc-interaction-posted:${uid}`;
+    if (sessionStorage.getItem(key) === "1") {
+      return;
+    }
+    sessionStorage.setItem(key, "1");
     formRef.current?.submit();
-  }, []);
+  }, [uid]);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">

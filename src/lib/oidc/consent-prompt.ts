@@ -53,12 +53,18 @@ export async function consentPromptNeeded(opts: {
   accountId?: string | null;
   resource?: string | null;
 }): Promise<boolean> {
-  if (opts.forceConsent && !opts.resultConsentGrantId?.trim()) {
+  const resultGrantId = opts.resultConsentGrantId?.trim();
+  // This authorization already accepted consent. Do not open another
+  // interaction — a second prompt 303s back to /oidc/interaction and looks
+  // like Authorize is reloading forever.
+  if (resultGrantId) {
+    return false;
+  }
+  if (opts.forceConsent) {
     return true;
   }
 
-  const grantId =
-    opts.resultConsentGrantId?.trim() || opts.sessionGrantId?.trim();
+  const grantId = opts.sessionGrantId?.trim();
   if (!grantId) {
     return true;
   }

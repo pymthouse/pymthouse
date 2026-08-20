@@ -19,6 +19,7 @@ import {
   filterScopesToAllowlist,
   isDcrClientId,
 } from "@/lib/oidc/dcr-client";
+import { resolveRedirectLocation } from "@/app/api/v1/oidc/[...oidc]/utils";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
 import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
@@ -187,8 +188,7 @@ async function buildConsentResult(opts: {
       grant.addOIDCScope(grantedScopes);
       grant.addResourceScope(mcpResource, grantedScopes);
     }
-    await grant.save();
-    grantId = grant.jti;
+    grantId = (await grant.save()) || grant.jti;
     if (mcpAppBinding && grantId) {
       await bindMcpAppToGrant(grantId, {
         accountId: opts.accountId,
@@ -396,13 +396,14 @@ export async function handleOidcInteractionPost(
     const redirectTo = await provider.interactionResult(req, res, result, {
       mergeWithLastSubmission: false,
     });
-    const response = NextResponse.redirect(redirectTo, { status: 302 });
+    const redirectUrl = resolveRedirectLocation(redirectTo, getPublicOrigin());
+    const response = NextResponse.redirect(redirectUrl, { status: 302 });
     appendSetCookies(res, response);
     const ttlSeconds =
       typeof details.exp === "number"
         ? details.exp - Math.floor(Date.now() / 1000)
         : 1800;
-    attachHandshakeCookies(provider, uid, redirectTo, ttlSeconds, response);
+    attachHandshakeCookies(provider, uid, redirectUrl.href, ttlSeconds, response);
     return response;
   } catch (err) {
     const name = err instanceof Error ? err.name : "";
