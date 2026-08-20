@@ -87,6 +87,7 @@ export default function AppSettingsPageClient({
       </div>
 
       <AppSettingsScreen
+        key={id}
         appId={id}
         initialData={appData.formData}
         initialState={appData.state}
