@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation, buildLoopbackRedirectBridgeHtml, isLoopbackHttpRedirect, jsonForInlineScript } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, buildLoopbackRedirectBridgeHtml, isLoopbackHttpRedirect } from "./utils";
 
 test("deriveExternalOriginFromHeaders prefers forwarded host+proto", () => {
   const headers = new Headers({
@@ -60,22 +60,22 @@ test("resolveRedirectLocation allows Claude hosted callback origins", () => {
   );
 });
 
-test("buildLoopbackRedirectBridgeHtml embeds the callback URL", () => {
+test("buildLoopbackRedirectBridgeHtml embeds the callback URL without scripts", () => {
   const html = buildLoopbackRedirectBridgeHtml(
     new URL("http://127.0.0.1:9999/callback?code=a&state=b"),
   );
   assert.match(html, /Return to Claude Code/);
   assert.match(html, /http:\/\/127\.0\.0\.1:9999\/callback\?code=a&amp;state=b/);
-  assert.match(html, /window\.location\.replace/);
+  assert.equal(html.includes("<script"), false);
+  assert.equal(html.includes("javascript:"), false);
 });
 
-test("jsonForInlineScript escapes script breakout in OAuth state", () => {
+test("buildLoopbackRedirectBridgeHtml HTML-encodes OAuth state", () => {
   const payload = 'http://127.0.0.1:1/callback?state=</script><script>alert(1)</script>';
-  const encoded = jsonForInlineScript(payload);
-  assert.equal(encoded.includes("</script>"), false);
-  assert.match(encoded, /\\u003c\/script\\u003e/);
   const html = buildLoopbackRedirectBridgeHtml(new URL(payload));
   assert.equal(html.includes("</script><script>"), false);
+  assert.equal(html.includes("<script>"), false);
+  assert.match(html, /state=/);
 });
 
 test("isLoopbackHttpRedirect accepts RFC 8252 callback hosts only", () => {
@@ -88,11 +88,23 @@ test("isLoopbackHttpRedirect accepts RFC 8252 callback hosts only", () => {
     true,
   );
   assert.equal(
+    isLoopbackHttpRedirect(new URL("http://[::1]/callback")),
+    true,
+  );
+  assert.equal(
     isLoopbackHttpRedirect(new URL("http://evil.example/callback")),
     false,
   );
   assert.equal(
     isLoopbackHttpRedirect(new URL("https://localhost/callback")),
+    false,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://localhost:1/nested/callback")),
+    false,
+  );
+  assert.equal(
+    isLoopbackHttpRedirect(new URL("http://user:pass@127.0.0.1/callback")),
     false,
   );
 });

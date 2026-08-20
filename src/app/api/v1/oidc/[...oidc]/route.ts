@@ -17,6 +17,10 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import { normalizeProviderPath } from "@/lib/oidc/routes";
 import {
+  consumeDcrRegistrationSlot,
+  dcrRegistrationClientKey,
+} from "@/lib/oidc/dcr-rate-limit";
+import {
   handleOidcInteractionGet,
   handleOidcInteractionPost,
   parseOidcInteractionUid,
@@ -118,6 +122,19 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
     console.info("[OIDC] route alias", { from: path, to: normalizedPath });
   }
   path = normalizedPath;
+
+  if (request.method === "POST" && path === "/reg") {
+    const clientKey = dcrRegistrationClientKey(request.headers);
+    if (!consumeDcrRegistrationSlot(clientKey)) {
+      return NextResponse.json(
+        {
+          error: "slow_down",
+          error_description: "Too many dynamic client registrations from this address",
+        },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
+  }
 
   // Discovery must stay cold-start free: Claude validates scopes against this
   // document before opening the authorize URL.
@@ -515,6 +532,8 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
                 headers: {
                   "content-type": "text/html; charset=utf-8",
                   "cache-control": "no-store",
+                  "x-content-type-options": "nosniff",
+                  "referrer-policy": "no-referrer",
                 },
               },
             );
@@ -638,6 +657,9 @@ function interactionUidFromRequest(request: NextRequest): string | null {
 export async function GET(request: NextRequest) {
   const uid = interactionUidFromRequest(request);
   if (uid) {
+    if (request.nextUrl.searchParams.get("complete") === "1") {
+      return handleOidcInteractionPost(request, uid);
+    }
     return handleOidcInteractionGet(request, uid);
   }
   return handleOIDC(request);

@@ -17,11 +17,17 @@ const CLAUDE_MCP_CALLBACK_PATH = "/api/mcp/auth_callback";
  */
 export function isLoopbackMcpRedirectUrl(url: URL): boolean {
   if (url.protocol !== "http:") return false;
+  if (url.username || url.password) return false;
   const host = url.hostname.toLowerCase();
-  if (host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]") {
+  if (
+    host !== "localhost" &&
+    host !== "127.0.0.1" &&
+    host !== "::1" &&
+    host !== "[::1]"
+  ) {
     return false;
   }
-  return url.pathname === "/callback" || url.pathname.endsWith("/callback");
+  return url.pathname === "/callback";
 }
 
 /**

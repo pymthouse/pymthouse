@@ -269,6 +269,9 @@ export async function handleOidcInteractionGet(
 async function readInteractionBody(
   request: NextRequest,
 ): Promise<{ action?: "approve" | "deny"; app_client_id?: string }> {
+  if (request.method === "GET") {
+    return {};
+  }
   try {
     const contentType = request.headers.get("content-type") ?? "";
     if (contentType.includes("application/x-www-form-urlencoded")) {

@@ -4,8 +4,8 @@ import { headers } from "next/headers";
 import { authOptions } from "@/lib/next-auth-options";
 import { checkAppAccess } from "@/lib/oidc/app-access";
 import {
-  completeOidcInteraction,
   loadOidcInteractionDetails,
+  oidcInteractionCompletePath,
 } from "@/lib/oidc/interaction-bridge";
 import {
   isCustomerServiceOidcClient,
@@ -70,8 +70,7 @@ export default async function OidcInteractionPage({
     redirect(oidcLoginRedirect(clientIdFromQuery, oidcInteractionPath(uid, clientIdFromQuery)));
   }
 
-  const requestHeaders = await headers();
-  const details = await loadOidcInteractionDetails(uid, requestHeaders);
+  const details = await loadOidcInteractionDetails(uid);
   if (!details) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
@@ -117,18 +116,7 @@ export default async function OidcInteractionPage({
     details.prompt.name === "consent" &&
     isCustomerServiceOidcClient(requestedClientId)
   )) {
-    const redirectTo = await completeOidcInteraction(uid, requestHeaders);
-    if (redirectTo) {
-      redirect(redirectTo);
-    }
-    return (
-      <main className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6">
-        <div className="max-w-md w-full border border-red-500/20 bg-zinc-900/40 rounded-xl p-6">
-          <h1 className="text-lg font-semibold text-red-300 mb-2">Invalid Session</h1>
-          <p className="text-sm text-zinc-400">Your session is invalid. Please sign in again.</p>
-        </div>
-      </main>
-    );
+    redirect(oidcInteractionCompletePath(uid));
   }
 
   if (details.prompt.name === "consent") {

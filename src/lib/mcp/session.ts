@@ -1,5 +1,6 @@
 import "server-only";
 
+import { hasScope } from "@/lib/auth";
 import { createCorrelationId } from "@/lib/audit";
 import { buildAppManifestForApp } from "@/lib/app-manifest";
 import type { AppManifestResponse } from "@/lib/discovery-allowlist";
@@ -73,6 +74,32 @@ function attachSdkToken(
 export async function createSignerSessionForPrincipal(
   principal: McpPrincipal,
 ): Promise<HostedSignerSession> {
+  if (principal.kind === "mcp_oauth") {
+    if (!hasScope(principal.scope ?? "", "sign:job")) {
+      throw new MintUserSignerTokenError(
+        "invalid_grant",
+        "MCP access token must include sign:job to create a signer session",
+        403,
+      );
+    }
+    const minted = await mintSignerJwtForExternalUser({
+      publicClientId: principal.publicClientId,
+      developerAppId: principal.developerAppId,
+      externalUserId: principal.externalUserId,
+    });
+    const session = buildSignerSessionEnvelope({
+      access_token: minted.access_token,
+      expires_in: minted.expires_in,
+      scope: minted.scope,
+      balanceUsdMicros: minted.balanceUsdMicros,
+      lifetimeGrantedUsdMicros: minted.lifetimeGrantedUsdMicros,
+      signer_url: getClientSignerApiUrl(principal.publicClientId),
+      discovery_url: getSignerDiscoveryUrl(),
+      issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    });
+    return attachSdkToken(session, principal);
+  }
+
   if (principal.kind === "m2m") {
     if (!principal.m2mClientId) {
       throw new MintUserSignerTokenError(

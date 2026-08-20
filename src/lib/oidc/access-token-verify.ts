@@ -1,6 +1,5 @@
 import * as jose from "jose";
 import { getCanonicalIssuer } from "./issuer-urls";
-import { getMcpResourceUrl } from "@/lib/mcp/oauth-resource";
 
 /**
  * Verify a JWT access token issued by the OIDC provider.
@@ -30,16 +29,6 @@ export async function verifyAccessToken(
   } catch {
     return null;
   }
-}
-
-/** Accept either a platform-issuer token or an MCP resource-bound token. */
-export async function verifyIssuerOrMcpAccessToken(
-  token: string,
-): Promise<jose.JWTPayload | null> {
-  return (
-    (await verifyAccessToken(token)) ??
-    (await verifyAccessToken(token, { audience: getMcpResourceUrl() }))
-  );
 }
 
 /**

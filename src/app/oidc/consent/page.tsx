@@ -602,8 +602,7 @@ export default async function ConsentPage({
   }
 
   const session = await getServerSession(authOptions);
-  const requestHeaders = await headers();
-  const interactionDetails = await loadOidcInteractionDetails(uid, requestHeaders);
+  const interactionDetails = await loadOidcInteractionDetails(uid);
   if (!interactionDetails) {
     return (
       <ConsentErrorPanel title="Expired or Invalid Request">

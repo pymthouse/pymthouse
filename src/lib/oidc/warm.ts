@@ -6,15 +6,28 @@
  * `/warm` handler also pings the page entrypoints so login/consent stay hot.
  */
 
+import { timingSafeEqual } from "node:crypto";
+
 import { getProvider } from "@/lib/oidc/provider";
 import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
+function bearerMatchesSecret(authorization: string | null, secret: string): boolean {
+  const expected = `Bearer ${secret}`;
+  const provided = authorization ?? "";
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
+
 export function isTrustedOidcWarmRequest(headers: Headers): boolean {
-  const secret = process.env.CRON_SECRET;
+  const secret = process.env.CRON_SECRET?.trim();
   if (!secret) {
     return false;
   }
-  return headers.get("authorization") === `Bearer ${secret}`;
+  return bearerMatchesSecret(headers.get("authorization"), secret);
 }
 
 export async function warmOidcProvider(): Promise<{ ok: true; issuer: string }> {
@@ -33,16 +46,16 @@ export async function warmOidcPageIsolates(): Promise<{
   interaction: number;
   consent: number;
 }> {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) {
+    return { interaction: 0, consent: 0 };
+  }
+
   const origin = getPublicOrigin();
   const headers: Record<string, string> = {
     "user-agent": "pymthouse-oidc-warm/1.0",
+    authorization: `Bearer ${secret}`,
   };
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    headers.authorization = `Bearer ${secret}`;
-  } else {
-    headers["x-vercel-cron"] = "1";
-  }
 
   const [interaction, consent] = await Promise.all([
     fetch(`${origin}/oidc/interaction?warm=1`, {

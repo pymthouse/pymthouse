@@ -46,6 +46,14 @@ test("only Claude hosted and RFC 8252 loopback redirect URIs are allowed", () =>
     isAllowedMcpDcrRedirectUri("https://example.com/oauth/callback"),
     false,
   );
+  assert.equal(
+    isAllowedMcpDcrRedirectUri("http://localhost:3118/nested/callback"),
+    false,
+  );
+  assert.equal(
+    isAllowedMcpDcrRedirectUri("http://user:pass@127.0.0.1/callback"),
+    false,
+  );
 });
 
 test("DCR allowlist matches MCP resource scopes (consent display + grant)", () => {

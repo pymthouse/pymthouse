@@ -241,6 +241,7 @@ function buildInteractionPolicy() {
 }
 
 let _provider: Provider | null = null;
+let _providerPromise: Promise<Provider> | null = null;
 let _cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 // TTL-cached CORS snapshot (refreshes every 60s)
@@ -294,7 +295,16 @@ async function buildCorsSnapshot(): Promise<{
   return { trustedHosts, clientOrigins };
 }
 
-export async function getProvider(): Promise<Provider> {
+export function getProvider(): Promise<Provider> {
+  if (_provider) return Promise.resolve(_provider);
+  _providerPromise ??= instantiateProvider().catch((err) => {
+    _providerPromise = null;
+    throw err;
+  });
+  return _providerPromise;
+}
+
+async function instantiateProvider(): Promise<Provider> {
   if (_provider) return _provider;
 
   const issuer = getIssuer();
@@ -454,10 +464,10 @@ export async function getProvider(): Promise<Provider> {
         enabled: true,
         initialAccessToken: false,
         idFactory: () => createDcrClientId(),
-        issueRegistrationAccessToken: true,
+        issueRegistrationAccessToken: false,
       },
       registrationManagement: {
-        enabled: true,
+        enabled: false,
         rotateRegistrationAccessToken: true,
       },
       clientCredentials: { enabled: true },
@@ -639,4 +649,5 @@ export function resetProvider(): void {
   _corsCache = null;
   _corsCacheExpiry = 0;
   _provider = null;
+  _providerPromise = null;
 }

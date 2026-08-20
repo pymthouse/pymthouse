@@ -87,36 +87,33 @@ export function resolveRedirectLocation(
  * http://localhost…` headers (leaving `http:/`); a same-origin page with an
  * explicit link + copyable URL survives that and matches Claude Code's
  * "paste the redirect URL" fallback.
+ *
+ * No inline JavaScript — a user-controlled OAuth `state` must never enter a
+ * `<script>` context on this origin.
  */
-/** JSON for an inline script — JSON.stringify does not escape `</script>`. */
-export function jsonForInlineScript(value: string): string {
-  return JSON.stringify(value)
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e")
-    .replaceAll("&", "\\u0026")
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 export function buildLoopbackRedirectBridgeHtml(redirectUrl: URL): string {
+  if (!isLoopbackHttpRedirect(redirectUrl)) {
+    throw new Error("[OIDC] Loopback HTML bridge requires an RFC 8252 callback");
+  }
   const href = redirectUrl.href;
-  const safeHref = href
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  const safeText = href
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  const scriptHref = jsonForInlineScript(href);
+  const safeHref = escapeHtml(href);
+  const safeText = escapeHtml(href);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"/>
   <title>Return to Claude Code</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #09090b; color: #fafafa;
@@ -135,15 +132,9 @@ export function buildLoopbackRedirectBridgeHtml(redirectUrl: URL): string {
   <main>
     <h1>Authorization complete</h1>
     <p>Return to Claude Code to finish connecting Livepeer MCP. If the app does not open automatically, use the button or paste the URL into the CLI prompt.</p>
-    <p><a class="button" id="continue" href="${safeHref}">Return to Claude Code</a></p>
+    <p><a class="button" id="continue" href="${safeHref}" rel="noopener noreferrer">Return to Claude Code</a></p>
     <pre id="url">${safeText}</pre>
   </main>
-  <script>
-    (function () {
-      var target = ${scriptHref};
-      try { window.location.replace(target); } catch (e) { /* keep manual link */ }
-    })();
-  </script>
 </body>
 </html>`;
 }
