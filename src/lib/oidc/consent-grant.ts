@@ -2,6 +2,9 @@ import type { Provider } from "oidc-provider";
 
 import { getIssuer } from "@/lib/oidc/issuer-urls";
 
+/** Must match `ttl.Grant` on the provider. Set on the instance so save() does not depend on `constructor.name`. */
+export const OIDC_GRANT_TTL_SECONDS = 14 * 24 * 3600;
+
 /** node-oidc-provider session.loginAccount requires a non-empty string. */
 export function asOidcAccountId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -28,9 +31,11 @@ export async function saveOidcConsentGrant(opts: {
     return undefined;
   }
 
-  const grant = new opts.provider.Grant();
-  grant.clientId = clientId;
-  grant.accountId = accountId;
+  const grant = new opts.provider.Grant({
+    clientId,
+    accountId,
+    expiresIn: OIDC_GRANT_TTL_SECONDS,
+  });
   grant.addOIDCScope(scope);
   grant.addResourceScope(getIssuer(), scope);
   await grant.save();

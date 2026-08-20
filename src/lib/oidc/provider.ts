@@ -6,10 +6,7 @@
 
 import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
-import {
-  consentPromptNeeded,
-  promptIncludesConsent,
-} from "@/lib/oidc/consent-prompt";
+import { promptIncludesConsent } from "@/lib/oidc/consent-prompt";
 import { oidcInteractionPath } from "@/lib/oidc/customer-service-id";
 import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
 import { PostgresOidcAdapter } from "./adapter";
@@ -32,7 +29,6 @@ import {
   isMcpResourceIndicator,
   MCP_OAUTH_APP_CLAIM,
   MCP_RESOURCE_SCOPES,
-  readResourceParam,
 } from "@/lib/mcp/oauth-resource";
 import { db } from "@/db/index";
 import { oidcSigningKeys, oidcClients, appAllowedDomains, developerApps } from "@/db/schema";
@@ -213,36 +209,24 @@ function patchHashedClientSecretComparison(provider: Provider): void {
  */
 function buildInteractionPolicy() {
   const basePolicy = interactionPolicy.base();
-
   const consent = basePolicy.find((p) => p.name === "consent");
   if (consent) {
     const { Check } = interactionPolicy;
-    consent.checks.clear();
+    // Keep native / missing-scope checks. Replacing them let resume finish
+    // with an empty grant and redirect access_denied (no description).
     consent.checks.add(
       new Check(
-        "native_client_prompt",
-        "consent required for third-party clients",
-        async (ctx) => {
-          const oidc = ctx.oidc;
-          const clientId = oidc.client?.clientId;
-          const resource = readResourceParam(
-            (oidc.params ?? {}) as Record<string, unknown>,
-          );
-          const needed = await consentPromptNeeded({
-            requestedScopes: oidc.requestParamScopes,
-            resultConsentGrantId: oidc.result?.consent?.grantId,
-            sessionGrantId: clientId
-              ? oidc.session?.grantIdFor(clientId)
-              : undefined,
-            findGrant: async (grantId) =>
-              oidc.provider.Grant.find(grantId),
-            forceConsent: promptIncludesConsent(oidc.params?.prompt),
-            accountId: oidc.session?.accountId ?? null,
-            resource,
-          });
-          return needed ? Check.REQUEST_PROMPT : Check.NO_NEED_TO_PROMPT;
+        "prompt_parameter_consent",
+        "client requested a consent prompt",
+        (ctx) => {
+          if (!promptIncludesConsent(ctx.oidc.params?.prompt)) {
+            return Check.NO_NEED_TO_PROMPT;
+          }
+          if (ctx.oidc.result?.consent) {
+            return Check.NO_NEED_TO_PROMPT;
+          }
+          return Check.REQUEST_PROMPT;
         },
-        (ctx) => ({ scopes: ctx.oidc.requestParamScopes }),
       ),
     );
   }

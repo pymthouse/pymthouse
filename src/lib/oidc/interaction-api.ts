@@ -12,7 +12,11 @@ import { getServerSession } from "next-auth";
 import type { Provider } from "oidc-provider";
 
 import { getClient } from "@/lib/oidc/clients";
-import { asOidcAccountId, saveOidcConsentGrant } from "@/lib/oidc/consent-grant";
+import {
+  asOidcAccountId,
+  OIDC_GRANT_TTL_SECONDS,
+  saveOidcConsentGrant,
+} from "@/lib/oidc/consent-grant";
 import { isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
 import {
   DCR_ALLOWED_SCOPES,
@@ -210,6 +214,7 @@ async function buildConsentResult(opts: {
     const grant = new opts.provider.Grant({
       clientId: opts.clientId,
       accountId: opts.accountId,
+      expiresIn: OIDC_GRANT_TTL_SECONDS,
     });
     grant.addOIDCScope(grantedScopes);
     for (const indicator of mcpGrantResourceIndicators(resource, opts.clientId)) {
