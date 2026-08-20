@@ -1,8 +1,4 @@
-"use client";
-
-import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
 /** Discovery profiles live under Billing Plans. */
-export default function AppDiscoveryProfilesPage() {
-  return <AppSettingsPageClient tab="plans" />;
-}
+export default AppSettingsSegmentPage;

@@ -1,8 +1,4 @@
-"use client";
-
-import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
 /** Alias of App profile (`/apps/[id]`). */
-export default function AppSettingsPage() {
-  return <AppSettingsPageClient tab="profile" />;
-}
+export default AppSettingsSegmentPage;

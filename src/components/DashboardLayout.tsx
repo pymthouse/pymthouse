@@ -152,6 +152,16 @@ export default function DashboardLayout({
     }
   }, [status, router]);
 
+  const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
+  const activeAppId = appDetailMatch?.[1] ?? null;
+
+  useEffect(() => {
+    if (!activeAppId) return;
+    for (const sub of APP_SUB_NAV_ITEMS) {
+      router.prefetch(`/apps/${activeAppId}${sub.href}`);
+    }
+  }, [activeAppId, router]);
+
   if (status === "loading") {
     return (
       <div className="flex h-screen w-full bg-zinc-950">
@@ -249,10 +259,6 @@ export default function DashboardLayout({
             const adminItems = navItems.filter((i) => i.group === "Admin");
             const resourceItems = navItems.filter((i) => i.group === "Resources");
             const otherItems = navItems.filter((i) => !i.group);
-
-            // Detect if we're inside an app detail page: /apps/<appId>/...
-            const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
-            const activeAppId = appDetailMatch?.[1] ?? null;
 
             const renderNavLink = (item: NavItem, isActive: boolean) => {
               const linkClass = `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${

@@ -1,7 +1,3 @@
-"use client";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
-import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
-
-export default function AppCredentialsPage() {
-  return <AppSettingsPageClient tab="credentials" />;
-}
+export default AppSettingsSegmentPage;

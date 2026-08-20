@@ -6,7 +6,6 @@ import { redirect } from "next/navigation";
 import { db } from "@/db/index";
 import { signerConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import DashboardLayout from "@/components/DashboardLayout";
 import AppsListSection from "@/components/apps/AppsListSection";
 import AdminAppsHome from "@/components/apps/AdminAppsHome";
 import MyAppsShortcutTiles from "@/components/apps/MyAppsShortcutTiles";
@@ -39,11 +38,7 @@ export default async function AppsPage({
   const params = await searchParams;
 
   if (role === "admin" || role === "operator") {
-    return (
-      <DashboardLayout>
-        <AdminMyApps userId={userId} />
-      </DashboardLayout>
-    );
+    return <AdminMyApps userId={userId} />;
   }
 
   if (userId && (await developerNeedsOnboarding(userId))) {
@@ -51,12 +46,10 @@ export default async function AppsPage({
   }
 
   return (
-    <DashboardLayout>
-      <DeveloperMyApps
-        userId={userId}
-        showSetupBanner={params.setup === "1"}
-      />
-    </DashboardLayout>
+    <DeveloperMyApps
+      userId={userId}
+      showSetupBanner={params.setup === "1"}
+    />
   );
 }
 
