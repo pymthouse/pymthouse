@@ -725,14 +725,14 @@ function CredentialAccordionSection({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
-      {expanded && (
-        <div
-          id={`credential-panel-${id}`}
-          className="border-t border-white/[0.06] px-5 py-5 sm:px-6 sm:py-6"
-        >
-          {children}
-        </div>
-      )}
+      <div
+        id={`credential-panel-${id}`}
+        hidden={!expanded}
+        inert={!expanded}
+        className="border-t border-white/[0.06] px-5 py-5 sm:px-6 sm:py-6"
+      >
+        {children}
+      </div>
     </div>
   );
 }
