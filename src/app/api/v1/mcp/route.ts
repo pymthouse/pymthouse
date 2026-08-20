@@ -8,7 +8,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const HOSTED_TOOLS = [
-  "livepeer_mcp_info",
   "list_capabilities",
   "list_discovery_profiles",
   "query_orchestrators",
@@ -60,6 +59,7 @@ function metadataResponse(request: NextRequest) {
       },
     },
     tools: [...HOSTED_TOOLS],
+    resources: ["livepeer://mcp/info"],
     local_client: {
       path: "livepeer-python-gateway/examples/comfypeer-mcp",
       tools: [

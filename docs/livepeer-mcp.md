@@ -43,7 +43,7 @@ Optional: `DISCOVERY_SERVICE_URL` (aliases `DISCOVERY_URL`, `LIVEPEER_DISCOVERY_
 DISCOVERY_SERVICE_URL=https://discovery-service-production-8955.up.railway.app/v1/discovery/raw
 ```
 
-`readDiscoveryServiceUrl()` takes the origin from that value to build `/v1/discovery/*` API calls; `readDiscoveryRawUrl()` returns it unchanged for `livepeer-python-gateway --token` payloads. A bare origin is also accepted (the raw path is backfilled). A value that is not an absolute http(s) URL throws rather than silently falling back to the hosted default. Both forms are reported by `livepeer_mcp_info` as `discovery_service_url` and `discovery_raw_url`.
+`readDiscoveryServiceUrl()` takes the origin from that value to build `/v1/discovery/*` API calls; `readDiscoveryRawUrl()` returns it unchanged for `livepeer-python-gateway --token` payloads. A bare origin is also accepted (the raw path is backfilled). A value that is not an absolute http(s) URL throws rather than silently falling back to the hosted default. Both forms are reported by the `livepeer://mcp/info` resource as `discovery_service_url` and `discovery_raw_url`.
 
 ```bash
 curl -s "$NEXTAUTH_URL/api/v1/mcp" | jq .
@@ -51,6 +51,6 @@ curl -s "$NEXTAUTH_URL/api/v1/mcp" | jq .
 curl -si -X POST "$NEXTAUTH_URL/api/v1/mcp" -H 'accept: application/json, text/event-stream' -H 'content-type: application/json' -d '{}' | head
 ```
 
-Tools: `livepeer_mcp_info`, `list_capabilities`, `list_discovery_profiles`, `query_orchestrators`, `get_discovery_freshness`, `create_signer_session`.
+Tools: `list_capabilities`, `list_discovery_profiles`, `query_orchestrators`, `get_discovery_freshness`, `create_signer_session` (`confirm: true`). Resource: `livepeer://mcp/info`.
 
 Local execution client adds Storyboard-aligned network verbs: `run_capability`, `start_stream` / `write_stream_control` / `stop_stream`, `call_live_runner`.
