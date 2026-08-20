@@ -19,7 +19,7 @@ import {
   filterScopesToAllowlist,
   isDcrClientId,
 } from "@/lib/oidc/dcr-client";
-import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
 import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
 import { getProvider } from "@/lib/oidc/provider";
@@ -60,36 +60,60 @@ async function resolveConsentScopeAllowlist(
   return registered?.allowedScopes ?? [];
 }
 
-/**
- * Build a minimal Node.js IncomingMessage/ServerResponse pair for calling
- * node-oidc-provider's `interactionDetails` and `interactionResult` APIs.
- *
- * The POST request body is intentionally NOT forwarded here. Both provider
- * methods read state from the signed `_interaction` cookie (present in the
- * forwarded headers) and take the interaction result as an explicit JS
- * parameter — neither reads from the HTTP body. Omitting the body keeps
- * this bridge simple and avoids stream-lifecycle bugs.
- */
-function buildNodeRequest(
-  method: "GET" | "POST",
+type CookieCapableProvider = Provider & {
+  cookieName: (type: string) => string;
+  createContext: (
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => {
+    cookies: {
+      set: (
+        name: string,
+        value: string | null,
+        opts?: Record<string, unknown>,
+      ) => void;
+    };
+  };
+};
+
+function appendSetCookies(from: ServerResponse, to: NextResponse): void {
+  const raw = from.getHeader("set-cookie");
+  if (!raw) return;
+  const cookies = Array.isArray(raw) ? raw : [raw];
+  for (const cookie of cookies) {
+    to.headers.append("Set-Cookie", String(cookie));
+  }
+}
+
+function attachHandshakeCookies(
+  provider: Provider,
   uid: string,
-  request: NextRequest,
-): { req: IncomingMessage; res: ServerResponse } {
+  returnTo: string,
+  ttlSeconds: number,
+  response: NextResponse,
+): void {
+  const cookieProvider = provider as CookieCapableProvider;
   const socket = new Socket();
   const req = new IncomingMessage(socket);
-  req.method = method;
-  req.url = `${OIDC_MOUNT_PATH}/interaction/${uid}`;
-  request.headers.forEach((value, key) => {
-    req.headers[key.toLowerCase()] = value;
-  });
   const publicUrl = new URL(getPublicOrigin());
   req.headers.host = publicUrl.host;
-  if (!req.headers["x-forwarded-proto"]) {
-    req.headers["x-forwarded-proto"] = publicUrl.protocol.replace(":", "");
-  }
-  req.push(null);
   const res = new ServerResponse(req);
-  return { req, res };
+  const ctx = cookieProvider.createContext(req, res);
+  const maxAge = Math.max(1, ttlSeconds) * 1000;
+  ctx.cookies.set(cookieProvider.cookieName("interaction"), uid, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge,
+  });
+  ctx.cookies.set(cookieProvider.cookieName("resume"), uid, {
+    path: new URL(returnTo, getPublicOrigin()).pathname,
+    domain: undefined,
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge,
+  });
+  appendSetCookies(res, response);
 }
 
 async function buildConsentResult(opts: {
@@ -228,14 +252,22 @@ async function interactionSubmissionResult(opts: {
 }
 
 export async function handleOidcInteractionGet(
-  request: NextRequest,
+  _request: NextRequest,
   uid: string,
 ): Promise<NextResponse> {
   const provider = await getProvider();
 
   try {
-    const { req, res } = buildNodeRequest("GET", uid, request);
-    const details = await provider.interactionDetails(req, res);
+    const details = await provider.Interaction.find(uid);
+    if (!details) {
+      return NextResponse.json(
+        {
+          error: "interaction_not_found",
+          error_description: "Interaction session not found or expired",
+        },
+        { status: 404 },
+      );
+    }
     const clientId = details.params.client_id as string | undefined;
     let clientName: string | undefined;
     if (clientId) {
@@ -317,8 +349,16 @@ export async function handleOidcInteractionPost(
   }
 
   try {
-    const { req, res } = buildNodeRequest("POST", uid, request);
-    const details = await provider.interactionDetails(req, res);
+    const details = await provider.Interaction.find(uid);
+    if (!details) {
+      return NextResponse.json(
+        {
+          error: "interaction_not_found",
+          error_description: "Interaction session not found or expired",
+        },
+        { status: 404 },
+      );
+    }
     const result = await interactionSubmissionResult({
       provider,
       promptName: details.prompt.name,
@@ -333,11 +373,16 @@ export async function handleOidcInteractionPost(
       return result;
     }
 
-    const redirectTo = await provider.interactionResult(req, res, result, {
-      mergeWithLastSubmission: false,
-    });
-
-    return NextResponse.redirect(redirectTo, { status: 302 });
+    details.result = result;
+    await details.persist();
+    const redirectTo = details.returnTo;
+    const response = NextResponse.redirect(redirectTo, { status: 302 });
+    const ttlSeconds =
+      typeof details.exp === "number"
+        ? details.exp - Math.floor(Date.now() / 1000)
+        : 1800;
+    attachHandshakeCookies(provider, uid, redirectTo, ttlSeconds, response);
+    return response;
   } catch (err) {
     if (DEBUG_OIDC_LOGS) {
       console.warn("[OIDC] interaction POST failed", { uid, err });

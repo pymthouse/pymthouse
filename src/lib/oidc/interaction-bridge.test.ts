@@ -57,6 +57,22 @@ test("mapInteractionPayload rejects expired interactions", () => {
   );
 });
 
+test("mapInteractionPayload treats Interaction uid as the payload jti", () => {
+  const details = mapInteractionPayload(
+    "IcxMHbL3WuA3no7wN0wC5ALCzxcy_rPPtOlsJUxAuiK",
+    {
+      jti: "IcxMHbL3WuA3no7wN0wC5ALCzxcy_rPPtOlsJUxAuiK",
+      exp: 4_000_000_000,
+      prompt: { name: "login", details: {} },
+      params: { client_id: "dcr_520e5020d4574ceba9e3cf86f1c1d7fa" },
+    },
+    undefined,
+    1_700_000_000_000,
+  );
+  assert.equal(details?.uid, "IcxMHbL3WuA3no7wN0wC5ALCzxcy_rPPtOlsJUxAuiK");
+  assert.equal(details?.prompt.name, "login");
+});
+
 test("mapInteractionPayload rejects payloads without a prompt name", () => {
   assert.equal(
     mapInteractionPayload("uid-1", { params: { client_id: "dcr_abc" } }),

@@ -12,6 +12,7 @@ export type OidcInteractionDetails = {
 
 type InteractionPayload = {
   uid?: unknown;
+  jti?: unknown;
   exp?: unknown;
   prompt?: unknown;
   params?: unknown;
@@ -56,7 +57,10 @@ export function mapInteractionPayload(
       : undefined;
 
   return {
-    uid: typeof payload.uid === "string" && payload.uid ? payload.uid : uid,
+    uid:
+      (typeof payload.uid === "string" && payload.uid) ||
+      (typeof payload.jti === "string" && payload.jti) ||
+      uid,
     prompt: {
       name: promptObj.name,
       details:
@@ -96,7 +100,10 @@ async function resolveInteractionClientName(
 export async function loadOidcInteractionDetails(
   uid: string,
 ): Promise<OidcInteractionDetails | null> {
-  const payload = await new PostgresOidcAdapter("Interaction").findByUid(uid);
+  const adapter = new PostgresOidcAdapter("Interaction");
+  // oidc-provider v9 aliases Interaction.uid to jti, so the URL uid is the
+  // primary key. The uid column is often null on older rows.
+  const payload = (await adapter.find(uid)) ?? (await adapter.findByUid(uid));
   if (!payload) {
     return null;
   }
