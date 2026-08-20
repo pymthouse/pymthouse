@@ -15,8 +15,8 @@ import {
   upsertAppBillingConfig,
 } from "@/lib/openmeter/billing-profiles";
 import {
-  buildEndUserCustomerKey,
   buildOpenMeterCustomerKey,
+  buildSandboxEndUserCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import {
   applyConnectedAccountWebhookUpdate,
@@ -29,7 +29,7 @@ import {
   seedDeveloperAppWithClient,
 } from "@/test-utils/fixtures";
 
-test("upsertAppUserStripeCustomer persists the canonical eu_ key, not a compound key", async (t) => {
+test("upsertAppUserStripeCustomer persists the canonical sandbox sbx_eu_ key, not a compound key", async (t) => {
   const app = await seedDeveloperAppWithClient({
     name: `StripeMap ${randomUUID().slice(0, 8)}`,
   });
@@ -45,7 +45,7 @@ test("upsertAppUserStripeCustomer persists the canonical eu_ key, not a compound
     app.clientId,
     externalUserId,
   );
-  const canonicalKey = buildEndUserCustomerKey(endUserRowId);
+  const canonicalKey = buildSandboxEndUserCustomerKey(endUserRowId);
   const legacyKey = buildOpenMeterCustomerKey(app.clientId, externalUserId);
 
   await upsertAppUserStripeCustomer({

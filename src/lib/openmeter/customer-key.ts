@@ -34,6 +34,13 @@ export const OWNER_CUSTOMER_KEY_PREFIX = "owner:";
 export const END_USER_CUSTOMER_PREFIX = "eu_";
 
 /**
+ * Sandbox Merchant Connect payer prefix. Live wallets stay `eu_{id}`; sandbox
+ * (`stripeLivemode=false`) uses `sbx_eu_{id}` so test-card grants never share
+ * the production prepaid customer.
+ */
+export const SANDBOX_END_USER_CUSTOMER_PREFIX = "sbx_";
+
+/**
  * Canonical OpenMeter customer key for a platform owner: bare `{users.id}`.
  * Credits and included usage live on this single customer across all apps.
  */
@@ -49,6 +56,11 @@ export function buildEndUserCustomerKey(endUserId: string): string {
   if (!trimmed) {
     return "";
   }
+  if (trimmed.startsWith(SANDBOX_END_USER_CUSTOMER_PREFIX)) {
+    return buildEndUserCustomerKey(
+      trimmed.slice(SANDBOX_END_USER_CUSTOMER_PREFIX.length),
+    );
+  }
   if (trimmed.startsWith(END_USER_CUSTOMER_PREFIX)) {
     return trimmed;
   }
@@ -56,9 +68,17 @@ export function buildEndUserCustomerKey(endUserId: string): string {
 }
 
 /**
- * True when `key` is a canonical end-user customer key (`eu_…`).
+ * Sandbox Merchant Connect payer key: `sbx_eu_{end_users.id}`.
  */
-export function isEndUserCustomerKey(key: string): boolean {
+export function buildSandboxEndUserCustomerKey(endUserId: string): string {
+  const live = buildEndUserCustomerKey(endUserId);
+  if (!live) {
+    return "";
+  }
+  return `${SANDBOX_END_USER_CUSTOMER_PREFIX}${live}`;
+}
+
+function isLiveEndUserCustomerKey(key: string): boolean {
   const trimmed = key.trim();
   return (
     trimmed.startsWith(END_USER_CUSTOMER_PREFIX) &&
@@ -67,11 +87,33 @@ export function isEndUserCustomerKey(key: string): boolean {
 }
 
 /**
- * Strip the `eu_` prefix, or return null when the key is not an end-user key.
+ * True when `key` is a sandbox end-user payer key (`sbx_eu_…`).
+ */
+export function isSandboxEndUserCustomerKey(key: string): boolean {
+  const trimmed = key.trim();
+  const prefixed = `${SANDBOX_END_USER_CUSTOMER_PREFIX}${END_USER_CUSTOMER_PREFIX}`;
+  return trimmed.startsWith(prefixed) && trimmed.length > prefixed.length;
+}
+
+/**
+ * True when `key` is an end-user customer key (`eu_…` or sandbox `sbx_eu_…`).
+ */
+export function isEndUserCustomerKey(key: string): boolean {
+  return isLiveEndUserCustomerKey(key) || isSandboxEndUserCustomerKey(key);
+}
+
+/**
+ * Strip `sbx_` / `eu_` prefixes to the `end_users.id`, or null when not an
+ * end-user key.
  */
 export function parseEndUserCustomerKey(key: string): string | null {
   const trimmed = key.trim();
-  if (!isEndUserCustomerKey(trimmed)) {
+  if (isSandboxEndUserCustomerKey(trimmed)) {
+    return parseEndUserCustomerKey(
+      trimmed.slice(SANDBOX_END_USER_CUSTOMER_PREFIX.length),
+    );
+  }
+  if (!isLiveEndUserCustomerKey(trimmed)) {
     return null;
   }
   return trimmed.slice(END_USER_CUSTOMER_PREFIX.length) || null;
@@ -90,8 +132,8 @@ export function buildOwnerWireSubject(userId: string): string {
  * - bare `{users.id}` (canonical)
  * - `owner:{users.id}` (legacy customer key / wire subject)
  *
- * End-user customer keys (`eu_…`) and compound `app_…:externalUserId` keys
- * are never owner wallets.
+ * End-user customer keys (`eu_…` / `sbx_eu_…`) and compound
+ * `app_…:externalUserId` keys are never owner wallets.
  */
 export function isOwnerCustomerKey(key: string): boolean {
   const trimmed = key.trim();

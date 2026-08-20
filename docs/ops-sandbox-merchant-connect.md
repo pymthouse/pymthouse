@@ -34,9 +34,19 @@ Dashboard endpoints pointed at production hosts and copy those new secrets.
 
 Leave Konnect / `OPENMETER_STRIPE_APP_ID` on the **live** Stripe app. Owner Plane A
 stays live; only Merchant Connect (Plane B) uses the sandbox key when
-`app_billing_config.stripe_livemode = false`. Sandbox webhooks restore payment
-methods and drive settlement collect; they never grant production Konnect
-prepaid (`usd_credits`) for owner or merchant top-ups.
+`app_billing_config.stripe_livemode = false`.
+
+Sandbox merchant payers are a **separate** OpenMeter customer:
+`sbx_eu_{end_users.id}`. Live merchant wallets stay `eu_{id}`. Test-card
+top-ups on the sandbox webhook plane grant prepaid credits onto `sbx_eu_…`
+only when that plane matches the app's `stripe_livemode`. Owner top-ups on
+the sandbox plane are still ignored — they must not mint production owner
+prepaid. Switching Sandbox → Live (or back) is a different customer; the
+active balance does not follow.
+
+Sandbox merchant customers pin to the existing OpenMeter **sandbox / free**
+billing profile, not Custom Invoicing. Live merchant customers stay on
+Custom Invoicing + settlement metadata.
 
 ### 3. Smoke
 
@@ -45,10 +55,13 @@ prepaid (`usd_credits`) for owner or merchant top-ups.
    you want real charges.
 2. Complete Account Link with Stripe test data
 3. Attach `pm_card_visa` for an end user
-4. `POST …/billing/collect` → settlement charges on the sandbox connected account
-5. Confirm Konnect custom-invoicing `payment/status` completes
+4. Add sandbox credit (Checkout $10). Confirm Konnect prepaid lands on
+   `sbx_eu_{end_users.id}`, not production `eu_{id}`
+5. `POST …/billing/collect` → settlement charges on the sandbox connected account
 
 ### 4. Going live later
 
 Disconnect Connect, switch **Live**, run a new Account Link. Sandbox `acct_` is
-not promotable — live is a new connected account on the live platform.
+not promotable — live is a new connected account on the live platform. The
+live end-user payer is `eu_{id}` again (empty until a live top-up); sandbox
+`sbx_eu_{id}` prepaid stays on the sandbox customer.

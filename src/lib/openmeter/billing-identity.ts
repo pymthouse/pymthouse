@@ -9,6 +9,7 @@ import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
+  buildSandboxEndUserCustomerKey,
   isEndUserCustomerKey,
   isOwnerWireSubject,
   normalizePlatformUserId,
@@ -19,7 +20,7 @@ import {
 /** JWT claim: owner_rollup end-user tokens name the app owner's wallet (legacy). */
 export const COST_OWNER_USER_ID_CLAIM = "cost_owner_user_id";
 
-/** JWT claim: OpenMeter payer customer key (owner bare id or `eu_…`). */
+/** JWT claim: OpenMeter payer customer key (owner bare id, `eu_…`, or `sbx_eu_…`). */
 export const BILLING_SUBJECT_KEY_CLAIM = "billing_subject_key";
 
 /** Separator between payer and actor in the wire `usage_subject`. */
@@ -72,6 +73,8 @@ type AppIdentityRow = {
   ownerId: string;
   isPlatformDefault: boolean;
   billingMode: "owner_rollup" | "merchant";
+  /** Merchant Connect Stripe plane. Missing config reads as live. */
+  stripeLivemode: boolean;
 };
 
 function platformUserIdentity(input: {
@@ -148,13 +151,17 @@ async function resolveEndUserActorIds(input: {
 
 /**
  * OpenMeter customer for app-user retail billing (payment methods, Checkout).
- * End-users use `eu_{end_users.id}` even under owner_rollup so cards never
- * land on the owner wallet. Owners and Explorers use the owner customer key.
+ * Owner-rollup end-users keep `eu_{end_users.id}` so cards never land on the
+ * owner wallet. Merchant sandbox payers use `sbx_eu_{id}` (the identity
+ * customer key). Owners and Explorers use the owner customer key.
  */
 export function appUserRetailCustomerKey(
   identity: ResolvedBillingIdentity,
 ): string {
-  if (isEndUserCustomerKey(identity.actorEndUserId)) {
+  if (
+    identity.sharesOwnerCostRail &&
+    isEndUserCustomerKey(identity.actorEndUserId)
+  ) {
     return identity.actorEndUserId;
   }
   return identity.customerKey;
@@ -369,6 +376,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
     ownerId: developerApps.ownerId,
     isPlatformDefault: developerApps.isPlatformDefault,
     billingMode: appBillingConfig.billingMode,
+    stripeLivemode: appBillingConfig.stripeLivemode,
   };
 
   const byPublic = await db
@@ -386,6 +394,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
       ownerId: byPublic[0].ownerId,
       isPlatformDefault: byPublic[0].isPlatformDefault === 1,
       billingMode: billingModeFromRow(byPublic[0].billingMode),
+      stripeLivemode: byPublic[0].stripeLivemode !== false,
     };
   }
 
@@ -407,6 +416,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
     ownerId: row.ownerId,
     isPlatformDefault: row.isPlatformDefault === 1,
     billingMode: billingModeFromRow(row.billingMode),
+    stripeLivemode: row.stripeLivemode !== false,
   };
 }
 
@@ -435,7 +445,7 @@ export function resetBillingIdentityCache(): void {
  * Resolve the OpenMeter billing customer for an (app, external user) pair.
  * App owners and owner_rollup end-users share the owner's `{users.id}` wallet;
  * platform-default (Livepeer Direct) members bill their own owner wallet;
- * merchant end-users bill their stable `eu_{end_users.id}` customer.
+ * merchant end-users bill `eu_{end_users.id}` (live) or `sbx_eu_{id}` (sandbox).
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
@@ -542,8 +552,12 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
     });
   }
 
+  const payerCustomerKey = app.stripeLivemode
+    ? actorIds.endUserCustomerKey
+    : buildSandboxEndUserCustomerKey(actorIds.endUserCustomerKey);
+
   return endUserIdentity({
-    payerCustomerKey: actorIds.endUserCustomerKey,
+    payerCustomerKey,
     payerKind: "end_user",
     sharesOwnerCostRail: false,
     actorEndUserId: actorIds.actorEndUserId,
