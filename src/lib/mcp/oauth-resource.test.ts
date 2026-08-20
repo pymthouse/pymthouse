@@ -5,6 +5,7 @@ import {
   buildMcpWwwAuthenticateHeader,
   isMcpResourceIndicator,
   MCP_OAUTH_APP_CLAIM,
+  readResourceParam,
 } from "@/lib/mcp/oauth-resource";
 
 test("isMcpResourceIndicator matches public origin MCP URL", () => {
@@ -36,4 +37,19 @@ test("WWW-Authenticate includes resource_metadata", () => {
 
 test("MCP_OAUTH_APP_CLAIM is stable", () => {
   assert.equal(MCP_OAUTH_APP_CLAIM, "pymthouse_app");
+});
+
+test("readResourceParam reads string or first array entry", () => {
+  assert.equal(readResourceParam({}), null);
+  assert.equal(readResourceParam({ resource: "   " }), null);
+  assert.equal(
+    readResourceParam({ resource: "https://pymthouse.com/api/v1/mcp" }),
+    "https://pymthouse.com/api/v1/mcp",
+  );
+  assert.equal(
+    readResourceParam({
+      resource: ["https://pymthouse.com/api/v1/mcp", "https://other"],
+    }),
+    "https://pymthouse.com/api/v1/mcp",
+  );
 });

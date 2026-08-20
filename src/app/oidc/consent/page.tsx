@@ -12,7 +12,7 @@ import { getScopeDefinition } from "@/lib/oidc/scopes";
 import { getProvider } from "@/lib/oidc/provider";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
-import { isMcpResourceIndicator } from "@/lib/mcp/oauth-resource";
+import { isMcpResourceIndicator, readResourceParam } from "@/lib/mcp/oauth-resource";
 import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { getDefaultBranding } from "@/lib/oidc/branding-shared";
 import type { AppBranding } from "@/lib/oidc/branding-shared";
@@ -25,16 +25,6 @@ import {
   isTrustedOidcWarmRequest,
   warmOidcProvider,
 } from "@/lib/oidc/warm";
-
-function readResourceParam(params: Record<string, unknown>): string | null {
-  const resource = params.resource;
-  if (typeof resource === "string" && resource.trim()) return resource.trim();
-  if (Array.isArray(resource)) {
-    const first = resource.find((r) => typeof r === "string" && r.trim());
-    return typeof first === "string" ? first.trim() : null;
-  }
-  return null;
-}
 
 type SearchParams = Record<string, string | string[] | undefined>;
 

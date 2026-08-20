@@ -11,6 +11,17 @@ export function getMcpResourceUrl(): string {
   return `${getPublicOrigin()}/api/v1/mcp`;
 }
 
+/** Read RFC 8707 `resource` from an OIDC interaction / authorize params object. */
+export function readResourceParam(params: Record<string, unknown>): string | null {
+  const resource = params.resource;
+  if (typeof resource === "string" && resource.trim()) return resource.trim();
+  if (Array.isArray(resource)) {
+    const first = resource.find((r) => typeof r === "string" && r.trim());
+    return typeof first === "string" ? first.trim() : null;
+  }
+  return null;
+}
+
 export function isMcpResourceIndicator(resource: string): boolean {
   const expected = getMcpResourceUrl();
   try {

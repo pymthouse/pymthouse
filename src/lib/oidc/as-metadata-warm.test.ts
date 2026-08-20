@@ -14,19 +14,19 @@ test("buildOpenIdProviderDiscovery advertises offline_access without provider in
   assert.ok(Array.isArray(discovery.claims_supported));
 });
 
-test("isTrustedOidcWarmRequest accepts Vercel cron markers when CRON_SECRET unset", () => {
+test("isTrustedOidcWarmRequest rejects spoofable cron markers when CRON_SECRET unset", () => {
   const previous = process.env.CRON_SECRET;
   delete process.env.CRON_SECRET;
   try {
     assert.equal(
       isTrustedOidcWarmRequest(new Headers({ "x-vercel-cron": "1" })),
-      true,
+      false,
     );
     assert.equal(
       isTrustedOidcWarmRequest(
         new Headers({ "user-agent": "vercel-cron/1.0" }),
       ),
-      true,
+      false,
     );
     assert.equal(isTrustedOidcWarmRequest(new Headers()), false);
   } finally {

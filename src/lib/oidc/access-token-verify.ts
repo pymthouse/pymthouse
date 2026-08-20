@@ -5,7 +5,9 @@ import { getMcpResourceUrl } from "@/lib/mcp/oauth-resource";
 /**
  * Verify a JWT access token issued by the OIDC provider.
  *
- * Accepts audience = canonical issuer (default) or the hosted MCP resource URL.
+ * Default audience is the canonical issuer only. MCP-bound (RFC 8707) tokens
+ * must pass `{ audience: getMcpResourceUrl() }` so they cannot be replayed
+ * against general platform APIs.
  */
 export async function verifyAccessToken(
   token: string,
@@ -17,9 +19,7 @@ export async function verifyAccessToken(
     const jwks = await getPublicJWKS();
     const keySet = jose.createLocalJWKSet(jwks);
 
-    const audience =
-      options?.audience ??
-      ([issuer, getMcpResourceUrl()] as string[]);
+    const audience = options?.audience ?? issuer;
 
     const { payload } = await jose.jwtVerify(token, keySet, {
       issuer,
@@ -30,6 +30,16 @@ export async function verifyAccessToken(
   } catch {
     return null;
   }
+}
+
+/** Accept either a platform-issuer token or an MCP resource-bound token. */
+export async function verifyIssuerOrMcpAccessToken(
+  token: string,
+): Promise<jose.JWTPayload | null> {
+  return (
+    (await verifyAccessToken(token)) ??
+    (await verifyAccessToken(token, { audience: getMcpResourceUrl() }))
+  );
 }
 
 /**
@@ -53,7 +63,7 @@ export async function verifyAccessTokenWithIssuer(
 
     const { payload } = await jose.jwtVerify(token, keySet, {
       issuer: expectedIssuer,
-      audience: [expectedIssuer, getMcpResourceUrl()],
+      audience: expectedIssuer,
     });
 
     return payload;

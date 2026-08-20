@@ -27,19 +27,10 @@ import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
 import {
   getMcpResourceUrl,
   isMcpResourceIndicator,
+  readResourceParam,
 } from "@/lib/mcp/oauth-resource";
 
 const DEBUG_OIDC_LOGS = process.env.OIDC_DEBUG_LOGS === "1";
-
-function readResourceParam(params: Record<string, unknown>): string | null {
-  const resource = params.resource;
-  if (typeof resource === "string" && resource.trim()) return resource.trim();
-  if (Array.isArray(resource)) {
-    const first = resource.find((r) => typeof r === "string" && r.trim());
-    return typeof first === "string" ? first.trim() : null;
-  }
-  return null;
-}
 
 function resolveMcpResource(
   resource: string | null,

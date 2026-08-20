@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation, buildLoopbackRedirectBridgeHtml, isLoopbackHttpRedirect } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, buildLoopbackRedirectBridgeHtml, isLoopbackHttpRedirect, jsonForInlineScript } from "./utils";
 
 test("deriveExternalOriginFromHeaders prefers forwarded host+proto", () => {
   const headers = new Headers({
@@ -67,6 +67,15 @@ test("buildLoopbackRedirectBridgeHtml embeds the callback URL", () => {
   assert.match(html, /Return to Claude Code/);
   assert.match(html, /http:\/\/127\.0\.0\.1:9999\/callback\?code=a&amp;state=b/);
   assert.match(html, /window\.location\.replace/);
+});
+
+test("jsonForInlineScript escapes script breakout in OAuth state", () => {
+  const payload = 'http://127.0.0.1:1/callback?state=</script><script>alert(1)</script>';
+  const encoded = jsonForInlineScript(payload);
+  assert.equal(encoded.includes("</script>"), false);
+  assert.match(encoded, /\\u003c\/script\\u003e/);
+  const html = buildLoopbackRedirectBridgeHtml(new URL(payload));
+  assert.equal(html.includes("</script><script>"), false);
 });
 
 test("isLoopbackHttpRedirect accepts RFC 8252 callback hosts only", () => {

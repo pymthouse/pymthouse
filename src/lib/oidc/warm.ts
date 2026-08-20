@@ -11,16 +11,10 @@ import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
 
 export function isTrustedOidcWarmRequest(headers: Headers): boolean {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    return headers.get("authorization") === `Bearer ${secret}`;
+  if (!secret) {
+    return false;
   }
-
-  // Without CRON_SECRET, accept Vercel's cron invocation markers only.
-  if (headers.get("x-vercel-cron") === "1") {
-    return true;
-  }
-  const userAgent = headers.get("user-agent") || "";
-  return userAgent.includes("vercel-cron");
+  return headers.get("authorization") === `Bearer ${secret}`;
 }
 
 export async function warmOidcProvider(): Promise<{ ok: true; issuer: string }> {

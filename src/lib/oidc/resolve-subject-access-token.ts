@@ -3,7 +3,7 @@ import { db } from "@/db/index";
 import { appUsers, developerApps, endUsers, oidcClients, users } from "@/db/schema";
 import { findOrCreateAppEndUser } from "@/lib/billing";
 import { MCP_OAUTH_APP_CLAIM } from "@/lib/mcp/oauth-resource";
-import { verifyAccessToken } from "@/lib/oidc/access-token-verify";
+import { verifyIssuerOrMcpAccessToken } from "@/lib/oidc/access-token-verify";
 import { TokenExchangeError } from "@/lib/oidc/token-exchange";
 
 export class SubjectAccessTokenResolveError extends Error {
@@ -86,7 +86,7 @@ export async function resolveSubjectAccessToken(
   },
 ): Promise<ResolvedSubjectAccessToken> {
   const dbConn = options?.dbConn ?? db;
-  const payload = await verifyAccessToken(subjectToken);
+  const payload = await verifyIssuerOrMcpAccessToken(subjectToken);
   if (!payload || typeof payload.sub !== "string" || !payload.sub.trim()) {
     throw new SubjectAccessTokenResolveError(
       "invalid_grant",

@@ -88,6 +88,16 @@ export function resolveRedirectLocation(
  * explicit link + copyable URL survives that and matches Claude Code's
  * "paste the redirect URL" fallback.
  */
+/** JSON for an inline script — JSON.stringify does not escape `</script>`. */
+export function jsonForInlineScript(value: string): string {
+  return JSON.stringify(value)
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e")
+    .replaceAll("&", "\\u0026")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+}
+
 export function buildLoopbackRedirectBridgeHtml(redirectUrl: URL): string {
   const href = redirectUrl.href;
   const safeHref = href
@@ -99,12 +109,14 @@ export function buildLoopbackRedirectBridgeHtml(redirectUrl: URL): string {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+  const scriptHref = jsonForInlineScript(href);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"/>
   <title>Return to Claude Code</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #09090b; color: #fafafa;
@@ -128,7 +140,7 @@ export function buildLoopbackRedirectBridgeHtml(redirectUrl: URL): string {
   </main>
   <script>
     (function () {
-      var target = ${JSON.stringify(href)};
+      var target = ${scriptHref};
       try { window.location.replace(target); } catch (e) { /* keep manual link */ }
     })();
   </script>

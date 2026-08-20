@@ -21,6 +21,7 @@ import { initiateLoginUriAcceptedByOidcProvider } from "./third-party-initiate-l
 import {
   applyMcpDcrRegistrationPolicy,
   createDcrClientId,
+  isDcrClientId,
 } from "./dcr-client";
 import { findMcpAppGrantBinding } from "./mcp-app-grant";
 import {
@@ -393,11 +394,16 @@ export async function getProvider(): Promise<Provider> {
     // Rotate refresh tokens on use
     rotateRefreshToken: true,
 
-    // Refresh when the client allows it and the auth code / offline_access
-    // request includes offline_access (Claude always requests it).
+    // Registered Builder/device clients keep refresh tokens whenever the
+    // refresh_token grant is enabled. MCP DCR clients follow OIDC and only
+    // receive a refresh token when the grant includes offline_access.
     issueRefreshToken: async (_ctx, client, code) => {
       if (!client.grantTypeAllowed("refresh_token")) return false;
-      if (code && typeof code.scopes?.has === "function") {
+      if (
+        isDcrClientId(client.clientId) &&
+        code &&
+        typeof code.scopes?.has === "function"
+      ) {
         return code.scopes.has("offline_access");
       }
       return true;
