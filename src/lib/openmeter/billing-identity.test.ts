@@ -299,6 +299,52 @@ test("live merchant end-user bills stable eu_ customer", async (t) => {
   );
 });
 
+test("cached merchant identity follows stripeLivemode after cache reset", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  const previousTtl = process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS;
+  process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS = "300";
+  t.after(async () => {
+    if (previousTtl === undefined) {
+      delete process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS;
+    } else {
+      process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS = previousTtl;
+    }
+    resetBillingIdentityCache();
+    await cleanupTestApp(seeded);
+  });
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const live = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.ok(isEndUserCustomerKey(live.payerCustomerKey));
+  assert.equal(isSandboxEndUserCustomerKey(live.payerCustomerKey), false);
+
+  await upsertAppBillingConfig(seeded.clientId, { stripeLivemode: false });
+  const stale = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(stale.payerCustomerKey, live.payerCustomerKey);
+
+  resetBillingIdentityCache();
+  const sandbox = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.ok(isSandboxEndUserCustomerKey(sandbox.payerCustomerKey));
+  assert.equal(
+    sandbox.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(sandbox.actorEndUserId),
+  );
+});
+
 test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));

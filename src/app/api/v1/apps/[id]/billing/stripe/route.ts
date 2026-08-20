@@ -540,9 +540,13 @@ export async function PATCH(
       parsed.fields,
     );
     // Drop cached (clientId, externalUserId) → identity rows so the next mint
-    // / debt / webhook resolve sees the new billingMode immediately. JWT TTL
-    // still bounds already-issued sessions (mint-forward).
-    if (parsed.fields.billingMode !== undefined) {
+    // / debt / webhook resolve sees the new billingMode or stripeLivemode
+    // immediately (merchant payers are eu_ vs sbx_eu_). JWT TTL still bounds
+    // already-issued sessions (mint-forward).
+    if (
+      parsed.fields.billingMode !== undefined ||
+      parsed.fields.stripeLivemode !== undefined
+    ) {
       resetBillingIdentityCache();
     }
     const status = await getStripeConnectStatus(access.auth.app.id);

@@ -424,7 +424,9 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
  * App→client→owner mappings change only on rare admin operations, but the
  * remote-signer hot path resolves them many times per request across mint,
  * provisioning, and balance reads. Cache per (clientId, externalUserId) so a
- * webhook invocation costs at most one Neon identity round-trip.
+ * webhook invocation costs at most one Neon identity round-trip. Merchant
+ * payer keys also depend on stripeLivemode — billing PATCH must reset this
+ * cache when livemode or billingMode changes.
  */
 let identityCache: ReturnType<
   typeof createAsyncTtlCache<ResolvedBillingIdentity>
