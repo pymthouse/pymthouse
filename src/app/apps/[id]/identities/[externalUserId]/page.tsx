@@ -4,7 +4,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
-import DashboardLayout from "@/components/DashboardLayout";
 import IdentityLifecycleActions from "@/components/identities/IdentityLifecycleActions";
 import IdentityRequestLog from "@/components/identities/IdentityRequestLog";
 import UsageBreakdownChart from "@/components/UsageBreakdownChart";
@@ -146,7 +145,7 @@ export default async function AppIdentityDetailPage({
   }
 
   return (
-    <DashboardLayout>
+    <>
       <AppSectionBreadcrumb
         appId={id}
         appName={app.name}
@@ -235,6 +234,6 @@ export default async function AppIdentityDetailPage({
       </section>
 
       <IdentityRequestLog appId={id} externalUserId={externalUserId} />
-    </DashboardLayout>
+    </>
   );
 }

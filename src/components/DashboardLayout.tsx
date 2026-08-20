@@ -15,6 +15,20 @@ interface NavItem {
   external?: boolean; // if set, opens in a new tab
 }
 
+interface AppSubNavItem {
+  id: string;
+  label: string;
+  href: string;
+}
+
+const APP_SUB_NAV_ITEMS: AppSubNavItem[] = [
+  { id: "profile", label: "App Profile", href: "" },
+  { id: "credentials", label: "Credentials & URLs", href: "/credentials" },
+  { id: "plans", label: "Billing Plans", href: "/plans" },
+  { id: "payments", label: "Payments", href: "/payments" },
+  { id: "usage", label: "Usage", href: "/usage" },
+];
+
 const API_REFERENCE_URL = "/api/v1/docs";
 const DOCS_URL = "https://docs.pymthouse.com";
 
@@ -137,6 +151,16 @@ export default function DashboardLayout({
       router.push("/login");
     }
   }, [status, router]);
+
+  const appDetailMatch = pathname.match(/^\/apps\/(app_[^/]+)/);
+  const activeAppId = appDetailMatch?.[1] ?? null;
+
+  useEffect(() => {
+    if (!activeAppId) return;
+    for (const sub of APP_SUB_NAV_ITEMS) {
+      router.prefetch(`/apps/${activeAppId}${sub.href}`);
+    }
+  }, [activeAppId, router]);
 
   if (status === "loading") {
     return (
@@ -298,10 +322,57 @@ export default function DashboardLayout({
               );
             };
 
+            const renderAppSubNav = () => {
+              if (!activeAppId) return null;
+              // Determine the active sub-nav item from the current pathname
+              const pathSuffix = pathname.slice(`/apps/${activeAppId}`.length);
+              const activeSubId =
+                pathSuffix === "" || pathSuffix === "/"
+                  ? "profile"
+                  : (pathSuffix.split("/")[1] ?? "profile");
+
+              return (
+                <div className="mt-0.5 ml-3 border-l border-zinc-800 pl-2 space-y-0.5">
+                  {APP_SUB_NAV_ITEMS.map((sub) => {
+                    const href = `/apps/${activeAppId}${sub.href}`;
+                    const isActive = activeSubId === sub.id;
+                    return (
+                      <Link
+                        key={sub.id}
+                        href={href}
+                        onClick={() => setMobileNavOpen(false)}
+                        aria-current={isActive ? "page" : undefined}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm transition-all duration-150 ${
+                          isActive
+                            ? "bg-emerald-500/10 text-emerald-400 font-medium shadow-[inset_0_0_0_1px_rgba(52,211,153,0.12)]"
+                            : "text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04] font-normal"
+                        }`}
+                      >
+                        {sub.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            };
+
             return (
               <>
                 {otherItems.map((item) => {
-                  const isActive = pathname.startsWith(item.href);
+                  const isAppsItem = item.href === "/apps";
+                  const isActive = activeAppId
+                    ? isAppsItem
+                    : pathname.startsWith(item.href);
+
+                  if (isAppsItem && activeAppId) {
+                    return (
+                      <div key={item.href}>
+                        {renderNavLink(item, true)}
+                        {renderAppSubNav()}
+                      </div>
+                    );
+                  }
+
                   return renderNavLink(item, isActive);
                 })}
                 {adminItems.length > 0 && (

@@ -27,8 +27,12 @@ test("listAppUserPaymentMethods returns [] for blank ids", async () => {
 });
 
 test("restoreAppUserBillingProfileForCheckoutSession ignores blank session ids", async () => {
-  assert.equal(await restoreAppUserBillingProfileForCheckoutSession(""), false);
-  assert.equal(await restoreAppUserBillingProfileForCheckoutSession("   "), false);
+  assert.deepEqual(await restoreAppUserBillingProfileForCheckoutSession(""), {
+    restored: false,
+  });
+  assert.deepEqual(await restoreAppUserBillingProfileForCheckoutSession("   "), {
+    restored: false,
+  });
 });
 
 test("createAppUserPaymentMethodCheckout requires ids", async () => {

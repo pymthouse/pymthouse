@@ -10,6 +10,7 @@ import {
   parseStripePaymentMethodAttached,
   parseStripePaymentMethodAttachedCustomer,
   resolveConnectWebhookSecret,
+  resolveSandboxStripeWebhookSecretsByKind,
   resolveStripeWebhookSecrets,
   sanitizeStripeOAuthProviderError,
   verifyStripeWebhookSignature,
@@ -309,4 +310,35 @@ test("resolveStripeWebhookSecrets returns every configured secret deduplicated",
   delete process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
   delete process.env.STRIPE_WEBHOOK_SECRET;
   assert.throws(() => resolveStripeWebhookSecrets(), /STRIPE_WEBHOOK_SECRET is required/);
+});
+
+test("resolveSandboxStripeWebhookSecretsByKind uses sandbox env vars", (t) => {
+  const prevConnect = process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET;
+  const prevPlatform = process.env.STRIPE_SANDBOX_WEBHOOK_SECRET;
+  t.after(() => {
+    if (prevConnect === undefined) {
+      delete process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET;
+    } else {
+      process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET = prevConnect;
+    }
+    if (prevPlatform === undefined) {
+      delete process.env.STRIPE_SANDBOX_WEBHOOK_SECRET;
+    } else {
+      process.env.STRIPE_SANDBOX_WEBHOOK_SECRET = prevPlatform;
+    }
+  });
+
+  process.env.STRIPE_SANDBOX_WEBHOOK_SECRET = "whsec_sandbox_platform";
+  process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET = "whsec_sandbox_connect";
+  assert.deepEqual(resolveSandboxStripeWebhookSecretsByKind(), [
+    { secret: "whsec_sandbox_platform", kind: "platform" },
+    { secret: "whsec_sandbox_connect", kind: "connect" },
+  ]);
+
+  delete process.env.STRIPE_SANDBOX_WEBHOOK_SECRET;
+  delete process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET;
+  assert.throws(
+    () => resolveSandboxStripeWebhookSecretsByKind(),
+    /STRIPE_SANDBOX_WEBHOOK_SECRET is required/,
+  );
 });

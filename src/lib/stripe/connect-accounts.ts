@@ -103,10 +103,12 @@ function mapAccountIdentity(
 
 export async function fetchConnectedAccountIdentity(
   accountId: string,
+  livemode = true,
 ): Promise<ConnectedAccountIdentity> {
   const account = await stripeFormRequest<StripeAccountIdentityShape>({
     method: "GET",
     path: `/v1/accounts/${encodeURIComponent(accountId)}`,
+    livemode,
   });
   return mapAccountIdentity(account);
 }
@@ -114,15 +116,56 @@ export async function fetchConnectedAccountIdentity(
 /** Exported for tests. */
 export const __testMapAccountIdentity = mapAccountIdentity;
 
-function requireStripeSecretKey(): string {
+function isStripeSecretOrRestrictedKey(key: string): boolean {
+  return key.startsWith("sk_") || key.startsWith("rk_");
+}
+
+function isStripeTestModeKey(key: string): boolean {
+  return key.startsWith("sk_test_") || key.startsWith("rk_test_");
+}
+
+/**
+ * Resolve the platform secret key for Merchant Connect.
+ * Live (default) uses STRIPE_SECRET_KEY; sandbox uses STRIPE_SANDBOX_SECRET_KEY.
+ * Sandbox requires a test-mode key (`sk_test_` / `rk_test_`) so a live key
+ * cannot be selected by flipping stripeLivemode. Restricted keys (`rk_`) are
+ * accepted. Owner Plane A callers must keep using the live key directly.
+ */
+export function resolveStripePlatformSecretKey(livemode = true): string {
+  if (livemode === false) {
+    const sandbox =
+      process.env.STRIPE_SANDBOX_SECRET_KEY?.trim() ||
+      process.env.STRIPE_SANDBOX_API_KEY?.trim();
+    if (!sandbox || !isStripeSecretOrRestrictedKey(sandbox) || !isStripeTestModeKey(sandbox)) {
+      throw new Error(
+        "STRIPE_SANDBOX_SECRET_KEY is required for sandbox Merchant Connect (must be sk_test_… or rk_test_…)",
+      );
+    }
+    return sandbox;
+  }
   const key =
     process.env.STRIPE_SECRET_KEY?.trim() || process.env.STRIPE_API_KEY?.trim();
-  if (!key?.startsWith("sk_")) {
+  if (!key || !isStripeSecretOrRestrictedKey(key)) {
     throw new Error(
-      "STRIPE_SECRET_KEY is required for Stripe Connect (must be sk_… platform key)",
+      "STRIPE_SECRET_KEY is required for Stripe Connect (must be sk_… or rk_… platform key)",
     );
   }
   return key;
+}
+
+/** Lookup-only sibling for list/chargeability paths that fail open to []. */
+export function resolveStripePlatformSecretKeyOrNull(
+  livemode = true,
+): string | null {
+  try {
+    return resolveStripePlatformSecretKey(livemode);
+  } catch {
+    return null;
+  }
+}
+
+function requireStripeSecretKey(livemode = true): string {
+  return resolveStripePlatformSecretKey(livemode);
 }
 
 function requireConnectClientId(): string {
@@ -142,8 +185,10 @@ async function stripeFormRequest<T>(input: {
   stripeAccount?: string;
   stripeVersion?: string;
   idempotencyKey?: string;
+  /** When false, use the sandbox platform key. Defaults to live. */
+  livemode?: boolean;
 }): Promise<T> {
-  const apiKey = requireStripeSecretKey();
+  const apiKey = requireStripeSecretKey(input.livemode !== false);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/x-www-form-urlencoded",
@@ -186,8 +231,9 @@ async function stripeJsonRequest<T>(input: {
   path: string;
   body?: unknown;
   stripeVersion: string;
+  livemode?: boolean;
 }): Promise<T> {
-  const apiKey = requireStripeSecretKey();
+  const apiKey = requireStripeSecretKey(input.livemode !== false);
   const response = await fetch(`https://api.stripe.com${input.path}`, {
     method: input.method,
     headers: {
@@ -236,16 +282,20 @@ export async function createMerchantConnectedAccount(input: {
   email?: string;
   country?: string;
   displayName?: string;
+  /** When false, create on the sandbox Connect platform. Defaults to live. */
+  livemode?: boolean;
 }): Promise<string> {
   const country = (input.country ?? "US").toUpperCase();
   const email = input.email?.trim();
   const displayName = input.displayName?.trim() || `PymtHouse ${input.clientId}`;
+  const livemode = input.livemode !== false;
 
   try {
     const created = await stripeJsonRequest<{ id?: string }>({
       method: "POST",
       path: "/v2/core/accounts",
       stripeVersion: "2025-03-31.preview",
+      livemode,
       body: {
         contact_email: email || undefined,
         display_name: displayName,
@@ -299,6 +349,7 @@ export async function createMerchantConnectedAccount(input: {
     method: "POST",
     path: "/v1/accounts",
     body,
+    livemode,
   });
   if (!account.id?.startsWith("acct_")) {
     throw new Error("Stripe did not return a Connected Account id");
@@ -310,6 +361,7 @@ export async function createAccountOnboardingLink(input: {
   accountId: string;
   refreshUrl: string;
   returnUrl: string;
+  livemode?: boolean;
 }): Promise<string> {
   const body = new URLSearchParams();
   body.set("account", input.accountId);
@@ -320,6 +372,7 @@ export async function createAccountOnboardingLink(input: {
     method: "POST",
     path: "/v1/account_links",
     body,
+    livemode: input.livemode !== false,
   });
   if (!link.url) {
     throw new Error("Stripe Account Link URL unavailable");
@@ -329,6 +382,7 @@ export async function createAccountOnboardingLink(input: {
 
 export async function refreshConnectedAccountStatus(
   accountId: string,
+  livemode = true,
 ): Promise<ConnectedAccountStatus> {
   const account = await stripeFormRequest<{
     id: string;
@@ -338,6 +392,7 @@ export async function refreshConnectedAccountStatus(
   }>({
     method: "GET",
     path: `/v1/accounts/${encodeURIComponent(accountId)}`,
+    livemode,
   });
   return {
     id: account.id,
@@ -361,9 +416,12 @@ export function buildConnectOAuthAuthorizeUrl(input: {
   return url.toString();
 }
 
-export async function exchangeConnectOAuthCode(code: string): Promise<string> {
+export async function exchangeConnectOAuthCode(
+  code: string,
+  livemode = true,
+): Promise<string> {
   const body = new URLSearchParams();
-  body.set("client_secret", requireStripeSecretKey());
+  body.set("client_secret", requireStripeSecretKey(livemode));
   body.set("code", code);
   body.set("grant_type", "authorization_code");
   const result = await stripeFormRequest<{
@@ -372,6 +430,7 @@ export async function exchangeConnectOAuthCode(code: string): Promise<string> {
     method: "POST",
     path: "/v1/oauth/token",
     body,
+    livemode,
   });
   const accountId = result.stripe_user_id?.trim();
   if (!accountId?.startsWith("acct_")) {
@@ -385,6 +444,7 @@ export async function createConnectedCustomer(input: {
   name?: string;
   email?: string;
   metadata?: Record<string, string>;
+  livemode?: boolean;
 }): Promise<string> {
   const body = new URLSearchParams();
   if (input.name?.trim()) {
@@ -401,6 +461,7 @@ export async function createConnectedCustomer(input: {
     path: "/v1/customers",
     body,
     stripeAccount: input.accountId,
+    livemode: input.livemode !== false,
   });
   if (!customer.id?.startsWith("cus_")) {
     throw new Error("Stripe did not return a customer id on Connected Account");
@@ -420,12 +481,23 @@ function addCheckoutMetadata(
   }
 }
 
+/** Stripe Checkout / PaymentIntent currency: lowercase ISO 4217, default usd. */
+function stripeFormCurrency(value?: string): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || "usd";
+}
+
 function addSetupCheckoutFields(
   body: URLSearchParams,
-  metadata: Record<string, string> | undefined,
+  input: {
+    currency?: string;
+    metadata?: Record<string, string>;
+  },
 ): void {
-  body.set("payment_method_types[0]", "card");
-  addCheckoutMetadata(body, metadata, "setup_intent_data[metadata]");
+  // Omit payment_method_types so Checkout uses Dashboard dynamic methods.
+  // Setup mode then requires `currency` (Stripe 400 otherwise).
+  body.set("currency", stripeFormCurrency(input.currency));
+  addCheckoutMetadata(body, input.metadata, "setup_intent_data[metadata]");
 }
 
 function addPaymentCheckoutFields(
@@ -441,7 +513,7 @@ function addPaymentCheckoutFields(
   if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
     throw new Error("amountCents must be a positive integer for payment mode");
   }
-  body.set("line_items[0][price_data][currency]", (input.currency ?? "usd").toLowerCase());
+  body.set("line_items[0][price_data][currency]", stripeFormCurrency(input.currency));
   body.set("line_items[0][price_data][unit_amount]", String(amount));
   body.set(
     "line_items[0][price_data][product_data][name]",
@@ -471,6 +543,7 @@ export async function createConnectedCheckoutSession(input: {
   currency?: string;
   productName?: string;
   metadata?: Record<string, string>;
+  livemode?: boolean;
 }): Promise<{ url: string; sessionId: string }> {
   const body = new URLSearchParams();
   const mode = input.mode ?? "setup";
@@ -479,7 +552,7 @@ export async function createConnectedCheckoutSession(input: {
   body.set("success_url", input.successUrl);
   body.set("cancel_url", input.cancelUrl);
   if (mode === "setup") {
-    addSetupCheckoutFields(body, input.metadata);
+    addSetupCheckoutFields(body, input);
   } else {
     addPaymentCheckoutFields(body, input);
   }
@@ -489,6 +562,7 @@ export async function createConnectedCheckoutSession(input: {
     path: "/v1/checkout/sessions",
     body,
     stripeAccount: input.accountId,
+    livemode: input.livemode !== false,
   });
   if (!session.url || !session.id) {
     throw new Error("Stripe Checkout session unavailable on Connected Account");
@@ -509,6 +583,7 @@ export async function createConnectedOffSessionPaymentIntent(input: {
   applicationFeeBps?: number;
   metadata?: Record<string, string>;
   idempotencyKey?: string;
+  livemode?: boolean;
 }): Promise<{ id: string; status: string }> {
   const amount = input.amountCents;
   if (!Number.isInteger(amount) || amount <= 0) {
@@ -516,7 +591,7 @@ export async function createConnectedOffSessionPaymentIntent(input: {
   }
   const body = new URLSearchParams();
   body.set("amount", String(amount));
-  body.set("currency", (input.currency ?? "usd").toLowerCase());
+  body.set("currency", stripeFormCurrency(input.currency));
   body.set("customer", input.customerId);
   body.set("payment_method", input.paymentMethodId);
   body.set("confirm", "true");
@@ -538,6 +613,7 @@ export async function createConnectedOffSessionPaymentIntent(input: {
     body,
     stripeAccount: input.accountId,
     idempotencyKey: input.idempotencyKey,
+    livemode: input.livemode !== false,
   });
   if (!pi.id) {
     throw new Error("Stripe PaymentIntent unavailable on Connected Account");
@@ -557,9 +633,11 @@ export async function createConnectedInvoice(input: {
   applicationFeeBps?: number;
   autoAdvance?: boolean;
   idempotencyKey?: string;
+  livemode?: boolean;
 }): Promise<{ invoiceId: string; hostedInvoiceUrl: string | null }> {
-  const currency = (input.currency ?? "usd").toLowerCase();
+  const currency = stripeFormCurrency(input.currency);
   const idempotencyBase = input.idempotencyKey?.trim();
+  const livemode = input.livemode !== false;
   const itemBody = new URLSearchParams();
   itemBody.set("customer", input.customerId);
   itemBody.set("amount", String(input.amountCents));
@@ -573,6 +651,7 @@ export async function createConnectedInvoice(input: {
     body: itemBody,
     stripeAccount: input.accountId,
     idempotencyKey: idempotencyBase ? `${idempotencyBase}:item` : undefined,
+    livemode,
   });
 
   const invoiceBody = new URLSearchParams();
@@ -597,6 +676,7 @@ export async function createConnectedInvoice(input: {
       body: invoiceBody,
       stripeAccount: input.accountId,
       idempotencyKey: idempotencyBase ? `${idempotencyBase}:invoice` : undefined,
+      livemode,
     });
     if (!invoice.id) {
       throw new Error("Stripe invoice create failed on Connected Account");
@@ -612,6 +692,7 @@ export async function createConnectedInvoice(input: {
           method: "DELETE",
           path: `/v1/invoiceitems/${item.id.trim()}`,
           stripeAccount: input.accountId,
+          livemode,
         });
       } catch {
         // Best-effort cleanup; surface the original invoice failure.

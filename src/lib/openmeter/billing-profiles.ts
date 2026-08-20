@@ -412,6 +412,7 @@ export async function prepareAppCustomerStripeBilling(input: {
         merchantSettlementMetadata({
           connectedAccountId: accountId,
           chargeModel,
+          livemode: config.stripeLivemode !== false,
         }),
       );
     }

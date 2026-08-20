@@ -4,7 +4,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import AppSectionBreadcrumb from "@/components/apps/AppSectionBreadcrumb";
-import DashboardLayout from "@/components/DashboardLayout";
 import IdentitiesTable from "@/components/identities/IdentitiesTable";
 import { calendarMonthBoundsUtc } from "@/lib/billing-utils";
 import { requireOpenMeterForUsageReads } from "@/lib/openmeter/constants";
@@ -50,7 +49,7 @@ export default async function AppIdentitiesPage({
     : [];
 
   return (
-    <DashboardLayout>
+    <>
       <AppSectionBreadcrumb appId={id} appName={app.name} section="Identities" />
 
       <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between">
@@ -77,6 +76,6 @@ export default async function AppIdentitiesPage({
           Usage metering is not configured, so per-identity usage is unavailable.
         </div>
       )}
-    </DashboardLayout>
+    </>
   );
 }

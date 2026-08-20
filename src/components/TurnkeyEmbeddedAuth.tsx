@@ -111,6 +111,10 @@ function TurnkeyEmbeddedAuthInner({
   const [error, setError] = useState<string | null>(null);
   const [hasGoogleOAuthAction, setHasGoogleOAuthAction] = useState(false);
   const [hasDiscordOAuthAction, setHasDiscordOAuthAction] = useState(false);
+  // Incremented to remount AuthComponent after a session expiry, giving it fresh state.
+  const [authComponentKey, setAuthComponentKey] = useState(0);
+  // Shown when an existing Turnkey session expires while the login page is open.
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
   const authSectionRef = useRef<HTMLElement | null>(null);
   // True once Turnkey has been Unauthenticated on this page — a later
   // Authenticated state is a fresh login we should bridge to NextAuth.
@@ -118,6 +122,10 @@ function TurnkeyEmbeddedAuthInner({
   // Only inspect the initial Turnkey session once (avoid logging out mid-bridge).
   const initialSessionHandled = useRef(false);
   const bridgeInFlight = useRef(false);
+  // True when we deliberately called logout() to clear a stale session.
+  const selfLogoutInFlight = useRef(false);
+  // Previous authState — used to detect Authenticated → Unauthenticated transitions.
+  const prevAuthStateRef = useRef<AuthState | undefined>(undefined);
 
   // undefined → default pymthouse mark; null/"" → no interior logo (exterior branding).
   const authLogo =
@@ -129,6 +137,30 @@ function TurnkeyEmbeddedAuthInner({
     if (authState === AuthState.Unauthenticated) {
       sawUnauthenticated.current = true;
     }
+  }, [authState]);
+
+  // Detect an existing authenticated Turnkey session expiring while the login
+  // page is open (Authenticated → Unauthenticated after initial setup, not
+  // triggered by our own logout call). When this happens, remount AuthComponent
+  // so its OTP/passkey UI resets to the email-entry step, and show a notice.
+  useEffect(() => {
+    const prev = prevAuthStateRef.current;
+    prevAuthStateRef.current = authState;
+
+    if (!initialSessionHandled.current) return;
+    if (bridgeInFlight.current) return;
+    if (authState !== AuthState.Unauthenticated) return;
+    if (prev === undefined || prev === AuthState.Unauthenticated) return;
+
+    if (selfLogoutInFlight.current) {
+      selfLogoutInFlight.current = false;
+      return;
+    }
+
+    // External session expiry: reset the AuthComponent and notify the user.
+    setAuthComponentKey((k) => k + 1);
+    setSessionExpiredNotice(true);
+    sawUnauthenticated.current = true;
   }, [authState]);
 
   useEffect(() => {
@@ -203,8 +235,10 @@ function TurnkeyEmbeddedAuthInner({
       nextAuthStatus === "unauthenticated" &&
       authState === AuthState.Authenticated
     ) {
+      selfLogoutInFlight.current = true;
       logout().catch(() => {
         // Ignore — AuthComponent can still proceed after a failed clear.
+        selfLogoutInFlight.current = false;
       });
       return;
     }
@@ -213,6 +247,13 @@ function TurnkeyEmbeddedAuthInner({
       sawUnauthenticated.current = true;
     }
   }, [authState, clientState, logout, nextAuthStatus]);
+
+  // Dismiss the "session expired" notice once the user is no longer unauthenticated.
+  useEffect(() => {
+    if (authState !== AuthState.Unauthenticated) {
+      setSessionExpiredNotice(false);
+    }
+  }, [authState]);
 
   // Bridge after a fresh Turnkey authentication (user completed the form).
   useEffect(() => {
@@ -353,6 +394,7 @@ function TurnkeyEmbeddedAuthInner({
           aria-label="Email, passkey, and wallet sign-in"
         >
           <AuthComponent
+            key={authComponentKey}
             title={title}
             {...(authLogo
               ? {
@@ -364,6 +406,11 @@ function TurnkeyEmbeddedAuthInner({
           />
         </section>
       </div>
+      {sessionExpiredNotice && (
+        <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300/90">
+          Your sign-in session expired. Please sign in again.
+        </p>
+      )}
       {error && (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">

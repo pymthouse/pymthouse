@@ -8,5 +8,5 @@ export default async function AppUsagePage({
   params: Promise<{ id: string }>;
 }>) {
   const { id } = await params;
-  return <BillingUsageDashboard filterAppId={id} />;
+  return <BillingUsageDashboard filterAppId={id} wrapLayout={false} />;
 }

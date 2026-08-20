@@ -73,7 +73,7 @@ interface Props {
    * Credentials & URLs client sub-tabs). When null, render the legacy stacked layout.
    */
   activeClient?: CredentialsClientTab | null;
-  /** When true, omit the page title (parent renders it above client sub-tabs). */
+  /** When true, omit the page title and inner card chrome (parent accordion already frames the section). */
   hideHeader?: boolean;
   /** Post-logout redirects on the web_ client (saved with Save changes). */
   postLogoutRedirectUris?: string[];
@@ -89,6 +89,10 @@ function secretActionLabel(generating: boolean, hasSecret: boolean): string {
   if (generating) return "Generating...";
   if (hasSecret) return "Rotate Secret";
   return "Generate Secret";
+}
+
+function clientPanelClass(embedded: boolean, framedClass: string): string {
+  return embedded ? "space-y-5" : framedClass;
 }
 
 function isValidInitiateLoginUri(uri: string): boolean {
@@ -1625,7 +1629,7 @@ export function AuthCodeFlowTestSection({
     showInitiateLogin && backendDeviceHelper && hasDeviceCode;
 
   return (
-    <div className="space-y-5 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
+    <div className="space-y-5 pt-5 border-t border-zinc-800/80">
       {showEmptyRedirectHint ? <AuthCodeMissingRedirectHint title={title} /> : null}
 
       {showRedirectUriEditor ? (
@@ -1971,7 +1975,7 @@ export default function TestingStep({
       : "Test a client-credentials token for Builder APIs.";
 
   return (
-    <div className="space-y-8">
+    <div className={hideHeader ? "space-y-0" : "space-y-8"}>
       {hideHeader ? null : (
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -1999,17 +2003,24 @@ export default function TestingStep({
       {copyError && <p className="text-xs text-red-400 mt-2">{copyError}</p>}
 
       {showPrimaryCredentials && primaryIsConfidential ? (
-        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4">
-          <div>
-            <h3 className="text-sm font-semibold text-emerald-200/90">
-              Public / SDK{" "}
-              <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
-            </h3>
-            <p className="text-xs text-zinc-500 mt-1">
+        <div className={clientPanelClass(hideHeader, "p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4")}>
+          {hideHeader ? (
+            <p className="text-xs text-zinc-500">
               Legacy confidential primary client. Prefer enabling M2M / Web siblings on App
               profile for new integrations.
             </p>
-          </div>
+          ) : (
+            <div>
+              <h3 className="text-sm font-semibold text-emerald-200/90">
+                Public / SDK{" "}
+                <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
+              </h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                Legacy confidential primary client. Prefer enabling M2M / Web siblings on App
+                profile for new integrations.
+              </p>
+            </div>
+          )}
           <div>
             <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
             <div className="flex items-center gap-2">
@@ -2073,16 +2084,18 @@ export default function TestingStep({
       ) : null}
 
       {showPublicPanel && !primaryIsConfidential ? (
-        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-5">
-          <div>
-            <h3 className="text-sm font-semibold text-emerald-200/90">
-              Public / SDK{" "}
-              <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
-            </h3>
-            <p className="text-xs text-zinc-500 mt-1">
-              For SDKs, CLIs, and device login. No secret — public only.
-            </p>
-          </div>
+        <div className={clientPanelClass(hideHeader, "p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-5")}>
+          {hideHeader ? null : (
+            <div>
+              <h3 className="text-sm font-semibold text-emerald-200/90">
+                Public / SDK{" "}
+                <code className="font-mono text-emerald-300/80 font-normal">(app_)</code>
+              </h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                For SDKs, CLIs, and device login. No secret — public only.
+              </p>
+            </div>
+          )}
 
           {showPrimaryCredentials ? (
             <div>
@@ -2104,7 +2117,15 @@ export default function TestingStep({
             </div>
           ) : null}
 
-          <div className="space-y-3 border-t border-emerald-500/15 pt-4">
+          <div
+            className={`space-y-3 ${
+              hideHeader && !showPrimaryCredentials
+                ? ""
+                : hideHeader
+                  ? "border-t border-zinc-800/80 pt-5"
+                  : "border-t border-emerald-500/15 pt-4"
+            }`}
+          >
             <div>
               <h4 className="text-xs font-semibold text-zinc-200">Domain allowlist</h4>
               <p className="text-xs text-zinc-500 mt-1">
@@ -2133,7 +2154,13 @@ export default function TestingStep({
       ) : null}
 
       {showPublicPanel && primaryIsConfidential ? (
-        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4">
+        <div
+          className={
+            hideHeader
+              ? "space-y-4 border-t border-zinc-800/80 pt-5"
+              : "p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-4"
+          }
+        >
           <div>
             <h4 className="text-xs font-semibold text-zinc-200">Domain allowlist</h4>
             <p className="text-xs text-zinc-500 mt-1">
@@ -2151,14 +2178,18 @@ export default function TestingStep({
       ) : null}
 
       {showM2mCredentials && backendHelper ? (
-        <div className="p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3">
-            <h3 className="text-sm font-semibold text-cyan-200/90">
-              M2M / Builder{" "}
-              <code className="font-mono text-cyan-300/80 font-normal">(m2m_)</code>
-            </h3>
-            <p className="text-xs text-zinc-500">
-              For Builder APIs and server-side device approval. Keep the secret off public apps.
-            </p>
+        <div className={clientPanelClass(hideHeader, "p-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 space-y-3")}>
+          {hideHeader ? null : (
+            <>
+              <h3 className="text-sm font-semibold text-cyan-200/90">
+                M2M / Builder{" "}
+                <code className="font-mono text-cyan-300/80 font-normal">(m2m_)</code>
+              </h3>
+              <p className="text-xs text-zinc-500">
+                For Builder APIs and server-side device approval. Keep the secret off public apps.
+              </p>
+            </>
+          )}
             <div>
               <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
               <div className="flex items-center gap-2">
@@ -2233,14 +2264,18 @@ export default function TestingStep({
       ) : null}
 
       {showWebCredentials && webHelper ? (
-        <div className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3">
-            <h3 className="text-sm font-semibold text-violet-200/90">
-              Web single sign-on (SSO){" "}
-              <code className="font-mono text-violet-300/80 font-normal">(web_)</code>
-            </h3>
-            <p className="text-xs text-zinc-500">
-              For portal SSO (auth code + secret). Redirects live here; domains on Public / SDK.
-            </p>
+        <div className={clientPanelClass(hideHeader, "p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 space-y-3")}>
+          {hideHeader ? null : (
+            <>
+              <h3 className="text-sm font-semibold text-violet-200/90">
+                Web single sign-on (SSO){" "}
+                <code className="font-mono text-violet-300/80 font-normal">(web_)</code>
+              </h3>
+              <p className="text-xs text-zinc-500">
+                For portal SSO (auth code + secret). Redirects live here; domains on Public / SDK.
+              </p>
+            </>
+          )}
             <div>
               <div className="block text-xs font-medium text-zinc-400 mb-1">Client ID</div>
               <div className="flex items-center gap-2">
@@ -2272,7 +2307,7 @@ export default function TestingStep({
               />
             </div>
             {showPostLogoutRedirectUris && onPostLogoutRedirectUrisChange ? (
-              <div className="space-y-3 pt-2 border-t border-violet-500/15">
+              <div className={`space-y-3 pt-2 border-t ${hideHeader ? "border-zinc-800/80" : "border-violet-500/15"}`}>
                 <div>
                   <label
                     htmlFor={postLogoutUriInputId}
@@ -2408,7 +2443,13 @@ export default function TestingStep({
       ) : null}
 
       {showAuthTestSection ? (
-        <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4">
+        <div
+          className={
+            hideHeader
+              ? "space-y-4 border-t border-zinc-800/80 pt-6"
+              : "p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-4"
+          }
+        >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-zinc-200">
@@ -2489,7 +2530,13 @@ export default function TestingStep({
       ) : null}
 
       {showM2mOnlyExchange ? (
-        <div className="space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30">
+        <div
+          className={
+            hideHeader
+              ? "space-y-4"
+              : "space-y-4 p-5 rounded-xl border border-zinc-800 bg-zinc-900/30"
+          }
+        >
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-cyan-500" />
             <h3 className="text-sm font-semibold text-zinc-200">M2M token exchange</h3>

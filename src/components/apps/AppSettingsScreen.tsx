@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
 import TestingStep, {
@@ -17,7 +16,6 @@ import {
   type AppState,
 } from "./AppWizard";
 import {
-  appSettingsPath,
   normalizeAppSettingsTab,
   type AppSettingsTab,
 } from "@/lib/apps/settings-paths";
@@ -68,16 +66,7 @@ function mergeFormData(
   };
 }
 
-const INTEGRATION_TABS = [
-  { id: "profile", label: "App profile" },
-  { id: "credentials", label: "Credentials & URLs" },
-  { id: "plans", label: "Billing Plans" },
-  { id: "payments", label: "Payments" },
-] as const satisfies ReadonlyArray<{ id: AppSettingsTab; label: string }>;
-
-type IntegrationSection = AppSettingsTab;
-
-function resolveInitialTab(tab: string | undefined): IntegrationSection {
+function resolveInitialTab(tab: string | undefined): AppSettingsTab {
   return normalizeAppSettingsTab(tab);
 }
 
@@ -96,7 +85,6 @@ export default function AppSettingsScreen({
   initialTab,
 }: Readonly<Props>) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [formData, setFormData] = useState<AppFormData>(() =>
     mergeFormData(initialData, initialInitiateLoginUri ?? null, initialDeviceThirdPartyInitiateLogin),
   );
@@ -116,20 +104,22 @@ export default function AppSettingsScreen({
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const integrationSection = resolveInitialTab(initialTab);
 
-  const clientParam = searchParams.get("client");
-  const credentialsClient: CredentialsClientTab =
-    clientParam === "m2m" || clientParam === "web" || clientParam === "public"
-      ? clientParam
-      : "public";
-
-  const credentialsClientHref = useCallback(
-    (client: CredentialsClientTab) => {
-      const path = appSettingsPath(appId, "credentials");
-      if (client === "public") return path;
-      return `${path}?client=${encodeURIComponent(client)}`;
-    },
-    [appId],
+  // Which credential accordion sections are expanded (all open by default)
+  const [expandedCredentials, setExpandedCredentials] = useState<Set<CredentialsClientTab>>(
+    () => new Set<CredentialsClientTab>(["public", "m2m", "web"]),
   );
+
+  const toggleCredential = useCallback((client: CredentialsClientTab) => {
+    setExpandedCredentials((prev) => {
+      const next = new Set(prev);
+      if (next.has(client)) {
+        next.delete(client);
+      } else {
+        next.add(client);
+      }
+      return next;
+    });
+  }, []);
 
   const showMessage = useCallback((msg: string) => {
     setMessage(msg);
@@ -164,6 +154,36 @@ export default function AppSettingsScreen({
       setIsDirty(true);
     },
     [],
+  );
+
+  const markPrimarySecretGenerated = useCallback(() => {
+    setAppState((s) => ({ ...s, hasSecret: true }));
+    updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
+  }, [updateFormData]);
+
+  const markBackendSecretGenerated = useCallback(() => {
+    setAppState((s) => ({
+      ...s,
+      backendHelper: s.backendHelper
+        ? { ...s.backendHelper, hasSecret: true }
+        : s.backendHelper,
+    }));
+  }, []);
+
+  const markWebSecretGenerated = useCallback(() => {
+    setAppState((s) => ({
+      ...s,
+      webHelper: s.webHelper
+        ? { ...s.webHelper, hasSecret: true }
+        : s.webHelper,
+    }));
+  }, []);
+
+  const handlePostLogoutRedirectUrisChange = useCallback(
+    (uris: string[]) => {
+      updatePostLogoutRedirectUris(uris);
+    },
+    [updatePostLogoutRedirectUris],
   );
 
   const syncCredentialsFromServer = useCallback(async () => {
@@ -207,11 +227,8 @@ export default function AppSettingsScreen({
   }, [appId]);
 
   useEffect(() => {
-    if (integrationSection !== "credentials") {
-      return;
-    }
     void syncCredentialsFromServer();
-  }, [integrationSection, syncCredentialsFromServer]);
+  }, [syncCredentialsFromServer]);
 
   const saveChanges = useCallback(async () => {
     if (!canEdit) return;
@@ -332,47 +349,22 @@ export default function AppSettingsScreen({
   const showWebCredentialsTab =
     Boolean(formData.confidentialWebHelper) || Boolean(appState.webHelper);
 
-  const credentialsClientTabs = useMemo(
-    () =>
-      (
-        [
-          {
-            id: "public" as const,
-            label: "Public / SDK",
-            hint: "app_",
-            show: true,
-          },
-          {
-            id: "m2m" as const,
-            label: "M2M / Builder",
-            hint: "m2m_",
-            show: showM2mCredentialsTab,
-          },
-          {
-            id: "web" as const,
-            label: "Web SSO",
-            hint: "web_",
-            show: showWebCredentialsTab,
-          },
-        ] as const
-      ).filter((tab) => tab.show),
-    [showM2mCredentialsTab, showWebCredentialsTab],
-  );
-
-  useEffect(() => {
-    if (
-      (credentialsClient === "m2m" && !showM2mCredentialsTab) ||
-      (credentialsClient === "web" && !showWebCredentialsTab)
-    ) {
-      router.replace(appSettingsPath(appId, "credentials"), { scroll: false });
-    }
-  }, [
+  const credentialsTestingStep = {
     appId,
-    credentialsClient,
-    router,
-    showM2mCredentialsTab,
-    showWebCredentialsTab,
-  ]);
+    appState,
+    formData,
+    domains,
+    onChange: updateFormData,
+    onDomainsChange: setDomains,
+    onSecretGenerated: markPrimarySecretGenerated,
+    onBackendSecretGenerated: markBackendSecretGenerated,
+    onWebSecretGenerated: markWebSecretGenerated,
+    ownerExternalUserId,
+    readOnly: !canEdit,
+    postLogoutRedirectUris,
+    onPostLogoutRedirectUrisChange: handlePostLogoutRedirectUrisChange,
+    showPostLogoutRedirectUris,
+  };
 
   return (
     <div className="max-w-3xl">
@@ -396,38 +388,11 @@ export default function AppSettingsScreen({
         )}
       </div>
 
-      <nav
-        className="flex flex-wrap gap-1 border-b border-zinc-800 pb-3 mb-6"
-        aria-label="Integration settings sections"
+      <SettingsTabPanel
+        id="profile"
+        active={integrationSection === "profile"}
+        className="space-y-10 pb-6"
       >
-        {INTEGRATION_TABS.map(({ id, label }) => {
-          const selected = integrationSection === id;
-          return (
-            <Link
-              key={id}
-              id={`tab-${id}`}
-              href={appSettingsPath(appId, id)}
-              scroll={false}
-              aria-current={selected ? "page" : undefined}
-              className={`px-3 py-2 text-sm font-medium rounded-t-md border-b-2 -mb-px transition-colors ${
-                selected
-                  ? "border-emerald-500 text-emerald-400 bg-zinc-900/50"
-                  : "border-transparent text-zinc-500 hover:text-zinc-300"
-              }`}
-            >
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {integrationSection === "profile" && (
-        <div
-          id="panel-profile"
-          role="tabpanel"
-          aria-labelledby="tab-profile"
-          className="space-y-10 pb-6"
-        >
           <section className="space-y-4">
             <AppInfoStep data={formData} onChange={updateFormData} readOnly={!canEdit} />
           </section>
@@ -480,23 +445,20 @@ export default function AppSettingsScreen({
               )}
             </section>
           )}
-        </div>
-      )}
+      </SettingsTabPanel>
 
-      {integrationSection === "credentials" && (
-        <div
-          id="panel-credentials"
-          role="tabpanel"
-          aria-labelledby="tab-credentials"
-          className="space-y-8 pb-6"
-        >
+      <SettingsTabPanel
+        id="credentials"
+        active={integrationSection === "credentials"}
+        className="space-y-6 pb-6"
+      >
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-zinc-100 mb-1">
                 Credentials &amp; URLs
               </h2>
               <p className="text-sm text-zinc-500">
-                SDK, Builder, and portal credentials — each on its own tab.
+                SDK, Builder, and portal credentials — expand each section to configure.
               </p>
             </div>
             <a
@@ -509,95 +471,60 @@ export default function AppSettingsScreen({
             </a>
           </div>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 overflow-hidden">
-            <nav
-              className="flex flex-wrap gap-0 border-b border-zinc-800 bg-zinc-900/50"
-              aria-label="OIDC client credentials"
-            >
-              {credentialsClientTabs.map((tab) => {
-                  const selected = credentialsClient === tab.id;
-                  return (
-                    <Link
-                      key={tab.id}
-                      id={`credentials-client-tab-${tab.id}`}
-                      href={credentialsClientHref(tab.id)}
-                      scroll={false}
-                      aria-current={selected ? "page" : undefined}
-                      className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                        selected
-                          ? "border-emerald-500 text-zinc-100 bg-zinc-900/80"
-                          : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/40"
-                      }`}
-                    >
-                      {tab.label}{" "}
-                      <code
-                        className={`font-mono text-xs ${
-                          selected ? "text-zinc-400" : "text-zinc-600"
-                        }`}
-                      >
-                        {tab.hint}
-                      </code>
-                    </Link>
-                  );
-                })}
-            </nav>
+          {/* Public / SDK — always shown */}
+          <CredentialAccordionSection
+            id="public"
+            label="Public / SDK"
+            prefix="app_"
+            description="For SDKs, CLIs, and device login. No secret — public only."
+            labelClass="text-emerald-200/90"
+            prefixClass="text-emerald-400/70"
+            expanded={expandedCredentials.has("public")}
+            onToggle={() => toggleCredential("public")}
+          >
+            <CredentialsTestingStep
+              activeClient="public"
+              {...credentialsTestingStep}
+            />
+          </CredentialAccordionSection>
 
-            <div
-              id={`credentials-client-panel-${credentialsClient}`}
-              role="tabpanel"
-              aria-labelledby={`credentials-client-tab-${credentialsClient}`}
-              className="p-5 sm:p-6 space-y-8"
+          {/* M2M / Builder — only when enabled */}
+          {showM2mCredentialsTab && (
+            <CredentialAccordionSection
+              id="m2m"
+              label="M2M / Builder"
+              prefix="m2m_"
+              description="Server credentials for Builder APIs and device approval."
+              labelClass="text-cyan-200/90"
+              prefixClass="text-cyan-400/70"
+              expanded={expandedCredentials.has("m2m")}
+              onToggle={() => toggleCredential("m2m")}
             >
-              <TestingStep
-                appId={appId}
-                clientId={appState.clientId}
-                grantTypes={formData.grantTypes}
-                tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
-                redirectUris={formData.redirectUris}
-                allowedScopes={formData.allowedScopes}
-                hasSecret={appState.hasSecret}
-                backendHelper={appState.backendHelper}
-                backendDeviceHelper={formData.backendDeviceHelper}
-                webHelper={appState.webHelper}
-                confidentialWebHelper={formData.confidentialWebHelper}
-                confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
-                initiateLoginUri={formData.initiateLoginUri}
-                deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
-                domains={domains}
-                onChange={updateFormData}
-                onDomainsChange={setDomains}
-                onSecretGenerated={() => {
-                  setAppState((s) => ({ ...s, hasSecret: true }));
-                  updateFormData({ tokenEndpointAuthMethod: "client_secret_post" });
-                }}
-                onBackendSecretGenerated={() => {
-                  setAppState((s) => ({
-                    ...s,
-                    backendHelper: s.backendHelper
-                      ? { ...s.backendHelper, hasSecret: true }
-                      : s.backendHelper,
-                  }));
-                }}
-                onWebSecretGenerated={() => {
-                  setAppState((s) => ({
-                    ...s,
-                    webHelper: s.webHelper
-                      ? { ...s.webHelper, hasSecret: true }
-                      : s.webHelper,
-                  }));
-                }}
-                ownerExternalUserId={ownerExternalUserId}
-                readOnly={!canEdit}
-                activeClient={credentialsClient}
-                hideHeader
-                postLogoutRedirectUris={postLogoutRedirectUris}
-                onPostLogoutRedirectUrisChange={(uris) =>
-                  updatePostLogoutRedirectUris(uris)
-                }
-                showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+              <CredentialsTestingStep
+                activeClient="m2m"
+                {...credentialsTestingStep}
               />
-            </div>
-          </div>
+            </CredentialAccordionSection>
+          )}
+
+          {/* Web SSO — only when enabled */}
+          {showWebCredentialsTab && (
+            <CredentialAccordionSection
+              id="web"
+              label="Web SSO"
+              prefix="web_"
+              description="Confidential client for portal single sign-on."
+              labelClass="text-violet-200/90"
+              prefixClass="text-violet-400/70"
+              expanded={expandedCredentials.has("web")}
+              onToggle={() => toggleCredential("web")}
+            >
+              <CredentialsTestingStep
+                activeClient="web"
+                {...credentialsTestingStep}
+              />
+            </CredentialAccordionSection>
+          )}
 
           <ReferenceEndpointsSection
             clientId={appState.clientId || ""}
@@ -606,28 +533,15 @@ export default function AppSettingsScreen({
             tokenUrl={tokenUrl}
             signerSessionUrl={signerSessionUrl}
           />
-        </div>
-      )}
+      </SettingsTabPanel>
 
-      {integrationSection === "plans" && (
-        <div
-          id="panel-plans"
-          role="tabpanel"
-          aria-labelledby="tab-plans"
-        >
-          <PlansTab appId={appId} canEdit={canEdit} />
-        </div>
-      )}
+      <SettingsTabPanel id="plans" active={integrationSection === "plans"}>
+        <PlansTab appId={appId} canEdit={canEdit} />
+      </SettingsTabPanel>
 
-      {integrationSection === "payments" && (
-        <div
-          id="panel-payments"
-          role="tabpanel"
-          aria-labelledby="tab-payments"
-        >
-          <PaymentsTab appId={appId} canManageBilling={canManageBilling} />
-        </div>
-      )}
+      <SettingsTabPanel id="payments" active={integrationSection === "payments"}>
+        <PaymentsTab appId={appId} canManageBilling={canManageBilling} />
+      </SettingsTabPanel>
 
       {/* Save - only shown for non-plans/payments tabs */}
       {integrationSection !== "plans" && integrationSection !== "payments" && (
@@ -667,6 +581,158 @@ export default function AppSettingsScreen({
         </div>
       </div>
       )}
+    </div>
+  );
+}
+
+function SettingsTabPanel({
+  id,
+  active,
+  className,
+  children,
+}: Readonly<{
+  id: AppSettingsTab;
+  active: boolean;
+  className?: string;
+  children: React.ReactNode;
+}>) {
+  return (
+    <div
+      id={`panel-${id}`}
+      role="tabpanel"
+      aria-labelledby={`tab-${id}`}
+      hidden={!active}
+      inert={!active}
+      className={className}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CredentialsTestingStep({
+  activeClient,
+  appId,
+  appState,
+  formData,
+  domains,
+  onChange,
+  onDomainsChange,
+  onSecretGenerated,
+  onBackendSecretGenerated,
+  onWebSecretGenerated,
+  ownerExternalUserId,
+  readOnly,
+  postLogoutRedirectUris,
+  onPostLogoutRedirectUrisChange,
+  showPostLogoutRedirectUris,
+}: Readonly<{
+  activeClient: CredentialsClientTab;
+  appId: string;
+  appState: AppState;
+  formData: AppFormData;
+  domains: { id: string; domain: string }[];
+  onChange: (updates: Partial<AppFormData>) => void;
+  onDomainsChange: (domains: { id: string; domain: string }[]) => void;
+  onSecretGenerated: () => void;
+  onBackendSecretGenerated: () => void;
+  onWebSecretGenerated: () => void;
+  ownerExternalUserId: string | null;
+  readOnly: boolean;
+  postLogoutRedirectUris: string[];
+  onPostLogoutRedirectUrisChange: (uris: string[]) => void;
+  showPostLogoutRedirectUris: boolean;
+}>) {
+  return (
+    <TestingStep
+      appId={appId}
+      clientId={appState.clientId}
+      grantTypes={formData.grantTypes}
+      tokenEndpointAuthMethod={formData.tokenEndpointAuthMethod}
+      redirectUris={formData.redirectUris}
+      allowedScopes={formData.allowedScopes}
+      hasSecret={appState.hasSecret}
+      backendHelper={appState.backendHelper}
+      backendDeviceHelper={formData.backendDeviceHelper}
+      webHelper={appState.webHelper}
+      confidentialWebHelper={formData.confidentialWebHelper}
+      confidentialWebRedirectUris={formData.confidentialWebRedirectUris}
+      initiateLoginUri={formData.initiateLoginUri}
+      deviceThirdPartyInitiateLogin={formData.deviceThirdPartyInitiateLogin}
+      domains={domains}
+      onChange={onChange}
+      onDomainsChange={onDomainsChange}
+      onSecretGenerated={onSecretGenerated}
+      onBackendSecretGenerated={onBackendSecretGenerated}
+      onWebSecretGenerated={onWebSecretGenerated}
+      ownerExternalUserId={ownerExternalUserId}
+      readOnly={readOnly}
+      activeClient={activeClient}
+      hideHeader
+      postLogoutRedirectUris={postLogoutRedirectUris}
+      onPostLogoutRedirectUrisChange={onPostLogoutRedirectUrisChange}
+      showPostLogoutRedirectUris={showPostLogoutRedirectUris}
+    />
+  );
+}
+
+function CredentialAccordionSection({
+  id,
+  label,
+  prefix,
+  description,
+  labelClass,
+  prefixClass,
+  expanded,
+  onToggle,
+  children,
+}: Readonly<{
+  id: string;
+  label: string;
+  prefix: string;
+  description: string;
+  labelClass: string;
+  prefixClass: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}>) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        aria-controls={`credential-panel-${id}`}
+        className="flex w-full items-start justify-between gap-3 px-5 py-4 text-left hover:bg-white/[0.03] transition-colors"
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className={`text-sm font-semibold ${labelClass}`}>{label}</span>
+            <code className={`font-mono text-xs ${prefixClass}`}>{prefix}</code>
+          </div>
+          <p className="text-xs text-zinc-500 mt-0.5">{description}</p>
+        </div>
+        <svg
+          className={`w-4 h-4 shrink-0 mt-0.5 text-zinc-500 transition-transform duration-200 ${
+            expanded ? "rotate-180" : ""
+          }`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      <div
+        id={`credential-panel-${id}`}
+        hidden={!expanded}
+        inert={!expanded}
+        className="border-t border-white/[0.06] px-5 py-5 sm:px-6 sm:py-6"
+      >
+        {children}
+      </div>
     </div>
   );
 }

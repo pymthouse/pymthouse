@@ -309,9 +309,10 @@ dbTest(
         stripe: {
           createCheckoutSession: async (body: {
             customer: { id: string };
-            options: { successURL: string; cancelURL: string };
+            options: { successURL: string; cancelURL: string; currency?: string };
           }) => {
             assert.equal(body.customer.id, "cust_pm_gate");
+            assert.equal(body.options.currency, "USD");
             // Open redirects must be rejected — evil successUrl falls back.
             assert.match(
               body.options.successURL,

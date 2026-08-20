@@ -535,7 +535,7 @@ export async function getProvider(): Promise<Provider> {
       DeviceCode: 600,            // 10 minutes
       IdToken: 3600,              // 1 hour
       RefreshToken: 30 * 24 * 3600, // 30 days
-      Interaction: 600,           // 10 minutes
+      Interaction: 1800,          // 30 minutes — gives users time to complete login without timing out
       Session: 14 * 24 * 3600,   // 14 days
       Grant: 14 * 24 * 3600,     // 14 days
     },
