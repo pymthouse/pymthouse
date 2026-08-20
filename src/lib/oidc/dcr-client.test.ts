@@ -10,6 +10,7 @@ import {
   filterScopesToAllowlist,
   isAllowedMcpDcrRedirectUri,
   isDcrClientId,
+  resolveGrantedConsentScopes,
   mcpDcrRegisteredScope,
   parseScopeParam,
 } from "@/lib/oidc/dcr-client";
@@ -79,6 +80,29 @@ test("filterScopesToAllowlist strips privileged scopes hidden from consent UI", 
   ]);
   assert.equal(granted.includes("admin"), false);
   assert.equal(granted.includes("users:write"), false);
+});
+
+test("resolveGrantedConsentScopes falls back to the DCR allowlist when scope is missing", () => {
+  assert.equal(
+    resolveGrantedConsentScopes(
+      "openid profile email offline_access sign:job",
+      DCR_ALLOWED_SCOPES,
+      "dcr_abc",
+    ),
+    "openid profile email offline_access sign:job",
+  );
+  assert.equal(
+    resolveGrantedConsentScopes(undefined, DCR_ALLOWED_SCOPES, "dcr_abc"),
+    DCR_ALLOWED_SCOPES.join(" "),
+  );
+  assert.equal(
+    resolveGrantedConsentScopes(new Set(["openid", "sign:job"]), DCR_ALLOWED_SCOPES, "dcr_abc"),
+    "openid sign:job",
+  );
+  assert.equal(
+    resolveGrantedConsentScopes(undefined, DCR_ALLOWED_SCOPES, "web_customer_service"),
+    "",
+  );
 });
 
 test("filterScopesToAllowlist preserves request order and ignores unknown tokens", () => {

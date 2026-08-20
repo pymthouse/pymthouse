@@ -20,10 +20,10 @@ export async function loadExistingGrant(ctx: KoaContextWithOIDC) {
   }
 
   const accountId = ctx.oidc.account?.accountId;
-  if (accountId && grant.accountId !== accountId) {
+  if (accountId && grant.accountId && grant.accountId !== accountId) {
     return undefined;
   }
-  if (clientId && grant.clientId !== clientId) {
+  if (clientId && grant.clientId && grant.clientId !== clientId) {
     return undefined;
   }
 

@@ -16,8 +16,8 @@ import { asOidcAccountId, saveOidcConsentGrant } from "@/lib/oidc/consent-grant"
 import { isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
 import {
   DCR_ALLOWED_SCOPES,
-  filterScopesToAllowlist,
   isDcrClientId,
+  resolveGrantedConsentScopes,
 } from "@/lib/oidc/dcr-client";
 import { resolveRedirectLocation } from "@/app/api/v1/oidc/[...oidc]/utils";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
@@ -52,6 +52,29 @@ function resolveMcpResource(
     return getMcpResourceUrl();
   }
   return null;
+}
+
+function mcpGrantResourceIndicators(
+  resource: string | null,
+  clientId: string,
+): string[] {
+  const canonical = resolveMcpResource(resource, clientId);
+  if (!canonical) return [];
+  const indicators = [canonical];
+  if (resource && resource !== canonical && isMcpResourceIndicator(resource)) {
+    indicators.push(resource);
+  }
+  return indicators;
+}
+
+function scopeFromInteraction(
+  params: Record<string, unknown>,
+  promptDetails?: Record<string, unknown>,
+): unknown {
+  if (params.scope !== undefined && params.scope !== null && params.scope !== "") {
+    return params.scope;
+  }
+  return promptDetails?.scopes;
 }
 
 async function resolveConsentScopeAllowlist(
@@ -146,7 +169,7 @@ async function buildConsentResult(opts: {
   provider: Provider;
   clientId: string;
   accountId: string;
-  scope: string | undefined;
+  scope: unknown;
   params: Record<string, unknown>;
   appClientId?: string;
 }): Promise<Record<string, unknown> | NextResponse> {
@@ -170,19 +193,27 @@ async function buildConsentResult(opts: {
   }
 
   const scopeAllowlist = await resolveConsentScopeAllowlist(opts.clientId);
-  const grantedScopes = filterScopesToAllowlist(
+  const grantedScopes = resolveGrantedConsentScopes(
     opts.scope,
     scopeAllowlist,
-  ).join(" ");
+    opts.clientId,
+  );
   let grantId: string | undefined;
 
   if (mcpResource) {
-    const grant = new opts.provider.Grant();
-    grant.clientId = opts.clientId;
-    grant.accountId = opts.accountId;
-    if (grantedScopes) {
-      grant.addOIDCScope(grantedScopes);
-      grant.addResourceScope(mcpResource, grantedScopes);
+    if (!grantedScopes) {
+      return NextResponse.json(
+        { error: "invalid_scope", error_description: "No scopes were requested" },
+        { status: 400 },
+      );
+    }
+    const grant = new opts.provider.Grant({
+      clientId: opts.clientId,
+      accountId: opts.accountId,
+    });
+    grant.addOIDCScope(grantedScopes);
+    for (const indicator of mcpGrantResourceIndicators(resource, opts.clientId)) {
+      grant.addResourceScope(indicator, grantedScopes);
     }
     grantId = (await grant.save()) || grant.jti;
     if (mcpAppBinding && grantId) {
@@ -219,7 +250,7 @@ async function interactionSubmissionResult(opts: {
   provider: Provider;
   promptName: string;
   clientId: string | undefined;
-  scope: string | undefined;
+  scope: unknown;
   params: Record<string, unknown>;
   accountId: string;
   action?: "approve" | "deny";
@@ -232,7 +263,10 @@ async function interactionSubmissionResult(opts: {
         remember: true,
       },
     };
-    if (!isCustomerServiceOidcClient(opts.clientId)) {
+    const attachConsent =
+      isCustomerServiceOidcClient(opts.clientId) ||
+      isDcrClientId(opts.clientId ?? "");
+    if (!attachConsent) {
       return result;
     }
     const consent = await buildConsentResult({
@@ -379,7 +413,10 @@ export async function handleOidcInteractionPost(
       provider,
       promptName: details.prompt.name,
       clientId: details.params.client_id as string | undefined,
-      scope: details.params.scope as string | undefined,
+      scope: scopeFromInteraction(
+        details.params as Record<string, unknown>,
+        details.prompt.details as Record<string, unknown> | undefined,
+      ),
       params: details.params as Record<string, unknown>,
       accountId: userId,
       action: body.action,

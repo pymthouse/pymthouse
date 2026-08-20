@@ -55,6 +55,41 @@ export function filterScopesToAllowlist(
   return requestedList.filter((scope) => allowed.has(scope));
 }
 
+/** Normalize interaction / authorize scope params (string, list, or Set). */
+export function requestedScopeInput(
+  requested: unknown,
+): string | string[] | undefined {
+  if (requested instanceof Set) {
+    return [...requested].filter((scope): scope is string => typeof scope === "string");
+  }
+  if (typeof requested === "string") return requested;
+  if (Array.isArray(requested)) {
+    return requested.filter((scope): scope is string => typeof scope === "string");
+  }
+  return undefined;
+}
+
+/**
+ * Scopes written onto the consent Grant. DCR requests that omit `scope` on the
+ * interaction still get the MCP allowlist so resume cannot finish empty and
+ * redirect `error=access_denied` (no description).
+ */
+export function resolveGrantedConsentScopes(
+  requested: unknown,
+  allowlist: readonly string[],
+  clientId: string,
+): string {
+  const filtered = filterScopesToAllowlist(
+    requestedScopeInput(requested),
+    allowlist,
+  ).join(" ");
+  if (filtered) return filtered;
+  if (isDcrClientId(clientId) && allowlist.length > 0) {
+    return allowlist.join(" ");
+  }
+  return "";
+}
+
 /** Fixed scope string written onto every MCP DCR client registration. */
 export function mcpDcrRegisteredScope(): string {
   return DCR_ALLOWED_SCOPES.join(" ");

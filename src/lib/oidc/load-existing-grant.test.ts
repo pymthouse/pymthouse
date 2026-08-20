@@ -59,6 +59,17 @@ test("loadExistingGrant returns undefined when session is missing", async () => 
   assert.equal(grant, undefined);
 });
 
+test("loadExistingGrant keeps a grant that omitted accountId or clientId", async () => {
+  const grant = await loadExistingGrant(
+    grantCtx({
+      consentGrantId: "g_partial",
+      accountId: "acct",
+      found: { accountId: "", clientId: "" } as { accountId: string; clientId: string },
+    }),
+  );
+  assert.ok(grant);
+});
+
 test("loadExistingGrant ignores grants for a different account instead of throwing", async () => {
   const grant = await loadExistingGrant(
     grantCtx({
