@@ -24,7 +24,7 @@ export function createOidcGrant(
     accountId,
   });
   // Instance TTL — not on the public Grant constructor type.
-  (grant as { expiresIn: number }).expiresIn = OIDC_GRANT_TTL_SECONDS;
+  (grant as unknown as { expiresIn: number }).expiresIn = OIDC_GRANT_TTL_SECONDS;
   return grant;
 }
 
