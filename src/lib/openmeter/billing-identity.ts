@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db/index";
-import { appBillingConfig, developerApps, oidcClients } from "@/db/schema";
+import { appBillingConfig, developerApps, endUsers, oidcClients } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import { findOrCreateAppEndUser } from "@/lib/billing";
 import {
@@ -14,6 +14,7 @@ import {
   isOwnerWireSubject,
   normalizePlatformUserId,
   parseCustomerKey,
+  parseEndUserCustomerKey,
   parseOwnerCustomerKey,
 } from "@/lib/openmeter/customer-key";
 
@@ -508,9 +509,38 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
   clientId: string;
   externalUserId: string;
   app: AppIdentityRow | null;
+  /**
+   * When true, `externalUserId` is already the integrator id remapped from a
+   * canonical `eu_{end_users.id}` / `sbx_eu_{id}` key — do not remap again.
+   */
+  resolvedFromEndUserKey?: boolean;
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId;
   const app = input.app;
+
+  // Canonical `eu_{id}` / `sbx_eu_{id}` must resolve by primary key. Treating
+  // the key string as an integrator external_user_id creates a shadow
+  // end_users row and bills / measures debt against the wrong OpenMeter
+  // customer (and can cross live ↔ sandbox planes).
+  if (!input.resolvedFromEndUserKey) {
+    const endUserRowId = parseEndUserCustomerKey(externalUserId);
+    if (endUserRowId) {
+      const mapped = await mapEndUserCustomerKeyToIntegratorId({
+        endUserRowId,
+        developerAppId: app?.developerAppId ?? null,
+      });
+      if (!mapped) {
+        throw new Error(`Unknown end-user customer key ${externalUserId}`);
+      }
+      return resolveOpenMeterBillingIdentityUncached({
+        clientId: input.clientId,
+        externalUserId: mapped,
+        app,
+        resolvedFromEndUserKey: true,
+      });
+    }
+  }
+
   if (!app) {
     // Fall back: treat input clientId as public id (tests / scripts).
     // Only wire `owner:{id}` marks owners here — bare UUIDs are common end-user ids.
@@ -633,6 +663,42 @@ export async function resolveAppUserOpenMeterLookupKeys(input: {
     return appUserOpenMeterLookupKeys(identity);
   } catch {
     return [buildOpenMeterCustomerKey(clientId, externalUserId)];
+  }
+}
+
+/**
+ * Map `eu_{end_users.id}` / `sbx_eu_{id}` → integrator `external_user_id`.
+ * Returns null when the row is missing, has no external id, or belongs to a
+ * different app.
+ */
+async function mapEndUserCustomerKeyToIntegratorId(input: {
+  endUserRowId: string;
+  developerAppId: string | null;
+}): Promise<string | null> {
+  try {
+    const rows = await db
+      .select({
+        appId: endUsers.appId,
+        externalUserId: endUsers.externalUserId,
+      })
+      .from(endUsers)
+      .where(eq(endUsers.id, input.endUserRowId))
+      .limit(1);
+    const row = rows[0];
+    const externalUserId = row?.externalUserId?.trim() || "";
+    if (!row || !externalUserId) {
+      return null;
+    }
+    if (
+      input.developerAppId &&
+      row.appId &&
+      row.appId !== input.developerAppId
+    ) {
+      return null;
+    }
+    return externalUserId;
+  } catch {
+    return null;
   }
 }
 
