@@ -39,7 +39,7 @@ export function promptIncludesConsent(prompt: unknown): boolean {
  * still requested a new interaction — which restarts the handshake.
  *
  * Claude DCR sends `prompt=consent`. Skipping that after a login-only
- * `complete=1` lets node-oidc-provider finish with an empty grant and redirect
+ * continue POST lets node-oidc-provider finish with an empty grant and redirect
  * `error=access_denied` (no description) to the loopback callback.
  */
 export async function consentPromptNeeded(opts: {

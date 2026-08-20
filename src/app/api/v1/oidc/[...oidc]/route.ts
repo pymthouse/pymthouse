@@ -657,9 +657,6 @@ function interactionUidFromRequest(request: NextRequest): string | null {
 export async function GET(request: NextRequest) {
   const uid = interactionUidFromRequest(request);
   if (uid) {
-    if (request.nextUrl.searchParams.get("complete") === "1") {
-      return handleOidcInteractionPost(request, uid);
-    }
     return handleOidcInteractionGet(request, uid);
   }
   return handleOIDC(request);

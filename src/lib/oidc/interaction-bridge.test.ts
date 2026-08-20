@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  mapInteractionPayload,
-  oidcInteractionCompletePath,
-} from "@/lib/oidc/interaction-bridge";
+import { mapInteractionPayload } from "@/lib/oidc/interaction-bridge";
+import { oidcInteractionSubmitPath } from "@/lib/oidc/interaction-path";
 
-test("oidcInteractionCompletePath is a document navigation, not an RSC fetch", () => {
+test("oidcInteractionSubmitPath is a POST path with no complete query", () => {
   assert.equal(
-    oidcInteractionCompletePath("W4hYOpuBXFIF3QMENLmR_86c9UGx-ysRiko5YKbvxs7"),
-    "/api/v1/oidc/interaction/W4hYOpuBXFIF3QMENLmR_86c9UGx-ysRiko5YKbvxs7?complete=1",
+    oidcInteractionSubmitPath("W4hYOpuBXFIF3QMENLmR_86c9UGx-ysRiko5YKbvxs7"),
+    "/api/v1/oidc/interaction/W4hYOpuBXFIF3QMENLmR_86c9UGx-ysRiko5YKbvxs7",
   );
+  assert.equal(oidcInteractionSubmitPath("abc").includes("complete="), false);
 });
 
 test("mapInteractionPayload reads prompt and params", () => {

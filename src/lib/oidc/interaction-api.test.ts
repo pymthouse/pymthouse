@@ -15,3 +15,12 @@ test("parseOidcInteractionUid rejects other oidc paths", () => {
   assert.equal(parseOidcInteractionUid("/interaction/"), null);
   assert.equal(parseOidcInteractionUid("/interaction/uid/extra"), null);
 });
+
+test("interaction completion is a POST path, not a GET complete query", async () => {
+  const { oidcInteractionSubmitPath } = await import(
+    "@/lib/oidc/interaction-path"
+  );
+  const path = oidcInteractionSubmitPath("uid-1");
+  assert.equal(path.startsWith("/api/v1/oidc/interaction/"), true);
+  assert.equal(path.includes("?"), false);
+});

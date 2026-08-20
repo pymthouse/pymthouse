@@ -3,10 +3,8 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { authOptions } from "@/lib/next-auth-options";
 import { checkAppAccess } from "@/lib/oidc/app-access";
-import {
-  loadOidcInteractionDetails,
-  oidcInteractionCompletePath,
-} from "@/lib/oidc/interaction-bridge";
+import { loadOidcInteractionDetails } from "@/lib/oidc/interaction-bridge";
+import InteractionContinueForm from "./interaction-continue-form";
 import {
   isCustomerServiceOidcClient,
   oidcInteractionPath,
@@ -116,7 +114,7 @@ export default async function OidcInteractionPage({
     details.prompt.name === "consent" &&
     isCustomerServiceOidcClient(requestedClientId)
   )) {
-    redirect(oidcInteractionCompletePath(uid));
+    return <InteractionContinueForm uid={uid} />;
   }
 
   if (details.prompt.name === "consent") {

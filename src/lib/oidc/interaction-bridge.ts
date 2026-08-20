@@ -2,6 +2,8 @@ import { getClient } from "@/lib/oidc/clients";
 import { PostgresOidcAdapter } from "@/lib/oidc/adapter";
 import { isDcrClientId } from "@/lib/oidc/dcr-client";
 
+export { oidcInteractionSubmitPath } from "@/lib/oidc/interaction-path";
+
 export type OidcInteractionDetails = {
   uid: string;
   prompt: { name: string; details: Record<string, unknown> };
@@ -18,15 +20,6 @@ type InteractionPayload = {
   params?: unknown;
   session?: unknown;
 };
-
-/**
- * Browser continue URL for login / customer-service auto-consent.
- * Must be a document navigation (not a same-origin RSC fetch) so the OIDC
- * isolate can run while the page isolate is still rendering.
- */
-export function oidcInteractionCompletePath(uid: string): string {
-  return `/api/v1/oidc/interaction/${encodeURIComponent(uid)}?complete=1`;
-}
 
 export function mapInteractionPayload(
   uid: string,

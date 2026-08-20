@@ -19,7 +19,7 @@ import {
   filterScopesToAllowlist,
   isDcrClientId,
 } from "@/lib/oidc/dcr-client";
-import { getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
 import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
 import { getProvider } from "@/lib/oidc/provider";
@@ -75,6 +75,28 @@ type CookieCapableProvider = Provider & {
     };
   };
 };
+
+function buildNodeRequest(
+  method: "POST",
+  uid: string,
+  request: NextRequest,
+): { req: IncomingMessage; res: ServerResponse } {
+  const socket = new Socket();
+  const req = new IncomingMessage(socket);
+  req.method = method;
+  req.url = `${OIDC_MOUNT_PATH}/interaction/${uid}`;
+  request.headers.forEach((value, key) => {
+    req.headers[key.toLowerCase()] = value;
+  });
+  const publicUrl = new URL(getPublicOrigin());
+  req.headers.host = publicUrl.host;
+  if (!req.headers["x-forwarded-proto"]) {
+    req.headers["x-forwarded-proto"] = publicUrl.protocol.replace(":", "");
+  }
+  req.push(null);
+  const res = new ServerResponse(req);
+  return { req, res };
+}
 
 function appendSetCookies(from: ServerResponse, to: NextResponse): void {
   const raw = from.getHeader("set-cookie");
@@ -301,9 +323,6 @@ export async function handleOidcInteractionGet(
 async function readInteractionBody(
   request: NextRequest,
 ): Promise<{ action?: "approve" | "deny"; app_client_id?: string }> {
-  if (request.method === "GET") {
-    return {};
-  }
   try {
     const contentType = request.headers.get("content-type") ?? "";
     if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -349,14 +368,15 @@ export async function handleOidcInteractionPost(
   }
 
   try {
-    const details = await provider.Interaction.find(uid);
-    if (!details) {
+    const { req, res } = buildNodeRequest("POST", uid, request);
+    const details = await provider.interactionDetails(req, res);
+    if (details.uid !== uid) {
       return NextResponse.json(
         {
-          error: "interaction_not_found",
-          error_description: "Interaction session not found or expired",
+          error: "invalid_request",
+          error_description: "Interaction cookie does not match this request",
         },
-        { status: 404 },
+        { status: 403 },
       );
     }
     const result = await interactionSubmissionResult({
@@ -373,10 +393,11 @@ export async function handleOidcInteractionPost(
       return result;
     }
 
-    details.result = result;
-    await details.persist();
-    const redirectTo = details.returnTo;
+    const redirectTo = await provider.interactionResult(req, res, result, {
+      mergeWithLastSubmission: false,
+    });
     const response = NextResponse.redirect(redirectTo, { status: 302 });
+    appendSetCookies(res, response);
     const ttlSeconds =
       typeof details.exp === "number"
         ? details.exp - Math.floor(Date.now() / 1000)
@@ -384,6 +405,23 @@ export async function handleOidcInteractionPost(
     attachHandshakeCookies(provider, uid, redirectTo, ttlSeconds, response);
     return response;
   } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : "";
+    if (
+      name === "SessionNotFound" ||
+      /cookie not found|interaction session not found|session not found/i.test(
+        message,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: "interaction_required",
+          error_description:
+            "Interaction cookie is missing or expired. Restart authorization from the application.",
+        },
+        { status: 403 },
+      );
+    }
     if (DEBUG_OIDC_LOGS) {
       console.warn("[OIDC] interaction POST failed", { uid, err });
     }

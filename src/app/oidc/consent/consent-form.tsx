@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { type AppBranding, getDefaultBranding } from "@/lib/oidc/branding-shared";
+import { oidcInteractionSubmitPath } from "@/lib/oidc/interaction-path";
 
 export type ConsentAppOption = {
   publicClientId: string;
@@ -38,7 +39,7 @@ export default function ConsentForm({
 
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = `/api/v1/oidc/interaction/${uid}`;
+    form.action = oidcInteractionSubmitPath(uid);
 
     const actionInput = document.createElement("input");
     actionInput.type = "hidden";
