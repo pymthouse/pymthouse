@@ -20,8 +20,13 @@ import {
   softNegativeDenyReason,
 } from "@/lib/billing/soft-negative-gate";
 import { isHostedAdminClientAvailable } from "@/lib/openmeter/admin-client";
+import {
+  signerSpendableCacheSubject,
+  signerSpendableLookupSubject,
+} from "@/lib/openmeter/billing-identity";
 import { getSpendableUsdMicros } from "@/lib/openmeter/spendable-allowance";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
+import { tryAutoTopUpIfEnabled } from "@/lib/stripe/auto-topup";
 
 const DEFAULT_EXPIRY_TTL_SECONDS = 60;
 const DEFAULT_BALANCE_CACHE_TTL_SECONDS = 20;
@@ -80,11 +85,19 @@ export function createSpendableBalanceCache(options: {
 
   return {
     seed(clientId, usageSubject, value) {
-      cache.seed(cacheKey(clientId, usageSubject), value);
+      cache.seed(
+        cacheKey(clientId, signerSpendableCacheSubject(usageSubject)),
+        value,
+      );
     },
     get(identity) {
-      return cache.get(cacheKey(identity.client_id, identity.usage_subject), () =>
-        options.getBalance(identity),
+      const cacheSubject = signerSpendableCacheSubject(identity.usage_subject);
+      const lookupSubject = signerSpendableLookupSubject(identity.usage_subject);
+      return cache.get(cacheKey(identity.client_id, cacheSubject), () =>
+        options.getBalance({
+          ...identity,
+          usage_subject: lookupSubject,
+        }),
       );
     },
   };
@@ -149,7 +162,10 @@ export function seedSignerOverageEligibility(
   usageSubject: string,
   allows: boolean,
 ): void {
-  getSharedOverageCache().seed(cacheKey(clientId, usageSubject), allows);
+  getSharedOverageCache().seed(
+    cacheKey(clientId, signerSpendableCacheSubject(usageSubject)),
+    allows,
+  );
 }
 
 /** Test-only: clear process-local caches between suite runs. */
@@ -162,12 +178,14 @@ export function __resetSignerBalanceCachesForTests(): void {
 }
 
 async function identityAllowsOverage(identity: UsageIdentity): Promise<boolean> {
+  const cacheSubject = signerSpendableCacheSubject(identity.usage_subject);
+  const lookupSubject = signerSpendableLookupSubject(identity.usage_subject);
   return getSharedOverageCache().get(
-    cacheKey(identity.client_id, identity.usage_subject),
+    cacheKey(identity.client_id, cacheSubject),
     () =>
       resolveAllowsOverageInvoicing({
         clientId: identity.client_id,
-        externalUserId: identity.usage_subject,
+        externalUserId: lookupSubject,
       }),
   );
 }
@@ -222,6 +240,38 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
     }
 
     if (balance < MIN_BALANCE_USD_MICROS) {
+      const lookupSubject = signerSpendableLookupSubject(
+        ctx.identity.usage_subject,
+      );
+
+      // Match mint: try auto-top-up before soft-negative overage. Users with a
+      // saved card are overage-eligible, which would otherwise skip reload and
+      // only raise pending_usage / mid-cycle invoices.
+      try {
+        const topped = await tryAutoTopUpIfEnabled({
+          publicClientId: ctx.identity.client_id,
+          externalUserId: lookupSubject,
+        });
+        if (topped.status === "charged") {
+          seedSignerSpendableBalance(
+            ctx.identity.client_id,
+            ctx.identity.usage_subject,
+            topped.grantedUsdMicros,
+          );
+          return {
+            expiry: Math.floor(Date.now() / 1000) + expiryTtlSeconds,
+          };
+        }
+        console.info(
+          `[remote-signer] auto-top-up ${topped.status} client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)} reason=${topped.reason}`,
+        );
+      } catch (err) {
+        console.warn(
+          `[remote-signer] auto-top-up failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
+          sanitizeForLog(err),
+        );
+      }
+
       let allowsOverage = false;
       try {
         allowsOverage = await identityAllowsOverage(ctx.identity);
@@ -238,7 +288,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       try {
         const softGate = await resolveSoftNegativeGate({
           clientId: ctx.identity.client_id,
-          externalUserId: ctx.identity.usage_subject,
+          externalUserId: lookupSubject,
           spendableUsdMicros: balance,
           allowsOverageInvoicing: allowsOverage,
         });
@@ -251,7 +301,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
             );
             hasDefaultPaymentMethod = await appUserHasChargeablePaymentMethod({
               clientId: ctx.identity.client_id,
-              externalUserId: ctx.identity.usage_subject,
+              externalUserId: lookupSubject,
             });
           } catch {
             hasDefaultPaymentMethod = null;
@@ -268,7 +318,9 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
           `[remote-signer] soft-negative check failed client_id=${sanitizeForLog(ctx.identity.client_id)} subject=${sanitizeForLog(ctx.identity.usage_subject)}:`,
           sanitizeForLog(err),
         );
-        softAllow = false;
+        // Overage-eligible subjects stay authorized when the ceiling lookup
+        // throws — same fail-open as resolveSoftNegativeGate's debt path.
+        softAllow = allowsOverage;
       }
 
       if (!softAllow) {
@@ -287,7 +339,7 @@ export function buildSignerBalanceCheck(): BalanceCheck | undefined {
       // settlement / Stripe app can collect before the debt ceiling.
       scheduleInvoiceTrigger({
         clientId: ctx.identity.client_id,
-        externalUserId: ctx.identity.usage_subject,
+        externalUserId: lookupSubject,
       });
     }
 

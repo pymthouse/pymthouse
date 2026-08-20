@@ -10,13 +10,16 @@ import {
   SIGNED_TICKET_COUNT_METER,
   SIGNED_TICKET_EVENT_SOURCE,
 } from "./constants";
-import { buildOpenMeterCustomerKey } from "./customer-key";
 import { ensureOpenMeterCustomer } from "./customers";
 import {
   getHostedTrialOpenMeterClient,
   getTrialFeatureKeyForApp,
 } from "./client-factory";
-import { getKonnectCreditBalance } from "./konnect-credits";
+import {
+  getKonnectCreditBalance,
+  readKonnectUsdCreditBalance,
+  usdMicrosToDecimalDollars,
+} from "./konnect-credits";
 import { shouldUseKonnectRoutes } from "./route-mode";
 
 export type { OpenMeterCustomerIdentity } from "./customers";
@@ -27,6 +30,17 @@ export type TrialCreditBalance = {
   balanceUsdMicros: string;
   consumedUsdMicros: string;
   lifetimeGrantedUsdMicros: string;
+};
+
+/** End-user credit balance: Konnect GET /credits/balance, no reconstructed totals. */
+export type AppUserCreditBalance = {
+  externalUserId: string;
+  customerId: string;
+  currency: string;
+  live: string;
+  pending: string;
+  settled: string;
+  retrievedAt: string | null;
 };
 
 export async function grantTrialCredits(input: {
@@ -128,6 +142,73 @@ export async function getTrialCreditBalance(input: {
   };
 }
 
+/**
+ * Resolve the OpenMeter customer, then return Konnect credits/balance
+ * (`live` / `pending` / `settled`) for one currency. Does not list grants.
+ */
+export async function readAppUserCreditBalance(input: {
+  clientId: string;
+  externalUserId: string;
+  currency?: string;
+  featureKey?: string;
+}): Promise<AppUserCreditBalance | null> {
+  const client = getHostedTrialOpenMeterClient();
+  if (!client) {
+    return null;
+  }
+
+  const { resolveOpenMeterBillingIdentity } = await import(
+    "@/lib/openmeter/billing-identity"
+  );
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: input.clientId,
+    externalUserId: input.externalUserId,
+  });
+  const customer = await ensureOpenMeterCustomer(client, identity.customerKey);
+  const apiKey = process.env.OPENMETER_API_KEY?.trim();
+  const currency = (input.currency ?? "USD").trim().toUpperCase() || "USD";
+
+  if (shouldUseKonnectRoutes(getHostedOpenMeterUrl(), apiKey)) {
+    const snapshot = await readKonnectUsdCreditBalance({
+      customerId: customer.id,
+      currency,
+      featureKey: input.featureKey,
+      apiKey,
+    });
+    if (!snapshot) {
+      return null;
+    }
+    return {
+      externalUserId: input.externalUserId,
+      customerId: customer.id,
+      currency: snapshot.currency,
+      live: snapshot.live,
+      pending: snapshot.pending,
+      settled: snapshot.settled,
+      retrievedAt: snapshot.retrievedAt,
+    };
+  }
+
+  const featureKey =
+    input.featureKey?.trim() ||
+    (await getTrialFeatureKeyForApp(identity.developerAppId));
+  const value = await client.customers.entitlements.value(
+    identity.customerKey,
+    featureKey,
+  );
+  const remaining = value ? entitlementAmountToMicros(value.balance) : 0n;
+  const dollars = usdMicrosToDecimalDollars(remaining > 0n ? remaining : 0n);
+  return {
+    externalUserId: input.externalUserId,
+    customerId: customer.id,
+    currency,
+    live: dollars,
+    pending: dollars,
+    settled: dollars,
+    retrievedAt: null,
+  };
+}
+
 /** Parse self-hosted OpenMeter entitlement amounts into non-negative USD micros. */
 function entitlementAmountToMicros(value: unknown): bigint {
   if (value == null) return 0n;
@@ -177,25 +258,26 @@ export async function ingestSignedTicketEvent(input: {
   event: SignedTicketOpenMeterEvent;
 }): Promise<void> {
   const usageSubject = input.event.externalUserId.trim();
-  const { resolveOpenMeterBillingIdentity } = await import(
-    "@/lib/openmeter/billing-identity"
-  );
+  const { buildPayerActorWireSubject, resolveOpenMeterBillingIdentity } =
+    await import("@/lib/openmeter/billing-identity");
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.event.clientId,
     externalUserId: usageSubject,
   });
-  // Wire auth_id stays compound app_…:platformUserId for analytics.
-  // CloudEvent subject must be the Konnect customer key for owners
-  // (owner:{id}) — Konnect billing beta clears multi-subject attribution
-  // when a subscription is created, so compound subjects cannot settle.
-  const platformUserId = identity.isOwner
-    ? (identity.ownerUserId as string)
-    : usageSubject;
-  const wireAuthId = buildOpenMeterCustomerKey(
-    identity.publicClientId,
-    platformUserId,
-  );
-  const meterSubject = identity.customerKey;
+  // CloudEvent subject = payer (Konnect customer key).
+  // data.external_user_id = actor (integrator external id) for meter groupBy.
+  // Wire auth_id embeds payer#actor so the Kafka collector can split them.
+  const meterSubject = identity.payerCustomerKey;
+  const wireUsageSubject = buildPayerActorWireSubject({
+    payerCustomerKey: identity.payerCustomerKey,
+    payerKind: identity.payerKind,
+    actorExternalUserId: identity.actorExternalUserId,
+  });
+  const wireAuthId = `${identity.publicClientId}:${wireUsageSubject}`;
+  const billingSubjectKind =
+    identity.payerKind === "platform_user"
+      ? "owner_wallet"
+      : "app_user_wallet";
 
   // Numbers (not strings) so OpenMeter SUM $.fee_wei / $.billable_secs accumulate.
   // Wei must be a non-negative integer within Number.MAX_SAFE_INTEGER (Konnect SUM).
@@ -213,10 +295,20 @@ export async function ingestSignedTicketEvent(input: {
     source: SIGNED_TICKET_EVENT_SOURCE,
     subject: meterSubject,
     data: {
+      schema_version: "2",
       client_id: identity.publicClientId,
-      usage_subject: platformUserId,
-      usage_subject_type: identity.isOwner ? "app_owner" : "external_user_id",
-      external_user_id: platformUserId,
+      usage_subject: meterSubject,
+      usage_subject_type:
+        identity.payerKind === "platform_user"
+          ? "app_owner"
+          : "external_user_id",
+      external_user_id: identity.actorExternalUserId,
+      billing_subject_key: identity.payerCustomerKey,
+      billing_subject_kind: billingSubjectKind,
+      // Collector schema v2 only sets actor_end_user_id for stable eu_… keys.
+      actor_end_user_id: identity.actorEndUserId.startsWith("eu_")
+        ? identity.actorEndUserId
+        : "",
       network_fee_usd_micros: Number(input.event.networkFeeUsdMicros),
       fee_wei: feeWei,
       pixels: input.event.pixels,
@@ -229,7 +321,7 @@ export async function ingestSignedTicketEvent(input: {
       eth_usd_round_id: input.event.ethUsdRoundId,
       eth_usd_observed_at: input.event.ethUsdObservedAt,
       auth_id: wireAuthId,
-      openmeter_customer_key: identity.customerKey,
+      openmeter_customer_key: identity.payerCustomerKey,
     },
   });
 }

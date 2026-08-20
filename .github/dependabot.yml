@@ -52,6 +52,11 @@ updates:
     commit-message:
       prefix: "build"
       include: scope
+    # Nested module lives at a pseudo-version. Dependabot tries
+    # github.com/tkhq/go-sdk@v0.17.0 which does not contain this package
+    # and marks the whole gomod update job failed.
+    ignore:
+      - dependency-name: github.com/tkhq/go-sdk/pkg/enclave_encrypt
     groups:
       go-security:
         applies-to: security-updates

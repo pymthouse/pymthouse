@@ -12,12 +12,22 @@ import {
 } from "@/lib/billing/wallet-billing-target";
 
 /**
- * POST /api/v1/apps/{clientId}/billing/collect — raise an invoice for a
- * subject's unbilled usage now instead of waiting for the amount-based trigger
- * or OpenMeter's daily collection.
+ * POST /api/v1/apps/{clientId}/billing/collect — ask settlement to raise an
+ * invoice for a subject's unbilled usage now instead of waiting for the
+ * amount-based trigger or OpenMeter's daily collection.
+ *
+ * `outcome: "queued"` means settlement accepted the request onto its
+ * per-customer Kafka lane, not that an invoice exists yet — the raise itself
+ * happens asynchronously there, which is also what serializes it against any
+ * other raise already in flight for the same customer instead of racing one.
+ * Poll `billingState` (already returned alongside it) or billing history to
+ * see the result land.
+ *
+ * HTTP status: `queued` / `skipped` / `rate_limited` → 200; settlement not
+ * configured → 503 (`unavailable`); settlement rejected/failed → 502 (`error`).
  *
  * Idempotent within the trigger cooldown: repeat calls return `rate_limited`
- * with the current state rather than raising duplicate invoices. Debt below
+ * with the current state rather than queuing duplicate raises. Debt below
  * Stripe's minimum charge returns `skipped`, since such an invoice could never
  * be collected.
  */
@@ -69,6 +79,13 @@ export async function POST(
     externalUserId: subjectId,
   });
 
+  const status =
+    result.outcome === "error"
+      ? 502
+      : result.outcome === "unavailable"
+        ? 503
+        : 200;
+
   return NextResponse.json(
     {
       outcome: result.outcome,
@@ -76,7 +93,7 @@ export async function POST(
       billingState: state,
     },
     {
-      status: result.outcome === "error" ? 502 : 200,
+      status,
       headers: { "Cache-Control": "no-store" },
     },
   );

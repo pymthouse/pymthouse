@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAppForBilling } from "@/lib/billing/app-auth";
-import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
+import { readAppUserCreditBalance } from "@/lib/openmeter/entitlements";
 
 export async function GET(
   request: NextRequest,
@@ -13,22 +13,29 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const balance = await getTrialCreditBalance({
+  const currency = request.nextUrl.searchParams.get("filter[currency][eq]")?.trim();
+  const featureKey = request.nextUrl.searchParams
+    .get("filter[feature_key][eq]")
+    ?.trim();
+
+  const balance = await readAppUserCreditBalance({
     clientId: access.app.id,
     externalUserId,
+    currency: currency || undefined,
+    featureKey: featureKey || undefined,
   });
   if (!balance) {
     return NextResponse.json({ error: "OpenMeter not configured" }, { status: 503 });
   }
 
   return NextResponse.json({
-    externalUserId,
-    allowances: {
-      balanceUsdMicros: balance.balanceUsdMicros,
-      consumedUsdMicros: balance.consumedUsdMicros,
-      lifetimeGrantedUsdMicros: balance.lifetimeGrantedUsdMicros,
-      hasAccess: balance.hasAccess,
-    },
+    externalUserId: balance.externalUserId,
+    customerId: balance.customerId,
+    currency: balance.currency,
+    live: balance.live,
+    pending: balance.pending,
+    settled: balance.settled,
+    retrievedAt: balance.retrievedAt,
   });
 }
 

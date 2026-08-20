@@ -140,6 +140,13 @@ export function invoiceDescription(invoice: LedgerInvoiceInput): string {
     if (status === "open" || status === "draft") {
       return `${base} · ${status}`;
     }
+    if (status === "pending") {
+      // Usage that has accrued but has not yet become a real invoice
+      // (see merchant-connect's synthetic "pending_usage" row) — distinct
+      // wording from open/draft so it does not read as an invoice already
+      // in flight toward collection.
+      return period ? `Usage · ${period} · not yet invoiced` : "Usage · not yet invoiced";
+    }
     return base;
   }
   const brand = invoice.paymentMethodBrand?.trim();

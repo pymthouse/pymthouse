@@ -5,6 +5,7 @@ import {
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
 import {
+  ownerCostRailUserId,
   resolveOpenMeterBillingIdentity,
   type ResolvedBillingIdentity,
 } from "@/lib/openmeter/billing-identity";
@@ -189,7 +190,8 @@ async function remainingDiscountAfterUsage(input: {
 }): Promise<bigint> {
   const { identity, discount } = input;
   const client = getHostedAdminClient();
-  if (identity.isOwner && identity.ownerUserId) {
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId) {
     await ensureOpenMeterCustomerForAppUser({
       client,
       clientId: input.input.clientId,
@@ -200,13 +202,17 @@ async function remainingDiscountAfterUsage(input: {
   }
 
   const cycle = calendarMonthBoundsUtc(new Date());
-  const usageSubjects =
-    identity.isOwner && identity.ownerUserId
-      ? buildOwnerMeterSubjects(identity.ownerUserId, [
-          identity.publicClientId,
-          ...(await listOwnedPublicClientIds(identity.ownerUserId)),
-        ])
-      : [identity.customerKey];
+  const usageSubjects = ownerUserId
+    ? buildOwnerMeterSubjects(ownerUserId, [
+        identity.publicClientId,
+        ...(await listOwnedPublicClientIds(ownerUserId)),
+      ])
+    : [
+        identity.payerCustomerKey,
+        ...(identity.legacyCompoundCustomerKey
+          ? [identity.legacyCompoundCustomerKey]
+          : []),
+      ];
 
   const used = await querySubjectsUsedUsdMicros(
     usageSubjects,

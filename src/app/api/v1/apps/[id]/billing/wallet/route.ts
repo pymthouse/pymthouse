@@ -4,7 +4,10 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db/index";
 import { plans } from "@/db/schema";
 import { loadBillingState } from "@/lib/billing/billing-state-read";
-import { authorizeOwnerWalletM2m } from "@/lib/billing/owner-wallet-m2m-auth";
+import {
+  authorizeOwnerWalletM2m,
+  readJsonObjectBody,
+} from "@/lib/billing/owner-wallet-m2m-auth";
 import {
   formatUsdMicrosForDisplay,
   resolvedPayPerUseBehavior,
@@ -17,6 +20,13 @@ import { listAppUserPaymentMethods } from "@/lib/openmeter/app-user-payment-meth
 import { getOwnerPrepaidCreditBalance } from "@/lib/openmeter/credit-allowance-summary";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import { ownerHasChargeablePaymentMethod } from "@/lib/openmeter/owner-payment-method";
+import {
+  DEFAULT_AUTO_TOP_UP_USD_MICROS,
+  loadAppUserAutoTopUpPrefs,
+  parseAutoTopUpPatch,
+  saveAppUserAutoTopUpPrefs,
+} from "@/lib/stripe/auto-topup";
+import { parseTopUpAmountUsd } from "@/lib/stripe/topup-checkout";
 
 /**
  * GET /api/v1/apps/{clientId}/billing/wallet — prepaid wallet summary for
@@ -66,7 +76,7 @@ export async function GET(
 
   if (billingTarget.target.mode === "merchant") {
     const endUserId = billingTarget.target.externalUserId;
-    const [trialBalance, paymentMethods, usagePlanRows, billingState] =
+    const [trialBalance, paymentMethods, usagePlanRows, billingState, autoTopUp] =
       await Promise.all([
         getTrialCreditBalance({
           clientId,
@@ -81,6 +91,10 @@ export async function GET(
           publicClientId: clientId,
           appId: access.app.id,
           target: billingTarget.target,
+          externalUserId: endUserId,
+        }),
+        loadAppUserAutoTopUpPrefs({
+          appId: access.app.id,
           externalUserId: endUserId,
         }),
       ]);
@@ -100,6 +114,7 @@ export async function GET(
           ? paymentMethods.some((pm) => pm.isDefault)
           : null,
       },
+      autoTopUp,
       billingState,
       payPerUsePlans: usagePlanRows.map((usagePlan) => ({
         planId: usagePlan.id,
@@ -136,6 +151,7 @@ export async function GET(
     paymentMethod: {
       hasDefault: hasDefaultPaymentMethod,
     },
+    autoTopUp: null,
     billingState,
     payPerUsePlans: usagePlanRows.map((usagePlan) => ({
       planId: usagePlan.id,
@@ -147,16 +163,87 @@ export async function GET(
 }
 
 /**
- * PATCH /api/v1/apps/{clientId}/billing/wallet — per-user auto top-up prefs
- * are retired. Soft-negative is configured via PATCH …/billing/stripe.
+ * PATCH /api/v1/apps/{clientId}/billing/wallet — merchant end-user auto-top-up
+ * prefs. Body: `{ externalUserId, enabled, amountUsd? }`.
  */
-export async function PATCH() {
-  return NextResponse.json(
-    {
-      error:
-        "Per-user auto top-up is retired. Configure softNegativeUsdMicros via PATCH /api/v1/apps/{clientId}/billing/stripe; mid-cycle charges use OpenMeter progressive invoicing.",
-      code: "auto_topup_retired",
-    },
-    { status: 410 },
-  );
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id: clientId } = await params;
+  const access = await authorizeOwnerWalletM2m(request, clientId);
+  if (!access) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const body = await readJsonObjectBody(request);
+  const billingTarget = await resolveWalletBillingTarget({
+    appId: access.app.id,
+    ownerUserId: access.ownerUserId,
+    externalUserId: readOptionalExternalUserId(body.externalUserId),
+  });
+  if (!billingTarget.ok) {
+    return NextResponse.json(
+      { error: billingTarget.error },
+      { status: billingTarget.status },
+    );
+  }
+  if (billingTarget.target.mode !== "merchant") {
+    return NextResponse.json(
+      {
+        error: "Auto top-up is available for merchant end-users only",
+        code: "auto_topup_merchant_only",
+      },
+      { status: 409 },
+    );
+  }
+
+  const parsed = parseAutoTopUpPatch(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+
+  const endUserId = billingTarget.target.externalUserId;
+  if (parsed.enabled) {
+    const methods = await listAppUserPaymentMethods({
+      clientId: access.app.id,
+      externalUserId: endUserId,
+    }).catch(() => []);
+    if (!methods.some((pm) => pm.isDefault)) {
+      return NextResponse.json(
+        {
+          error: "Add a payment method before enabling auto top-up",
+          code: "payment_method_required",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
+  const existing = await loadAppUserAutoTopUpPrefs({
+    appId: access.app.id,
+    externalUserId: endUserId,
+  });
+  let amountUsdMicros = parsed.amountUsdMicros;
+  if (amountUsdMicros === undefined) {
+    if (existing.amountUsd) {
+      const stored = parseTopUpAmountUsd(existing.amountUsd);
+      amountUsdMicros = stored.ok
+        ? stored.amountUsdMicros
+        : DEFAULT_AUTO_TOP_UP_USD_MICROS;
+    } else {
+      amountUsdMicros = DEFAULT_AUTO_TOP_UP_USD_MICROS;
+    }
+  }
+
+  const autoTopUp = await saveAppUserAutoTopUpPrefs({
+    appId: access.app.id,
+    externalUserId: endUserId,
+    enabled: parsed.enabled,
+    amountUsdMicros,
+  });
+  return NextResponse.json({
+    externalUserId: endUserId,
+    autoTopUp,
+  });
 }

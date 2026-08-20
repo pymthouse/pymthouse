@@ -13,7 +13,7 @@ import { createLocalSignerJwksResolver } from "@/lib/oidc/local-signer-jwks";
 import { createLocalTokenExchangeFetch } from "@/lib/oidc/local-token-exchange-fetch";
 import { buildSignerBalanceCheck } from "@/lib/oidc/signer-balance-gate";
 import { timeSignerWebhookPhase } from "@/lib/oidc/signer-webhook-metrics";
-import { buildOwnerWireSubject } from "@/lib/openmeter/customer-key";
+import { wireUsageSubjectFromJwt } from "@/lib/openmeter/billing-identity";
 import { trimTrailingSlashes } from "@/lib/openapi/string-utils";
 
 type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -21,10 +21,9 @@ type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
 type EndUserVerifier = RemoteSignerWebhookConfig["endUserAuth"];
 
 /**
- * Map owner JWTs (bare platform user id + user_type=app_owner) onto webhook
- * usage_subject owner:{id} so go-livepeer auth_id carries a transport marker.
- * The collector strips `owner:` before writing the CloudEvent subject / Konnect
- * customer key (bare `{users.id}`). JWT claims stay bare for clients.
+ * Map JWT billing claims onto webhook usage_subject (payer#actor) so
+ * go-livepeer auth_id carries both identities. The collector splits on `#`
+ * and strips `owner:` before writing the CloudEvent subject.
  */
 function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifier {
   return {
@@ -34,25 +33,37 @@ function withOwnerBillingUsageSubject(verifier: EndUserVerifier): EndUserVerifie
       const raw = result.raw as Record<string, unknown> | undefined;
       const userType =
         typeof raw?.user_type === "string" ? raw.user_type.trim() : "";
-      if (userType !== "app_owner") {
+      const costOwnerUserId =
+        typeof raw?.cost_owner_user_id === "string"
+          ? raw.cost_owner_user_id
+          : undefined;
+      const billingSubjectKey =
+        typeof raw?.billing_subject_key === "string"
+          ? raw.billing_subject_key
+          : undefined;
+      const actorExternalUserId =
+        typeof raw?.external_user_id === "string"
+          ? raw.external_user_id
+          : result.identity.usage_subject;
+      const rewritten = wireUsageSubjectFromJwt({
+        userType,
+        usageSubject: result.identity.usage_subject,
+        costOwnerUserId,
+        billingSubjectKey,
+        actorExternalUserId,
+      });
+      if (
+        rewritten.usageSubject === result.identity.usage_subject &&
+        rewritten.usageSubjectType === result.identity.usage_subject_type
+      ) {
         return result;
-      }
-      const bareId = result.identity.usage_subject.trim();
-      if (!bareId || bareId.startsWith("owner:")) {
-        return {
-          ...result,
-          identity: {
-            ...result.identity,
-            usage_subject_type: "app_owner",
-          },
-        };
       }
       return {
         ...result,
         identity: {
           ...result.identity,
-          usage_subject: buildOwnerWireSubject(bareId),
-          usage_subject_type: "app_owner",
+          usage_subject: rewritten.usageSubject,
+          usage_subject_type: rewritten.usageSubjectType,
         },
       };
     },

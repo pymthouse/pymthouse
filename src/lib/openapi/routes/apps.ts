@@ -158,7 +158,7 @@ registerMetadataRoutes([
     { includeExternalUserId: true, created: true },
   ],
   ["delete", userPath("/keys"), OPENAPI_TAGS.users, "Revoke user API key", { includeExternalUserId: true }],
-  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "List user allowances", { includeExternalUserId: true }],
+  ["get", userPath("/allowances"), OPENAPI_TAGS.users, "Read customer credit balance", { includeExternalUserId: true }],
   ["post", userPath("/allowances"), OPENAPI_TAGS.users, "Grant user allowance", { includeExternalUserId: true }],
   ["get", userPath("/subscription"), OPENAPI_TAGS.users, "Get user subscription", { includeExternalUserId: true }],
   [
@@ -389,11 +389,47 @@ defineRouteMetadata("get", appPath("/billing/wallet"), {
   summary: "Owner prepaid wallet summary",
   description:
     "M2M Basic only. Prepaid credit balance, default payment-method status, " +
-    "the embedded `billingState`, and all active Pay-Per-Use plans with " +
+    "the embedded `billingState`, merchant auto-top-up prefs when " +
+    "`externalUserId` is set, and all active Pay-Per-Use plans with " +
     "resolved settlement behavior (credits first, then auto-debit at the " +
     "threshold).",
   security: m2mSecurity,
   request: { params: z.object({ clientId }) },
+  responses: {
+    200: jsonSuccess,
+    ...builderErrorResponses,
+    ...walletUpstreamErrorResponses,
+  },
+});
+defineRouteMetadata("patch", appPath("/billing/wallet"), {
+  tags: [OPENAPI_TAGS.billing],
+  summary: "Set merchant auto top-up prefs",
+  description:
+    "M2M Basic only. Merchant end-users: enable optional off-session prepaid " +
+    "reload when live spendable hits $0. Body: `externalUserId`, `enabled`, " +
+    "optional `amountUsd` ($1–$10,000; default $10). Requires a default card. " +
+    "Owner-rollup apps return 409.",
+  security: m2mSecurity,
+  request: {
+    params: z.object({ clientId }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            externalUserId: z.string().min(1).openapi({
+              description: "App end-user id (required in merchant mode).",
+            }),
+            enabled: z.boolean().openapi({
+              description: "Charge the saved card when live credit hits $0.",
+            }),
+            amountUsd: z.union([z.string(), z.number()]).optional().openapi({
+              description: "Reload amount in USD, e.g. `10` or `\"25.00\"`.",
+            }),
+          }),
+        },
+      },
+    },
+  },
   responses: {
     200: jsonSuccess,
     ...builderErrorResponses,

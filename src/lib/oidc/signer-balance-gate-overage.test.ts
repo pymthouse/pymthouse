@@ -9,6 +9,7 @@ import {
   seedSignerOverageEligibility,
   seedSignerSpendableBalance,
 } from "@/lib/oidc/signer-balance-gate";
+import { __setTryAutoTopUpIfEnabledForTests } from "@/lib/stripe/auto-topup";
 
 function identity(subject: string): UsageIdentity {
   return {
@@ -31,12 +32,17 @@ function withOpenMeterConfigured(t: test.TestContext) {
     if (prevLive === undefined) delete process.env.OPENMETER_TEST_LIVE;
     else process.env.OPENMETER_TEST_LIVE = prevLive;
     __resetSignerBalanceCachesForTests();
+    __setTryAutoTopUpIfEnabledForTests(null);
   });
 
   process.env.OPENMETER_URL = "https://us.api.konghq.com/v3/openmeter";
   process.env.OPENMETER_API_KEY = "om_test_key";
   process.env.OPENMETER_TEST_LIVE = "1";
   __resetSignerBalanceCachesForTests();
+  __setTryAutoTopUpIfEnabledForTests(async () => ({
+    status: "skipped",
+    reason: "test",
+  }));
 }
 
 test("buildSignerBalanceCheck is undefined when OpenMeter is not configured", (t) => {
@@ -143,6 +149,82 @@ test("buildSignerBalanceCheck rejects non-integer balance", async (t) => {
     },
     (err: unknown) => err instanceof WebhookError && err.status === 503,
   );
+});
+
+test("buildSignerBalanceCheck denies when auto-top-up throws", async (t) => {
+  withOpenMeterConfigured(t);
+  t.after(() => __setTryAutoTopUpIfEnabledForTests(null));
+  __setTryAutoTopUpIfEnabledForTests(async () => {
+    throw new Error("stripe down");
+  });
+
+  seedSignerSpendableBalance("app_test_overage", "eu_topup_err", "0");
+  seedSignerOverageEligibility("app_test_overage", "eu_topup_err", false);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  await assert.rejects(
+    async () => {
+      await check({
+        identity: identity("eu_topup_err"),
+        expiry: Math.floor(Date.now() / 1000) + 60,
+        payload: {},
+        request: new Request("http://localhost/authorize"),
+      });
+    },
+    (err: unknown) => err instanceof WebhookError && err.status === 483,
+  );
+});
+
+test("buildSignerBalanceCheck allows zero spendable after auto-top-up charge", async (t) => {
+  withOpenMeterConfigured(t);
+  t.after(() => __setTryAutoTopUpIfEnabledForTests(null));
+  __setTryAutoTopUpIfEnabledForTests(async () => ({
+    status: "charged",
+    paymentIntentId: "pi_reload",
+    grantedUsdMicros: "10000000",
+  }));
+
+  seedSignerSpendableBalance("app_test_overage", "eu_reload", "0");
+  seedSignerOverageEligibility("app_test_overage", "eu_reload", false);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  const result = await check({
+    identity: identity("eu_reload"),
+    expiry: Math.floor(Date.now() / 1000) + 60,
+    payload: {},
+    request: new Request("http://localhost/authorize"),
+  });
+  assert.ok(result && typeof result === "object" && "expiry" in result);
+});
+
+test("buildSignerBalanceCheck prefers auto-top-up over overage when both apply", async (t) => {
+  withOpenMeterConfigured(t);
+  t.after(() => __setTryAutoTopUpIfEnabledForTests(null));
+  let topUpCalls = 0;
+  __setTryAutoTopUpIfEnabledForTests(async () => {
+    topUpCalls += 1;
+    return {
+      status: "charged",
+      paymentIntentId: "pi_reload_overage",
+      grantedUsdMicros: "25000000",
+    };
+  });
+
+  seedSignerSpendableBalance("app_test_overage", "eu_topup_over_overage", "0");
+  seedSignerOverageEligibility("app_test_overage", "eu_topup_over_overage", true);
+
+  const check = buildSignerBalanceCheck();
+  assert.ok(check);
+  const result = await check({
+    identity: identity("eu_topup_over_overage"),
+    expiry: Math.floor(Date.now() / 1000) + 60,
+    payload: {},
+    request: new Request("http://localhost/authorize"),
+  });
+  assert.ok(result && typeof result === "object" && "expiry" in result);
+  assert.equal(topUpCalls, 1);
 });
 
 test("__resetSignerBalanceCachesForTests is test-only", () => {

@@ -17,7 +17,7 @@ function createDeps(overrides: Partial<TestUsageDeps> = {}): TestUsageDeps {
     }),
     ingestSignedTicketEvent: async () => undefined,
     invoiceGatheringForIdentity: async () => ({
-      outcome: "invoiced",
+      outcome: "queued",
       invoiceIds: ["inv_1"],
     }),
     formatUsdMicrosForDisplay: (amountUsdMicros: string) => `usd:${amountUsdMicros}`,
@@ -76,7 +76,12 @@ test("ingestTestUsageEvent requires non-empty client and external user ids", asy
   );
 });
 
-test("ingestTestUsageEvent with collect=false skips settle wait and forced collection", async () => {
+test("ingestTestUsageEvent defaults collect=false: skips settle wait and forced collection", async () => {
+  // Matches what real usage does: comfypeer's actual traffic only ever
+  // reaches invoiceGatheringForIdentity through the balance gate's
+  // automatic, non-forced scheduleInvoiceTrigger — never this forced path.
+  // A test tool that forces collection by default exercises a path
+  // production usage never takes.
   let ensureCalled = 0;
   let invoiceCalled = 0;
   let sleepCalled = 0;
@@ -88,7 +93,6 @@ test("ingestTestUsageEvent with collect=false skips settle wait and forced colle
       publicClientId: "pc_123",
       externalUserId: "eu_123",
       amountUsd: "12.34",
-      collect: false,
     },
     createDeps({
       ensureOpenMeterCustomerForAppUser: async () => {
@@ -104,7 +108,7 @@ test("ingestTestUsageEvent with collect=false skips settle wait and forced colle
       },
       invoiceGatheringForIdentity: async () => {
         invoiceCalled += 1;
-        return { outcome: "invoiced", invoiceIds: ["inv_1"] };
+        return { outcome: "queued", invoiceIds: ["inv_1"] };
       },
       sleep: async () => {
         sleepCalled += 1;
@@ -129,7 +133,7 @@ test("ingestTestUsageEvent with collect=false skips settle wait and forced colle
   });
 });
 
-test("ingestTestUsageEvent defaults collect=true and forces collection after settle wait", async () => {
+test("ingestTestUsageEvent with collect=true forces collection after settle wait", async () => {
   let sleptForMs = 0;
   let collectInput: Record<string, unknown> | null = null;
 
@@ -138,6 +142,7 @@ test("ingestTestUsageEvent defaults collect=true and forces collection after set
       publicClientId: "pc_123",
       externalUserId: "eu_123",
       amountUsd: "12.34",
+      collect: true,
     },
     createDeps({
       sleep: async (ms) => {
@@ -145,7 +150,7 @@ test("ingestTestUsageEvent defaults collect=true and forces collection after set
       },
       invoiceGatheringForIdentity: async (input) => {
         collectInput = input as unknown as Record<string, unknown>;
-        return { outcome: "invoiced", invoiceIds: ["inv_9"] };
+        return { outcome: "queued", invoiceIds: ["inv_9"] };
       },
     }),
   );
@@ -158,17 +163,18 @@ test("ingestTestUsageEvent defaults collect=true and forces collection after set
   });
   assert.equal(result.collected, true);
   assert.deepEqual(result.collect, {
-    outcome: "invoiced",
+    outcome: "queued",
     invoiceIds: ["inv_9"],
   });
 });
 
-test("ingestTestUsageEvent reports collected=false when collect outcome is not invoiced", async () => {
+test("ingestTestUsageEvent reports collected=false when collect outcome is not queued", async () => {
   const result = await ingestTestUsageEvent(
     {
       publicClientId: "pc_123",
       externalUserId: "eu_123",
       amountUsd: "12.34",
+      collect: true,
     },
     createDeps({
       invoiceGatheringForIdentity: async () => ({

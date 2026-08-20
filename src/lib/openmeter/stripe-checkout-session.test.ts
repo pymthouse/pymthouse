@@ -96,6 +96,37 @@ test("createOpenMeterStripeCheckoutSession uses Konnect customer billing path", 
   });
 });
 
+test("createOpenMeterStripeCheckoutSession defaults Konnect currency to USD", async (t) => {
+  withKonnectEnv(t);
+
+  let posted: unknown;
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    posted = init?.body ? JSON.parse(String(init.body)) : null;
+    return new Response(
+      JSON.stringify({
+        url: "https://checkout.stripe.com/c/pay/cs_test_default",
+        session_id: "cs_test_default",
+      }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  });
+
+  await createOpenMeterStripeCheckoutSession({
+    client: {} as OpenMeter,
+    customerId: "01CUSTOMERULID000000000001",
+    successUrl: "https://app.example/ok",
+    cancelUrl: "https://app.example/cancel",
+  });
+
+  assert.deepEqual(posted, {
+    stripe_options: {
+      success_url: "https://app.example/ok",
+      cancel_url: "https://app.example/cancel",
+      currency: "USD",
+    },
+  });
+});
+
 test("createOpenMeterStripeCheckoutSession uses SDK on self-hosted", async (t) => {
   const previousUrl = process.env.OPENMETER_URL;
   const previousKey = process.env.OPENMETER_API_KEY;

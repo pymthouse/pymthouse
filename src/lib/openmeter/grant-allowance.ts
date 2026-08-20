@@ -79,7 +79,7 @@ export async function grantAllowanceUsdMicros(input: {
     externalUserId,
   });
   const provisionExternalUserId = identity.isOwner
-    ? (identity.ownerUserId as string)
+    ? identity.payerPlatformUserId || externalUserId
     : externalUserId;
 
   await resolveOrCreateAppUser({
@@ -133,6 +133,7 @@ export async function grantAllowanceUsdMicros(input: {
     clientId: identity.publicClientId,
     externalUserId: provisionExternalUserId,
     featureKey,
+    identity,
   });
 
   return {

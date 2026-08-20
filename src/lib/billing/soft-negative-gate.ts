@@ -37,13 +37,23 @@ export async function resolveSoftNegativeGate(input: {
     };
   }
 
-  const app = await getProviderApp(input.clientId);
-  const appId =
-    app?.id?.trim() ||
-    (await resolveOpenMeterMeterClientId(input.clientId).catch(() =>
-      input.clientId.trim(),
-    ));
-  const config = await getAppBillingConfig(appId);
+  let config: { softNegativeUsdMicros?: string | null } | null = null;
+  try {
+    const app = await getProviderApp(input.clientId);
+    const appId =
+      app?.id?.trim() ||
+      (await resolveOpenMeterMeterClientId(input.clientId).catch(() =>
+        input.clientId.trim(),
+      ));
+    config = await getAppBillingConfig(appId);
+  } catch (err) {
+    // Unknown ceiling is not a ceiling. A billing outage must not lock out
+    // an overage-eligible subject — same fail-open as the debt lookup.
+    console.warn(
+      `[soft-negative-gate] billing config lookup failed client_id=${sanitizeForLog(input.clientId)} subject=${sanitizeForLog(input.externalUserId)}:`,
+      sanitizeForLog(err),
+    );
+  }
   const softNegativeUsdMicros = effectiveSoftNegativeUsdMicros(
     config?.softNegativeUsdMicros,
   );

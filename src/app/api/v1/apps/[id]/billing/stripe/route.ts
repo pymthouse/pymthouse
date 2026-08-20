@@ -24,6 +24,7 @@ import {
   getStripeConnectStatus,
 } from "@/lib/openmeter/stripe-app-install";
 import { getAppOpenMeterConfigRow } from "@/lib/openmeter/client-factory";
+import { resetBillingIdentityCache } from "@/lib/openmeter/billing-identity";
 import { isConnectReady } from "@/lib/activation/app-activation";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 
@@ -35,6 +36,8 @@ type BillingPatchFields = {
   billingMode?: "owner_rollup" | "merchant";
   endUserCap?: number;
   supplierTaxId?: string | null;
+  /** Merchant Connect platform mode; locked once a Connected Account exists. */
+  stripeLivemode?: boolean;
 };
 
 type ParseResult =
@@ -222,8 +225,29 @@ function hasBillingPatchFields(body: Record<string, unknown>): boolean {
     body.applicationFeeBps !== undefined ||
     body.billingMode !== undefined ||
     body.endUserCap !== undefined ||
-    body.supplierTaxId !== undefined
+    body.supplierTaxId !== undefined ||
+    body.stripeLivemode !== undefined
   );
+}
+
+function applyStripeLivemodeField(
+  value: unknown,
+  fields: BillingPatchFields,
+): ParseResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== "boolean") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "stripeLivemode must be a boolean" },
+        { status: 400 },
+      ),
+    };
+  }
+  fields.stripeLivemode = value;
+  return null;
 }
 
 function applySupplierTaxIdField(
@@ -311,7 +335,7 @@ async function parseBillingPatchBody(
       response: NextResponse.json(
         {
           error:
-            "Provide progressiveBilling, invoiceLeadUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, and/or supplierTaxId to update",
+            "Provide progressiveBilling, invoiceLeadUsdMicros, softNegativeUsdMicros, applicationFeeBps, billingMode, endUserCap, supplierTaxId, and/or stripeLivemode to update",
         },
         { status: 400 },
       ),
@@ -360,6 +384,9 @@ async function parseBillingPatchBody(
   );
   if (capErr) return capErr;
 
+  const livemodeErr = applyStripeLivemodeField(body.stripeLivemode, fields);
+  if (livemodeErr) return livemodeErr;
+
   return { ok: true, fields };
 }
 
@@ -395,6 +422,7 @@ async function persistBillingPatch(
     billingMode,
     endUserCap,
     supplierTaxId,
+    stripeLivemode,
   } = fields;
   // Persist OpenMeter profile settings before Neon billingMode/endUserCap so
   // a failed OM write cannot leave the app on a new revenue plane.
@@ -417,6 +445,16 @@ async function persistBillingPatch(
       "@/lib/openmeter/supplier-sync"
     );
     await setAppSupplierTaxId({ clientId: appId, taxId: supplierTaxId });
+  }
+
+  if (stripeLivemode !== undefined) {
+    const existing = await getAppBillingConfig(appId);
+    if (existing?.stripeConnectedAccountId?.trim()) {
+      throw new Error(
+        "Cannot change stripeLivemode while a Connected Account is linked. Disconnect Stripe Connect first, then switch sandbox/live and re-onboard.",
+      );
+    }
+    await upsertAppBillingConfig(appId, { stripeLivemode });
   }
 
   if (billingMode !== undefined || endUserCap !== undefined) {
@@ -501,11 +539,26 @@ export async function PATCH(
       access.auth.app.id,
       parsed.fields,
     );
+    // Drop cached (clientId, externalUserId) → identity rows so the next mint
+    // / debt / webhook resolve sees the new billingMode immediately. JWT TTL
+    // still bounds already-issued sessions (mint-forward).
+    if (parsed.fields.billingMode !== undefined) {
+      resetBillingIdentityCache();
+    }
     const status = await getStripeConnectStatus(access.auth.app.id);
+    // Mode switches are mint-forward: identity/provision caches (default 300s)
+    // plus live signer JWT TTL bound when new sessions pick up the new rail.
+    // Already-ingested CloudEvents stay on the customer they were billed to.
+    // Cache is busted above; effectiveAt remains a client hint for JWT expiry.
+    const billingModeEffectiveAt =
+      parsed.fields.billingMode !== undefined
+        ? new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        : undefined;
     return NextResponse.json({
       clientId: access.auth.app.id,
       ...status,
       ...updated,
+      ...(billingModeEffectiveAt ? { billingModeEffectiveAt } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

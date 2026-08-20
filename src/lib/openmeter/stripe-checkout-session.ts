@@ -59,22 +59,13 @@ async function createKonnectStripeCheckoutSession(input: {
   cancelUrl: string;
   currency?: string;
 }): Promise<StripeCheckoutSessionResult> {
-  const body: {
-    stripe_options: {
-      success_url: string;
-      cancel_url: string;
-      currency?: string;
-    };
-  } = {
+  const body = {
     stripe_options: {
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
+      currency: (input.currency?.trim() || "USD").toUpperCase(),
     },
   };
-  const currency = input.currency?.trim().toUpperCase();
-  if (currency) {
-    body.stripe_options.currency = currency;
-  }
 
   const result = await konnectAdminFetch<KonnectCheckoutSessionResponse>(
     `/customers/${encodeURIComponent(input.customerId)}/billing/stripe/checkout-sessions`,
@@ -102,18 +93,11 @@ async function createSelfHostedStripeCheckoutSession(input: {
   cancelUrl: string;
   currency?: string;
 }): Promise<StripeCheckoutSessionResult> {
-  const options: {
-    successURL: string;
-    cancelURL: string;
-    currency?: string;
-  } = {
+  const options = {
     successURL: input.successUrl,
     cancelURL: input.cancelUrl,
+    currency: (input.currency?.trim() || "USD").toUpperCase(),
   };
-  const currency = input.currency?.trim().toUpperCase();
-  if (currency) {
-    options.currency = currency;
-  }
 
   const checkout = await input.client.apps.stripe.createCheckoutSession({
     customer: { id: input.customerId },

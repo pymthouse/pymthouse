@@ -442,6 +442,30 @@ function stringRecord(value: unknown): Record<string, string> {
 }
 
 /**
+ * Kong customer label values: max 63 chars, must match
+ * `^[a-z0-9A-Z]{1}([a-z0-9A-Z-._]*[a-z0-9A-Z]+)?$` (no commas/spaces).
+ * Drop anything that would 400 the PUT — callers treat SDK `metadata` as soft KV.
+ */
+const KONNECT_LABEL_VALUE_RE =
+  /^[a-z0-9A-Z]{1}([a-z0-9A-Z-._]*[a-z0-9A-Z]+)?$/;
+
+export function isKonnectLabelValue(value: string): boolean {
+  return value.length > 0 && value.length <= 63 && KONNECT_LABEL_VALUE_RE.test(value);
+}
+
+export function sanitizeKonnectLabels(
+  labels: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(labels)) {
+    if (isKonnectLabelValue(value)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
  * Konnect stores customer KV under `labels` and silently discards `metadata`.
  * The OpenMeter SDK reads/writes `metadata`, so merge labels into metadata on
  * the way in and map metadata → labels on the way out.
@@ -485,7 +509,7 @@ function rewriteKonnectCustomerRequestBody(body: unknown): unknown {
   const record = { ...(snake as Record<string, unknown>) };
   const fromLabels = stringRecord(record.labels);
   const fromMetadata = stringRecord(record.metadata);
-  const merged = { ...fromLabels, ...fromMetadata };
+  const merged = sanitizeKonnectLabels({ ...fromLabels, ...fromMetadata });
   delete record.metadata;
   if (Object.keys(merged).length > 0) {
     record.labels = merged;

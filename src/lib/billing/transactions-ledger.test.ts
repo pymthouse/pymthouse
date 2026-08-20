@@ -5,8 +5,25 @@ import {
   buildLedgerEntries,
   filterLedgerEntries,
   formatInvoicePeriodLabel,
+  invoiceDescription,
   splitDailyUsageAgainstAllowance,
 } from "@/lib/billing/transactions-ledger";
+
+test("invoiceDescription labels pending usage distinctly from open/draft invoices", () => {
+  assert.equal(
+    invoiceDescription({ status: "pending" } as never),
+    "Usage · not yet invoiced",
+  );
+  assert.equal(
+    invoiceDescription({ status: "open" } as never),
+    "Invoice · open",
+  );
+  assert.equal(
+    invoiceDescription({ status: "draft" } as never),
+    "Invoice · draft",
+  );
+  assert.equal(invoiceDescription({ status: "paid" } as never), "Invoice · Paid");
+});
 
 test("splitDailyUsageAgainstAllowance drains the allowance before credits", () => {
   const split = splitDailyUsageAgainstAllowance(

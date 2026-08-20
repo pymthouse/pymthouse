@@ -73,9 +73,18 @@ async function provisionAppUserBillingUncached(input: {
     findOrCreateAppEndUser(input.clientId, externalUserId),
   ]);
 
-  // ensureStarterSubscriptionForAppUser already syncs the Starter plan and
-  // ensures the OpenMeter customer + billing profile internally; no separate
-  // trial-allowance ensure is needed here.
+  // Eagerly ensure the OpenMeter customer for this identity. Under
+  // owner_rollup this creates both the eu_… end-user customer (unsubscribed)
+  // and the owner wallet; Starter is only created on the payer.
+  if (isHostedAdminClientAvailable()) {
+    await ensureAppUserKonnectCustomer({
+      clientId: input.clientId,
+      externalUserId,
+    });
+  }
+
+  // ensureStarterSubscriptionForAppUser syncs Starter on the payer only
+  // (owner wallet under rollup; eu_… customer under merchant).
   const sub = await ensureStarterSubscriptionForAppUser({
     clientId: input.clientId,
     externalUserId,

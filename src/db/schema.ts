@@ -304,6 +304,10 @@ export const appUsers = pgTable(
     depositWalletAddress: text("deposit_wallet_address"),
     status: text("status").notNull().default("active"),
     role: text("role").notNull().default("user"),
+    /** Off-session prepaid reload when live spendable hits $0. Merchant end-users. */
+    autoTopUpEnabled: boolean("auto_top_up_enabled").notNull().default(false),
+    /** Reload amount in USD micros; null falls back to $10 when enabling. */
+    autoTopUpUsdMicros: text("auto_top_up_usd_micros"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -592,6 +596,13 @@ export const appBillingConfig = pgTable(
     invoiceLeadUsdMicros: text("invoice_lead_usd_micros"),
     /** Merchant Stripe Connected Account id (`acct_…`). */
     stripeConnectedAccountId: text("stripe_connected_account_id"),
+    /**
+     * When true, Merchant Connect uses the live platform key.
+     * When false (default for new rows), Connect uses STRIPE_SANDBOX_SECRET_KEY.
+     * Existing live merchant apps stay true. Locked once stripeConnectedAccountId
+     * is set — disconnect to switch.
+     */
+    stripeLivemode: boolean("stripe_livemode").notNull().default(false),
     /** How the merchant linked: account_link | oauth */
     stripeOnboardingMethod: text("stripe_onboarding_method"),
     stripeChargesEnabled: boolean("stripe_charges_enabled").notNull().default(false),
@@ -805,6 +816,42 @@ export const appBillingOauthStates = pgTable(
 );
 
 /** Maps end-users to merchant-owned Stripe customers on Connected Accounts. */
+/**
+ * Local registry of OpenMeter customers. Required once end-user keys drop the
+ * `app_…:` prefix — OpenMeter can no longer be enumerated by clientId key prefix.
+ */
+export const billingCustomers = pgTable(
+  "billing_customers",
+  {
+    id: text("id").primaryKey(),
+    /** Canonical OpenMeter customer key (`{users.id}` or `eu_{end_users.id}`). */
+    customerKey: text("customer_key").notNull(),
+    /** `platform_user` | `end_user` */
+    kind: text("kind").notNull(),
+    platformUserId: text("platform_user_id"),
+    endUserId: text("end_user_id").references(() => endUsers.id),
+    /** developer_apps.id — attribution only; not part of the customer key. */
+    clientId: text("client_id")
+      .notNull()
+      .references(() => developerApps.id),
+    openmeterCustomerId: text("openmeter_customer_id").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("idx_billing_customers_customer_key_client").on(
+      t.customerKey,
+      t.clientId,
+    ),
+    index("idx_billing_customers_client_id").on(t.clientId),
+    index("idx_billing_customers_openmeter_id").on(t.openmeterCustomerId),
+  ],
+);
+
 export const appUserStripeCustomers = pgTable(
   "app_user_stripe_customers",
   {
@@ -1085,6 +1132,8 @@ export type EndUser = typeof endUsers.$inferSelect;
 export type NewEndUser = typeof endUsers.$inferInsert;
 export type AppUser = typeof appUsers.$inferSelect;
 export type NewAppUser = typeof appUsers.$inferInsert;
+export type BillingCustomer = typeof billingCustomers.$inferSelect;
+export type NewBillingCustomer = typeof billingCustomers.$inferInsert;
 export type StreamSession = typeof streamSessions.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type OidcSigningKey = typeof oidcSigningKeys.$inferSelect;

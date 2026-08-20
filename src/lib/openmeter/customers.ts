@@ -1,12 +1,15 @@
 import { eq } from "drizzle-orm";
 import type { OpenMeter } from "@openmeter/sdk";
+import { v4 as uuidv4 } from "uuid";
 
 import { db } from "@/db/index";
-import { developerApps, oidcClients } from "@/db/schema";
+import { billingCustomers, developerApps, oidcClients } from "@/db/schema";
 import { createAsyncTtlCache, resolveCacheTtlSeconds } from "@/lib/async-ttl-cache";
 import {
   buildOwnerCustomerKey,
   buildOwnerMeterSubjects,
+  isEndUserCustomerKey,
+  parseEndUserCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import { sanitizeForLog } from "@/lib/sanitize-for-log";
 import { getHostedOpenMeterUrl } from "./constants";
@@ -219,9 +222,11 @@ async function ensureOwnerCustomerUncached(
     trimmedOwnerId,
     uniqueClientIds,
   );
+  // Neon (`listOwnedPublicClientIds`) is the source of truth for owned apps.
+  // Do not write comma-joined client ids into Konnect labels — Kong rejects
+  // commas and values over 63 chars (`labels.* [max_length]` / `[pattern]`).
   const metadata: Record<string, string> = {
     pymthouse_owner_user_id: trimmedOwnerId,
-    pymthouse_owned_client_ids: uniqueClientIds.join(","),
   };
 
   const existing = await findOpenMeterCustomerByKey(client, ownerKey);
@@ -395,29 +400,145 @@ export async function ensureOpenMeterCustomerForAppUser(input: {
   externalUserId: string;
   displayName?: string;
 }): Promise<OpenMeterCustomerIdentity> {
-  const { resolveOpenMeterBillingIdentity } = await import(
+  const { ownerCostRailUserId, resolveOpenMeterBillingIdentity } = await import(
     "@/lib/openmeter/billing-identity"
   );
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: input.clientId,
     externalUserId: input.externalUserId,
   });
-  if (identity.isOwner && identity.ownerUserId) {
-    const ownedClientIds = await listOwnedPublicClientIds(identity.ownerUserId);
+
+  // Eagerly ensure the end-user customer (eu_…) so a later merchant switch
+  // never needs a subject-key edit under an active subscription.
+  if (isEndUserCustomerKey(identity.actorEndUserId)) {
+    const endUserCustomer = await ensureOpenMeterCustomer(
+      input.client,
+      identity.actorEndUserId,
+      input.displayName,
+    );
+    await recordBillingCustomer({
+      customerKey: endUserCustomer.key,
+      kind: "end_user",
+      endUserId: parseEndUserCustomerKey(endUserCustomer.key) ?? undefined,
+      clientId: identity.developerAppId,
+      openmeterCustomerId: endUserCustomer.id,
+    });
+  }
+
+  const ownerUserId = ownerCostRailUserId(identity);
+  if (ownerUserId) {
+    const ownedClientIds = await listOwnedPublicClientIds(ownerUserId);
     const publicClientIds = [
       ...new Set([identity.publicClientId, ...ownedClientIds]),
     ];
-    return ensureOwnerCustomer(
+    const owner = await ensureOwnerCustomer(
       input.client,
-      identity.ownerUserId,
+      ownerUserId,
       publicClientIds,
     );
+    await recordBillingCustomer({
+      customerKey: owner.key,
+      kind: "platform_user",
+      platformUserId: ownerUserId,
+      clientId: identity.developerAppId,
+      openmeterCustomerId: owner.id,
+    });
+    return owner;
   }
-  return ensureOpenMeterCustomer(
+
+  const customer = await ensureOpenMeterCustomer(
     input.client,
     identity.customerKey,
     input.displayName,
   );
+  await recordBillingCustomer({
+    customerKey: customer.key,
+    kind: isEndUserCustomerKey(customer.key) ? "end_user" : "platform_user",
+    endUserId: parseEndUserCustomerKey(customer.key) ?? undefined,
+    clientId: identity.developerAppId,
+    openmeterCustomerId: customer.id,
+  });
+  return customer;
+}
+
+/**
+ * Persist / refresh the local OpenMeter customer registry row.
+ * Best-effort — never fails the billing hot path when Neon is briefly unavailable.
+ */
+export async function recordBillingCustomer(input: {
+  customerKey: string;
+  kind: "platform_user" | "end_user";
+  platformUserId?: string;
+  endUserId?: string;
+  clientId: string;
+  openmeterCustomerId?: string | null;
+}): Promise<void> {
+  const customerKey = input.customerKey.trim();
+  const openmeterCustomerId = input.openmeterCustomerId?.trim();
+  if (!customerKey || !openmeterCustomerId) {
+    return;
+  }
+  // plans/billing_customers.client_id is developer_apps.id — callers sometimes
+  // pass the public app_… oidc id (especially audit spendable probes).
+  const clientId = await resolveBillingCustomersClientId(input.clientId);
+  if (!clientId) {
+    return;
+  }
+  const now = new Date().toISOString();
+  const kind = input.kind;
+  const platformUserId = input.platformUserId?.trim() || null;
+  const endUserId = input.endUserId?.trim() || null;
+  try {
+    await db
+      .insert(billingCustomers)
+      .values({
+        id: uuidv4(),
+        customerKey,
+        kind,
+        platformUserId,
+        endUserId,
+        clientId,
+        openmeterCustomerId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [billingCustomers.customerKey, billingCustomers.clientId],
+        set: {
+          kind,
+          platformUserId,
+          endUserId,
+          openmeterCustomerId,
+          updatedAt: now,
+        },
+      });
+  } catch (err) {
+    console.warn(
+      "customers: billing_customers upsert failed",
+      sanitizeForLog(customerKey),
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+async function resolveBillingCustomersClientId(
+  clientIdOrPublic: string,
+): Promise<string | null> {
+  const trimmed = clientIdOrPublic.trim();
+  if (!trimmed) return null;
+  const byId = await db
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .where(eq(developerApps.id, trimmed))
+    .limit(1);
+  if (byId[0]?.id) return byId[0].id;
+  const byPublic = await db
+    .select({ id: developerApps.id })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, trimmed))
+    .limit(1);
+  return byPublic[0]?.id ?? null;
 }
 
 /**
@@ -457,7 +578,40 @@ export async function assignCustomerBillingProfileOverride(input: {
   });
 }
 
-export async function listTenantCustomers(
+async function listTenantCustomersFromRegistry(
+  clientId: string,
+): Promise<Array<{ id: string; key: string }>> {
+  const trimmed = clientId.trim();
+  if (!trimmed) {
+    return [];
+  }
+  // Resolve developer_apps.id from a public client id or pass-through app id.
+  const byPublic = await db
+    .select({ developerAppId: developerApps.id })
+    .from(developerApps)
+    .innerJoin(oidcClients, eq(developerApps.oidcClientId, oidcClients.id))
+    .where(eq(oidcClients.clientId, trimmed))
+    .limit(1);
+  const developerAppId = byPublic[0]?.developerAppId?.trim() || trimmed;
+
+  const rows = await db
+    .select({
+      id: billingCustomers.openmeterCustomerId,
+      key: billingCustomers.customerKey,
+      kind: billingCustomers.kind,
+    })
+    .from(billingCustomers)
+    .where(eq(billingCustomers.clientId, developerAppId));
+  // Tenant invoice / credit lists are end-user customers. Shared owner
+  // wallets are resolved separately (resolveOwnerCustomerIdsForApp) — a
+  // platform_user registry row whose client_id was last touched by another
+  // app of the same owner must not leak into this app's end-user list.
+  return rows.filter(
+    (row) => row.id && row.key && row.kind === "end_user",
+  );
+}
+
+async function listTenantCustomersFromOpenMeterPrefix(
   client: OpenMeter,
   clientId: string,
 ): Promise<Array<{ id: string; key: string }>> {
@@ -485,6 +639,30 @@ export async function listTenantCustomers(
   }
 
   return rows;
+}
+
+/**
+ * List OpenMeter customers attributed to an app.
+ * Prefers the Neon `billing_customers` registry (works for `eu_…` keys);
+ * falls back to the legacy OpenMeter key-prefix scan for unmigrated rows.
+ */
+export async function listTenantCustomers(
+  client: OpenMeter,
+  clientId: string,
+): Promise<Array<{ id: string; key: string }>> {
+  const fromRegistry = await listTenantCustomersFromRegistry(clientId).catch(
+    () => [] as Array<{ id: string; key: string }>,
+  );
+  const fromPrefix = await listTenantCustomersFromOpenMeterPrefix(
+    client,
+    clientId,
+  ).catch(() => [] as Array<{ id: string; key: string }>);
+
+  const byKey = new Map<string, { id: string; key: string }>();
+  for (const row of [...fromRegistry, ...fromPrefix]) {
+    byKey.set(row.key, row);
+  }
+  return [...byKey.values()];
 }
 
 export async function listTenantCustomerIds(

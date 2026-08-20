@@ -5,7 +5,7 @@
 #   signer-dmz      — production; livepeer from livepeer/go-livepeer Docker image (Railway single service).
 
 # Base image for signer-dmz-local (override: docker build --build-arg LIVEPEER_IMAGE=...).
-ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-4c0796460277e6db069fb9131891ab9f3401aa78
+ARG LIVEPEER_IMAGE=livepeer/go-livepeer:sha-264fc6ba8c67c03cd53824d55b13a53721f07577
 
 FROM debian:bookworm-slim AS build-mod
 
@@ -54,7 +54,7 @@ RUN git clone https://github.com/AnthonyDeroche/mod_authnz_jwt.git && \
     make && \
     make install
 
-FROM golang:1.25.12-bookworm AS turnkey-bootstrap-build
+FROM golang:1.25.13-bookworm AS turnkey-bootstrap-build
 
 WORKDIR /src
 COPY docker/signer-dmz/turnkey-bootstrap/go.mod ./go.mod
