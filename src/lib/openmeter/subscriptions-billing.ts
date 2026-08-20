@@ -11,7 +11,10 @@ import {
   isMerchantConnectPaymentsReady,
 } from "@/lib/stripe/merchant-connect";
 import { getHostedAdminClient } from "./admin-client";
-import { assertAppUserRetailBillingSubject } from "./billing-identity";
+import {
+  assertAppUserRetailBillingSubject,
+  resolveOpenMeterBillingIdentity,
+} from "./billing-identity";
 import {
   applyFreeBillingProfileToCustomer,
   applyTenantBillingProfileToCustomer,
@@ -183,10 +186,19 @@ async function upsertNeonSubscriptionCache(input: {
   status: string;
   stripeCheckoutSessionId?: string | null;
 }): Promise<void> {
-  const customerKey = buildOpenMeterCustomerKey(
+  let customerKey = buildOpenMeterCustomerKey(
     input.clientId,
     input.externalUserId,
   );
+  try {
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId: input.clientId,
+      externalUserId: input.externalUserId,
+    });
+    customerKey = identity.customerKey;
+  } catch {
+    // Keep the compound key when identity cannot be resolved.
+  }
   const existing = await db
     .select()
     .from(subscriptions)

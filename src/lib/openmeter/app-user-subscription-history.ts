@@ -14,9 +14,8 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
-import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
+import { resolveAppUserOpenMeterLookupKeys } from "@/lib/openmeter/billing-identity";
 import { findOpenMeterCustomerByKey } from "@/lib/openmeter/customers";
-import { resolveOpenMeterMeterClientId } from "@/lib/openmeter/meter-client-id";
 import { buildOpenMeterPlanKey } from "@/lib/openmeter/plan-naming";
 import { isLiveSubscriptionStatus } from "@/lib/openmeter/subscription-state";
 import {
@@ -174,10 +173,18 @@ async function lookupCustomerId(
   clientId: string,
   externalUserId: string,
 ): Promise<string | null> {
-  const publicClientId = await resolveOpenMeterMeterClientId(clientId);
-  const key = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-  const existing = await findOpenMeterCustomerByKey(client, key);
-  return existing?.id?.trim() || null;
+  const keys = await resolveAppUserOpenMeterLookupKeys({
+    clientId,
+    externalUserId,
+  });
+  for (const key of keys) {
+    const existing = await findOpenMeterCustomerByKey(client, key);
+    const id = existing?.id?.trim();
+    if (id) {
+      return id;
+    }
+  }
+  return null;
 }
 
 export type ListAppUserSubscriptionHistoryDeps = {

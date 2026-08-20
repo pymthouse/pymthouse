@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import nodeTest from "node:test";
 
 import {
+  appUserOpenMeterLookupKeys,
   appUserRetailCustomerKey,
   AppUserOwnerWalletMutationError,
   assertAppUserRetailBillingSubject,
@@ -104,6 +105,40 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
       developerAppId: "app_demo",
     }),
     "owner-uuid",
+  );
+});
+
+nodeTest("appUserOpenMeterLookupKeys prefers sandbox payer over live actor and owner", () => {
+  assert.deepEqual(
+    appUserOpenMeterLookupKeys({
+      customerKey: "sbx_eu_end-user-1",
+      payerCustomerKey: "sbx_eu_end-user-1",
+      payerKind: "end_user",
+      isOwner: false,
+      sharesOwnerCostRail: false,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+      legacyCompoundCustomerKey: "app_demo:ext-9",
+    }),
+    ["sbx_eu_end-user-1", "app_demo:ext-9"],
+  );
+  assert.deepEqual(
+    appUserOpenMeterLookupKeys({
+      customerKey: "owner-uuid",
+      payerCustomerKey: "owner-uuid",
+      payerKind: "platform_user",
+      payerPlatformUserId: "owner-uuid",
+      isOwner: false,
+      sharesOwnerCostRail: true,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+      legacyCompoundCustomerKey: "app_demo:ext-9",
+    }),
+    ["eu_end-user-1", "app_demo:ext-9"],
   );
 });
 

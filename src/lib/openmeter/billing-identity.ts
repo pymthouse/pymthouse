@@ -167,6 +167,29 @@ export function appUserRetailCustomerKey(
   return identity.customerKey;
 }
 
+/**
+ * OpenMeter keys to read for an app-user wallet (grants, usage, invoices).
+ * Retail/payer first (`eu_…` live, `sbx_eu_…` sandbox); never the owner
+ * wallet on owner_rollup. Legacy compound is dual-read only.
+ */
+export function appUserOpenMeterLookupKeys(
+  identity: ResolvedBillingIdentity,
+): string[] {
+  const retail = appUserRetailCustomerKey(identity);
+  const keys = [retail];
+  if (
+    identity.customerKey !== retail &&
+    !identity.sharesOwnerCostRail
+  ) {
+    keys.push(identity.customerKey);
+  }
+  const legacy = identity.legacyCompoundCustomerKey?.trim();
+  if (legacy && legacy !== retail) {
+    keys.push(legacy);
+  }
+  return [...new Set(keys.filter((key) => key.trim()))];
+}
+
 /** Owner wallet id when this identity's cost rail is the shared owner customer. */
 export function ownerCostRailUserId(
   identity: ResolvedBillingIdentity,
@@ -568,6 +591,30 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
     developerAppId: app.developerAppId,
     legacyCompoundCustomerKey: actorIds.legacyCompoundCustomerKey,
   });
+}
+
+/**
+ * Keys to look up for an app-user in OpenMeter. Identity first (`eu_…` /
+ * `sbx_eu_…`); compound fallback when identity cannot be resolved.
+ */
+export async function resolveAppUserOpenMeterLookupKeys(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<string[]> {
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return [];
+  }
+  try {
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId,
+      externalUserId,
+    });
+    return appUserOpenMeterLookupKeys(identity);
+  } catch {
+    return [buildOpenMeterCustomerKey(clientId, externalUserId)];
+  }
 }
 
 /** True when this external user id is the owner of the given app. */
