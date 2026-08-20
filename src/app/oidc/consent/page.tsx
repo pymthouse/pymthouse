@@ -9,16 +9,16 @@ import { getClient } from "@/lib/oidc/clients";
 import { DCR_ALLOWED_SCOPES, isDcrClientId } from "@/lib/oidc/dcr-client";
 import { listOwnedAppsForUser } from "@/lib/oidc/owned-apps";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
-import { getProvider } from "@/lib/oidc/provider";
-import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
+import {
+  loadOidcInteractionDetails,
+  type OidcInteractionDetails,
+} from "@/lib/oidc/interaction-bridge";
 import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
 import { isMcpResourceIndicator, readResourceParam } from "@/lib/mcp/oauth-resource";
 import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { getDefaultBranding } from "@/lib/oidc/branding-shared";
 import type { AppBranding } from "@/lib/oidc/branding-shared";
 import { eq } from "drizzle-orm";
-import { IncomingMessage, ServerResponse } from "node:http";
-import { Socket } from "node:net";
 import type { ReactNode } from "react";
 import ConsentForm from "./consent-form";
 import {
@@ -70,38 +70,7 @@ function ConsentErrorPanel({
   );
 }
 
-type InteractionDetails = {
-  prompt: { name: string; details: Record<string, unknown> };
-  params: Record<string, unknown>;
-  session?: { accountId?: string };
-};
-
-async function loadInteractionDetails(
-  uid: string,
-): Promise<InteractionDetails | null> {
-  try {
-    const provider = await getProvider();
-    const requestHeaders = await headers();
-    const socket = new Socket();
-    const req = new IncomingMessage(socket);
-    req.method = "GET";
-    req.url = `${OIDC_MOUNT_PATH}/interaction/${uid}`;
-    requestHeaders.forEach((value, key) => {
-      req.headers[key.toLowerCase()] = value;
-    });
-    const publicUrl = new URL(getPublicOrigin());
-    req.headers.host = requestHeaders.get("x-forwarded-host") || publicUrl.host;
-    if (!req.headers["x-forwarded-proto"]) {
-      req.headers["x-forwarded-proto"] = publicUrl.protocol.replace(":", "");
-    }
-    req.push(null);
-    const res = new ServerResponse(req);
-
-    return await provider.interactionDetails(req, res);
-  } catch {
-    return null;
-  }
-}
+type InteractionDetails = OidcInteractionDetails;
 
 type ConsentClient = {
   id: string;
@@ -118,6 +87,7 @@ type ConsentClient = {
 async function resolveConsentClient(
   clientId: string,
   registeredClient: Awaited<ReturnType<typeof getClient>>,
+  clientName?: string,
 ): Promise<ConsentClient | null> {
   if (registeredClient) {
     return registeredClient;
@@ -127,21 +97,10 @@ async function resolveConsentClient(
     return null;
   }
 
-  const provider = await getProvider();
-  const dynamicClient = await provider.Client.find(clientId);
-  if (!dynamicClient) {
-    return null;
-  }
-
-  const displayName =
-    typeof dynamicClient.clientName === "string" && dynamicClient.clientName
-      ? dynamicClient.clientName
-      : "MCP Connector";
-
   return {
     id: clientId,
     clientId,
-    displayName,
+    displayName: clientName?.trim() || "MCP Connector",
     redirectUris: [],
     allowedScopes: [...DCR_ALLOWED_SCOPES],
     grantTypes: ["authorization_code", "refresh_token"],
@@ -272,7 +231,11 @@ async function buildConsentViewModel(
     (resource !== null && isMcpResourceIndicator(resource));
 
   const registeredClient = await getClient(clientId);
-  const client = await resolveConsentClient(clientId, registeredClient);
+  const client = await resolveConsentClient(
+    clientId,
+    registeredClient,
+    interactionDetails.clientName,
+  );
   if (!client) {
     return null;
   }
@@ -639,7 +602,8 @@ export default async function ConsentPage({
   }
 
   const session = await getServerSession(authOptions);
-  const interactionDetails = await loadInteractionDetails(uid);
+  const requestHeaders = await headers();
+  const interactionDetails = await loadOidcInteractionDetails(uid, requestHeaders);
   if (!interactionDetails) {
     return (
       <ConsentErrorPanel title="Expired or Invalid Request">

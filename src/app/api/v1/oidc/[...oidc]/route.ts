@@ -17,6 +17,11 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import { normalizeProviderPath } from "@/lib/oidc/routes";
 import {
+  handleOidcInteractionGet,
+  handleOidcInteractionPost,
+  parseOidcInteractionUid,
+} from "@/lib/oidc/interaction-api";
+import {
   OIDC_MOUNT_PATH,
   getIssuer,
 } from "@/lib/oidc/issuer-urls";
@@ -621,11 +626,28 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
   });
 }
 
+function interactionUidFromRequest(request: NextRequest): string | null {
+  const url = new URL(request.url);
+  let path = url.pathname;
+  if (path.startsWith(OIDC_MOUNT_PATH)) {
+    path = path.slice(OIDC_MOUNT_PATH.length) || "/";
+  }
+  return parseOidcInteractionUid(normalizeProviderPath(path));
+}
+
 export async function GET(request: NextRequest) {
+  const uid = interactionUidFromRequest(request);
+  if (uid) {
+    return handleOidcInteractionGet(request, uid);
+  }
   return handleOIDC(request);
 }
 
 export async function POST(request: NextRequest) {
+  const uid = interactionUidFromRequest(request);
+  if (uid) {
+    return handleOidcInteractionPost(request, uid);
+  }
   return handleOIDC(request);
 }
 
