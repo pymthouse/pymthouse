@@ -780,6 +780,7 @@ function withSandboxWebhookEnv(t: { after: (fn: () => void) => void }): void {
   process.env.STRIPE_SANDBOX_WEBHOOK_SECRET = SANDBOX_PLATFORM_SECRET;
   process.env.STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET = SANDBOX_CONNECT_SECRET;
   __setResolveAppBillingCurrencyForTests(async () => "usd");
+  __setResolveAppLivemodeForWebhookForTests(async () => false);
 }
 
 async function postSignedSandbox(
@@ -824,9 +825,37 @@ test("POST sandbox owner top-up does not grant production credits", async (t) =>
   assert.equal(granted, false);
 });
 
-test("POST sandbox merchant Connect top-up does not grant production credits", async (t) => {
+test("POST sandbox merchant Connect top-up grants sandbox-plane credits", async (t) => {
   withSandboxWebhookEnv(t);
   __setMerchantTopUpAccountMatchesForTests(async () => true);
+  const calls: Array<Record<string, unknown>> = [];
+  __setGrantAllowanceUsdMicrosForTests(async (input) => {
+    calls.push({ ...input, amountUsdMicros: input.amountUsdMicros.toString() });
+    return {
+      externalUserId: input.externalUserId,
+      source: input.source,
+      grantedUsdMicros: input.amountUsdMicros.toString(),
+      featureKey: "usd_credits",
+      balance: null,
+    };
+  });
+
+  const rawBody = merchantTopUpEventBody("checkout.session.completed", {
+    account: "acct_sandbox_1",
+  });
+  const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { credited?: boolean; ignored?: string };
+  assert.equal(json.credited, true);
+  assert.equal(json.ignored, undefined);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.externalUserId, "eu_route_1");
+});
+
+test("POST sandbox merchant Connect top-up ignores live app livemode mismatch", async (t) => {
+  withSandboxWebhookEnv(t);
+  __setMerchantTopUpAccountMatchesForTests(async () => true);
+  __setResolveAppLivemodeForWebhookForTests(async () => true);
   let granted = false;
   __setGrantAllowanceUsdMicrosForTests(async () => {
     granted = true;
@@ -846,7 +875,7 @@ test("POST sandbox merchant Connect top-up does not grant production credits", a
   assert.equal(res.status, 200);
   const json = (await res.json()) as { credited?: boolean; ignored?: string };
   assert.equal(json.credited, undefined);
-  assert.equal(json.ignored, "sandbox_merchant_grant");
+  assert.equal(json.ignored, "livemode_mismatch");
   assert.equal(granted, false);
 });
 
@@ -876,7 +905,7 @@ test("POST sandbox platform auto-topup does not grant owner credits", async (t) 
   assert.equal(granted, false);
 });
 
-test("POST sandbox Connect auto-topup does not grant production credits", async (t) => {
+test("POST sandbox Connect auto-topup grants sandbox-plane credits", async (t) => {
   withSandboxWebhookEnv(t);
   __setMerchantTopUpAccountMatchesForTests(async () => true);
   let granted = false;
@@ -895,9 +924,9 @@ test("POST sandbox Connect auto-topup does not grant production credits", async 
   const res = await postSignedSandbox(rawBody, SANDBOX_CONNECT_SECRET);
   assert.equal(res.status, 200);
   const json = (await res.json()) as { credited?: boolean; ignored?: string };
-  assert.equal(json.credited, undefined);
-  assert.equal(json.ignored, "sandbox_merchant_grant");
-  assert.equal(granted, false);
+  assert.equal(json.credited, true);
+  assert.equal(json.ignored, undefined);
+  assert.equal(granted, true);
 });
 
 test("POST sandbox setup_intent restore ignores live app livemode mismatch", async (t) => {

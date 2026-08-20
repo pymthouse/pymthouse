@@ -373,7 +373,17 @@ export async function prepareAppCustomerStripeBilling(input: {
     process.env.OPENMETER_MERCHANT_BILLING_PROFILE_ID?.trim() ||
     null;
 
-  // Merchant plane: pin to Custom Invoicing profile (no platform Stripe charge).
+  // Merchant sandbox payers (`sbx_eu_…`) stay on the namespace sandbox
+  // profile — Custom Invoicing + settlement metadata belong on live `eu_…`.
+  if (config?.billingMode === "merchant" && config.stripeLivemode === false) {
+    await applyFreeBillingProfileToCustomer({
+      client: input.client,
+      customerId: input.customerId,
+    });
+    return;
+  }
+
+  // Live merchant plane: pin to Custom Invoicing (no platform Stripe charge).
   // Credits-first Starter users stay on this profile too — Sandbox is wrong
   // because it fake-pays invoices and bypasses settlement / Connect.
   if (config?.billingMode === "merchant") {

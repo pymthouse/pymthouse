@@ -9,9 +9,9 @@ export const runtime = "nodejs";
  *   POST {PUBLIC_ORIGIN}/webhooks/stripe/sandbox
  *
  * Secrets: STRIPE_SANDBOX_WEBHOOK_SECRET, STRIPE_SANDBOX_CONNECT_WEBHOOK_SECRET.
- * This route never grants Konnect prepaid credits (owner or merchant).
- * Merchant Connect events still restore payment methods and drive Stripe
- * settlement collect; they do not mint production usd_credits.
+ * Owner top-ups are never granted on this plane. Merchant Connect top-ups
+ * grant onto the sandbox payer (`sbx_eu_…`) when the app's stripeLivemode
+ * is false. Events still restore payment methods and drive settlement collect.
  */
 export async function POST(request: Request): Promise<Response> {
   return handleStripeWebhookPost(

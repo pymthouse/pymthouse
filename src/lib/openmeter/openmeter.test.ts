@@ -77,9 +77,11 @@ test("owner customer key helpers use bare user id", async () => {
     buildOwnerCustomerKey,
     buildOwnerWireSubject,
     buildEndUserCustomerKey,
+    buildSandboxEndUserCustomerKey,
     isOwnerCustomerKey,
     isEndUserCustomerKey,
     isOwnerWireSubject,
+    isSandboxEndUserCustomerKey,
     parseOwnerCustomerKey,
     parseEndUserCustomerKey,
     parseCustomerKey,
@@ -91,6 +93,23 @@ test("owner customer key helpers use bare user id", async () => {
   assert.equal(buildOwnerWireSubject("uuid-1"), "owner:uuid-1");
   assert.equal(buildEndUserCustomerKey("eu-id-1"), "eu_eu-id-1");
   assert.equal(buildEndUserCustomerKey("eu_eu-id-1"), "eu_eu-id-1");
+  assert.equal(
+    buildSandboxEndUserCustomerKey("eu-id-1"),
+    "sbx_eu_eu-id-1",
+  );
+  assert.equal(
+    buildSandboxEndUserCustomerKey("eu_eu-id-1"),
+    "sbx_eu_eu-id-1",
+  );
+  assert.equal(isSandboxEndUserCustomerKey("sbx_eu_eu-id-1"), true);
+  assert.equal(isSandboxEndUserCustomerKey("eu_eu-id-1"), false);
+  assert.equal(isEndUserCustomerKey("sbx_eu_eu-id-1"), true);
+  assert.equal(isOwnerCustomerKey("sbx_eu_eu-id-1"), false);
+  assert.equal(parseEndUserCustomerKey("sbx_eu_eu-id-1"), "eu-id-1");
+  assert.deepEqual(parseCustomerKey("sbx_eu_eu-id-1"), {
+    kind: "end_user",
+    endUserId: "eu-id-1",
+  });
   assert.equal(isOwnerCustomerKey("uuid-1"), true);
   assert.equal(isOwnerCustomerKey("owner:uuid-1"), true);
   assert.equal(isOwnerCustomerKey("app_x:uuid-1"), false);

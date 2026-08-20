@@ -123,3 +123,43 @@ test("loadAppUserBillingLedger marks degraded when meter query reports fallback"
     ),
   );
 });
+
+test("loadAppUserBillingLedger queries the sandbox identity customer, not the compound key", async () => {
+  const grantKeys: string[] = [];
+  const usageSubjects: string[][] = [];
+  const deps = createDeps({
+    resolveOpenMeterBillingIdentity: async () => ({
+      customerKey: "sbx_eu_end-1",
+      payerCustomerKey: "sbx_eu_end-1",
+      payerKind: "end_user",
+      isOwner: false,
+      sharesOwnerCostRail: false,
+      actorEndUserId: "eu_end-1",
+      actorExternalUserId: "external_1",
+      publicClientId: "pc_test",
+      developerAppId: "app_1",
+      legacyCompoundCustomerKey: "pc_test:external_1",
+    }),
+    listAppUserCreditGrants: async (input) => {
+      grantKeys.push(input.customerKey);
+      return [];
+    },
+    isHostedAdminClientAvailable: () => true,
+    querySubjectDailyFeeUsage: async (input) => {
+      usageSubjects.push([...input.subjects]);
+      return [];
+    },
+  });
+
+  await loadAppUserBillingLedger(
+    {
+      appId: "app_1",
+      publicClientId: "pc_test",
+      externalUserId: "external_1",
+    },
+    deps,
+  );
+
+  assert.deepEqual(grantKeys, ["sbx_eu_end-1"]);
+  assert.deepEqual(usageSubjects, [["sbx_eu_end-1", "pc_test:external_1"]]);
+});

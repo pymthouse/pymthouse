@@ -17,9 +17,13 @@ import {
   getHostedAdminClient,
   isHostedAdminClientAvailable,
 } from "@/lib/openmeter/admin-client";
+import {
+  appUserOpenMeterLookupKeys,
+  resolveOpenMeterBillingIdentity,
+} from "@/lib/openmeter/billing-identity";
 import { getHostedOpenMeterUrl } from "@/lib/openmeter/constants";
 import { buildOpenMeterCustomerKey } from "@/lib/openmeter/customer-key";
-import { ensureOpenMeterCustomer } from "@/lib/openmeter/customers";
+import { findOpenMeterCustomerByKey } from "@/lib/openmeter/customers";
 import { querySubjectDailyFeeUsage } from "@/lib/openmeter/daily-fee-usage";
 import { getTrialCreditBalance } from "@/lib/openmeter/entitlements";
 import {
@@ -67,8 +71,7 @@ function withSoftTimeout<T>(input: {
 }
 
 async function listAppUserCreditGrants(input: {
-  publicClientId: string;
-  externalUserId: string;
+  customerKey: string;
   onDegraded?: () => void;
 }): Promise<LedgerGrantInput[]> {
   if (!isHostedAdminClientAvailable()) {
@@ -80,12 +83,15 @@ async function listAppUserCreditGrants(input: {
   }
 
   const client = getHostedAdminClient();
-  const customerKey = buildOpenMeterCustomerKey(
-    input.publicClientId,
-    input.externalUserId,
-  );
+  const customerKey = input.customerKey.trim();
+  if (!customerKey) {
+    return [];
+  }
   try {
-    const customer = await ensureOpenMeterCustomer(client, customerKey);
+    const customer = await findOpenMeterCustomerByKey(client, customerKey);
+    if (!customer?.id) {
+      return [];
+    }
     const grants = await listKonnectCreditGrants({
       customerId: customer.id,
       apiKey,
@@ -184,6 +190,7 @@ type AppUserBillingLedgerDeps = {
   isHostedAdminClientAvailable: typeof isHostedAdminClientAvailable;
   getHostedAdminClient: typeof getHostedAdminClient;
   querySubjectDailyFeeUsage: typeof querySubjectDailyFeeUsage;
+  resolveOpenMeterBillingIdentity?: typeof resolveOpenMeterBillingIdentity;
 };
 
 const DEFAULT_APP_USER_BILLING_LEDGER_DEPS: AppUserBillingLedgerDeps = {
@@ -218,12 +225,24 @@ export async function loadAppUserBillingLedger(input: {
   const meterClientId = await deps.resolveOpenMeterMeterClientId(input.appId).catch(
     () => publicClientId,
   );
-  const customerKey = buildOpenMeterCustomerKey(meterClientId, externalUserId);
+  const resolveIdentity =
+    deps.resolveOpenMeterBillingIdentity ?? resolveOpenMeterBillingIdentity;
+  let customerKey = buildOpenMeterCustomerKey(meterClientId, externalUserId);
+  let usageSubjects = [customerKey];
+  try {
+    const identity = await resolveIdentity({
+      clientId: publicClientId,
+      externalUserId,
+    });
+    customerKey = identity.customerKey;
+    usageSubjects = appUserOpenMeterLookupKeys(identity);
+  } catch {
+    // Keep the compound key when identity cannot be resolved (tests / offline).
+  }
 
   const [konnectGrants, discount, balance, history] = await Promise.all([
     deps.listAppUserCreditGrants({
-      publicClientId: meterClientId,
-      externalUserId,
+      customerKey,
       onDegraded: () => {
         degraded = true;
       },
@@ -272,7 +291,7 @@ export async function loadAppUserBillingLedger(input: {
     dailyUsage = await withSoftTimeout({
       promise: deps.querySubjectDailyFeeUsage({
         client: deps.getHostedAdminClient(),
-        subjects: [customerKey],
+        subjects: usageSubjects,
         start: cycle.start,
         end: cycle.end,
         logLabel: "app-user-ledger",

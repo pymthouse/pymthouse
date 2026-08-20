@@ -7,16 +7,15 @@ import {
   classifyInvoiceLineKind,
   type InvoiceLineSummary,
 } from "@/lib/billing/invoice-line-labels";
+import { resolveAppUserOpenMeterLookupKeys } from "@/lib/openmeter/billing-identity";
 import {
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
 } from "@/lib/openmeter/customer-key";
-import { buildOpenMeterCustomerKey } from "./customer-key";
 import {
   findOpenMeterCustomerByKey,
   listTenantCustomerIds,
 } from "./customers";
-import { resolveOpenMeterMeterClientId } from "./meter-client-id";
 
 /**
  * Invoice line rounding policy:
@@ -396,30 +395,34 @@ export async function getOwnerWalletInvoice(input: {
 
 /**
  * Lookup-only end-user customer for invoice/PM reads.
- * Always uses compound `{publicClientId}:{externalUserId}` — never the owner
- * wallet path from {@link ensureOpenMeterCustomerForAppUser}.
+ * Uses the billing identity (`eu_…` live, `sbx_eu_…` sandbox) and dual-reads
+ * the legacy compound key. Never the owner wallet on owner_rollup.
  */
 async function lookupAppUserCustomer(input: {
   client: OpenMeter;
   clientId: string;
   externalUserId: string;
 }): Promise<{ id: string; key: string } | null> {
-  const publicClientId = await resolveOpenMeterMeterClientId(input.clientId);
   const externalUserId = input.externalUserId.trim();
-  if (!publicClientId || !externalUserId) {
+  if (!input.clientId.trim() || !externalUserId) {
     return null;
   }
-  const key = buildOpenMeterCustomerKey(publicClientId, externalUserId);
-  const existing = await findOpenMeterCustomerByKey(input.client, key);
-  const id = existing?.id?.trim();
-  if (!id) {
-    return null;
+  const keys = await resolveAppUserOpenMeterLookupKeys({
+    clientId: input.clientId,
+    externalUserId,
+  });
+  for (const key of keys) {
+    const existing = await findOpenMeterCustomerByKey(input.client, key);
+    const id = existing?.id?.trim();
+    if (id) {
+      return { id, key };
+    }
   }
-  return { id, key };
+  return null;
 }
 
 /**
- * End-user invoices for one app user (`{publicClientId}:{externalUserId}`).
+ * End-user invoices for one app user (identity customer, plus legacy compound).
  * Lookup-only — does not create customers or resolve owner wallets.
  */
 export async function listAppUserInvoices(input: {
