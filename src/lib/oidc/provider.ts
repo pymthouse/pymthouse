@@ -6,7 +6,10 @@
 
 import { Provider, errors as oidcErrors, interactionPolicy } from "oidc-provider";
 import type { Configuration, ClientMetadata, KoaContextWithOIDC } from "oidc-provider";
-import { consentPromptNeeded } from "@/lib/oidc/consent-prompt";
+import {
+  consentPromptNeeded,
+  promptIncludesConsent,
+} from "@/lib/oidc/consent-prompt";
 import { oidcInteractionPath } from "@/lib/oidc/customer-service-id";
 import { loadExistingGrant } from "@/lib/oidc/load-existing-grant";
 import { PostgresOidcAdapter } from "./adapter";
@@ -29,6 +32,7 @@ import {
   isMcpResourceIndicator,
   MCP_OAUTH_APP_CLAIM,
   MCP_RESOURCE_SCOPES,
+  readResourceParam,
 } from "@/lib/mcp/oauth-resource";
 import { db } from "@/db/index";
 import { oidcSigningKeys, oidcClients, appAllowedDomains, developerApps } from "@/db/schema";
@@ -221,6 +225,9 @@ function buildInteractionPolicy() {
         async (ctx) => {
           const oidc = ctx.oidc;
           const clientId = oidc.client?.clientId;
+          const resource = readResourceParam(
+            (oidc.params ?? {}) as Record<string, unknown>,
+          );
           const needed = await consentPromptNeeded({
             requestedScopes: oidc.requestParamScopes,
             resultConsentGrantId: oidc.result?.consent?.grantId,
@@ -229,6 +236,9 @@ function buildInteractionPolicy() {
               : undefined,
             findGrant: async (grantId) =>
               oidc.provider.Grant.find(grantId),
+            forceConsent: promptIncludesConsent(oidc.params?.prompt),
+            accountId: oidc.session?.accountId ?? null,
+            resource,
           });
           return needed ? Check.REQUEST_PROMPT : Check.NO_NEED_TO_PROMPT;
         },

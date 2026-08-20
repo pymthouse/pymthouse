@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
   consentPromptNeeded,
+  promptIncludesConsent,
   requestedScopesList,
 } from "./consent-prompt";
 
@@ -46,6 +47,51 @@ test("consentPromptNeeded is true when granted scopes do not cover the request",
     sessionGrantId: "g1",
     findGrant: async () => ({
       getOIDCScope: () => "openid profile",
+    }),
+  });
+  assert.equal(needed, true);
+});
+
+test("promptIncludesConsent reads the OIDC prompt parameter", () => {
+  assert.equal(promptIncludesConsent("consent"), true);
+  assert.equal(promptIncludesConsent("login consent"), true);
+  assert.equal(promptIncludesConsent("login"), false);
+  assert.equal(promptIncludesConsent(["login", "consent"]), true);
+  assert.equal(promptIncludesConsent(undefined), false);
+});
+
+test("consentPromptNeeded is true for prompt=consent until this request grants", async () => {
+  const needed = await consentPromptNeeded({
+    requestedScopes: ["openid"],
+    sessionGrantId: "g_session",
+    forceConsent: true,
+    findGrant: async () => ({
+      getOIDCScope: () => "openid profile email offline_access sign:job",
+    }),
+  });
+  assert.equal(needed, true);
+});
+
+test("consentPromptNeeded is false for prompt=consent after this request grants", async () => {
+  const needed = await consentPromptNeeded({
+    requestedScopes: ["openid"],
+    resultConsentGrantId: "g_result",
+    forceConsent: true,
+    findGrant: async () => ({
+      getOIDCScope: () => "openid",
+    }),
+  });
+  assert.equal(needed, false);
+});
+
+test("consentPromptNeeded is true when the session grant belongs to another account", async () => {
+  const needed = await consentPromptNeeded({
+    requestedScopes: ["openid"],
+    sessionGrantId: "g_session",
+    accountId: "user-2",
+    findGrant: async () => ({
+      accountId: "user-1",
+      getOIDCScope: () => "openid",
     }),
   });
   assert.equal(needed, true);
