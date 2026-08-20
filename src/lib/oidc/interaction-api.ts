@@ -22,7 +22,10 @@ import {
 import { resolveRedirectLocation } from "@/app/api/v1/oidc/[...oidc]/utils";
 import { OIDC_MOUNT_PATH, getPublicOrigin } from "@/lib/oidc/issuer-urls";
 import { bindMcpAppToGrant } from "@/lib/oidc/mcp-app-grant";
-import { resolveOwnedAppChoice } from "@/lib/oidc/owned-apps";
+import {
+  readSpecifiedAppClientId,
+  resolveMcpAppForOwner,
+} from "@/lib/oidc/owned-apps";
 import { getProvider } from "@/lib/oidc/provider";
 import {
   getMcpResourceUrl,
@@ -150,23 +153,16 @@ async function buildConsentResult(opts: {
   const resource = readResourceParam(opts.params);
   const mcpResource = resolveMcpResource(resource, opts.clientId);
 
-  let mcpAppBinding: Awaited<ReturnType<typeof resolveOwnedAppChoice>> = null;
+  let mcpAppBinding: Awaited<ReturnType<typeof resolveMcpAppForOwner>> = null;
   if (mcpResource) {
-    if (!opts.appClientId) {
-      return NextResponse.json(
-        {
-          error: "invalid_request",
-          error_description: "app_client_id is required for MCP consent",
-        },
-        { status: 400 },
-      );
-    }
-    mcpAppBinding = await resolveOwnedAppChoice(opts.accountId, opts.appClientId);
-    if (!mcpAppBinding) {
+    const specified =
+      opts.appClientId?.trim() || readSpecifiedAppClientId(opts.params);
+    mcpAppBinding = await resolveMcpAppForOwner(opts.accountId, specified);
+    if (specified && !mcpAppBinding) {
       return NextResponse.json(
         {
           error: "access_denied",
-          error_description: "Selected app is not owned by this user",
+          error_description: "Specified app is not owned by this user",
         },
         { status: 403 },
       );

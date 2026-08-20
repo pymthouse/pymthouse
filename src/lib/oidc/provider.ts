@@ -411,6 +411,8 @@ async function instantiateProvider(): Promise<Provider> {
       required: (_ctx, client) => client.tokenEndpointAuthMethod === "none",
     },
 
+    extraParams: ["app_client_id"],
+
     // Rotate refresh tokens on use
     rotateRefreshToken: true,
 

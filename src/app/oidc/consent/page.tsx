@@ -7,14 +7,12 @@ import { db } from "@/db/index";
 import { developerApps, oidcClients } from "@/db/schema";
 import { getClient } from "@/lib/oidc/clients";
 import { DCR_ALLOWED_SCOPES, isDcrClientId } from "@/lib/oidc/dcr-client";
-import { listOwnedAppsForUser } from "@/lib/oidc/owned-apps";
 import { getScopeDefinition } from "@/lib/oidc/scopes";
 import {
   loadOidcInteractionDetails,
   type OidcInteractionDetails,
 } from "@/lib/oidc/interaction-bridge";
 import { oidcLoginRedirect } from "@/lib/oidc/customer-service-id";
-import { isMcpResourceIndicator, readResourceParam } from "@/lib/mcp/oauth-resource";
 import { resolveAppBrandingByClientId, shouldUseWhiteLabelBranding } from "@/lib/oidc/branding";
 import { getDefaultBranding } from "@/lib/oidc/branding-shared";
 import type { AppBranding } from "@/lib/oidc/branding-shared";
@@ -196,8 +194,6 @@ type ConsentViewModel = {
   client: ConsentClient;
   branding: AppBranding;
   isWhiteLabel: boolean;
-  isMcpOAuth: boolean;
-  ownedApps: Array<{ publicClientId: string; name: string }>;
   developerApp: DeveloperAppMeta | undefined;
   logoUrl: string | null;
   scopeItems: Array<{
@@ -225,10 +221,6 @@ async function buildConsentViewModel(
   const clientId = interactionDetails.params.client_id as string;
   const redirectUri = interactionDetails.params.redirect_uri as string;
   const scope = interactionDetails.params.scope as string;
-  const resource = readResourceParam(interactionDetails.params);
-  const isMcpOAuth =
-    isDcrClientId(clientId) ||
-    (resource !== null && isMcpResourceIndicator(resource));
 
   const registeredClient = await getClient(clientId);
   const client = await resolveConsentClient(
@@ -239,10 +231,6 @@ async function buildConsentViewModel(
   if (!client) {
     return null;
   }
-
-  const userId = (user as Record<string, unknown>).id as string | undefined;
-  const ownedApps =
-    isMcpOAuth && userId ? await listOwnedAppsForUser(userId) : [];
 
   const branding = registeredClient
     ? await resolveAppBrandingByClientId(clientId)
@@ -291,8 +279,6 @@ async function buildConsentViewModel(
     client,
     branding,
     isWhiteLabel,
-    isMcpOAuth,
-    ownedApps,
     developerApp,
     logoUrl,
     scopeItems,
@@ -318,8 +304,6 @@ function ConsentAuthorizedView({
     client,
     branding,
     isWhiteLabel,
-    isMcpOAuth,
-    ownedApps,
     developerApp,
     logoUrl,
     scopeItems,
@@ -541,11 +525,6 @@ function ConsentAuthorizedView({
         <ConsentForm
           uid={uid}
           branding={branding}
-          requireAppSelection={isMcpOAuth}
-          appOptions={ownedApps.map((a) => ({
-            publicClientId: a.publicClientId,
-            name: a.name,
-          }))}
         />
 
         <p className="text-xs text-zinc-500 text-center mt-4">
