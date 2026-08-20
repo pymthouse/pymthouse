@@ -150,6 +150,7 @@ function attachHandshakeCookies(
   const req = new IncomingMessage(socket);
   const publicUrl = new URL(getPublicOrigin());
   req.headers.host = publicUrl.host;
+  req.headers["x-forwarded-proto"] = publicUrl.protocol.replace(":", "");
   const res = new ServerResponse(req);
   const ctx = cookieProvider.createContext(req, res);
   const maxAge = Math.max(1, ttlSeconds) * 1000;
@@ -298,7 +299,10 @@ async function interactionSubmissionResult(opts: {
     };
   }
 
-  return buildConsentResult({
+  // Always re-bind login to the NextAuth principal that owns the grant.
+  // A stale OIDC session from another account makes loadExistingGrant drop the
+  // consent grant (account mismatch) and re-prompt forever.
+  const consent = await buildConsentResult({
     provider: opts.provider,
     clientId: opts.clientId as string,
     accountId: opts.accountId,
@@ -306,6 +310,42 @@ async function interactionSubmissionResult(opts: {
     params: opts.params,
     appClientId: opts.appClientId,
   });
+  if (consent instanceof NextResponse) {
+    return consent;
+  }
+  return {
+    login: {
+      accountId: opts.accountId,
+      remember: true,
+    },
+    ...consent,
+  };
+}
+
+/**
+ * When NextAuth and the OIDC session disagree, clear the OIDC principal so
+ * resume can `loginAccount` without hitting the end_session confirm form.
+ */
+export async function clearOidcSessionPrincipalIfMismatch(
+  provider: Provider,
+  sessionRef: { uid?: string; accountId?: string } | undefined,
+  accountId: string,
+): Promise<void> {
+  const sessionUid = sessionRef?.uid?.trim();
+  const sessionAccountId = sessionRef?.accountId?.trim();
+  if (!sessionUid || !sessionAccountId || sessionAccountId === accountId) {
+    return;
+  }
+
+  const oidcSession = await provider.Session.findByUid(sessionUid);
+  if (!oidcSession?.accountId || oidcSession.accountId === accountId) {
+    return;
+  }
+
+  delete (oidcSession as { accountId?: string }).accountId;
+  delete (oidcSession as { authorizations?: unknown }).authorizations;
+  delete (oidcSession as { loginTs?: number }).loginTs;
+  await oidcSession.persist();
 }
 
 export async function handleOidcInteractionGet(
@@ -414,6 +454,11 @@ export async function handleOidcInteractionPost(
         { status: 403 },
       );
     }
+    await clearOidcSessionPrincipalIfMismatch(
+      provider,
+      details.session as { uid?: string; accountId?: string } | undefined,
+      userId,
+    );
     const result = await interactionSubmissionResult({
       provider,
       promptName: details.prompt.name,
