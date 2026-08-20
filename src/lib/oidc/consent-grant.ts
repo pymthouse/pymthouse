@@ -14,6 +14,20 @@ export function asOidcAccountId(value: unknown): string | null {
   return id.length > 0 ? id : null;
 }
 
+export function createOidcGrant(
+  provider: Provider,
+  clientId: string,
+  accountId: string,
+) {
+  const grant = new provider.Grant({
+    clientId,
+    accountId,
+  });
+  // Instance TTL — not on the public Grant constructor type.
+  (grant as { expiresIn: number }).expiresIn = OIDC_GRANT_TTL_SECONDS;
+  return grant;
+}
+
 /**
  * Persist an OIDC grant for the requested scopes (OIDC + RFC 8707 resource).
  * Returns the grant jti for `interactionResult` consent.
@@ -31,11 +45,7 @@ export async function saveOidcConsentGrant(opts: {
     return undefined;
   }
 
-  const grant = new opts.provider.Grant({
-    clientId,
-    accountId,
-    expiresIn: OIDC_GRANT_TTL_SECONDS,
-  });
+  const grant = createOidcGrant(opts.provider, clientId, accountId);
   grant.addOIDCScope(scope);
   grant.addResourceScope(getIssuer(), scope);
   await grant.save();

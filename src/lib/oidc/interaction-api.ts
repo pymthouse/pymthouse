@@ -14,7 +14,7 @@ import type { Provider } from "oidc-provider";
 import { getClient } from "@/lib/oidc/clients";
 import {
   asOidcAccountId,
-  OIDC_GRANT_TTL_SECONDS,
+  createOidcGrant,
   saveOidcConsentGrant,
 } from "@/lib/oidc/consent-grant";
 import { isCustomerServiceOidcClient } from "@/lib/oidc/customer-service-id";
@@ -211,11 +211,11 @@ async function buildConsentResult(opts: {
         { status: 400 },
       );
     }
-    const grant = new opts.provider.Grant({
-      clientId: opts.clientId,
-      accountId: opts.accountId,
-      expiresIn: OIDC_GRANT_TTL_SECONDS,
-    });
+    const grant = createOidcGrant(
+      opts.provider,
+      opts.clientId,
+      opts.accountId,
+    );
     grant.addOIDCScope(grantedScopes);
     for (const indicator of mcpGrantResourceIndicators(resource, opts.clientId)) {
       grant.addResourceScope(indicator, grantedScopes);
