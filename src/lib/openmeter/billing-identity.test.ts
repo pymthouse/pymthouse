@@ -334,7 +334,7 @@ test("live merchant end-user bills stable eu_ customer", async (t) => {
   );
 });
 
-test("cached merchant identity follows stripeLivemode after cache reset", async (t) => {
+test("cached merchant identity follows stripeLivemode without cache reset", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   const previousTtl = process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS;
   process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS = "300";
@@ -361,14 +361,9 @@ test("cached merchant identity follows stripeLivemode after cache reset", async 
   assert.ok(isEndUserCustomerKey(live.payerCustomerKey));
   assert.equal(isSandboxEndUserCustomerKey(live.payerCustomerKey), false);
 
+  // Livemode is part of the identity cache key. A sandbox Connect top-up in
+  // the same process must not reuse the live `eu_` payer from the TTL cache.
   await upsertAppBillingConfig(seeded.clientId, { stripeLivemode: false });
-  const stale = await resolveOpenMeterBillingIdentity({
-    clientId: seeded.clientId,
-    externalUserId: endUserId,
-  });
-  assert.equal(stale.payerCustomerKey, live.payerCustomerKey);
-
-  resetBillingIdentityCache();
   const sandbox = await resolveOpenMeterBillingIdentity({
     clientId: seeded.clientId,
     externalUserId: endUserId,
@@ -378,6 +373,8 @@ test("cached merchant identity follows stripeLivemode after cache reset", async 
     sandbox.payerCustomerKey,
     buildSandboxEndUserCustomerKey(sandbox.actorEndUserId),
   );
+  assert.equal(sandbox.actorEndUserId, live.actorEndUserId);
+  assert.notEqual(sandbox.payerCustomerKey, live.payerCustomerKey);
 });
 
 test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {

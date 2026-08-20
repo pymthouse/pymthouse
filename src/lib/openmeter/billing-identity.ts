@@ -446,10 +446,10 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
 /**
  * App→client→owner mappings change only on rare admin operations, but the
  * remote-signer hot path resolves them many times per request across mint,
- * provisioning, and balance reads. Cache per (clientId, externalUserId) so a
- * webhook invocation costs at most one Neon identity round-trip. Merchant
- * payer keys also depend on stripeLivemode — billing PATCH must reset this
- * cache when livemode or billingMode changes.
+ * provisioning, and balance reads. Merchant payer keys also depend on
+ * stripeLivemode (`eu_` vs `sbx_eu_`), so the app row is always re-read and
+ * the identity cache is keyed by billing plane. findOrCreateAppEndUser still
+ * runs at most once per (client, user, plane) within the TTL.
  */
 let identityCache: ReturnType<
   typeof createAsyncTtlCache<ResolvedBillingIdentity>
@@ -464,6 +464,17 @@ function getIdentityCache() {
 
 export function resetBillingIdentityCache(): void {
   identityCache = null;
+}
+
+function identityCacheKey(input: {
+  clientId: string;
+  externalUserId: string;
+  app: AppIdentityRow | null;
+}): string {
+  const plane = input.app
+    ? `${input.app.billingMode}\u0000${input.app.stripeLivemode ? "1" : "0"}`
+    : "";
+  return `${input.clientId}\u0000${input.externalUserId}\u0000${plane}`;
 }
 
 /**
@@ -481,17 +492,25 @@ export async function resolveOpenMeterBillingIdentity(input: {
     throw new Error("externalUserId is required");
   }
   const clientId = input.clientId.trim();
-  return getIdentityCache().get(`${clientId}\u0000${externalUserId}`, () =>
-    resolveOpenMeterBillingIdentityUncached({ clientId, externalUserId }),
+  const app = await loadAppIdentity(clientId);
+  return getIdentityCache().get(
+    identityCacheKey({ clientId, externalUserId, app }),
+    () =>
+      resolveOpenMeterBillingIdentityUncached({
+        clientId,
+        externalUserId,
+        app,
+      }),
   );
 }
 
 async function resolveOpenMeterBillingIdentityUncached(input: {
   clientId: string;
   externalUserId: string;
+  app: AppIdentityRow | null;
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId;
-  const app = await loadAppIdentity(input.clientId);
+  const app = input.app;
   if (!app) {
     // Fall back: treat input clientId as public id (tests / scripts).
     // Only wire `owner:{id}` marks owners here — bare UUIDs are common end-user ids.
