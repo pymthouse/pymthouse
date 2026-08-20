@@ -8,7 +8,10 @@ import {
   findOrCreateAppEndUser,
   resolveAppUserExternalIdFromCustomerKey,
 } from "@/lib/billing/end-users";
-import { buildEndUserCustomerKey } from "@/lib/openmeter/customer-key";
+import {
+  buildEndUserCustomerKey,
+  buildSandboxEndUserCustomerKey,
+} from "@/lib/openmeter/customer-key";
 import {
   loadAppUserAutoTopUpPrefs,
   saveAppUserAutoTopUpPrefs,
@@ -95,6 +98,12 @@ test("resolveAppUserExternalIdFromCustomerKey maps eu_ keys to the integrator id
 
   assert.equal(
     await resolveAppUserExternalIdFromCustomerKey(customerKey),
+    externalUserId,
+  );
+  assert.equal(
+    await resolveAppUserExternalIdFromCustomerKey(
+      buildSandboxEndUserCustomerKey(created.id),
+    ),
     externalUserId,
   );
   assert.equal(

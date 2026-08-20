@@ -61,9 +61,10 @@ export async function findOrCreateAppEndUser(
 }
 
 /**
- * Map a canonical OpenMeter end-user key (`eu_{end_users.id}`) back to the
- * integrator `external_user_id` used by `app_users` prefs and Connect
- * customers. Non-`eu_` values pass through unchanged.
+ * Map a canonical OpenMeter end-user key (`eu_{end_users.id}` or sandbox
+ * `sbx_eu_{end_users.id}`) back to the integrator `external_user_id` used
+ * by `app_users` prefs and Connect customers. Other values pass through
+ * unchanged.
  */
 export async function resolveAppUserExternalIdFromCustomerKey(
   externalUserId: string,

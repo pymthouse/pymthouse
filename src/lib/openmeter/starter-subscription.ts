@@ -212,7 +212,8 @@ export async function recoverStarterBillingProfile(
 }
 
 /**
- * Eager Custom Invoicing pin for merchant Starter users (before create).
+ * Eager merchant billing-profile pin for Starter users (before create).
+ * Live merchant: Custom Invoicing. Sandbox merchant: free/sandbox profile.
  * @internal Exported for unit tests.
  */
 export async function pinMerchantCustomInvoicingIfNeeded(

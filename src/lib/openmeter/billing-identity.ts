@@ -9,6 +9,7 @@ import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
+  buildSandboxEndUserCustomerKey,
   isEndUserCustomerKey,
   isOwnerWireSubject,
   normalizePlatformUserId,
@@ -19,7 +20,7 @@ import {
 /** JWT claim: owner_rollup end-user tokens name the app owner's wallet (legacy). */
 export const COST_OWNER_USER_ID_CLAIM = "cost_owner_user_id";
 
-/** JWT claim: OpenMeter payer customer key (owner bare id or `eu_…`). */
+/** JWT claim: OpenMeter payer customer key (owner bare id, `eu_…`, or `sbx_eu_…`). */
 export const BILLING_SUBJECT_KEY_CLAIM = "billing_subject_key";
 
 /** Separator between payer and actor in the wire `usage_subject`. */
@@ -72,6 +73,8 @@ type AppIdentityRow = {
   ownerId: string;
   isPlatformDefault: boolean;
   billingMode: "owner_rollup" | "merchant";
+  /** Merchant Connect Stripe plane. Missing config reads as live. */
+  stripeLivemode: boolean;
 };
 
 function platformUserIdentity(input: {
@@ -148,16 +151,43 @@ async function resolveEndUserActorIds(input: {
 
 /**
  * OpenMeter customer for app-user retail billing (payment methods, Checkout).
- * End-users use `eu_{end_users.id}` even under owner_rollup so cards never
- * land on the owner wallet. Owners and Explorers use the owner customer key.
+ * Owner-rollup end-users keep `eu_{end_users.id}` so cards never land on the
+ * owner wallet. Merchant sandbox payers use `sbx_eu_{id}` (the identity
+ * customer key). Owners and Explorers use the owner customer key.
  */
 export function appUserRetailCustomerKey(
   identity: ResolvedBillingIdentity,
 ): string {
-  if (isEndUserCustomerKey(identity.actorEndUserId)) {
+  if (
+    identity.sharesOwnerCostRail &&
+    isEndUserCustomerKey(identity.actorEndUserId)
+  ) {
     return identity.actorEndUserId;
   }
   return identity.customerKey;
+}
+
+/**
+ * OpenMeter keys to read for an app-user wallet (grants, usage, invoices).
+ * Retail/payer first (`eu_…` live, `sbx_eu_…` sandbox); never the owner
+ * wallet on owner_rollup. Legacy compound is dual-read only.
+ */
+export function appUserOpenMeterLookupKeys(
+  identity: ResolvedBillingIdentity,
+): string[] {
+  const retail = appUserRetailCustomerKey(identity);
+  const keys = [retail];
+  if (
+    identity.customerKey !== retail &&
+    !identity.sharesOwnerCostRail
+  ) {
+    keys.push(identity.customerKey);
+  }
+  const legacy = identity.legacyCompoundCustomerKey?.trim();
+  if (legacy && legacy !== retail) {
+    keys.push(legacy);
+  }
+  return [...new Set(keys.filter((key) => key.trim()))];
 }
 
 /** Owner wallet id when this identity's cost rail is the shared owner customer. */
@@ -369,6 +399,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
     ownerId: developerApps.ownerId,
     isPlatformDefault: developerApps.isPlatformDefault,
     billingMode: appBillingConfig.billingMode,
+    stripeLivemode: appBillingConfig.stripeLivemode,
   };
 
   const byPublic = await db
@@ -386,6 +417,7 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
       ownerId: byPublic[0].ownerId,
       isPlatformDefault: byPublic[0].isPlatformDefault === 1,
       billingMode: billingModeFromRow(byPublic[0].billingMode),
+      stripeLivemode: byPublic[0].stripeLivemode !== false,
     };
   }
 
@@ -407,14 +439,17 @@ async function loadAppIdentity(clientIdOrAppId: string): Promise<AppIdentityRow 
     ownerId: row.ownerId,
     isPlatformDefault: row.isPlatformDefault === 1,
     billingMode: billingModeFromRow(row.billingMode),
+    stripeLivemode: row.stripeLivemode !== false,
   };
 }
 
 /**
  * App→client→owner mappings change only on rare admin operations, but the
  * remote-signer hot path resolves them many times per request across mint,
- * provisioning, and balance reads. Cache per (clientId, externalUserId) so a
- * webhook invocation costs at most one Neon identity round-trip.
+ * provisioning, and balance reads. Merchant payer keys also depend on
+ * stripeLivemode (`eu_` vs `sbx_eu_`), so the app row is always re-read and
+ * the identity cache is keyed by billing plane. findOrCreateAppEndUser still
+ * runs at most once per (client, user, plane) within the TTL.
  */
 let identityCache: ReturnType<
   typeof createAsyncTtlCache<ResolvedBillingIdentity>
@@ -431,11 +466,22 @@ export function resetBillingIdentityCache(): void {
   identityCache = null;
 }
 
+function identityCacheKey(input: {
+  clientId: string;
+  externalUserId: string;
+  app: AppIdentityRow | null;
+}): string {
+  const plane = input.app
+    ? `${input.app.billingMode}\u0000${input.app.stripeLivemode ? "1" : "0"}`
+    : "";
+  return `${input.clientId}\u0000${input.externalUserId}\u0000${plane}`;
+}
+
 /**
  * Resolve the OpenMeter billing customer for an (app, external user) pair.
  * App owners and owner_rollup end-users share the owner's `{users.id}` wallet;
  * platform-default (Livepeer Direct) members bill their own owner wallet;
- * merchant end-users bill their stable `eu_{end_users.id}` customer.
+ * merchant end-users bill `eu_{end_users.id}` (live) or `sbx_eu_{id}` (sandbox).
  */
 export async function resolveOpenMeterBillingIdentity(input: {
   clientId: string;
@@ -446,17 +492,25 @@ export async function resolveOpenMeterBillingIdentity(input: {
     throw new Error("externalUserId is required");
   }
   const clientId = input.clientId.trim();
-  return getIdentityCache().get(`${clientId}\u0000${externalUserId}`, () =>
-    resolveOpenMeterBillingIdentityUncached({ clientId, externalUserId }),
+  const app = await loadAppIdentity(clientId);
+  return getIdentityCache().get(
+    identityCacheKey({ clientId, externalUserId, app }),
+    () =>
+      resolveOpenMeterBillingIdentityUncached({
+        clientId,
+        externalUserId,
+        app,
+      }),
   );
 }
 
 async function resolveOpenMeterBillingIdentityUncached(input: {
   clientId: string;
   externalUserId: string;
+  app: AppIdentityRow | null;
 }): Promise<ResolvedBillingIdentity> {
   const externalUserId = input.externalUserId;
-  const app = await loadAppIdentity(input.clientId);
+  const app = input.app;
   if (!app) {
     // Fall back: treat input clientId as public id (tests / scripts).
     // Only wire `owner:{id}` marks owners here — bare UUIDs are common end-user ids.
@@ -542,8 +596,12 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
     });
   }
 
+  const payerCustomerKey = app.stripeLivemode
+    ? actorIds.endUserCustomerKey
+    : buildSandboxEndUserCustomerKey(actorIds.endUserCustomerKey);
+
   return endUserIdentity({
-    payerCustomerKey: actorIds.endUserCustomerKey,
+    payerCustomerKey,
     payerKind: "end_user",
     sharesOwnerCostRail: false,
     actorEndUserId: actorIds.actorEndUserId,
@@ -552,6 +610,30 @@ async function resolveOpenMeterBillingIdentityUncached(input: {
     developerAppId: app.developerAppId,
     legacyCompoundCustomerKey: actorIds.legacyCompoundCustomerKey,
   });
+}
+
+/**
+ * Keys to look up for an app-user in OpenMeter. Identity first (`eu_…` /
+ * `sbx_eu_…`); compound fallback when identity cannot be resolved.
+ */
+export async function resolveAppUserOpenMeterLookupKeys(input: {
+  clientId: string;
+  externalUserId: string;
+}): Promise<string[]> {
+  const clientId = input.clientId.trim();
+  const externalUserId = input.externalUserId.trim();
+  if (!clientId || !externalUserId) {
+    return [];
+  }
+  try {
+    const identity = await resolveOpenMeterBillingIdentity({
+      clientId,
+      externalUserId,
+    });
+    return appUserOpenMeterLookupKeys(identity);
+  } catch {
+    return [buildOpenMeterCustomerKey(clientId, externalUserId)];
+  }
 }
 
 /** True when this external user id is the owner of the given app. */

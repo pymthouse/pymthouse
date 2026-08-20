@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import nodeTest from "node:test";
 
 import {
+  appUserOpenMeterLookupKeys,
   appUserRetailCustomerKey,
   AppUserOwnerWalletMutationError,
   assertAppUserRetailBillingSubject,
@@ -24,7 +25,9 @@ import {
   buildOpenMeterCustomerKey,
   buildOwnerCustomerKey,
   buildOwnerWireSubject,
+  buildSandboxEndUserCustomerKey,
   isEndUserCustomerKey,
+  isSandboxEndUserCustomerKey,
 } from "@/lib/openmeter/customer-key";
 import { upsertAppBillingConfig } from "@/lib/openmeter/billing-profiles";
 import { test } from "@/test-utils/db-guard";
@@ -77,6 +80,20 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
   );
   assert.equal(
     appUserRetailCustomerKey({
+      customerKey: "sbx_eu_end-user-1",
+      payerCustomerKey: "sbx_eu_end-user-1",
+      payerKind: "end_user",
+      isOwner: false,
+      sharesOwnerCostRail: false,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+    }),
+    "sbx_eu_end-user-1",
+  );
+  assert.equal(
+    appUserRetailCustomerKey({
       customerKey: "owner-uuid",
       payerCustomerKey: "owner-uuid",
       payerKind: "platform_user",
@@ -88,6 +105,40 @@ nodeTest("appUserRetailCustomerKey keeps end-user cards off the owner wallet", (
       developerAppId: "app_demo",
     }),
     "owner-uuid",
+  );
+});
+
+nodeTest("appUserOpenMeterLookupKeys prefers sandbox payer over live actor and owner", () => {
+  assert.deepEqual(
+    appUserOpenMeterLookupKeys({
+      customerKey: "sbx_eu_end-user-1",
+      payerCustomerKey: "sbx_eu_end-user-1",
+      payerKind: "end_user",
+      isOwner: false,
+      sharesOwnerCostRail: false,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+      legacyCompoundCustomerKey: "app_demo:ext-9",
+    }),
+    ["sbx_eu_end-user-1", "app_demo:ext-9"],
+  );
+  assert.deepEqual(
+    appUserOpenMeterLookupKeys({
+      customerKey: "owner-uuid",
+      payerCustomerKey: "owner-uuid",
+      payerKind: "platform_user",
+      payerPlatformUserId: "owner-uuid",
+      isOwner: false,
+      sharesOwnerCostRail: true,
+      actorEndUserId: "eu_end-user-1",
+      actorExternalUserId: "ext-9",
+      publicClientId: "app_demo",
+      developerAppId: "app_demo",
+      legacyCompoundCustomerKey: "app_demo:ext-9",
+    }),
+    ["eu_end-user-1", "app_demo:ext-9"],
   );
 });
 
@@ -242,12 +293,15 @@ test("owner_rollup end-user shares the owner wallet with eu_ actor", async (t) =
   );
 });
 
-test("merchant end-user bills stable eu_ customer", async (t) => {
+test("live merchant end-user bills stable eu_ customer", async (t) => {
   const seeded = await seedDeveloperAppWithClient();
   t.after(async () => cleanupTestApp(seeded));
   const endUserId = `ext-${randomUUID()}`;
 
-  await upsertAppBillingConfig(seeded.clientId, { billingMode: "merchant" });
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
   resetBillingIdentityCache();
   const identity = await resolveOpenMeterBillingIdentity({
     clientId: seeded.clientId,
@@ -278,6 +332,80 @@ test("merchant end-user bills stable eu_ customer", async (t) => {
     identity.payerCustomerKey,
     buildEndUserCustomerKey(identity.actorEndUserId.replace(/^eu_/, "")),
   );
+});
+
+test("cached merchant identity follows stripeLivemode without cache reset", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  const previousTtl = process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS;
+  process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS = "300";
+  t.after(async () => {
+    if (previousTtl === undefined) {
+      delete process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS;
+    } else {
+      process.env.BILLING_IDENTITY_CACHE_TTL_SECONDS = previousTtl;
+    }
+    resetBillingIdentityCache();
+    await cleanupTestApp(seeded);
+  });
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: true,
+  });
+  resetBillingIdentityCache();
+  const live = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.ok(isEndUserCustomerKey(live.payerCustomerKey));
+  assert.equal(isSandboxEndUserCustomerKey(live.payerCustomerKey), false);
+
+  // Livemode is part of the identity cache key. A sandbox Connect top-up in
+  // the same process must not reuse the live `eu_` payer from the TTL cache.
+  await upsertAppBillingConfig(seeded.clientId, { stripeLivemode: false });
+  const sandbox = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.ok(isSandboxEndUserCustomerKey(sandbox.payerCustomerKey));
+  assert.equal(
+    sandbox.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(sandbox.actorEndUserId),
+  );
+  assert.equal(sandbox.actorEndUserId, live.actorEndUserId);
+  assert.notEqual(sandbox.payerCustomerKey, live.payerCustomerKey);
+});
+
+test("sandbox merchant end-user bills sbx_eu_ customer", async (t) => {
+  const seeded = await seedDeveloperAppWithClient();
+  t.after(async () => cleanupTestApp(seeded));
+  const endUserId = `ext-${randomUUID()}`;
+
+  await upsertAppBillingConfig(seeded.clientId, {
+    billingMode: "merchant",
+    stripeLivemode: false,
+  });
+  resetBillingIdentityCache();
+  const identity = await resolveOpenMeterBillingIdentity({
+    clientId: seeded.clientId,
+    externalUserId: endUserId,
+  });
+  assert.equal(identity.isOwner, false);
+  assert.equal(identity.sharesOwnerCostRail, false);
+  assert.equal(identity.payerKind, "end_user");
+  assert.ok(isSandboxEndUserCustomerKey(identity.payerCustomerKey));
+  assert.ok(isEndUserCustomerKey(identity.payerCustomerKey));
+  assert.equal(identity.customerKey, identity.payerCustomerKey);
+  assert.notEqual(identity.actorEndUserId, identity.payerCustomerKey);
+  assert.equal(appUserRetailCustomerKey(identity), identity.customerKey);
+  assert.equal(
+    identity.payerCustomerKey,
+    buildSandboxEndUserCustomerKey(identity.actorEndUserId),
+  );
+  assert.deepEqual(billingSubjectClaim(identity), {
+    billing_subject_key: identity.payerCustomerKey,
+  });
 });
 
 test("normal app owner bills shared owner wallet", async (t) => {
