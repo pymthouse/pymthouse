@@ -78,6 +78,12 @@ export function appSettingsTabFromPathname(pathname: string): AppSettingsTab | n
   if (isAppSettingsTab(parts[2])) {
     return parts[2];
   }
+  if (parts[2] === "settings" || parts[2] === "auth") {
+    return "profile";
+  }
+  if (parts[2] === "discovery-profiles" || parts[2] === "network-discovery") {
+    return "plans";
+  }
   // Nested non-tab routes (identities, usage, …) — not a settings tab page.
   return null;
 }

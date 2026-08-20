@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppInfoStep from "./steps/AppInfoStep";
 import AppModeStep from "./steps/AppModeStep";
@@ -228,11 +227,8 @@ export default function AppSettingsScreen({
   }, [appId]);
 
   useEffect(() => {
-    if (integrationSection !== "credentials") {
-      return;
-    }
     void syncCredentialsFromServer();
-  }, [integrationSection, syncCredentialsFromServer]);
+  }, [syncCredentialsFromServer]);
 
   const saveChanges = useCallback(async () => {
     if (!canEdit) return;
@@ -392,13 +388,11 @@ export default function AppSettingsScreen({
         )}
       </div>
 
-      {integrationSection === "profile" && (
-        <div
-          id="panel-profile"
-          role="tabpanel"
-          aria-labelledby="tab-profile"
-          className="space-y-10 pb-6"
-        >
+      <SettingsTabPanel
+        id="profile"
+        active={integrationSection === "profile"}
+        className="space-y-10 pb-6"
+      >
           <section className="space-y-4">
             <AppInfoStep data={formData} onChange={updateFormData} readOnly={!canEdit} />
           </section>
@@ -451,16 +445,13 @@ export default function AppSettingsScreen({
               )}
             </section>
           )}
-        </div>
-      )}
+      </SettingsTabPanel>
 
-      {integrationSection === "credentials" && (
-        <div
-          id="panel-credentials"
-          role="tabpanel"
-          aria-labelledby="tab-credentials"
-          className="space-y-6 pb-6"
-        >
+      <SettingsTabPanel
+        id="credentials"
+        active={integrationSection === "credentials"}
+        className="space-y-6 pb-6"
+      >
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-zinc-100 mb-1">
@@ -542,28 +533,15 @@ export default function AppSettingsScreen({
             tokenUrl={tokenUrl}
             signerSessionUrl={signerSessionUrl}
           />
-        </div>
-      )}
+      </SettingsTabPanel>
 
-      {integrationSection === "plans" && (
-        <div
-          id="panel-plans"
-          role="tabpanel"
-          aria-labelledby="tab-plans"
-        >
-          <PlansTab appId={appId} canEdit={canEdit} />
-        </div>
-      )}
+      <SettingsTabPanel id="plans" active={integrationSection === "plans"}>
+        <PlansTab appId={appId} canEdit={canEdit} />
+      </SettingsTabPanel>
 
-      {integrationSection === "payments" && (
-        <div
-          id="panel-payments"
-          role="tabpanel"
-          aria-labelledby="tab-payments"
-        >
-          <PaymentsTab appId={appId} canManageBilling={canManageBilling} />
-        </div>
-      )}
+      <SettingsTabPanel id="payments" active={integrationSection === "payments"}>
+        <PaymentsTab appId={appId} canManageBilling={canManageBilling} />
+      </SettingsTabPanel>
 
       {/* Save - only shown for non-plans/payments tabs */}
       {integrationSection !== "plans" && integrationSection !== "payments" && (
@@ -603,6 +581,31 @@ export default function AppSettingsScreen({
         </div>
       </div>
       )}
+    </div>
+  );
+}
+
+function SettingsTabPanel({
+  id,
+  active,
+  className,
+  children,
+}: Readonly<{
+  id: AppSettingsTab;
+  active: boolean;
+  className?: string;
+  children: React.ReactNode;
+}>) {
+  return (
+    <div
+      id={`panel-${id}`}
+      role="tabpanel"
+      aria-labelledby={`tab-${id}`}
+      hidden={!active}
+      inert={!active}
+      className={className}
+    >
+      {children}
     </div>
   );
 }

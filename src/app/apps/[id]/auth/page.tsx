@@ -1,8 +1,4 @@
-"use client";
-
-import AppSettingsPageClient from "@/components/apps/AppSettingsPageClient";
+import AppSettingsSegmentPage from "@/components/apps/AppSettingsSegmentPage";
 
 /** Auth settings live under App profile. */
-export default function AppAuthPage() {
-  return <AppSettingsPageClient tab="profile" />;
-}
+export default AppSettingsSegmentPage;

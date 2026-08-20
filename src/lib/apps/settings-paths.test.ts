@@ -43,5 +43,12 @@ test("appSettingsAbsoluteUrl keeps callback query on path", () => {
 test("appSettingsTabFromPathname", () => {
   assert.equal(appSettingsTabFromPathname("/apps/app_1"), "profile");
   assert.equal(appSettingsTabFromPathname("/apps/app_1/payments"), "payments");
+  assert.equal(appSettingsTabFromPathname("/apps/app_1/settings"), "profile");
+  assert.equal(appSettingsTabFromPathname("/apps/app_1/auth"), "profile");
+  assert.equal(
+    appSettingsTabFromPathname("/apps/app_1/discovery-profiles"),
+    "plans",
+  );
   assert.equal(appSettingsTabFromPathname("/apps/app_1/identities"), null);
+  assert.equal(appSettingsTabFromPathname("/apps/app_1/usage"), null);
 });
