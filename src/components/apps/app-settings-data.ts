@@ -82,7 +82,13 @@ export function loadedAppFromApiPayload(data: AppSettingsApiPayload): LoadedApp 
       status: data.status ?? "",
       hasSecret: data.oidcClient?.hasSecret || false,
       backendHelper: data.m2mOidcClient ?? null,
-      webHelper: data.webOidcClient ?? null,
+      webHelper: data.webOidcClient
+        ? {
+            clientId: data.webOidcClient.clientId,
+            hasSecret: data.webOidcClient.hasSecret,
+            redirectUris: data.webOidcClient.redirectUris ?? [],
+          }
+        : null,
     },
     domains: (data.domains || []).map((d) => ({
       id: d.id,
