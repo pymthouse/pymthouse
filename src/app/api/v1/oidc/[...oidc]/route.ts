@@ -32,7 +32,7 @@ import {
 import { getRegisteredRedirectOrigins } from "@/lib/oidc/clients";
 import { isVerifiedCustomDomain } from "@/lib/oidc/custom-domains";
 import { getSecureHeaders } from "@/lib/oidc/security";
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, getTrustedOidcOrigins, reencodeOAuthRedirectLocation } from "./utils";
 import { isTokenExchangeGrant, handleTokenExchange, TokenExchangeError } from "@/lib/oidc/token-exchange";
 import {
   handleGatewayTokenExchange,
@@ -523,10 +523,17 @@ async function handleOIDC(request: NextRequest): Promise<NextResponse> {
             return originalEnd(chunk, ...args);
           }
 
-          const redirectResponse = NextResponse.redirect(
-            redirectUrl,
-            statusCode as 301 | 302 | 303 | 307 | 308,
-          );
+          // Prefer a string Location so we control query encoding. Bare `+` in
+          // OAuth state must stay `%2B` or Claude Code reports invalid state.
+          const locationHeader = /^https?:\/\//i.test(location.trim())
+            ? reencodeOAuthRedirectLocation(location)
+            : reencodeOAuthRedirectLocation(redirectUrl.href);
+          const redirectResponse = new NextResponse(null, {
+            status: statusCode as 301 | 302 | 303 | 307 | 308,
+            headers: {
+              Location: locationHeader,
+            },
+          });
           const setCookies = rawHeaders["set-cookie"];
           if (setCookies) {
             const cookies = Array.isArray(setCookies) ? setCookies : [setCookies];
