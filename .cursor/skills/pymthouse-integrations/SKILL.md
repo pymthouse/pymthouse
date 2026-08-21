@@ -19,12 +19,14 @@ PymtHouse is the **sole OIDC issuer** for integrator apps. External backends tal
 | Skill | When |
 | --- | --- |
 | `pymthouse-sdk-token-streaming` | Mint app-user API key / `sdkToken`, decode `--token`, stream with livepeer-python-gateway |
+| `pymthouse-payment-integration` | Owner vs merchant rails, sandbox/live Connect, wallet top-up, auto-top-up, billing state / 402s |
 
 ## Canonical docs (source of truth)
 
 | Topic | Path |
 | --- | --- |
-| Builder product (OIDC issuer, Builder API, Usage API, device + token exchange) | `docs/builder-api.md` || [docs.pymthouse.com](https://docs.pymthouse.com)
+| Builder product (OIDC issuer, Builder API, Usage API, device + token exchange) | `docs/builder-api.md` || [docs.pymthouse.com](https://docs.pymthouse.com) |
+| Payments (Connect, wallet, billing state) | `docs/builder-api.md` (Merchant billing) · `docs/ops-sandbox-merchant-connect.md` · skill `pymthouse-payment-integration` |
 
 ## OIDC siblings per interactive app
 

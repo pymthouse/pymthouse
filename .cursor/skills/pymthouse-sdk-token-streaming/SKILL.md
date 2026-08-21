@@ -14,7 +14,7 @@ description: >-
 
 This skill covers the **gateway `--token`** (also returned as `sdkToken` when minting keys), not OIDC access JWTs or M2M client credentials.
 
-Related OAuth / Builder flows: skill `pymthouse-integrations`.
+Related OAuth / Builder flows: skill `pymthouse-integrations`. Paid jobs / 402 spend gates: skill `pymthouse-payment-integration`.
 
 ## What the token is
 
@@ -186,6 +186,7 @@ Token field precedence (gateway): token `orchestrators` → explicit orch → to
 | 401 on signer | Key revoked, wrong app, or Bearer not the full composite `app_*_*` |
 | Off-chain / unpaid jobs | Token omitted `--token` and no `--signer` → examples run offchain |
 | Billing / identity | Signer webhook must accept the composite Bearer (see `docs/builder-api.md` credential types) |
+| 402 / `trial_credits_exhausted` / `no_payment_method` | Token is fine; the **payer** is blocked — `GET …/billing/state` and skill `pymthouse-payment-integration` |
 
 ## Key files in this repo
 
