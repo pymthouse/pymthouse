@@ -14,11 +14,19 @@ description: >-
 
 PymtHouse is the **sole OIDC issuer** for integrator apps. External backends talk to it via **Builder API** (`/api/v1/apps/{clientId}/...`) and **OIDC** (`/api/v1/oidc/...`). Read discovery from `{issuer}/.well-known/openid-configuration` in production.
 
+## Related skills
+
+| Skill | When |
+| --- | --- |
+| `pymthouse-sdk-token-streaming` | Mint app-user API key / `sdkToken`, decode `--token`, stream with livepeer-python-gateway |
+| `pymthouse-payment-integration` | Owner vs merchant rails, sandbox/live Connect, wallet top-up, auto-top-up, billing state / 402s |
+
 ## Canonical docs (source of truth)
 
 | Topic | Path |
 | --- | --- |
-| Builder product (OIDC issuer, Builder API, Usage API, device + token exchange) | `docs/builder-api.md` || [docs.pymthouse.com](https://docs.pymthouse.com)
+| Builder product (OIDC issuer, Builder API, Usage API, device + token exchange) | `docs/builder-api.md` || [docs.pymthouse.com](https://docs.pymthouse.com) |
+| Payments (Connect, wallet, billing state) | `docs/builder-api.md` (Merchant billing) · `docs/ops-sandbox-merchant-connect.md` · skill `pymthouse-payment-integration` |
 
 ## Two clients per interactive app
 
