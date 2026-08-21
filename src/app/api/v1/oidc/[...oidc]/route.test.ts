@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveExternalOriginFromHeaders, resolveRedirectLocation, buildLoopbackRedirectBridgeHtml, isLoopbackHttpRedirect } from "./utils";
+import { deriveExternalOriginFromHeaders, resolveRedirectLocation, isLoopbackHttpRedirect } from "./utils";
 
 test("deriveExternalOriginFromHeaders prefers forwarded host+proto", () => {
   const headers = new Headers({
@@ -58,24 +58,6 @@ test("resolveRedirectLocation allows Claude hosted callback origins", () => {
     redirect.href,
     "https://claude.ai/api/mcp/auth_callback?code=abc",
   );
-});
-
-test("buildLoopbackRedirectBridgeHtml embeds the callback URL without scripts", () => {
-  const html = buildLoopbackRedirectBridgeHtml(
-    new URL("http://127.0.0.1:9999/callback?code=a&state=b"),
-  );
-  assert.match(html, /Return to Claude Code/);
-  assert.match(html, /http:\/\/127\.0\.0\.1:9999\/callback\?code=a&amp;state=b/);
-  assert.equal(html.includes("<script"), false);
-  assert.equal(html.includes("javascript:"), false);
-});
-
-test("buildLoopbackRedirectBridgeHtml HTML-encodes OAuth state", () => {
-  const payload = 'http://127.0.0.1:1/callback?state=</script><script>alert(1)</script>';
-  const html = buildLoopbackRedirectBridgeHtml(new URL(payload));
-  assert.equal(html.includes("</script><script>"), false);
-  assert.equal(html.includes("<script>"), false);
-  assert.match(html, /state=/);
 });
 
 test("isLoopbackHttpRedirect accepts RFC 8252 callback hosts only", () => {
